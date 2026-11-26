@@ -2663,11 +2663,11 @@
         [_ (No)])]
     [_ (No)]))
 
-(define (opt-fold-instr
-  [type-segment-bases : i64]
-  [env : OptConstEnv]
-  [instr : ir.CompilerIrInstr]
-  [rmw? : bool]) : OptInstrResult
+;; The arms a constant fold and a strength reduction share: a literal Mov, the
+;; address that ends a constant's life, a mask-op fold, the stores (which end
+;; the environment's chain), a Pack/Word (a literal), and the default that
+;; unbinds the instruction's definition.
+(define (opt-fold-shared-instr [env : OptConstEnv] [instr : ir.CompilerIrInstr]) : OptInstrResult
   (match (compiler-opt-global-shared-view instr)
     [(Mov dst value ty)
       (match (opt-resolve-known env (& value) ty)
@@ -2681,6 +2681,26 @@
             (Mov dst folded ty))]
         [(NoConst) (Result (opt-const-unbind env dst) instr)])]
     [(AddrOf dst src _storage-words) (opt-invalidate-addr-of env dst src instr)]
+    [(MaskBinOp dst op lhs rhs lanes)
+      (Result
+        (opt-const-unbind env dst)
+        (MaskBinOp dst (opt-fold-mask-binop-op op lhs rhs) lhs rhs lanes))]
+    [(or (StorePtr _ _ _) (StoreOwned _ _ _) (CopyBytes _ _ _))
+      (Result Nil instr)]
+    [(or (Pack _ _ _) (Word _ _ _ _)) (Result env instr)]
+    [_
+      (Result
+        (match (opt-instr-def-var (& instr))
+          [(Some dst) (opt-const-unbind env dst)]
+          [(None) env])
+        instr)]))
+
+(define (opt-fold-instr
+  [type-segment-bases : i64]
+  [env : OptConstEnv]
+  [instr : ir.CompilerIrInstr]
+  [rmw? : bool]) : OptInstrResult
+  (match (compiler-opt-global-shared-view instr)
     [(Cast dst src from-ty to-ty)
       (match (opt-fold-cast
         (& (opt-resolve-known env (& src) from-ty))
@@ -2752,34 +2772,10 @@
               (compiler-opt-global-shared-view ty))
             (Mov dst folded ty))]
         [(No) (Result (opt-const-unbind env dst) instr)])]
-    [(MaskBinOp dst op lhs rhs lanes)
-      (Result
-        (opt-const-unbind env dst)
-        (MaskBinOp dst (opt-fold-mask-binop-op op lhs rhs) lhs rhs lanes))]
-    [(or (StorePtr _ _ _) (StoreOwned _ _ _) (CopyBytes _ _ _))
-      (Result Nil instr)]
-    [(or (Pack _ _ _) (Word _ _ _ _)) (Result env instr)]
-    [_
-      (Result
-        (match (opt-instr-def-var (& instr))
-          [(Some dst) (opt-const-unbind env dst)]
-          [(None) env])
-        instr)]))
+    [_ (opt-fold-shared-instr env instr)]))
 
 (define (opt-strength-instr [env : OptConstEnv] [instr : ir.CompilerIrInstr]) : OptInstrResult
   (match (compiler-opt-global-shared-view instr)
-    [(Mov dst value ty)
-      (match (opt-resolve-known env (& value) ty)
-        [(SomeConst folded _)
-          (Result
-            (opt-const-bind
-              env
-              dst
-              (compiler-opt-global-shared-view folded)
-              (compiler-opt-global-shared-view ty))
-            (Mov dst folded ty))]
-        [(NoConst) (Result (opt-const-unbind env dst) instr)])]
-    [(AddrOf dst src _storage-words) (opt-invalidate-addr-of env dst src instr)]
     [(BinOp dst op l r ty)
       (match (opt-strength-binop
         (& op)
@@ -2799,20 +2795,7 @@
               (Mov dst replacement ty))
             (Result (opt-const-unbind env dst) (Mov dst replacement ty)))]
         [(No) (Result (opt-const-unbind env dst) instr)])]
-    [(MaskBinOp dst op lhs rhs lanes)
-      (Result
-        (opt-const-unbind env dst)
-        (MaskBinOp dst (opt-fold-mask-binop-op op lhs rhs) lhs rhs lanes))]
-    [(or (StorePtr _ _ _) (StoreOwned _ _ _) (CopyBytes _ _ _))
-      (Result Nil instr)]
-    [(or (Pack _ _ _) (Word _ _ _ _))
-      (Result (owned_view.compiler-owned-reference-shared-view env) instr)]
-    [_
-      (Result
-        (match (opt-instr-def-var (& instr))
-          [(Some dst) (opt-const-unbind env dst)]
-          [(None) (owned_view.compiler-owned-reference-shared-view env)])
-        instr)]))
+    [_ (opt-fold-shared-instr env instr)]))
 
 ;; --- dead-code elimination ---------------------------------------------------
 ;;
@@ -12022,35 +12005,41 @@
           (opt-verify-call-args-uses defs doms proof args block-id pos)))]
     [_ (opt-verify-uses defs doms block-id pos instr)]))
 
-(define (opt-verify-instr-seq-uses-from
+;; Every use in one block's instruction sequence. `contextual?` names the
+;; caller that reports a rejection with the block and instruction it came from;
+;; the final-IR check reads the message alone.
+(define (opt-verify-instr-seq-uses
   [type-segment-bases : i64]
   [defs : (& defs OptVerifyDefs)]
   [doms : (& doms OptDomInfo)]
   [proof : (&mut proof (OptSretStorageProof body))]
   [block-id : i64]
   [instrs : (& ir.CompilerIrInstrSeq)]
-  [index : i64]
-  [pos : i64]) : ResultCompilerOptimizeVerify
-  (let
-    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    [i : i64 index]
-    [p : i64 pos]
-    (while (< i count)
-      (let
-        [_
-          (try
-            (opt-verify-instr-uses
-              type-segment-bases
-              defs
-              doms
-              proof
-              block-id
-              p
-              (ir.compiler-ir-instr-seq-borrow instrs i)))]
-        unit)
-      (+= i 1)
-      (+= p 1))
-    (Ok)))
+  [contextual? : bool]) : ResultCompilerOptimizeVerify
+  (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+    (match (opt-verify-instr-uses
+      type-segment-bases
+      defs
+      doms
+      proof
+      block-id
+      (+ index 1)
+      (ir.compiler-ir-instr-seq-borrow instrs index))
+      [(Ok) unit]
+      [(Err message)
+        (return
+          (Err
+            (if contextual?
+              (str_cat.str-cat
+                "block "
+                (ir.compiler-ir-label-text
+                  (opt-cfg-index-label doms.index block-id))
+                " instruction "
+                (string.int->string index)
+                ": "
+                message)
+              message)))]))
+  (Ok))
 
 (define (opt-phi-input-labels [inputs : (& inputs ir.CompilerIrPhiInputSeq)]) : OptLabelSet
   ;; Last input first, as the set has always been built.
@@ -12226,7 +12215,8 @@
   [doms : (& doms OptDomInfo)]
   [proof : (&mut proof (OptSretStorageProof body))]
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
-  [block-id : i64]) : ResultCompilerOptimizeVerify
+  [block-id : i64]
+  [contextual? : bool]) : ResultCompilerOptimizeVerify
   (match blocks
     [(slice) (Ok)]
     [(slice block & rest)
@@ -12235,84 +12225,22 @@
           (let
             [_
               (try
-                (opt-verify-instr-seq-uses-from
+                (opt-verify-instr-seq-uses
                   type-segment-bases
                   defs
                   doms
                   proof
                   block-id
                   (& instrs)
-                  0
-                  1))]
+                  contextual?))]
             (opt-verify-block-uses
               type-segment-bases
               defs
               doms
               proof
               rest
-              (+ block-id 1)))])]))
-
-(define (opt-verify-instr-seq-uses-contextual
-  [type-segment-bases : i64]
-  [defs : (& defs OptVerifyDefs)]
-  [doms : (& doms OptDomInfo)]
-  [proof : (&mut proof (OptSretStorageProof body))]
-  [block-id : i64]
-  [instrs : (& ir.CompilerIrInstrSeq)]
-  [pos : i64]) : ResultCompilerOptimizeVerify
-  (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
-    (match (opt-verify-instr-uses
-      type-segment-bases
-      defs
-      doms
-      proof
-      block-id
-      pos
-      (ir.compiler-ir-instr-seq-borrow instrs index))
-      [(Ok) (set! pos (+ pos 1))]
-      [(Err message)
-        (return
-          (Err
-            (str_cat.str-cat
-              "block "
-              (ir.compiler-ir-label-text
-                (opt-cfg-index-label doms.index block-id))
-              " instruction "
-              (string.int->string index)
-              ": "
-              message)))]))
-  (Ok))
-
-(define (opt-verify-block-uses-contextual
-  [type-segment-bases : i64]
-  [defs : (& defs OptVerifyDefs)]
-  [doms : (& doms OptDomInfo)]
-  [proof : (&mut proof (OptSretStorageProof body))]
-  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
-  [block-id : i64]) : ResultCompilerOptimizeVerify
-  (match blocks
-    [(slice) (Ok)]
-    [(slice block & rest)
-      (match block
-        [(Block _ instrs)
-          (let
-            [_
-              (try
-                (opt-verify-instr-seq-uses-contextual
-                  type-segment-bases
-                  defs
-                  doms
-                  proof
-                  block-id
-                  (& instrs)
-                  1))]
-            (opt-verify-block-uses-contextual
-              type-segment-bases
-              defs
-              doms
-              proof
-              rest
-              (+ block-id 1)))])]))
+              (+ block-id 1)
+              contextual?))])]))
 
 (define (opt-verify-function-body-with-context
   [func : (& func ir.CompilerIrFunction)]
@@ -12337,7 +12265,8 @@
               doms
               (&mut proof)
               (ir.compiler-ir-block-list-view blocks)
-              0))])]))
+              0
+              false))])]))
 
 ;; The caller derived the index (and with it the single-definition proof) for
 ;; exactly this function; final IR that fails that proof is not checked here at
@@ -12360,13 +12289,14 @@
             blocks
             (__tl_make-array bool 0)
             (__tl_make-array i64 0))]
-        (opt-verify-block-uses-contextual
+        (opt-verify-block-uses
           type-segment-bases
           defs
           doms
           (&mut proof)
           (ir.compiler-ir-block-list-view blocks)
-          0))]))
+          0
+          true))]))
 
 (define (opt-verify-scan-post-terminator [blocks : (& ir.CompilerIrBlockList)]) : i64
   (match blocks
@@ -54694,6 +54624,26 @@
                   fuel))]
             [_ false])])]))
 
+;; The operand's copies resolved, then the non-negativity query made of it: the
+;; quotient, shift and mask rules below all ask exactly this of an operand.
+(define (opt-bounds-dom-nonneg-resolved?
+  [env : (& env OptBoundsDomEnv)]
+  [cmp-facts : (& cmp-facts OptDomCmpFacts)]
+  [phis : (& phis OptNonnegPhis)]
+  [at-id : i64]
+  [value : (& ir.CompilerIrValue)]
+  [fuel : i64]) : bool
+  (opt-bounds-dom-nonneg-at?
+    env
+    cmp-facts
+    phis
+    at-id
+    (&
+      (opt-bounds-dom-resolve
+        env.copies
+        (owned_view.compiler-owned-reference-shared-view value)))
+    fuel))
+
 (define (opt-bounds-dom-nonneg-binop?
   [env : (& env OptBoundsDomEnv)]
   [cmp-facts : (& cmp-facts OptDomCmpFacts)]
@@ -54763,16 +54713,7 @@
         [(I64 divisor)
           (and
             (> divisor 0)
-            (opt-bounds-dom-nonneg-at?
-              env
-              cmp-facts
-              phis
-              at-id
-              (&
-                (opt-bounds-dom-resolve
-                  env.copies
-                  (owned_view.compiler-owned-reference-shared-view lhs)))
-              fuel))]
+            (opt-bounds-dom-nonneg-resolved? env cmp-facts phis at-id lhs fuel))]
         [_ false])]
     ;; `x >> k` for a literal k in [0, width): the arithmetic shift right of a
     ;; non-negative value is floor(x / 2^k), still in [0, x]. A count outside
@@ -54785,16 +54726,7 @@
           (and
             (>= count 0)
             (< count 64)
-            (opt-bounds-dom-nonneg-at?
-              env
-              cmp-facts
-              phis
-              at-id
-              (&
-                (opt-bounds-dom-resolve
-                  env.copies
-                  (owned_view.compiler-owned-reference-shared-view lhs)))
-              fuel))]
+            (opt-bounds-dom-nonneg-resolved? env cmp-facts phis at-id lhs fuel))]
         [_ false])]
     ;; `x & m`: one clear sign bit clears the result's, so EITHER operand
     ;; proving non-negative is enough and nothing is asked of the other.
@@ -54802,26 +54734,8 @@
         [(BitAnd) true]
         [_ false])
       (or
-        (opt-bounds-dom-nonneg-at?
-          env
-          cmp-facts
-          phis
-          at-id
-          (&
-            (opt-bounds-dom-resolve
-              env.copies
-              (owned_view.compiler-owned-reference-shared-view lhs)))
-          fuel)
-        (opt-bounds-dom-nonneg-at?
-          env
-          cmp-facts
-          phis
-          at-id
-          (&
-            (opt-bounds-dom-resolve
-              env.copies
-              (owned_view.compiler-owned-reference-shared-view rhs)))
-          fuel))]
+        (opt-bounds-dom-nonneg-resolved? env cmp-facts phis at-id lhs fuel)
+        (opt-bounds-dom-nonneg-resolved? env cmp-facts phis at-id rhs fuel))]
     [else false]))
 
 ;; One phi input, discharged at the block whose edge carries it: that is where
@@ -127917,12 +127831,36 @@
             count))]))
   count)
 
-;; P18-2: bits for one pool. Distinct bits run from `next` up to
+;; Which globals of a packed row take a bit of their own: the non-scalars alone
+;; (IAG-2's own-storage index), or the globals of ONE P18 pool that the program
+;; directly stores.
+(defenum OptGlobalBitPool
+  (Nonscalar)
+  (StoredScalar)
+  (StoredNonscalar))
+
+(define (opt-global-bit-pool-takes?
+  [pool : OptGlobalBitPool]
+  [stores : (& stores opt_i64_i64_map.Map)]
+  [id : i64]
+  [ty : (& ty ast.AstType)]) : bool
+  (match pool
+    [(Nonscalar) (not (opt-global-obj-scalar-type? ty))]
+    [(StoredScalar)
+      (and
+        (opt-global-obj-scalar-type? ty)
+        (opt_i64_i64_map.contains? stores id))]
+    [(StoredNonscalar)
+      (and
+        (not (opt-global-obj-scalar-type? ty))
+        (opt_i64_i64_map.contains? stores id))]))
+
+;; P18-2 / ALIAS-2: bits for one row. Distinct bits run from `next` up to
 ;; `last-distinct`; past that every global of the pool shares `overflow-bit`.
-(define (opt-global-mod-ref-index-fill-pool
+(define (opt-global-bit-index-fill
   [globals : (& ir.CompilerIrGlobalSeq)]
   [stores : (& stores opt_i64_i64_map.Map)]
-  [scalar? : bool]
+  [pool : OptGlobalBitPool]
   [last-distinct : i64]
   [overflow-bit : i64]
   [out : opt_i64_i64_map.Map]
@@ -127933,15 +127871,15 @@
     (match (ir.compiler-ir-global-seq-borrow globals at)
       [(Global name ty _)
         (if (not
-          (and
-            (= scalar? (opt-global-obj-scalar-type? (& ty)))
-            (opt_i64_i64_map.contains?
-              (& stores)
-              (ir.compiler-ir-symbol-id name))))
-          (opt-global-mod-ref-index-fill-pool
+          (opt-global-bit-pool-takes?
+            pool
+            stores
+            (ir.compiler-ir-symbol-id name)
+            (& ty)))
+          (opt-global-bit-index-fill
             globals
             stores
-            scalar?
+            pool
             last-distinct
             overflow-bit
             out
@@ -127960,10 +127898,10 @@
                   (&mut assigned)
                   (ir.compiler-ir-symbol-id name)
                   bit)
-                (opt-global-mod-ref-index-fill-pool
+                (opt-global-bit-index-fill
                   globals
                   stores
-                  scalar?
+                  pool
                   last-distinct
                   overflow-bit
                   assigned
@@ -127993,43 +127931,39 @@
     [arrays : i64 (opt-global-mod-ref-store-count-pool globals stores false 0)]
     [scalars : i64 (opt-global-mod-ref-store-count-pool globals stores true 0)]
     [fits? : bool (<= (+ arrays scalars) limit)]
-    ;; arrays: distinct bits up to `array-last`, then `array-overflow`
-    [array-last : i64
+    ;; Both pools run their distinct bits up to the same `last-distinct`; only
+    ;; the bit past it differs.
+    [last-distinct : i64
       (cond
         [fits? (- limit 1)]
         [(<= arrays (- limit 1)) (- limit 2)]
         [else (- limit 3)])]
+    ;; arrays: distinct bits up to `last-distinct`, then `array-overflow`
     [array-overflow : i64
       (if (<= arrays (- limit 1))
         (- 0 1)
         (- limit 2))]
-    ;; scalars: distinct bits from where the arrays stopped up to
-    ;; `scalar-last`, then the top bit
-    [scalar-last : i64
-      (cond
-        [fits? (- limit 1)]
-        [(<= arrays (- limit 1)) (- limit 2)]
-        [else (- limit 3)])]
+    ;; scalars: distinct bits from where the arrays stopped, then the top bit
     [scalar-overflow : i64
       (if fits?
         (- 0 1)
         (- limit 1))]
-    (match (opt-global-mod-ref-index-fill-pool
+    (match (opt-global-bit-index-fill
       globals
       stores
-      false
-      array-last
+      (StoredNonscalar)
+      last-distinct
       array-overflow
       (opt_i64_i64_map.with-capacity capacity)
       0
       0)
       [(No) (No)]
       [(Some out next)
-        (opt-global-mod-ref-index-fill-pool
+        (opt-global-bit-index-fill
           globals
           stores
-          true
-          scalar-last
+          (StoredScalar)
+          last-distinct
           scalar-overflow
           out
           0
@@ -128867,40 +128801,6 @@
     (- (opt-global-mod-ref-limit) 1)
     (- 0 1)))
 
-(define (opt-global-obj-index-fill
-  [globals : (& ir.CompilerIrGlobalSeq)]
-  [overflow-bit : i64]
-  [out : opt_i64_i64_map.Map]
-  [at : i64]
-  [next : i64]) : OptGlobalModRefIndex
-  (if (>= at globals.len)
-    (Some out next)
-    (match (ir.compiler-ir-global-seq-borrow globals at)
-      [(Global name ty _)
-        (if (opt-global-obj-scalar-type? (& ty))
-          (opt-global-obj-index-fill globals overflow-bit out (+ at 1) next)
-          (let
-            [bit : i64
-              (if (< next (opt-global-mod-ref-limit))
-                next
-                overflow-bit)]
-            (if (< bit 0)
-              (No)
-              (let
-                [assigned : opt_i64_i64_map.Map out]
-                (opt_i64_i64_map.insert-ref!
-                  (&mut assigned)
-                  (ir.compiler-ir-symbol-id name)
-                  bit)
-                (opt-global-obj-index-fill
-                  globals
-                  overflow-bit
-                  assigned
-                  (+ at 1)
-                  (if (< next (opt-global-mod-ref-limit))
-                    (+ next 1)
-                    next))))))])))
-
 ;; Build the table, or decline. The preconditions are the ones the header
 ;; states: no global cell ADDRESS exists in the program (`GlobalAddr`, the one
 ;; value form this analysis does not model, is then absent), the program is
@@ -128923,8 +128823,12 @@
     (> (opt-function-seq-count functions) (opt-summary-function-limit))
     (= (ir.compiler-ir-global-seq-count globals) 0))
     (opt-global-mod-ref-none)
-    (match (opt-global-obj-index-fill
+    ;; The non-scalar pool reads no store filter, so it fills with none.
+    (match (opt-global-bit-index-fill
       globals
+      (& (opt_i64_i64_map.with-capacity 1))
+      (Nonscalar)
+      (- (opt-global-mod-ref-limit) 1)
       (opt-global-obj-overflow-bit globals)
       (opt_i64_i64_map.with-capacity capacity)
       0
@@ -146555,20 +146459,27 @@
   (branch-count i64)
   (writes (__tl_dyn-array bool))
   (write-count i64)
-  (on bool))
+  (on bool)
+  ;; The scratch every query in this family reads: the def table and the block
+  ;; that defines each var, each block's condition var and taken successor, the
+  ;; leaf scratch, the reachability scratch and its stack, and the block count.
+  ;; A by-value view shares the storage, so a callee writes the caller's arrays.
+  (defs (__tl_dyn-array OptBoolBranchDef))
+  (cond-var (__tl_dyn-array i64))
+  (taken (__tl_dyn-array i64))
+  (def-blocks (__tl_dyn-array i64))
+  (leaves (__tl_dyn-array i64))
+  (fwd (__tl_dyn-array bool))
+  (bwd (__tl_dyn-array bool))
+  (stack (__tl_dyn-array i64))
+  (block-count i64))
 
 ;; Is the condition at `cond-var` still about the same values at `to`? Same
 ;; region rule as (2): no leaf redefined on a path from `from` to `to` that
 ;; avoids `blocked`.
 (define (opt-guard-imply-cond-live?
   [index : (& index OptCfgIndex)]
-  [block-count : i64]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [def-blocks : (& def-blocks (__tl_dyn-array i64))]
-  [leaves : (&mut leaves (__tl_dyn-array i64))]
-  [fwd : (&mut fwd (__tl_dyn-array bool))]
-  [bwd : (&mut bwd (__tl_dyn-array bool))]
-  [stack : (&mut stack (__tl_dyn-array i64))]
+  [scan : (&mut scan OptGuardImplyScan)]
   [cond-var : i64]
   [blocked : i64]
   [from : i64]
@@ -146576,8 +146487,8 @@
   (let
     [leaf-count : i64
       (opt-guard-dedup-collect-leaves
-        defs
-        leaves
+        scan.defs
+        (&mut scan.leaves)
         0
         (& (Var cond-var))
         (opt-guard-dedup-eq-fuel))]
@@ -146585,12 +146496,12 @@
       (>= leaf-count 0)
       (opt-guard-dedup-fact-live?
         index
-        block-count
-        fwd
-        bwd
-        stack
-        def-blocks
-        leaves
+        scan.block-count
+        (&mut scan.fwd)
+        (&mut scan.bwd)
+        (&mut scan.stack)
+        scan.def-blocks
+        scan.leaves
         leaf-count
         blocked
         from
@@ -146601,25 +146512,20 @@
 ;; two reads.
 (define (opt-guard-imply-var-live?
   [index : (& index OptCfgIndex)]
-  [block-count : i64]
-  [def-blocks : (& def-blocks (__tl_dyn-array i64))]
-  [leaves : (&mut leaves (__tl_dyn-array i64))]
-  [fwd : (&mut fwd (__tl_dyn-array bool))]
-  [bwd : (&mut bwd (__tl_dyn-array bool))]
-  [stack : (&mut stack (__tl_dyn-array i64))]
+  [scan : (&mut scan OptGuardImplyScan)]
   [var : i64]
   [blocked : i64]
   [from : i64]
   [to : i64]) : bool
-  (set! (array-ref leaves 0) var)
+  (set! (array-ref scan.leaves 0) var)
   (opt-guard-dedup-fact-live?
     index
-    block-count
-    fwd
-    bwd
-    stack
-    def-blocks
-    leaves
+    scan.block-count
+    (&mut scan.fwd)
+    (&mut scan.bwd)
+    (&mut scan.stack)
+    scan.def-blocks
+    scan.leaves
     1
     blocked
     from
@@ -146631,22 +146537,18 @@
 ;; refuses unless both whole-program rows prove it writes nothing.
 (define (opt-guard-imply-region-clean?
   [index : (& index OptCfgIndex)]
-  [block-count : i64]
-  [scan : (& scan OptGuardImplyScan)]
-  [fwd : (&mut fwd (__tl_dyn-array bool))]
-  [bwd : (&mut bwd (__tl_dyn-array bool))]
-  [stack : (&mut stack (__tl_dyn-array i64))]
+  [scan : (&mut scan OptGuardImplyScan)]
   [from : i64]
   [to : i64]) : bool
   (or
     (= scan.write-count 0)
     (opt-guard-dedup-region-clean?
       index
-      block-count
+      scan.block-count
       scan.writes
-      fwd
-      bwd
-      stack
+      (&mut scan.fwd)
+      (&mut scan.bwd)
+      (&mut scan.stack)
       from
       to)))
 
@@ -146656,21 +146558,15 @@
 (define (opt-guard-imply-alias-ok?
   [index : (& index OptCfgIndex)]
   [doms : (& doms OptDomInfo)]
-  [block-count : i64]
-  [scan : (& scan OptGuardImplyScan)]
-  [def-blocks : (& def-blocks (__tl_dyn-array i64))]
-  [leaves : (&mut leaves (__tl_dyn-array i64))]
-  [fwd : (&mut fwd (__tl_dyn-array bool))]
-  [bwd : (&mut bwd (__tl_dyn-array bool))]
-  [stack : (&mut stack (__tl_dyn-array i64))]
+  [scan : (&mut scan OptGuardImplyScan)]
   [fact-term : (& fact-term OptGuardImplyTerm)]
   [query-term : (& query-term OptGuardImplyTerm)]) : bool
   (if (not (opt-guard-imply-alias? fact-term query-term))
     true
     (let
-      [a : i64 (opt-guard-imply-term-block fact-term def-blocks)]
-      [b : i64 (opt-guard-imply-term-block query-term def-blocks)]
-      (if (or (< a 0) (< b 0) (>= a block-count) (>= b block-count))
+      [a : i64 (opt-guard-imply-term-block fact-term scan.def-blocks)]
+      [b : i64 (opt-guard-imply-term-block query-term scan.def-blocks)]
+      (if (or (< a 0) (< b 0) (>= a scan.block-count) (>= b scan.block-count))
         false
         (let
           ;; `a = b` is admitted through the same region test, not around it:
@@ -146688,84 +146584,16 @@
               a)]
           (and
             (>= first 0)
-            (opt-guard-imply-region-clean?
-              index
-              block-count
-              scan
-              fwd
-              bwd
-              stack
-              first
-              second)
+            (opt-guard-imply-region-clean? index (&mut scan) first second)
             (or
               (not (= fact-term.kind (opt-guard-imply-kind-desc)))
               (opt-guard-imply-var-live?
                 index
-                block-count
-                def-blocks
-                leaves
-                fwd
-                bwd
-                stack
+                (&mut scan)
                 fact-term.a
                 (- 0 1)
                 first
                 second))))))))
-
-;; Does a dominating fast edge state `0 <= base` (or `0 < base`) for this term's
-;; key? The wrap argument for a moved offset is the only consumer.
-(define (opt-guard-imply-nonneg?
-  [index : (& index OptCfgIndex)]
-  [doms : (& doms OptDomInfo)]
-  [scan : (& scan OptGuardImplyScan)]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [cond-var : (& cond-var (__tl_dyn-array i64))]
-  [taken : (& taken (__tl_dyn-array i64))]
-  [def-blocks : (& def-blocks (__tl_dyn-array i64))]
-  [leaves : (&mut leaves (__tl_dyn-array i64))]
-  [fwd : (&mut fwd (__tl_dyn-array bool))]
-  [bwd : (&mut bwd (__tl_dyn-array bool))]
-  [stack : (&mut stack (__tl_dyn-array i64))]
-  [block-count : i64]
-  [term : (& term OptGuardImplyTerm)]
-  [id : i64]) : bool
-  (let
-    [found : bool false]
-    [slot : i64 0]
-    (while (and (not found) (< slot scan.branch-count))
-      (let
-        [other : i64 (array-ref scan.branch-ids slot)]
-        [fact : OptGuardImplyCond (array-ref scan.conds other)]
-        (if (and
-          (not (= other id))
-          fact.ok
-          (not fact.unsigned)
-          (= fact.lhs.kind (opt-guard-imply-kind-lit))
-          (= fact.lhs.offset 0)
-          (= fact.rhs.offset 0)
-          (opt-guard-imply-key-eq? fact.rhs term)
-          (not (opt-guard-imply-alias? fact.rhs term))
-          (<= (opt-guard-imply-bound fact) 0)
-          (>= (array-ref taken other) 0)
-          (= (opt-guard-dedup-pred-count index (array-ref taken other)) 1)
-          (opt-dom-info-dominates-id? doms (array-ref taken other) id)
-          (opt-guard-imply-cond-live?
-            index
-            block-count
-            defs
-            def-blocks
-            leaves
-            fwd
-            bwd
-            stack
-            (array-ref cond-var other)
-            other
-            (array-ref taken other)
-            id))
-          (set! found true)
-          unit)
-        (+= slot 1)))
-    found))
 
 ;; Fill the canonical conjunct of every block and list the two-way branch blocks
 ;; in index order. Returns how many there are; the scan walks that list, so a
@@ -146800,16 +146628,7 @@
 (define (opt-guard-imply-decide
   [index : (& index OptCfgIndex)]
   [doms : (& doms OptDomInfo)]
-  [scan : (& scan OptGuardImplyScan)]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [cond-var : (& cond-var (__tl_dyn-array i64))]
-  [taken : (& taken (__tl_dyn-array i64))]
-  [def-blocks : (& def-blocks (__tl_dyn-array i64))]
-  [leaves : (&mut leaves (__tl_dyn-array i64))]
-  [fwd : (&mut fwd (__tl_dyn-array bool))]
-  [bwd : (&mut bwd (__tl_dyn-array bool))]
-  [stack : (&mut stack (__tl_dyn-array i64))]
-  [block-count : i64]
+  [scan : (&mut scan OptGuardImplyScan)]
   [id : i64]) : i64
   (if (not scan.on)
     0
@@ -146819,37 +146638,33 @@
         0
         (let
           [left-nonneg : bool
-            (opt-guard-imply-nonneg?
-              index
-              doms
-              scan
-              defs
-              cond-var
-              taken
-              def-blocks
-              leaves
-              fwd
-              bwd
-              stack
-              block-count
-              query.lhs
-              id)]
+            (>
+              (opt-guard-imply-scan
+                index
+                doms
+                (&mut scan)
+                true
+                query.lhs
+                false
+                false
+                false
+                false
+                id)
+              0)]
           [right-nonneg : bool
-            (opt-guard-imply-nonneg?
-              index
-              doms
-              scan
-              defs
-              cond-var
-              taken
-              def-blocks
-              leaves
-              fwd
-              bwd
-              stack
-              block-count
-              query.rhs
-              id)]
+            (>
+              (opt-guard-imply-scan
+                index
+                doms
+                (&mut scan)
+                true
+                query.rhs
+                false
+                false
+                false
+                false
+                id)
+              0)]
           [left-exact : bool
             (opt-guard-imply-term-exact? query.lhs query.unsigned left-nonneg)]
           [right-exact : bool
@@ -146867,48 +146682,36 @@
             (opt-guard-imply-alias-ok?
               index
               doms
-              block-count
-              scan
-              def-blocks
-              leaves
-              fwd
-              bwd
-              stack
+              (&mut scan)
               query.lhs
               query.rhs))
             1
-            (opt-guard-imply-scan-facts
+            (opt-guard-imply-scan
               index
               doms
-              scan
-              defs
-              cond-var
-              taken
-              def-blocks
-              leaves
-              fwd
-              bwd
-              stack
-              block-count
+              (&mut scan)
+              false
+              query.lhs
               left-nonneg
               right-nonneg
               left-exact
               right-exact
               id)))))))
 
-(define (opt-guard-imply-scan-facts
+;; The fact scan both queries run: walk the function's two-way branch blocks in
+;; index order and stop at the first fact that settles the query. `nonneg?`
+;; asks the narrower question -- does a dominating fast edge state `0 <= base`
+;; (or `0 < base`) for `term`'s key? -- and only that consumer passes a term.
+;; Otherwise the query is the conjunct at `id` and the caller's four derived
+;; flags decide whether a weakened fact still covers it. The verdict is the
+;; tracer's reason code: 1 for a fact that decides the non-negativity question
+;; outright, 2 for an exact fact and 3 for a weakened one.
+(define (opt-guard-imply-scan
   [index : (& index OptCfgIndex)]
   [doms : (& doms OptDomInfo)]
-  [scan : (& scan OptGuardImplyScan)]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [cond-var : (& cond-var (__tl_dyn-array i64))]
-  [taken : (& taken (__tl_dyn-array i64))]
-  [def-blocks : (& def-blocks (__tl_dyn-array i64))]
-  [leaves : (&mut leaves (__tl_dyn-array i64))]
-  [fwd : (&mut fwd (__tl_dyn-array bool))]
-  [bwd : (&mut bwd (__tl_dyn-array bool))]
-  [stack : (&mut stack (__tl_dyn-array i64))]
-  [block-count : i64]
+  [scan : (&mut scan OptGuardImplyScan)]
+  [nonneg? : bool]
+  [term : (& term OptGuardImplyTerm)]
   [left-nonneg : bool]
   [right-nonneg : bool]
   [left-exact : bool]
@@ -146929,25 +146732,41 @@
         (if (and
           (not (= other id))
           fact.ok
-          (or
-            (and fact.unsigned query.unsigned)
-            (and (not fact.unsigned) (not query.unsigned)))
-          (opt-guard-imply-key-eq? fact.lhs query.lhs)
-          (opt-guard-imply-key-eq? fact.rhs query.rhs)
-          (<= (opt-guard-imply-bound fact) (opt-guard-imply-bound query))
-          (or
-            same-offsets
+          (if nonneg?
             (and
-              (not query.unsigned)
-              left-exact
-              right-exact
-              (opt-guard-imply-term-exact? fact.lhs query.unsigned left-nonneg)
-              (opt-guard-imply-term-exact? fact.rhs query.unsigned right-nonneg)))
-          (>= (array-ref taken other) 0)
+              (not fact.unsigned)
+              (= fact.lhs.kind (opt-guard-imply-kind-lit))
+              (= fact.lhs.offset 0)
+              (= fact.rhs.offset 0)
+              (opt-guard-imply-key-eq? fact.rhs term)
+              (not (opt-guard-imply-alias? fact.rhs term))
+              (<= (opt-guard-imply-bound fact) 0))
+            (and
+              (or
+                (and fact.unsigned query.unsigned)
+                (and (not fact.unsigned) (not query.unsigned)))
+              (opt-guard-imply-key-eq? fact.lhs query.lhs)
+              (opt-guard-imply-key-eq? fact.rhs query.rhs)
+              (<= (opt-guard-imply-bound fact) (opt-guard-imply-bound query))
+              (or
+                same-offsets
+                (and
+                  (not query.unsigned)
+                  left-exact
+                  right-exact
+                  (opt-guard-imply-term-exact?
+                    fact.lhs
+                    query.unsigned
+                    left-nonneg)
+                  (opt-guard-imply-term-exact?
+                    fact.rhs
+                    query.unsigned
+                    right-nonneg)))))
+          (>= (array-ref scan.taken other) 0)
           ;; The taken successor must be entered by this edge ALONE, or
           ;; reaching it proves nothing about the condition.
-          (= (opt-guard-dedup-pred-count index (array-ref taken other)) 1)
-          (opt-dom-info-dominates-id? doms (array-ref taken other) id)
+          (= (opt-guard-dedup-pred-count index (array-ref scan.taken other)) 1)
+          (opt-dom-info-dominates-id? doms (array-ref scan.taken other) id)
           ;; Only the FACT's leaves are tested for staleness. (2) tests
           ;; the query's because there the two conditions are one tree and
           ;; one leaf set; here they are not, and the query's leaves are
@@ -146957,46 +146776,33 @@
           ;; shared memory key.
           (opt-guard-imply-cond-live?
             index
-            block-count
-            defs
-            def-blocks
-            leaves
-            fwd
-            bwd
-            stack
-            (array-ref cond-var other)
+            (&mut scan)
+            (array-ref scan.cond-var other)
             other
-            (array-ref taken other)
+            (array-ref scan.taken other)
             id)
-          (opt-guard-imply-alias-ok?
-            index
-            doms
-            block-count
-            scan
-            def-blocks
-            leaves
-            fwd
-            bwd
-            stack
-            fact.lhs
-            query.lhs)
-          (opt-guard-imply-alias-ok?
-            index
-            doms
-            block-count
-            scan
-            def-blocks
-            leaves
-            fwd
-            bwd
-            stack
-            fact.rhs
-            query.rhs))
+          (if nonneg?
+            true
+            (and
+              (opt-guard-imply-alias-ok?
+                index
+                doms
+                (&mut scan)
+                fact.lhs
+                query.lhs)
+              (opt-guard-imply-alias-ok?
+                index
+                doms
+                (&mut scan)
+                fact.rhs
+                query.rhs))))
           (set!
             verdict
-            (if same-offsets
-              2
-              3))
+            (if nonneg?
+              1
+              (if same-offsets
+                2
+                3)))
           unit)
         (+= slot 1)))
     verdict))
@@ -147200,59 +147006,52 @@
   [type-segment-bases : i64]
   [index : (& index OptCfgIndex)]
   [doms : (& doms OptDomInfo)]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [def-blocks : (& def-blocks (__tl_dyn-array i64))]
-  [cond-var : (& cond-var (__tl_dyn-array i64))]
-  [taken : (& taken (__tl_dyn-array i64))]
+  [scan : (&mut scan OptGuardImplyScan)]
   [bchain : (& bchain (__tl_dyn-array i64))]
   [heads : (& heads opt_i64_i64_map.Map)]
   [bhash : (& bhash (__tl_dyn-array i64))]
-  [leaves : (&mut leaves (__tl_dyn-array i64))]
-  [fwd : (&mut fwd (__tl_dyn-array bool))]
-  [bwd : (&mut bwd (__tl_dyn-array bool))]
-  [stack : (&mut stack (__tl_dyn-array i64))]
-  [block-count : i64]
   [id : i64]) : bool
   (let
     [cursor : i64
       (- (opt_i64_i64_map.get-value-or (& heads) (array-ref bhash id) 0) 1)]
     [found : bool false]
-    [remaining : i64 (opt-whole-function-lookup-count block-count block-count)]
+    [remaining : i64
+      (opt-whole-function-lookup-count scan.block-count scan.block-count)]
     (while (and (not found) (>= cursor 0) (> remaining 0))
       (if (and
         (not (= cursor id))
-        (>= (array-ref cond-var cursor) 0)
+        (>= (array-ref scan.cond-var cursor) 0)
         ;; The taken successor must be entered by this edge ALONE, or
         ;; reaching it proves nothing about the condition.
-        (= (opt-guard-dedup-pred-count index (array-ref taken cursor)) 1)
-        (opt-dom-info-dominates-id? doms (array-ref taken cursor) id)
+        (= (opt-guard-dedup-pred-count index (array-ref scan.taken cursor)) 1)
+        (opt-dom-info-dominates-id? doms (array-ref scan.taken cursor) id)
         (opt-guard-dedup-value-eq?
           type-segment-bases
-          defs
-          (& (Var (array-ref cond-var cursor)))
-          (& (Var (array-ref cond-var id)))
+          scan.defs
+          (& (Var (array-ref scan.cond-var cursor)))
+          (& (Var (array-ref scan.cond-var id)))
           (opt-guard-dedup-eq-fuel))
         (let
           [leaf-count : i64
             (opt-guard-dedup-collect-leaves
-              defs
-              leaves
+              scan.defs
+              (&mut scan.leaves)
               0
-              (& (Var (array-ref cond-var id)))
+              (& (Var (array-ref scan.cond-var id)))
               (opt-guard-dedup-eq-fuel))]
           (and
             (>= leaf-count 0)
             (opt-guard-dedup-fact-live?
               index
-              block-count
-              fwd
-              bwd
-              stack
-              def-blocks
-              leaves
+              scan.block-count
+              (&mut scan.fwd)
+              (&mut scan.bwd)
+              (&mut scan.stack)
+              scan.def-blocks
+              scan.leaves
               leaf-count
               cursor
-              (array-ref taken cursor)
+              (array-ref scan.taken cursor)
               id))))
         (set! found true)
         unit)
@@ -147265,28 +147064,19 @@
   [type-segment-bases : i64]
   [index : (& index OptCfgIndex)]
   [doms : (& doms OptDomInfo)]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [def-blocks : (& def-blocks (__tl_dyn-array i64))]
-  [leaves : (&mut leaves (__tl_dyn-array i64))]
-  [fwd : (&mut fwd (__tl_dyn-array bool))]
-  [bwd : (&mut bwd (__tl_dyn-array bool))]
-  [stack : (&mut stack (__tl_dyn-array i64))]
-  [block-count : i64]
-  [cond-var : (& cond-var (__tl_dyn-array i64))]
-  [taken : (& taken (__tl_dyn-array i64))]
   [other : (& other (__tl_dyn-array i64))]
   [bhash : (& bhash (__tl_dyn-array i64))]
   [bchain : (& bchain (__tl_dyn-array i64))]
   [heads : (& heads opt_i64_i64_map.Map)]
   [fold : (&mut fold (__tl_dyn-array bool))]
   [name : i64]
-  [scan : (& scan OptGuardImplyScan)]) : i64
+  [scan : (&mut scan OptGuardImplyScan)]) : i64
   (let
     [total : i64 0]
-    (for [id (iterator.range 0 block-count)]
+    (for [id (iterator.range 0 scan.block-count)]
       (if (and
-        (>= (array-ref cond-var id) 0)
-        (opt-guard-dedup-chain-head? index cond-var taken other id))
+        (>= (array-ref scan.cond-var id) 0)
+        (opt-guard-dedup-chain-head? index scan.cond-var scan.taken other id))
         (let
           [cursor : i64 id]
           [links : i64 0]
@@ -147301,34 +147091,13 @@
                   type-segment-bases
                   index
                   doms
-                  defs
-                  def-blocks
-                  cond-var
-                  taken
+                  (&mut scan)
                   bchain
                   heads
                   bhash
-                  leaves
-                  fwd
-                  bwd
-                  stack
-                  block-count
                   cursor)
                   4
-                  (opt-guard-imply-decide
-                    index
-                    doms
-                    scan
-                    defs
-                    cond-var
-                    taken
-                    def-blocks
-                    leaves
-                    fwd
-                    bwd
-                    stack
-                    block-count
-                    cursor))]
+                  (opt-guard-imply-decide index doms (&mut scan) cursor))]
               (opt-guard-imply-trace-member!
                 name
                 (opt-cfg-index-label index cursor)
@@ -147340,7 +147109,12 @@
               (+= links 1)
               (set!
                 cursor
-                (opt-guard-dedup-chain-next index cond-var taken other cursor))))
+                (opt-guard-dedup-chain-next
+                  index
+                  scan.cond-var
+                  scan.taken
+                  other
+                  cursor))))
           (opt-guard-imply-trace-chain!
             name
             (opt-cfg-index-label index id)
@@ -147356,8 +147130,8 @@
                   apply-cursor
                   (opt-guard-dedup-chain-next
                     index
-                    cond-var
-                    taken
+                    scan.cond-var
+                    scan.taken
                     other
                     apply-cursor))))
             unit))
@@ -147839,27 +147613,27 @@
                           imply-branches
                           imply-writes
                           imply-write-count
-                          (<= imply-branches (opt-guard-imply-branch-cap)))]
+                          (<= imply-branches (opt-guard-imply-branch-cap))
+                          defs
+                          cond-var
+                          taken
+                          def-blocks
+                          leaves
+                          fact-fwd
+                          fact-bwd
+                          fact-stack
+                          block-count)]
                       (opt-guard-dedup-mark-chains!
                         type-segment-bases
                         index
                         context.doms
-                        defs
-                        def-blocks
-                        (&mut leaves)
-                        (&mut fact-fwd)
-                        (&mut fact-bwd)
-                        (&mut fact-stack)
-                        block-count
-                        cond-var
-                        taken
                         other
                         bhash
                         bchain
                         heads
                         (&mut fold)
                         (ir.compiler-ir-symbol-id name)
-                        scan))))]
+                        (&mut scan)))))]
               ;; The hoist is kept ONLY when it completed into a CSE. A moved
               ;; pair whose re-derivation the memory test refused is pure cost
               ;; -- the bypass edge now runs a load the arm used to run -- so

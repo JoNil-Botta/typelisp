@@ -55955,11 +55955,12 @@
         importer-module
         import-unqualified)]))
 
-;; The alias materialization a module's selected import or alias binding
-;; publishes: one per (importer, alias, target) row. The importer is part of the
-;; key because an alias names a binding in its own module's namespace, so two
-;; modules selecting the same item of the same target under the same alias each
-;; materialize theirs.
+;; The alias materialization a module's selected import publishes: one per
+;; (importer, alias, target) row. The importer is part of the key because a
+;; selected alias names a binding in its own module's namespace, so two modules
+;; selecting the same item of the same target under the same alias each
+;; materialize theirs. A module import is keyed by (alias, target) instead: it
+;; binds the module alias itself, and one entry serves every importer.
 (define (tc-import-alias-materialized-key-id
   [module-id : i64]
   [alias-key : i64]
@@ -56107,10 +56108,7 @@
             [alias-key : i64
               (csym.compiler-symbols-import-alias-key-id cur-module-id alias)]
             [seen-key : i64
-              (tc-import-alias-materialized-key-id
-                cur-module-id
-                alias-key
-                target-module)]
+              (csym.compiler-composite-pair-key-id alias-key target-module)]
             (unless
               (tc-import-alias-materialized? seen-aliases seen-key)
               (tc_i64_i64_map.insert-ref! (&mut seen-aliases) seen-key 1)
@@ -59729,11 +59727,15 @@
             tc-type-handle-lookup-caller-constructor)]
         (if (and
           (csym.compiler-symbols-handle-found? root-handle)
-          (csym.compiler-symbol-root-module-id?
+          ;; Root ownership is decided by the owner entry itself: a missing
+          ;; entry answers -2 and so never compares equal to the root module
+          ;; id, which keeps this fallback fail-closed.
+          (=
             (csym.compiler-symbols-owner-module-id-at-index-or
               symbols
               (csym.compiler-symbol-handle-index root-handle)
-              (csym.compiler-symbol-root-module-id))))
+              -2)
+            (csym.compiler-symbol-root-module-id)))
           root-handle
           handle)))))
 

@@ -2026,6 +2026,10 @@
   (functions backend_i64_i64_map.Map)
   (function-names (__tl_dyn-array String))
   (function-signatures (__tl_dyn-array CompilerBackendMaybeSignature))
+  ;; By function slot: the hidden-argument index of an internal leading
+  ;; return-storage function, which returns that argument as `u64` on every
+  ;; path, or -1.
+  (function-leading-sret (__tl_dyn-array i64))
   (extern-signatures backend_i64_i64_map.Map)
   (extern-signature-values (__tl_dyn-array CompilerBackendMaybeSignature))
   ;; Extern call classification, packed by extern slot: bit 0 is C ABI,

@@ -244,16 +244,6 @@
     (< var (array-length facts.definition-count))
     (= (array-ref facts.definition-count var) 1)))
 
-(define (structural-address-cast? [from : ast.AstType] [to : ast.AstType]) : bool
-  (and
-    (match to
-      [(ast.AstType.U64) true]
-      [_ false])
-    (match from
-      [(ast.AstType.Tuple _) true]
-      [(ast.AstType.Array _ _) true]
-      [_ false])))
-
 (define (incoming-range [facts : (& facts StorageFacts)] [var : i64]) : StorageRange
   (let
     [facts : StorageFacts
@@ -364,7 +354,9 @@
                       [(ir.CompilerIrInstr.Mov _ source _)
                         (range facts source budget)]
                       [(ir.CompilerIrInstr.Cast _ source from to)
-                        (if (structural-address-cast? from to)
+                        (if (ir.compiler-ir-storage-address-cast?
+                          (& from)
+                          (& to))
                           (range facts source budget)
                           (StorageRange.Unknown))]
                       [(ir.CompilerIrInstr.Gep _ base offset _)

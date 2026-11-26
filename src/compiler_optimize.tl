@@ -92521,11 +92521,7 @@
       (match block
         [(Block _ instrs)
           (opt-def-block-instrs! (& instrs) block-id def-block single-def?)
-          (opt-def-block-blocks!
-            rest
-            (+ block-id 1)
-            def-block
-            single-def?)])]))
+          (opt-def-block-blocks! rest (+ block-id 1) def-block single-def?)])]))
 
 ;; Whole-function census keyed by the var a Gep uses as its variable INDEX:
 ;; how many Geps index on it, whether any of them disqualifies it (non-variable
@@ -98640,6 +98636,7 @@
               (set! done true)
               (set! walk next)))]))
     answer))
+
 ;; Score one candidate. Returns the target block id, or -1.
 ;;
 ;; `remat?` is the second reader of this walk: a rematerializable definition may
@@ -98667,7 +98664,9 @@
     st.index
     st.doms
     st.count
-    (if remat? source (- 0 1))
+    (if remat?
+      source
+      (- 0 1))
     (&mut st.scan-out))
   (if (or
     (<= (array-ref st.scan-out 0) 0)
@@ -120190,12 +120189,7 @@
               (if (opt-inline-call-args-has-global? (& cargs))
                 (let
                   [staging
-                    (opt-inline-arg-staging
-                      cparams
-                      cargs
-                      cblocks
-                      false
-                      false)]
+                    (opt-inline-arg-staging cparams cargs cblocks false false)]
                   (opt-inline-try-single-block-with-spans
                     tail?
                     dst

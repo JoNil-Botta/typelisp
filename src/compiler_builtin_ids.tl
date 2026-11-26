@@ -285,7 +285,6 @@
 ;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-Choice : i64
   -1)
-
 (define compiler-builtin-id-fix-comptime : i64
   -1)
 

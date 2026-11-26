@@ -13,19 +13,45 @@ experimentation, and small native tools.
 
 ## Why TypeLisp?
 
-TypeLisp combines several deliberate constraints:
+TypeLisp is built around ten project pillars. They are decision criteria and
+measured targets, not a claim that every current program already meets them:
+[SPEC.md](SPEC.md) is the authoritative contract, and its section 8 records the
+implemented subset.
 
-- Lisp syntax with static types, algebraic data types, pattern matching, and
-  native data layout.
-- Direct native compilation with no bytecode VM, interpreter, or garbage
-  collector.
-- Move semantics, lexical borrowing, scoped arenas, and safe boxed recursive
-  data.
-- Zig-style comptime generation instead of source-level generics, traits, or
-  `impl` blocks.
-- ISPC-style SPMD forms with scalar, AVX2, and AVX-512 lowering for supported
-  subsets.
-- A self-hosted compiler with no third-party package dependencies.
+- **C-class control and native layout.** Ordinary structs and enums keep their
+  declared native/C layout; the compiler never inserts hidden representation
+  changes. See [SPEC.md](SPEC.md) sections 3.5.3 and 4.7.3.
+- **Rust-class safety and usability.** Safe code has no undefined behavior:
+  ownership, borrows, lifetimes, and arena regions are checked statically, and
+  diagnostics and ordinary API use are held to the same practical standard.
+  See [SPEC.md](SPEC.md) section 1 and the [memory model](docs/memory-model.md).
+- **`clang -O2`-class generated-code performance with fast compilation.**
+  Generated code is measured against paired C baselines and instruction-count
+  gates, while compile time stays an independently guarded target. See
+  [benchmarks](benchmarks/README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
+- **Lisp simplicity and minimal magic.** A small core of explicit, inspectable
+  mechanisms; no hidden heap identity and no implicit language magic. See the
+  [language guide](docs/language-guide.md).
+- **Zig-style comptime expressed as Lisp macros.** Typed expression macros and
+  declaration-generating macros replace source generics, traits, interfaces,
+  and `impl` blocks. See [SPEC.md](SPEC.md) section 3.7.
+- **ISPC-style SPMD.** One source model with scalar reference semantics and
+  native AVX2/AVX-512 lowering for supported subsets, with gaps stated in
+  [SPEC.md](SPEC.md) section 8.2.
+- **Full self-hosting and zero package dependencies.** Compiler, stdlib,
+  tooling, and tests are TypeLisp; host OS interfaces and the documented
+  assembler/linker toolchain are not package dependencies. See [the bootstrap
+  guide](docs/testing-and-bootstrap.md).
+- **Deterministic, native Linux/Windows tooling.** Reproducible identities,
+  diagnostics, and specified artifacts, with equivalent supported behavior on
+  both native targets. See [compiler invariants](docs/compiler-invariants.md).
+- **Zero is initialization.** The all-zero state of every ZII storage type is
+  valid, safely overwritable, and safely discardable without hidden
+  construction or cleanup. See [SPEC.md](SPEC.md) section 5.12.1.
+- **Arena-based allocation and reclamation.** No garbage collector and no
+  general-purpose per-object `free`; allocation is explicit and memory is
+  reclaimed through program-lifetime, scoped, first-class, or atomic arenas.
+  See the [memory model](docs/memory-model.md).
 
 The native assembler and linker are still required build inputs. “Zero
 third-party dependencies” does not mean that the operating-system toolchain is
@@ -143,8 +169,9 @@ The following parts are implemented and actively tested:
 - Structs, enums, exhaustive `match`, tuples, fixed arrays, borrowed `Slice`
   views with checked range-disjoint splitting, strings, closures, FFI, raw
   pointers, and atomics.
-- Move and borrow checking, scoped and first-class arenas, safe recursive data
-  through `(Box T)`, and safe task threading.
+- Move and borrow checking, scoped and first-class arenas, native-layout
+  recursive data through explicit finite-size edges (`Box`, checked references,
+  or raw pointers in C-compatible declarations), and safe task threading.
 - Comptime macros with type reflection, package manifests and lockfiles,
   inline tests, doctests, formatting, linting, documentation generation, and a
   stdio language server with a deterministic multi-root workspace index and

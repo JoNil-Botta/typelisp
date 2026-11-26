@@ -1030,7 +1030,6 @@
 ;; available declaration and proves the caller's storage extent.
 (defenum CompilerIrReturnStorageConvention
   (InternalLeading)
-  (InternalTrailing)
   (SysV)
   (Win64))
 
@@ -4302,6 +4301,19 @@
     [(ast.AstType.Array _ _) true]
     [_ false]))
 
+;; Lowering retypes an inline aggregate storage pointer to the physical `u64`
+;; word of a by-reference argument copy. This cast preserves the address,
+;; unlike arbitrary casts, so storage proofs and stack colouring trace through
+;; it.
+(define (compiler-ir-storage-address-cast?
+  [from : (& from ast.AstType)]
+  [to : (& to ast.AstType)]) : bool
+  (and
+    (match to
+      [(ast.AstType.U64) true]
+      [_ false])
+    (compiler-ir-return-storage-type? from)))
+
 (define (compiler-ir-return-storage-shape-error
   [bases : i64]
   [type-count : i64]
@@ -4363,12 +4375,15 @@
         "return-storage hidden argument must have physical type u64"]
       [(and (compiler-ir-return-storage-c? abi) (not (= abi.index 0)))
         "C return-storage hidden argument must be first"]
+      ;; One internal convention for nominal and structural results: the
+      ;; hidden pointer leads the source arguments, after `__tl_env` for a
+      ;; closure body.
       [(and
           (match abi.convention
-            [(CompilerIrReturnStorageConvention.InternalTrailing) true]
+            [(CompilerIrReturnStorageConvention.InternalLeading) true]
             [_ false])
-          (not (= abi.index (- count 1))))
-        "nominal return-storage hidden argument must be last"]
+          (> abi.index 1))
+        "internal return-storage hidden argument must lead"]
       [else
         (match abi.source-signature
           [(ast.AstType.Func _ result-id)
@@ -7044,7 +7059,6 @@
   [convention : (& CompilerIrReturnStorageConvention)]) : CompilerIrReturnStorageConvention
   (match convention
     [(InternalLeading) (InternalLeading)]
-    [(InternalTrailing) (InternalTrailing)]
     [(SysV) (SysV)]
     [(Win64) (Win64)]))
 
@@ -8869,7 +8883,6 @@
   [convention : CompilerIrReturnStorageConvention]) : String
   (match convention
     [(CompilerIrReturnStorageConvention.InternalLeading) "internal-leading"]
-    [(CompilerIrReturnStorageConvention.InternalTrailing) "internal-trailing"]
     [(CompilerIrReturnStorageConvention.SysV) "sysv"]
     [(CompilerIrReturnStorageConvention.Win64) "win64"]))
 
@@ -10431,17 +10444,17 @@
     [_ fallback]))
 
 ;; The var a call passes as its hidden output: the marked `Sret` argument, or
-;; else the trailing argument (a forwarded slot rides there unmarked); -1 when
-;; that argument is not a var.
+;; else the leading argument (a forwarded slot rides there unmarked, in the
+;; hidden result position); -1 when that argument is not a var.
 (define (compiler-ir-call-args-slot-var [args : CompilerIrCallArgs]) : i64
   (match args
     [(CompilerIrCallArgs.Nil) (- 0 1)]
     [(CompilerIrCallArgs.One a) (compiler-ir-value-var-or a (- 0 1))]
-    [(CompilerIrCallArgs.Two _ b) (compiler-ir-value-var-or b (- 0 1))]
+    [(CompilerIrCallArgs.Two a _) (compiler-ir-value-var-or a (- 0 1))]
     [(CompilerIrCallArgs.Array values)
       (if (> (array-length values) 0)
         (compiler-ir-value-var-or
-          (compiler-ir-array-shared-view values (- (array-length values) 1))
+          (compiler-ir-array-shared-view values 0)
           (- 0 1))
         (- 0 1))]
     [(CompilerIrCallArgs.Sret values index)

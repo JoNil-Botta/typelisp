@@ -2841,10 +2841,9 @@
     [(Var id) (opt-used-add set id)]
     [_ set]))
 
-;; Use scans record either a variable read or another occurrence of a global.
-;; They share one walk of ir.compiler-ir-instr-uses-into!.
+;; Symbol-use scans record either global occurrences or function values.
+;; They share one walk of ir.compiler-ir-instr-symbol-uses-into!.
 (defenum OptUseNote
-  (Var)
   (GlobalCount)
   ;; Function descriptors and raw code addresses (including closure code slots).
   (FunctionValue))
@@ -2854,10 +2853,6 @@
   [set : (&mut set opt_i64_i64_map.Map)]
   [use : (& ir.CompilerIrUse)]) : unit
   (match note
-    [(Var)
-      (match use.kind
-        [(VarUse) (opt_i64_i64_map.insert-ref! set use.id 1)]
-        [_ unit])]
     [(GlobalCount)
       (match use.kind
         [(GlobalUse)
@@ -21514,10 +21509,17 @@
   (and
     (> (array-length marks) 0)
     (let
-      [ids : ir.CompilerIrIdList (ir.compiler-ir-id-list-new)]
-      (ir.compiler-ir-instr-use-var-ids-into! instr (&mut ids))
-      (any? [id (& ids)]
-        (opt-addr-taken-var? marks (deref id))))))
+      [short : ir.CompilerIrShortVarUses
+        (ir.compiler-ir-instr-short-var-uses instr)]
+      (if short.fits?
+        (or
+          (and (>= short.first 0) (opt-addr-taken-var? marks short.first))
+          (and (>= short.second 0) (opt-addr-taken-var? marks short.second)))
+        (let
+          [ids : ir.CompilerIrIdList (ir.compiler-ir-id-list-new)]
+          (ir.compiler-ir-instr-use-var-ids-into! instr (&mut ids))
+          (any? [id (& ids)]
+            (opt-addr-taken-var? marks (deref id))))))))
 
 ;; The installed marks may only be read once a refresh or install made them
 ;; this function's; the count is safe to read always.
@@ -71745,12 +71747,13 @@
   (let
     [builder : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity (* gangs last))]
+    [rw : ir.CompilerIrInstrRewrite (ir.compiler-ir-instr-rewrite-new)]
     (for [copy (iterator.range 0 gangs)]
       (for [index (iterator.range 0 last)]
         (ir.compiler-ir-instr-builder-push!
           (&mut builder)
           (opt-unroll-simd-clone-instr
-            (&mut (ir.compiler-ir-instr-rewrite-new))
+            (&mut rw)
             type-segment-bases
             (owned_view.compiler-owned-reference-shared-view remap)
             cell
@@ -87364,6 +87367,7 @@
 ;; proved non-failing and remapping the kept underivable ones (partial
 ;; versioning: the fast clone is not necessarily check-free).
 (define (opt-bce-mb-push-clone-instrs!
+  [rw : (&mut rw ir.CompilerIrInstrRewrite)]
   [label : i64]
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [index : i64]
@@ -87387,7 +87391,7 @@
         (ir.compiler-ir-instr-builder-push!
           builder
           (opt-bce-mb-clone-instr
-            (&mut (ir.compiler-ir-instr-rewrite-new))
+            rw
             remap
             body-labels
             all-labels
@@ -87398,6 +87402,7 @@
             label
             instr)))
       (opt-bce-mb-push-clone-instrs!
+        rw
         label
         instrs
         (+ index 1)
@@ -87427,7 +87432,9 @@
     [builder : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity
         (ir.compiler-ir-instr-seq-count instrs))]
+    [rw : ir.CompilerIrInstrRewrite (ir.compiler-ir-instr-rewrite-new)]
     (opt-bce-mb-push-clone-instrs!
+      (&mut rw)
       label
       instrs
       index
@@ -90804,6 +90811,7 @@
       (opt-unroll-mb-shifted-vars instrs shape cell copy)]
     [builder : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity count)]
+    [rw : ir.CompilerIrInstrRewrite (ir.compiler-ir-instr-rewrite-new)]
     (for [next (iterator.range index count)]
       (let
         [instr (ir.compiler-ir-instr-seq-ref instrs next)]
@@ -90852,7 +90860,7 @@
                     remap1
                     copy)
                   (opt-unroll-mb-clone-instr
-                    (&mut (ir.compiler-ir-instr-rewrite-new))
+                    (&mut rw)
                     (& instr)
                     (& remap)
                     shape.body-labels
@@ -98278,6 +98286,7 @@
         [total : i64 (ir.compiler-ir-instr-seq-count instrs)]
         [builder : ir.CompilerIrInstrBuilder
           (ir.compiler-ir-instr-builder-with-capacity (+ total 2))]
+        [rw : ir.CompilerIrInstrRewrite (ir.compiler-ir-instr-rewrite-new)]
         [phi-end : i64 (opt-rotate-ssa-leading-phi-end instrs 0)]
         (for [slot (iterator.range 0 total)]
           (if (and (= slot phi-end) (= id target-id))
@@ -98288,7 +98297,7 @@
           (ir.compiler-ir-instr-builder-push!
             (&mut builder)
             (opt-guard-sink-remat-instr
-              (&mut (ir.compiler-ir-instr-rewrite-new))
+              (&mut rw)
               env
               var
               clone
@@ -104875,6 +104884,7 @@
             [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
             [builder : ir.CompilerIrInstrBuilder
               (ir.compiler-ir-instr-builder-with-capacity (+ count 2))]
+            [rw : ir.CompilerIrInstrRewrite (ir.compiler-ir-instr-rewrite-new)]
             [step : i64
               (if (>= site 0)
                 (opt_dense_i64_vec.get cands (+ (* site 6) 1) -1)
@@ -104912,7 +104922,7 @@
                   (&mut builder)
                   (if renamed
                     (opt-rewrite-operands
-                      (&mut (ir.compiler-ir-instr-rewrite-new))
+                      (&mut rw)
                       (&
                         (Rename
                           (owned_view.compiler-owned-reference-shared-view
@@ -132330,6 +132340,7 @@
         [total : i64 (+ hoist-count count)]
         [slots : (__tl_dyn-array ir.CompilerIrInstr)
           (__tl_make-array ir.CompilerIrInstr total)]
+        [rw : ir.CompilerIrInstrRewrite (ir.compiler-ir-instr-rewrite-new)]
         (for [index (iterator.range 0 hoist-count)]
           (set!
             (array-ref slots index)
@@ -132338,7 +132349,7 @@
           (set!
             (array-ref slots (+ hoist-count index))
             (opt-global-cell-rewrite-instr
-              (&mut (ir.compiler-ir-instr-rewrite-new))
+              (&mut rw)
               (owned_view.compiler-owned-reference-shared-view plan)
               true
               (ir.compiler-ir-instr-seq-ref instrs index))))
@@ -132575,6 +132586,7 @@
       [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
       [builder : ir.CompilerIrInstrBuilder
         (ir.compiler-ir-instr-builder-with-capacity count)]
+      [rw : ir.CompilerIrInstrRewrite (ir.compiler-ir-instr-rewrite-new)]
       [env : OptCopyEnv (opt-copy-env-empty)]
       [delayed : OptCopyEnv (opt-copy-env-empty)]
       (for [index (iterator.range 0 count)]
@@ -132640,7 +132652,7 @@
                 [_ unit]))]
           [rewritten : ir.CompilerIrInstr
             (opt-copy-subst-instr
-              (&mut (ir.compiler-ir-instr-rewrite-new))
+              (&mut rw)
               (if policy.defer?
                 (& delayed)
                 (& env))

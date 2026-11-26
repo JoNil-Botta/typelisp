@@ -90116,3 +90116,128 @@ inl.entry.0.cont:
         (not (string.contains (& store-ir) "rotr "))
         (string.contains (& store-ir) "bit_or "))
       "intervening store_ptr blocks rotate fusion")))
+
+(test
+  verifier-short-use-rejects-negative-var
+  (let
+    [func : ir.CompilerIrFunction
+      (irt.func
+        "function @neg() -> i64 vars 2 {\nentry:\n%0 = mov 1 : i64\nreturn %0\n}")]
+    [ctx : opt.OptCfgContext
+      (opt.opt-cfg-context-build (opt.opt-function-blocks (& func)))]
+    [defs : opt.OptVerifyDefs
+      (opt.OptVerifyDefs (__tl_make-array i64 2) (__tl_make-array i64 2))]
+    [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
+    [bad : ir.CompilerIrInstr
+      (ir.CompilerIrInstr.Mov 1 (ir.CompilerIrValue.Var -1) (ast.AstType.I64))]
+    (test.assert-true
+      (match (opt.opt-verify-uses (&mut uses) (& defs) (& ctx.doms) 0 1 (& bad))
+        [(Err reason)
+          (string.eq reason "optimizer verify: use before definition")]
+        [(Ok) false])
+      "opt-verify-uses rejects negative var id on short-use instruction")))
+
+(test
+  copy-subst-instr-spmd-call-roles
+  (let
+    [callee : i64 (ir.compiler-ir-symbol "spmd_helper")]
+    [abi : ir.CompilerIrSpmdPrivateAbi
+      (ir.CompilerIrSpmdPrivateAbi
+        (ir.CompilerIrSpmdPrivateAbiSchema.V1)
+        callee
+        (ir.CompilerIrSpmdBackend.Avx2)
+        4
+        (ir.CompilerIrSpmdPrivateParamSeq
+          (__tl_make-array ir.CompilerIrSpmdPrivateParam 0)
+          0)
+        (ir.CompilerIrSpmdPrivateIndex.None)
+        (ir.CompilerIrSpmdPrivateResult.Unit))]
+    [slots : (__tl_dyn-array ir.CompilerIrSpmdCallArg)
+      (__tl_make-array ir.CompilerIrSpmdCallArg 5)]
+    [_init : unit
+      (begin
+        (set!
+          (array-ref slots 0)
+          (ir.CompilerIrSpmdCallArg.Arg
+            (ir.CompilerIrSpmdValueClass.Uniform)
+            (ir.CompilerIrValue.Var 0)
+            (ast.AstType.Bool)))
+        (set!
+          (array-ref slots 1)
+          (ir.CompilerIrSpmdCallArg.Arg
+            (ir.CompilerIrSpmdValueClass.Varying)
+            (ir.CompilerIrValue.Var 0)
+            (ast.AstType.Bool)))
+        (set!
+          (array-ref slots 2)
+          (ir.CompilerIrSpmdCallArg.Arg
+            (ir.CompilerIrSpmdValueClass.Mask)
+            (ir.CompilerIrValue.Var 0)
+            (ast.AstType.Bool)))
+        (set!
+          (array-ref slots 3)
+          (ir.CompilerIrSpmdCallArg.Arg
+            (ir.CompilerIrSpmdValueClass.Varying)
+            (ir.CompilerIrValue.Var 1)
+            (ast.AstType.Bool)))
+        (set!
+          (array-ref slots 4)
+          (ir.CompilerIrSpmdCallArg.Arg
+            (ir.CompilerIrSpmdValueClass.Mask)
+            (ir.CompilerIrValue.Var 1)
+            (ast.AstType.Bool))))]
+    [instr : ir.CompilerIrInstr
+      (ir.CompilerIrInstr.SpmdCall
+        (box
+          (ir.CompilerIrInstrSpmdCallPayload
+            callee
+            (ir.CompilerIrSpmdBackend.Avx2)
+            4
+            (ir.CompilerIrValue.Var 1)
+            (ir.CompilerIrSpmdCallArgSeq slots 5)
+            (ir.CompilerIrSpmdCallResult.Unit)
+            (ir.CompilerIrSpmdCallOrigin.Private (box abi)))))]
+    [env : opt.OptCopyEnv
+      (opt.opt-copy-env-push
+        (opt.opt-copy-env-push
+          (opt.opt-copy-env-empty)
+          (opt.OptCopyEntry.Copy 0 (ir.CompilerIrValue.Bool true)))
+        (opt.OptCopyEntry.Copy 1 (ir.CompilerIrValue.Var 2)))]
+    [rw : ir.CompilerIrInstrRewrite (ir.compiler-ir-instr-rewrite-new)]
+    [rewritten : ir.CompilerIrInstr
+      (opt.opt-copy-subst-instr (&mut rw) (& env) instr)]
+    (match (& rewritten)
+      [(SpmdCall payload-box)
+        (let
+          [payload (& (deref payload-box))]
+          (test.assert-true
+            (match (& payload.active-mask)
+              [(Var id) (= id 2)]
+              [_ false])
+            "active-mask accepts var-to-var copy")
+          (test.assert-true
+            (match (owned_view.compiler-owned-element-view payload.args.slots 0)
+              [(Arg (Uniform) (Bool b) _) b]
+              [_ false])
+            "uniform SPMD arg accepts scalar literal copy")
+          (test.assert-true
+            (match (owned_view.compiler-owned-element-view payload.args.slots 1)
+              [(Arg (Varying) (Var id) _) (= id 0)]
+              [_ false])
+            "varying SPMD arg rejects scalar literal copy")
+          (test.assert-true
+            (match (owned_view.compiler-owned-element-view payload.args.slots 2)
+              [(Arg (Mask) (Var id) _) (= id 0)]
+              [_ false])
+            "mask SPMD arg rejects scalar literal copy")
+          (test.assert-true
+            (match (owned_view.compiler-owned-element-view payload.args.slots 3)
+              [(Arg (Varying) (Var id) _) (= id 2)]
+              [_ false])
+            "varying SPMD arg accepts var-to-var copy")
+          (test.assert-true
+            (match (owned_view.compiler-owned-element-view payload.args.slots 4)
+              [(Arg (Mask) (Var id) _) (= id 2)]
+              [_ false])
+            "mask SPMD arg accepts var-to-var copy"))]
+      [_ (test.assert-true false "expected SpmdCall instruction")])))

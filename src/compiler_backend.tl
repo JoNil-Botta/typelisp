@@ -23331,6 +23331,8 @@
                     (array-ref calls.dst k)))]
               [rename : compiler_optimize.OptOperandRewrite
                 (compiler_optimize.OptOperandRewrite.Rename map)]
+              [rw : compiler_ir_types.CompilerIrInstrRewrite
+                (compiler_ir_types.compiler-ir-instr-rewrite-new)]
               [rebuilt : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)
                 (__tl_make-array compiler_ir_types.CompilerIrBlock 0)]
               [start : i64 (array-ref calls.site 0)]
@@ -23377,8 +23379,7 @@
                             (set!
                               (array-ref out j)
                               (compiler_optimize.opt-rewrite-operands
-                                (&mut
-                                  (compiler_ir_types.compiler-ir-instr-rewrite-new))
+                                (&mut rw)
                                 (& rename)
                                 instr)))))
                       (when

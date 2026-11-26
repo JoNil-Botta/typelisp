@@ -2878,10 +2878,14 @@
   (when (= (array-length ids.slots) 0) (set! ids.slots (__tl_make-array i64 4)))
   (compiler-ir-id-list-push ids id))
 
-;; A short operand: the var id, -1 for a constant, -2 for a symbol.
+;; A short operand: a non-negative var id, -1 for a constant, -2 for a symbol
+;; or a negative var id (so malformed vars fall through to full walks).
 (define (compiler-ir-value-short-use [value : (& value CompilerIrValue)]) : i64
   (match value
-    [(Var id) id]
+    [(Var id)
+      (if (< id 0)
+        -2
+        id)]
     [(or (Global _) (GlobalAddr _) (Function _) (RuntimeGlobal _)) -2]
     [_ -1]))
 

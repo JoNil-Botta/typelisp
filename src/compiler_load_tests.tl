@@ -4821,7 +4821,8 @@
           (load.compiler-load-canonical-stdlib-path "/roots/a/string.tl")
           "/roots/a/string.tl"))]
     [_reset : unit
-      (load.compiler-load-session-state-embedded-provenance-reset! (& state))]
+      (load.compiler-load-session-state-embedded-provenance-reset!
+        (& load.compiler-load-active-session-state))]
     [_note-after-reset : unit
       (load.compiler-load-session-state-note-stdlib-path!
         (owned_view.compiler-owned-shared-view state)
@@ -6067,9 +6068,11 @@
         (= (load.compiler-load-dependency-catalog-owner-arena state) 0)
         (= (array-ref state.dependency-catalog.entries 0).len 0)))))
 
-;; A source's provider follows where it lies (#8733): stdlib text, synthetic
-;; and catalog names, and the physical path a prebuilt package `.tli` gives
-;; its declarations, which names the provider of the same file from source.
+;; A source's provider follows where it lies (#8733): a disk file under the
+;; cwd's `stdlib/` is stdlib only once that directory is a stdlib root; then
+;; synthetic and catalog names, and the physical path a prebuilt package `.tli`
+;; gives its declarations, which names the provider of the same file from
+;; source.
 (define (compiler-load-provider-ok?) : bool
   (let
     [source : String "src/compiler_load.tl"]
@@ -6079,10 +6082,22 @@
         "typelisp"
         (& (load.compiler-load-canonical-path "."))
         "typelisp/src/compiler_load.tl")]
+    [_unrooted : unit
+      (load.compiler-load-session-state-embedded-provenance-reset!
+        (& load.compiler-load-active-session-state))]
+    [unrooted : i64
+      (load.compiler-load-provider-id-for-path "stdlib/vector.tl")]
+    [_rooted : unit
+      (load.compiler-load-session-state-note-configured-stdlib-roots!
+        (& load.compiler-load-active-session-state)
+        (& (compiler-load-string-vec-one "stdlib")))]
+    [rooted : i64 (load.compiler-load-provider-id-for-path "stdlib/vector.tl")]
+    [_reset : unit
+      (load.compiler-load-session-state-embedded-provenance-reset!
+        (& load.compiler-load-active-session-state))]
     (and
-      (=
-        (load.compiler-load-provider-id-for-path "stdlib/vector.tl")
-        (load.compiler-load-provider-stdlib))
+      (not (= unrooted (load.compiler-load-provider-stdlib)))
+      (= rooted (load.compiler-load-provider-stdlib))
       (=
         (load.compiler-load-provider-id-for-path "<generated test harness>")
         (load.compiler-load-provider-unknown))

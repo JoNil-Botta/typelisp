@@ -855,8 +855,9 @@ not change layout or ABI. It keeps the type's representation inside its
 module's name followed by `.` (its dotted descendants, such as `db.pool` for a
 type defined in `db`), whose source has the same **provider** as the type's.
 The provider is where a source file lies, never the module it declares: the
-stdlib, for the embedded stdlib, a `--stdlib-root` and a prebuilt stdlib
-`.tli`; else the package of the nearest `typelisp.pkg` at or above the file
+stdlib, for the embedded stdlib, a `--stdlib-root`, the working directory's
+`stdlib/` once stdlib resolution has read a module from it, and a prebuilt
+stdlib `.tli`; else the package of the nearest `typelisp.pkg` at or above the file
 (the root package or the dependency that holds it, loaded from source or from
 its prebuilt `.tli`); else no package, which every file outside a package
 shares. So a dependency that declares `(module db.extra)` is outside `db`'s

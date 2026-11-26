@@ -719,8 +719,9 @@
   (canonical-paths (__tl_dyn-array sym_i64_env.SymI64Env))
   ;; Stdlib suffix -> the first physical path noted for it.
   (suffix-claims (__tl_dyn-array sym_i64_env.SymI64Env))
-  ;; Canonical directory of each stdlib root a stdlib module was read from. A
-  ;; source anywhere under one has the stdlib provider (#8733). Kept as text:
+  ;; Each configured stdlib root, and the canonical directory of each root a
+  ;; stdlib module was read from. A source anywhere under one has the stdlib
+  ;; provider (#8733). Kept as text:
   ;; interning a checkout path would put it into the embedded image.
   ;; The cell holds `compiler-load-no-stdlib-roots` until a root is noted, so
   ;; a reset allocates nothing that an arena reset could leave dangling.
@@ -3649,8 +3650,8 @@
       (when
         (> (string.string-length (& root-text)) 0)
         (compiler-load-note-stdlib-root!
-          state.embedded-stdlib-provenance.roots
-          (compiler-load-canonical-path (& root-text))))
+          (& state)
+          (& (compiler-load-canonical-path (& root-text)))))
       (if (< claimant 0)
         (begin
           (set!
@@ -4353,6 +4354,9 @@
 (define (compiler-load-resolve-stdlib-root
   [suffix : (& str)]
   [roots : (& svec.Vec)]) : CompilerLoadMaybePath
+  (compiler-load-session-state-note-configured-stdlib-roots!
+    (& compiler-load-active-session-state)
+    roots)
   (compiler-load-resolve-stdlib-root-raw
     suffix
     (&
@@ -16241,28 +16245,74 @@
 (define (compiler-load-provider-no-package) : i64
   -3)
 
-;: CELL's stdlib roots with ROOT added once, in the current arena.
+;: STATE's stdlib roots with ROOT added once, in the current arena. A ROOT
+;: already present allocates nothing.
 (define (compiler-load-note-stdlib-root!
-  [cell : (__tl_dyn-array (__tl_dyn-array String))]
-  [root : String]) : unit
+  [state : (& state CompilerLoadSessionState)]
+  [root : (& str)]) : unit
   (let
-    [count : i64 (array-length (& (array-ref cell 0)))]
-    [grown : (__tl_dyn-array String) (__tl_make-array String (+ count 1))]
-    [present : bool false]
-    (for [index (iterator.range 0 count)]
-      (let
-        [existing : String
-          (string.copy (& (array-ref (array-ref cell 0) index)))]
-        (when (string.eq (& existing) (& root)) (set! present true))
-        (set! (array-ref grown index) existing)))
+    [count : i64
+      (array-length (& (array-ref state.embedded-stdlib-provenance.roots 0)))]
     (unless
-      present
-      (set! (array-ref grown count) root)
-      (set! (array-ref cell 0) grown))))
+      (any? [index (iterator.range 0 count)]
+        (string.eq
+          (&
+            (array-ref
+              (array-ref state.embedded-stdlib-provenance.roots 0)
+              index))
+          root))
+      (let
+        [grown : (__tl_dyn-array String) (__tl_make-array String (+ count 1))]
+        (for [index (iterator.range 0 count)]
+          (set!
+            (array-ref grown index)
+            (string.copy
+              (&
+                (array-ref
+                  (array-ref state.embedded-stdlib-provenance.roots 0)
+                  index)))))
+        (set! (array-ref grown count) (string.copy root))
+        (owned_view.compiler-owned-cell-set!
+          state.embedded-stdlib-provenance.roots
+          0
+          grown)))))
 
-;: Whether canonical SOURCE lies under a stdlib root, as a stdlib's own test
-;: files do (#8733): the cwd's `stdlib`, which stdlib resolution reads first,
-;: or a root this session read a stdlib module from.
+;: Note ROOT, when not empty, as a stdlib provider root of STATE, in its
+;: provenance arena.
+(define (compiler-load-session-state-note-stdlib-root!
+  [state : (& state CompilerLoadSessionState)]
+  [root : (& str)]) : unit
+  (when
+    (> (string.string-length root) 0)
+    (in-arena
+      (unsafe
+        (arena.Arena
+          (compiler-load-session-state-embedded-provenance-arena state)))
+      (compiler-load-note-stdlib-root! state root))))
+
+;: Note each configured stdlib root, ROOTS (`--stdlib-root`) and
+;: `TYPELISP_STDLIB_ROOT`, as a stdlib provider root of STATE (#8733), whether
+;: or not a stdlib module is read from it: a prebuilt stdlib serves those
+;: modules without reading the root. The list holds the spelling as
+;: configured; a query canonicalizes.
+(define (compiler-load-session-state-note-configured-stdlib-roots!
+  [state : (& state CompilerLoadSessionState)]
+  [roots : (& svec.Vec)]) : unit
+  (for [index (iterator.range 0 (svec.len roots))]
+    (compiler-load-session-state-note-stdlib-root!
+      state
+      (& (svec.get roots index ""))))
+  (let
+    [name : String "TYPELISP_STDLIB_ROOT"]
+    (match (env.get (& name))
+      [(EnvNoString) unit]
+      [(EnvSomeString root)
+        (compiler-load-session-state-note-stdlib-root! state (& root))])))
+
+;: Whether canonical SOURCE lies under a stdlib root of this session (#8733): a
+;: configured root, or a root a stdlib module was read from, as a stdlib's own
+;: test files are. A `stdlib` directory under the cwd counts only as one of
+;: those; a package's own `stdlib/` subdirectory does not.
 (define (compiler-load-under-stdlib-root? [source : (& str)]) : bool
   (let
     [cell : (__tl_dyn-array (__tl_dyn-array String))
@@ -16270,14 +16320,37 @@
         (ptr-read
           (ptr-addr-of
             compiler-load-active-session-state.embedded-stdlib-provenance.roots)))]
-    (or
+    (any? [index (iterator.range 0 (array-length (& (array-ref cell 0))))]
       (compiler-load-path-under-root?
         source
-        (& (compiler-load-canonical-path "stdlib")))
-      (any? [index (iterator.range 0 (array-length (& (array-ref cell 0))))]
-        (compiler-load-path-under-root?
-          source
-          (& (array-ref (array-ref cell 0) index)))))))
+        (&
+          (compiler-load-canonical-path
+            (& (array-ref (array-ref cell 0) index))))))))
+
+;: Whether PATH names a module the embedded stdlib serves (#8733): spelled
+;: `stdlib/<suffix>` for an embedded suffix, and either read from the image (or
+;: from a disk copy identical to it) this session, or naming no file on disk, as
+;: a prebuilt stdlib `.tli` declaration does. A disk file under the cwd's
+;: `stdlib/` is otherwise stdlib only under a stdlib root.
+(define (compiler-load-embedded-stdlib-provider-path? [path : (& str)]) : bool
+  (let
+    [normalized : String (compiler-load-normalize-path path)]
+    [module-ids : sym_i64_env.SymI64Env
+      (array-ref
+        (unsafe
+          (ptr-read
+            (ptr-addr-of
+              compiler-load-active-session-state.embedded-stdlib-provenance.module-ids)))
+        0)]
+    (and
+      (compiler-load-embedded-stdlib-contains-path? (& normalized))
+      (or
+        (not (io.file-exists? (string.copy normalized)))
+        (match (ci.intern-lookup
+          (compiler-load-canonical-module-id-from-path (& normalized)))
+          [(InternLookupFound id)
+            (sym_i64_env.sym-i64-contains-id module-ids id)]
+          [(InternLookupMissing) false])))))
 
 ;: The provider of the source at physical PATH (#8733): stdlib, else the
 ;: interned canonical directory of the nearest `typelisp.pkg` at or above it
@@ -16293,8 +16366,7 @@
         (compiler-load-string-prefix-at? path "<" 0)
         (compiler-load-string-prefix-at? path "tli:" 0))
       (compiler-load-provider-unknown)]
-    [(compiler-load-stdlib-import?
-        (& (compiler-load-canonical-stdlib-path (string.copy path))))
+    [(compiler-load-embedded-stdlib-provider-path? path)
       (compiler-load-provider-stdlib)]
     [(compiler-load-under-stdlib-root? (& (compiler-load-canonical-path path)))
       (compiler-load-provider-stdlib)]

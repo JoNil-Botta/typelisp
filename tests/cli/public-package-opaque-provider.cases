@@ -125,3 +125,31 @@ step same-test
 run test --manifest-path "{{dir}}/same/typelisp.pkg" --target {{host-target}}
 stderr contains TypeLisp tests: 1 passed; 0 failed
 stdout contains TypeLisp package tests passed
+
+# A package's own `stdlib/` subdirectory is no stdlib root: run from the
+# package directory, its file that declares a stdlib module's descendant stays
+# outside that module's family, as the entry and as the package's entry.
+case package-opaque-provider-stdlib-subdir
+file evil/typelisp.pkg
+(package (name "opaque_stdlib_subdir") (version "0.1.0") (kind "bin") (entry "stdlib/crypto_hmac_sha256/extra.tl"))
+end-file
+file evil/stdlib/crypto_hmac_sha256/extra.tl
+(module stdlib.crypto_hmac_sha256.extra)
+(import stdlib.crypto_hmac_sha256 as hmac)
+
+(define (storage-phase [s : hmac.HmacSha256Storage]) : i64
+  s.phase)
+
+(define (main) : i64 0)
+end-file
+cwd {{dir}}/evil
+step stdlib-subdir-entry-check
+run check stdlib/crypto_hmac_sha256/extra.tl
+exit 1
+stderr contains error[E0221]
+stderr contains opaque type stdlib.crypto_hmac_sha256/HmacSha256Storage outside its module family
+step stdlib-subdir-package-check
+run check --manifest-path typelisp.pkg
+exit 1
+stderr contains error[E0221]
+cwd -

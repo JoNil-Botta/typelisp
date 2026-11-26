@@ -393,7 +393,7 @@ stage2_safety_corpus_supported() {
     # A pristine --stdlib-root compiles against the prebuilt stdlib beside the
     # compiler, whose runtime lives in the sysroot archive.
     probe_archive=$(linux_stdlib_archive_for_asm "$asm" "${compiler:-}")
-    if ! ld "$obj" ${probe_archive:+-z noexecstack --gc-sections --start-group "$probe_archive" --end-group} \
+    if ! ld "$obj" ${probe_archive:+-z noexecstack --gc-sections -z start-stop-gc --start-group "$probe_archive" --end-group} \
         -o "$bin" -static -e "$entry" \
         > "$probe_dir/link.stdout" 2> "$probe_dir/link.stderr"; then
         echo "[ci-verify] stage2 safety probe link failed"

@@ -1226,6 +1226,9 @@
             (process.args-single "-Wl,--end-group")))
         inputs-in-order))))
 
+;; `-z start-stop-gc` stops the `__start_`/`__stop_` references of the abort
+;; lookup from keeping every `tl_abort_sites` section: each row then stays only
+;; with the function it is linked to.
 (define (source-tool-linker-command
   [obj-path : String]
   [bin-path : String]
@@ -1246,9 +1249,11 @@
           "-no-pie"
           (process.args-cons
             "-Wl,--gc-sections"
-            (process.args-append
-              output
-              (source-tool-link-inputs-linux-args link-inputs)))))
+            (process.args-cons
+              "-Wl,-z,start-stop-gc"
+              (process.args-append
+                output
+                (source-tool-link-inputs-linux-args link-inputs))))))
       (let
         [archives : process.ProcessStringList
           (source-tool-link-inputs-archives (& link-inputs))]
@@ -1270,7 +1275,11 @@
               "-e"
               (process.args-cons
                 "_tl_start"
-                (process.args-cons "--gc-sections" inputs)))))))))
+                (process.args-cons
+                  "--gc-sections"
+                  (process.args-cons
+                    "-z"
+                    (process.args-cons "start-stop-gc" inputs)))))))))))
 
 ;; Freestanding Win32: no CRT (no vcruntime140/ucrt/msvcrt) and only the
 ;; audited kernel32 plus ntdll system boundary.

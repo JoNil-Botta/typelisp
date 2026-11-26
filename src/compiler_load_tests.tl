@@ -6067,10 +6067,40 @@
         (= (load.compiler-load-dependency-catalog-owner-arena state) 0)
         (= (array-ref state.dependency-catalog.entries 0).len 0)))))
 
+;; A source's provider follows where it lies (#8733): stdlib text, synthetic
+;; and catalog names, and the physical path a prebuilt package `.tli` gives
+;; its declarations, which names the provider of the same file from source.
+(define (compiler-load-provider-ok?) : bool
+  (let
+    [source : String "src/compiler_load.tl"]
+    [hydrated : String
+      (tli_hydrate.tli-hydrate-physical-path
+        false
+        "typelisp"
+        (& (load.compiler-load-canonical-path "."))
+        "typelisp/src/compiler_load.tl")]
+    (and
+      (=
+        (load.compiler-load-provider-id-for-path "stdlib/vector.tl")
+        (load.compiler-load-provider-stdlib))
+      (=
+        (load.compiler-load-provider-id-for-path "<generated test harness>")
+        (load.compiler-load-provider-unknown))
+      (=
+        (load.compiler-load-provider-id-for-path "tli:opaque_owner")
+        (load.compiler-load-provider-unknown))
+      (not (= (load.compiler-load-provider-id-for-path (& source)) -1))
+      (=
+        (load.compiler-load-provider-id-for-path (& source))
+        (load.compiler-load-provider-id-for-path (& hydrated))))))
+
 (define (compiler-load-self-test) : i64
   (unless
     (compiler-load-dependency-catalog-registry-ok?)
     (return (io.panic "compiler-load: dependency catalog registry mismatch")))
+  (unless
+    (compiler-load-provider-ok?)
+    (return (io.panic "compiler-load: source provider mismatch")))
   (unless
     (compiler-load-embedded-provenance-observer-ok?)
     (return (io.panic "compiler-load: embedded provenance observer mismatch")))

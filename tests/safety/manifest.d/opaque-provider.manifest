@@ -1,0 +1,4 @@
+# Safety corpus cases: an (:opaque) module family also requires the defining provider (#8733).
+# Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+opaque_provider_stdlib_spoof_reject|check-fail|tests/safety/opaque_provider_stdlib_spoof_reject.tl|-|cannot hold by value the opaque type stdlib.crypto_secret/SecretStorage outside its module family
+opaque_provider_stdlib_reflect_reject|check-fail|tests/safety/opaque_provider_stdlib_reflect_reject.tl|-|size-of cannot reach the representation of the opaque type stdlib.crypto_secret/SecretStorage outside its module family

@@ -719,6 +719,12 @@
   (canonical-paths (__tl_dyn-array sym_i64_env.SymI64Env))
   ;; Stdlib suffix -> the first physical path noted for it.
   (suffix-claims (__tl_dyn-array sym_i64_env.SymI64Env))
+  ;; Canonical directory of each stdlib root a stdlib module was read from. A
+  ;; source anywhere under one has the stdlib provider (#8733). Kept as text:
+  ;; interning a checkout path would put it into the embedded image.
+  ;; The cell holds `compiler-load-no-stdlib-roots` until a root is noted, so
+  ;; a reset allocates nothing that an arena reset could leave dangling.
+  (roots (__tl_dyn-array (__tl_dyn-array String)))
   (noted (__tl_dyn-array bool))
   ;; Whether a prelude read from a configured root failed to load.
   (prelude-load-failed (__tl_dyn-array bool))
@@ -1008,12 +1014,21 @@
   [value : bool]) : unit
   (set! (array-ref cell 0) value))
 
+(define compiler-load-no-stdlib-roots-cell : (__tl_dyn-array String)
+  (__tl_make-array String 0))
+
+;: The process-lived empty stdlib root list.
+(define (compiler-load-no-stdlib-roots) : (__tl_dyn-array String)
+  (unsafe
+    (ptr-read (ptr-addr-of compiler-load-no-stdlib-roots-cell))))
+
 (define (compiler-load-embedded-stdlib-provenance-state-new) : CompilerLoadEmbeddedStdlibProvenanceState
   (CompilerLoadEmbeddedStdlibProvenanceState
     (__tl_make-array (sym_i64_env.sym-i64-empty))
     (__tl_make-array (sym_i64_env.sym-i64-empty))
     (__tl_make-array (sym_i64_env.sym-i64-empty))
     (__tl_make-array (sym_i64_env.sym-i64-empty))
+    (__tl_make-array (compiler-load-no-stdlib-roots))
     (compiler-load-session-state-bool-cell false)
     (compiler-load-session-state-bool-cell false)
     (__tl_make-array
@@ -3340,6 +3355,10 @@
     0
     (sym_i64_env.sym-i64-empty))
   (owned_view.compiler-owned-cell-set!
+    state.embedded-stdlib-provenance.roots
+    0
+    (compiler-load-no-stdlib-roots))
+  (owned_view.compiler-owned-cell-set!
     state.embedded-stdlib-provenance.noted
     0
     false)
@@ -3605,7 +3624,15 @@
   [disk-path : (& str)]) : unit
   (let
     [path : String (compiler-load-normalize-path disk-path)]
+    [suffix-len : i64 (string.string-length (& suffix))]
     [identity? : bool (string.eq path (str_cat.str-cat "stdlib/" suffix))]
+    [path-len : i64 (string.string-length (& path))]
+    ;; PATH is the root joined with SUFFIX; its canonical root names the
+    ;; stdlib provider (#8733).
+    [root-text : String
+      (if (> path-len suffix-len)
+        (string.substring (& path) 0 (- path-len suffix-len))
+        "")]
     [path-id : i64
       (compiler-load-session-state-intern
         (owned_view.compiler-owned-shared-view state)
@@ -3619,6 +3646,11 @@
       (unsafe
         (arena.Arena
           (compiler-load-session-state-embedded-provenance-arena state)))
+      (when
+        (> (string.string-length (& root-text)) 0)
+        (compiler-load-note-stdlib-root!
+          state.embedded-stdlib-provenance.roots
+          (compiler-load-canonical-path (& root-text))))
       (if (< claimant 0)
         (begin
           (set!
@@ -16193,6 +16225,92 @@
 ;: Discover the nearest `typelisp.pkg` at or above the importer's directory.
 (define (compiler-load-discover-manifest [start-path : (& str)]) : CompilerLoadMaybePath
   (compiler-load-discover-manifest-up (compiler-load-dirname start-path) 256))
+
+;: The provider of a source no physical path names: a synthetic `<...>` path,
+;: a `tli:` catalog name, or none. It is the provider of no other source, not
+;: even itself (#8733).
+(define (compiler-load-provider-unknown) : i64
+  -1)
+
+;: The provider of every stdlib source: the embedded copy, a `--stdlib-root`,
+;: or a hydrated stdlib `.tli`.
+(define (compiler-load-provider-stdlib) : i64
+  -2)
+
+;: The provider shared by sources with no `typelisp.pkg` at or above them.
+(define (compiler-load-provider-no-package) : i64
+  -3)
+
+;: CELL's stdlib roots with ROOT added once, in the current arena.
+(define (compiler-load-note-stdlib-root!
+  [cell : (__tl_dyn-array (__tl_dyn-array String))]
+  [root : String]) : unit
+  (let
+    [count : i64 (array-length (& (array-ref cell 0)))]
+    [grown : (__tl_dyn-array String) (__tl_make-array String (+ count 1))]
+    [present : bool false]
+    (for [index (iterator.range 0 count)]
+      (let
+        [existing : String
+          (string.copy (& (array-ref (array-ref cell 0) index)))]
+        (when (string.eq (& existing) (& root)) (set! present true))
+        (set! (array-ref grown index) existing)))
+    (unless
+      present
+      (set! (array-ref grown count) root)
+      (set! (array-ref cell 0) grown))))
+
+;: Whether canonical SOURCE lies under a stdlib root, as a stdlib's own test
+;: files do (#8733): the cwd's `stdlib`, which stdlib resolution reads first,
+;: or a root this session read a stdlib module from.
+(define (compiler-load-under-stdlib-root? [source : (& str)]) : bool
+  (let
+    [cell : (__tl_dyn-array (__tl_dyn-array String))
+      (unsafe
+        (ptr-read
+          (ptr-addr-of
+            compiler-load-active-session-state.embedded-stdlib-provenance.roots)))]
+    (or
+      (compiler-load-path-under-root?
+        source
+        (& (compiler-load-canonical-path "stdlib")))
+      (any? [index (iterator.range 0 (array-length (& (array-ref cell 0))))]
+        (compiler-load-path-under-root?
+          source
+          (& (array-ref (array-ref cell 0) index)))))))
+
+;: The provider of the source at physical PATH (#8733): stdlib, else the
+;: interned canonical directory of the nearest `typelisp.pkg` at or above it
+;: (the root package or the dependency package that holds the file, as import
+;: resolution reads it), else no package. The answer depends only on where the
+;: file lies, never on the `(module ...)` it declares. A hydrated package
+;: `.tli` names its declarations by their physical path under the canonical
+;: package root, so it has the provider of the same package loaded from source.
+(define (compiler-load-provider-id-for-path [path : (& str)]) : i64
+  (cond
+    [(or
+        (= (string.string-length path) 0)
+        (compiler-load-string-prefix-at? path "<" 0)
+        (compiler-load-string-prefix-at? path "tli:" 0))
+      (compiler-load-provider-unknown)]
+    [(compiler-load-stdlib-import?
+        (& (compiler-load-canonical-stdlib-path (string.copy path))))
+      (compiler-load-provider-stdlib)]
+    [(compiler-load-under-stdlib-root? (& (compiler-load-canonical-path path)))
+      (compiler-load-provider-stdlib)]
+    [else
+      (let
+        [source : String (compiler-load-canonical-path path)]
+        ;; The walk ends at the cwd's manifest once it passes the filesystem
+        ;; root; only a manifest above SOURCE itself names its provider.
+        (match (compiler-load-discover-manifest (& source))
+          [(CompilerLoadSomePath manifest)
+            (if (fs.path-absolute? (& manifest))
+              (ci.intern
+                (compiler-load-canonical-path
+                  (& (compiler-load-dirname (& manifest)))))
+              (compiler-load-provider-no-package))]
+          [(CompilerLoadNoPath) (compiler-load-provider-no-package)]))]))
 
 ;: Resolve a `pkg:<alias>/...` import by discovering and parsing the nearest
 ;: `typelisp.pkg` relative to the importer, then resolving against its deps.

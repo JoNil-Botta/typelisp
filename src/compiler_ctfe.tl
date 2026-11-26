@@ -1425,6 +1425,15 @@
 (define (ctfe-type-literal-resolutions-empty) : CtfeTypeLiteralResolutions
   (CtfeTypeLiteralResolutions (ast.ast-type-list-new) (ast.ast-type-list-new)))
 
+;; The code one comptime evaluation runs as: its module, or
+;; `ctfe-representation-unchecked`; its source's provider; and the provider of
+;; each module's (:opaque) aggregates. Providers are the loader's
+;; (`compiler-load-provider-id-for-path`); an unknown one, -1, matches none.
+(defstruct CtfeRepresentation
+  (module i64)
+  (provider i64)
+  (module-providers ctfe_key_map.Map))
+
 (defstruct CtfeEnvMetadata
   (pools ast.AstNodePoolContext)
   (layouts CtfeLayoutInfoList)
@@ -1432,10 +1441,9 @@
   (source-names ci.InternSourceNameSessionHandle)
   ;; The boxed CtfeTypeLiteralResolutions of one comptime evaluation, or 0.
   (type-literals u64)
-  ;; The module whose code one comptime evaluation runs as, which decides the
-  ;; (:opaque) aggregates whose representation it may reach (#8735), or
-  ;; `ctfe-representation-unchecked`.
-  (representation-module i64))
+  ;; The code one comptime evaluation runs as, which decides the (:opaque)
+  ;; aggregates whose representation it may reach (#8735, #8733).
+  (representation CtfeRepresentation))
 
 ;; The binding arena and the metadata are boxed and shared by every snapshot of
 ;; an environment; the environment keeps the two box pointers as addresses, so
@@ -1508,7 +1516,10 @@
         reflections
         source-names
         0
-        (ctfe-representation-unchecked)))
+        (CtfeRepresentation
+          (ctfe-representation-unchecked)
+          -1
+          (ctfe_key_map.with-capacity 1))))
     macro-state))
 
 (define (ctfe-env-empty-with-pools-and-source-names-and-macro-state
@@ -2260,12 +2271,15 @@
           metadata.reflections
           metadata.source-names
           address
-          metadata.representation-module))
+          metadata.representation))
       env.macro-state)))
 
-;; `env` evaluating as code of MODULE-ID: outside an (:opaque) aggregate's
-;; module family, its layout and reflection queries fail (#8735).
-(define (ctfe-env-with-representation-module [env : CtfeEnv] [module-id : i64]) : CtfeEnv
+;; `env` evaluating as code of REPRESENTATION: outside an (:opaque)
+;; aggregate's module family or provider, its layout and reflection queries
+;; fail (#8735, #8733).
+(define (ctfe-env-with-representation
+  [env : CtfeEnv]
+  [representation : CtfeRepresentation]) : CtfeEnv
   (let
     [env-view : CtfeEnv env]
     [metadata : CtfeEnvMetadata (ctfe-env-metadata-read env-view.metadata)]
@@ -2280,8 +2294,13 @@
           metadata.reflections
           metadata.source-names
           metadata.type-literals
-          module-id))
+          representation))
       env.macro-state)))
+
+;; The provider of code typecheck already admitted, which lowering re-reads:
+;; it keeps the module-family test, not the provider's (#8733).
+(define (ctfe-provider-admitted) : i64
+  -5)
 
 ;; The representation module of an evaluation no module's code runs, such as
 ;; a lowering-time refold of a comptime form typecheck already admitted.
@@ -2351,7 +2370,7 @@
           metadata.reflections
           metadata.source-names
           metadata.type-literals
-          metadata.representation-module))
+          metadata.representation))
       env.macro-state)))
 
 ;; `env` reading `reflections` as its reflection metadata.
@@ -2372,7 +2391,7 @@
           reflections
           metadata.source-names
           metadata.type-literals
-          metadata.representation-module))
+          metadata.representation))
       env.macro-state)))
 
 ;; Binding-clause syntax values predate the pool-bearing CapturedExpr variants.
@@ -2398,7 +2417,7 @@
           metadata.reflections
           metadata.source-names
           metadata.type-literals
-          metadata.representation-module))
+          metadata.representation))
       env.macro-state)))
 
 (define (ctfe-ast-get [env : (& env CtfeEnv)] [id : i64]) : ast.AstExpr
@@ -5341,20 +5360,32 @@
   [info : (& CtfeReflectInfo)]) : bool
   (let
     [view : CtfeEnv (deref env)]
-    [authority : i64
-      (__tl-project-field
-        (ctfe-env-metadata-read view.metadata)
-        representation-module)]
+    [authority : CtfeRepresentation
+      (__tl-project-field (ctfe-env-metadata-read view.metadata) representation)]
     [markers : i64
       (match info
         [(or (Struct _ _ _ _ _ _ markers) (Enum _ _ _ _ _ _ markers)) markers])]
+    [nominal-module : i64 (ctfe-reflect-info-nominal-module-id info)]
+    [def-module : i64
+      (if (< nominal-module 0)
+        cbi.compiler-builtin-id-fix-empty
+        nominal-module)]
     (and
-      (not (= authority (ctfe-representation-unchecked)))
+      (not (= authority.module (ctfe-representation-unchecked)))
       (not (= (bit-and markers 2) 0))
-      (not
-        (ctfe-module-in-family?
-          authority
-          (ctfe-reflect-info-nominal-module-id info))))))
+      (or
+        (not (ctfe-module-in-family? authority.module def-module))
+        (and
+          (not (= authority.provider (ctfe-provider-admitted)))
+          (or
+            (= authority.provider -1)
+            (not
+              (=
+                authority.provider
+                (ctfe_key_map.get-value-or
+                  (& authority.module-providers)
+                  def-module
+                  -1)))))))))
 
 ;; The display name of the foreign opaque aggregate TY is or holds by value as
 ;; a tuple or array element, else "".

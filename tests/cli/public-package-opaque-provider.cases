@@ -1,0 +1,127 @@
+# #8733: an (:opaque) module family also requires the defining provider
+# (gate stage2-public-tool-cli-transcripts-2). A dependency that declares a
+# dotted descendant of the owner's module stays outside the family under
+# check, build, run and test, for code and comptime reflection, as does a file
+# that declares itself a stdlib module's descendant, under the LSP too; the
+# same descendant inside the owner's own package keeps full access.
+do none
+target -
+opt -
+
+case package-opaque-provider
+file owner/typelisp.pkg
+(package (name "opaque_owner") (version "0.1.0") (kind "lib") (entry "src/opaque_owner.tl"))
+end-file
+file owner/src/opaque_owner.tl
+(module opaque_owner)
+
+(defstruct Handle
+  (:opaque)
+  (id i64))
+
+(define (make [id : i64]) : Handle (Handle id))
+end-file
+file spoof/typelisp.pkg
+(package (name "opaque_spoof") (version "0.1.0") (kind "bin") (entry "src/main.tl")
+  (dependencies (owner "../owner")))
+end-file
+file spoof/src/main.tl
+(module opaque_owner.extra)
+(import stdlib.test)
+(import owner.src.opaque_owner as owner)
+
+(define (read-handle) : i64
+  (let
+    [h : owner.Handle (owner.Handle 7)]
+    h.id))
+
+(define (main) : i64 (read-handle))
+
+(test reads-handle
+  (test.assert-i64-eq (read-handle) 7 "handle id"))
+end-file
+file reflect/typelisp.pkg
+(package (name "opaque_reflect") (version "0.1.0") (kind "bin") (entry "src/main.tl")
+  (dependencies (owner "../owner")))
+end-file
+file reflect/src/main.tl
+(module opaque_owner.extra)
+(import owner.src.opaque_owner as owner)
+
+(define (main) : i64 (comptime (size-of (type owner.Handle))))
+end-file
+file lsp/main.tl
+(module stdlib.crypto_secret.extra)
+(import stdlib.crypto_secret as cs)
+
+(define (storage-state [s : cs.SecretStorage]) : u64
+  s.state)
+end-file
+file same/typelisp.pkg
+(package (name "opaque_same") (version "0.1.0") (kind "bin") (entry "src/main.tl"))
+end-file
+file same/src/opaque_owner.tl
+(module opaque_owner)
+
+(defstruct Handle
+  (:opaque)
+  (id i64))
+end-file
+file same/src/main.tl
+(module opaque_owner.extra)
+(import stdlib.test)
+(import opaque_owner as owner)
+
+(define (handle-size) : i64 (comptime (size-of (type owner.Handle))))
+
+(define (read-handle) : i64
+  (let
+    [h : owner.Handle (owner.Handle 7)]
+    h.id))
+
+(define (main) : i64 (read-handle))
+
+(test reads-handle
+  (test.assert-i64-eq (read-handle) 7 "handle id")
+  (test.assert-i64-eq (handle-size) 8 "handle size"))
+end-file
+step spoof-check
+run check --manifest-path "{{dir}}/spoof/typelisp.pkg"
+exit 1
+stderr contains error[E0221]
+stderr contains opaque type opaque_owner/Handle outside its module family
+step spoof-build
+run build --manifest-path "{{dir}}/spoof/typelisp.pkg" --target {{host-target}}
+exit 1
+stderr contains error[E0221]
+step spoof-run
+run run --manifest-path "{{dir}}/spoof/typelisp.pkg" --target {{host-target}}
+exit 1
+stderr contains error[E0221]
+step spoof-test
+run test --manifest-path "{{dir}}/spoof/typelisp.pkg" --target {{host-target}}
+exit 1
+stderr contains error[E0221]
+step spoof-reflect-check
+run check --manifest-path "{{dir}}/reflect/typelisp.pkg"
+exit 1
+stderr contains error[E0221]
+stderr contains size-of cannot reach the representation of the opaque type opaque_owner/Handle
+# The LSP does not yet load a dependency the way the package CLI does, so its
+# step opens a file that declares itself a stdlib module's descendant.
+step stdlib-spoof-lsp
+sh b='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}' && printf 'Content-Length: %s\r\n\r\n%s' "${#b}" "$b" > "{{dir}}/lsp.in"
+sh t=$(sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' "{{dir}}/lsp/main.tl" | awk '{printf "%s\\n", $0}') && b='{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file://'"{{dir}}"'/lsp/main.tl","languageId":"typelisp","version":1,"text":"'"$t"'"}}}' && printf 'Content-Length: %s\r\n\r\n%s' "${#b}" "$b" >> "{{dir}}/lsp.in"
+sh b='{"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}' && printf 'Content-Length: %s\r\n\r\n%s' "${#b}" "$b" >> "{{dir}}/lsp.in"
+run lsp < "{{dir}}/lsp.in"
+stdout contains "code":"E0221"
+step same-check
+run check --manifest-path "{{dir}}/same/typelisp.pkg"
+stderr empty
+step same-run
+run run --manifest-path "{{dir}}/same/typelisp.pkg" --target {{host-target}}
+exit 7
+step same-test
+run test --manifest-path "{{dir}}/same/typelisp.pkg" --target {{host-target}}
+stderr contains TypeLisp tests: 1 passed; 0 failed
+stdout contains TypeLisp package tests passed

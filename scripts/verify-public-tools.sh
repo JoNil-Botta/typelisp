@@ -73,6 +73,7 @@ cli_transcripts_files() {
             printf '%s\n' \
                 tests/cli/public-package.cases \
                 tests/cli/public-package-tli.cases \
+                tests/cli/public-package-opaque-provider.cases \
                 tests/cli/public-cond-diagnostics.cases
             ;;
         3)

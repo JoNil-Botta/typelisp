@@ -1327,7 +1327,8 @@
     ctx.module-id
     ctx.type-module-id
     ctx.module
-    ctx.program-decls))
+    ctx.program-decls
+    ctx.provider-id))
 
 (define (lower-clone-state [state : (& LowerState)]) : LowerState
   (LowerState state.address))
@@ -79309,6 +79310,8 @@
   [entry-path : String]
   [names : LowerNameEnv]
   [mode : CompilerLowerMode]) : ResultCompilerLower
+  ;; Lowering re-reads code typecheck admitted (#8733).
+  (set! ctx (tc_core.tc-context-with-admitted-provider ctx))
   (match (compiler-lower-state-pointer-proof-request lower-state)
     [(Disabled) unit]
     [(Requested input)

@@ -109,6 +109,7 @@ tl_oob_abort_at:
       (str_cat.str-cat
         "main:
     leaq .L_tl_str_la(%rip), %rdi
+    leaq .L_tl_str_le(%rip), %rsi
     ret
     .section .rodata
 "
@@ -116,11 +117,19 @@ tl_oob_abort_at:
         ".L_tl_str_data_a:
     .ascii \"pan\"
 .L_tl_str_data_b:
-    .string \"ic\"
-.L_tl_str_data_c:
-    .string \"dead\"
+    .ascii \"ic\"
 "
-        (prune.literal-end)
+        (prune.literal-unit-end)
+        ".L_tl_str_data_c:
+    .ascii \"dead\"
+"
+        (prune.literal-unit-end)
+        ".L_tl_str_data_d:
+    .ascii \"ov\"
+.L_tl_str_data_e:
+    .ascii \"erlap\"
+"
+        (prune.literal-unit-end)
         "    .balign 8
 "
         (prune.literal-begin)
@@ -130,6 +139,9 @@ tl_oob_abort_at:
 .L_tl_str_lc:
     .quad .L_tl_str_data_c
     .quad 4
+.L_tl_str_le:
+    .quad .L_tl_str_data_e
+    .quad 5
 "
         (prune.literal-end)
         "    .text
@@ -146,8 +158,13 @@ tl_oob_abort_at:
     (test.assert-true
       (string.contains
         (& output)
-        ".L_tl_str_data_a:\n    .ascii \"pan\"\n.L_tl_str_data_b:\n    .string \"ic\"\n")
+        ".L_tl_str_data_a:\n    .ascii \"pan\"\n.L_tl_str_data_b:\n    .ascii \"ic\"\n")
       "a live string keeps its whole suffix-shared run")
+    (test.assert-true
+      (string.contains
+        (& output)
+        ".L_tl_str_data_d:\n    .ascii \"ov\"\n.L_tl_str_data_e:\n    .ascii \"erlap\"\n")
+      "a live string keeps every owner overlapped into its unit")
     (test.assert-true
       (not (string.contains (& output) ".L_tl_str_lc:"))
       "a header named only by a dead helper is omitted")

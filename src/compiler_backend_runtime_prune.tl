@@ -32,6 +32,9 @@
 (define (literal-end) : String
   "# typelisp literal bundle end\n")
 
+(define (literal-unit-end) : String
+  "# typelisp literal unit end\n")
+
 (defstruct RuntimeFragment
   (start i64)
   (end i64))
@@ -109,8 +112,9 @@
     (fragment_vec.push-ref! ranges (RuntimeFragment start end))))
 
 ;; A literal bundle holds string data and {ptr,len} headers. Each entry starts
-;; at a label: labels and `.ascii` prefixes of one suffix-shared string run on
-;; until its `.string` record, and a header is a label and two `.quad`s.
+;; at a label. The labels and `.ascii` records of one unit of shared bytes run
+;; on until its end marker, so a unit is kept or dropped whole. A header is a
+;; label and two `.quad`s.
 ;; Returns false when a marker is left open; nothing is pruned then.
 (define (find-ranges!
   [data : (Ptr u8)]
@@ -137,6 +141,10 @@
             (set! bundle false)]
           [(has-prefix? data pos end (& (literal-begin)))
             (set! literal true)
+            (set! continued false)]
+          [(has-prefix? data pos end (& (literal-unit-end)))
+            (record-range! ranges start end)
+            (set! start -1)
             (set! continued false)]
           [(has-prefix? data pos end (& (literal-end)))
             (record-range! ranges start pos)

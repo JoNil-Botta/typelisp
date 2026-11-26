@@ -3556,7 +3556,7 @@
     (has
       ".L_tl_str_data_l2_13861_13991:"
       ".L_tl_str_l2_13861_13991:"
-      "    .string \"hi\"\n"
+      "    .ascii \"hi\"\n"
       "    .quad .L_tl_str_data_l2_13861_13991\n"
       "    .quad 2\n"
       "_tl_greeting:\n    .quad .L_tl_str_l2_13861_13991\n"
@@ -4878,7 +4878,7 @@
         (be_state.backend-and8
           (asm-has? asm ".L_tl_str_data_l2_12961_16211:")
           (asm-has? asm ".L_tl_str_l2_12961_16211:")
-          (asm-has? asm "    .string \"az\"\n")
+          (asm-has? asm "    .ascii \"az\"\n")
           (asm-has? asm "    .quad .L_tl_str_data_l2_12961_16211\n")
           (asm-lacks? asm "    cmpq %r11, %rax\n")
           ;; COLD-1: the passing check falls through; the abort stub is
@@ -47268,8 +47268,7 @@ user_fn:
 
 (define (compiler-backend-literal-pool-case
   [values : (__tl_dyn-array String)]
-  [maximum-bytes : i64]
-  [terminated? : bool]) : bool
+  [maximum-bytes : i64]) : bool
   (let
     [owner : arena.Arena
       (unsafe
@@ -47343,9 +47342,6 @@ user_fn:
               (array-ref out.slots (+ offset j))
               (cast (string.string-ref value j) : u8))
             (return false)))
-        (when
-          (and terminated? (!= (array-ref out.slots (+ offset length)) 0))
-          (return false))
         (for [j (iterator.range 0 8)]
           (unless
             (=
@@ -47396,50 +47392,154 @@ user_fn:
           (+
             16
             (layout.compiler-object-layout-align-offset
-              (+ (string.string-length value) 1)
+              (string.string-length value)
               8)))
         (set! (array-ref many i) value)))
     (set! (array-ref many 64) "end")
     (and
-      (compiler-backend-literal-pool-case (__tl_make-array String 0) 0 true)
-      (compiler-backend-literal-pool-case (__tl_make-array "only") 24 true)
-      (compiler-backend-literal-pool-case
-        (__tl_make-array "ab" "cd" "ef")
-        64
-        true)
+      (compiler-backend-literal-pool-case (__tl_make-array String 0) 0)
+      (compiler-backend-literal-pool-case (__tl_make-array "only") 24)
+      (compiler-backend-literal-pool-case (__tl_make-array "ab" "cd" "ef") 56)
       (compiler-backend-literal-pool-case
         (__tl_make-array "prefix/abc" "abc" "bc" "c" "")
-        96
-        true)
+        96)
       (compiler-backend-literal-pool-case
         (__tl_make-array "" "c" "abc" "prefix/abc" "bc")
-        96
-        true)
+        96)
       (compiler-backend-literal-pool-case
         (__tl_make-array "cab" "dab" "ab" "b" "")
-        88
-        true)
-      (compiler-backend-literal-pool-case (__tl_make-array nul "b" "") 56 true)
+        88)
+      (compiler-backend-literal-pool-case (__tl_make-array nul "b" "") 56)
       (compiler-backend-literal-pool-case
         (__tl_make-array "prefixλ" "λ" "")
-        64
-        true)
-      (compiler-backend-literal-pool-case many budget true))))
+        56)
+      (compiler-backend-literal-pool-case many budget))))
 
 (test
   backend-interior-literal-records
   (test.assert-true
     (compiler-backend-literal-pool-case
       (__tl_make-array "prefix-middle-suffix" "middle")
-      56
-      false)
+      56)
     "interior literal relocation and byte length agree with its descriptor"))
+
+;; Overlapping owners chain into one unit, and a literal shorter than six
+;; bytes still lands inside a longer one: "head-tail-end" fits 16 bytes where
+;; the separate payloads need 24, and "abcdefg" holds "cd" in 8.
+(test
+  backend-overlapped-literal-records
+  (test.assert-true
+    (and
+      (compiler-backend-literal-pool-case
+        (__tl_make-array "head-tail" "tail-end")
+        48)
+      (compiler-backend-literal-pool-case
+        (__tl_make-array "tail-end" "x-head" "head-tail")
+        64)
+      (compiler-backend-literal-pool-case (__tl_make-array "abcdefg" "cd") 40)
+      (compiler-backend-literal-pool-case
+        (__tl_make-array "cd" "e" "abcdefg" "fg" "a")
+        88))
+    "overlapped and short interior literals agree with their descriptors"))
+
+(define (compiler-backend-literal-section-strings) : be_state.BackendStringSeq
+  (be_state.BackendStringSeq (__tl_make-array "head-tail" "tail-end" "zz") 3))
+
+;; A library object gives each unit and header its own ELF section, and every
+;; build closes each unit with the marker the closed-build pruner splits on.
+(define (compiler-backend-literal-rodata-sections-ok?) : bool
+  (let
+    [head : String (be_facts.compiler-backend-string-data-label "head-tail")]
+    [tail : String (be_facts.compiler-backend-string-data-label "tail-end")]
+    [zz : String (be_facts.compiler-backend-string-data-label "zz")]
+    [header : String (be_operand.compiler-backend-string-fat-label "tail-end")]
+    [sectioned : String
+      (text_buf.render
+        (be_data.compiler-backend-emit-string-rodata-into
+          (compiler-backend-literal-section-strings)
+          true
+          (text_buf.empty)))]
+    [plain : String
+      (text_buf.render
+        (be_data.compiler-backend-emit-string-rodata-into
+          (compiler-backend-literal-section-strings)
+          false
+          (text_buf.empty)))]
+    [unit-end : String "# typelisp literal unit end\n"]
+    (and
+      (string.contains
+        (& sectioned)
+        (&
+          (str_cat.str-cat
+            ".section \".rodata."
+            head
+            "\",\"a\",@progbits\n"
+            head
+            ":\n    .ascii \"head-\"\n"
+            tail
+            ":\n    .ascii \"tail-end\"\n"
+            unit-end)))
+      (string.contains
+        (& sectioned)
+        (& (str_cat.str-cat ".section \".rodata." zz "\",\"a\",@progbits\n")))
+      (string.contains
+        (& sectioned)
+        (&
+          (str_cat.str-cat
+            ".section \".rodata."
+            header
+            "\",\"a\",@progbits\n    .balign 8\n"
+            header
+            ":\n")))
+      (= (backend.compiler-backend-string-count sectioned unit-end) 2)
+      (= (backend.compiler-backend-string-count plain unit-end) 2)
+      (= (backend.compiler-backend-string-count plain ".section \".rodata.") 0)
+      (= (backend.compiler-backend-string-count plain "    .balign 8\n") 1)
+      (not (string.contains (& plain) ".string")))))
+
+(test
+  backend-literal-rodata-sections
+  (test.assert-true
+    (compiler-backend-literal-rodata-sections-ok?)
+    "library literal units and headers each take an ELF section"))
+
+;; Only a CRT or loader-built TLS block copies `.tdata`; the freestanding
+;; entry stores the null arena itself, so its arena word is `.tbss`.
+(define (compiler-backend-freestanding-arena-tbss-ok?) : bool
+  (let
+    [features : runtime_common.CompilerBackendRuntimeFeatures
+      (be_data.compiler-backend-runtime-features
+        (compiler-backend-runtime-helper-full-plan))]
+    [freestanding : String
+      (be_data.compiler-backend-runtime-data-for-target
+        (be_state.CompilerBackendTarget.Linux)
+        features
+        true)]
+    [hosted : String
+      (be_data.compiler-backend-runtime-data-for-target
+        (be_state.CompilerBackendTarget.Linux)
+        features
+        false)]
+    (and
+      (not (string.contains (& freestanding) ".tdata"))
+      (string.contains
+        (& freestanding)
+        "    .section .tbss,\"awT\",@nobits\n    .balign 8\n    .globl tl_current_arena\ntl_current_arena:\n    .zero 8\n")
+      (string.contains
+        (& hosted)
+        "    .section .tdata,\"awT\",@progbits\n    .balign 8\n    .globl tl_current_arena\ntl_current_arena:\n    .quad .L_tl_null_arena\n"))))
+
+(test
+  backend-freestanding-arena-tbss
+  (test.assert-true
+    (compiler-backend-freestanding-arena-tbss-ok?)
+    "the freestanding Linux arena word has no .tdata initial value"))
 
 (test
   backend-packed-literal-records
   (test.assert-true
     (compiler-backend-packed-literal-records-ok?)
-    "packed literal bytes, terminal zeros and aligned pointer/length headers"))
+    "packed literal bytes and aligned pointer/length headers"))
 
 (test
   backend-c-export-backtrace

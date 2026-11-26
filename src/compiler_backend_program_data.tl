@@ -34,8 +34,7 @@
 (defstruct CompilerBackendLiteralKey
   (slot-address u64)
   (owner i64)
-  (offset i64)
-  (owner-address u64))
+  (offset i64))
 
 ;; The owner equality hook the full-mode vector shared with `stdlib.sort.vec`
 ;; requires.
@@ -45,8 +44,7 @@
   (and
     (= left.slot-address right.slot-address)
     (= left.owner right.owner)
-    (= left.offset right.offset)
-    (= left.owner-address right.owner-address)))
+    (= left.offset right.offset)))
 
 (import (stdlib.vector.vector CompilerBackendLiteralKey) as literal_vec)
 (import (stdlib.sort.vec CompilerBackendLiteralKey) as literal_sort)
@@ -191,11 +189,12 @@
         (unless (= a b) (return (> a b)))))
     (> i j)))
 
-;; Both consumers of literal byte labels carry explicit lengths: String
-;; descriptors and located diagnostic paths. The C marshalling helpers create
-;; their own terminated buffers. Raw binary data and runtime C strings are
-;; emitted separately. Put a real label at each interior offset so text, ELF,
-;; and COFF all relocate to it using their normal symbol-address records.
+;; Every consumer of a literal byte label carries an explicit length: String
+;; descriptors and located diagnostic paths. The C marshalling helpers copy
+;; into their own terminated buffers, and raw binary data and runtime C
+;; strings are emitted separately, so literal bytes carry no NUL. Put a real
+;; label at each interior offset so text, ELF, and COFF all relocate to it
+;; using their normal symbol-address records.
 (define (compiler-backend-literal-text [address : u64]) : String
   (unsafe
     (ptr-read (int->ptr address : (Ptr String)))))
@@ -210,12 +209,22 @@
 (define compiler-backend-literal-prefix-length : i64
   6)
 
-(define (compiler-backend-literal-prefix-key [text : (& text str)]) : i64
+;; The index key of `width` bytes at `offset`. A six-byte prefix packs into
+;; the low 48 bits. A whole shorter literal is tagged with its width above
+;; them, so keys of different widths never collide.
+(define (compiler-backend-literal-key
+  [text : (& text str)]
+  [offset : i64]
+  [width : i64]) : i64
   (let
     [key : i64 0]
-    (for [i (iterator.range 0 compiler-backend-literal-prefix-length)]
-      (set! key (bit-or (shl key 8) (cast (string.string-ref text i) : i64))))
-    key))
+    (for [i (iterator.range 0 width)]
+      (set!
+        key
+        (bit-or (shl key 8) (cast (string.string-ref text (+ offset i)) : i64))))
+    (if (< width compiler-backend-literal-prefix-length)
+      (bit-or key (shl width 48))
+      key)))
 
 (define compiler-backend-literal-prefix-filter-size : i64
   65536)
@@ -224,11 +233,47 @@
   ;; Multiplicative hashing takes the high 16 bits of the wrapped product.
   (cast (shr (cast (* key -7046029254386353131) : u64) 48) : i64))
 
-;; Index only prefixes that can remove an entire payload. A match must still
-;; prove equality across the full byte range. Only a strictly longer owner
-;; can take over a payload, so the placement graph is acyclic. Six bytes
-;; separate common assembly and diagnostic prefixes. The prefilter costs
-;; one byte lookup at each position and avoids most hash-table probes.
+;; Moves each indexed owner with `key` whose bytes occur at `offset` of the
+;; strictly longer owner `host` into that host.
+(define (compiler-backend-literal-place-at!
+  [ordered : (&mut ordered literal_vec.Vec)]
+  [links : (& links (__tl_dyn-array i64))]
+  [filter : (& filter (__tl_dyn-array bool))]
+  [keys : (& keys backend_i64_i64_map.Map)]
+  [key : i64]
+  [host : i64]
+  [text : (& text str)]
+  [offset : i64]) : unit
+  (when
+    (array-ref filter (compiler-backend-literal-prefix-filter-index key))
+    (let
+      [length : i64 (string.string-length text)]
+      [link : i64 (backend_i64_i64_map.get-value-or keys key 0)]
+      (while (> link 0)
+        (let
+          [index : i64 (- link 1)]
+          [entry : CompilerBackendLiteralKey (array-ref ordered.slots index)]
+          (when
+            (= entry.owner index)
+            (let
+              [candidate : String
+                (compiler-backend-literal-text entry.slot-address)]
+              [need : i64 (string.string-length (& candidate))]
+              (when
+                (and
+                  (< need length)
+                  (<= need (- length offset))
+                  (string.is-string-prefix-at text (& candidate) offset))
+                (set! (array-ref ordered.slots index).owner host)
+                (set! (array-ref ordered.slots index).offset offset))))
+          (set! link (array-ref links index)))))))
+
+;; Index every owner by its key: its six-byte prefix, or all of a shorter
+;; literal. Each owner then probes every offset once per short width and once
+;; for a prefix. A match must still prove equality across the full byte range.
+;; Only a strictly longer owner can take over a payload, so the placement
+;; graph is acyclic. The prefilter costs one byte lookup per probe and avoids
+;; most hash-table probes.
 (define (compiler-backend-literal-place-interiors!
   [ordered : (&mut ordered literal_vec.Vec)]) : unit
   (with-arena
@@ -237,84 +282,79 @@
       [links : (__tl_dyn-array i64) (__tl_make-array i64 ordered.len)]
       [filter : (__tl_dyn-array bool)
         (__tl_make-array bool compiler-backend-literal-prefix-filter-size)]
-      [prefixes : backend_i64_i64_map.Map
+      [keys : backend_i64_i64_map.Map
         (backend_i64_i64_map.with-capacity ordered.len)]
       (for [i (iterator.range 0 ordered.len)]
         (let
           [entry : CompilerBackendLiteralKey (array-ref ordered.slots i)]
           [text : String (compiler-backend-literal-text entry.slot-address)]
+          [length : i64 (string.string-length (& text))]
           (when
-            (and
-              (= entry.owner i)
-              (>=
-                (string.string-length (& text))
-                compiler-backend-literal-prefix-length))
+            (and (= entry.owner i) (> length 0))
             (let
-              [key : i64 (compiler-backend-literal-prefix-key (& text))]
+              [key : i64
+                (compiler-backend-literal-key
+                  (& text)
+                  0
+                  (if (< length compiler-backend-literal-prefix-length)
+                    length
+                    compiler-backend-literal-prefix-length))]
               (set!
                 (array-ref links i)
-                (backend_i64_i64_map.get-value-or (& prefixes) key 0))
+                (backend_i64_i64_map.get-value-or (& keys) key 0))
               (set!
                 (array-ref
                   filter
                   (compiler-backend-literal-prefix-filter-index key))
                 true)
-              (backend_i64_i64_map.insert-ref! (&mut prefixes) key (+ i 1))))))
+              (backend_i64_i64_map.insert-ref! (&mut keys) key (+ i 1))))))
       (for [i (iterator.range 0 ordered.len)]
         (let
           [host : CompilerBackendLiteralKey (array-ref ordered.slots i)]
           [text : String (compiler-backend-literal-text host.slot-address)]
           [length : i64 (string.string-length (& text))]
           (when
-            (and
-              (= host.owner i)
-              (> length compiler-backend-literal-prefix-length))
-            (let
-              [key : i64 (compiler-backend-literal-prefix-key (& text))]
-              (for [offset
-                (iterator.range
-                  0
-                  (+ 1 (- length compiler-backend-literal-prefix-length)))]
-                (let
-                  [link : i64
-                    (if (array-ref
-                      filter
-                      (compiler-backend-literal-prefix-filter-index key))
-                      (backend_i64_i64_map.get-value-or (& prefixes) key 0)
-                      0)]
-                  (while (> link 0)
-                    (let
-                      [index : i64 (- link 1)]
-                      [entry : CompilerBackendLiteralKey
-                        (array-ref ordered.slots index)]
-                      (when
-                        (= entry.owner index)
-                        (let
-                          [candidate : String
-                            (compiler-backend-literal-text entry.slot-address)]
-                          [need : i64 (string.string-length (& candidate))]
-                          (when
-                            (and
-                              (< need length)
-                              (<= need (- length offset))
-                              (string.is-string-prefix-at
-                                (& text)
-                                (& candidate)
-                                offset))
-                            (set! (array-ref ordered.slots index).owner i)
-                            (set! (array-ref ordered.slots index).offset offset))))
-                      (set! link (array-ref links index))))
-                  (when
-                    (< (+ offset compiler-backend-literal-prefix-length) length)
-                    (set!
-                      key
-                      (bit-or
-                        (bit-and (shl key 8) 281474976710655)
-                        (cast
-                          (string.string-ref
-                            (& text)
-                            (+ offset compiler-backend-literal-prefix-length))
-                          : i64))))))))))))
+            (and (= host.owner i) (> length 1))
+            (for [offset (iterator.range 0 length)]
+              (let
+                [rest : i64 (- length offset)]
+                [widest : i64
+                  (if (< rest compiler-backend-literal-prefix-length)
+                    rest
+                    (- compiler-backend-literal-prefix-length 1))]
+                [bytes : i64 0]
+                (for [width (iterator.range 1 (+ widest 1))]
+                  (set!
+                    bytes
+                    (bit-or
+                      (shl bytes 8)
+                      (cast
+                        (string.string-ref (& text) (+ offset (- width 1)))
+                        : i64)))
+                  (compiler-backend-literal-place-at!
+                    ordered
+                    (& links)
+                    (& filter)
+                    (& keys)
+                    (bit-or bytes (shl width 48))
+                    i
+                    (& text)
+                    offset))
+                (when
+                  (>= rest compiler-backend-literal-prefix-length)
+                  (compiler-backend-literal-place-at!
+                    ordered
+                    (& links)
+                    (& filter)
+                    (& keys)
+                    (bit-or
+                      (shl bytes 8)
+                      (cast
+                        (string.string-ref (& text) (+ offset widest))
+                        : i64))
+                    i
+                    (& text)
+                    offset)))))))))
   (for [i (iterator.range 0 ordered.len)]
     (let
       [entry : CompilerBackendLiteralKey (array-ref ordered.slots i)]
@@ -327,11 +367,195 @@
         (set! parent (array-ref ordered.slots owner)))
       (set!
         (array-ref ordered.slots i)
-        (CompilerBackendLiteralKey
-          entry.slot-address
-          owner
-          offset
-          parent.slot-address)))))
+        (CompilerBackendLiteralKey entry.slot-address owner offset)))))
+
+(define compiler-backend-literal-overlap-limit : i64
+  64)
+
+;; An odd hash base and its inverse modulo 2^64.
+(define compiler-backend-literal-hash-base : i64
+  1099511628211)
+(define compiler-backend-literal-hash-base-inverse : i64
+  -3560570117845248645)
+
+;; True when the last `width` bytes of `left` are the first `width` of `right`.
+(define (compiler-backend-literal-overlaps?
+  [left : (& left str)]
+  [right : (& right str)]
+  [width : i64]) : bool
+  (let
+    [start : i64 (- (string.string-length left) width)]
+    (for [i (iterator.range 0 width)]
+      (unless
+        (= (string.string-ref left (+ start i)) (string.string-ref right i))
+        (return false)))
+    true))
+
+;; Greedy shortest-superstring merge of the owners left after placement,
+;; longest overlap first. At each width, every owner whose tail is free takes
+;; the first owner with a free head whose leading bytes are its trailing ones,
+;; unless that owner heads its own chain. Each round shrinks both hashes by a
+;; byte: a prefix hash drops its top term, and a suffix hash drops its first
+;; byte and multiplies by the base inverse. A chain becomes one unit: its
+;; owners and their payloads move to the chain head, at their offsets in the
+;; merged bytes.
+(define (compiler-backend-literal-chain-owners!
+  [ordered : (&mut ordered literal_vec.Vec)]) : unit
+  (with-arena
+    scratch
+    (let
+      [count : i64 ordered.len]
+      [limit : i64 compiler-backend-literal-overlap-limit]
+      [lengths : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+      [prefixes : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+      [suffixes : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+      [next : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+      [joined : (__tl_dyn-array bool) (__tl_make-array bool count)]
+      [ends : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+      [overlaps : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+      [links : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+      [powers : (__tl_dyn-array i64) (__tl_make-array i64 (+ limit 1))]
+      [heads : backend_i64_i64_map.Map
+        (backend_i64_i64_map.with-capacity count)]
+      [width : i64 limit]
+      (set! (array-ref powers 0) 1)
+      (for [k (iterator.range 1 (+ limit 1))]
+        (set!
+          (array-ref powers k)
+          (* (array-ref powers (- k 1)) compiler-backend-literal-hash-base)))
+      (for [i (iterator.range 0 count)]
+        (let
+          [entry : CompilerBackendLiteralKey (array-ref ordered.slots i)]
+          (set! (array-ref ends i) i)
+          (when
+            (= entry.owner i)
+            (let
+              [text : String (compiler-backend-literal-text entry.slot-address)]
+              [length : i64 (string.string-length (& text))]
+              [start : i64
+                (if (< (- length 1) limit)
+                  (- length 1)
+                  limit)]
+              [prefix : i64 0]
+              [suffix : i64 0]
+              (set! (array-ref lengths i) length)
+              (for [j (iterator.range 0 start)]
+                (+=
+                  prefix
+                  (*
+                    (cast (string.string-ref (& text) j) : i64)
+                    (array-ref powers j)))
+                (+=
+                  suffix
+                  (*
+                    (cast
+                      (string.string-ref (& text) (+ (- length start) j))
+                      : i64)
+                    (array-ref powers j))))
+              (set! (array-ref prefixes i) prefix)
+              (set! (array-ref suffixes i) suffix)))))
+      (while (> width 0)
+        (backend_i64_i64_map.clear-ref! (&mut heads))
+        (for [i (iterator.range 0 count)]
+          (when
+            (and (> (array-ref lengths i) width) (not (array-ref joined i)))
+            (set!
+              (array-ref links i)
+              (backend_i64_i64_map.get-value-or
+                (& heads)
+                (array-ref prefixes i)
+                0))
+            (backend_i64_i64_map.insert-ref!
+              (&mut heads)
+              (array-ref prefixes i)
+              (+ i 1))))
+        (for [i (iterator.range 0 count)]
+          (when
+            (and (> (array-ref lengths i) width) (= (array-ref next i) 0))
+            (let
+              [left : String
+                (compiler-backend-literal-text
+                  (array-ref ordered.slots i).slot-address)]
+              [link : i64
+                (backend_i64_i64_map.get-value-or
+                  (& heads)
+                  (array-ref suffixes i)
+                  0)]
+              (while (> link 0)
+                (let
+                  [j : i64 (- link 1)]
+                  [right : String
+                    (compiler-backend-literal-text
+                      (array-ref ordered.slots j).slot-address)]
+                  (if (and
+                    (not (array-ref joined j))
+                    (!= j (array-ref ends i))
+                    (compiler-backend-literal-overlaps?
+                      (& left)
+                      (& right)
+                      width))
+                    (let
+                      [head : i64 (array-ref ends i)]
+                      [tail : i64 (array-ref ends j)]
+                      (set! (array-ref next i) link)
+                      (set! (array-ref joined j) true)
+                      (set! (array-ref overlaps j) width)
+                      (set! (array-ref ends head) tail)
+                      (set! (array-ref ends tail) head)
+                      (set! link 0))
+                    (set! link (array-ref links j))))))))
+        (for [i (iterator.range 0 count)]
+          (let
+            [length : i64 (array-ref lengths i)]
+            (when
+              (> length width)
+              (let
+                [text : String
+                  (compiler-backend-literal-text
+                    (array-ref ordered.slots i).slot-address)]
+                (set!
+                  (array-ref prefixes i)
+                  (-
+                    (array-ref prefixes i)
+                    (*
+                      (cast (string.string-ref (& text) (- width 1)) : i64)
+                      (array-ref powers (- width 1)))))
+                (set!
+                  (array-ref suffixes i)
+                  (*
+                    (-
+                      (array-ref suffixes i)
+                      (cast (string.string-ref (& text) (- length width)) : i64))
+                    compiler-backend-literal-hash-base-inverse))))))
+        (-= width 1))
+      (let
+        [bases : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        [roots : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        (for [i (iterator.range 0 count)]
+          (when
+            (and
+              (= (array-ref ordered.slots i).owner i)
+              (not (array-ref joined i)))
+            (let
+              [member : i64 i]
+              [base : i64 0]
+              (set! (array-ref roots i) i)
+              (while (> (array-ref next member) 0)
+                (let
+                  [following : i64 (- (array-ref next member) 1)]
+                  (set!
+                    base
+                    (-
+                      (+ base (array-ref lengths member))
+                      (array-ref overlaps following)))
+                  (set! (array-ref roots following) i)
+                  (set! (array-ref bases following) base)
+                  (set! member following))))))
+        (for [i (iterator.range 0 count)]
+          (let
+            [owner : i64 (array-ref ordered.slots i).owner]
+            (+= (array-ref ordered.slots i).offset (array-ref bases owner))
+            (set! (array-ref ordered.slots i).owner (array-ref roots owner))))))))
 
 (define (compiler-backend-literal-records
   [strings : be_state.BackendStringSeq]
@@ -345,7 +569,6 @@
         (CompilerBackendLiteralKey
           (unsafe
             (ptr->int (ptr-offset (__tl_array-data strings.slots) i)))
-          0
           0
           0)))
     (literal_sort.sort! (&mut ordered) compiler-backend-literal-suffix-before?)
@@ -369,73 +592,89 @@
             (string.is-string-prefix-at text candidate offset))
             (set!
               (array-ref ordered.slots i)
-              (CompilerBackendLiteralKey entry.slot-address owner offset 0))
+              (CompilerBackendLiteralKey entry.slot-address owner offset))
             (begin
               (set! owner i)
               (set! owner-address entry.slot-address)
               (set!
                 (array-ref ordered.slots i)
-                (CompilerBackendLiteralKey entry.slot-address i 0 0)))))))
+                (CompilerBackendLiteralKey entry.slot-address i 0)))))))
     (compiler-backend-literal-place-interiors! (&mut ordered))
+    (compiler-backend-literal-chain-owners! (&mut ordered))
     (literal_sort.sort!
       (&mut ordered)
       compiler-backend-literal-position-before?)
     (compiler-backend-literal-build-records (& ordered))))
 
+;; `(Align 1)` opens each unit of shared bytes. A unit's bytes come from the
+;; literal reaching furthest so far: in offset order, each literal starts
+;; inside the bytes of an earlier one.
 (define (compiler-backend-literal-build-records
   [ordered : (& ordered literal_vec.Vec)]) : cobj.CompilerObjectDataRecordList
   (let
     [records : cobj.CompilerObjectDataRecordBuilder
       (cobj.compiler-object-data-record-builder-with-capacity
-        (+ 1 (* 6 ordered.len)))]
+        (+ 1 (* 7 ordered.len)))]
     [owner : i64 -1]
     [cursor : i64 0]
-    [text : String ""]
-    (for [i (iterator.range 0 ordered.len)]
+    [cover : String ""]
+    [cover-offset : i64 0]
+    [cover-end : i64 0]
+    (for [i (iterator.range 0 (+ ordered.len 1))]
       (let
-        [entry : CompilerBackendLiteralKey (array-ref ordered.slots i)]
+        [last : bool (= i ordered.len)]
+        [entry : CompilerBackendLiteralKey
+          (if last
+            (CompilerBackendLiteralKey 0 -1 0)
+            (array-ref ordered.slots i))]
         (when
-          (!= owner entry.owner)
-          (when
-            (>= owner 0)
-            (set!
-              records
-              (cobj.compiler-object-data-record-builder-push
-                records
-                (String
-                  (string.substring
-                    text
-                    cursor
-                    (- (string.string-length text) cursor))))))
-          (set! owner entry.owner)
-          (set! text (compiler-backend-literal-text entry.owner-address))
-          (set! cursor 0))
-        (when
-          (> entry.offset cursor)
+          (and (!= owner entry.owner) (< cursor cover-end))
           (set!
             records
             (cobj.compiler-object-data-record-builder-push
               records
-              (Bytes (string.substring text cursor (- entry.offset cursor)))))
-          (set! cursor entry.offset))
-        (set!
-          records
-          (cobj.compiler-object-data-record-builder-push
-            records
-            (Label
-              (be_facts.compiler-backend-string-data-label
-                (compiler-backend-literal-text entry.slot-address)))))))
-    (when
-      (>= owner 0)
-      (set!
-        records
-        (cobj.compiler-object-data-record-builder-push
-          records
-          (String
-            (string.substring
-              text
-              cursor
-              (- (string.string-length text) cursor))))))
+              (Bytes
+                (string.substring
+                  cover
+                  (- cursor cover-offset)
+                  (- cover-end cursor))))))
+        (unless
+          last
+          (let
+            [text : String (compiler-backend-literal-text entry.slot-address)]
+            [end : i64 (+ entry.offset (string.string-length (& text)))]
+            (when
+              (!= owner entry.owner)
+              (set!
+                records
+                (cobj.compiler-object-data-record-builder-push
+                  records
+                  (Align 1)))
+              (set! owner entry.owner)
+              (set! cursor 0)
+              (set! cover-end 0))
+            (when
+              (> entry.offset cursor)
+              (set!
+                records
+                (cobj.compiler-object-data-record-builder-push
+                  records
+                  (Bytes
+                    (string.substring
+                      cover
+                      (- cursor cover-offset)
+                      (- entry.offset cursor)))))
+              (set! cursor entry.offset))
+            (set!
+              records
+              (cobj.compiler-object-data-record-builder-push
+                records
+                (Label (be_facts.compiler-backend-string-data-label text))))
+            (when
+              (> end cover-end)
+              (set! cover text)
+              (set! cover-offset entry.offset)
+              (set! cover-end end))))))
     (set!
       records
       (cobj.compiler-object-data-record-builder-push records (Align 8)))
@@ -465,8 +704,20 @@
     (be_facts.compiler-backend-escape-string text))
   (byte_buf_core.byte-buf-builder-append-string out "\"\n"))
 
+(define (compiler-backend-literal-section [label : (& label str)]) : String
+  (be_operand.compiler-backend-elf-symbol-section
+    ".rodata"
+    label
+    "\"a\",@progbits"))
+
+;; A closed build drops each unit and header no live code names. A marker
+;; closes each unit, whose labels share its bytes. The alignment between the
+;; two bundles stays a root. A sectioned (ELF library) object gives each unit
+;; and header its own section, so the linker collects it with the code that
+;; names it.
 (define (compiler-backend-emit-string-rodata-into
   [strings : be_state.BackendStringSeq]
+  [sectioned : bool]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (if (= strings.len 0)
     buf
@@ -476,8 +727,8 @@
       [out : byte_buf_core.ByteBufBuilder
         (byte_buf_core.byte-buf-builder-with-capacity 4096)]
       [i : i64 0]
-      ;; A closed build drops each string and header no live code names. The
-      ;; alignment between the two bundles stays a root.
+      [unit-open : bool false]
+      [headers : bool false]
       (byte_buf_core.byte-buf-builder-append-string
         (&mut out)
         "    .section .rodata\n")
@@ -487,20 +738,50 @@
       (while (< i records.len)
         (match (cobj.compiler-object-data-record-list-ref (& records) i)
           [(Align alignment)
-            (byte_buf_core.byte-buf-builder-append-string
-              (&mut out)
-              (runtime_prune.literal-end))
+            (when
+              unit-open
+              (byte_buf_core.byte-buf-builder-append-string
+                (&mut out)
+                (runtime_prune.literal-unit-end))
+              (set! unit-open false))
+            (if (= alignment 1)
+              (begin
+                (when
+                  sectioned
+                  (match (cobj.compiler-object-data-record-list-ref
+                    (& records)
+                    (+ i 1))
+                    [(Label label)
+                      (byte_buf_core.byte-buf-builder-append-string
+                        (&mut out)
+                        (compiler-backend-literal-section (& label)))]
+                    [_ unit]))
+                (set! unit-open true))
+              (begin
+                (set! headers true)
+                (byte_buf_core.byte-buf-builder-append-string
+                  (&mut out)
+                  (runtime_prune.literal-end))
+                (unless
+                  sectioned
+                  (object_asm.compiler-object-asm-render-data-record!
+                    (&mut out)
+                    (Align alignment)))
+                (byte_buf_core.byte-buf-builder-append-string
+                  (&mut out)
+                  (runtime_prune.literal-begin))))]
+          [(Label label)
+            (when
+              (and headers sectioned)
+              (byte_buf_core.byte-buf-builder-append-string
+                (&mut out)
+                (compiler-backend-literal-section (& label)))
+              (byte_buf_core.byte-buf-builder-append-string
+                (&mut out)
+                "    .balign 8\n"))
             (object_asm.compiler-object-asm-render-data-record!
               (&mut out)
-              (Align alignment))
-            (byte_buf_core.byte-buf-builder-append-string
-              (&mut out)
-              (runtime_prune.literal-begin))]
-          [(String text)
-            (compiler-backend-emit-quoted-literal!
-              (&mut out)
-              "    .string \""
-              text)]
+              (Label label))]
           [(Bytes text)
             (compiler-backend-emit-quoted-literal!
               (&mut out)
@@ -516,6 +797,11 @@
       (byte_buf_core.byte-buf-builder-append-string
         (&mut out)
         (runtime_prune.literal-end))
+      (when
+        sectioned
+        (byte_buf_core.byte-buf-builder-append-string
+          (&mut out)
+          "    .section .rodata\n"))
       (text_buf.append
         buf
         (byte_buf_core.byte-buf-builder-finish-string (& out))))))
@@ -2592,12 +2878,35 @@
                 (bit-or features.leaf-mask (bit-and used 96))])))))
     features))
 
+;; `tl_thread_init` maps a zeroed TLS block for the freestanding Linux entry
+;; and each clone worker, then stores the null arena itself. Only a TLS block
+;; that a CRT or the dynamic loader builds copies the `.tdata` initial value,
+;; so a freestanding image keeps the arena word in `.tbss`. It then has no
+;; `.tdata` and no RELRO page to pad for it.
 (define (compiler-backend-runtime-data-for-target
   [target : be_state.CompilerBackendTarget]
-  [features : runtime_common.CompilerBackendRuntimeFeatures]) : String
+  [features : runtime_common.CompilerBackendRuntimeFeatures]
+  [freestanding : bool]) : String
   (match target
     [(be_state.CompilerBackendTarget.Linux)
-      (runtime_linux.compiler-backend-runtime-data features)]
+      (let
+        [data : String (runtime_linux.compiler-backend-runtime-data features)]
+        (if freestanding
+          (string.replace
+            data
+            "    .section .tdata,\"awT\",@progbits
+    .balign 8
+    .globl tl_current_arena
+tl_current_arena:
+    .quad .L_tl_null_arena
+"
+            "    .section .tbss,\"awT\",@nobits
+    .balign 8
+    .globl tl_current_arena
+tl_current_arena:
+    .zero 8
+")
+          data))]
     [(be_state.CompilerBackendTarget.Windows)
       (runtime_windows.compiler-backend-runtime-data features)]))
 
@@ -3528,7 +3837,13 @@
   [crt-entry : bool]) : text_buf.TextBuf
   (let
     [string-buf : text_buf.TextBuf
-      (compiler-backend-emit-string-rodata-into strings globals-buf)]
+      (compiler-backend-emit-string-rodata-into
+        strings
+        (and
+          (be_state.compiler-backend-state-library-object?
+            program-index.backend-state)
+          (be_state.compiler-backend-target-elf? target))
+        globals-buf)]
     (begin
       (cfg
         compile-profile
@@ -3612,7 +3927,12 @@
                         (if emit-entry
                           (compiler-backend-runtime-data-for-target
                             target
-                            runtime-features)
+                            runtime-features
+                            (not
+                              (or
+                                crt-entry
+                                (be_state.compiler-backend-state-emission-target-policy
+                                  program-index.backend-state).shared-object)))
                           ""))]
                     (begin
                       (cfg

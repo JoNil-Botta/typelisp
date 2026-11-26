@@ -31966,6 +31966,41 @@ entry:
 (define (main) : i64
   (+ (div64 42 6) (mod64 22 7)))")
 
+;; An abort row names its path's own NUL-terminated bytes, defined once per
+;; object in a mergeable string section (`.rdata` on COFF), and the lookup
+;; counts the path's length. Each ELF abort kind's jump has its own section.
+(test
+  compiler-backend-abort-row-path-and-kind-sections
+  (match (backend.compiler-backend-emit-source
+    (compiler-backend-scalar-div-mod-source))
+    [(Ok asm)
+      (test.assert-true
+        (asm-has?
+          asm
+          "    .macro .tl_abort_row fn, pc, path, text, location, kind\n    .ifndef \\path\n    .pushsection .rodata.str1.1,\"aMS\",@progbits,1\n\\path:\n    .asciz \"\\text\"\n    .popsection\n    .endif\n"
+          ":\n    .tl_abort_row "
+          ", .L_tl_abort_path_l"
+          "    .section .text..L_tl_abort_\\kind,\"ax\",@progbits\n.L_tl_abort_\\kind:\n    jmp tl_site_\\kind\n"
+          "    movslq 4(%r10), %rax\n    leaq 4(%r10,%rax), %rax\n    movq %rax, (%rdi)\n    movq %rax, %r10\n6:\n    cmpb $0, (%r10)\n    je 7f\n    incq %r10\n    jmp 6b\n7:\n    subq %rax, %r10\n    movq %r10, 8(%rdi)\n    call *%r11\n")
+        "ELF abort rows name NUL-terminated paths and split jumps by kind")
+      (test.assert-true
+        (asm-lacks? asm "movdqu 4(%r10" "    .section .text\n.L_tl_abort_")
+        "no ELF abort path header copy or shared .text jump remains")]
+    [(Err _) (test.assert-true false "ELF abort-row source emits")])
+  (match (backend.compiler-backend-emit-source-for-target
+    (compiler-backend-scalar-div-mod-source)
+    (be_state.CompilerBackendTarget.Windows))
+    [(Ok asm)
+      (test.assert-true
+        (asm-has?
+          asm
+          "    .ifndef \\path\n    .pushsection .rdata,\"dr\"\n\\path:\n    .asciz \"\\text\"\n"
+          "    .section .text\n.L_tl_abort_\\kind:\n    jmp tl_site_\\kind\n"
+          "    movq %rax, (%rcx)\n"
+          "    movq %r10, 8(%rcx)\n")
+        "COFF abort rows name NUL-terminated .rdata paths")]
+    [(Err _) (test.assert-true false "COFF abort-row source emits")]))
+
 (define (compiler-backend-scalar-div-mod-ok?) : bool
   (match (backend.compiler-backend-emit-source
     (compiler-backend-scalar-div-mod-source))

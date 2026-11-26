@@ -68,7 +68,7 @@ tl_oob_abort_at:
   (let
     [program : String
       (str_cat.str-cat
-        "    .tl_abort_row f, .L_pc, .L_path, 4097, tl_oob_abort_at
+        "    .tl_abort_row f, .L_pc, .L_path, \"p.tl\", 4097, tl_oob_abort_at
 "
         (prune.optional-fragment "tl_oob_abort_at:
     ret

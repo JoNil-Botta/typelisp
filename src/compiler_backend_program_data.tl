@@ -20,7 +20,6 @@
 (import compiler_object_asm as object_asm)
 (import stdlib.sort)
 (import stdlib.vector)
-(import compiler_intern as ci)
 (import stdlib.hashmap)
 (import (hashmap.hashmap String i64) as backend_string_i64_map)
 (import (hashmap.hashmap i64 i64) as backend_i64_i64_map)
@@ -137,35 +136,6 @@
         (be_state.compiler-backend-program-collections-new-with-iag iag)
         globals)]
     (compiler-backend-collect-function-collections seeded functions)))
-
-(define (compiler-backend-collect-source-path-strings
-  [backend-state : be_state.CompilerBackendState]
-  [collections : be_state.CompilerBackendProgramCollections]
-  [spans : compiler_ir_types.CompilerSourceSpans]) : be_state.CompilerBackendProgramCollections
-  (match spans
-    [(Spans _ instr-entries _ _)
-      (let
-        [slots : (__tl_dyn-array
-          compiler_ir_types.CompilerSourceSpansInstrEntry)
-          instr-entries.slots]
-        [count : i64 instr-entries.len]
-        [out : be_state.CompilerBackendProgramCollections collections]
-        (for [index (iterator.range 0 count)]
-          (let
-            [span-entry : compiler_ir_types.CompilerSourceSpansInstrEntry
-              (array-ref slots index)]
-            [path-id : i64 span-entry.path-id]
-            (when
-              (> path-id 0)
-              (set!
-                out
-                (be_state.compiler-backend-program-collections-add-string
-                  out
-                  (compiler_ir_types.compiler-debug-path-remap
-                    (ci.intern-compat-state-str
-                      (be_state.compiler-backend-state-intern backend-state)
-                      path-id)))))))
-        out)]))
 
 ;; Reverse-byte descending order places every terminated suffix after an
 ;; owner. A suffix of any earlier value is also a suffix of the current owner:
@@ -3702,7 +3672,6 @@
   [target : be_state.CompilerBackendTarget]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
-  [spans : compiler_ir_types.CompilerSourceSpans]
   [program-index : be_state.CompilerBackendProgramIndex]) : ResultCompilerBackendGlobalsAndCollections
   (let
     [census : be_state.CompilerBackendIagCensusCell
@@ -3712,13 +3681,10 @@
         (be_state.compiler-backend-global-shared-view globals)
         (be_state.compiler-backend-global-shared-view functions))]
     [collections : be_state.CompilerBackendProgramCollections
-      (compiler-backend-collect-source-path-strings
-        program-index.backend-state
-        (compiler-backend-collect-program-collections-with-iag
-          (be_state.compiler-backend-global-shared-view globals)
-          functions
-          (be_state.compiler-backend-global-shared-view census))
-        spans)]
+      (compiler-backend-collect-program-collections-with-iag
+        (be_state.compiler-backend-global-shared-view globals)
+        functions
+        (be_state.compiler-backend-global-shared-view census))]
     ;; W3(c): the walk above is the whole-program cell-writer scan. Publishing
     ;; here -- before any function is planned -- is what makes a frozen global's
     ;; read rematerialisable in the allocator.

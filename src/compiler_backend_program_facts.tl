@@ -2110,7 +2110,7 @@
     (!= trap-label (compiler_ir_types.compiler-ir-label-none))))
 
 (define (compiler-backend-switch-cases-target-phi?
-  [targets : be_state.BackendSymbolSeq]
+  [targets : (& targets be_state.BackendSymbolSeq)]
   [cases : (& cases compiler_ir_types.CompilerIrSwitchCaseSeq)]) : bool
   (for [index (iterator.range 0 cases.len)]
     (match (compiler_ir_types.compiler-ir-switch-case-seq-borrow cases index)
@@ -2120,8 +2120,8 @@
           (return true))]))
   false)
 
-(define (compiler-backend-switch-target-phi?
-  [targets : be_state.BackendSymbolSeq]
+(define (compiler-backend-switch-target-phi-borrowed?
+  [targets : (& targets be_state.BackendSymbolSeq)]
   [cases : (& cases compiler_ir_types.CompilerIrSwitchCaseSeq)]
   [default-label : i64]) : bool
   (if (= targets.len 0)
@@ -2129,6 +2129,12 @@
     (or
       (be_state.compiler-backend-symbol-list-contains-id? targets default-label)
       (compiler-backend-switch-cases-target-phi? targets cases))))
+
+(define (compiler-backend-switch-target-phi?
+  [targets : be_state.BackendSymbolSeq]
+  [cases : (& cases compiler_ir_types.CompilerIrSwitchCaseSeq)]
+  [default-label : i64]) : bool
+  (compiler-backend-switch-target-phi-borrowed? (& targets) cases default-label))
 
 ;; A switch case value spells part of the edge block's label, and a case value
 ;; may be NEGATIVE: a dense switch is built from whatever integers the arms
@@ -2157,28 +2163,156 @@
         "_switch_case_"
         (compiler-backend-switch-case-tag-text tag)))))
 
-(define compiler-backend-compact-switch-max-instrs : i64
-  1500)
+;; Conservative x86-64 machine-code byte upper bound for emitting one function
+;; with `-Os` 2-byte signed intra-function switch-table offsets (signed 16-bit
+;; range ±32767 B). Staying at or below 24000 B leaves >8 KB headroom for
+;; prologue, epilogue, stack probe, cold stubs, emergency-scavenge restores,
+;; and block alignment.
+(define compiler-backend-compact-switch-max-bytes : i64
+  24000)
 
-(define (compiler-backend-block-seq-instr-count
-  [blocks : (& compiler_ir_types.CompilerIrBlockSeq)]) : i64
-  (let
-    [count : i64 0]
-    [n : i64 (compiler_ir_types.compiler-ir-block-seq-count blocks)]
-    (for [i (iterator.range 0 n)]
-      (match (compiler_ir_types.compiler-ir-block-seq-ref blocks i)
-        [(Block _ instrs)
-          (+= count (compiler_ir_types.compiler-ir-instr-seq-count instrs))]))
-    count))
+(define (compiler-backend-compact-switch-call-byte-bound [arg-count : i64]) : i64
+  (if (> arg-count 1500)
+    (+ compiler-backend-compact-switch-max-bytes 1)
+    (+ (* arg-count 16) 96)))
+
+(define (compiler-backend-compact-switch-simd-byte-bound [lanes : i64]) : i64
+  (if (> lanes 256)
+    (+ compiler-backend-compact-switch-max-bytes 1)
+    (+ (* lanes 48) 64)))
+
+(define (compiler-backend-compact-switch-instr-byte-bound
+  [instr : (& compiler_ir_types.CompilerIrInstr)]
+  [max-phi-count : i64]) : i64
+  (match instr
+    [(CopyBytes _ _ size)
+      (cond
+        [(>= size 8000) (+ compiler-backend-compact-switch-max-bytes 1)]
+        [(> size 0) (+ (* size 3) 96)]
+        [else 48])]
+    [(or (Switch _ _ cases _) (TotalEnumSwitch _ _ cases _ _))
+      (let
+        [case-count : i64
+          (compiler_ir_types.compiler-ir-switch-case-seq-count cases)]
+        (if (or (> case-count 1000) (> max-phi-count 1000))
+          (+ compiler-backend-compact-switch-max-bytes 1)
+          (+ 128 (* (+ case-count 1) (+ (* max-phi-count 24) 64)))))]
+    [(Jump _)
+      (if (> max-phi-count 1000)
+        (+ compiler-backend-compact-switch-max-bytes 1)
+        (+ 48 (* max-phi-count 24)))]
+    [(or (Branch _ _ _) (TotalEnumBranch _ _ _))
+      (if (> max-phi-count 1000)
+        (+ compiler-backend-compact-switch-max-bytes 1)
+        (+ 64 (* max-phi-count 48)))]
+    [(BoundsCheck _ _ _) 96]
+    [(or (Syscall _ args) (Call _ _ args _) (CallIndirect _ _ args _)
+         (CallIndirectC _ _ args _) (TailCall _ args _)
+         (TailCallIndirect _ args _))
+      (compiler-backend-compact-switch-call-byte-bound
+        (compiler_ir_types.compiler-ir-call-args-count args))]
+    [(CallCAbiStoreResult payload-box)
+      (+
+        (compiler-backend-compact-switch-call-byte-bound
+          (compiler_ir_types.compiler-ir-call-args-count
+            (& (deref payload-box).args)))
+        32)]
+    [(CallIndirectCAbiStoreResult payload-box)
+      (+
+        (compiler-backend-compact-switch-call-byte-bound
+          (compiler_ir_types.compiler-ir-call-args-count
+            (& (deref payload-box).args)))
+        32)]
+    [(SpmdCall payload-box)
+      (let
+        [arg-count : i64 (deref payload-box).args.len]
+        [lanes : i64 (deref payload-box).lanes]
+        (if (or (> arg-count 500) (> lanes 256))
+          (+ compiler-backend-compact-switch-max-bytes 1)
+          (+ (* arg-count 32) (* lanes 64) 256)))]
+    [(or (LaneId _ lanes _) (Splat _ _ lanes _) (VectorReduce _ _ _ lanes _)
+         (MaskBinOp _ _ _ _ lanes) (MaskNot _ _ lanes) (MaskReduce _ _ _ lanes)
+         (VectorLoad _ _ _ lanes _) (TailMask _ _ _ lanes))
+      (compiler-backend-compact-switch-simd-byte-bound lanes)]
+    [(VectorBinOp payload-box)
+      (compiler-backend-compact-switch-simd-byte-bound
+        (deref payload-box).lanes)]
+    [(VectorPrefix payload-box)
+      (compiler-backend-compact-switch-simd-byte-bound
+        (deref payload-box).lanes)]
+    [(VectorCompare payload-box)
+      (compiler-backend-compact-switch-simd-byte-bound
+        (deref payload-box).lanes)]
+    [(Select payload-box)
+      (compiler-backend-compact-switch-simd-byte-bound
+        (deref payload-box).lanes)]
+    [(VectorStore payload-box)
+      (compiler-backend-compact-switch-simd-byte-bound
+        (deref payload-box).lanes)]
+    [(PredicatedStore payload-box)
+      (compiler-backend-compact-switch-simd-byte-bound
+        (deref payload-box).lanes)]
+    [(PredicatedLoad payload-box)
+      (compiler-backend-compact-switch-simd-byte-bound
+        (deref payload-box).lanes)]
+    [(GatherLoad payload-box)
+      (compiler-backend-compact-switch-simd-byte-bound
+        (deref payload-box).lanes)]
+    [(VectorShuffle payload-box)
+      (compiler-backend-compact-switch-simd-byte-bound
+        (deref payload-box).lanes)]
+    [_ 48]))
 
 (define (compiler-backend-compact-switch-blocks?
   [backend-state : be_state.CompilerBackendState]
   [blocks : (& compiler_ir_types.CompilerIrBlockSeq)]) : bool
-  (and
-    (be_state.compiler-backend-state-optimize-for-size? backend-state)
-    (<=
-      (compiler-backend-block-seq-instr-count blocks)
-      compiler-backend-compact-switch-max-instrs)))
+  (if (not (be_state.compiler-backend-state-optimize-for-size? backend-state))
+    false
+    (let
+      [n : i64 (compiler_ir_types.compiler-ir-block-seq-count blocks)]
+      [has-switch? : bool false]
+      [max-phi-count : i64 0]
+      (for [i (iterator.range 0 n)]
+        (match (compiler_ir_types.compiler-ir-block-seq-borrow blocks i)
+          [(Block _ instrs)
+            (let
+              [block-phis : i64 0]
+              [m : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
+              (for [j (iterator.range 0 m)]
+                (match (compiler_ir_types.compiler-ir-instr-seq-borrow instrs j)
+                  [(Phi _ _ _) (+= block-phis 1)]
+                  [(or (Switch _ _ _ _) (TotalEnumSwitch _ _ _ _ _))
+                    (set! has-switch? true)]
+                  [_ unit]))
+              (when
+                (> block-phis max-phi-count)
+                (set! max-phi-count block-phis)))]))
+      (if (not has-switch?)
+        false
+        (let
+          [bound : i64 0]
+          (for [i (iterator.range 0 n)]
+            (+= bound 16)
+            (when
+              (> bound compiler-backend-compact-switch-max-bytes)
+              (return false))
+            (match (compiler_ir_types.compiler-ir-block-seq-borrow blocks i)
+              [(Block _ instrs)
+                (let
+                  [m : i64
+                    (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
+                  (for [j (iterator.range 0 m)]
+                    (+=
+                      bound
+                      (compiler-backend-compact-switch-instr-byte-bound
+                        (compiler_ir_types.compiler-ir-instr-seq-borrow
+                          instrs
+                          j)
+                        max-phi-count))
+                    (when
+                      (> bound compiler-backend-compact-switch-max-bytes)
+                      (return false))))]))
+          true)))))
 
 (define (compiler-backend-switch-table-label
   [function : String]
@@ -2205,11 +2339,11 @@
           "")))))
 
 (define (compiler-backend-emit-switch-table-cases-into
-  [function : String]
+  [function : (& f str)]
   [current-label : i64]
   [retarget-phi-edges : bool]
-  [targets : be_state.BackendSymbolSeq]
-  [cases : compiler_ir_types.CompilerIrSwitchCaseSeq]
+  [targets : (& t be_state.BackendSymbolSeq)]
+  [cases : (& c compiler_ir_types.CompilerIrSwitchCaseSeq)]
   [absolute : bool]
   [compact : bool]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
@@ -2218,10 +2352,10 @@
     [rel-base : String
       (if compact
         (compiler-backend-switch-base-label
-          (string.copy (& function))
+          (string.copy function)
           current-label)
         (compiler-backend-switch-table-label
-          (string.copy (& function))
+          (string.copy function)
           current-label))]
     [entry-prefix : String
       (if compact
@@ -2239,7 +2373,7 @@
                   (text_buf.append
                     (text_buf.append out (string.copy (& entry-prefix)))
                     (be_operand.compiler-backend-asm-label
-                      (string.copy (& function))
+                      (string.copy function)
                       (if (and
                         retarget-phi-edges
                         (be_state.compiler-backend-symbol-list-contains-id?
@@ -2264,16 +2398,16 @@
 ;; Otherwise emit 4-byte entries: absolute case addresses for non-PIC ELF, or
 ;; case-minus-table differences for every other code model.
 (define (compiler-backend-emit-switch-table
-  [function : String]
+  [function : (& f str)]
   [current-label : i64]
-  [cases : compiler_ir_types.CompilerIrSwitchCaseSeq]
+  [cases : (& c compiler_ir_types.CompilerIrSwitchCaseSeq)]
   [retarget-phi-edges : bool]
-  [targets : be_state.BackendSymbolSeq]
+  [targets : (& t be_state.BackendSymbolSeq)]
   [absolute : bool]
   [compact : bool]) : String
   (text_buf.render
     (compiler-backend-emit-switch-table-cases-into
-      (string.copy (& function))
+      function
       current-label
       retarget-phi-edges
       targets
@@ -2287,74 +2421,68 @@
             (if compact
               "    .balign 2\n"
               "    .balign 4\n"))
-          (compiler-backend-switch-table-label function current-label))
+          (compiler-backend-switch-table-label
+            (string.copy function)
+            current-label))
         ":\n"))))
 
 (define (compiler-backend-emit-switch-tables-instr-seq-into
-  [function : String]
+  [function : (& f str)]
   [current-label : i64]
-  [targets : be_state.BackendSymbolSeq]
+  [targets : (& t be_state.BackendSymbolSeq)]
   [absolute : bool]
   [compact : bool]
   [instrs : (& compiler_ir_types.CompilerIrInstrSeq)]
-  [index : i64]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
-    buf
-    (compiler-backend-emit-switch-tables-instr-seq-into
-      (string.copy (& function))
-      current-label
-      (be_state.compiler-backend-global-shared-view targets)
-      absolute
-      compact
-      instrs
-      (+ index 1)
-      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+  (let
+    [out : text_buf.TextBuf buf]
+    [n : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
+    (for [index (iterator.range 0 n)]
+      (match (compiler_ir_types.compiler-ir-instr-seq-borrow instrs index)
         [(or (Switch _ _ cases default-label)
              (TotalEnumSwitch _ _ cases default-label _))
-          (text_buf.append
-            buf
-            (compiler-backend-emit-switch-table
-              function
-              current-label
-              (be_state.compiler-backend-global-shared-view cases)
-              (compiler-backend-switch-target-phi?
-                (be_state.compiler-backend-global-shared-view targets)
+          (set!
+            out
+            (text_buf.append
+              out
+              (compiler-backend-emit-switch-table
+                function
+                current-label
                 cases
-                default-label)
-              targets
-              absolute
-              compact))]
-        [_ buf]))))
+                (compiler-backend-switch-target-phi-borrowed?
+                  targets
+                  cases
+                  default-label)
+                targets
+                absolute
+                compact)))]
+        [_ unit]))
+    out))
 
 (define (compiler-backend-emit-switch-tables-seq-into
-  [function : String]
-  [targets : be_state.BackendSymbolSeq]
+  [function : (& f str)]
+  [targets : (& t be_state.BackendSymbolSeq)]
   [absolute : bool]
   [compact : bool]
   [blocks : (& compiler_ir_types.CompilerIrBlockSeq)]
-  [index : i64]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (if (>= index (compiler_ir_types.compiler-ir-block-seq-count blocks))
-    buf
-    (match (compiler_ir_types.compiler-ir-block-seq-ref blocks index)
-      [(Block label instrs)
-        (compiler-backend-emit-switch-tables-seq-into
-          (string.copy (& function))
-          (be_state.compiler-backend-global-shared-view targets)
-          absolute
-          compact
-          blocks
-          (+ index 1)
-          (compiler-backend-emit-switch-tables-instr-seq-into
-            function
-            label
-            targets
-            absolute
-            compact
-            instrs
-            0
-            buf))])))
+  (let
+    [out : text_buf.TextBuf buf]
+    [n : i64 (compiler_ir_types.compiler-ir-block-seq-count blocks)]
+    (for [index (iterator.range 0 n)]
+      (match (compiler_ir_types.compiler-ir-block-seq-borrow blocks index)
+        [(Block label instrs)
+          (set!
+            out
+            (compiler-backend-emit-switch-tables-instr-seq-into
+              function
+              label
+              targets
+              absolute
+              compact
+              instrs
+              out))]))
+    out))
 
 ;; Executables share a section for their switch tables. Library objects
 ;; split the tables so a linker can collect each function independently.
@@ -2424,12 +2552,11 @@
                     (let
                       [tables
                         (compiler-backend-emit-switch-tables-seq-into
-                          scope
-                          targets
+                          (& scope)
+                          (& targets)
                           absolute
                           compact?
                           (& seq)
-                          0
                           (text_buf.empty))]
                       (if (text_buf.empty? (& tables))
                         buf
@@ -2456,22 +2583,20 @@
                             (text_buf.render tables)))))
                     (if (= want-rodata? current-rodata?)
                       (compiler-backend-emit-switch-tables-seq-into
-                        scope
-                        targets
+                        (& scope)
+                        (& targets)
                         absolute
                         compact?
                         (& seq)
-                        0
                         buf)
                       (let
                         [tables
                           (compiler-backend-emit-switch-tables-seq-into
-                            scope
-                            targets
+                            (& scope)
+                            (& targets)
                             absolute
                             compact?
                             (& seq)
-                            0
                             (text_buf.empty))]
                         (if (text_buf.empty? (& tables))
                           buf

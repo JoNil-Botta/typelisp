@@ -18649,6 +18649,178 @@ f:
     (compiler-backend-total-switch-compact-os-asm-ok?)
     "-Os emits 2-byte intra-function relative switch tables for small functions"))
 
+(define (compiler-backend-compact-os-large-copy-fallback-program) : ir.CompilerIrProgram
+  (Program
+    (ir.compiler-ir-global-seq-empty)
+    (ir.compiler-ir-function-seq-prepend
+      (&
+        (Function
+          (ci.intern "main")
+          (ir.compiler-ir-param-seq-empty)
+          (I64)
+          4
+          (ir.compiler-ir-blocks-with-tail
+            (compiler-backend-total-switch-return-block
+              (ir.compiler-ir-label "one")
+              1
+              (compiler-backend-total-switch-return-block
+                (ir.compiler-ir-label "two")
+                2
+                (compiler-backend-total-switch-return-block
+                  (ir.compiler-ir-label "three")
+                  3
+                  (compiler-backend-total-switch-return-block
+                    (ir.compiler-ir-label "four")
+                    4
+                    (compiler-backend-total-switch-return-block
+                      (ir.compiler-ir-label "five")
+                      5
+                      (ir.compiler-ir-blocks
+                        (ir.CompilerIrBlock.Block
+                          (ir.compiler-ir-label "zero")
+                          (compiler-backend-test-instr-seq-prepend
+                            (CopyBytes (Var 1) (Var 2) 8192)
+                            (compiler-backend-test-instr-seq-prepend
+                              (Return (Some (I64 0)))
+                              (ir.compiler-ir-instr-seq-empty))))
+                        (compiler-backend-total-switch-trap-test-block)))))))
+            (ir.CompilerIrBlock.Block
+              (ir.compiler-ir-label "entry")
+              (compiler-backend-test-instr-seq-prepend
+                (TotalEnumSwitch
+                  (Var 0)
+                  0
+                  (compiler-backend-total-switch-test-cases)
+                  (ir.compiler-ir-label "match_total_trap")
+                  (ir.compiler-ir-label "match_total_trap"))
+                (ir.compiler-ir-instr-seq-empty))))
+          Ordinary))
+      (& (ir.compiler-ir-function-seq-empty)))
+    (ir.compiler-ir-extern-seq-empty)
+    (ir.CompilerIrReturnStorageAuthority.None)))
+
+(define (compiler-backend-compact-os-switch-phi-fallback-program) : ir.CompilerIrProgram
+  (let
+    [case-builder : ir.CompilerIrSwitchCaseBuilder
+      (ir.compiler-ir-switch-case-builder-with-capacity 50)]
+    [join-label : i64 (ir.compiler-ir-label "join")]
+    [entry-label : i64 (ir.compiler-ir-label "entry")]
+    (for [i (iterator.range 0 50)]
+      (ir.compiler-ir-switch-case-builder-push!
+        (&mut case-builder)
+        (ir.CompilerIrSwitchCase.Case i join-label)))
+    (let
+      [join-instrs : ir.CompilerIrInstrSeq
+        (compiler-backend-test-instr-seq-prepend
+          (Return (Some (Var 1)))
+          (ir.compiler-ir-instr-seq-empty))]
+      (for [i (iterator.range 0 20)]
+        (set!
+          join-instrs
+          (compiler-backend-test-instr-seq-prepend
+            (Phi
+              (+ i 1)
+              (ir.compiler-ir-phi-input-seq-prepend
+                (I64 (+ i 1))
+                entry-label
+                (& (ir.compiler-ir-phi-input-seq-empty)))
+              (I64))
+            join-instrs)))
+      (Program
+        (ir.compiler-ir-global-seq-empty)
+        (ir.compiler-ir-function-seq-prepend
+          (&
+            (Function
+              (ci.intern "main")
+              (ir.compiler-ir-param-seq-empty)
+              (I64)
+              22
+              (ir.compiler-ir-blocks
+                (ir.CompilerIrBlock.Block
+                  entry-label
+                  (compiler-backend-test-instr-seq-prepend
+                    (Switch
+                      (Var 0)
+                      0
+                      (ir.compiler-ir-switch-case-builder-to-seq case-builder)
+                      join-label)
+                    (ir.compiler-ir-instr-seq-empty)))
+                (ir.CompilerIrBlock.Block join-label join-instrs))
+              Ordinary))
+          (& (ir.compiler-ir-function-seq-empty)))
+        (ir.compiler-ir-extern-seq-empty)
+        (ir.CompilerIrReturnStorageAuthority.None)))))
+
+(define (compiler-backend-total-switch-compact-os-fallback-asm-ok?) : bool
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [state-copy : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [state-phi : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    (be_state.compiler-backend-state-set-optimize-for-size! state-copy true)
+    (be_state.compiler-backend-state-set-optimize-for-size! state-phi true)
+    (let
+      [copy-ok : bool
+        (match (backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+          state-copy
+          (ast.ast-node-pool-context-capture-active)
+          (compiler-backend-compact-os-large-copy-fallback-program)
+          (be_state.CompilerBackendTarget.Linux)
+          (Scalar)
+          (ir.compiler-source-spans-empty)
+          true
+          false
+          (profile_state.compiler-profile-state-new))
+          [(Ok asm)
+            (and
+              (=
+                (backend.compiler-backend-string-count asm "    .long .Lf0_")
+                6)
+              (=
+                (backend.compiler-backend-string-count asm "    .word .Lf0_")
+                0)
+              (asm-has?
+                asm
+                "    .section .rodata\n    .balign 4\n.Lf0_entry_switch_table:\n")
+              (asm-lacks? asm "_switch_base"))]
+          [(Err _) false])]
+      [phi-ok : bool
+        (match (backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+          state-phi
+          (ast.ast-node-pool-context-capture-active)
+          (compiler-backend-compact-os-switch-phi-fallback-program)
+          (be_state.CompilerBackendTarget.Linux)
+          (Scalar)
+          (ir.compiler-source-spans-empty)
+          true
+          false
+          (profile_state.compiler-profile-state-new))
+          [(Ok asm)
+            (and
+              (=
+                (backend.compiler-backend-string-count
+                  asm
+                  "    .long .Lf0_entry_switch_case_")
+                50)
+              (=
+                (backend.compiler-backend-string-count asm "    .word .Lf0_")
+                0)
+              (asm-has?
+                asm
+                "    .section .rodata\n    .balign 4\n.Lf0_entry_switch_table:\n")
+              (asm-lacks? asm "_switch_base"))]
+          [(Err _) false])]
+      (and copy-ok phi-ok))))
+
+(test
+  backend-total-switch-compact-os-fallback
+  (test.assert-true
+    (compiler-backend-total-switch-compact-os-fallback-asm-ok?)
+    "-Os falls back to 4-byte switch tables when CopyBytes or switch+phi worst-case byte bound exceeds 16-bit headroom"))
+
 (define (compiler-backend-total-switch-object-image-ok?) : bool
   (match (be_object.compiler-backend-emit-program-object-image-linux
     (compiler-backend-total-switch-test-program)

@@ -71956,12 +71956,17 @@
   (opt-bce-trace-note! reason)
   (No))
 
-(define (opt-bce-trace-refuse-result
-  [reason : i64]
-  [blocks : ir.CompilerIrBlockList]
-  [frame : i64]) : OptUnrollResult
+(defenum OptBceApplyHit
+  (No)
+  (Some ir.CompilerIrBlockList i64))
+
+(defenum OptBceScanHit
+  (No)
+  (Some ir.CompilerIrBlockList i64 i64))
+
+(define (opt-bce-trace-refuse-apply [reason : i64]) : OptBceApplyHit
   (opt-bce-trace-note! reason)
-  (Result blocks frame false))
+  (No))
 
 (define (opt-bce-trace-refuse-guard [reason : i64]) : OptBceVersionGuardOut
   (opt-bce-trace-note! reason)
@@ -72054,26 +72059,57 @@
 ;; The multi-block scan's emission site. The loop's own check and block counts
 ;; are walked INSIDE the guard, so they cost a compile without the flag
 ;; nothing at all.
+(define (opt-bce-label-set-copy [set : (& OptLabelSet)]) : OptLabelSet
+  (match set
+    [(Nil) (Nil)]
+    [(Dense h l) (Dense h l)]))
+
 (define (opt-bce-trace-mb-loop! [loop : (& OptNaturalLoop)] [versioned? : bool]) : unit
   (if (and
     (not (= opt-bce-trace-reason (opt-bce-reason-none)))
     compiler-opt-debug-trace-passes
     (not compiler-opt-debug-suppressed?))
-    (match (owned_view.compiler-owned-reference-shared-view loop)
+    (match loop
       [(Loop header _ body _ _)
         (io.print-error
           (opt-bce-trace-line
             header
             versioned?
             (opt-bce-mb-body-checks
-              (ir.compiler-ir-block-list-view body.blocks)
+              (ir.compiler-ir-block-list-view (& body.blocks))
               0)
-            (opt-label-count body.labels)))])
+            (opt-label-count (opt-bce-label-set-copy (& body.labels)))))])
     unit))
 
-(defenum OptBceVersionGuardAcc
-  (No)
-  (Some ir.CompilerIrInstrBuilder ir.CompilerIrValueSeq bool))
+(defstruct OptBceGuardBuf
+  (instrs ir.CompilerIrInstrBuilder)
+  (values ir.CompilerIrValueBuilder)
+  (counter-seen bool)
+  (ok? bool))
+
+(defstruct OptBceGuardMark
+  (ilen i64)
+  (vlen i64)
+  (counter-seen bool)
+  (ok? bool))
+
+(define (opt-bce-guard-buf-new) : OptBceGuardBuf
+  (OptBceGuardBuf
+    (ir.compiler-ir-instr-builder-new)
+    (ir.compiler-ir-value-builder-with-capacity 0)
+    false
+    true))
+
+(define (opt-bce-guard-mark [acc : (& OptBceGuardBuf)]) : OptBceGuardMark
+  (OptBceGuardMark acc.instrs.len acc.values.len acc.counter-seen acc.ok?))
+
+(define (opt-bce-guard-restore!
+  [acc : (&mut OptBceGuardBuf)]
+  [mark : OptBceGuardMark]) : unit
+  (set! (deref acc).instrs.len mark.ilen)
+  (set! (deref acc).values.len mark.vlen)
+  (set! (deref acc).counter-seen mark.counter-seen)
+  (set! (deref acc).ok? mark.ok?))
 
 (defenum OptBceVersionGuardResult
   (No)
@@ -72088,6 +72124,17 @@
 
 (define (opt-bce-version-keep-new [index-bound : i64]) : OptBceVersionKeep
   (OptBceVersionKeep (__tl_make-array bool index-bound) 0))
+
+(define (opt-bce-version-keep-add!
+  [keep : (&mut OptBceVersionKeep)]
+  [index : i64]) : unit
+  (when
+    (and
+      (>= index 0)
+      (< index (array-length keep.present))
+      (not (array-ref keep.present index)))
+    (set! (array-ref keep.present index) true)
+    (set! keep.count (+ keep.count 1))))
 
 (define (opt-bce-version-keep-add [keep : OptBceVersionKeep] [index : i64]) : OptBceVersionKeep
   (if (and
@@ -72138,7 +72185,7 @@
 ;; checks), the kept-check set, and how many checks derived -- partial
 ;; versioning requires at least one derivable check to make cloning pay.
 (defstruct OptBceVersionDerive
-  (guard OptBceVersionGuardAcc)
+  (guard OptBceGuardBuf)
   (keep OptBceVersionKeep)
   (derived i64))
 
@@ -72199,21 +72246,6 @@
     [next : i64 (array-ref cell 0)]
     (set! (array-ref cell 0) (+ next 1))
     next))
-
-(define (opt-bce-version-builder-push!
-  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
-  [instr : (& ir.CompilerIrInstr)]) : unit
-  (ir.compiler-ir-instr-builder-push!
-    builder
-    (owned_view.compiler-owned-reference-shared-view instr)))
-
-(define (opt-bce-version-builder-push
-  [builder-input : ir.CompilerIrInstrBuilder]
-  [instr : (& ir.CompilerIrInstr)]) : ir.CompilerIrInstrBuilder
-  (let
-    [builder : ir.CompilerIrInstrBuilder builder-input]
-    (opt-bce-version-builder-push! (&mut builder) instr)
-    builder))
 
 ;; A conjunct the guard builder can decide before emitting it, and which
 ;; therefore costs nothing at run time. Two shapes reach the builder often
@@ -72332,41 +72364,37 @@
 (define (opt-bce-version-cond-typed
   [cell : (&mut cell (__tl_dyn-array i64))]
   [op : ir.CompilerIrBinOp]
-  [lhs : ir.CompilerIrValue]
-  [rhs : ir.CompilerIrValue]
+  [lhs : (& ir.CompilerIrValue)]
+  [rhs : (& ir.CompilerIrValue)]
   [ty : ast.AstType]
-  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
-  (match acc
-    [(No) (No)]
-    [(Some instrs values counter-seen)
-      (match (opt-bce-version-cond-fold op lhs rhs ty)
-        ;; A conjunct that always holds states nothing; a conjunct that never
-        ;; holds makes the whole guard unenterable.
-        [(True) (Some instrs values counter-seen)]
-        [(False) (No)]
-        [(Unknown)
-          (let
-            [dst : i64 (opt-bce-version-alloc-var cell)]
-            (Some
-              (opt-bce-version-builder-push
-                instrs
-                (& (BinOp dst op lhs rhs ty)))
-              (ir.compiler-ir-value-seq-prepend (& (Var dst)) (& values))
-              counter-seen))])]))
+  [acc : (&mut OptBceGuardBuf)]) : unit
+  (when
+    acc.ok?
+    (match (opt-bce-version-cond-fold (& op) lhs rhs (& ty))
+      ;; A conjunct that always holds states nothing; a conjunct that never
+      ;; holds makes the whole guard unenterable.
+      [(True) unit]
+      [(False) (set! acc.ok? false)]
+      [(Unknown)
+        (let
+          [dst : i64 (opt-bce-version-alloc-var cell)]
+          (ir.compiler-ir-instr-builder-push!
+            (&mut acc.instrs)
+            (BinOp
+              dst
+              op
+              (ir.compiler-ir-clone-value lhs)
+              (ir.compiler-ir-clone-value rhs)
+              ty))
+          (ir.compiler-ir-value-builder-push! (&mut acc.values) (Var dst)))])))
 
 (define (opt-bce-version-cond
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [op : (& ir.CompilerIrBinOp)]
+  [op : ir.CompilerIrBinOp]
   [lhs : (& ir.CompilerIrValue)]
   [rhs : (& ir.CompilerIrValue)]
-  [acc : (& OptBceVersionGuardAcc)]) : OptBceVersionGuardAcc
-  (opt-bce-version-cond-typed
-    cell
-    (owned_view.compiler-owned-reference-shared-view op)
-    (owned_view.compiler-owned-reference-shared-view lhs)
-    (owned_view.compiler-owned-reference-shared-view rhs)
-    (I64)
-    (owned_view.compiler-owned-reference-shared-view acc)))
+  [acc : (&mut OptBceGuardBuf)]) : unit
+  (opt-bce-version-cond-typed cell op lhs rhs (I64) acc))
 
 ;; The literal a guard operand really is, when the loop was handed a COPY of a
 ;; constant. Rotation routinely seeds a counter phi from a `mov 0` in the
@@ -72405,43 +72433,49 @@
           [else (Some (* a b))]))]
     [_ (No)]))
 
-(define (opt-bce-version-literal-of
+(define (opt-bce-version-literal-i64
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [value : (& value ir.CompilerIrValue)]
-  [fuel : i64]) : ir.CompilerIrValue
+  [fuel : i64]) : OptBceVersionKSum
   (match value
+    [(I64 k) (Some k)]
     [(Var var)
       (if (<= fuel 0)
-        (owned_view.compiler-owned-reference-shared-view value)
+        (No)
         (match (opt-bce-mb-find-def (ir.compiler-ir-block-list-view blocks) var)
-          [(No) (owned_view.compiler-owned-reference-shared-view value)]
+          [(No) (No)]
           [(Some instr)
             (match instr
               [(Mov _ src ty)
                 (if (opt-affine-64bit-type? ty)
                   (match (& src)
-                    [(I64 k) (I64 k)]
-                    [(Var _) (opt-bce-version-literal-of blocks src (- fuel 1))]
-                    [_ (owned_view.compiler-owned-reference-shared-view value)])
-                  (owned_view.compiler-owned-reference-shared-view value))]
+                    [(I64 k) (Some k)]
+                    [(Var _)
+                      (opt-bce-version-literal-i64 blocks (& src) (- fuel 1))]
+                    [_ (No)])
+                  (No))]
               [(BinOp _ op lhs rhs ty)
                 (if (not (opt-affine-64bit-type? ty))
-                  (owned_view.compiler-owned-reference-shared-view value)
-                  (match (opt-bce-version-literal-of blocks lhs (- fuel 1))
-                    [(I64 a)
-                      (match (opt-bce-version-literal-of blocks rhs (- fuel 1))
-                        [(I64 b)
-                          (match (opt-bce-version-literal-binop (& op) a b)
-                            [(No)
-                              (owned_view.compiler-owned-reference-shared-view
-                                value)]
-                            [(Some folded) (I64 folded)])]
-                        [_
-                          (owned_view.compiler-owned-reference-shared-view
-                            value)])]
-                    [_ (owned_view.compiler-owned-reference-shared-view value)]))]
-              [_ (owned_view.compiler-owned-reference-shared-view value)])]))]
-    [_ (owned_view.compiler-owned-reference-shared-view value)]))
+                  (No)
+                  (match (opt-bce-version-literal-i64 blocks (& lhs) (- fuel 1))
+                    [(Some a)
+                      (match (opt-bce-version-literal-i64
+                        blocks
+                        (& rhs)
+                        (- fuel 1))
+                        [(Some b) (opt-bce-version-literal-binop (& op) a b)]
+                        [(No) (No)])]
+                    [(No) (No)]))]
+              [_ (No)])]))]
+    [_ (No)]))
+
+(define (opt-bce-version-literal-of
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [value : (& value ir.CompilerIrValue)]
+  [fuel : i64]) : ir.CompilerIrValue
+  (match (opt-bce-version-literal-i64 blocks value fuel)
+    [(Some k) (I64 k)]
+    [(No) (ir.compiler-ir-clone-value value)]))
 
 ;; The mathematical sum of two literal operands, when both are literals and the
 ;; sum forms.
@@ -72465,10 +72499,9 @@
     [(Var _) true]
     [_ false]))
 
-(define (opt-bce-version-cond-counter-seen [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
-  (match acc
-    [(No) (No)]
-    [(Some instrs values _) (Some instrs values true)]))
+(define (opt-bce-version-cond-counter-seen [acc : (&mut OptBceGuardBuf)]) : bool
+  (when acc.ok? (set! acc.counter-seen true))
+  acc.ok?)
 
 ;; A loop-local index written as `scale * counter + offset`. The coefficients
 ;; are mathematical signed i64 values, not merely their wrapping bit patterns:
@@ -72616,75 +72649,56 @@
 ;; cond B with the primary's `0 <= seed < bound` gives `length - K >= bound > 0`.
 (define (opt-bce-version-affine-guard
   [seed : (& ir.CompilerIrValue)]
-  [bound : ir.CompilerIrValue]
+  [bound : (& ir.CompilerIrValue)]
   [length : (& ir.CompilerIrValue)]
   [scale : i64]
   [offset : i64]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  [acc : (&mut OptBceGuardBuf)]) : bool
   (cond
-    [(or (<= scale 0) (= offset (- (- 0 9223372036854775807) 1))) (No)]
+    [(or (<= scale 0) (= offset (- (- 0 9223372036854775807) 1))) false]
     [(and (= scale 1) (= offset 0))
-      (opt-bce-version-cond-counter-seen
-        (opt-bce-version-cond cell (& (Le)) (& bound) length (& acc)))]
+      (opt-bce-version-cond cell (Le) bound length acc)
+      (opt-bce-version-cond-counter-seen acc)]
     [(= scale 1)
-      (opt-bce-version-scale1-guard seed (& bound) length offset cell (& acc))]
+      (opt-bce-version-scale1-range-guard
+        seed
+        bound
+        length
+        offset
+        offset
+        cell
+        acc)]
     [else
-      (let
-        [upper : OptBceVersionGuardAcc
-          (opt-bce-version-quotient-upper
-            (No)
-            bound
-            length
-            (I64 offset)
-            scale
-            cell
-            acc)]
-        [capacity-safe : OptBceVersionGuardAcc
-          (if (>= offset 0)
-            ;; length > offset makes `length - 1 - offset`
-            ;; representable and non-negative.
-            (opt-bce-version-cond
-              cell
-              (& (Gt))
-              length
-              (& (I64 offset))
-              (& upper))
-            (let
-              ;; For offset=-d, cap <= MAX-d+1 prevents positive
-              ;; overflow in `cap - 1 + d`; cap > 0 supplies its lower
-              ;; bound.
-              [maximum-length : i64 (+ (+ 9223372036854775807 offset) 1)]
-              (opt-bce-version-cond
-                cell
-                (& (Gt))
-                length
-                (& (I64 0))
-                (&
-                  (opt-bce-version-cond
-                    cell
-                    (& (Le))
-                    length
-                    (& (I64 maximum-length))
-                    (& upper))))))]
-        [minimum-safe : OptBceVersionGuardAcc
-          (if (>= offset 0)
-            capacity-safe
-            (let
-              [magnitude : i64 (- 0 offset)]
-              [minimum-seed : i64
-                (+
-                  (/ magnitude scale)
-                  (if (= (% magnitude scale) 0)
-                    0
-                    1))]
-              (opt-bce-version-cond
-                cell
-                (& (Ge))
-                seed
-                (& (I64 minimum-seed))
-                (& capacity-safe))))]
-        (opt-bce-version-cond-counter-seen minimum-safe))]))
+      (opt-bce-version-quotient-upper
+        false
+        seed
+        bound
+        length
+        (& (I64 offset))
+        scale
+        cell
+        acc)
+      (if (>= offset 0)
+        ;; length > offset makes `length - 1 - offset`
+        ;; representable and non-negative.
+        (opt-bce-version-cond cell (Gt) length (& (I64 offset)) acc)
+        (let
+          ;; For offset=-d, cap <= MAX-d+1 prevents positive
+          ;; overflow in `cap - 1 + d`; cap > 0 supplies its lower
+          ;; bound.
+          [maximum-length : i64 (+ (+ 9223372036854775807 offset) 1)]
+          [magnitude : i64 (- 0 offset)]
+          [minimum-seed : i64
+            (+
+              (/ magnitude scale)
+              (if (= (% magnitude scale) 0)
+                0
+                1))]
+          (opt-bce-version-cond cell (Le) length (& (I64 maximum-length)) acc)
+          (opt-bce-version-cond cell (Gt) length (& (I64 0)) acc)
+          (opt-bce-version-cond cell (Ge) seed (& (I64 minimum-seed)) acc)))
+      (opt-bce-version-cond-counter-seen acc)]))
 
 ;; The scale-1 specialization of the guard above, for a whole RANGE of literal
 ;; offsets [kmin, kmax] against one length: `bound <= length - kmax`, plus
@@ -72707,63 +72721,31 @@
 (define (opt-bce-version-scale1-range-guard
   [seed : (& ir.CompilerIrValue)]
   [bound : (& ir.CompilerIrValue)]
-  [length : ir.CompilerIrValue]
+  [length : (& ir.CompilerIrValue)]
   [kmin : i64]
   [kmax : i64]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
-  (match acc
-    [(No) (No)]
-    [(Some instrs values counter-seen)
-      (let
-        [upper : OptBceVersionGuardAcc
-          (if (= kmax 0)
-            (opt-bce-version-cond
-              cell
-              (& (Le))
-              bound
-              (& length)
-              (& (Some instrs values counter-seen)))
-            (let
-              [room : i64 (opt-bce-version-alloc-var cell)]
-              (opt-bce-version-cond
-                cell
-                (& (Le))
-                bound
-                (& (Var room))
-                (&
-                  (Some
-                    (opt-bce-version-builder-push
-                      instrs
-                      (& (BinOp room (Sub) length (I64 kmax) (I64))))
-                    values
-                    counter-seen)))))]
-        (opt-bce-version-cond-counter-seen
-          (if (>= kmin 0)
-            upper
-            (opt-bce-version-cond
-              cell
-              (& (Ge))
-              seed
-              (& (I64 (- 0 kmin)))
-              (& upper)))))]))
-
-;; One scale-1 check on its own: the range guard with a single-point range.
-(define (opt-bce-version-scale1-guard
-  [seed : (& ir.CompilerIrValue)]
-  [bound : (& ir.CompilerIrValue)]
-  [length : (& ir.CompilerIrValue)]
-  [offset : i64]
-  [cell : (&mut cell (__tl_dyn-array i64))]
-  [acc : (& OptBceVersionGuardAcc)]) : OptBceVersionGuardAcc
-  (opt-bce-version-scale1-range-guard
-    seed
-    bound
-    (owned_view.compiler-owned-reference-shared-view length)
-    offset
-    offset
-    cell
-    (owned_view.compiler-owned-reference-shared-view acc)))
+  [acc : (&mut OptBceGuardBuf)]) : bool
+  (if (not acc.ok?)
+    false
+    (begin
+      (if (= kmax 0)
+        (opt-bce-version-cond cell (Le) bound length acc)
+        (let
+          [room : i64 (opt-bce-version-alloc-var cell)]
+          (ir.compiler-ir-instr-builder-push!
+            (&mut acc.instrs)
+            (BinOp
+              room
+              (Sub)
+              (ir.compiler-ir-clone-value length)
+              (I64 kmax)
+              (I64)))
+          (opt-bce-version-cond cell (Le) bound (& (Var room)) acc)))
+      (when
+        (< kmin 0)
+        (opt-bce-version-cond cell (Ge) seed (& (I64 (- 0 kmin))) acc))
+      (opt-bce-version-cond-counter-seen acc))))
 
 ;; Prove a positive-step derived induction phi stays in range. If the primary
 ;; loop executes, its trip number ranges over
@@ -72791,35 +72773,28 @@
 ;; make this conjunct pass, never the conjunction. A power-of-two step then
 ;; costs one `shr` instead of the signed sequence's five instructions.
 (define (opt-bce-version-derived-guard
-  [seed : ir.CompilerIrValue]
-  [bound : ir.CompilerIrValue]
+  [seed : (& ir.CompilerIrValue)]
+  [bound : (& ir.CompilerIrValue)]
   [derived-seed : (& ir.CompilerIrValue)]
   [step : i64]
   [length : (& ir.CompilerIrValue)]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  [acc : (&mut OptBceGuardBuf)]) : bool
   (if (<= step 0)
-    (No)
-    (let
-      [upper : OptBceVersionGuardAcc
-        (opt-bce-version-quotient-upper
-          (Some seed)
-          bound
-          length
-          (ir.compiler-ir-clone-value derived-seed)
-          step
-          cell
-          acc)]
-      [capacity-safe : OptBceVersionGuardAcc
-        (opt-bce-version-cond cell (& (Gt)) length derived-seed (& upper))]
-      [minimum-safe : OptBceVersionGuardAcc
-        (opt-bce-version-cond
-          cell
-          (& (Ge))
-          derived-seed
-          (& (I64 0))
-          (& capacity-safe))]
-      (opt-bce-version-cond-counter-seen minimum-safe))))
+    false
+    (begin
+      (opt-bce-version-quotient-upper
+        true
+        seed
+        bound
+        length
+        derived-seed
+        step
+        cell
+        acc)
+      (opt-bce-version-cond cell (Gt) length derived-seed acc)
+      (opt-bce-version-cond cell (Ge) derived-seed (& (I64 0)) acc)
+      (opt-bce-version-cond-counter-seen acc))))
 
 ;; The upper conjunct both quotient guards share,
 ;;
@@ -72830,68 +72805,69 @@
 ;; guard; a divisor of 1 needs no division. See the two guards above for why
 ;; the quotient is unsigned and why nothing here wraps on the accepted path.
 (define (opt-bce-version-quotient-upper
-  [trip-seed : ir.CompilerIrMaybeValue]
-  [bound : ir.CompilerIrValue]
+  [has-seed? : bool]
+  [seed : (& ir.CompilerIrValue)]
+  [bound : (& ir.CompilerIrValue)]
   [length : (& ir.CompilerIrValue)]
-  [origin : ir.CompilerIrValue]
+  [origin : (& ir.CompilerIrValue)]
   [divisor : i64]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
-  (match acc
-    [(No) (No)]
-    [(Some instrs-input values counter-seen)
-      (let
-        [instrs : ir.CompilerIrInstrBuilder instrs-input]
-        [trip-span : i64
-          (match (& trip-seed)
-            [(Some _) (opt-bce-version-alloc-var cell)]
-            [(No) (- 0 1)])]
-        [last : i64 (opt-bce-version-alloc-var cell)]
-        [length-minus-one : i64 (opt-bce-version-alloc-var cell)]
-        [room : i64 (opt-bce-version-alloc-var cell)]
-        [maximum : i64
-          (if (= divisor 1)
-            room
-            (opt-bce-version-alloc-var cell))]
-        [_emit-arithmetic : unit
-          (begin
-            (match trip-seed
-              [(Some seed)
-                (opt-bce-version-builder-push!
-                  (&mut instrs)
-                  (& (BinOp trip-span (Sub) bound seed (I64))))
-                (opt-bce-version-builder-push!
-                  (&mut instrs)
-                  (& (BinOp last (Sub) (Var trip-span) (I64 1) (I64))))]
-              [(No)
-                (opt-bce-version-builder-push!
-                  (&mut instrs)
-                  (& (BinOp last (Sub) bound (I64 1) (I64))))])
-            (opt-bce-version-builder-push!
-              (&mut instrs)
-              (&
-                (BinOp
-                  length-minus-one
-                  (Sub)
-                  (owned_view.compiler-owned-reference-shared-view length)
-                  (I64 1)
-                  (I64))))
-            (opt-bce-version-builder-push!
-              (&mut instrs)
-              (& (BinOp room (Sub) (Var length-minus-one) origin (I64))))
-            ;; UNSIGNED quotient: a power-of-two divisor lowers to one logical
-            ;; shift instead of the signed sequence's five.
-            (unless
-              (= divisor 1)
-              (opt-bce-version-builder-push!
-                (&mut instrs)
-                (& (BinOp maximum (Div) (Var room) (I64 divisor) (U64))))))]
-        (opt-bce-version-cond
-          cell
-          (& (Le))
-          (& (Var last))
-          (& (Var maximum))
-          (& (Some instrs values counter-seen))))]))
+  [acc : (&mut OptBceGuardBuf)]) : bool
+  (if (not acc.ok?)
+    false
+    (let
+      [trip-span : i64
+        (if has-seed?
+          (opt-bce-version-alloc-var cell)
+          (- 0 1))]
+      [last : i64 (opt-bce-version-alloc-var cell)]
+      [length-minus-one : i64 (opt-bce-version-alloc-var cell)]
+      [room : i64 (opt-bce-version-alloc-var cell)]
+      [maximum : i64
+        (if (= divisor 1)
+          room
+          (opt-bce-version-alloc-var cell))]
+      (if has-seed?
+        (begin
+          (ir.compiler-ir-instr-builder-push!
+            (&mut acc.instrs)
+            (BinOp
+              trip-span
+              (Sub)
+              (ir.compiler-ir-clone-value bound)
+              (ir.compiler-ir-clone-value seed)
+              (I64)))
+          (ir.compiler-ir-instr-builder-push!
+            (&mut acc.instrs)
+            (BinOp last (Sub) (Var trip-span) (I64 1) (I64))))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut acc.instrs)
+          (BinOp last (Sub) (ir.compiler-ir-clone-value bound) (I64 1) (I64))))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut acc.instrs)
+        (BinOp
+          length-minus-one
+          (Sub)
+          (ir.compiler-ir-clone-value length)
+          (I64 1)
+          (I64)))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut acc.instrs)
+        (BinOp
+          room
+          (Sub)
+          (Var length-minus-one)
+          (ir.compiler-ir-clone-value origin)
+          (I64)))
+      ;; UNSIGNED quotient: a power-of-two divisor lowers to one logical
+      ;; shift instead of the signed sequence's five.
+      (unless
+        (= divisor 1)
+        (ir.compiler-ir-instr-builder-push!
+          (&mut acc.instrs)
+          (BinOp maximum (Div) (Var room) (I64 divisor) (U64))))
+      (opt-bce-version-cond cell (Le) (& (Var last)) (& (Var maximum)) acc)
+      acc.ok?)))
 
 ;; --- strided variable-base indices ----------------------------------------------
 ;;
@@ -72942,13 +72918,6 @@
   (No)
   (Some i64 i64))
 
-;; The synthesized derived seed: an invariant base value, an optional second
-;; invariant value, a literal offset, and the guard instruction stream the
-;; emitted adds landed on.
-(defstruct OptBceSynthSeed
-  (value ir.CompilerIrValue)
-  (instrs ir.CompilerIrInstrBuilder))
-
 ;; Fold the literal pieces and emit the adds for `base + extra + offset` into
 ;; the guard stream. Every fold and every emitted Add wraps exactly like the
 ;; body's own arithmetic: the language defines i64 arithmetic to wrap, so the
@@ -72963,76 +72932,75 @@
 ;; no instruction is emitted at all.
 (define (opt-bce-version-synth-add
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [instrs : ir.CompilerIrInstrBuilder]
-  [lhs : ir.CompilerIrValue]
-  [rhs : ir.CompilerIrValue]) : OptBceSynthSeed
+  [instrs : (&mut ir.CompilerIrInstrBuilder)]
+  [lhs : (& ir.CompilerIrValue)]
+  [rhs : (& ir.CompilerIrValue)]) : ir.CompilerIrValue
   (match (opt-bce-version-literal-pair-sum lhs rhs)
     ;; Two literals fold outright (a family whose base and initializer are both
     ;; constants reaches its extremal seeds without a single instruction).
-    [(Some sum) (OptBceSynthSeed (I64 sum) instrs)]
+    [(Some sum) (I64 sum)]
     [(No)
-      (if (opt-bce-version-zero-literal? rhs)
-        (OptBceSynthSeed lhs instrs)
-        (if (opt-bce-version-zero-literal? lhs)
-          (OptBceSynthSeed rhs instrs)
+      (cond
+        [(opt-bce-version-zero-literal? rhs) (ir.compiler-ir-clone-value lhs)]
+        [(opt-bce-version-zero-literal? lhs) (ir.compiler-ir-clone-value rhs)]
+        [else
           (let
             [dst : i64 (opt-bce-version-alloc-var cell)]
-            (OptBceSynthSeed
-              (Var dst)
-              (opt-bce-version-builder-push
-                instrs
-                (& (BinOp dst (Add) lhs rhs (I64))))))))]))
+            (ir.compiler-ir-instr-builder-push!
+              instrs
+              (BinOp
+                dst
+                (Add)
+                (ir.compiler-ir-clone-value lhs)
+                (ir.compiler-ir-clone-value rhs)
+                (I64)))
+            (Var dst))])]))
 
 (define (opt-bce-version-guard-seed-sum
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [instrs : ir.CompilerIrInstrBuilder]
-  [base : ir.CompilerIrValue]
-  [extra : ir.CompilerIrMaybeValue]
-  [offset : i64]) : OptBceSynthSeed
+  [instrs : (&mut ir.CompilerIrInstrBuilder)]
+  [base : (& ir.CompilerIrValue)]
+  [has-extra? : bool]
+  [extra : (& ir.CompilerIrValue)]
+  [offset : i64]) : ir.CompilerIrValue
   (let
     [off1 : i64
-      (match (& base)
+      (match base
         [(I64 b) (+ offset b)]
         [_ offset])]
-    [base-term : ir.CompilerIrMaybeValue
-      (match (& base)
-        [(I64 _) (No)]
-        [_ (Some base)])]
+    [base-var? : bool
+      (match base
+        [(I64 _) false]
+        [_ true])]
     [off2 : i64
-      (match (& extra)
-        [(No) off1]
-        [(Some ev)
-          (match ev
-            [(I64 e) (+ off1 e)]
-            [_ off1])])]
-    [extra-term : ir.CompilerIrMaybeValue
-      (match extra
-        [(No) (No)]
-        [(Some ev)
-          (match (& ev)
-            [(I64 _) (No)]
-            [_ (Some ev)])])]
-    (match base-term
-      [(No)
-        (match extra-term
-          [(No) (OptBceSynthSeed (I64 off2) instrs)]
-          [(Some value)
-            (if (= off2 0)
-              (OptBceSynthSeed value instrs)
-              (opt-bce-version-synth-add cell instrs value (I64 off2)))])]
-      [(Some base-value)
-        (match extra-term
-          [(No)
-            (if (= off2 0)
-              (OptBceSynthSeed base-value instrs)
-              (opt-bce-version-synth-add cell instrs base-value (I64 off2)))]
-          [(Some extra-value)
-            (let
-              [sum : OptBceSynthSeed
-                (opt-bce-version-synth-add cell instrs base-value extra-value)]
-              (if (= off2 0)
-                sum
-                (opt-bce-version-synth-add cell sum.instrs sum.value (I64 off2))))])])))
+      (if has-extra?
+        (match extra
+          [(I64 e) (+ off1 e)]
+          [_ off1])
+        off1)]
+    [extra-var? : bool
+      (and
+        has-extra?
+        (match extra
+          [(I64 _) false]
+          [_ true]))]
+    (cond
+      [(and (not base-var?) (not extra-var?)) (I64 off2)]
+      [(not base-var?)
+        (if (= off2 0)
+          (ir.compiler-ir-clone-value extra)
+          (opt-bce-version-synth-add cell instrs extra (& (I64 off2))))]
+      [(not extra-var?)
+        (if (= off2 0)
+          (ir.compiler-ir-clone-value base)
+          (opt-bce-version-synth-add cell instrs base (& (I64 off2))))]
+      [else
+        (let
+          [sum : ir.CompilerIrValue
+            (opt-bce-version-synth-add cell instrs base extra)]
+          (if (= off2 0)
+            sum
+            (opt-bce-version-synth-add cell instrs (& sum) (& (I64 off2)))))])))
 
 ;; Prove `base + counter + offset` stays in [0, length) for every counter in
 ;; [seed, bound), with `base` loop-invariant. This is the literal
@@ -73072,55 +73040,40 @@
 (define (opt-bce-version-var-base-guard
   [_seed : (& ir.CompilerIrValue)]
   [bound : (& ir.CompilerIrValue)]
-  [base : ir.CompilerIrValue]
+  [base : (& ir.CompilerIrValue)]
   [offset : i64]
-  [length : ir.CompilerIrValue]
+  [length : (& ir.CompilerIrValue)]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
-  (match acc
-    [(No) (No)]
-    [(Some instrs values counter-seen)
-      (let
-        [eff-var : i64
-          (if (= offset 0)
-            (- 0 1)
-            (opt-bce-version-alloc-var cell))]
-        [eff : ir.CompilerIrValue
-          (if (= offset 0)
-            (owned_view.compiler-owned-shared-view base)
-            (Var eff-var))]
-        [eff-instrs : ir.CompilerIrInstrBuilder
-          (if (= offset 0)
-            instrs
-            (opt-bce-version-builder-push
-              instrs
-              (& (BinOp eff-var (Add) base (I64 offset) (I64)))))]
-        [room : i64 (opt-bce-version-alloc-var cell)]
-        [_emit-arithmetic : unit
-          (opt-bce-version-builder-push!
-            (&mut eff-instrs)
-            (&
+  [acc : (&mut OptBceGuardBuf)]) : bool
+  (if (not acc.ok?)
+    false
+    (let
+      [eff : ir.CompilerIrValue
+        (if (= offset 0)
+          (ir.compiler-ir-clone-value base)
+          (let
+            [eff-var : i64 (opt-bce-version-alloc-var cell)]
+            (ir.compiler-ir-instr-builder-push!
+              (&mut acc.instrs)
               (BinOp
-                room
-                (Sub)
-                length
-                (compiler-opt-global-shared-view eff)
-                (I64))))]
-        [with-arithmetic : OptBceVersionGuardAcc
-          (Some eff-instrs values counter-seen)]
-        (opt-bce-version-cond-counter-seen
-          (opt-bce-version-cond
-            cell
-            (& (Le))
-            bound
-            (& (Var room))
-            (&
-              (opt-bce-version-cond
-                cell
-                (& (Ge))
-                (& eff)
-                (& (I64 0))
-                (& with-arithmetic))))))]))
+                eff-var
+                (Add)
+                (ir.compiler-ir-clone-value base)
+                (I64 offset)
+                (I64)))
+            (Var eff-var)))]
+      [room : i64 (opt-bce-version-alloc-var cell)]
+      (ir.compiler-ir-instr-builder-push!
+        (&mut acc.instrs)
+        (BinOp
+          room
+          (Sub)
+          (ir.compiler-ir-clone-value length)
+          (ir.compiler-ir-clone-value (& eff))
+          (I64)))
+      (opt-bce-version-cond cell (Ge) (& eff) (& (I64 0)) acc)
+      (opt-bce-version-cond cell (Le) bound (& (Var room)) acc)
+      (opt-bce-version-cond-counter-seen acc))))
 
 ;; --- range normal form: two unsigned compares ---------------------------------
 ;;
@@ -73226,11 +73179,11 @@
 ;; guard is placed. Substituting for a value it EQUALS needs nothing else.
 (define (opt-bce-version-shift-of
   [blocks : (& ir.CompilerIrBlockList)]
-  [value : ir.CompilerIrValue]
+  [value : (& ir.CompilerIrValue)]
   [k : i64]
   [fuel : i64]) : ir.CompilerIrMaybeValue
   (if (= k 0)
-    (Some value)
+    (Some (ir.compiler-ir-clone-value value))
     (if (<= fuel 0)
       (No)
       (match value
@@ -73247,7 +73200,7 @@
               (match instr
                 [(Mov _ src ty)
                   (if (opt-affine-64bit-type? ty)
-                    (opt-bce-version-shift-of blocks src k (- fuel 1))
+                    (opt-bce-version-shift-of blocks (& src) k (- fuel 1))
                     (No))]
                 [(BinOp _ op lhs rhs ty)
                   (if (not (opt-affine-64bit-type? ty))
@@ -73259,7 +73212,7 @@
                           [(Some next)
                             (opt-bce-version-shift-of
                               blocks
-                              lhs
+                              (& lhs)
                               next
                               (- fuel 1))])]
                       [_ (No)]))]
@@ -73274,77 +73227,61 @@
 ;; the entire family, whatever its size.
 (define (opt-bce-version-range-normal-guard
   [blocks : (& ir.CompilerIrBlockList)]
-  [bound : ir.CompilerIrValue]
-  [base : ir.CompilerIrValue]
+  [bound : (& ir.CompilerIrValue)]
+  [base : (& ir.CompilerIrValue)]
   [kmin : i64]
   [width : i64]
   [length : (& ir.CompilerIrValue)]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
-  (match acc
-    [(No) (No)]
-    [(Some instrs values counter-seen)
-      (let
-        [start-var : i64
-          (if (= kmin 0)
-            (- 0 1)
-            (opt-bce-version-alloc-var cell))]
-        [start : ir.CompilerIrValue
-          (if (= kmin 0)
-            (owned_view.compiler-owned-shared-view base)
-            (Var start-var))]
-        [work : ir.CompilerIrInstrBuilder
-          (if (= kmin 0)
-            instrs
-            (opt-bce-version-builder-push
-              instrs
-              (& (BinOp start-var (Add) base (I64 kmin) (I64)))))]
-        [folded : ir.CompilerIrMaybeValue
-          (opt-bce-version-shift-of
-            blocks
-            (compiler-opt-global-shared-view bound)
-            width
-            (opt-bce-version-shift-fuel))]
-        [count-var : i64
-          (match (& folded)
-            [(Some _) (- 0 1)]
-            [(No) (opt-bce-version-alloc-var cell)])]
-        [count : ir.CompilerIrValue
-          (match (compiler-opt-global-shared-view folded)
-            [(Some named) named]
-            [(No) (Var count-var)])]
-        [_emit-count : unit
-          (match folded
-            [(Some _) unit]
-            [(No)
-              (opt-bce-version-builder-push!
-                (&mut work)
-                (& (BinOp count-var (Add) bound (I64 width) (I64))))])]
-        [room : i64 (opt-bce-version-alloc-var cell)]
-        [_emit-room : unit
-          (opt-bce-version-builder-push!
-            (&mut work)
-            (&
+  [acc : (&mut OptBceGuardBuf)]) : bool
+  (if (not acc.ok?)
+    false
+    (let
+      [start : ir.CompilerIrValue
+        (if (= kmin 0)
+          (ir.compiler-ir-clone-value base)
+          (let
+            [start-var : i64 (opt-bce-version-alloc-var cell)]
+            (ir.compiler-ir-instr-builder-push!
+              (&mut acc.instrs)
               (BinOp
-                room
-                (Sub)
-                (owned_view.compiler-owned-reference-shared-view length)
-                (compiler-opt-global-shared-view start)
-                (I64))))]
-        (opt-bce-version-cond-counter-seen
-          (opt-bce-version-cond-typed
-            cell
-            (Le)
-            count
-            (Var room)
-            (U64)
-            (opt-bce-version-cond-typed
-              cell
-              (Le)
-              start
-              (owned_view.compiler-owned-reference-shared-view length)
-              (U64)
-              (Some work values counter-seen)))))]))
+                start-var
+                (Add)
+                (ir.compiler-ir-clone-value base)
+                (I64 kmin)
+                (I64)))
+            (Var start-var)))]
+      [count : ir.CompilerIrValue
+        (match (opt-bce-version-shift-of
+          blocks
+          bound
+          width
+          (opt-bce-version-shift-fuel))
+          [(Some named) named]
+          [(No)
+            (let
+              [count-var : i64 (opt-bce-version-alloc-var cell)]
+              (ir.compiler-ir-instr-builder-push!
+                (&mut acc.instrs)
+                (BinOp
+                  count-var
+                  (Add)
+                  (ir.compiler-ir-clone-value bound)
+                  (I64 width)
+                  (I64)))
+              (Var count-var))])]
+      [room : i64 (opt-bce-version-alloc-var cell)]
+      (ir.compiler-ir-instr-builder-push!
+        (&mut acc.instrs)
+        (BinOp
+          room
+          (Sub)
+          (ir.compiler-ir-clone-value length)
+          (ir.compiler-ir-clone-value (& start))
+          (I64)))
+      (opt-bce-version-cond-typed cell (Le) (& start) length (U64) acc)
+      (opt-bce-version-cond-typed cell (Le) (& count) (& (Var room)) (U64) acc)
+      (opt-bce-version-cond-counter-seen acc))))
 
 ;; --- index-family fan subsumption -----------------------------------------------
 ;;
@@ -73436,50 +73373,53 @@
 ;; the scale-1 range guard instead, where the minimum condition constrains the
 ;; counter seed rather than an invariant effective base and the width alone is
 ;; not enough to imply the cap.
+(defstruct OptBceFanSpan
+  (kmin i64)
+  (kmax i64)
+  (step i64)
+  (kind i64))
+
 (define (opt-bce-version-fan-proves-no-wrap?
   [type-segment-bases : i64]
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [hoists : (& hoists OptBceMbHoists)]
   [fan : (& OptBceVersionFan)]
-  [step : i64]
-  [index : i64]) : bool
-  (if (or (<= step 1) (>= index (array-ref fan.slots 0)))
+  [step : i64]) : bool
+  (if (<= step 1)
     false
-    (let
-      [keys : (__tl_dyn-array ir.CompilerIrValue)
-        (owned_view.compiler-owned-reference-shared-view (& fan.keys))]
-      [slots : (__tl_dyn-array i64)
-        (owned_view.compiler-owned-reference-shared-view (& fan.slots))]
-      [key-at : i64 (* index (opt-bce-version-fan-key-words))]
-      [slot-at : i64 (+ (* index (opt-bce-version-fan-slot-words)) 1)]
-      [base : ir.CompilerIrValue
+    (begin
+      (for [index (iterator.range 0 (array-ref fan.slots 0))]
         (let
-          [value (compiler-opt-global-array-element-shared-view keys key-at)]
-          (opt-bce-version-literal-of blocks value 8))]
-      [this-entry : bool
-        (and
-          (= (array-ref slots (+ slot-at 3)) (opt-bce-version-fan-kind-unit))
-          (match base
-            [(Var _) true]
-            [_ false])
-          (>=
-            (- (array-ref slots (+ slot-at 1)) (array-ref slots slot-at))
-            (- step 1))
-          (let
-            [len
-              (compiler-opt-global-array-element-shared-view keys (+ key-at 1))]
-            (or
-              (opt-ubound-len-nonneg? type-segment-bases blocks (& len))
-              (opt-bce-mb-hoists-length-var? hoists (& len)))))]
-      (or
-        this-entry
-        (opt-bce-version-fan-proves-no-wrap?
-          type-segment-bases
-          blocks
-          hoists
-          fan
-          step
-          (+ index 1))))))
+          [key-at : i64 (* index (opt-bce-version-fan-key-words))]
+          [slot-at : i64 (+ (* index (opt-bce-version-fan-slot-words)) 1)]
+          [base : ir.CompilerIrValue
+            (opt-bce-version-literal-of
+              blocks
+              (& (array-ref fan.keys key-at))
+              8)]
+          (when
+            (and
+              (=
+                (array-ref fan.slots (+ slot-at 3))
+                (opt-bce-version-fan-kind-unit))
+              (match (& base)
+                [(Var _) true]
+                [_ false])
+              (>=
+                (-
+                  (array-ref fan.slots (+ slot-at 1))
+                  (array-ref fan.slots slot-at))
+                (- step 1))
+              (or
+                (opt-ubound-len-nonneg?
+                  type-segment-bases
+                  blocks
+                  (& (array-ref fan.keys (+ key-at 1))))
+                (opt-bce-mb-hoists-length-var?
+                  hoists
+                  (& (array-ref fan.keys (+ key-at 1))))))
+            (return true))))
+      false)))
 
 ;; The three index families the table subsumes. The kind is part of the KEY:
 ;; two families over the same (base, length) whose members advance differently
@@ -73542,23 +73482,19 @@
   [kind : i64]) : i64
   (for [index (iterator.range 0 (array-ref fan.slots 0))]
     (let
-      [keys : (__tl_dyn-array ir.CompilerIrValue)
-        (owned_view.compiler-owned-reference-shared-view (& fan.keys))]
-      [slots : (__tl_dyn-array i64)
-        (owned_view.compiler-owned-reference-shared-view (& fan.slots))]
       [key-at : i64 (* index (opt-bce-version-fan-key-words))]
       [slot-at : i64 (+ (* index (opt-bce-version-fan-slot-words)) 1)]
       (when
         (and
-          (opt-bce-version-fan-value-eq? (& (array-ref keys key-at)) base)
+          (opt-bce-version-fan-value-eq? (& (array-ref fan.keys key-at)) base)
           (opt-bce-version-fan-value-eq?
-            (& (array-ref keys (+ key-at 1)))
+            (& (array-ref fan.keys (+ key-at 1)))
             length)
           (opt-bce-version-fan-value-eq?
-            (& (array-ref keys (+ key-at 2)))
+            (& (array-ref fan.keys (+ key-at 2)))
             extra)
-          (= (array-ref slots (+ slot-at 2)) step)
-          (= (array-ref slots (+ slot-at 3)) kind))
+          (= (array-ref fan.slots (+ slot-at 2)) step)
+          (= (array-ref fan.slots (+ slot-at 3)) kind))
         (return index))))
   (- 0 1))
 
@@ -73581,37 +73517,25 @@
   [base : (& base ir.CompilerIrValue)]
   [offset : i64]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
-  (match acc
-    [(No) (No)]
-    [(Some instrs values counter-seen)
-      (let
-        [eff-var : i64
-          (if (= offset 0)
-            (- 0 1)
-            (opt-bce-version-alloc-var cell))]
-        [eff : ir.CompilerIrValue
-          (if (= offset 0)
-            (owned_view.compiler-owned-reference-shared-view base)
-            (Var eff-var))]
-        [eff-instrs : ir.CompilerIrInstrBuilder
-          (if (= offset 0)
-            instrs
-            (opt-bce-version-builder-push
-              instrs
-              (&
-                (BinOp
-                  eff-var
-                  (Add)
-                  (owned_view.compiler-owned-reference-shared-view base)
-                  (I64 offset)
-                  (I64)))))]
-        (opt-bce-version-cond
-          cell
-          (& (Ge))
-          (& eff)
-          (& (I64 0))
-          (& (Some eff-instrs values counter-seen))))]))
+  [acc : (&mut OptBceGuardBuf)]) : unit
+  (when
+    acc.ok?
+    (let
+      [eff : ir.CompilerIrValue
+        (if (= offset 0)
+          (ir.compiler-ir-clone-value base)
+          (let
+            [eff-var : i64 (opt-bce-version-alloc-var cell)]
+            (ir.compiler-ir-instr-builder-push!
+              (&mut acc.instrs)
+              (BinOp
+                eff-var
+                (Add)
+                (ir.compiler-ir-clone-value base)
+                (I64 offset)
+                (I64)))
+            (Var eff-var)))]
+      (opt-bce-version-cond cell (Ge) (& eff) (& (I64 0)) acc))))
 
 ;; --- scaled and derived families -----------------------------------------------
 ;;
@@ -73678,40 +73602,43 @@
 ;; soundness requirement of this construction.
 (define (opt-bce-version-fan-derived-seed
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [instrs : (& ir.CompilerIrInstrBuilder)]
-  [seed : ir.CompilerIrValue]
+  [instrs : (&mut ir.CompilerIrInstrBuilder)]
+  [seed : (& ir.CompilerIrValue)]
   [base : (& ir.CompilerIrValue)]
-  [extra : ir.CompilerIrValue]
+  [extra : (& ir.CompilerIrValue)]
   [offset : i64]
   [step : i64]
-  [kind : i64]) : OptBceSynthSeed
+  [kind : i64]) : ir.CompilerIrValue
   (if (= kind (opt-bce-version-fan-kind-derived))
-    (opt-bce-version-guard-seed-sum
-      cell
-      (owned_view.compiler-owned-reference-shared-view instrs)
-      (owned_view.compiler-owned-reference-shared-view base)
-      (Some extra)
-      offset)
-    (match (& seed)
+    (opt-bce-version-guard-seed-sum cell instrs base true extra offset)
+    (match seed
       ;; A literal seed folds the product into the offset; the fold wraps
       ;; like the runtime multiply would.
       [(I64 sk)
         (opt-bce-version-guard-seed-sum
           cell
-          (owned_view.compiler-owned-reference-shared-view instrs)
-          (owned_view.compiler-owned-reference-shared-view base)
-          (No)
+          instrs
+          base
+          false
+          extra
           (+ offset (* step sk)))]
       [_
         (let
           [product : i64 (opt-bce-version-alloc-var cell)]
+          (ir.compiler-ir-instr-builder-push!
+            instrs
+            (BinOp
+              product
+              (Mul)
+              (ir.compiler-ir-clone-value seed)
+              (I64 step)
+              (I64)))
           (opt-bce-version-guard-seed-sum
             cell
-            (opt-bce-version-builder-push
-              (owned_view.compiler-owned-reference-shared-view instrs)
-              (& (BinOp product (Mul) seed (I64 step) (I64))))
-            (owned_view.compiler-owned-reference-shared-view base)
-            (Some (Var product))
+            instrs
+            base
+            true
+            (& (Var product))
             offset))])))
 
 ;; Emit one scaled/derived entry's extremal conditions: the full derived guard
@@ -73723,60 +73650,55 @@
   [base : (& ir.CompilerIrValue)]
   [extra : (& ir.CompilerIrValue)]
   [length : (& ir.CompilerIrValue)]
-  [kmin : i64]
-  [kmax : i64]
-  [step : i64]
-  [kind : i64]
+  [span : OptBceFanSpan]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
-  (match acc
-    [(No) (No)]
-    [(Some instrs values counter-seen)
-      (let
-        ;; A base or phi initializer that is a COPY of a constant is read as
-        ;; the constant (opt-bce-version-literal-of): the seed synthesis then
-        ;; folds it into the offset instead of emitting an identity add per
-        ;; family. Rotation hands the derived phi of `tokens[base + 2*edge]`
-        ;; exactly that shape (`d0 = mov 0` in the preheader).
-        [top : OptBceSynthSeed
-          (opt-bce-version-fan-derived-seed
-            cell
-            (& instrs)
-            (owned_view.compiler-owned-reference-shared-view seed)
-            (& (opt-bce-version-literal-of blocks base 8))
-            (opt-bce-version-literal-of blocks extra 8)
-            kmax
-            step
-            kind)]
-        [with-top : OptBceVersionGuardAcc
-          (opt-bce-version-derived-guard
-            (owned_view.compiler-owned-reference-shared-view seed)
-            (owned_view.compiler-owned-reference-shared-view bound)
-            (& top.value)
-            step
-            length
-            cell
-            (Some top.instrs values counter-seen))]
-        (if (= kmin kmax)
-          with-top
+  [acc : (&mut OptBceGuardBuf)]) : bool
+  (if (not acc.ok?)
+    false
+    (let
+      ;; A base or phi initializer that is a COPY of a constant is read as
+      ;; the constant (opt-bce-version-literal-of): the seed synthesis then
+      ;; folds it into the offset instead of emitting an identity add per
+      ;; family. Rotation hands the derived phi of `tokens[base + 2*edge]`
+      ;; exactly that shape (`d0 = mov 0` in the preheader).
+      [lit-base : ir.CompilerIrValue (opt-bce-version-literal-of blocks base 8)]
+      [lit-extra : ir.CompilerIrValue
+        (opt-bce-version-literal-of blocks extra 8)]
+      [top : ir.CompilerIrValue
+        (opt-bce-version-fan-derived-seed
+          cell
+          (&mut acc.instrs)
+          seed
+          (& lit-base)
+          (& lit-extra)
+          span.kmax
+          span.step
+          span.kind)]
+      (if (not
+        (opt-bce-version-derived-guard
+          seed
+          bound
+          (& top)
+          span.step
+          length
+          cell
+          acc))
+        (begin
+          (set! acc.ok? false)
+          false)
+        (if (= span.kmin span.kmax)
+          true
           ;; One Add of a negative literal reaches the minimum member from the
           ;; maximum one; see the family argument above for why it cannot wrap.
-          (match with-top
-            [(No) (No)]
-            [(Some top-instrs top-values top-seen)
-              (let
-                [low : OptBceSynthSeed
-                  (opt-bce-version-synth-add
-                    cell
-                    top-instrs
-                    top.value
-                    (I64 (- kmin kmax)))]
-                (opt-bce-version-cond
-                  cell
-                  (& (Ge))
-                  (& low.value)
-                  (& (I64 0))
-                  (& (Some low.instrs top-values top-seen))))])))]))
+          (let
+            [low : ir.CompilerIrValue
+              (opt-bce-version-synth-add
+                cell
+                (&mut acc.instrs)
+                (& top)
+                (& (I64 (- span.kmin span.kmax))))]
+            (opt-bce-version-cond cell (Ge) (& low) (& (I64 0)) acc)
+            acc.ok?))))))
 
 ;; Emit the recorded extremal conditions for one fan entry: the full
 ;; var-base-guard at the largest offset, plus the minimum-side cond A when
@@ -73800,13 +73722,10 @@
   [base-key : (& ir.CompilerIrValue)]
   [length : (& ir.CompilerIrValue)]
   [extra : (& ir.CompilerIrValue)]
-  [kmin : i64]
-  [kmax : i64]
-  [step : i64]
-  [kind : i64]
+  [span : OptBceFanSpan]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [acc : (& OptBceVersionGuardAcc)]) : OptBceVersionGuardAcc
-  (if (not (= kind (opt-bce-version-fan-kind-unit)))
+  [acc : (&mut OptBceGuardBuf)]) : bool
+  (if (not (= span.kind (opt-bce-version-fan-kind-unit)))
     (opt-bce-version-fan-derived-flush
       blocks
       seed
@@ -73814,32 +73733,33 @@
       base-key
       extra
       length
-      kmin
-      kmax
-      step
-      kind
+      span
       cell
-      (owned_view.compiler-owned-reference-shared-view acc))
+      acc)
     (let
       ;; A base that is a COPY of a constant folds into the offsets like a
       ;; literal one, which is one Add and one compare less per family.
       [base : ir.CompilerIrValue (opt-bce-version-literal-of blocks base-key 8)]
       (match (& base)
         [(I64 b)
-          (match (opt-bce-version-k-add b kmin)
-            [(No) (No)]
+          (match (opt-bce-version-k-add b span.kmin)
+            [(No)
+              (set! acc.ok? false)
+              false]
             [(Some low)
-              (match (opt-bce-version-k-add b kmax)
-                [(No) (No)]
+              (match (opt-bce-version-k-add b span.kmax)
+                [(No)
+                  (set! acc.ok? false)
+                  false]
                 [(Some high)
                   (opt-bce-version-scale1-range-guard
                     seed
                     bound
-                    (owned_view.compiler-owned-reference-shared-view length)
+                    length
                     low
                     high
                     cell
-                    (owned_view.compiler-owned-reference-shared-view acc))])])]
+                    acc)])])]
         [_
           ;; The two-compare normal form whenever the container invariant
           ;; `length >= 0` is there to license it; the signed chain otherwise.
@@ -73858,40 +73778,31 @@
           ;; boolean. `opt-licm-hot-use-vars` prices that: it does not count a
           ;; branch condition as a consumer that pays for a hoist.
           (if (and
-            (or (> kmax kmin) (not base-shared?))
+            (or (> span.kmax span.kmin) (not base-shared?))
             (or
               (opt-ubound-len-nonneg? type-segment-bases blocks length)
               (opt-bce-mb-hoists-length-var? hoists length)))
             (opt-bce-version-range-normal-guard
               blocks
-              (owned_view.compiler-owned-reference-shared-view bound)
-              base
-              kmin
-              (- kmax kmin)
+              bound
+              (& base)
+              span.kmin
+              (- span.kmax span.kmin)
               length
               cell
-              (owned_view.compiler-owned-reference-shared-view acc))
-            (if (= kmin kmax)
+              acc)
+            (begin
+              (unless
+                (= span.kmin span.kmax)
+                (opt-bce-version-fan-min-cond (& base) span.kmin cell acc))
               (opt-bce-version-var-base-guard
                 seed
                 bound
-                base
-                kmax
-                (owned_view.compiler-owned-reference-shared-view length)
+                (& base)
+                span.kmax
+                length
                 cell
-                (owned_view.compiler-owned-reference-shared-view acc))
-              (opt-bce-version-var-base-guard
-                seed
-                bound
-                (compiler-opt-global-shared-view base)
-                kmax
-                (owned_view.compiler-owned-reference-shared-view length)
-                cell
-                (opt-bce-version-fan-min-cond
-                  base
-                  kmin
-                  cell
-                  (owned_view.compiler-owned-reference-shared-view acc)))))]))))
+                acc)))]))))
 
 ;; Does ANOTHER unit family in this table check the same base against a
 ;; different length? Two such families share their `base >= 0` conjunct -- one
@@ -73912,50 +73823,35 @@
   [self : i64]) : bool
   (for [index (iterator.range 0 (array-ref fan.slots 0))]
     (let
-      [keys : (__tl_dyn-array ir.CompilerIrValue)
-        (owned_view.compiler-owned-reference-shared-view (& fan.keys))]
-      [slots : (__tl_dyn-array i64)
-        (owned_view.compiler-owned-reference-shared-view (& fan.slots))]
       [slot-at : i64 (+ (* index (opt-bce-version-fan-slot-words)) 1)]
       (when
         (and
           (not (= index self))
-          (= (array-ref slots (+ slot-at 3)) (opt-bce-version-fan-kind-unit))
+          (=
+            (array-ref fan.slots (+ slot-at 3))
+            (opt-bce-version-fan-kind-unit))
           (opt-bce-version-fan-value-eq?
-            (& (array-ref keys (* index (opt-bce-version-fan-key-words))))
-            (& (array-ref keys (* self (opt-bce-version-fan-key-words))))))
+            (& (array-ref fan.keys (* index (opt-bce-version-fan-key-words))))
+            (& (array-ref fan.keys (* self (opt-bce-version-fan-key-words))))))
         (return true))))
   false)
 
 ;; Walk the dense table once at guard assembly.
-(define (opt-bce-version-fan-flush
+(define (opt-bce-version-fan-flush!
   [type-segment-bases : i64]
   [blocks : (& ir.CompilerIrBlockList)]
   [hoists : (& hoists OptBceMbHoists)]
   [fan : (& OptBceVersionFan)]
-  [index : i64]
   [seed : (& ir.CompilerIrValue)]
   [bound : (& ir.CompilerIrValue)]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
-  (if (>= index (array-ref fan.slots 0))
-    acc
+  [acc : (&mut OptBceGuardBuf)]) : unit
+  (for [index (iterator.range 0 (array-ref fan.slots 0))]
+    (unless acc.ok? (return unit))
     (let
-      [keys : (__tl_dyn-array ir.CompilerIrValue)
-        (owned_view.compiler-owned-reference-shared-view (& fan.keys))]
-      [slots : (__tl_dyn-array i64)
-        (owned_view.compiler-owned-reference-shared-view (& fan.slots))]
       [key-at : i64 (* index (opt-bce-version-fan-key-words))]
       [slot-at : i64 (+ (* index (opt-bce-version-fan-slot-words)) 1)]
-      (opt-bce-version-fan-flush
-        type-segment-bases
-        blocks
-        hoists
-        fan
-        (+ index 1)
-        seed
-        bound
-        cell
+      [_ : bool
         (opt-bce-version-fan-entry-flush
           type-segment-bases
           (opt-bce-version-fan-base-shared? fan index)
@@ -73963,15 +73859,17 @@
           hoists
           seed
           bound
-          (& (array-ref keys key-at))
-          (& (array-ref keys (+ key-at 1)))
-          (& (array-ref keys (+ key-at 2)))
-          (array-ref slots slot-at)
-          (array-ref slots (+ slot-at 1))
-          (array-ref slots (+ slot-at 2))
-          (array-ref slots (+ slot-at 3))
+          (& (array-ref fan.keys key-at))
+          (& (array-ref fan.keys (+ key-at 1)))
+          (& (array-ref fan.keys (+ key-at 2)))
+          (OptBceFanSpan
+            (array-ref fan.slots slot-at)
+            (array-ref fan.slots (+ slot-at 1))
+            (array-ref fan.slots (+ slot-at 2))
+            (array-ref fan.slots (+ slot-at 3)))
           cell
-          (& acc))))))
+          acc)]
+      unit)))
 
 ;; The per-check guard a member falls back to when the table cannot hold it:
 ;; exactly the code emitted before the fan existed.
@@ -73980,49 +73878,39 @@
   [bound : (& ir.CompilerIrValue)]
   [base : (& ir.CompilerIrValue)]
   [extra : (& ir.CompilerIrValue)]
-  [offset : i64]
   [length : (& ir.CompilerIrValue)]
-  [step : i64]
-  [kind : i64]
+  [span : OptBceFanSpan]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
-  (if (= kind (opt-bce-version-fan-kind-unit))
-    (opt-bce-version-var-base-guard
-      seed
-      bound
-      (owned_view.compiler-owned-reference-shared-view base)
-      offset
-      (owned_view.compiler-owned-reference-shared-view length)
-      cell
-      acc)
+  [acc : (&mut OptBceGuardBuf)]) : bool
+  (if (= span.kind (opt-bce-version-fan-kind-unit))
+    (opt-bce-version-var-base-guard seed bound base span.kmin length cell acc)
     ;; A single-point range of the same family: the flush's own synthesis and
     ;; the positive-step derived guard, with no extremal pair to state. Going
     ;; through the flush's synthesis rather than the standalone
     ;; `opt-bce-version-var-base-{scaled,derived}-guard` keeps the overflow
     ;; path emitting what the table path would have emitted for a lone member,
     ;; including the step-1 derived family those two refuse.
-    (match acc
-      [(No) (No)]
-      [(Some instrs values counter-seen)
-        (let
-          [origin : OptBceSynthSeed
-            (opt-bce-version-fan-derived-seed
-              cell
-              (& instrs)
-              (owned_view.compiler-owned-reference-shared-view seed)
-              base
-              (owned_view.compiler-owned-reference-shared-view extra)
-              offset
-              step
-              kind)]
-          (opt-bce-version-derived-guard
-            (owned_view.compiler-owned-reference-shared-view seed)
-            (owned_view.compiler-owned-reference-shared-view bound)
-            (& origin.value)
-            step
-            length
+    (if (not acc.ok?)
+      false
+      (let
+        [origin : ir.CompilerIrValue
+          (opt-bce-version-fan-derived-seed
             cell
-            (Some origin.instrs values counter-seen)))])))
+            (&mut acc.instrs)
+            seed
+            base
+            extra
+            span.kmin
+            span.step
+            span.kind)]
+        (opt-bce-version-derived-guard
+          seed
+          bound
+          (& origin)
+          span.step
+          length
+          cell
+          acc)))))
 
 ;; One fan member's derivation: widen the family entry's offset range
 ;; (creating it on first sight), emit NOTHING but the counter-bearing guard
@@ -74031,108 +73919,97 @@
 ;; or a table with no room for a new family, falls back to the plain per-check
 ;; guard -- exactly the code emitted before the fan existed.
 (define (opt-bce-version-fan-admit
-  [fan : OptBceVersionFan]
+  [fan : (&mut OptBceVersionFan)]
   [seed : (& ir.CompilerIrValue)]
   [bound : (& ir.CompilerIrValue)]
-  [base : ir.CompilerIrValue]
-  [offset : i64]
-  [length : ir.CompilerIrValue]
-  [extra : ir.CompilerIrValue]
-  [step : i64]
-  [kind : i64]
+  [base : (& ir.CompilerIrValue)]
+  [length : (& ir.CompilerIrValue)]
+  [extra : (& ir.CompilerIrValue)]
+  [span : OptBceFanSpan]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [acc : (& OptBceVersionGuardAcc)]) : OptBceVersionGuardAcc
-  (match acc
-    [(No) (No)]
-    [(Some _ _ _)
-      (let
-        [slots : (__tl_dyn-array i64)
-          (compiler-opt-global-shared-view fan.slots)]
-        [at : i64
-          (opt-bce-version-fan-find
-            (& fan)
-            (& base)
-            (& length)
-            (& extra)
-            step
-            kind)]
-        [slot-at : i64
-          (if (< at 0)
-            (- 0 1)
-            (+ (* at (opt-bce-version-fan-slot-words)) 1))]
-        [old-min : i64
-          (if (< at 0)
-            offset
-            (array-ref slots slot-at))]
-        [old-max : i64
-          (if (< at 0)
-            offset
-            (array-ref slots (+ slot-at 1)))]
-        [kmin : i64
-          (if (< offset old-min)
-            offset
-            old-min)]
-        [kmax : i64
-          (if (> offset old-max)
-            offset
-            old-max)]
-        (if (or
-          (not (opt-bce-version-fan-range-ok? kmin kmax))
-          (and (< at 0) (>= (array-ref slots 0) (opt-bce-version-fan-max))))
-          (opt-bce-version-fan-fallback
-            seed
-            bound
-            (& base)
-            (& extra)
-            offset
-            (& length)
-            step
-            kind
-            cell
-            (owned_view.compiler-owned-reference-shared-view acc))
-          (let
-            [entry : i64
-              (if (< at 0)
-                (array-ref slots 0)
-                at)]
-            [entry-slot : i64 (+ (* entry (opt-bce-version-fan-slot-words)) 1)]
-            [_fresh : unit
-              (if (< at 0)
-                (let
-                  [keys : (__tl_dyn-array ir.CompilerIrValue) fan.keys]
-                  [key-at : i64 (* entry (opt-bce-version-fan-key-words))]
-                  (set! (array-ref keys key-at) base)
-                  (set! (array-ref keys (+ key-at 1)) length)
-                  (set! (array-ref keys (+ key-at 2)) extra)
-                  (set! (array-ref slots (+ entry-slot 2)) step)
-                  (set! (array-ref slots (+ entry-slot 3)) kind)
-                  (set! (array-ref slots 0) (+ entry 1)))
-                unit)]
-            [_kmin : unit (set! (array-ref slots entry-slot) kmin)]
-            [_kmax : unit (set! (array-ref slots (+ entry-slot 1)) kmax)]
-            (opt-bce-version-cond-counter-seen
-              (owned_view.compiler-owned-reference-shared-view acc)))))]))
+  [acc : (&mut OptBceGuardBuf)]) : bool
+  (if (not acc.ok?)
+    false
+    (let
+      [offset : i64 span.kmin]
+      [at : i64
+        (opt-bce-version-fan-find fan base length extra span.step span.kind)]
+      [slot-at : i64
+        (if (< at 0)
+          (- 0 1)
+          (+ (* at (opt-bce-version-fan-slot-words)) 1))]
+      [old-min : i64
+        (if (< at 0)
+          offset
+          (array-ref fan.slots slot-at))]
+      [old-max : i64
+        (if (< at 0)
+          offset
+          (array-ref fan.slots (+ slot-at 1)))]
+      [kmin : i64
+        (if (< offset old-min)
+          offset
+          old-min)]
+      [kmax : i64
+        (if (> offset old-max)
+          offset
+          old-max)]
+      (if (or
+        (not (opt-bce-version-fan-range-ok? kmin kmax))
+        (and (< at 0) (>= (array-ref fan.slots 0) (opt-bce-version-fan-max))))
+        (opt-bce-version-fan-fallback
+          seed
+          bound
+          base
+          extra
+          length
+          span
+          cell
+          acc)
+        (let
+          [entry : i64
+            (if (< at 0)
+              (array-ref fan.slots 0)
+              at)]
+          [entry-slot : i64 (+ (* entry (opt-bce-version-fan-slot-words)) 1)]
+          (when
+            (< at 0)
+            (let
+              [key-at : i64 (* entry (opt-bce-version-fan-key-words))]
+              (set!
+                (array-ref fan.keys key-at)
+                (ir.compiler-ir-clone-value base))
+              (set!
+                (array-ref fan.keys (+ key-at 1))
+                (ir.compiler-ir-clone-value length))
+              (set!
+                (array-ref fan.keys (+ key-at 2))
+                (ir.compiler-ir-clone-value extra))
+              (set! (array-ref fan.slots (+ entry-slot 2)) span.step)
+              (set! (array-ref fan.slots (+ entry-slot 3)) span.kind)
+              (set! (array-ref fan.slots 0) (+ entry 1))))
+          (set! (array-ref fan.slots entry-slot) kmin)
+          (set! (array-ref fan.slots (+ entry-slot 1)) kmax)
+          (opt-bce-version-cond-counter-seen acc))))))
 
 ;; A scale-1 fan member: the plain `base + counter + k` family.
 (define (opt-bce-version-fan-admit-unit
-  [fan : OptBceVersionFan]
+  [fan : (&mut OptBceVersionFan)]
   [seed : (& ir.CompilerIrValue)]
   [bound : (& ir.CompilerIrValue)]
   [base : (& ir.CompilerIrValue)]
   [offset : i64]
   [length : (& ir.CompilerIrValue)]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [acc : (& OptBceVersionGuardAcc)]) : OptBceVersionGuardAcc
+  [acc : (&mut OptBceGuardBuf)]) : bool
   (opt-bce-version-fan-admit
     fan
     seed
     bound
-    (owned_view.compiler-owned-reference-shared-view base)
-    offset
-    (owned_view.compiler-owned-reference-shared-view length)
-    (I64 0)
-    1
-    (opt-bce-version-fan-kind-unit)
+    base
+    length
+    (& (I64 0))
+    (OptBceFanSpan offset offset 1 (opt-bce-version-fan-kind-unit))
     cell
     acc))
 
@@ -74181,90 +74058,71 @@
 ;; non-negative, which is exactly why the fan is sound there. So each decreasing
 ;; check states its own three conditions.
 (define (opt-bce-version-mirror-guard
-  [seed : ir.CompilerIrValue]
-  [bound : ir.CompilerIrValue]
+  [seed : (& ir.CompilerIrValue)]
+  [bound : (& ir.CompilerIrValue)]
   [origin : (& ir.CompilerIrValue)]
   [magnitude : i64]
   [length : (& ir.CompilerIrValue)]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
-  (if (<= magnitude 0)
-    (No)
-    (match acc
-      [(No) (No)]
-      [(Some instrs-input values counter-seen)
-        (let
-          [instrs : ir.CompilerIrInstrBuilder instrs-input]
-          [trip-span : i64 (opt-bce-version-alloc-var cell)]
-          [last-trip : i64 (opt-bce-version-alloc-var cell)]
-          ;; A unit magnitude needs no quotient at all (the threshold IS the
-          ;; origin), and a literal origin's quotient is decided here rather
-          ;; than emitted -- unsigned, which is what the runtime divide would
-          ;; be, and exact because condition (A) admits only a non-negative
-          ;; origin.
-          [literal-room : OptBceVersionKSum
-            (if (= magnitude 1)
-              (No)
-              (match origin
-                [(I64 k)
-                  (Some (cast (/ (cast k : u64) (cast magnitude : u64)) : i64))]
-                [_ (No)]))]
-          [emit-quotient? : bool
-            (and
-              (not (= magnitude 1))
-              (match literal-room
-                [(Some _) false]
-                [(No) true]))]
-          [maximum-trip : i64
-            (if emit-quotient?
-              (opt-bce-version-alloc-var cell)
-              (- 0 1))]
-          [room : ir.CompilerIrValue
-            (if emit-quotient?
-              (Var maximum-trip)
-              (match literal-room
-                [(Some q) (I64 q)]
-                [(No) (owned_view.compiler-owned-reference-shared-view origin)]))]
-          [_emit-arithmetic : unit
-            (begin
-              (opt-bce-version-builder-push!
-                (&mut instrs)
-                (& (BinOp trip-span (Sub) bound seed (I64))))
-              (opt-bce-version-builder-push!
-                (&mut instrs)
-                (& (BinOp last-trip (Sub) (Var trip-span) (I64 1) (I64))))
-              (if (not emit-quotient?)
-                unit
-                (opt-bce-version-builder-push!
-                  (&mut instrs)
-                  (&
-                    (BinOp
-                      maximum-trip
-                      (Div)
-                      (owned_view.compiler-owned-reference-shared-view origin)
-                      (I64 magnitude)
-                      (U64))))))]
-          [with-arithmetic : OptBceVersionGuardAcc
-            (Some instrs values counter-seen)]
-          (opt-bce-version-cond-counter-seen
-            (opt-bce-version-cond
-              cell
-              (& (Ge))
-              origin
-              (& (I64 0))
-              (&
-                (opt-bce-version-cond
-                  cell
-                  (& (Gt))
-                  length
-                  origin
-                  (&
-                    (opt-bce-version-cond
-                      cell
-                      (& (Le))
-                      (& (Var last-trip))
-                      (& room)
-                      (& with-arithmetic))))))))])))
+  [acc : (&mut OptBceGuardBuf)]) : bool
+  (if (or (<= magnitude 0) (not acc.ok?))
+    false
+    (let
+      [trip-span : i64 (opt-bce-version-alloc-var cell)]
+      [last-trip : i64 (opt-bce-version-alloc-var cell)]
+      ;; A unit magnitude needs no quotient at all (the threshold IS the
+      ;; origin), and a literal origin's quotient is decided here rather
+      ;; than emitted -- unsigned, which is what the runtime divide would
+      ;; be, and exact because condition (A) admits only a non-negative
+      ;; origin.
+      [literal-room : OptBceVersionKSum
+        (if (= magnitude 1)
+          (No)
+          (match origin
+            [(I64 k)
+              (Some (cast (/ (cast k : u64) (cast magnitude : u64)) : i64))]
+            [_ (No)]))]
+      [emit-quotient? : bool
+        (and
+          (not (= magnitude 1))
+          (match literal-room
+            [(Some _) false]
+            [(No) true]))]
+      [maximum-trip : i64
+        (if emit-quotient?
+          (opt-bce-version-alloc-var cell)
+          (- 0 1))]
+      [room : ir.CompilerIrValue
+        (if emit-quotient?
+          (Var maximum-trip)
+          (match literal-room
+            [(Some q) (I64 q)]
+            [(No) (ir.compiler-ir-clone-value origin)]))]
+      (ir.compiler-ir-instr-builder-push!
+        (&mut acc.instrs)
+        (BinOp
+          trip-span
+          (Sub)
+          (ir.compiler-ir-clone-value bound)
+          (ir.compiler-ir-clone-value seed)
+          (I64)))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut acc.instrs)
+        (BinOp last-trip (Sub) (Var trip-span) (I64 1) (I64)))
+      (when
+        emit-quotient?
+        (ir.compiler-ir-instr-builder-push!
+          (&mut acc.instrs)
+          (BinOp
+            maximum-trip
+            (Div)
+            (ir.compiler-ir-clone-value origin)
+            (I64 magnitude)
+            (U64))))
+      (opt-bce-version-cond cell (Le) (& (Var last-trip)) (& room) acc)
+      (opt-bce-version-cond cell (Gt) length origin acc)
+      (opt-bce-version-cond cell (Ge) origin (& (I64 0)) acc)
+      (opt-bce-version-cond-counter-seen acc))))
 
 ;; One decreasing member: synthesize its origin (the same seed synthesis the
 ;; increasing families use, with the negative scale in the multiply) and state
@@ -74275,118 +74133,56 @@
   [bound : (& ir.CompilerIrValue)]
   [base : (& ir.CompilerIrValue)]
   [extra : (& ir.CompilerIrValue)]
-  [offset : i64]
-  [step : i64]
-  [kind : i64]
+  [span : OptBceFanSpan]
   [length : (& ir.CompilerIrValue)]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
-  (if (or (>= step 0) (= step (- (- 0 9223372036854775807) 1)))
-    (No)
-    (match acc
-      [(No) (No)]
-      [(Some instrs values counter-seen)
-        (let
-          [origin : OptBceSynthSeed
-            (opt-bce-version-fan-derived-seed
-              cell
-              (& instrs)
-              (owned_view.compiler-owned-reference-shared-view seed)
-              base
-              (owned_view.compiler-owned-reference-shared-view extra)
-              offset
-              step
-              kind)]
-          (opt-bce-version-mirror-guard
-            (owned_view.compiler-owned-reference-shared-view seed)
-            (owned_view.compiler-owned-reference-shared-view bound)
-            (& origin.value)
-            (- 0 step)
-            length
-            cell
-            (Some origin.instrs values counter-seen)))])))
+  [acc : (&mut OptBceGuardBuf)]) : bool
+  (if (or
+    (>= span.step 0)
+    (= span.step (- (- 0 9223372036854775807) 1))
+    (not acc.ok?))
+    false
+    (let
+      [origin : ir.CompilerIrValue
+        (opt-bce-version-fan-derived-seed
+          cell
+          (&mut acc.instrs)
+          seed
+          base
+          extra
+          span.kmin
+          span.step
+          span.kind)]
+      (opt-bce-version-mirror-guard
+        seed
+        bound
+        (& origin)
+        (- 0 span.step)
+        length
+        cell
+        acc))))
 
-;; One member of a SCALED family, whichever direction it runs: the increasing
-;; ones join the fan, the decreasing ones state the mirrored conditions.
-(define (opt-bce-version-scaled-family
-  [fan : OptBceVersionFan]
+;; One member of a SCALED or DERIVED family, whichever direction it runs: the
+;; increasing ones join the fan, the decreasing ones state the mirrored
+;; conditions.
+(define (opt-bce-version-strided-family
+  [fan : (&mut OptBceVersionFan)]
   [seed : (& ir.CompilerIrValue)]
   [bound : (& ir.CompilerIrValue)]
   [base : (& ir.CompilerIrValue)]
-  [offset : i64]
-  [scale : i64]
+  [extra : (& ir.CompilerIrValue)]
+  [span : OptBceFanSpan]
   [length : (& ir.CompilerIrValue)]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [acc : (& OptBceVersionGuardAcc)]) : OptBceVersionGuardAcc
-  (if (< (opt-bce-counter-affine-magnitude offset) 0)
+  [acc : (&mut OptBceGuardBuf)]) : bool
+  (if (< (opt-bce-counter-affine-magnitude span.kmin) 0)
     ;; The i64-MIN offset rejection the literal affine guard makes, kept for
     ;; the synthesized forms as shared caution rather than as a requirement of
     ;; their construction (see opt-bce-version-fan-derived-seed).
-    (No)
-    (if (> scale 0)
-      (opt-bce-version-fan-admit
-        fan
-        seed
-        bound
-        (owned_view.compiler-owned-reference-shared-view base)
-        offset
-        (owned_view.compiler-owned-reference-shared-view length)
-        (I64 0)
-        scale
-        (opt-bce-version-fan-kind-scaled)
-        cell
-        acc)
-      (opt-bce-version-mirror-family
-        seed
-        bound
-        base
-        (& (I64 0))
-        offset
-        scale
-        (opt-bce-version-fan-kind-scaled)
-        length
-        cell
-        (owned_view.compiler-owned-reference-shared-view acc)))))
-
-;; One member of a DERIVED family (a derived induction phi with an invariant
-;; init `d0`), in either direction.
-(define (opt-bce-version-derived-family
-  [fan : OptBceVersionFan]
-  [seed : (& ir.CompilerIrValue)]
-  [bound : (& ir.CompilerIrValue)]
-  [base : (& ir.CompilerIrValue)]
-  [d0 : (& ir.CompilerIrValue)]
-  [offset : i64]
-  [step : i64]
-  [length : (& ir.CompilerIrValue)]
-  [cell : (&mut cell (__tl_dyn-array i64))]
-  [acc : (& OptBceVersionGuardAcc)]) : OptBceVersionGuardAcc
-  (if (< (opt-bce-counter-affine-magnitude offset) 0)
-    (No)
-    (if (> step 0)
-      (opt-bce-version-fan-admit
-        fan
-        seed
-        bound
-        (owned_view.compiler-owned-reference-shared-view base)
-        offset
-        (owned_view.compiler-owned-reference-shared-view length)
-        (owned_view.compiler-owned-reference-shared-view d0)
-        step
-        (opt-bce-version-fan-kind-derived)
-        cell
-        acc)
-      (opt-bce-version-mirror-family
-        seed
-        bound
-        base
-        d0
-        offset
-        step
-        (opt-bce-version-fan-kind-derived)
-        length
-        cell
-        (owned_view.compiler-owned-reference-shared-view acc)))))
+    false
+    (if (> span.step 0)
+      (opt-bce-version-fan-admit fan seed bound base length extra span cell acc)
+      (opt-bce-version-mirror-family seed bound base extra span length cell acc))))
 
 ;; --- masked index with a loop-invariant mask ----------------------------------
 ;;
@@ -74424,14 +74220,9 @@
   [cell : (&mut cell (__tl_dyn-array i64))]
   [mask : (& ir.CompilerIrValue)]
   [length-value : (& ir.CompilerIrValue)]
-  [acc : (& OptBceVersionGuardAcc)]) : OptBceVersionGuardAcc
-  (opt-bce-version-cond-typed
-    cell
-    (Lt)
-    (owned_view.compiler-owned-reference-shared-view mask)
-    (owned_view.compiler-owned-reference-shared-view length-value)
-    (U64)
-    (owned_view.compiler-owned-reference-shared-view acc)))
+  [acc : (&mut OptBceGuardBuf)]) : bool
+  (opt-bce-version-cond-typed cell (Lt) mask length-value (U64) acc)
+  acc.ok?)
 
 ;; The distinct invariant bounds collected off one index expression. A phi merges
 ;; several, so the set is what the guard states, once per member.
@@ -74459,14 +74250,6 @@
     [(Dense values count)
       (owned_view.compiler-owned-element-view values (- (- count 1) index))]))
 
-(define (opt-bce-mask-list-tail [masks : (& masks OptBceMaskList)]) : OptBceMaskList
-  (match (owned_view.compiler-owned-reference-shared-view masks)
-    [(Empty) (Empty)]
-    [(Dense values count)
-      (if (<= count 1)
-        (Empty)
-        (Dense values (- count 1)))]))
-
 (define (opt-bce-mask-list-cons
   [value : ir.CompilerIrValue]
   [masks : OptBceMaskList]) : OptBceMaskList
@@ -74486,12 +74269,10 @@
   [value : (& ir.CompilerIrValue)]) : bool
   (match masks
     [(Empty) false]
-    [(Dense _ _)
-      (if (opt-value-eq (& (opt-bce-mask-list-ref masks 0)) value)
-        true
-        (let
-          [masks-2 (opt-bce-mask-list-tail masks)]
-          (opt-bce-mask-list-contains? masks-2 value)))]))
+    [(Dense values count)
+      (for [i (iterator.range 0 count)]
+        (when (opt-value-eq (& (array-ref values i)) value) (return true)))
+      false]))
 
 (define (opt-bce-mask-set-add
   [set : OptBceMaskSet]
@@ -74500,15 +74281,13 @@
     [(No) (No)]
     [(Some masks)
       (let
-        [count : i64 (opt-bce-mask-list-count masks)]
+        [count : i64 (opt-bce-mask-list-count (& masks))]
         (cond
-          [(opt-bce-mask-list-contains? masks value) (Some masks)]
+          [(opt-bce-mask-list-contains? (& masks) value) (Some masks)]
           [(>= count (opt-bce-mask-set-max)) (No)]
           [else
             (Some
-              (opt-bce-mask-list-cons
-                (owned_view.compiler-owned-reference-shared-view value)
-                masks))]))]))
+              (opt-bce-mask-list-cons (ir.compiler-ir-clone-value value) masks))]))]))
 
 ;; An invariant bound is usable only when it can pass: a negative literal never
 ;; can (see the head comment).
@@ -74522,22 +74301,17 @@
   [cell : (&mut cell (__tl_dyn-array i64))]
   [masks : (& OptBceMaskList)]
   [length-value : (& ir.CompilerIrValue)]
-  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  [acc : (&mut OptBceGuardBuf)]) : bool
   (match masks
-    [(Empty) acc]
-    [(Dense _ _)
-      (let
-        [next : OptBceVersionGuardAcc
-          (opt-bce-version-mask-cond
-            cell
-            (& (opt-bce-mask-list-ref masks 0))
-            length-value
-            (& acc))]
-        (opt-bce-mask-conds
+    [(Empty) acc.ok?]
+    [(Dense values count)
+      (for [i (iterator.range 0 count)]
+        (opt-bce-version-mask-cond
           cell
-          (& (opt-bce-mask-list-tail masks))
+          (& (array-ref values (- (- count 1) i)))
           length-value
-          next))]))
+          acc))
+      acc.ok?]))
 
 (cfg
   test
@@ -74545,7 +74319,7 @@
     optimizer-bce-mask-fixed-capacity-order-and-overflow
     (let
       [set : OptBceMaskSet (Some (Empty))]
-      (match (compiler-opt-global-shared-view set)
+      (match (& set)
         [(No) (test.assert-true false "empty BCE mask set is available")]
         [(Some masks)
           (test.assert-i64-eq
@@ -74555,14 +74329,14 @@
       (for [index (iterator.range 0 4)]
         (set! set (opt-bce-mask-set-add set (& (I64 index)))))
       (set! set (opt-bce-mask-set-add set (& (I64 2))))
-      (match (compiler-opt-global-shared-view set)
+      (match (& set)
         [(No) (test.assert-true false "four BCE masks remain admitted")]
         [(Some masks)
           (test.assert-i64-eq
             (opt-bce-mask-list-count masks)
             4
             "duplicate mask does not consume capacity")
-          (match (compiler-opt-global-shared-view masks)
+          (match masks
             [(Empty) (test.assert-true false "four-mask storage is dense")]
             [(Dense items _)
               (test.assert-i64-eq
@@ -74633,130 +74407,94 @@
                     (No)]
                   [_ (No)])])))))))
 
-(define (opt-bce-version-derive-checks
-  [type-segment-bases : i64]
+;; Copy scalar context shared across single-block and multi-block check
+;; derivation. Passed by `&` so 8 loop-invariant scalars travel in one register
+;; with zero heap allocation.
+(defstruct OptBceDeriveScalars
+  (latch i64)
+  (preheader i64)
+  (iphi i64)
+  (exact? bool)
+  (single-block? bool)
+  (allow-scale1 bool)
+  (stable? bool)
+  (only-keep? bool))
+
+(defstruct OptBceVersionLoopScalars
+  (type-segment-bases i64)
+  (phi-count i64)
+  (last i64)
+  (loop-label i64)
+  (pred-label i64)
+  (iphi i64)
+  (step i64)
+  (bound-nonneg? bool)
+  (nested-entry? bool)
+  (down? bool))
+
+(define (opt-bce-version-derive-checks!
+  [lsc : (& OptBceVersionLoopScalars)]
   [blocks : (& ir.CompilerIrBlockList)]
   [len-eq : (& opt_i64_i64_map.Map)]
   [instrs : (& ir.CompilerIrInstrSeq)]
   ;; The loop's one block as a block list (opt-bce-version-body-blocks).
   [body-blocks : (& ir.CompilerIrBlockList)]
-  [index : i64]
-  [phi-count : i64]
-  [last : i64]
   [defs : (& defs opt_i64_i64_map.Map)]
-  [loop-label : i64]
-  [pred-label : i64]
-  [iphi : i64]
   [seed : (& ir.CompilerIrValue)]
   [bound : (& ir.CompilerIrValue)]
   [cell : (&mut cell (__tl_dyn-array i64))]
   [allow-scale1 : bool]
-  [fan : OptBceVersionFan]
-  [state : OptBceVersionDerive]) : OptBceVersionDerive
-  (if (>= index last)
-    state
-    (opt-bce-version-derive-checks
-      type-segment-bases
-      blocks
-      len-eq
-      instrs
-      body-blocks
-      (+ index 1)
-      phi-count
-      last
-      defs
-      loop-label
-      pred-label
-      iphi
-      seed
-      bound
-      cell
-      allow-scale1
-      (compiler-opt-global-shared-view fan)
+  [fan : (&mut OptBceVersionFan)]
+  [state : (&mut OptBceVersionDerive)]) : unit
+  (let
+    [dsc : OptBceDeriveScalars
+      (OptBceDeriveScalars
+        lsc.loop-label
+        lsc.pred-label
+        lsc.iphi
+        true
+        true
+        allow-scale1
+        false
+        false)]
+    (for [index (iterator.range lsc.phi-count lsc.last)]
       (match (ir.compiler-ir-instr-seq-borrow instrs index)
         [(BoundsCheck index-value length-value _)
-          (match (opt-bce-version-invariant-operand
-            instrs
-            phi-count
-            last
+          (match (opt-bce-mb-invariant-operand
+            body-blocks
             defs
-            length-value)
+            (& length-value))
             [(Some length-invariant)
               (let
                 [canon-length : ir.CompilerIrValue
                   (match (opt-bce-len-eq-canon!
-                    type-segment-bases
+                    lsc.type-segment-bases
                     blocks
                     len-eq
                     (& length-value)
                     (& length-invariant))
                     [(Some v) v]
                     [(No) length-invariant])]
-                [derived-guard : OptBceVersionGuardAcc
-                  (opt-bce-mb-derive-index
-                    body-blocks
-                    body-blocks
-                    defs
-                    loop-label
-                    pred-label
-                    iphi
-                    true
-                    false
-                    true
-                    allow-scale1
-                    seed
-                    bound
-                    cell
-                    (& index-value)
-                    (& canon-length)
-                    fan
-                    (& (__tl-project-field state guard)))]
-                (match (& derived-guard)
-                  [(No)
-                    (OptBceVersionDerive
-                      (owned_view.compiler-owned-shared-view state.guard)
-                      (opt-bce-version-keep-add
-                        (owned_view.compiler-owned-shared-view state.keep)
-                        index)
-                      state.derived)]
-                  [(Some _ _ _)
-                    (OptBceVersionDerive
-                      derived-guard
-                      (owned_view.compiler-owned-shared-view state.keep)
-                      (+ state.derived 1))]))]
-            [(No)
-              (OptBceVersionDerive
-                (owned_view.compiler-owned-shared-view state.guard)
-                (opt-bce-version-keep-add
-                  (owned_view.compiler-owned-shared-view state.keep)
-                  index)
-                state.derived)])]
-        [_ state]))))
-
-(define (opt-bce-version-and-chain-array
-  [cell : (&mut cell (__tl_dyn-array i64))]
-  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
-  [current : ir.CompilerIrValue]
-  [values : (& ir.CompilerIrValueSeq)]
-  [index : i64]) : ir.CompilerIrValue
-  (if (>= index values.len)
-    current
-    (let
-      [dst : i64 (opt-bce-version-alloc-var cell)]
-      (ir.compiler-ir-instr-builder-push!
-        builder
-        (ir.CompilerIrInstr.BinOp
-          dst
-          (And)
-          current
-          (compiler-opt-global-array-element-shared-view values.slots index)
-          (Bool)))
-      (opt-bce-version-and-chain-array
-        cell
-        builder
-        (Var dst)
-        values
-        (+ index 1)))))
+                [mark : OptBceGuardMark (opt-bce-guard-mark (& state.guard))]
+                (if (opt-bce-mb-derive-index
+                  body-blocks
+                  body-blocks
+                  defs
+                  (& dsc)
+                  false
+                  seed
+                  bound
+                  cell
+                  (& index-value)
+                  (& canon-length)
+                  fan
+                  (&mut state.guard))
+                  (+= state.derived 1)
+                  (begin
+                    (opt-bce-guard-restore! (&mut state.guard) mark)
+                    (opt-bce-version-keep-add! (&mut state.keep) index))))]
+            [(No) (opt-bce-version-keep-add! (&mut state.keep) index)])]
+        [_ unit]))))
 
 ;; Zero conditions is a guard that always passes, which is what a derivation
 ;; whose every conjunct folded away leaves behind (`bound <= len` where the
@@ -74767,30 +74505,37 @@
 ;; loops whose guard was only ever a trivially true comparison.
 (define (opt-bce-version-build-guard
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [instrs-input : ir.CompilerIrInstrBuilder]
-  [values : (& ir.CompilerIrValueSeq)]) : OptBceVersionGuardResult
-  (let
-    [instrs : ir.CompilerIrInstrBuilder instrs-input]
-    [value-count : i64 (ir.compiler-ir-value-seq-count values)]
-    (if (= value-count 0)
-      (let
-        [dst : i64 (opt-bce-version-alloc-var cell)]
-        (Some
-          (ir.compiler-ir-instr-builder-to-seq
-            (opt-bce-version-builder-push
-              instrs
-              (& (Mov dst (Bool true) (Bool)))))
-          (Var dst)))
-      (let
-        [guard-value : ir.CompilerIrValue
-          (opt-bce-version-and-chain-array
-            cell
-            (&mut instrs)
+  [acc : OptBceGuardBuf]) : OptBceVersionGuardResult
+  (if (not acc.ok?)
+    (No)
+    (let
+      [value-count : i64 acc.values.len]
+      (if (= value-count 0)
+        (let
+          [dst : i64 (opt-bce-version-alloc-var cell)]
+          (ir.compiler-ir-instr-builder-push!
+            (&mut acc.instrs)
+            (Mov dst (Bool true) (Bool)))
+          (Some (ir.compiler-ir-instr-builder-to-seq acc.instrs) (Var dst)))
+        (let
+          [last-idx : i64 (- value-count 1)]
+          [cur : ir.CompilerIrValue
             (ir.compiler-ir-clone-value
-              (ir.compiler-ir-value-seq-borrow values 0))
-            values
-            1)]
-        (Some (ir.compiler-ir-instr-builder-to-seq instrs) guard-value)))))
+              (& (array-ref acc.values.slots last-idx)))]
+          (for [k (iterator.range 1 value-count)]
+            (let
+              [dst : i64 (opt-bce-version-alloc-var cell)]
+              (ir.compiler-ir-instr-builder-push!
+                (&mut acc.instrs)
+                (ir.CompilerIrInstr.BinOp
+                  dst
+                  (And)
+                  cur
+                  (ir.compiler-ir-clone-value
+                    (& (array-ref acc.values.slots (- last-idx k))))
+                  (Bool)))
+              (set! cur (Var dst))))
+          (Some (ir.compiler-ir-instr-builder-to-seq acc.instrs) cur))))))
 
 ;; Assemble the guard from the derived per-check conditions: the once-only
 ;; `seed < bound` and `seed >= 0` when any counter-cased check needs them (a
@@ -74879,121 +74624,69 @@
   [no-wrap-known? : bool]
   [bound-nonneg? : bool]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardResult
-  (match acc
-    [(No) (No)]
-    [(Some cond-instrs cond-values counter-seen)
-      (let
-        ;; The pair is merged only when BOTH halves are actually being emitted
-        ;; (a dominating branch decides neither), the bound is provably
-        ;; non-negative, and the seed is not a literal -- a literal seed folds
-        ;; both halves at compile time already, which is cheaper still.
-        [merge-pair? : bool
-          (and
-            counter-seen
-            (not entered-known?)
-            (not nonneg-known?)
-            bound-nonneg?
-            (opt-bce-version-value-var? seed))]
-        ;; The canonical self-loop is do-while shaped: the FIRST body
-        ;; iteration (index = seed) runs before any compare, so the counter
-        ;; range argument also needs `seed < bound` in the guard -- without
-        ;; it a loop entered with seed >= bound would run one unchecked fast
-        ;; iteration at an index the slow path would have aborted on.
-        ;; Rotated loops satisfy it dynamically (their preheader guard
-        ;; proved a first iteration), so the compare never deselects the
-        ;; fast path there.
-        [entered : OptBceVersionGuardAcc
-          (if merge-pair?
-            (opt-bce-version-cond-typed
-              cell
-              (Lt)
-              (owned_view.compiler-owned-reference-shared-view seed)
-              (owned_view.compiler-owned-reference-shared-view bound)
-              (U64)
-              (Some cond-instrs cond-values true))
-            (if (and counter-seen (not entered-known?))
-              (match seed
-                [(I64 sk)
-                  (match bound
-                    [(I64 bk)
-                      (if (< sk bk)
-                        (Some cond-instrs cond-values true)
-                        (No))]
-                    [_
-                      (opt-bce-version-cond
-                        cell
-                        (& (Lt))
-                        seed
-                        bound
-                        (& (Some cond-instrs cond-values true)))])]
-                [_
-                  (opt-bce-version-cond
-                    cell
-                    (& (Lt))
-                    seed
-                    bound
-                    (& (Some cond-instrs cond-values true)))])
-              (Some cond-instrs cond-values false)))]
-        [seeded : OptBceVersionGuardAcc
-          (if merge-pair?
-            entered
-            (if (and counter-seen (not nonneg-known?))
-              (match entered
-                [(No) (No)]
-                [(Some e-instrs e-values _)
-                  (match seed
-                    [(I64 k)
-                      (if (>= k 0)
-                        (Some e-instrs e-values true)
-                        (No))]
-                    [(Var _)
-                      (opt-bce-version-cond
-                        cell
-                        (& (Ge))
-                        seed
-                        (& (I64 0))
-                        (& (Some e-instrs e-values true)))]
-                    [_ (No)])])
-              entered))]
-        [unwrapped : OptBceVersionGuardAcc
-          (if (and counter-seen (> step 1) (not no-wrap-known?))
-            (match seeded
-              [(No) (No)]
-              [(Some s-instrs s-values _)
+  [acc : OptBceGuardBuf]) : OptBceVersionGuardResult
+  (if (not acc.ok?)
+    (No)
+    (let
+      [counter-seen : bool acc.counter-seen]
+      ;; The pair is merged only when BOTH halves are actually being emitted
+      ;; (a dominating branch decides neither), the bound is provably
+      ;; non-negative, and the seed is not a literal -- a literal seed folds
+      ;; both halves at compile time already, which is cheaper still.
+      [merge-pair? : bool
+        (and
+          counter-seen
+          (not entered-known?)
+          (not nonneg-known?)
+          bound-nonneg?
+          (opt-bce-version-value-var? seed))]
+      ;; The canonical self-loop is do-while shaped: the FIRST body
+      ;; iteration (index = seed) runs before any compare, so the counter
+      ;; range argument also needs `seed < bound` in the guard -- without
+      ;; it a loop entered with seed >= bound would run one unchecked fast
+      ;; iteration at an index the slow path would have aborted on.
+      ;; Rotated loops satisfy it dynamically (their preheader guard
+      ;; proved a first iteration), so the compare never deselects the
+      ;; fast path there.
+      (if merge-pair?
+        (opt-bce-version-cond-typed cell (Lt) seed bound (U64) (&mut acc))
+        (begin
+          (when
+            (and counter-seen (not entered-known?))
+            (match seed
+              [(I64 sk)
                 (match bound
-                  [(I64 bk)
-                    ;; Representable for every literal step in [2, MAX].
-                    (if (<= bk (+ (- 9223372036854775807 step) 1))
-                      (Some s-instrs s-values true)
-                      (No))]
-                  [_
-                    (let
-                      [probe : i64 (opt-bce-version-alloc-var cell)]
-                      (opt-bce-version-cond
-                        cell
-                        (& (Ge))
-                        (& (Var probe))
-                        bound
-                        (&
-                          (Some
-                            (opt-bce-version-builder-push
-                              s-instrs
-                              (&
-                                (BinOp
-                                  probe
-                                  (Add)
-                                  (owned_view.compiler-owned-reference-shared-view
-                                    bound)
-                                  (I64 (- step 1))
-                                  (I64))))
-                            s-values
-                            true))))])])
-            seeded)]
-        (match unwrapped
-          [(No) (No)]
-          [(Some all-instrs all-values _)
-            (opt-bce-version-build-guard cell all-instrs (& all-values))]))]))
+                  [(I64 bk) (unless (< sk bk) (set! acc.ok? false))]
+                  [_ (opt-bce-version-cond cell (Lt) seed bound (&mut acc))])]
+              [_ (opt-bce-version-cond cell (Lt) seed bound (&mut acc))]))
+          (when
+            (and counter-seen (not nonneg-known?) acc.ok?)
+            (match seed
+              [(I64 k) (unless (>= k 0) (set! acc.ok? false))]
+              [(Var _)
+                (opt-bce-version-cond cell (Ge) seed (& (I64 0)) (&mut acc))]
+              [_ (set! acc.ok? false)]))))
+      (when
+        (and counter-seen (> step 1) (not no-wrap-known?) acc.ok?)
+        (match bound
+          [(I64 bk)
+            ;; Representable for every literal step in [2, MAX].
+            (unless
+              (<= bk (+ (- 9223372036854775807 step) 1))
+              (set! acc.ok? false))]
+          [_
+            (let
+              [probe : i64 (opt-bce-version-alloc-var cell)]
+              (ir.compiler-ir-instr-builder-push!
+                (&mut acc.instrs)
+                (BinOp
+                  probe
+                  (Add)
+                  (ir.compiler-ir-clone-value bound)
+                  (I64 (- step 1))
+                  (I64)))
+              (opt-bce-version-cond cell (Ge) (& (Var probe)) bound (&mut acc)))]))
+      (opt-bce-version-build-guard cell acc))))
 
 ;; Append the terminating branch to a freshly built dense guard block.
 (define (opt-bce-version-guard-block
@@ -75016,25 +74709,6 @@
       (ir.CompilerIrInstr.Branch guard-value true-label false-label))
     (Block label (ir.compiler-ir-instr-builder-to-seq builder))))
 
-;; The empty derivation state every scan starts from.
-(define (opt-bce-version-derive-start [index-bound : i64]) : OptBceVersionDerive
-  (OptBceVersionDerive
-    (Some
-      (ir.compiler-ir-instr-builder-new)
-      (ir.compiler-ir-value-seq-empty)
-      false)
-    (opt-bce-version-keep-new index-bound)
-    0))
-
-;; ALIAS-1. The same start, over a PRELUDE the caller has already accumulated:
-;; the descending range's `seed + 1` and its no-wrap conjunct
-;; (opt-bce-version-down-range). An ascending loop passes the empty accumulator
-;; and gets exactly opt-bce-version-derive-start back.
-(define (opt-bce-version-derive-start-with
-  [index-bound : i64]
-  [pre : OptBceVersionGuardAcc]) : OptBceVersionDerive
-  (OptBceVersionDerive pre (opt-bce-version-keep-new index-bound) 0))
-
 ;; ALIAS-1. The ascending RANGE a descending unit-step counter executes over,
 ;; and the guard prelude that states it.
 ;;
@@ -75053,47 +74727,23 @@
 ;; by folding at compile time for a literal seed, and by the emitted
 ;; `seed + 1 > seed` conjunct for a variable one, which is false exactly when
 ;; the addition wrapped and therefore deselects the fast clone.
-(defenum OptBceVersionDownRange
-  (No)
-  ;; the exclusive ascending bound, and the guard accumulator that computes it
-  (Some ir.CompilerIrValue OptBceVersionGuardAcc))
-
 (define (opt-bce-version-down-range
   [seed : (& seed ir.CompilerIrValue)]
-  [cell : (&mut cell (__tl_dyn-array i64))]) : OptBceVersionDownRange
+  [cell : (&mut cell (__tl_dyn-array i64))]
+  [acc : (&mut OptBceGuardBuf)]) : ir.CompilerIrMaybeValue
   (match seed
     [(I64 k)
       (if (= k 9223372036854775807)
         (No)
-        (Some
-          (I64 (+ k 1))
-          (Some
-            (ir.compiler-ir-instr-builder-new)
-            (ir.compiler-ir-value-seq-empty)
-            false)))]
+        (Some (I64 (+ k 1))))]
     [(Var _)
       (let
         [dst : i64 (opt-bce-version-alloc-var cell)]
-        (Some
-          (Var dst)
-          (opt-bce-version-cond
-            cell
-            (& (Gt))
-            (& (Var dst))
-            seed
-            (&
-              (Some
-                (opt-bce-version-builder-push
-                  (ir.compiler-ir-instr-builder-new)
-                  (&
-                    (BinOp
-                      dst
-                      (Add)
-                      (owned_view.compiler-owned-reference-shared-view seed)
-                      (I64 1)
-                      (I64))))
-                (ir.compiler-ir-value-seq-empty)
-                false)))))]
+        (ir.compiler-ir-instr-builder-push!
+          (&mut acc.instrs)
+          (BinOp dst (Add) (ir.compiler-ir-clone-value seed) (I64 1) (I64)))
+        (opt-bce-version-cond cell (Gt) (& (Var dst)) seed acc)
+        (Some (Var dst)))]
     [_ (No)]))
 
 ;; Assemble the single-block guard: derive the per-check conditions, then
@@ -75226,26 +74876,15 @@
       (and (= stores 1) (<= loads 1)))))
 
 (define (opt-bce-version-guard-conds
-  [type-segment-bases : i64]
+  [lsc : (& OptBceVersionLoopScalars)]
   [blocks : (& ir.CompilerIrBlockList)]
   [len-eq : (& opt_i64_i64_map.Map)]
   [instrs : (& ir.CompilerIrInstrSeq)]
-  [phi-count : i64]
-  [last : i64]
   [defs : (& defs opt_i64_i64_map.Map)]
-  [loop-label : i64]
-  [pred-label : i64]
-  [iphi : i64]
   [seed : (& ir.CompilerIrValue)]
   [bound : (& ir.CompilerIrValue)]
-  [step : i64]
-  [bound-nonneg? : bool]
-  [nested-entry? : bool]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  ;; ALIAS-1: the descending range's prelude, empty for an ascending counter,
-  ;; and whether this counter descends at all (which re-prices the guard).
-  [pre : (& OptBceVersionGuardAcc)]
-  [down? : bool]) : OptBceVersionGuardOut
+  [pre : OptBceGuardBuf]) : OptBceVersionGuardOut
   (let
     [census-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [_census-seed : unit (set! (array-ref census-cell 0) (array-ref cell 0))]
@@ -75253,51 +74892,45 @@
     [body-blocks : ir.CompilerIrBlockList (opt-bce-version-body-blocks instrs)]
     ;; The census gets its own fan table for the same reason it gets its own
     ;; var counter: its records are discarded with its conditions.
+    [census-fan : OptBceVersionFan (opt-bce-version-fan-new)]
     [census : OptBceVersionDerive
-      (opt-bce-version-derive-checks
-        type-segment-bases
+      (OptBceVersionDerive
+        (opt-bce-guard-buf-new)
+        (opt-bce-version-keep-new lsc.last)
+        0)]
+    [_c : unit
+      (opt-bce-version-derive-checks!
+        lsc
         blocks
         len-eq
         instrs
         (& body-blocks)
-        phi-count
-        phi-count
-        last
         defs
-        loop-label
-        pred-label
-        iphi
         seed
         bound
         (&mut census-cell)
         true
-        (opt-bce-version-fan-new)
-        (opt-bce-version-derive-start last))]
+        (&mut census-fan)
+        (&mut census))]
     [allow-scale1 : bool (>= census.derived 1)]
     [_reset2 : unit (opt-bce-len-eq-reset!)]
     [fan : OptBceVersionFan (opt-bce-version-fan-new)]
     [state : OptBceVersionDerive
-      (opt-bce-version-derive-checks
-        type-segment-bases
+      (OptBceVersionDerive pre (opt-bce-version-keep-new lsc.last) 0)]
+    [_d : unit
+      (opt-bce-version-derive-checks!
+        lsc
         blocks
         len-eq
         instrs
         (& body-blocks)
-        phi-count
-        phi-count
-        last
         defs
-        loop-label
-        pred-label
-        iphi
         seed
         bound
         cell
         allow-scale1
-        (compiler-opt-global-shared-view fan)
-        (opt-bce-version-derive-start-with
-          last
-          (owned_view.compiler-owned-reference-shared-view pre)))]
+        (&mut fan)
+        (&mut state))]
     ;; Partial versioning still needs at least one REMOVED check to pay for
     ;; the clone; with none, the loop is left untouched.
     ;;
@@ -75318,86 +74951,96 @@
     [_trace : unit (opt-bce-trace-derivation! state.derived state.keep.count)]
     (if (or
       (= state.derived 0)
-      (and down? (< state.derived 2))
-      (and (opt-bce-mb-label-in-clone? loop-label) (> state.keep.count 0)))
+      (and lsc.down? (< state.derived 2))
+      (and (opt-bce-mb-label-in-clone? lsc.loop-label) (> state.keep.count 0)))
       (opt-bce-trace-refuse-guard
         (if (= state.derived 0)
           (opt-bce-reason-derived-zero)
           (opt-bce-reason-floor)))
-      (match (opt-bce-version-guard-finish
-        seed
-        bound
-        step
-        (and
-          (not down?)
-          (opt-bce-mb-entry-decides? blocks pred-label (& (Lt)) seed bound 8))
-        (and
-          (not down?)
-          (opt-bce-mb-entry-decides?
-            blocks
-            pred-label
-            (& (Ge))
-            seed
-            (& (I64 0))
-            8))
-        (opt-bce-version-fan-proves-no-wrap?
-          type-segment-bases
-          blocks
-          (& (OptBceMbHoists.Nil))
-          (& fan)
-          step
-          0)
-        bound-nonneg?
-        cell
+      (let
+        [no-hoists : OptBceMbHoists (opt-bce-mb-hoists-new)]
         ;; The fan's extremal conditions join the accumulator only here, once
         ;; per loop, instead of twice per fan member.
-        (opt-bce-version-fan-flush
-          type-segment-bases
+        (opt-bce-version-fan-flush!
+          lsc.type-segment-bases
           blocks
-          (& (OptBceMbHoists.Nil))
+          (& no-hoists)
           (& fan)
-          0
           seed
           bound
           cell
-          state.guard))
-        [(No) (opt-bce-trace-refuse-guard (opt-bce-reason-unsatisfiable))]
-        [(Some guard-instrs guard-value)
-          (let
-            [conjuncts : i64 (opt-bce-guard-conjunct-count (& guard-instrs))]
-            [guard-cost : i64 (opt-bce-guard-cost (& guard-instrs))]
-            [div-penalty : i64
-              (if (opt-bce-guard-has-non-pow2-div? (& guard-instrs))
-                2
-                0)]
-            [max-trips-refused? : bool
-              (match (opt-loop-max-trips
-                blocks
-                pred-label
-                seed
-                bound
-                step
-                down?)
-                [(Some max-trips)
-                  (>= guard-cost (* 2 (* state.derived max-trips)))]
-                [(No) false])]
-            [nested-refused? : bool
+          (&mut state.guard))
+        (match state
+          [(OptBceVersionDerive guard keep derived)
+            (match (opt-bce-version-guard-finish
+              seed
+              bound
+              lsc.step
               (and
-                nested-entry?
-                (not opt-bce-in-priced-pipeline?)
-                (not
-                  (opt-bce-version-fill-or-copy-shape?
-                    instrs
-                    phi-count
-                    last
-                    step
-                    down?
-                    state.keep.count
-                    state.derived))
-                (> (+ conjuncts div-penalty) (* 3 state.derived)))]
-            (if (or max-trips-refused? nested-refused?)
-              (opt-bce-trace-refuse-guard (opt-bce-reason-floor))
-              (Some guard-instrs guard-value state.keep)))]))))
+                (not lsc.down?)
+                (opt-bce-mb-entry-decides?
+                  blocks
+                  lsc.pred-label
+                  (& (Lt))
+                  seed
+                  bound
+                  8))
+              (and
+                (not lsc.down?)
+                (opt-bce-mb-entry-decides?
+                  blocks
+                  lsc.pred-label
+                  (& (Ge))
+                  seed
+                  (& (I64 0))
+                  8))
+              (opt-bce-version-fan-proves-no-wrap?
+                lsc.type-segment-bases
+                blocks
+                (& no-hoists)
+                (& fan)
+                lsc.step)
+              lsc.bound-nonneg?
+              cell
+              guard)
+              [(No) (opt-bce-trace-refuse-guard (opt-bce-reason-unsatisfiable))]
+              [(Some guard-instrs guard-value)
+                (let
+                  [conjuncts : i64
+                    (opt-bce-guard-conjunct-count (& guard-instrs))]
+                  [guard-cost : i64 (opt-bce-guard-cost (& guard-instrs))]
+                  [div-penalty : i64
+                    (if (opt-bce-guard-has-non-pow2-div? (& guard-instrs))
+                      2
+                      0)]
+                  [max-trips-refused? : bool
+                    (match (opt-loop-max-trips
+                      blocks
+                      lsc.pred-label
+                      seed
+                      bound
+                      lsc.step
+                      lsc.down?)
+                      [(Some max-trips)
+                        (>= guard-cost (* 2 (* derived max-trips)))]
+                      [(No) false])]
+                  [nested-refused? : bool
+                    (and
+                      lsc.nested-entry?
+                      (not opt-bce-in-priced-pipeline?)
+                      (not
+                        (opt-bce-version-fill-or-copy-shape?
+                          instrs
+                          lsc.phi-count
+                          lsc.last
+                          lsc.step
+                          lsc.down?
+                          keep.count
+                          derived))
+                      (> (+ conjuncts div-penalty) (* 3 derived)))]
+                  (if (or max-trips-refused? nested-refused?)
+                    (opt-bce-trace-refuse-guard (opt-bce-reason-floor))
+                    (Some guard-instrs guard-value keep)))])])))))
 
 ;; --- shape scan ---------------------------------------------------------------
 (define (opt-bce-version-shape-phi
@@ -75856,76 +75499,71 @@
             [_ instr]))))
     (ir.compiler-ir-instr-builder-to-seq builder)))
 
+(defstruct OptBceVersionRewriteLabels
+  (pred-label i64)
+  (loop-label i64)
+  (exit-label i64)
+  (fast-label i64)
+  (guard-label i64))
+
 (define (opt-bce-version-rewrite-blocks!
   [out : (&mut out ir.CompilerIrBlockBuilder)]
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
-  [pred-label : i64]
-  [loop-label : i64]
-  [exit-label : i64]
-  [fast-label : i64]
-  [guard-label : i64]
-  [guard-block : ir.CompilerIrBlock]
-  [fast-block : ir.CompilerIrBlock]
-  [remap : (__tl_dyn-array ir.CompilerIrValue)]) : unit
-  (match blocks
-    [(slice) unit]
-    [(slice block & rest)
-      (match block
-        [(Block label instrs)
-          (if (= label loop-label)
-            (begin
-              (ir.compiler-ir-block-builder-push!
-                out
-                (compiler-opt-global-shared-view guard-block))
-              (ir.compiler-ir-block-builder-push!
-                out
-                (compiler-opt-global-shared-view fast-block))
-              (ir.compiler-ir-block-builder-push!
-                out
-                (ir.CompilerIrBlock.Block
-                  label
-                  (opt-relabel-phi-instrs (& instrs) 0 pred-label guard-label))))
+  [labels : (& OptBceVersionRewriteLabels)]
+  [guard-block : (& ir.CompilerIrBlock)]
+  [fast-block : (& ir.CompilerIrBlock)]
+  [remap : (& (__tl_dyn-array ir.CompilerIrValue))]) : unit
+  (for [bi (iterator.range 0 (array-length blocks))]
+    (match (& (array-ref blocks bi))
+      [(Block label instrs)
+        (if (= label labels.loop-label)
+          (begin
             (ir.compiler-ir-block-builder-push!
               out
-              (cond
-                [(= label pred-label)
-                  (ir.CompilerIrBlock.Block
-                    label
-                    (opt-unroll-retarget-instrs
-                      (& instrs)
-                      loop-label
-                      guard-label))]
-                [(= label exit-label)
-                  (ir.CompilerIrBlock.Block
-                    label
-                    (opt-clone-extend-exit-instrs
-                      (& instrs)
-                      0
-                      (& remap)
-                      (& (Edge loop-label fast-label))))]
-                [else (owned_view.compiler-owned-reference-shared-view block)])))
-          (opt-bce-version-rewrite-blocks!
+              (owned_view.compiler-owned-reference-shared-view guard-block))
+            (ir.compiler-ir-block-builder-push!
+              out
+              (owned_view.compiler-owned-reference-shared-view fast-block))
+            (ir.compiler-ir-block-builder-push!
+              out
+              (ir.CompilerIrBlock.Block
+                label
+                (opt-relabel-phi-instrs
+                  (& instrs)
+                  0
+                  labels.pred-label
+                  labels.guard-label))))
+          (ir.compiler-ir-block-builder-push!
             out
-            rest
-            pred-label
-            loop-label
-            exit-label
-            fast-label
-            guard-label
-            (compiler-opt-global-shared-view guard-block)
-            (compiler-opt-global-shared-view fast-block)
-            (compiler-opt-global-shared-view remap))])]))
+            (cond
+              [(= label labels.pred-label)
+                (ir.CompilerIrBlock.Block
+                  label
+                  (opt-unroll-retarget-instrs
+                    (& instrs)
+                    labels.loop-label
+                    labels.guard-label))]
+              [(= label labels.exit-label)
+                (ir.CompilerIrBlock.Block
+                  label
+                  (opt-clone-extend-exit-instrs
+                    (& instrs)
+                    0
+                    remap
+                    (& (Edge labels.loop-label labels.fast-label))))]
+              [else
+                (owned_view.compiler-owned-reference-shared-view
+                  (& (array-ref blocks bi)))])))])))
 
 (define (opt-bce-version-apply-wired
   [type-segment-bases : i64]
   [len-eq : (& opt_i64_i64_map.Map)]
-  [original-blocks : (& original-blocks ir.CompilerIrBlockList)]
   [blocks : (& ir.CompilerIrBlockList)]
   [block : (& ir.CompilerIrBlock)]
-  [shape : OptUnrollShape]
+  [shape : (& OptUnrollShape)]
   [nested-entry? : bool]
   [frame : i64]
-  [cell : (&mut cell (__tl_dyn-array i64))]) : OptUnrollResult
+  [cell : (&mut cell (__tl_dyn-array i64))]) : OptBceApplyHit
   (match block
     [(Block label instrs)
       (let
@@ -75933,32 +75571,23 @@
         [last : i64 (- count 1)]
         [phi-count : i64 shape.phi-count]
         [iphi : i64 shape.iphi]
-        [iphi-ty : ast.AstType shape.iphi-ty]
-        [seed : ir.CompilerIrValue shape.seed]
-        [inext : i64 shape.inext]
-        [bound : ir.CompilerIrValue shape.bound]
-        [others : OptUnrollPhiList shape.others]
         [pred-label : i64 shape.pred-label]
-        [cond-var : i64 shape.cond-var]
-        [then-label
-          : i64
-          ;; The shape's branch may close the back edge from either one of its
-          ;; arms (opt-bce-version-shape-counter). Everything below -- the exit
-          ;; label and the fast clone's OWN branch -- reads the same arm the
-          ;; original does: a clone that swapped them would exit where the
-          ;; original loops and loop where it exits.
+        ;; The shape's branch may close the back edge from either one of its
+        ;; arms (opt-bce-version-shape-counter). Everything below -- the exit
+        ;; label and the fast clone's OWN branch -- reads the same arm the
+        ;; original does: a clone that swapped them would exit where the
+        ;; original loops and loop where it exits.
+        [continues-on-true? : bool
           (match (ir.compiler-ir-instr-seq-borrow instrs last)
-            [(Branch _ then-label _) then-label]
-            [_ label])]
-        [else-label : i64
-          (match (ir.compiler-ir-instr-seq-borrow instrs last)
-            [(Branch _ _ else-label) else-label]
-            [_ label])]
-        [continues-on-true? : bool (= then-label label)]
+            [(Branch _ then-label _) (= then-label label)]
+            [_ true])]
         [exit-label : i64
-          (if continues-on-true?
-            else-label
-            then-label)]
+          (match (ir.compiler-ir-instr-seq-borrow instrs last)
+            [(Branch _ then-label else-label)
+              (if (= then-label label)
+                else-label
+                then-label)]
+            [_ label])]
         [guard-label : i64
           (ir.compiler-ir-label
             (&
@@ -75970,7 +75599,7 @@
           (opt-unroll-block-defs
             (& (__tl-project-field instrs slots))
             0
-            (ir.compiler-ir-instr-seq-count instrs)
+            count
             (opt_i64_i64_map.with-capacity 32))]
         [outside : opt_i64_i64_map.Map
           (opt-bce-mb-outside-uses
@@ -75991,170 +75620,169 @@
         ;; [seed, bound) and needs no prelude; a descending one is
         ;; [bound, seed + 1), whose upper end the prelude computes.
         [literal-seed : ir.CompilerIrValue
-          (opt-bce-version-literal-of blocks seed 8)]
-        [down-range : OptBceVersionDownRange
+          (opt-bce-version-literal-of blocks (& shape.seed) 8)]
+        [guard-pre : OptBceGuardBuf (opt-bce-guard-buf-new)]
+        [down-top : ir.CompilerIrMaybeValue
           (if down?
-            (opt-bce-version-down-range literal-seed cell)
+            (opt-bce-version-down-range (& literal-seed) cell (&mut guard-pre))
             (No))]
         [range-ok? : bool
           (if down?
-            (match (& down-range)
+            (match (& down-top)
               [(No) false]
-              [(Some _ _) true])
+              [(Some _) true])
             true)]
         [guard-seed : ir.CompilerIrValue
           (if down?
-            (opt-bce-version-literal-of blocks bound 8)
+            (opt-bce-version-literal-of blocks (& shape.bound) 8)
             literal-seed)]
         [guard-bound : ir.CompilerIrValue
-          (match (compiler-opt-global-shared-view down-range)
-            [(Some top _) top]
-            [(No) bound])]
-        [guard-pre : OptBceVersionGuardAcc
-          (match down-range
-            [(Some _ acc) acc]
-            [(No)
-              (Some
-                (ir.compiler-ir-instr-builder-new)
-                (ir.compiler-ir-value-seq-empty)
-                false)])]
+          (match down-top
+            [(Some top) top]
+            [(No) (ir.compiler-ir-clone-value (& shape.bound))])]
         [reason : i64
           (cond
-            [(= exit-label label) (opt-bce-reason-latch-form)]
-            [(= exit-label pred-label) (opt-bce-reason-latch-form)]
+            [(or (= exit-label label) (= exit-label pred-label))
+              (opt-bce-reason-latch-form)]
             [(not range-ok?) (opt-bce-reason-bound-range)]
             [(opt-bce-mb-defs-escape-instrs? (& instrs) outside)
               (opt-bce-reason-defs-escape)]
             [else (opt-bce-reason-ok)])]
         (if (not (= reason (opt-bce-reason-ok)))
-          (opt-bce-trace-refuse-result
-            reason
-            (owned_view.compiler-owned-reference-shared-view original-blocks)
-            frame)
-          (match (opt-bce-version-guard-conds
-            type-segment-bases
-            blocks
-            len-eq
-            (& instrs)
-            phi-count
-            last
-            defs
-            label
-            pred-label
-            iphi
-            ;; The guard reads a copied constant as the constant it is: the
-            ;; scaled seed products and the once-only compares then fold at
-            ;; compile time instead of costing instructions per loop entry.
-            (& guard-seed)
-            (& guard-bound)
-            step
-            ;; Merging the once-only pair into one unsigned compare needs the
-            ;; bound's sign; the loop's blocks are where a length-slot load is
-            ;; recognized.
-            (opt-ubound-len-nonneg? type-segment-bases blocks guard-bound)
-            nested-entry?
-            cell
-            (& guard-pre)
-            down?)
-            [(No)
-              (Result
-                (owned_view.compiler-owned-reference-shared-view
-                  original-blocks)
-                frame
-                false)]
-            [(Some guard-instrs guard-value keep)
-              (let
-                [remap : (__tl_dyn-array ir.CompilerIrValue)
-                  (__tl_make-array ir.CompilerIrValue frame)]
-                [_fill : unit (opt-unroll-remap-fill (&mut remap) 0)]
-                ;; Fresh phi destinations first so the cloned body reads the
-                ;; clone's loop-carried values.
-                [_iphi : i64 (opt-unroll-clone-dst (&mut remap) cell iphi)]
-                [_others : unit
-                  (opt-bce-version-alloc-other-phis (&mut remap) cell others)]
-                [body-builder : ir.CompilerIrInstrBuilder
-                  (ir.compiler-ir-instr-builder-with-capacity
-                    (- last phi-count))]
-                [_body-build : unit
-                  (opt-bce-version-push-clone-body!
-                    (&mut (ir.compiler-ir-instr-rewrite-new))
-                    (& instrs)
-                    phi-count
-                    last
-                    (& remap)
-                    cell
-                    keep
-                    (&mut body-builder))]
-                [body : ir.CompilerIrInstrSeq
-                  (ir.compiler-ir-instr-builder-to-seq body-builder)]
-                [fast-builder : ir.CompilerIrInstrBuilder
-                  (ir.compiler-ir-instr-builder-with-capacity
-                    (+ 1 (- last phi-count)))]
-                [_fast-phi : unit
-                  (ir.compiler-ir-instr-builder-push!
-                    (&mut fast-builder)
-                    (ir.CompilerIrInstr.Phi
-                      (match (opt-unroll-subst-value (& remap) (Var iphi))
-                        [(Var fresh-id) fresh-id]
-                        [_ iphi])
-                      (ir.compiler-ir-phi-input-seq-prepend
-                        seed
-                        guard-label
-                        (&
-                          (ir.compiler-ir-phi-input-seq-prepend
-                            (opt-unroll-subst-value (& remap) (Var inext))
-                            fast-label
-                            (& (ir.compiler-ir-phi-input-seq-empty)))))
-                      iphi-ty))]
-                [_fast-other-phis : unit
-                  (opt-bce-version-push-fast-phis!
-                    (& others)
-                    (& remap)
-                    guard-label
-                    fast-label
-                    (&mut fast-builder))]
-                [_fast-body : unit
-                  (ir.compiler-ir-instr-builder-append-seq-range!
-                    (&mut fast-builder)
-                    body
-                    0
-                    (ir.compiler-ir-instr-seq-count body))]
-                [_fast-branch : unit
-                  (ir.compiler-ir-instr-builder-push!
-                    (&mut fast-builder)
-                    (ir.CompilerIrInstr.Branch
-                      (opt-unroll-subst-value (& remap) (Var cond-var))
-                      (if continues-on-true?
-                        fast-label
-                        exit-label)
-                      (if continues-on-true?
-                        exit-label
-                        fast-label)))]
-                [fast-block : ir.CompilerIrBlock
-                  (Block
-                    fast-label
-                    (ir.compiler-ir-instr-builder-to-seq fast-builder))]
-                [guard-block : ir.CompilerIrBlock
-                  (opt-bce-version-guard-block
-                    guard-label
-                    (& guard-instrs)
-                    guard-value
-                    fast-label
-                    label)]
-                (Result
-                  (opt-blocks-build
-                    (owned_view.compiler-owned-reference-shared-view blocks)
-                    opt-bce-version-rewrite-blocks!
-                    pred-label
-                    label
-                    exit-label
-                    fast-label
-                    guard-label
-                    guard-block
-                    fast-block
-                    remap)
-                  (array-ref cell 0)
-                  true))])))]))
+          (opt-bce-trace-refuse-apply reason)
+          (let
+            [lsc : OptBceVersionLoopScalars
+              (OptBceVersionLoopScalars
+                type-segment-bases
+                phi-count
+                last
+                label
+                pred-label
+                iphi
+                step
+                ;; Merging the once-only pair into one unsigned compare needs the
+                ;; bound's sign; the loop's blocks are where a length-slot load is
+                ;; recognized.
+                (opt-ubound-len-nonneg?
+                  type-segment-bases
+                  blocks
+                  (& guard-bound))
+                nested-entry?
+                down?)]
+            (match (opt-bce-version-guard-conds
+              (& lsc)
+              blocks
+              len-eq
+              (& instrs)
+              (& defs)
+              ;; The guard reads a copied constant as the constant it is: the
+              ;; scaled seed products and the once-only compares then fold at
+              ;; compile time instead of costing instructions per loop entry.
+              (& guard-seed)
+              (& guard-bound)
+              cell
+              guard-pre)
+              [(No) (No)]
+              [(Some guard-instrs guard-value keep)
+                (let
+                  [remap : (__tl_dyn-array ir.CompilerIrValue)
+                    (__tl_make-array ir.CompilerIrValue frame)]
+                  [_fill : unit (opt-unroll-remap-fill (&mut remap) 0)]
+                  ;; Fresh phi destinations first so the cloned body reads the
+                  ;; clone's loop-carried values.
+                  [_iphi : i64 (opt-unroll-clone-dst (&mut remap) cell iphi)]
+                  [_others : unit
+                    (opt-bce-version-alloc-other-phis
+                      (&mut remap)
+                      cell
+                      (& shape.others))]
+                  [body-builder : ir.CompilerIrInstrBuilder
+                    (ir.compiler-ir-instr-builder-with-capacity
+                      (- last phi-count))]
+                  [_body-build : unit
+                    (opt-bce-version-push-clone-body!
+                      (&mut (ir.compiler-ir-instr-rewrite-new))
+                      (& instrs)
+                      phi-count
+                      last
+                      (& remap)
+                      cell
+                      keep
+                      (&mut body-builder))]
+                  [body : ir.CompilerIrInstrSeq
+                    (ir.compiler-ir-instr-builder-to-seq body-builder)]
+                  [fast-builder : ir.CompilerIrInstrBuilder
+                    (ir.compiler-ir-instr-builder-with-capacity
+                      (+ 1 (- last phi-count)))]
+                  [_fast-phi : unit
+                    (ir.compiler-ir-instr-builder-push!
+                      (&mut fast-builder)
+                      (ir.CompilerIrInstr.Phi
+                        (match (opt-unroll-subst-value (& remap) (Var iphi))
+                          [(Var fresh-id) fresh-id]
+                          [_ iphi])
+                        (ir.compiler-ir-phi-input-seq-prepend
+                          (ir.compiler-ir-clone-value (& shape.seed))
+                          guard-label
+                          (&
+                            (ir.compiler-ir-phi-input-seq-prepend
+                              (opt-unroll-subst-value
+                                (& remap)
+                                (Var shape.inext))
+                              fast-label
+                              (& (ir.compiler-ir-phi-input-seq-empty)))))
+                        (ast.ty-node-persist (& shape.iphi-ty))))]
+                  [_fast-other-phis : unit
+                    (opt-bce-version-push-fast-phis!
+                      (& shape.others)
+                      (& remap)
+                      guard-label
+                      fast-label
+                      (&mut fast-builder))]
+                  [_fast-body : unit
+                    (ir.compiler-ir-instr-builder-append-seq-range!
+                      (&mut fast-builder)
+                      body
+                      0
+                      (ir.compiler-ir-instr-seq-count body))]
+                  [_fast-branch : unit
+                    (ir.compiler-ir-instr-builder-push!
+                      (&mut fast-builder)
+                      (ir.CompilerIrInstr.Branch
+                        (opt-unroll-subst-value (& remap) (Var shape.cond-var))
+                        (if continues-on-true?
+                          fast-label
+                          exit-label)
+                        (if continues-on-true?
+                          exit-label
+                          fast-label)))]
+                  [fast-block : ir.CompilerIrBlock
+                    (Block
+                      fast-label
+                      (ir.compiler-ir-instr-builder-to-seq fast-builder))]
+                  [guard-block : ir.CompilerIrBlock
+                    (opt-bce-version-guard-block
+                      guard-label
+                      (& guard-instrs)
+                      guard-value
+                      fast-label
+                      label)]
+                  [rewrite-labels : OptBceVersionRewriteLabels
+                    (OptBceVersionRewriteLabels
+                      pred-label
+                      label
+                      exit-label
+                      fast-label
+                      guard-label)]
+                  (Some
+                    (opt-blocks-build
+                      blocks
+                      opt-bce-version-rewrite-blocks!
+                      (& rewrite-labels)
+                      (& guard-block)
+                      (& fast-block)
+                      (& remap))
+                    (array-ref cell 0)))]))))]))
 
 ;; A self-loop reduction often carries its result directly into the sole exit
 ;; block instead of through an exit Phi. Reuse the multi-block versioner's
@@ -76208,7 +75836,7 @@
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [block : (& ir.CompilerIrBlock)]
   [shape : (& OptUnrollShape)]
-  [frame : i64]) : OptUnrollResult
+  [frame : i64]) : OptBceApplyHit
   (match block
     [(Block label _)
       (let
@@ -76222,7 +75850,7 @@
           (ir.compiler-ir-blocks
             (owned_view.compiler-owned-reference-shared-view block))]
         (match (opt-bce-mb-wire-exits
-          context.pred-map
+          (& context.pred-map)
           blocks
           blocks
           body-labels
@@ -76230,31 +75858,23 @@
           (& (opt-bce-mb-body-defs (& body-blocks)))
           (&mut cell)
           (Nil))
-          [(No)
-            (opt-bce-trace-refuse-result
-              (opt-bce-reason-exit-wiring)
-              (owned_view.compiler-owned-reference-shared-view blocks)
-              frame)]
+          [(No) (opt-bce-trace-refuse-apply (opt-bce-reason-exit-wiring))]
           [(Some wired stubs)
             (match stubs
               [(Nil)
                 (opt-bce-version-apply-wired
                   type-segment-bases
                   len-eq
-                  blocks
                   (& wired)
                   block
-                  (owned_view.compiler-owned-reference-shared-view shape)
+                  shape
                   (opt-cfg-label-in-enclosing-loop?
                     (& context)
                     shape.pred-label)
                   frame
                   (&mut cell))]
               [(Dense _ _)
-                (opt-bce-trace-refuse-result
-                  (opt-bce-reason-exit-wiring)
-                  (owned_view.compiler-owned-reference-shared-view blocks)
-                  frame)])]))]))
+                (opt-bce-trace-refuse-apply (opt-bce-reason-exit-wiring))])]))]))
 
 (define (opt-bce-version-alloc-other-phis
   [remap : (&mut remap (__tl_dyn-array ir.CompilerIrValue))]
@@ -76270,14 +75890,6 @@
             [others-2 (opt-unroll-phi-list-tail others)]
             (opt-bce-version-alloc-other-phis remap cell others-2))])]))
 
-;; A scan's outcome, plus WHICH loop it applied to: the header (single-block
-;; loop label / multi-block loop header) the rewrite belongs to, or
-;; `ir.compiler-ir-label-none` when nothing applied. The driver needs that
-;; label to retire exactly the loop whose rewrite its post-application verify
-;; refused, instead of giving up on the whole function.
-(defenum OptBceVersionScan
-  (Scan ir.CompilerIrBlockList i64 bool i64))
-
 ;; One scan applies at most one versioning; the driver repeats the scan while
 ;; the invocation's budget (opt-loop-apply-budget) lasts, like the unroller.
 ;; `rejected` holds the loops this invocation already retired (their rewrite
@@ -76285,66 +75897,39 @@
 (define (opt-bce-version-blocks-scan
   [type-segment-bases : i64]
   [len-eq : (& opt_i64_i64_map.Map)]
-  [blocks : ir.CompilerIrBlockList]
+  [blocks : (& ir.CompilerIrBlockList)]
   [remaining : (& remaining (Slice ir.CompilerIrBlock))]
   [entry-label : i64]
   [rejected : OptLabelSet]
-  [frame : i64]) : OptBceVersionScan
-  (match remaining
-    [(slice) (Scan blocks frame false (ir.compiler-ir-label-none))]
-    [(slice block & rest)
-      (match (opt-bce-version-block-shape blocks entry-label block)
-        [(Some shape)
-          (if (or
-            (opt-label-contains rejected shape.loop-label)
-            (opt-loop-block-tainted? block))
-            ;; Already retired by this invocation's verifier: its line was
-            ;; emitted when the rewrite was refused, and re-reporting it once
-            ;; per rescan would count the same loop many times. Or refused by
-            ;; the address-taken gate (#9420).
-            (begin
-              (opt-bce-trace-begin! false)
-              (opt-bce-version-blocks-scan
-                type-segment-bases
-                len-eq
-                blocks
-                rest
-                entry-label
-                rejected
-                frame))
-            (match (opt-bce-version-apply
-              type-segment-bases
-              len-eq
-              blocks
-              block
-              (& shape)
-              frame)
-              [(Result next-blocks next-frame changed)
-                (if changed
-                  (begin
-                    (opt-bce-trace-note! (opt-bce-reason-ok))
-                    (opt-bce-trace-self-loop! block true)
-                    (Scan next-blocks next-frame true shape.loop-label))
-                  (begin
-                    (opt-bce-trace-self-loop! block false)
-                    (opt-bce-version-blocks-scan
-                      type-segment-bases
-                      len-eq
-                      blocks
-                      rest
-                      entry-label
-                      rejected
-                      frame)))]))]
-        [(No)
-          (opt-bce-trace-self-loop! block false)
-          (opt-bce-version-blocks-scan
+  [frame : i64]) : OptBceScanHit
+  (for [bi (iterator.range 0 (array-length remaining))]
+    (match (opt-bce-version-block-shape
+      blocks
+      entry-label
+      (& (array-ref remaining bi)))
+      [(Some shape)
+        (if (or
+          (opt-label-contains rejected shape.loop-label)
+          (opt-loop-block-tainted? (& (array-ref remaining bi))))
+          ;; Already retired by this invocation's verifier: its line was
+          ;; emitted when the rewrite was refused, and re-reporting it once
+          ;; per rescan would count the same loop many times. Or refused by
+          ;; the address-taken gate (#9420).
+          (opt-bce-trace-begin! false)
+          (match (opt-bce-version-apply
             type-segment-bases
             len-eq
             blocks
-            rest
-            entry-label
-            rejected
-            frame)])]))
+            (& (array-ref remaining bi))
+            (& shape)
+            frame)
+            [(Some next-blocks next-frame)
+              (opt-bce-trace-note! (opt-bce-reason-ok))
+              (opt-bce-trace-self-loop! (& (array-ref remaining bi)) true)
+              (return (Some next-blocks next-frame shape.loop-label))]
+            [(No) (opt-bce-trace-self-loop! (& (array-ref remaining bi)) false)]))]
+      [(No) (opt-bce-trace-self-loop! (& (array-ref remaining bi)) false)]))
+  (No))
 
 ;; Cheap prescan: a candidate is a self-loop block that starts with a Phi,
 ;; ends with a branch on either arm back to itself, and contains a BoundsCheck.
@@ -77387,14 +76972,14 @@
 ;; over the cap, or a descending shape came out shifted.
 (define (opt-bce-mb-counter-shifted
   [iphi : i64]
-  [seed : ir.CompilerIrValue]
+  [seed : (& ir.CompilerIrValue)]
   [inext : i64]
-  [bound : ir.CompilerIrValue]
+  [bound : (& ir.CompilerIrValue)]
   [step : i64]
   [shift : i64]
   [k : i64]
   [bottom? : bool]
-  [offset : ir.CompilerIrValue]) : OptBceMbMaybeCounter
+  [offset : (& ir.CompilerIrValue)]) : OptBceMbMaybeCounter
   (if (or
     (> k (opt-bce-mb-counter-k-max))
     (< k (- 0 (opt-bce-mb-counter-k-max))))
@@ -77434,13 +77019,13 @@
                     (No)
                     (Some
                       iphi
-                      seed
+                      (ir.compiler-ir-clone-value seed)
                       inext
-                      bound
+                      (ir.compiler-ir-clone-value bound)
                       step
                       delta
                       wrap-step
-                      offset
+                      (ir.compiler-ir-clone-value offset)
                       false))])]))])))
 
 ;; The counter increment behind a header phi's latch input: `iphi + step` with a
@@ -77482,14 +77067,14 @@
                   [_ false]))
                 (opt-bce-mb-counter-shifted
                   iphi
-                  (owned_view.compiler-owned-reference-shared-view seed)
+                  seed
                   inext
-                  (owned_view.compiler-owned-reference-shared-view bound)
+                  bound
                   step
                   shift
                   k
                   bottom?
-                  (owned_view.compiler-owned-reference-shared-view offset))
+                  offset)
                 (No)))]
           ;; MONOTONE CURSOR (#8261): the back-edge value is a merge whose
           ;; inputs are each `iphi` or `iphi + 1` (the bounded-value rule the
@@ -77516,14 +77101,14 @@
                 8))
               (opt-bce-mb-counter-shifted
                 iphi
-                (owned_view.compiler-owned-reference-shared-view seed)
+                seed
                 inext
-                (owned_view.compiler-owned-reference-shared-view bound)
+                bound
                 1
                 shift
                 k
                 bottom?
-                (owned_view.compiler-owned-reference-shared-view offset))
+                offset)
               (No))]
           [_ (No)])])))
 
@@ -78542,20 +78127,21 @@
   [header : i64]
   [body-labels : OptLabelSet]
   [acc : OptLabelSet]) : OptLabelSet
-  (match loops
-    [(slice) acc]
-    [(slice loop & rest)
-      (match (owned_view.compiler-owned-reference-shared-view loop)
-        [(Loop other-header _ other-body _ _)
-          (opt-bce-mb-inner-labels
-            rest
-            header
-            body-labels
-            (if (and
-              (not (= other-header header))
-              (opt-label-contains body-labels other-header))
-              (opt-bce-mb-labels-union other-body.labels acc)
-              acc))])]))
+  (let
+    [res : OptLabelSet acc]
+    (for [i (iterator.range 0 (array-length loops))]
+      (let
+        [other-header : i64 (opt-natural-loop-header (& (array-ref loops i)))]
+        (when
+          (and
+            (not (= other-header header))
+            (opt-label-contains body-labels other-header))
+          (set!
+            res
+            (opt-bce-mb-labels-union
+              (opt-natural-loop-body (& (array-ref loops i)))
+              res)))))
+    res))
 
 ;; Is this candidate preheader outside every natural loop of the function?
 ;; Only then does its guard run once per CALL rather than once per enclosing
@@ -78563,14 +78149,11 @@
 (define (opt-bce-mb-preheader-outside-loops?
   [loops : (& loops (Slice OptNaturalLoop))]
   [pred : i64]) : bool
-  (match loops
-    [(slice) true]
-    [(slice loop & rest)
-      (match (owned_view.compiler-owned-reference-shared-view loop)
-        [(Loop _ _ other-body _ _)
-          (if (opt-label-contains other-body.labels pred)
-            false
-            (opt-bce-mb-preheader-outside-loops? rest pred))])]))
+  (for [i (iterator.range 0 (array-length loops))]
+    (when
+      (opt-label-contains (opt-natural-loop-body (& (array-ref loops i))) pred)
+      (return false)))
+  true)
 
 (define (opt-bce-mb-loop-shape-with-preheader
   [blocks : (& ir.CompilerIrBlockList)]
@@ -79027,6 +78610,9 @@
 
 ;; Physical pushes keep the logical prepend order: readers walk from the live
 ;; end toward zero (newest first).
+(define (opt-bce-mb-var-list-push! [vars : (&mut OptBceMbVarList)] [var : i64]) : unit
+  (opt_dense_i64_vec.push-ref! (&mut vars.items) var))
+
 (define (opt-bce-mb-var-list-prepend [vars : OptBceMbVarList] [var : i64]) : OptBceMbVarList
   (let
     [items : opt_dense_i64_vec.Vec vars.items]
@@ -79299,7 +78885,7 @@
     [(Nil) (ir.compiler-ir-phi-input-seq-empty)]
     [(Dense _ _)
       (ir.compiler-ir-phi-input-seq-prepend
-        (owned_view.compiler-owned-reference-shared-view value)
+        (ir.compiler-ir-clone-value value)
         (opt-label-ref preds 0)
         (& (opt-bce-mb-wire-phi-inputs (opt-label-tail preds) value)))]))
 
@@ -79340,76 +78926,45 @@
 
 ;; Materialize one exit phi per wireable var and the copy env rewriting its
 ;; non-phi uses to the phi's var.
-(define (opt-bce-mb-wire-phis-from
-  [vars : (& vars OptBceMbVarList)]
-  [index : i64]
-  [all-blocks : (& all-blocks ir.CompilerIrBlockList)]
-  [preds : OptLabelSet]
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [cell : (&mut cell (__tl_dyn-array i64))]
-  [env : OptCopyEnv]
-  [phis : (& ir.CompilerIrInstrBuilder)]) : OptBceMbMaybeWirePhis
-  (if (< index 0)
-    (Some
-      env
-      (ir.compiler-ir-instr-builder-to-seq
-        (owned_view.compiler-owned-reference-shared-view phis)))
-    (let
-      [var : i64 (opt-bce-mb-var-list-ref vars index)]
-      [existing : i64 (opt-bce-mb-existing-merge-phi instrs 0 var preds)]
-      (if (>= existing 0)
-        (opt-bce-mb-wire-phis-from
-          vars
-          (- index 1)
-          all-blocks
-          preds
-          instrs
-          cell
-          (opt-copy-env-push env (OptCopyEntry.Copy var (Var existing)))
-          phis)
-        (match (opt-bce-mb-find-def
-          (ir.compiler-ir-block-list-view all-blocks)
-          var)
-          [(No) (No)]
-          [(Some instr)
-            (match (opt-bce-mb-def-type instr)
-              [(No) (No)]
-              [(Some ty)
-                (let
-                  [pv : i64 (opt-bce-version-alloc-var cell)]
-                  (opt-bce-mb-wire-phis-from
-                    vars
-                    (- index 1)
-                    all-blocks
-                    preds
-                    instrs
-                    cell
-                    (opt-copy-env-push env (OptCopyEntry.Copy var (Var pv)))
-                    (&
-                      (opt-bce-version-builder-push
-                        (owned_view.compiler-owned-reference-shared-view phis)
-                        (&
-                          (Phi
-                            pv
-                            (opt-bce-mb-wire-phi-inputs preds (& (Var var)))
-                            ty))))))])])))))
-
 (define (opt-bce-mb-wire-phis
   [vars : (& OptBceMbVarList)]
   [all-blocks : (& all-blocks ir.CompilerIrBlockList)]
   [preds : OptLabelSet]
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [env : OptCopyEnv]) : OptBceMbMaybeWirePhis
-  (opt-bce-mb-wire-phis-from
-    vars
-    (- (opt-bce-mb-var-list-count vars) 1)
-    all-blocks
-    preds
-    instrs
-    cell
-    env
-    (& (ir.compiler-ir-instr-builder-new))))
+  [env-input : OptCopyEnv]) : OptBceMbMaybeWirePhis
+  (let
+    [count : i64 (opt-bce-mb-var-list-count vars)]
+    [env : OptCopyEnv env-input]
+    [phis : ir.CompilerIrInstrBuilder (ir.compiler-ir-instr-builder-new)]
+    (for [step (iterator.range 0 count)]
+      (let
+        [var : i64 (opt-bce-mb-var-list-ref vars (- (- count 1) step))]
+        [existing : i64 (opt-bce-mb-existing-merge-phi instrs 0 var preds)]
+        (if (>= existing 0)
+          (set!
+            env
+            (opt-copy-env-push env (OptCopyEntry.Copy var (Var existing))))
+          (match (opt-bce-mb-find-def
+            (ir.compiler-ir-block-list-view all-blocks)
+            var)
+            [(No) (return (No))]
+            [(Some instr)
+              (match (opt-bce-mb-def-type instr)
+                [(No) (return (No))]
+                [(Some ty)
+                  (let
+                    [pv : i64 (opt-bce-version-alloc-var cell)]
+                    (set!
+                      env
+                      (opt-copy-env-push env (OptCopyEntry.Copy var (Var pv))))
+                    (ir.compiler-ir-instr-builder-push!
+                      (&mut phis)
+                      (Phi
+                        pv
+                        (opt-bce-mb-wire-phi-inputs preds (& (Var var)))
+                        ty)))])]))))
+    (Some env (ir.compiler-ir-instr-builder-to-seq phis))))
 
 ;; The rewired block's instructions: the existing phi prefix, then the
 ;; materialized phis, then every original instruction with its non-phi uses
@@ -79572,27 +79127,17 @@
   [body-blocks : (& ir.CompilerIrBlockList)]
   [defs : (& OptBceMbBodyDefs)]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [stubs : OptLabelSet]) : OptBceMbMaybeLabels
-  (match blocks
-    [(slice) (Some stubs)]
-    [(slice block & rest)
-      (match block
+  [stubs-input : OptLabelSet]) : OptBceMbMaybeLabels
+  (let
+    [stubs : OptLabelSet stubs-input]
+    (for [bi (iterator.range 0 (array-length blocks))]
+      (match (& (array-ref blocks bi))
         [(Block label instrs)
           (if (opt-label-contains body-labels label)
-            (begin
-              (ir.compiler-ir-block-builder-push!
-                out
-                (owned_view.compiler-owned-reference-shared-view block))
-              (opt-bce-mb-wire-exit-blocks!
-                out
-                pred-map
-                rest
-                all-blocks
-                body-labels
-                body-blocks
-                defs
-                cell
-                stubs))
+            (ir.compiler-ir-block-builder-push!
+              out
+              (owned_view.compiler-owned-reference-shared-view
+                (& (array-ref blocks bi))))
             (let
               [uses : opt_i64_i64_map.Map
                 (opt-bce-mb-nonphi-uses-seq
@@ -79610,33 +79155,16 @@
                 (& instrs)
                 (& uses)
                 cell)
-                [(No) (No)]
+                [(No) (return (No))]
                 [(Same)
                   (ir.compiler-ir-block-builder-push!
                     out
-                    (owned_view.compiler-owned-reference-shared-view block))
-                  (opt-bce-mb-wire-exit-blocks!
-                    out
-                    pred-map
-                    rest
-                    all-blocks
-                    body-labels
-                    body-blocks
-                    defs
-                    cell
-                    stubs)]
+                    (owned_view.compiler-owned-reference-shared-view
+                      (& (array-ref blocks bi))))]
                 [(Some wired-block block-stubs)
                   (ir.compiler-ir-block-builder-push! out wired-block)
-                  (opt-bce-mb-wire-exit-blocks!
-                    out
-                    pred-map
-                    rest
-                    all-blocks
-                    body-labels
-                    body-blocks
-                    defs
-                    cell
-                    (opt-bce-mb-labels-union block-stubs stubs))])))])]))
+                  (set! stubs (opt-bce-mb-labels-union block-stubs stubs))])))]))
+    (Some stubs)))
 
 ;; --- exit-stub phi escapes ----------------------------------------------------
 ;;
@@ -79922,28 +79450,15 @@
     unit)
   false)
 
-(define (opt-bce-mb-var-list-union
+(define (opt-bce-mb-var-list-union!
   [vars : (& OptBceMbVarList)]
-  [acc : (& OptBceMbVarList)]) : OptBceMbVarList
-  (opt-bce-mb-var-list-union-from
-    vars
-    0
-    (owned_view.compiler-owned-reference-shared-view acc)))
-
-(define (opt-bce-mb-var-list-union-from
-  [vars : (& OptBceMbVarList)]
-  [index : i64]
-  [acc : OptBceMbVarList]) : OptBceMbVarList
-  (if (>= index (opt-bce-mb-var-list-count vars))
-    acc
+  [acc : (&mut OptBceMbVarList)]) : unit
+  (for [index (iterator.range 0 (opt-bce-mb-var-list-count vars))]
     (let
       [item : i64 (opt-bce-mb-var-list-ref vars index)]
-      (opt-bce-mb-var-list-union-from
-        vars
-        (+ index 1)
-        (if (opt-bce-mb-var-list-contains? acc item)
-          acc
-          (opt-bce-mb-var-list-prepend acc item))))))
+      (unless
+        (opt-bce-mb-var-list-contains? acc item)
+        (opt-bce-mb-var-list-push! acc item)))))
 
 ;; Classify every outside block with a direct loop-def use as the wire point or
 ;; as a far block.
@@ -80071,84 +79586,41 @@
           (+= i 1))
         out)]))
 
-(define (opt-bce-mb-far-phi-inputs
+(define (opt-bce-mb-far-phi-inputs!
   [body-labels : OptLabelSet]
   [body-blocks : (& ir.CompilerIrBlockList)]
   [defs : (& OptBceMbBodyDefs)]
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [index : i64]
   [count : i64]
-  [plan : OptBceMbFarPlan]) : OptBceMbFarPlan
-  (if (>= index count)
-    plan
-    (let
-      [next : OptBceMbFarPlan
-        (match (ir.compiler-ir-instr-seq-borrow instrs index)
-          [(Phi _ inputs _)
-            (opt-bce-mb-far-phi-input-seq
-              body-labels
-              body-blocks
-              defs
-              (& inputs)
-              0
-              plan)]
-          [_ plan])]
-      (opt-bce-mb-far-phi-inputs
-        body-labels
-        body-blocks
-        defs
-        instrs
-        (+ index 1)
-        count
-        next))))
-
-(define (opt-bce-mb-far-phi-input-seq
-  [body-labels : OptLabelSet]
-  [body-blocks : (& ir.CompilerIrBlockList)]
-  [defs : (& OptBceMbBodyDefs)]
-  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
-  [index : i64]
-  [plan : OptBceMbFarPlan]) : OptBceMbFarPlan
-  (if (>= index inputs.len)
-    plan
-    (let
-      [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
-      [label : i64 input.label]
-      [next : OptBceMbFarPlan
-        (if (opt-label-contains body-labels label)
-          plan
-          (match input.value
-            [(Var var)
-              (let
-                [uses : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 2)]
-                [_mark : unit (opt_i64_i64_map.insert-ref! (&mut uses) var 1)]
-                [vars : OptBceMbVarList
-                  (opt-bce-mb-body-defs-used
-                    defs
-                    body-blocks
-                    (& uses)
-                    (opt-bce-mb-var-list-new))]
-                (if (opt-bce-mb-var-list-empty? vars)
-                  plan
-                  (OptBceMbFarPlan
-                    plan.wire
-                    (owned_view.compiler-owned-shared-view plan.wire-vars)
-                    plan.far-labels
-                    (owned_view.compiler-owned-shared-view plan.far-vars)
-                    (opt-bce-mb-var-list-prepend
-                      (owned_view.compiler-owned-shared-view plan.phi-labels)
-                      label)
-                    (opt-bce-mb-var-list-prepend
-                      (owned_view.compiler-owned-shared-view plan.phi-vars)
-                      var))))]
-            [_ plan]))]
-      (opt-bce-mb-far-phi-input-seq
-        body-labels
-        body-blocks
-        defs
-        inputs
-        (+ index 1)
-        next))))
+  [plan : (&mut OptBceMbFarPlan)]) : unit
+  (for [index (iterator.range 0 count)]
+    (match (ir.compiler-ir-instr-seq-borrow instrs index)
+      [(Phi _ inputs _)
+        (for [ii (iterator.range 0 inputs.len)]
+          (let
+            [input (ir.compiler-ir-phi-input-seq-borrow (& inputs) ii)]
+            [label : i64 input.label]
+            (unless
+              (opt-label-contains body-labels label)
+              (match (& input.value)
+                [(Var var)
+                  (let
+                    [uses : opt_i64_i64_map.Map
+                      (opt_i64_i64_map.with-capacity 2)]
+                    [_mark : unit
+                      (opt_i64_i64_map.insert-ref! (&mut uses) var 1)]
+                    [vars : OptBceMbVarList
+                      (opt-bce-mb-body-defs-used
+                        defs
+                        body-blocks
+                        (& uses)
+                        (opt-bce-mb-var-list-new))]
+                    (unless
+                      (opt-bce-mb-var-list-empty? (& vars))
+                      (opt-bce-mb-var-list-push! (&mut plan.phi-labels) label)
+                      (opt-bce-mb-var-list-push! (&mut plan.phi-vars) var)))]
+                [_ unit]))))]
+      [_ unit])))
 
 (define (opt-bce-mb-far-rewrite-phis
   [instrs : (& ir.CompilerIrInstrSeq)]
@@ -80197,85 +79669,69 @@
             (ir.CompilerIrPhiInput input.value label)))))
     (ir.compiler-ir-phi-input-builder-to-seq builder)))
 
-(define (opt-bce-mb-far-scan
+(define (opt-bce-mb-far-scan!
   [pred-map : (& pred-map OptPredMap)]
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [all-blocks : (& all-blocks ir.CompilerIrBlockList)]
   [body-labels : OptLabelSet]
   [body-blocks : (& ir.CompilerIrBlockList)]
   [defs : (& OptBceMbBodyDefs)]
-  [plan : OptBceMbFarPlan]) : OptBceMbFarPlan
-  (match blocks
-    [(slice) plan]
-    [(slice block & rest)
-      (opt-bce-mb-far-scan
-        pred-map
-        rest
-        all-blocks
-        body-labels
-        body-blocks
-        defs
-        (match block
-          [(Block label instrs)
-            (if (opt-label-contains body-labels label)
-              plan
-              (let
-                ;; BCE-FARPHI: a phi input whose VALUE is a loop def and whose
-                ;; edge comes from an outside block L is a far use at the end
-                ;; of L: the merge phi the wire point materializes for that
-                ;; def is what the input has to read, so L joins the far
-                ;; labels (it must be dominated by the wire point) and the def
-                ;; the far vars. An input on a group edge is the ordinary
-                ;; exit-phi extension's and is left alone.
-                [plan : OptBceMbFarPlan
-                  (opt-bce-mb-far-phi-inputs
-                    body-labels
-                    body-blocks
-                    defs
-                    instrs
-                    0
-                    (opt-unroll-phi-prefix-count instrs 0)
-                    plan)]
-                [vars : OptBceMbVarList
-                  (opt-bce-mb-body-defs-used
-                    defs
-                    body-blocks
-                    (&
-                      (opt-bce-mb-nonphi-uses-seq
-                        (&mut (ir.compiler-ir-id-list-new))
-                        (opt_i64_i64_map.with-capacity 8)
-                        instrs
-                        0))
-                    (opt-bce-mb-var-list-new))]
-                (if (opt-bce-mb-var-list-empty? vars)
-                  plan
-                  (match (opt-bce-mb-wire-preds
-                    pred-map
-                    all-blocks
-                    body-labels
-                    (opt-pred-map-lookup pred-map label)
-                    label
-                    (Nil))
-                    [(Some _)
-                      (OptBceMbFarPlan
-                        (if (= plan.wire -1)
-                          label
-                          -2)
-                        (if (= plan.wire -1)
-                          vars
-                          plan.wire-vars)
-                        plan.far-labels
-                        plan.far-vars
-                        plan.phi-labels
-                        plan.phi-vars)]
-                    [(No)
-                      (OptBceMbFarPlan
-                        plan.wire
-                        plan.wire-vars
-                        (opt-label-add plan.far-labels label)
-                        (opt-bce-mb-var-list-union (& vars) (& plan.far-vars))
-                        plan.phi-labels
-                        plan.phi-vars)]))))]))]))
+  [plan : (&mut OptBceMbFarPlan)]) : unit
+  (let
+    [ids : ir.CompilerIrIdList (ir.compiler-ir-id-list-new)]
+    (for [bi (iterator.range 0 (array-length blocks))]
+      (match (& (array-ref blocks bi))
+        [(Block label instrs)
+          (unless
+            (opt-label-contains body-labels label)
+            ;; BCE-FARPHI: a phi input whose VALUE is a loop def and whose
+            ;; edge comes from an outside block L is a far use at the end
+            ;; of L: the merge phi the wire point materializes for that
+            ;; def is what the input has to read, so L joins the far
+            ;; labels (it must be dominated by the wire point) and the def
+            ;; the far vars. An input on a group edge is the ordinary
+            ;; exit-phi extension's and is left alone.
+            (opt-bce-mb-far-phi-inputs!
+              body-labels
+              body-blocks
+              defs
+              (& instrs)
+              (opt-unroll-phi-prefix-count (& instrs) 0)
+              plan)
+            (let
+              [vars : OptBceMbVarList
+                (opt-bce-mb-body-defs-used
+                  defs
+                  body-blocks
+                  (&
+                    (opt-bce-mb-nonphi-uses-seq
+                      (&mut ids)
+                      (opt_i64_i64_map.with-capacity 8)
+                      (& instrs)
+                      0))
+                  (opt-bce-mb-var-list-new))]
+              (unless
+                (opt-bce-mb-var-list-empty? (& vars))
+                (match (opt-bce-mb-wire-preds
+                  pred-map
+                  all-blocks
+                  body-labels
+                  (opt-pred-map-lookup pred-map label)
+                  label
+                  (Nil))
+                  [(Some _)
+                    (if (= plan.wire -1)
+                      (begin
+                        (set! plan.wire label)
+                        (set! plan.wire-vars vars))
+                      (set! plan.wire -2))]
+                  [(No)
+                    (set!
+                      plan.far-labels
+                      (opt-label-add
+                        (opt-bce-label-set-copy (& plan.far-labels))
+                        label))
+                    (opt-bce-mb-var-list-union! (& vars) (&mut plan.far-vars))]))))]))))
 
 (define (opt-bce-mb-far-labels-dominated?
   [doms : (& doms OptDomInfo)]
@@ -80338,10 +79794,13 @@
 (define (opt-bce-mb-far-plan-ok?
   [doms : (& doms OptDomInfo)]
   [header-phis : (& OptBceMbVarList)]
-  [plan : OptBceMbFarPlan]) : bool
+  [plan : (& OptBceMbFarPlan)]) : bool
   (and
     (>= plan.wire 0)
-    (opt-bce-mb-far-labels-dominated? doms plan.wire plan.far-labels)
+    (opt-bce-mb-far-labels-dominated?
+      doms
+      plan.wire
+      (opt-bce-label-set-copy (& plan.far-labels)))
     (opt-bce-mb-far-vars-wireable?
       (& plan.far-vars)
       (& plan.wire-vars)
@@ -80418,30 +79877,22 @@
   (Same)
   (Some ir.CompilerIrBlockList))
 
-(define (opt-bce-mb-far-merge-phis
+(define (opt-bce-mb-far-merge-phis!
   [doms : (& doms OptDomInfo)]
-  [plan : OptBceMbFarPlan]
-  [index : i64]) : OptBceMbFarPlan
-  (if (>= index (opt-bce-mb-var-list-count plan.phi-labels))
-    plan
+  [plan : (&mut OptBceMbFarPlan)]) : unit
+  (for [index
+    (iterator.range 0 (opt-bce-mb-var-list-count (& plan.phi-labels)))]
     (let
-      [label : i64 (opt-bce-mb-var-list-ref plan.phi-labels index)]
-      [var : i64 (opt-bce-mb-var-list-ref plan.phi-vars index)]
-      [next : OptBceMbFarPlan
-        (if (opt-dom-dominates? doms plan.wire label)
-          (OptBceMbFarPlan
-            plan.wire
-            (owned_view.compiler-owned-shared-view plan.wire-vars)
-            (opt-label-add plan.far-labels label)
-            (if (opt-bce-mb-var-list-contains? plan.far-vars var)
-              (owned_view.compiler-owned-shared-view plan.far-vars)
-              (opt-bce-mb-var-list-prepend
-                (owned_view.compiler-owned-shared-view plan.far-vars)
-                var))
-            (owned_view.compiler-owned-shared-view plan.phi-labels)
-            (owned_view.compiler-owned-shared-view plan.phi-vars))
-          plan)]
-      (opt-bce-mb-far-merge-phis doms next (+ index 1)))))
+      [label : i64 (opt-bce-mb-var-list-ref (& plan.phi-labels) index)]
+      [var : i64 (opt-bce-mb-var-list-ref (& plan.phi-vars) index)]
+      (when
+        (opt-dom-dominates? doms plan.wire label)
+        (set!
+          plan.far-labels
+          (opt-label-add (opt-bce-label-set-copy (& plan.far-labels)) label))
+        (unless
+          (opt-bce-mb-var-list-contains? (& plan.far-vars) var)
+          (opt-bce-mb-var-list-push! (&mut plan.far-vars) var))))))
 
 (define (opt-bce-mb-far-repair
   [pred-map : (& pred-map OptPredMap)]
@@ -80453,32 +79904,30 @@
   [cell : (&mut cell (__tl_dyn-array i64))]) : OptBceMbFarResult
   (let
     [defs : OptBceMbBodyDefs (opt-bce-mb-body-defs body-blocks)]
-    [scanned : OptBceMbFarPlan
-      (opt-bce-mb-far-scan
-        pred-map
-        (ir.compiler-ir-block-list-view blocks)
-        blocks
-        body-labels
-        body-blocks
-        (& defs)
-        (OptBceMbFarPlan
-          -1
-          (opt-bce-mb-var-list-new)
-          (Nil)
-          (opt-bce-mb-var-list-new)
-          (opt-bce-mb-var-list-new)
-          (opt-bce-mb-var-list-new)))]
     [plan : OptBceMbFarPlan
-      (if (< scanned.wire 0)
-        scanned
-        (opt-bce-mb-far-merge-phis doms scanned 0))]
+      (OptBceMbFarPlan
+        -1
+        (opt-bce-mb-var-list-new)
+        (Nil)
+        (opt-bce-mb-var-list-new)
+        (opt-bce-mb-var-list-new)
+        (opt-bce-mb-var-list-new))]
+    (opt-bce-mb-far-scan!
+      pred-map
+      (ir.compiler-ir-block-list-view blocks)
+      blocks
+      body-labels
+      body-blocks
+      (& defs)
+      (&mut plan))
+    (when (>= plan.wire 0) (opt-bce-mb-far-merge-phis! doms (&mut plan)))
     (if (= (opt-label-count plan.far-labels) 0)
       (Same)
       (if (not
         (opt-bce-mb-far-plan-ok?
           doms
           (& (opt-bce-mb-header-phi-vars blocks header))
-          (compiler-opt-global-shared-view plan)))
+          (& plan)))
         (No)
         (match (opt-bce-mb-far-phis
           (& plan.far-vars)
@@ -80494,7 +79943,7 @@
           [(Some env phis)
             (Some
               (opt-blocks-build
-                (owned_view.compiler-owned-reference-shared-view blocks)
+                blocks
                 opt-bce-mb-far-rewrite!
                 plan.wire
                 plan.far-labels
@@ -80742,68 +80191,45 @@
 (defenum OptBceMbKeepEntry
   (Entry i64 i64))
 
-(defenum OptBceMbKeep
-  (Nil)
-  (Dense (__tl_dyn-array OptBceMbKeepEntry) i64))
+(defstruct OptBceMbKeep
+  (items (__tl_dyn-array OptBceMbKeepEntry))
+  (len i64))
 
-(define (opt-bce-mb-keep-ref [keep : (& keep OptBceMbKeep)] [index : i64]) : OptBceMbKeepEntry
-  (match keep
-    [(Nil) (Entry -1 -1)]
-    [(Dense items len) (array-ref items (- (- len 1) index))]))
+(define (opt-bce-mb-keep-empty) : OptBceMbKeep
+  (OptBceMbKeep (__tl_make-array OptBceMbKeepEntry 0) 0))
 
 (define (opt-bce-mb-keep-count [keep : (& keep OptBceMbKeep)]) : i64
-  (match keep
-    [(OptBceMbKeep.Nil) 0]
-    [(OptBceMbKeep.Dense _ len) len]))
+  keep.len)
 
-(define (opt-bce-mb-keep-tail [keep : (& keep OptBceMbKeep)]) : OptBceMbKeep
-  (match (owned_view.compiler-owned-reference-shared-view keep)
-    [(Nil) (Nil)]
-    [(Dense items len)
-      (if (<= len 1)
-        (Nil)
-        (Dense items (- len 1)))]))
-
-(define (opt-bce-mb-keep-cons
+(define (opt-bce-mb-keep-push!
+  [keep : (&mut OptBceMbKeep)]
   [label : i64]
-  [index : i64]
-  [keep : (& keep OptBceMbKeep)]) : OptBceMbKeep
+  [index : i64]) : unit
   (let
     [entry : OptBceMbKeepEntry (Entry label index)]
-    (match (owned_view.compiler-owned-reference-shared-view keep)
-      [(Nil)
-        (let
-          [items : (__tl_dyn-array OptBceMbKeepEntry)
-            (__tl_make-array OptBceMbKeepEntry 4)]
-          (set! (array-ref items 0) entry)
-          (Dense items 1))]
-      [(Dense items len)
-        (if (< len (array-length items))
-          (begin
-            (set! (array-ref items len) entry)
-            (Dense items (+ len 1)))
-          (let
-            [bigger : (__tl_dyn-array OptBceMbKeepEntry)
-              (__tl_make-array OptBceMbKeepEntry (opt-dense-next-capacity len))]
-            (for [slot (iterator.range 0 len)]
-              (set! (array-ref bigger slot) (array-ref items slot)))
-            (set! (array-ref bigger len) entry)
-            (Dense bigger (+ len 1))))])))
+    [len : i64 keep.len]
+    [cap : i64 (array-length keep.items)]
+    (when
+      (>= len cap)
+      (let
+        [bigger : (__tl_dyn-array OptBceMbKeepEntry)
+          (__tl_make-array OptBceMbKeepEntry (opt-dense-next-capacity len))]
+        (for [slot (iterator.range 0 len)]
+          (match (array-ref keep.items slot)
+            [(Entry l idx) (set! (array-ref bigger slot) (Entry l idx))]))
+        (set! keep.items bigger)))
+    (set! (array-ref keep.items len) entry)
+    (set! keep.len (+ len 1))))
 
 (define (opt-bce-mb-keep-contains?
   [keep : (& keep OptBceMbKeep)]
   [label : i64]
   [index : i64]) : bool
-  (match keep
-    [(Nil) false]
-    [(Dense _ _)
-      (match (opt-bce-mb-keep-ref keep 0)
-        [(Entry item-label item-index)
-          (if (and (= item-index index) (= item-label label))
-            true
-            (let
-              [keep-2 (opt-bce-mb-keep-tail keep)]
-              (opt-bce-mb-keep-contains? keep-2 label index)))])]))
+  (for [i (iterator.range 0 keep.len)]
+    (match (array-ref keep.items i)
+      [(Entry item-label item-index)
+        (when (and (= item-index index) (= item-label label)) (return true))]))
+  false)
 
 (define (opt-bce-mb-pair-barrier? [instr : (& ir.CompilerIrInstr)]) : bool
   (or
@@ -80847,7 +80273,7 @@
 ;; the descriptor-length hoists already emitted into the guard, and the
 ;; fusion length-relation conjuncts already emitted.
 (defstruct OptBceMbDerive
-  (guard OptBceVersionGuardAcc)
+  (guard OptBceGuardBuf)
   (keep OptBceMbKeep)
   (derived i64)
   (hoists OptBceMbHoists)
@@ -81020,10 +80446,7 @@
 (define (opt-bce-mb-var-base-derived-side
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
   [defs : (& defs opt_i64_i64_map.Map)]
-  [latch : i64]
-  [preheader : i64]
-  [any-sign? : bool]
-  [iphi : i64]
+  [sc : (& OptBceDeriveScalars)]
   [seed : (& ir.CompilerIrValue)]
   [bound : (& ir.CompilerIrValue)]
   [k0 : i64]
@@ -81031,34 +80454,37 @@
   [base-side : (& base-side ir.CompilerIrValue)]
   [length-value : (& ir.CompilerIrValue)]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [fan : OptBceVersionFan]
-  [acc : (& OptBceVersionGuardAcc)]) : OptBceVersionGuardAcc
-  (if (< iphi 0)
-    (No)
+  [fan : (&mut OptBceVersionFan)]
+  [acc : (&mut OptBceGuardBuf)]) : bool
+  (if (< sc.iphi 0)
+    false
     (match (opt-bce-mb-strided-derived
       body-blocks
       defs
-      latch
-      preheader
+      sc.latch
+      sc.preheader
       affine-side
       16
-      any-sign?)
-      [(or (No) (Scaled _ _)) (No)]
+      sc.single-block?)
+      [(or (No) (Scaled _ _)) false]
       [(Derived d0 step k2)
         (match (opt-bce-version-k-add k0 k2)
-          [(No) (No)]
+          [(No) false]
           [(Some offset)
             (match (opt-bce-mb-invariant-operand body-blocks defs base-side)
-              [(No) (No)]
+              [(No) false]
               [(Some base)
-                (opt-bce-version-derived-family
+                (opt-bce-version-strided-family
                   fan
                   seed
                   bound
                   (& base)
                   (& d0)
-                  offset
-                  step
+                  (OptBceFanSpan
+                    offset
+                    offset
+                    step
+                    (opt-bce-version-fan-kind-derived))
                   length-value
                   cell
                   acc)])])])))
@@ -81067,10 +80493,7 @@
 (define (opt-bce-mb-var-base-derived-add
   [body-blocks : (& ir.CompilerIrBlockList)]
   [defs : (& defs opt_i64_i64_map.Map)]
-  [latch : i64]
-  [preheader : i64]
-  [any-sign? : bool]
-  [iphi : i64]
+  [sc : (& OptBceDeriveScalars)]
   [seed : (& ir.CompilerIrValue)]
   [bound : (& ir.CompilerIrValue)]
   [k0 : i64]
@@ -81078,43 +80501,39 @@
   [rhs : (& ir.CompilerIrValue)]
   [length-value : (& ir.CompilerIrValue)]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [fan : OptBceVersionFan]
-  [acc : (& OptBceVersionGuardAcc)]) : OptBceVersionGuardAcc
-  (match (opt-bce-mb-var-base-derived-side
-    body-blocks
-    defs
-    latch
-    preheader
-    any-sign?
-    iphi
-    seed
-    bound
-    k0
-    lhs
-    rhs
-    length-value
-    cell
-    (compiler-opt-global-shared-view fan)
-    acc)
-    [(Some next-instrs next-values next-seen)
-      (Some next-instrs next-values next-seen)]
-    [(No)
-      (opt-bce-mb-var-base-derived-side
-        body-blocks
-        defs
-        latch
-        preheader
-        any-sign?
-        iphi
-        seed
-        bound
-        k0
-        rhs
-        lhs
-        length-value
-        cell
-        fan
-        acc)]))
+  [fan : (&mut OptBceVersionFan)]
+  [acc : (&mut OptBceGuardBuf)]) : bool
+  (let
+    [mark : OptBceGuardMark (opt-bce-guard-mark acc)]
+    (if (opt-bce-mb-var-base-derived-side
+      body-blocks
+      defs
+      sc
+      seed
+      bound
+      k0
+      lhs
+      rhs
+      length-value
+      cell
+      fan
+      acc)
+      true
+      (begin
+        (opt-bce-guard-restore! acc mark)
+        (opt-bce-mb-var-base-derived-side
+          body-blocks
+          defs
+          sc
+          seed
+          bound
+          k0
+          rhs
+          lhs
+          length-value
+          cell
+          fan
+          acc)))))
 
 (define (opt-bce-mb-var-base-add
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
@@ -81215,9 +80634,39 @@
 ;; RECOVERS such a handle out of a module global's cell, for the chains a loop
 ;; reloads per iteration (`gep @g, k` / `load`). Both are keyed by
 ;; (kind, key, offset) so a repeated chain is emitted into the guard once.
-(defenum OptBceMbHoists
-  (Nil)
-  (Cons i64 i64 i64 i64 (Box OptBceMbHoists)))
+(defenum OptBceMbHoistEntry
+  (Entry i64 i64 i64 i64))
+
+(defstruct OptBceMbHoists
+  (items (__tl_dyn-array OptBceMbHoistEntry))
+  (len i64))
+
+(define (opt-bce-mb-hoists-new) : OptBceMbHoists
+  (OptBceMbHoists (__tl_make-array OptBceMbHoistEntry 0) 0))
+
+(define (opt-bce-mb-hoists-push!
+  [hoists : (&mut OptBceMbHoists)]
+  [kind : i64]
+  [key : i64]
+  [off : i64]
+  [load-var : i64]) : unit
+  (let
+    [entry : OptBceMbHoistEntry (Entry kind key off load-var)]
+    [len : i64 hoists.len]
+    [cap : i64 (array-length hoists.items)]
+    (when
+      (>= len cap)
+      (let
+        [next-cap : i64 (opt-dense-next-capacity cap)]
+        [bigger : (__tl_dyn-array OptBceMbHoistEntry)
+          (__tl_make-array OptBceMbHoistEntry next-cap)]
+        (for [i (iterator.range 0 len)]
+          (match (array-ref hoists.items i)
+            [(Entry ek ekey eoff eload)
+              (set! (array-ref bigger i) (Entry ek ekey eoff eload))]))
+        (set! hoists.items bigger)))
+    (set! (array-ref hoists.items len) entry)
+    (set! hoists.len (+ len 1))))
 
 (define (opt-bce-mb-hoist-kind-var) : i64
   0)
@@ -81233,14 +80682,13 @@
   [value : (& ir.CompilerIrValue)]) : bool
   (match value
     [(Var target)
-      (match hoists
-        [(OptBceMbHoists.Nil) false]
-        [(OptBceMbHoists.Cons item-kind _ _ load-var rest)
-          (if (and
-            (= item-kind (opt-bce-mb-hoist-kind-var))
-            (= load-var target))
-            true
-            (opt-bce-mb-hoists-length-var? rest value))])]
+      (for [i (iterator.range 0 hoists.len)]
+        (match (array-ref hoists.items i)
+          [(Entry ek _ _ eload)
+            (when
+              (and (= ek (opt-bce-mb-hoist-kind-var)) (= eload target))
+              (return true))]))
+      false]
     [_ false]))
 
 (define (opt-bce-mb-hoists-lookup
@@ -81248,12 +80696,11 @@
   [kind : i64]
   [key : i64]
   [offset : i64]) : i64
-  (match hoists
-    [(OptBceMbHoists.Nil) (- 0 1)]
-    [(OptBceMbHoists.Cons item-kind item-key item-offset load-var rest)
-      (if (and (= item-kind kind) (= item-key key) (= item-offset offset))
-        load-var
-        (opt-bce-mb-hoists-lookup rest kind key offset))]))
+  (for [i (iterator.range 0 hoists.len)]
+    (match (array-ref hoists.items i)
+      [(Entry ek ekey eoff eload)
+        (when (and (= ek kind) (= ekey key) (= eoff offset)) (return eload))]))
+  (- 0 1))
 
 ;; Can any instruction of these loop blocks change a DESCRIPTOR word -- a
 ;; descriptor header slot, or the global cell a handle lives in -- that a load
@@ -81306,12 +80753,16 @@
     [(OptBceMbDescriptor.No) (- 0 1)]
     [(OptBceMbDescriptor.Some bases _ _ _) bases]))
 
-;; P-B's length-equality table, or an empty one when recognition is off.
-(define (opt-bce-mb-descriptor-len-eq
-  [descriptor : (& descriptor OptBceMbDescriptor)]) : opt_i64_i64_map.Map
-  (match (owned_view.compiler-owned-reference-shared-view descriptor)
-    [(No) (opt_i64_i64_map.with-capacity 1)]
-    [(Some _ _ _ len-eq) len-eq]))
+;; P-B's length-equality canonicalization against a descriptor context.
+(define (opt-bce-mb-descriptor-len-eq-canon!
+  [descriptor : (& descriptor OptBceMbDescriptor)]
+  [all-blocks : (& ir.CompilerIrBlockList)]
+  [raw-len : (& ir.CompilerIrValue)]
+  [inv-len : (& ir.CompilerIrValue)]) : ir.CompilerIrMaybeValue
+  (match descriptor
+    [(No) (No)]
+    [(Some bases _ _ len-eq)
+      (opt-bce-len-eq-canon! bases all-blocks len-eq raw-len inv-len)]))
 
 (define (opt-bce-mb-call-descriptor-stable?
   [descriptor : (& descriptor OptBceMbDescriptor)]
@@ -81352,67 +80803,22 @@
             (opt-bce-mb-stable-blocks? descriptor rest)
             false)])]))
 
-;; The descriptor-length derivation result: the length value the guard
-;; references (a hoisted load), the updated hoist set, and the guard
-;; accumulator with the hoisted gep+load pair consed on.
-(defenum OptBceMbMaybeLength
-  (No)
-  (Some ir.CompilerIrValue OptBceMbHoists OptBceVersionGuardAcc))
-
-;; Where the guard gets the descriptor HANDLE a length load reads through: the
-;; base var itself, or a hoisted recovery of it.
-(defenum OptBceMbMaybeBase
-  (No)
-  (Some i64 OptBceMbHoists OptBceVersionGuardAcc))
-
 ;; The handle a length load's `Gep` is rooted at, made available in the guard.
-;;
-;; The easy case is a base the loop does NOT define: the guard block dominates
-;; the loop, so the var is already in scope there and nothing is emitted.
-;;
-;; The case this exists for is the one a workspace of module globals produces on
-;; every iteration:
-;;
-;;     %h  = gep @g, k      ;; the cell's address
-;;     %d  = load %h        ;; the descriptor handle living in that cell
-;;     %o  = gep %d, 1
-;;     %n  = load %o        ;; the length
-;;
-;; `%d` is a loop def, so a plain loop-def test refuses the whole chain and
-;; every check against `%n` stays. But the loop defines `%d` only because it
-;; RELOADS it: the value is the global cell's content, and
-;; opt-bce-mb-stable-blocks? has already proved that nothing the loop executes
-;; can write a global cell (or a descriptor word). So the guard may recover the
-;; handle itself, once, with the same two instructions, and every iteration's
-;; `%d` equals it.
-;;
-;; SAFETY OF THE HOISTED RECOVERY. `gep @g, k` is a symbol address, and the load
-;; through it reads the global's own storage -- always mapped, whatever path
-;; through the loop would have been taken. The handle it yields is then a live
-;; descriptor for the same reason the second load's is: the type says so, and a
-;; dangling handle is already UB. This is the argument the LICM `Global` operand
-;; promotion makes for reading a cell in the preheader; the versioner makes it
-;; in the guard, which the fast clone alone is entered from.
-;;
-;; Only a GLOBAL-rooted chain is recovered. A base the loop computes any other
-;; way (an element read, an arithmetic address) is refused:
-;; the recovery has to be a re-execution of instructions whose result cannot
-;; depend on where in the loop they run, and a symbol address plus a cell read
-;; that no body instruction can write is the one such chain.
+;; Returns the handle var id, or -1 when not hoistable.
 (define (opt-bce-mb-descriptor-base
   [defs : (& defs opt_i64_i64_map.Map)]
   [all-blocks : (& all-blocks ir.CompilerIrBlockList)]
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
   [base-id : i64]
-  [hoists : OptBceMbHoists]
+  [hoists : (&mut OptBceMbHoists)]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [acc : OptBceVersionGuardAcc]) : OptBceMbMaybeBase
+  [acc : (&mut OptBceGuardBuf)]) : i64
   (if (not (opt-used-contains defs base-id))
-    (Some base-id hoists acc)
+    base-id
     (match (opt-bce-mb-find-def
       (ir.compiler-ir-block-list-view all-blocks)
       base-id)
-      [(No) (No)]
+      [(No) (- 0 1)]
       [(Some base-instr)
         (match base-instr
           [(Load _ handle-src handle-ty)
@@ -81421,7 +80827,7 @@
                 (match (opt-bce-mb-find-def
                   (ir.compiler-ir-block-list-view all-blocks)
                   (opt-bce-mb-resolve body-blocks handle-raw 16))
-                  [(No) (No)]
+                  [(No) (- 0 1)]
                   [(Some cell-instr)
                     (match cell-instr
                       [(Gep _ cell-base cell-off cell-ty)
@@ -81439,11 +80845,11 @@
                                   hoists
                                   cell
                                   acc)]
-                              [_ (No)])]
-                          [_ (No)])]
-                      [_ (No)])])]
-              [_ (No)])]
-          [_ (No)])])))
+                              [_ (- 0 1)])]
+                          [_ (- 0 1)])]
+                      [_ (- 0 1)])])]
+              [_ (- 0 1)])]
+          [_ (- 0 1)])])))
 
 ;; Emit (or reuse) the guard's `gep @g, k` + `load` pair recovering one
 ;; global-held descriptor handle.
@@ -81454,36 +80860,32 @@
   [off : i64]
   [cell-ty : ast.AstType]
   [handle-ty : ast.AstType]
-  [hoists : OptBceMbHoists]
+  [hoists : (&mut OptBceMbHoists)]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [acc : OptBceVersionGuardAcc]) : OptBceMbMaybeBase
+  [acc : (&mut OptBceGuardBuf)]) : i64
   (let
     [shared : i64
       (opt-bce-mb-hoists-lookup hoists (opt-bce-mb-hoist-kind-root) sym-id off)]
     (if (>= shared 0)
-      (Some shared hoists acc)
-      (match acc
-        [(No) (No)]
-        [(Some instrs values counter-seen)
-          (let
-            [gep-var : i64 (opt-bce-version-alloc-var cell)]
-            [load-var : i64 (opt-bce-version-alloc-var cell)]
-            (Some
-              load-var
-              (Cons
-                (opt-bce-mb-hoist-kind-root)
-                sym-id
-                off
-                load-var
-                (box hoists))
-              (Some
-                (opt-bce-version-builder-push
-                  (opt-bce-version-builder-push
-                    instrs
-                    (& (Gep gep-var cell-base cell-off cell-ty)))
-                  (& (Load load-var (Var gep-var) handle-ty)))
-                values
-                counter-seen)))]))))
+      shared
+      (if (not acc.ok?)
+        (- 0 1)
+        (let
+          [gep-var : i64 (opt-bce-version-alloc-var cell)]
+          [load-var : i64 (opt-bce-version-alloc-var cell)]
+          (opt-bce-mb-hoists-push!
+            hoists
+            (opt-bce-mb-hoist-kind-root)
+            sym-id
+            off
+            load-var)
+          (ir.compiler-ir-instr-builder-push!
+            (&mut acc.instrs)
+            (Gep gep-var cell-base cell-off cell-ty))
+          (ir.compiler-ir-instr-builder-push!
+            (&mut acc.instrs)
+            (Load load-var (Var gep-var) handle-ty))
+          load-var)))))
 
 ;; A non-invariant check length may still be a descriptor length-slot load:
 ;; it resolves to `Load (Gep base, length-slot)` where base is an array/string
@@ -81492,10 +80894,7 @@
 ;; mid-loop, so the guard may reference ONE hoisted gep+load pair per distinct
 ;; (base, offset), emitted into the guard block: reading a live descriptor's
 ;; length slot is always safe (a dangling handle is already UB), and the hoisted
-;; value equals every in-iteration load. The pair is consed onto the accumulator
-;; BEFORE the conditions that consume it so the final reversal emits it first --
-;; and after any root recovery the base needed, which is consed first for the
-;; same reason.
+;; value equals every in-iteration load.
 (define (opt-bce-mb-descriptor-length
   [descriptor : (& descriptor OptBceMbDescriptor)]
   [stable? : bool]
@@ -81503,145 +80902,119 @@
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
   [defs : (& defs opt_i64_i64_map.Map)]
   [length-value : (& ir.CompilerIrValue)]
-  [hoists : (& OptBceMbHoists)]
+  [hoists : (&mut OptBceMbHoists)]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [acc : (& OptBceVersionGuardAcc)]) : OptBceMbMaybeLength
-  (if (not stable?)
+  [acc : (&mut OptBceGuardBuf)]) : ir.CompilerIrMaybeValue
+  (if (or (not stable?) (not acc.ok?))
     (No)
-    (match acc
+    (match descriptor
       [(No) (No)]
-      [(Some _ _ _)
-        (match descriptor
-          [(No) (No)]
-          [(Some type-segment-bases header-set _ _)
-            (match length-value
-              [(Var raw)
-                (let
-                  [id : i64 (opt-bce-mb-resolve body-blocks raw 16)]
-                  (match (opt-bce-mb-find-def
-                    (ir.compiler-ir-block-list-view all-blocks)
-                    id)
-                    [(No) (No)]
-                    [(Some instr)
-                      (match instr
-                        [(Load _ src load-ty)
-                          (match (& load-ty)
-                            [(I64)
-                              (match src
-                                [(Var src-raw)
-                                  (let
-                                    [src-id : i64
-                                      (opt-bce-mb-resolve
-                                        body-blocks
-                                        src-raw
-                                        16)]
-                                    (match (opt-bce-mb-find-def
-                                      (ir.compiler-ir-block-list-view
-                                        all-blocks)
-                                      src-id)
-                                      [(No) (No)]
-                                      [(Some gep-instr)
-                                        (match gep-instr
-                                          [(Gep _ base offset gep-ty)
-                                            (match base
-                                              [(Var base-raw)
-                                                (match (& offset)
-                                                  [(I64 off)
+      [(Some type-segment-bases header-set _ _)
+        (match length-value
+          [(Var raw)
+            (let
+              [id : i64 (opt-bce-mb-resolve body-blocks raw 16)]
+              (match (opt-bce-mb-find-def
+                (ir.compiler-ir-block-list-view all-blocks)
+                id)
+                [(No) (No)]
+                [(Some instr)
+                  (match instr
+                    [(Load _ src load-ty)
+                      (match (& load-ty)
+                        [(I64)
+                          (match src
+                            [(Var src-raw)
+                              (let
+                                [src-id : i64
+                                  (opt-bce-mb-resolve body-blocks src-raw 16)]
+                                (match (opt-bce-mb-find-def
+                                  (ir.compiler-ir-block-list-view all-blocks)
+                                  src-id)
+                                  [(No) (No)]
+                                  [(Some gep-instr)
+                                    (match gep-instr
+                                      [(Gep _ base offset gep-ty)
+                                        (match base
+                                          [(Var base-raw)
+                                            (match (& offset)
+                                              [(I64 off)
+                                                (let
+                                                  [base-id : i64
+                                                    (opt-bce-mb-resolve
+                                                      body-blocks
+                                                      base-raw
+                                                      16)]
+                                                  (if (or
+                                                    (not
+                                                      (opt-load-header-var?
+                                                        header-set
+                                                        base-id))
+                                                    (not
+                                                      (opt-bounds-object-length-slot?
+                                                        type-segment-bases
+                                                        offset
+                                                        gep-ty)))
+                                                    (No)
                                                     (let
-                                                      [base-id : i64
-                                                        (opt-bce-mb-resolve
-                                                          body-blocks
-                                                          base-raw
-                                                          16)]
-                                                      (if (or
-                                                        (not
-                                                          (opt-load-header-var?
-                                                            header-set
-                                                            base-id))
-                                                        (not
-                                                          (opt-bounds-object-length-slot?
-                                                            type-segment-bases
-                                                            offset
-                                                            gep-ty)))
-                                                        (No)
-                                                        (match (opt-bce-mb-descriptor-base
+                                                      [guard-base : i64
+                                                        (opt-bce-mb-descriptor-base
                                                           defs
                                                           all-blocks
                                                           body-blocks
                                                           base-id
-                                                          (owned_view.compiler-owned-reference-shared-view
-                                                            hoists)
+                                                          hoists
                                                           cell
-                                                          (owned_view.compiler-owned-reference-shared-view
-                                                            acc))
-                                                          [(No) (No)]
-                                                          [(Some
+                                                          acc)]
+                                                      (if (< guard-base 0)
+                                                        (No)
+                                                        (let
+                                                          [shared : i64
+                                                            (opt-bce-mb-hoists-lookup
+                                                              hoists
+                                                              (opt-bce-mb-hoist-kind-var)
                                                               guard-base
-                                                              base-hoists
-                                                              base-acc)
+                                                              off)]
+                                                          (if (>= shared 0)
+                                                            (Some (Var shared))
                                                             (let
-                                                              [shared : i64
-                                                                (opt-bce-mb-hoists-lookup
-                                                                  base-hoists
-                                                                  (opt-bce-mb-hoist-kind-var)
-                                                                  guard-base
-                                                                  off)]
-                                                              (if (>= shared 0)
-                                                                (Some
-                                                                  (Var shared)
-                                                                  base-hoists
-                                                                  base-acc)
-                                                                (opt-bce-mb-descriptor-hoist
-                                                                  guard-base
+                                                              [gep-var : i64
+                                                                (opt-bce-version-alloc-var
+                                                                  cell)]
+                                                              [load-var : i64
+                                                                (opt-bce-version-alloc-var
+                                                                  cell)]
+                                                              (opt-bce-mb-hoists-push!
+                                                                hoists
+                                                                (opt-bce-mb-hoist-kind-var)
+                                                                guard-base
+                                                                off
+                                                                load-var)
+                                                              (ir.compiler-ir-instr-builder-push!
+                                                                (&mut
+                                                                  acc.instrs)
+                                                                (Gep
+                                                                  gep-var
+                                                                  (Var
+                                                                    guard-base)
                                                                   offset
-                                                                  gep-ty
-                                                                  load-ty
-                                                                  base-hoists
-                                                                  cell
-                                                                  base-acc)))])))]
-                                                  [_ (No)])]
+                                                                  gep-ty))
+                                                              (ir.compiler-ir-instr-builder-push!
+                                                                (&mut
+                                                                  acc.instrs)
+                                                                (Load
+                                                                  load-var
+                                                                  (Var gep-var)
+                                                                  load-ty))
+                                                              (Some
+                                                                (Var load-var)))))))))]
                                               [_ (No)])]
-                                          [_ (No)])]))]
-                                [_ (No)])]
+                                          [_ (No)])]
+                                      [_ (No)])]))]
                             [_ (No)])]
-                        [_ (No)])]))]
-              [_ (No)])])])))
-
-;; Emit the hoisted gep+load pair for a (base, offset) pair seen for the
-;; first time.
-(define (opt-bce-mb-descriptor-hoist
-  [base-id : i64]
-  [offset : ir.CompilerIrValue]
-  [gep-ty : ast.AstType]
-  [load-ty : ast.AstType]
-  [hoists : OptBceMbHoists]
-  [cell : (&mut cell (__tl_dyn-array i64))]
-  [acc : OptBceVersionGuardAcc]) : OptBceMbMaybeLength
-  (match acc
-    [(No) (No)]
-    [(Some instrs values counter-seen)
-      (let
-        [gep-var : i64 (opt-bce-version-alloc-var cell)]
-        [load-var : i64 (opt-bce-version-alloc-var cell)]
-        (match (& offset)
-          [(I64 off)
-            (Some
-              (Var load-var)
-              (Cons
-                (opt-bce-mb-hoist-kind-var)
-                base-id
-                off
-                load-var
-                (box hoists))
-              (Some
-                (opt-bce-version-builder-push
-                  (opt-bce-version-builder-push
-                    instrs
-                    (& (Gep gep-var (Var base-id) offset gep-ty)))
-                  (& (Load load-var (Var gep-var) load-ty)))
-                values
-                counter-seen))]
-          [_ (No)]))]))
+                        [_ (No)])]
+                    [_ (No)])]))]
+          [_ (No)])])))
 
 ;; A BOUNDED PHI of this loop: an i64 header phi whose non-latch input comes
 ;; from the preheader and resolves to the counter's own seed, and whose latch
@@ -82091,7 +81464,7 @@
   [value : (& ir.CompilerIrValue)]
   [length-value : (& ir.CompilerIrValue)]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [acc : (& OptBceVersionGuardAcc)]) : OptBceVersionGuardAcc
+  [acc : (&mut OptBceGuardBuf)]) : bool
   (match (opt-bce-mask-collect
     all-blocks
     body-blocks
@@ -82100,15 +81473,11 @@
     value
     4
     (Some (Empty)))
-    [(No) (No)]
+    [(No) false]
     [(Some masks)
-      (if (< (opt-bce-mask-list-count masks) 1)
-        (No)
-        (opt-bce-mask-conds
-          cell
-          (& masks)
-          length-value
-          (owned_view.compiler-owned-reference-shared-view acc)))]))
+      (if (< (opt-bce-mask-list-count (& masks)) 1)
+        false
+        (opt-bce-mask-conds cell (& masks) length-value acc))]))
 
 ;; A header phi read at literal offset `k`. Bounded by the counter (same seed,
 ;; back-edge value within {phi, phi+1} through any merge), it shares the
@@ -82126,13 +81495,9 @@
   [all-blocks : (& ir.CompilerIrBlockList)]
   [body-blocks : (& ir.CompilerIrBlockList)]
   [defs : (& defs opt_i64_i64_map.Map)]
-  [latch : i64]
-  [preheader : i64]
+  [sc : (& OptBceDeriveScalars)]
   [mask-preheader : i64]
-  [iphi : i64]
-  [exact? : bool]
   [allow-other-bounded-phi? : bool]
-  [any-sign? : bool]
   [seed : (& ir.CompilerIrValue)]
   [bound : (& ir.CompilerIrValue)]
   [cell : (&mut cell (__tl_dyn-array i64))]
@@ -82141,20 +81506,20 @@
   [k : i64]
   [masked? : bool]
   [length-value : (& ir.CompilerIrValue)]
-  [fan : OptBceVersionFan]
-  [acc : (& OptBceVersionGuardAcc)]) : OptBceVersionGuardAcc
+  [fan : (&mut OptBceVersionFan)]
+  [acc : (&mut OptBceGuardBuf)]) : bool
   (let
     [bounded? : bool
       (and
-        (>= iphi 0)
-        (or exact? (= var iphi))
-        (or (= var iphi) allow-other-bounded-phi?)
-        (match (opt-unroll-split-phi-inputs inputs latch)
+        (>= sc.iphi 0)
+        (or sc.exact? (= var sc.iphi))
+        (or (= var sc.iphi) allow-other-bounded-phi?)
+        (match (opt-unroll-split-phi-inputs inputs sc.latch)
           [(Split init back pred-label)
             (opt-bce-mb-bounded-phi?
               all-blocks
               body-blocks
-              preheader
+              sc.preheader
               pred-label
               seed
               (& init)
@@ -82171,25 +81536,24 @@
         length-value
         cell
         acc)
-      (match (if (and (>= iphi 0) exact?)
+      (match (if (and (>= sc.iphi 0) sc.exact?)
         (opt-bce-mb-derived-induction
           body-blocks
           defs
-          latch
-          preheader
+          sc.latch
+          sc.preheader
           var
           inputs
-          any-sign?)
+          sc.single-block?)
         (OptBceDerivedInduction.No))
         [(Some derived-seed step)
-          (opt-bce-version-derived-family
+          (opt-bce-version-strided-family
             fan
             seed
             bound
             (& (I64 0))
             (& derived-seed)
-            k
-            step
+            (OptBceFanSpan k k step (opt-bce-version-fan-kind-derived))
             length-value
             cell
             acc)]
@@ -82204,401 +81568,333 @@
               length-value
               cell
               acc)
-            (No))]))))
+            false)]))))
 
 (define (opt-bce-mb-derive-index
   [all-blocks : (& ir.CompilerIrBlockList)]
   [body-blocks : (& ir.CompilerIrBlockList)]
   [defs : (& defs opt_i64_i64_map.Map)]
-  [latch : i64]
-  [preheader : i64]
-  [iphi : i64]
-  [exact? : bool]
+  [sc : (& OptBceDeriveScalars)]
   [allow-other-bounded-phi? : bool]
-  ;; The loop's one block, as the single-block pass reads it
-  ;; (opt-bce-version-derive-checks): a mask takes no preheader relaxation
-  ;; (opt-bce-mask-invariant), a derived phi may step either way, and
-  ;; `allow-scale1` carries that pass's loop-level verdict on the plain
-  ;; `base + counter + k` form (opt-bce-version-guard-conds), which rejects a
-  ;; unit-stride variable-base member when false.
-  [single-block? : bool]
-  [allow-scale1 : bool]
   [seed : (& ir.CompilerIrValue)]
   [bound : (& ir.CompilerIrValue)]
   [cell : (&mut cell (__tl_dyn-array i64))]
   [index-value : (& index-value ir.CompilerIrValue)]
   [length-value : (& ir.CompilerIrValue)]
-  [fan : OptBceVersionFan]
-  [acc : (& OptBceVersionGuardAcc)]) : OptBceVersionGuardAcc
-  (match index-value
-    [(I64 k)
-      (if (>= k 0)
-        (opt-bce-version-cond cell (& (Lt)) (& (I64 k)) length-value acc)
-        (No))]
-    [(Var raw)
-      (let
-        [id : i64 (opt-bce-mb-resolve body-blocks raw 16)]
-        [mask-preheader : i64
-          (if single-block?
-            (ir.compiler-ir-label-none)
-            preheader)]
-        (cond
-          [(= id iphi)
-            ;; counter: [seed, bound) subset of [0, len) iff seed >= 0
-            ;; (emitted once at the end) and bound <= len. Recorded as the
-            ;; literal-base fan's offset 0 so a loop also reading `counter + k`
-            ;; against this length states the two conditions once for the whole
-            ;; family (opt-bce-version-fan-entry-flush); a lone offset-0 member
-            ;; flushes to exactly the `bound <= len` above.
-            (opt-bce-version-fan-admit-unit
-              fan
-              seed
-              bound
-              (& (I64 0))
-              0
-              length-value
-              cell
-              acc)]
-          ;; loop-invariant index: exactly its own range check, hoisted.
-          ;;
-          ;; ONE UNSIGNED CONJUNCT. `BoundsCheck` compares UNSIGNED
-          ;; (opt-bce-version-mask-cond reads the same fact for an invariant
-          ;; mask), so `id <u len` IS the removed check, evaluated once in the
-          ;; guard instead of once per iteration. It needs no companion sign
-          ;; condition: a negative `id` is >=u 2^63 and fails the conjunct
-          ;; exactly where the check itself would have trapped, and a length
-          ;; whose own sign bit is set admits the same indexes the check admits.
-          ;; So the guard is EXACT in both directions -- false sends the entry
-          ;; to the original loop, which aborts exactly where it did -- and no
-          ;; ordering question among aborts arises.
-          ;;
-          ;; COUNTED SHAPES ONLY, and the single conjunct does not change that.
-          ;; The rule reads no trip range, so the counter-free economics gate
-          ;; (at most one conjunct per removed check,
-          ;; opt-bce-mb-guard-conds-ranged) would admit it -- which is exactly
-          ;; the shape that must not be admitted. A loop-invariant index sits on
-          ;; whatever arm the body puts it on, so its removals fire only on the
-          ;; iterations that reach that arm while the conjunct is paid on every
-          ;; ENTRY: the cross-array fusion is scoped away from counter-free
-          ;; shapes for the same reason, one paragraph up. Without this clause
-          ;; a counter-free scan whose three `buf[start + k]` reads are hoisted
-          ;; into the preheader and checked on one conditional arm buys a
-          ;; three-conjunct entry guard per call for three removals that fire
-          ;; only when the arm is taken.
-          ;;
-          ;; So the walk loops this would otherwise reach (`rpo_num[b]` with `b`
-          ;; fixed across a dominator solver's idom walks) keep their check. Two
-          ;; further gates stand behind this one for that case anyway: the
-          ;; counter-free shape is offered only to loops whose preheader is
-          ;; outside every loop (opt-bce-mb-loop-shape-with-preheader), and a
-          ;; loop already inside a fast clone is refused outright
-          ;; (opt-bce-mb-label-in-clone?), which is where such a walk lives once
-          ;; the enclosing region versions.
-          [(and (>= iphi 0) (not (opt-used-contains defs id)))
-            (opt-bce-version-mask-cond cell (& (Var id)) length-value acc)]
-          [else
-            (match (opt-bce-mb-find-def
-              (ir.compiler-ir-block-list-view body-blocks)
-              id)
-              [(No) (No)]
-              [(Some instr)
-                (match instr
-                  [(BinOp _ op lhs rhs _)
-                    (match op
-                      [(BitAnd)
-                        (match (opt-affine-var-const lhs rhs)
-                          [(Some _ m)
-                            (if (>= m 0)
-                              ;; masked index: in [0, m] whatever the source.
-                              (opt-bce-version-cond
-                                cell
-                                (& (Lt))
-                                (& (I64 m))
+  [fan : (&mut OptBceVersionFan)]
+  [acc : (&mut OptBceGuardBuf)]) : bool
+  (if (not acc.ok?)
+    false
+    (match index-value
+      [(I64 k)
+        (if (>= k 0)
+          (begin
+            (opt-bce-version-cond cell (Lt) (& (I64 k)) length-value acc)
+            acc.ok?)
+          false)]
+      [(Var raw)
+        (let
+          [id : i64 (opt-bce-mb-resolve body-blocks raw 16)]
+          [mask-preheader : i64
+            (if sc.single-block?
+              (ir.compiler-ir-label-none)
+              sc.preheader)]
+          (cond
+            [(= id sc.iphi)
+              ;; counter: [seed, bound) subset of [0, len) iff seed >= 0
+              ;; (emitted once at the end) and bound <= len. Recorded as the
+              ;; literal-base fan's offset 0 so a loop also reading `counter + k`
+              ;; against this length states the two conditions once for the whole
+              ;; family (opt-bce-version-fan-entry-flush); a lone offset-0 member
+              ;; flushes to exactly the `bound <= len` above.
+              (opt-bce-version-fan-admit-unit
+                fan
+                seed
+                bound
+                (& (I64 0))
+                0
+                length-value
+                cell
+                acc)]
+            [(and (>= sc.iphi 0) (not (opt-used-contains defs id)))
+              (opt-bce-version-mask-cond cell (& (Var id)) length-value acc)]
+            [else
+              (match (opt-bce-mb-find-def
+                (ir.compiler-ir-block-list-view body-blocks)
+                id)
+                [(No) false]
+                [(Some instr)
+                  (match instr
+                    [(BinOp _ op lhs rhs _)
+                      (match op
+                        [(BitAnd)
+                          (match (opt-affine-var-const lhs rhs)
+                            [(Some _ m)
+                              (if (>= m 0)
+                                ;; masked index: in [0, m] whatever the source.
+                                (begin
+                                  (opt-bce-version-cond
+                                    cell
+                                    (Lt)
+                                    (& (I64 m))
+                                    length-value
+                                    acc)
+                                  acc.ok?)
+                                false)]
+                            ;; A VARIABLE mask: the loop-invariant one bounds the
+                            ;; index unsigned, whichever side it is on.
+                            [(No)
+                              (opt-bce-masked-guard
+                                all-blocks
+                                body-blocks
+                                defs
+                                mask-preheader
+                                (& (Var id))
                                 length-value
-                                acc)
-                              (No))]
-                          ;; A VARIABLE mask: the loop-invariant one bounds the
-                          ;; index unsigned, whichever side it is on.
-                          [(No)
-                            (opt-bce-masked-guard
-                              all-blocks
-                              body-blocks
-                              defs
-                              mask-preheader
-                              (& (Var id))
-                              length-value
-                              cell
-                              acc)])]
-                      [_
-                        (match (let
-                          [value (ir.CompilerIrValue.Var id)]
-                          (opt-bce-mb-counter-affine body-blocks iphi value 16))
-                          [(No)
-                            ;; A var+var Add (possibly under peeled literal
-                            ;; addends) defeats the literal-coefficient
-                            ;; recovery: retry as `base + strided + k` with a
-                            ;; loop-invariant variable base.
-                            (match (let
-                              [value (ir.CompilerIrValue.Var id)]
-                              (opt-bce-mb-strided-peel body-blocks value 0 8))
-                              [(No) (No)]
-                              [(Some core k0)
-                                (match (opt-bce-mb-find-def
-                                  (ir.compiler-ir-block-list-view body-blocks)
-                                  core)
-                                  [(No) (No)]
-                                  [(Some core-instr)
-                                    (match core-instr
-                                      [(BinOp
-                                          _
-                                          core-op
-                                          core-lhs
-                                          core-rhs
-                                          core-ty)
-                                        (if (not
-                                          (opt-affine-64bit-type? core-ty))
-                                          (No)
-                                          (match core-op
-                                            [(Add)
-                                              (match (opt-bce-mb-var-base-add
-                                                body-blocks
-                                                defs
-                                                iphi
-                                                core-lhs
-                                                core-rhs)
-                                                [(No)
-                                                  ;; VT-1: the same index after
-                                                  ;; strength reduction, with
-                                                  ;; the strided side a derived
-                                                  ;; induction phi rather than a
-                                                  ;; syntactic multiple of the
-                                                  ;; counter.
-                                                  (if exact?
-                                                    (opt-bce-mb-var-base-derived-add
-                                                      body-blocks
-                                                      defs
-                                                      latch
-                                                      preheader
-                                                      single-block?
-                                                      iphi
-                                                      seed
-                                                      bound
-                                                      k0
-                                                      (& core-lhs)
-                                                      (& core-rhs)
-                                                      length-value
-                                                      cell
-                                                      fan
-                                                      acc)
-                                                    (No))]
-                                                [(Some scale k2 base)
-                                                  (if (and
-                                                    (=
-                                                      (opt-bce-counter-affine-magnitude
-                                                        scale)
-                                                      1)
-                                                    (not allow-scale1))
-                                                    (No)
-                                                    (match (opt-bce-version-k-add
-                                                      k0
-                                                      k2)
-                                                      [(No) (No)]
-                                                      [(Some offset)
-                                                        (if (= scale 1)
-                                                          ;; Fan member: record
-                                                          ;; (base, length, k);
-                                                          ;; the flush emits the
-                                                          ;; extremal conditions.
-                                                          (opt-bce-version-fan-admit-unit
-                                                            fan
-                                                            seed
-                                                            bound
-                                                            (& base)
-                                                            offset
-                                                            length-value
-                                                            cell
-                                                            acc)
-                                                          ;; Strided variable
-                                                          ;; base: a SCALED fan
-                                                          ;; family, whose flush
-                                                          ;; synthesizes the
-                                                          ;; derived seed once
-                                                          ;; and reuses the
-                                                          ;; positive-step
-                                                          ;; quotient.
-                                                          (opt-bce-version-scaled-family
-                                                            fan
-                                                            seed
-                                                            bound
-                                                            (& base)
-                                                            offset
-                                                            scale
-                                                            length-value
-                                                            cell
-                                                            acc))]))])]
-                                            ;; `base - strided + k0`: the
-                                            ;; decreasing mirror of the Add
-                                            ;; split, and the shape a reversed
-                                            ;; copy walks with
-                                            ;; (`postorder[post - 1 - i]`, the
-                                            ;; rpo copy loop). The strided side
-                                            ;; enters with every coefficient's
-                                            ;; sign flipped, so the family is
-                                            ;; the one `-scale` names; only THIS
-                                            ;; operand order is a variable-base
-                                            ;; index, because `strided - base`
-                                            ;; would need the base itself
-                                            ;; negated.
-                                            [(Sub)
-                                              (match (opt-bce-mb-var-base-side
-                                                body-blocks
-                                                defs
-                                                iphi
-                                                core-rhs
-                                                core-lhs)
-                                                [(No) (No)]
-                                                [(Some scale k2 base)
-                                                  ;; i64-MIN has no
-                                                  ;; representable negation for
-                                                  ;; the flip below.
-                                                  (if (or
-                                                    (and
+                                cell
+                                acc)])]
+                        [_
+                          (match (opt-bce-mb-counter-affine
+                            body-blocks
+                            sc.iphi
+                            (& (Var id))
+                            16)
+                            [(No)
+                              ;; A var+var Add (possibly under peeled literal
+                              ;; addends) defeats the literal-coefficient
+                              ;; recovery: retry as `base + strided + k` with a
+                              ;; loop-invariant variable base.
+                              (match (opt-bce-mb-strided-peel
+                                body-blocks
+                                (& (Var id))
+                                0
+                                8)
+                                [(No) false]
+                                [(Some core k0)
+                                  (match (opt-bce-mb-find-def
+                                    (ir.compiler-ir-block-list-view body-blocks)
+                                    core)
+                                    [(No) false]
+                                    [(Some core-instr)
+                                      (match core-instr
+                                        [(BinOp
+                                            _
+                                            core-op
+                                            core-lhs
+                                            core-rhs
+                                            core-ty)
+                                          (if (not
+                                            (opt-affine-64bit-type? core-ty))
+                                            false
+                                            (match core-op
+                                              [(Add)
+                                                (match (opt-bce-mb-var-base-add
+                                                  body-blocks
+                                                  defs
+                                                  sc.iphi
+                                                  (& core-lhs)
+                                                  (& core-rhs))
+                                                  [(No)
+                                                    ;; VT-1: the same index after
+                                                    ;; strength reduction, with
+                                                    ;; the strided side a derived
+                                                    ;; induction phi rather than a
+                                                    ;; syntactic multiple of the
+                                                    ;; counter.
+                                                    (if sc.exact?
+                                                      (opt-bce-mb-var-base-derived-add
+                                                        body-blocks
+                                                        defs
+                                                        sc
+                                                        seed
+                                                        bound
+                                                        k0
+                                                        (& core-lhs)
+                                                        (& core-rhs)
+                                                        length-value
+                                                        cell
+                                                        fan
+                                                        acc)
+                                                      false)]
+                                                  [(Some scale k2 base)
+                                                    (if (and
                                                       (=
                                                         (opt-bce-counter-affine-magnitude
                                                           scale)
                                                         1)
-                                                      (not allow-scale1))
-                                                    (<
-                                                      (opt-bce-counter-affine-magnitude
+                                                      (not sc.allow-scale1))
+                                                      false
+                                                      (match (opt-bce-version-k-add
+                                                        k0
                                                         k2)
-                                                      0))
-                                                    (No)
-                                                    (match (opt-bce-version-k-add
-                                                      k0
-                                                      (- 0 k2))
-                                                      [(No) (No)]
-                                                      [(Some offset)
-                                                        (opt-bce-version-scaled-family
-                                                          fan
-                                                          seed
-                                                          bound
-                                                          (& base)
-                                                          offset
-                                                          (- 0 scale)
-                                                          length-value
-                                                          cell
-                                                          acc)]))])]
-                                            [_ (No)]))]
-                                      ;; A BOUNDED PHI plus a literal: the phi's
-                                      ;; own range is the counter's, so
-                                      ;; `sphi + k` is the counter's range
-                                      ;; shifted by k -- the same fan member
-                                      ;; `counter + k` is, and admitted under
-                                      ;; the same conditions as the bare
-                                      ;; bounded phi below.
-                                      [(Phi _ inputs pty)
-                                        (match pty
-                                          [(I64)
-                                            (opt-bce-mb-derive-phi
-                                              all-blocks
-                                              body-blocks
-                                              defs
-                                              latch
-                                              preheader
-                                              mask-preheader
-                                              iphi
-                                              exact?
-                                              allow-other-bounded-phi?
-                                              single-block?
-                                              seed
-                                              bound
-                                              cell
-                                              core
-                                              (& inputs)
-                                              k0
-                                              false
-                                              length-value
-                                              fan
-                                              acc)]
-                                          [_ (No)])]
-                                      [_ (No)])])])]
-                          [(Some scale offset)
-                            ;; scale 1 is a literal-base fan member (see the
-                            ;; counter case above); larger scales keep the
-                            ;; quotient guard, and a DECREASING one takes the
-                            ;; mirrored conditions with a literal base of 0
-                            ;; (the single-block pass makes the same split).
-                            (cond
-                              [(= scale 1)
-                                (opt-bce-version-fan-admit-unit
-                                  fan
-                                  seed
-                                  bound
-                                  (& (I64 0))
-                                  offset
-                                  length-value
-                                  cell
-                                  acc)]
-                              [(< scale 0)
-                                (opt-bce-version-mirror-family
-                                  seed
-                                  bound
-                                  (& (I64 0))
-                                  (& (I64 0))
-                                  offset
-                                  scale
-                                  (opt-bce-version-fan-kind-scaled)
-                                  length-value
-                                  cell
-                                  (owned_view.compiler-owned-reference-shared-view
-                                    acc))]
-                              [else
-                                (opt-bce-version-affine-guard
-                                  seed
-                                  (owned_view.compiler-owned-reference-shared-view
-                                    bound)
-                                  length-value
-                                  scale
-                                  offset
-                                  cell
-                                  (owned_view.compiler-owned-reference-shared-view
-                                    acc))])])])]
-                  [(Phi _ inputs pty)
-                    ;; Bounded header phi (only header phis carry latch-edge
-                    ;; inputs): same seed as the counter, back-edge value within
-                    ;; {sphi, sphi+1} through any merge. The counter's conditions
-                    ;; then cover its whole range, recorded as the literal-base
-                    ;; fan's offset 0 like the counter itself. A phi that is
-                    ;; neither -- the loop-carried MASKED probe cursor -- falls
-                    ;; through to the counter-independent mask rule, which is
-                    ;; also the ONLY rule a counter-free shape (iphi < 0) may
-                    ;; use: every other one reads the trip range.
-                    (match pty
-                      [(I64)
-                        (opt-bce-mb-derive-phi
-                          all-blocks
-                          body-blocks
-                          defs
-                          latch
-                          preheader
-                          mask-preheader
-                          iphi
-                          exact?
-                          allow-other-bounded-phi?
-                          single-block?
-                          seed
-                          bound
-                          cell
-                          id
-                          (& inputs)
-                          0
-                          true
-                          length-value
-                          fan
-                          acc)]
-                      [_ (No)])]
-                  [_ (No)])])]))]
-    [_ (No)]))
+                                                        [(No) false]
+                                                        [(Some offset)
+                                                          (if (= scale 1)
+                                                            ;; Fan member: record
+                                                            ;; (base, length, k);
+                                                            ;; the flush emits the
+                                                            ;; extremal conditions.
+                                                            (opt-bce-version-fan-admit-unit
+                                                              fan
+                                                              seed
+                                                              bound
+                                                              (& base)
+                                                              offset
+                                                              length-value
+                                                              cell
+                                                              acc)
+                                                            ;; Strided variable
+                                                            ;; base: a SCALED fan
+                                                            ;; family, whose flush
+                                                            ;; synthesizes the
+                                                            ;; derived seed once
+                                                            ;; and reuses the
+                                                            ;; positive-step
+                                                            ;; quotient.
+                                                            (opt-bce-version-strided-family
+                                                              fan
+                                                              seed
+                                                              bound
+                                                              (& base)
+                                                              (& (I64 0))
+                                                              (OptBceFanSpan
+                                                                offset
+                                                                offset
+                                                                scale
+                                                                (opt-bce-version-fan-kind-scaled))
+                                                              length-value
+                                                              cell
+                                                              acc))]))])]
+                                              ;; `base - strided + k0`: the
+                                              ;; decreasing mirror of the Add
+                                              ;; split, and the shape a reversed
+                                              ;; copy walks with
+                                              ;; (`postorder[post - 1 - i]`, the
+                                              ;; rpo copy loop).
+                                              [(Sub)
+                                                (match (opt-bce-mb-var-base-side
+                                                  body-blocks
+                                                  defs
+                                                  sc.iphi
+                                                  (& core-rhs)
+                                                  (& core-lhs))
+                                                  [(No) false]
+                                                  [(Some scale k2 base)
+                                                    ;; i64-MIN has no
+                                                    ;; representable negation for
+                                                    ;; the flip below.
+                                                    (if (or
+                                                      (and
+                                                        (=
+                                                          (opt-bce-counter-affine-magnitude
+                                                            scale)
+                                                          1)
+                                                        (not sc.allow-scale1))
+                                                      (<
+                                                        (opt-bce-counter-affine-magnitude
+                                                          k2)
+                                                        0))
+                                                      false
+                                                      (match (opt-bce-version-k-add
+                                                        k0
+                                                        (- 0 k2))
+                                                        [(No) false]
+                                                        [(Some offset)
+                                                          (opt-bce-version-strided-family
+                                                            fan
+                                                            seed
+                                                            bound
+                                                            (& base)
+                                                            (& (I64 0))
+                                                            (OptBceFanSpan
+                                                              offset
+                                                              offset
+                                                              (- 0 scale)
+                                                              (opt-bce-version-fan-kind-scaled))
+                                                            length-value
+                                                            cell
+                                                            acc)]))])]
+                                              [_ false]))]
+                                        [(Phi _ inputs pty)
+                                          (match pty
+                                            [(I64)
+                                              (opt-bce-mb-derive-phi
+                                                all-blocks
+                                                body-blocks
+                                                defs
+                                                sc
+                                                mask-preheader
+                                                allow-other-bounded-phi?
+                                                seed
+                                                bound
+                                                cell
+                                                core
+                                                (& inputs)
+                                                k0
+                                                false
+                                                length-value
+                                                fan
+                                                acc)]
+                                            [_ false])]
+                                        [_ false])])])]
+                            [(Some scale offset)
+                              (cond
+                                [(= scale 1)
+                                  (opt-bce-version-fan-admit-unit
+                                    fan
+                                    seed
+                                    bound
+                                    (& (I64 0))
+                                    offset
+                                    length-value
+                                    cell
+                                    acc)]
+                                [(< scale 0)
+                                  (opt-bce-version-mirror-family
+                                    seed
+                                    bound
+                                    (& (I64 0))
+                                    (& (I64 0))
+                                    (OptBceFanSpan
+                                      offset
+                                      offset
+                                      scale
+                                      (opt-bce-version-fan-kind-scaled))
+                                    length-value
+                                    cell
+                                    acc)]
+                                [else
+                                  (opt-bce-version-affine-guard
+                                    seed
+                                    bound
+                                    length-value
+                                    scale
+                                    offset
+                                    cell
+                                    acc)])])])]
+                    [(Phi _ inputs pty)
+                      (match pty
+                        [(I64)
+                          (opt-bce-mb-derive-phi
+                            all-blocks
+                            body-blocks
+                            defs
+                            sc
+                            mask-preheader
+                            allow-other-bounded-phi?
+                            seed
+                            bound
+                            cell
+                            id
+                            (& inputs)
+                            0
+                            true
+                            length-value
+                            fan
+                            acc)]
+                        [_ false])]
+                    [_ false])])]))]
+      [_ false])))
 
 ;; --- cross-array check-domain fusion -----------------------------------------
 ;;
@@ -82670,14 +81966,13 @@
           (return true))]))
   false)
 
-(define (opt-bce-mb-fused-prepend
-  [fused : OptBceMbFused]
+(define (opt-bce-mb-fused-push!
+  [fused : (&mut OptBceMbFused)]
   [lhs : ir.CompilerIrValue]
-  [rhs : ir.CompilerIrValue]) : OptBceMbFused
-  (let
-    [items : opt_bce_mb_fused_vec.Vec fused.items]
-    (opt_bce_mb_fused_vec.push-ref! (&mut items) (OptBceMbFusedPair lhs rhs))
-    (OptBceMbFused items)))
+  [rhs : (& ir.CompilerIrValue)]) : unit
+  (opt_bce_mb_fused_vec.push-ref!
+    (&mut fused.items)
+    (OptBceMbFusedPair lhs (ir.compiler-ir-clone-value rhs))))
 
 ;; The one conjunct a fused check needs: `anchor_length <=u target_length`.
 ;; UNSIGNED, exactly matching the order a BoundsCheck tests, so it needs no
@@ -82687,14 +81982,9 @@
   [cell : (&mut cell (__tl_dyn-array i64))]
   [anchor-length : (& ir.CompilerIrValue)]
   [length-value : (& ir.CompilerIrValue)]
-  [acc : (& OptBceVersionGuardAcc)]) : OptBceVersionGuardAcc
-  (opt-bce-version-cond-typed
-    cell
-    (Le)
-    (owned_view.compiler-owned-reference-shared-view anchor-length)
-    (owned_view.compiler-owned-reference-shared-view length-value)
-    (U64)
-    (owned_view.compiler-owned-reference-shared-view acc)))
+  [acc : (&mut OptBceGuardBuf)]) : bool
+  (opt-bce-version-cond-typed cell (Le) anchor-length length-value (U64) acc)
+  acc.ok?)
 
 ;; A dominating check of the SAME index value whose length is loop-invariant
 ;; and different from this check's: the anchor whose fact fusion transfers.
@@ -82875,22 +82165,21 @@
   [descriptor : (& descriptor OptBceMbDescriptor)]
   [anchor : (& anchor ir.CompilerIrValue)]
   [length : (& length ir.CompilerIrValue)]) : bool
-  (let
-    [bases : i64 (opt-bce-mb-descriptor-type-segment-bases descriptor)]
-    (and
-      (>= bases 0)
-      (let
-        [table (opt-bce-mb-descriptor-len-eq descriptor)]
+  (match descriptor
+    [(OptBceMbDescriptor.No) false]
+    [(OptBceMbDescriptor.Some bases _ _ table)
+      (and
+        (>= bases 0)
         (opt-len-eq-same-family?
-          table
+          (& table)
           (opt-bce-mb-len-eq-global all-blocks (& table) bases anchor)
-          (opt-bce-mb-len-eq-global all-blocks (& table) bases length))))))
+          (opt-bce-mb-len-eq-global all-blocks (& table) bases length)))]))
 
 ;; The fusion fallback for a check no single-array derivation reached: on a
 ;; dominating anchor the guard gains `Lj <=u Lk` (once per array pair, however
 ;; many checks fuse across it) and the check is dropped from the clone;
 ;; otherwise it is kept, exactly like any underivable index.
-(define (opt-bce-mb-derive-fused
+(define (opt-bce-mb-derive-fused!
   [doms : (& doms OptDomInfo)]
   [descriptor : (& descriptor OptBceMbDescriptor)]
   [all-blocks : (& ir.CompilerIrBlockList)]
@@ -82901,69 +82190,63 @@
   [index : i64]
   [index-value : (& ir.CompilerIrValue)]
   [length-invariant : (& ir.CompilerIrValue)]
-  [state : OptBceMbDerive]) : OptBceMbDerive
+  [state : (&mut OptBceMbDerive)]) : unit
   (let
-    [kept : OptBceMbDerive
-      (OptBceMbDerive
-        (compiler-opt-global-shared-view state.guard)
-        (opt-bce-mb-keep-cons label index state.keep)
-        state.derived
-        (compiler-opt-global-shared-view state.hoists)
-        (compiler-opt-global-shared-view state.fused))]
-    (match index-value
-      [(Var raw)
-        (let
-          [index-id : i64 (opt-bce-mb-resolve body-blocks raw 16)]
-          [use-block-id : i64 (opt-global-block-id doms label)]
-          (match (if (< use-block-id 0)
-            (ir.CompilerIrMaybeValue.No)
-            (opt-bce-mb-fuse-anchor
-              doms
-              body-blocks
-              (ir.compiler-ir-block-list-view body-blocks)
-              defs
-              use-block-id
-              index
-              index-id
-              length-invariant))
-            [(No) kept]
-            [(Some anchor-length)
-              (let
-                [related? : bool
-                  (or
-                    (opt-bce-mb-fused-contains?
-                      state.fused
-                      (& anchor-length)
-                      length-invariant)
-                    (opt-bce-mb-len-eq-pair?
-                      all-blocks
-                      descriptor
-                      anchor-length
-                      length-invariant))]
-                [with-relation : OptBceVersionGuardAcc
-                  (if related?
-                    state.guard
-                    (opt-bce-mb-fuse-cond
-                      cell
-                      (& anchor-length)
-                      length-invariant
-                      (& state.guard)))]
-                (match (& with-relation)
-                  [(No) kept]
-                  [(Some _ _ _)
-                    (OptBceMbDerive
-                      with-relation
-                      state.keep
-                      (+ state.derived 1)
-                      state.hoists
-                      (if related?
-                        state.fused
-                        (opt-bce-mb-fused-prepend
-                          (owned_view.compiler-owned-shared-view state.fused)
+    [fused? : bool
+      (match index-value
+        [(Var raw)
+          (let
+            [index-id : i64 (opt-bce-mb-resolve body-blocks raw 16)]
+            [use-block-id : i64 (opt-global-block-id doms label)]
+            (match (if (< use-block-id 0)
+              (ir.CompilerIrMaybeValue.No)
+              (opt-bce-mb-fuse-anchor
+                doms
+                body-blocks
+                (ir.compiler-ir-block-list-view body-blocks)
+                defs
+                use-block-id
+                index
+                index-id
+                length-invariant))
+              [(No) false]
+              [(Some anchor-length)
+                (let
+                  [related? : bool
+                    (or
+                      (opt-bce-mb-fused-contains?
+                        (& state.fused)
+                        (& anchor-length)
+                        length-invariant)
+                      (opt-bce-mb-len-eq-pair?
+                        all-blocks
+                        descriptor
+                        (& anchor-length)
+                        length-invariant))]
+                  [mark : OptBceGuardMark (opt-bce-guard-mark (& state.guard))]
+                  [ok? : bool
+                    (if related?
+                      state.guard.ok?
+                      (opt-bce-mb-fuse-cond
+                        cell
+                        (& anchor-length)
+                        length-invariant
+                        (&mut state.guard)))]
+                  (if ok?
+                    (begin
+                      (+= state.derived 1)
+                      (unless
+                        related?
+                        (opt-bce-mb-fused-push!
+                          (&mut state.fused)
                           anchor-length
-                          (owned_view.compiler-owned-reference-shared-view
-                            length-invariant))))]))]))]
-      [_ kept])))
+                          length-invariant))
+                      true)
+                    (begin
+                      (opt-bce-guard-restore! (&mut state.guard) mark)
+                      false)))]))]
+        [_ false])]
+    (unless fused? (opt-bce-mb-keep-push! (&mut state.keep) label index))))
 
 ;; Copy a simple scalar/var/global IR value without cloning heap payloads.
 (define (opt-bce-simple-value? [v : (& ir.CompilerIrValue)]) : bool
@@ -83075,20 +82358,15 @@
 
 ;; Derive one check against a proven-invariant length value: on success the
 ;; guard gains the conditions and the derived count ticks; on failure the
-;; check falls back to cross-array fusion and, failing that too, joins the kept
-;; set instead. A failure reverts to the state's guard
-;; AND hoist set, so a descriptor hoist emitted for a check that then fails
-;; derivation is dropped along with its (unused) guard instructions.
-(define (opt-bce-mb-derive-check
+;; guard and hoists revert to `(mark, saved-hlen)` and the check falls back to
+;; cross-array fusion (which keeps the check if no dominating anchor exists).
+(define (opt-bce-mb-derive-check!
   [doms : (& doms OptDomInfo)]
   [descriptor : (& descriptor OptBceMbDescriptor)]
   [all-blocks : (& ir.CompilerIrBlockList)]
   [body-blocks : (& ir.CompilerIrBlockList)]
   [defs : (& defs opt_i64_i64_map.Map)]
-  [latch : i64]
-  [preheader : i64]
-  [iphi : i64]
-  [exact? : bool]
+  [sc : (& OptBceDeriveScalars)]
   [counter-lens : (& opt_bce_mb_upper_vec.Vec)]
   [seed : (& ir.CompilerIrValue)]
   [bound : (& ir.CompilerIrValue)]
@@ -83097,61 +82375,42 @@
   [index : i64]
   [index-value : (& ir.CompilerIrValue)]
   [length-invariant : (& ir.CompilerIrValue)]
-  [success-hoists : OptBceMbHoists]
-  [fan : OptBceVersionFan]
-  [acc : (& OptBceVersionGuardAcc)]
-  [state : OptBceMbDerive]) : OptBceMbDerive
+  [mark : OptBceGuardMark]
+  [saved-hlen : i64]
+  [fan : (&mut OptBceVersionFan)]
+  [state : (&mut OptBceMbDerive)]) : unit
   (let
     [allow-other-bounded-phi? : bool
       (or
         (= (opt_bce_mb_upper_vec.len counter-lens) 0)
-        (opt-dom-info-dominates-label? doms label latch)
+        (opt-dom-info-dominates-label? doms label sc.latch)
         (opt-bce-mb-counter-lens-match?
           all-blocks
           descriptor
           counter-lens
           length-invariant))]
-    [derived-guard : OptBceVersionGuardAcc
-      (opt-bce-mb-derive-index
-        all-blocks
-        body-blocks
-        defs
-        latch
-        preheader
-        iphi
-        exact?
-        allow-other-bounded-phi?
-        false
-        true
-        seed
-        bound
-        cell
-        index-value
-        length-invariant
-        fan
-        acc)]
-    (match (& derived-guard)
-      [(No)
-        ;; No single-array derivation: try the cross-array fusion fallback,
-        ;; which keeps the check when it finds no dominating anchor either.
-        ;;
-        ;; COUNTED SHAPES ONLY. Fusion states one conjunct per pair of arrays the
-        ;; walk touches, and the checks it removes fire only on the iterations
-        ;; that reach them, so it needs the trip-count evidence a counted shape
-        ;; carries. Offered to a counter-free bucket walk it inverts: a hash
-        ;; chain walk takes one conjunct per node array, paid on every call, to
-        ;; remove checks that only the matching-key iterations execute. The
-        ;; counter-free relaxation exists for the masked-index family, whose
-        ;; guard is one unsigned conjunct per (mask, length) pair and whose
-        ;; removal fires on EVERY iteration; nothing else rides along.
-        (if (< iphi 0)
-          (OptBceMbDerive
-            state.guard
-            (opt-bce-mb-keep-cons label index state.keep)
-            state.derived
-            state.hoists
-            state.fused)
-          (opt-bce-mb-derive-fused
+    (if (opt-bce-mb-derive-index
+      all-blocks
+      body-blocks
+      defs
+      sc
+      allow-other-bounded-phi?
+      seed
+      bound
+      cell
+      index-value
+      length-invariant
+      fan
+      (&mut state.guard))
+      (+= state.derived 1)
+      (begin
+        ;; Revert any guard instructions and descriptor hoists emitted for this
+        ;; check before trying cross-array fusion (counted shapes only).
+        (opt-bce-guard-restore! (&mut state.guard) mark)
+        (set! state.hoists.len saved-hlen)
+        (if (< sc.iphi 0)
+          (opt-bce-mb-keep-push! (&mut state.keep) label index)
+          (opt-bce-mb-derive-fused!
             doms
             descriptor
             all-blocks
@@ -83162,140 +82421,82 @@
             index
             index-value
             length-invariant
-            state))]
-      [(Some _ _ _)
-        (OptBceMbDerive
-          derived-guard
-          state.keep
-          (+ state.derived 1)
-          success-hoists
-          state.fused)])))
+            state))))))
 
-(define (opt-bce-mb-derive-block
+(define (opt-bce-mb-derive-block!
   [doms : (& doms OptDomInfo)]
   [descriptor : (& descriptor OptBceMbDescriptor)]
-  [stable? : bool]
   [label : i64]
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [index : i64]
   [all-blocks : (& ir.CompilerIrBlockList)]
   [body-blocks : (& ir.CompilerIrBlockList)]
   [defs : (& defs opt_i64_i64_map.Map)]
-  [latch : i64]
-  [preheader : i64]
-  [iphi : i64]
-  [exact? : bool]
+  [sc : (& OptBceDeriveScalars)]
   [counter-lens : (& opt_bce_mb_upper_vec.Vec)]
   [seed : (& ir.CompilerIrValue)]
   [bound : (& ir.CompilerIrValue)]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [fan : OptBceVersionFan]
-  [only-keep? : bool]
+  [fan : (&mut OptBceVersionFan)]
   [only-keep : (& OptBceMbKeep)]
-  [state : OptBceMbDerive]) : OptBceMbDerive
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    state
-    (opt-bce-mb-derive-block
-      doms
-      descriptor
-      stable?
-      label
-      instrs
-      (+ index 1)
-      all-blocks
-      body-blocks
-      defs
-      latch
-      preheader
-      iphi
-      exact?
-      counter-lens
-      seed
-      bound
-      cell
-      (compiler-opt-global-shared-view fan)
-      only-keep?
-      only-keep
-      (if (and
-        only-keep?
+  [state : (&mut OptBceMbDerive)]) : unit
+  (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+    (unless
+      (and
+        sc.only-keep?
         (not (opt-bce-mb-keep-contains? only-keep label index)))
-        state
-        (match (ir.compiler-ir-instr-seq-borrow instrs index)
-          [(BoundsCheck index-value length-value _)
-            ;; The length the check derives against, with the hoists and guard
-            ;; it carries: a proven-invariant length (len-eq canonicalized)
-            ;; under the state's own, or a hoisted descriptor length under the
-            ;; hoist's -- unless len-eq canonicalizes it onto a family already
-            ;; in the guard, which makes the hoist unnecessary.
-            (match (match (opt-bce-mb-invariant-operand
-              body-blocks
-              defs
-              length-value)
-              [(Some length-invariant)
-                (OptBceMbMaybeLength.Some
-                  (match (opt-bce-len-eq-canon!
-                    (opt-bce-mb-descriptor-type-segment-bases descriptor)
+      (match (ir.compiler-ir-instr-seq-borrow instrs index)
+        [(BoundsCheck index-value length-value _)
+          (let
+            [mark : OptBceGuardMark (opt-bce-guard-mark (& state.guard))]
+            [saved-hlen : i64 state.hoists.len]
+            [resolved-len : ir.CompilerIrMaybeValue
+              (match (opt-bce-mb-invariant-operand
+                body-blocks
+                defs
+                (& length-value))
+                [(Some length-invariant)
+                  (match (opt-bce-mb-descriptor-len-eq-canon!
+                    descriptor
                     all-blocks
-                    (& (opt-bce-mb-descriptor-len-eq descriptor))
                     (& length-value)
                     (& length-invariant))
-                    [(Some v) v]
-                    [(No) length-invariant])
-                  (compiler-opt-global-shared-view state.hoists)
-                  (compiler-opt-global-shared-view state.guard))]
-              ;; A hoisted descriptor length costs a gep+load in the guard for
-              ;; the whole loop, which is priced against a trip range; a
-              ;; counter-free shape has none, so it keeps such a check (the same
-              ;; scoping the fusion and invariant-index rules take).
-              [(No)
-                (match (if (< iphi 0)
-                  (OptBceMbMaybeLength.No)
-                  (opt-bce-mb-descriptor-length
-                    descriptor
-                    stable?
-                    all-blocks
-                    body-blocks
-                    defs
-                    (& length-value)
-                    (& state.hoists)
-                    cell
-                    (& state.guard)))
-                  [(No) (OptBceMbMaybeLength.No)]
-                  [(Some hoisted-length hoisted-hoists hoisted-guard)
-                    (match (opt-bce-len-eq-canon!
-                      (opt-bce-mb-descriptor-type-segment-bases descriptor)
+                    [(Some v) (Some v)]
+                    [(No) (Some length-invariant)])]
+                [(No)
+                  (if (< sc.iphi 0)
+                    (No)
+                    (match (opt-bce-mb-descriptor-length
+                      descriptor
+                      sc.stable?
                       all-blocks
-                      (& (opt-bce-mb-descriptor-len-eq descriptor))
+                      body-blocks
+                      defs
                       (& length-value)
-                      (& hoisted-length))
-                      [(Some canon-len)
-                        (OptBceMbMaybeLength.Some
-                          canon-len
-                          (compiler-opt-global-shared-view state.hoists)
-                          (compiler-opt-global-shared-view state.guard))]
-                      [(No)
-                        (OptBceMbMaybeLength.Some
-                          hoisted-length
-                          hoisted-hoists
-                          hoisted-guard)])])])
-              [(No)
-                (OptBceMbDerive
-                  (owned_view.compiler-owned-shared-view state.guard)
-                  (opt-bce-mb-keep-cons label index state.keep)
-                  state.derived
-                  (owned_view.compiler-owned-shared-view state.hoists)
-                  (owned_view.compiler-owned-shared-view state.fused))]
-              [(Some check-length success-hoists check-guard)
-                (opt-bce-mb-derive-check
+                      (&mut state.hoists)
+                      cell
+                      (&mut state.guard))
+                      [(No) (No)]
+                      [(Some hoisted-length)
+                        (match (opt-bce-mb-descriptor-len-eq-canon!
+                          descriptor
+                          all-blocks
+                          (& length-value)
+                          (& hoisted-length))
+                          [(Some canon-len)
+                            (opt-bce-guard-restore! (&mut state.guard) mark)
+                            (set! state.hoists.len saved-hlen)
+                            (Some canon-len)]
+                          [(No) (Some hoisted-length)])]))])]
+            (match resolved-len
+              [(No) (opt-bce-mb-keep-push! (&mut state.keep) label index)]
+              [(Some check-length)
+                (opt-bce-mb-derive-check!
                   doms
                   descriptor
                   all-blocks
                   body-blocks
                   defs
-                  latch
-                  preheader
-                  iphi
-                  exact?
+                  sc
                   counter-lens
                   seed
                   bound
@@ -83304,110 +82505,67 @@
                   index
                   (& index-value)
                   (& check-length)
-                  success-hoists
+                  mark
+                  saved-hlen
                   fan
-                  (& check-guard)
-                  (owned_view.compiler-owned-shared-view state))])]
-          [_ state])))))
+                  state)]))]
+        [_ unit]))))
 
 ;; An UNCOVERED block's checks: the counter compare does not dominate them
 ;; (see the entry guard chain), so no trip-range derivation applies and every
 ;; one of them stays -- remapped -- in the fast clone, exactly like an
 ;; underivable index. The abort sites the slow path has are the abort sites the
 ;; clone has.
-(define (opt-bce-mb-keep-block-checks
+(define (opt-bce-mb-keep-block-checks!
   [label : i64]
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [index : i64]
-  [keep : OptBceMbKeep]) : OptBceMbKeep
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    keep
-    (opt-bce-mb-keep-block-checks
-      label
-      instrs
-      (+ index 1)
-      (match (ir.compiler-ir-instr-seq-borrow instrs index)
-        [(BoundsCheck _ _ _) (opt-bce-mb-keep-cons label index keep)]
-        [_ keep]))))
+  [state : (&mut OptBceMbDerive)]) : unit
+  (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+    (match (ir.compiler-ir-instr-seq-borrow instrs index)
+      [(BoundsCheck _ _ _)
+        (opt-bce-mb-keep-push! (&mut state.keep) label index)]
+      [_ unit])))
 
-(define (opt-bce-mb-derive-blocks
+(define (opt-bce-mb-derive-blocks!
   [doms : (& doms OptDomInfo)]
   [descriptor : (& descriptor OptBceMbDescriptor)]
-  [stable? : bool]
   [remaining : (& remaining (Slice ir.CompilerIrBlock))]
   [all-blocks : (& ir.CompilerIrBlockList)]
   [body-blocks : (& ir.CompilerIrBlockList)]
   [defs : (& defs opt_i64_i64_map.Map)]
-  [latch : i64]
-  [preheader : i64]
-  [iphi : i64]
-  [exact? : bool]
+  [sc : (& OptBceDeriveScalars)]
   [counter-lens : (& opt_bce_mb_upper_vec.Vec)]
   [seed : (& ir.CompilerIrValue)]
   [bound : (& ir.CompilerIrValue)]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [fan : OptBceVersionFan]
+  [fan : (&mut OptBceVersionFan)]
   [uncovered : OptLabelSet]
-  [only-keep? : bool]
   [only-keep : (& OptBceMbKeep)]
-  [state : OptBceMbDerive]) : OptBceMbDerive
-  (match remaining
-    [(slice) state]
-    [(slice block & rest)
-      (match block
-        [(Block label instrs)
-          (opt-bce-mb-derive-blocks
+  [state : (&mut OptBceMbDerive)]) : unit
+  (for [bi (iterator.range 0 (array-length remaining))]
+    (match (& (array-ref remaining bi))
+      [(Block label instrs)
+        ;; An uncovered block's checks stay kept on the filtered (2-tier
+        ;; full) pass as well: skipping them there would leave the full
+        ;; clone's kept set empty and delete checks no guard covers.
+        (if (opt-label-contains uncovered label)
+          (opt-bce-mb-keep-block-checks! label (& instrs) state)
+          (opt-bce-mb-derive-block!
             doms
             descriptor
-            stable?
-            rest
+            label
+            (& instrs)
             all-blocks
             body-blocks
             defs
-            latch
-            preheader
-            iphi
-            exact?
+            sc
             counter-lens
             seed
             bound
             cell
-            (compiler-opt-global-shared-view fan)
-            uncovered
-            only-keep?
+            fan
             only-keep
-            ;; An uncovered block's checks stay kept on the filtered (2-tier
-            ;; full) pass as well: skipping them there would leave the full
-            ;; clone's kept set empty and delete checks no guard covers.
-            (if (opt-label-contains uncovered label)
-              (OptBceMbDerive
-                state.guard
-                (opt-bce-mb-keep-block-checks label instrs 0 state.keep)
-                state.derived
-                state.hoists
-                state.fused)
-              (opt-bce-mb-derive-block
-                doms
-                descriptor
-                stable?
-                label
-                instrs
-                0
-                all-blocks
-                body-blocks
-                defs
-                latch
-                preheader
-                iphi
-                exact?
-                counter-lens
-                seed
-                bound
-                cell
-                fan
-                only-keep?
-                only-keep
-                state)))])]))
+            state))])))
 
 ;; --- region profitability ------------------------------------------------------
 ;;
@@ -83522,14 +82680,14 @@
   [uppers : OptBceMbUppers]
   [value : (& ir.CompilerIrValue)]) : OptBceMbUppers
   (if (or
-    (>= (opt-bce-mb-uppers-count uppers) (opt-bce-mb-upper-max))
-    (opt-bce-mb-uppers-contains? uppers value))
+    (>= (opt-bce-mb-uppers-count (& uppers)) (opt-bce-mb-upper-max))
+    (opt-bce-mb-uppers-contains? (& uppers) value))
     uppers
     (let
       [items : opt_bce_mb_upper_vec.Vec uppers.items]
       (opt_bce_mb_upper_vec.push-ref!
         (&mut items)
-        (owned_view.compiler-owned-reference-shared-view value))
+        (ir.compiler-ir-clone-value value))
       (OptBceMbUppers items))))
 
 (cfg
@@ -83539,36 +82697,36 @@
     (let
       [uppers : OptBceMbUppers (opt-bce-mb-uppers-new)]
       (test.assert-i64-eq
-        (opt-bce-mb-uppers-count uppers)
+        (opt-bce-mb-uppers-count (& uppers))
         0
         "BCE upper storage starts empty")
       (set! uppers (opt-bce-mb-uppers-insert uppers (& (Var 10))))
       (test.assert-i64-eq
-        (opt-bce-mb-uppers-count uppers)
+        (opt-bce-mb-uppers-count (& uppers))
         1
         "BCE upper storage preserves a singleton")
       (test.assert-true
-        (opt-value-eq (& (opt-bce-mb-uppers-ref uppers 0)) (& (Var 10)))
+        (opt-value-eq (& (opt-bce-mb-uppers-ref (& uppers) 0)) (& (Var 10)))
         "BCE upper singleton keeps its logical order")
       (set! uppers (opt-bce-mb-uppers-insert uppers (& (Var 11))))
       ;; Duplicate insertion and a third distinct bound are both rejected.
       (set! uppers (opt-bce-mb-uppers-insert uppers (& (Var 11))))
       (set! uppers (opt-bce-mb-uppers-insert uppers (& (Var 12))))
       (test.assert-i64-eq
-        (opt-bce-mb-uppers-count uppers)
+        (opt-bce-mb-uppers-count (& uppers))
         2
         "BCE upper storage grows to its distinct-bound limit")
       (test.assert-true
-        (opt-bce-mb-uppers-contains? uppers (& (Var 10)))
+        (opt-bce-mb-uppers-contains? (& uppers) (& (Var 10)))
         "BCE upper storage retains its oldest bound")
       (test.assert-true
-        (opt-bce-mb-uppers-contains? uppers (& (Var 11)))
+        (opt-bce-mb-uppers-contains? (& uppers) (& (Var 11)))
         "BCE upper storage retains its newest bound")
       (test.assert-true
-        (not (opt-bce-mb-uppers-contains? uppers (& (Var 12))))
+        (not (opt-bce-mb-uppers-contains? (& uppers) (& (Var 12))))
         "BCE upper storage rejects a third distinct bound")
       (test.assert-true
-        (opt-value-eq (& (opt-bce-mb-uppers-ref uppers 0)) (& (Var 11)))
+        (opt-value-eq (& (opt-bce-mb-uppers-ref (& uppers) 0)) (& (Var 11)))
         "BCE upper traversal remains newest-first"))))
 
 ;; The invariant `X` a branch condition tests the counter's UPPER side against,
@@ -83631,7 +82789,7 @@
   [uppers : OptBceMbUppers]) : OptBceMbUppers
   (if (or
     (>= index (ir.compiler-ir-instr-seq-count instrs))
-    (>= (opt-bce-mb-uppers-count uppers) (opt-bce-mb-upper-max)))
+    (>= (opt-bce-mb-uppers-count (& uppers)) (opt-bce-mb-upper-max)))
     uppers
     (opt-bce-mb-upper-scan-instrs
       body-blocks
@@ -83682,57 +82840,38 @@
 ;; `bound - offset`), so the pair would relate facts about one to conditions
 ;; about the other. An offset shape simply hoists no upper and derives only
 ;; what the covered blocks give it.
-(define (opt-bce-mb-uppers-for-shape [shape : OptBceMbShape]) : OptBceMbUppers
+(define (opt-bce-mb-uppers-for-shape [shape : (& OptBceMbShape)]) : OptBceMbUppers
   (if (or
     shape.interval?
-    (not (opt-bce-mb-counter-offset-none? shape.bound-offset)))
+    (not (opt-bce-mb-counter-offset-none? (& shape.bound-offset))))
     (opt-bce-mb-uppers-new)
-    (match shape.uncovered
+    (match (opt-bce-label-set-copy (& shape.uncovered))
       [(Nil) (opt-bce-mb-uppers-new)]
       [(Dense _ _)
         (opt-bce-mb-upper-scan
           (& shape.body-blocks)
-          (ir.compiler-ir-block-list-view shape.body-blocks)
+          (ir.compiler-ir-block-list-view (& shape.body-blocks))
           shape.iphi
           (& shape.bound)
-          shape.uncovered
+          (opt-bce-label-set-copy (& shape.uncovered))
           (opt-bce-mb-uppers-new))])))
 
-(define (opt-bce-mb-upper-conds
-  [cell : (&mut cell (__tl_dyn-array i64))]
-  [bound : (& ir.CompilerIrValue)]
-  [uppers : (& OptBceMbUppers)]
-  [acc : (& OptBceVersionGuardAcc)]) : OptBceVersionGuardAcc
-  (opt-bce-mb-upper-conds-from
-    cell
-    bound
-    uppers
-    (owned_view.compiler-owned-reference-shared-view acc)
-    0))
-
-(define (opt-bce-mb-upper-conds-from
+(define (opt-bce-mb-upper-conds!
   [cell : (&mut cell (__tl_dyn-array i64))]
   [bound : (& bound ir.CompilerIrValue)]
   [uppers : (& uppers OptBceMbUppers)]
-  [acc : OptBceVersionGuardAcc]
-  [index : i64]) : OptBceVersionGuardAcc
-  (if (>= index (opt-bce-mb-uppers-count uppers))
-    acc
-    (opt-bce-mb-upper-conds-from
+  [acc : (&mut OptBceGuardBuf)]) : unit
+  (for [index (iterator.range 0 (opt-bce-mb-uppers-count uppers))]
+    (opt-bce-version-cond
       cell
+      (Le)
       bound
-      uppers
-      (opt-bce-version-cond
-        cell
-        (& (Le))
-        bound
-        (& (opt-bce-mb-uppers-ref uppers index))
-        (& acc))
-      (+ index 1))))
+      (& (opt-bce-mb-uppers-ref uppers index))
+      acc)))
 
 (defenum OptBceMbRange
   (No)
-  (Some ir.CompilerIrValue ir.CompilerIrValue i64 OptBceVersionGuardAcc))
+  (Some ir.CompilerIrValue ir.CompilerIrValue i64))
 
 ;; MIRRORING A DESCENDING COUNTER.
 ;;
@@ -83805,107 +82944,81 @@
   [wrap-step : i64]
   [no-wrap-known? : bool]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [acc-raw : (& OptBceVersionGuardAcc)]) : OptBceMbRange
-  (match (opt-bce-mb-counter-shift
-    (owned_view.compiler-owned-reference-shared-view bound-raw)
-    delta
-    no-wrap-known?
-    cell
-    (owned_view.compiler-owned-reference-shared-view acc-raw))
+  [acc : (&mut OptBceGuardBuf)]) : OptBceMbRange
+  (match (opt-bce-mb-counter-shift bound-raw delta no-wrap-known? cell acc)
     [(No) (No)]
-    [(Some bound acc)
-      (opt-bce-mb-counter-range-shifted
-        (owned_view.compiler-owned-reference-shared-view seed)
-        bound
-        step
-        wrap-step
-        cell
-        acc)]))
-
-(defenum OptBceMbShifted
-  (No)
-  (Some ir.CompilerIrValue OptBceVersionGuardAcc))
+    [(Some bound)
+      (opt-bce-mb-counter-range-shifted seed bound step wrap-step cell acc)]))
 
 (define (opt-bce-mb-counter-shift
-  [bound : ir.CompilerIrValue]
+  [bound : (& ir.CompilerIrValue)]
   [delta : i64]
   [no-wrap-known? : bool]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [acc : OptBceVersionGuardAcc]) : OptBceMbShifted
+  [acc : (&mut OptBceGuardBuf)]) : ir.CompilerIrMaybeValue
   (if (= delta 0)
-    (Some bound acc)
-    (match acc
-      [(No) (No)]
-      [(Some instrs values counter-seen)
-        (match (& bound)
-          [(I64 bk)
-            (match (opt-bce-version-k-add bk delta)
-              [(No) (No)]
-              [(Some shifted)
-                (Some (I64 shifted) (Some instrs values counter-seen))])]
-          [(Var _)
-            (let
-              [limit : i64 (opt-bce-version-alloc-var cell)]
-              [shifted : ir.CompilerIrValue (Var limit)]
-              [added : OptBceVersionGuardAcc
-                (Some
-                  (opt-bce-version-builder-push
-                    instrs
-                    (&
-                      (BinOp
-                        limit
-                        (Add)
-                        (compiler-opt-global-shared-view bound)
-                        (I64 delta)
-                        (I64))))
-                  values
-                  counter-seen)]
-              (Some
-                (compiler-opt-global-shared-view shifted)
-                (if no-wrap-known?
-                  added
-                  (opt-bce-version-cond
-                    cell
-                    (&
-                      (if (< delta 0)
-                        (Le)
-                        (Ge)))
-                    (& shifted)
-                    (& bound)
-                    (& added)))))]
-          [_ (No)])])))
+    (Some (ir.compiler-ir-clone-value bound))
+    (if (not acc.ok?)
+      (No)
+      (match bound
+        [(I64 bk)
+          (match (opt-bce-version-k-add bk delta)
+            [(No) (No)]
+            [(Some shifted) (Some (I64 shifted))])]
+        [(Var _)
+          (let
+            [limit : i64 (opt-bce-version-alloc-var cell)]
+            (ir.compiler-ir-instr-builder-push!
+              (&mut acc.instrs)
+              (BinOp
+                limit
+                (Add)
+                (ir.compiler-ir-clone-value bound)
+                (I64 delta)
+                (I64)))
+            (unless
+              no-wrap-known?
+              (opt-bce-version-cond
+                cell
+                (if (< delta 0)
+                  (Le)
+                  (Ge))
+                (& (Var limit))
+                bound
+                acc)
+              unit)
+            (Some (Var limit)))]
+        [_ (No)]))))
 
 (define (opt-bce-mb-counter-range-shifted
-  [seed : ir.CompilerIrValue]
+  [seed : (& ir.CompilerIrValue)]
   [bound : ir.CompilerIrValue]
   [step : i64]
   [wrap-step : i64]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [acc : OptBceVersionGuardAcc]) : OptBceMbRange
+  [acc : (&mut OptBceGuardBuf)]) : OptBceMbRange
   (if (> step 0)
-    (Some seed bound wrap-step acc)
-    (match (compiler-opt-global-shared-view acc)
-      [(No) (No)]
-      [(Some instrs values counter-seen)
-        (match (compiler-opt-global-shared-view seed)
-          [(I64 top)
-            (if (= top 9223372036854775807)
-              (No)
-              (Some bound (I64 (+ top 1)) 1 acc))]
-          [(Var _)
-            (let
-              [limit : i64 (opt-bce-version-alloc-var cell)]
-              (Some
-                bound
-                (Var limit)
-                1
-                (Some
-                  (opt-bce-version-builder-push
-                    instrs
-                    (& (BinOp limit (Add) seed (I64 1) (I64))))
-                  values
-                  counter-seen)))]
-          [_ (No)])])))
+    (Some (ir.compiler-ir-clone-value seed) bound wrap-step)
+    (if (not acc.ok?)
+      (No)
+      (match seed
+        [(I64 top)
+          (if (= top 9223372036854775807)
+            (No)
+            (Some bound (I64 (+ top 1)) 1))]
+        [(Var _)
+          (let
+            [limit : i64 (opt-bce-version-alloc-var cell)]
+            (ir.compiler-ir-instr-builder-push!
+              (&mut acc.instrs)
+              (BinOp
+                limit
+                (Add)
+                (ir.compiler-ir-clone-value seed)
+                (I64 1)
+                (I64)))
+            (Some bound (Var limit) 1))]
+        [_ (No)]))))
 
 ;; --- once-only conditions a dominating branch already decided ----------------
 ;;
@@ -84069,99 +83182,44 @@
 ;; `opt-bce-mb-counter-offset-side` is stated over. A shape without an offset
 ;; passes its own bound through and starts from the empty accumulator, which is
 ;; exactly what the pass built before.
-(defenum OptBceMbBoundPrelude
-  ;; the counter's exclusive limit, and the guard stream that computes it
-  (Some ir.CompilerIrValue OptBceVersionGuardAcc))
-
 (define (opt-bce-mb-bound-prelude
-  [bound : ir.CompilerIrValue]
+  [bound : (& ir.CompilerIrValue)]
   [offset : (& ir.CompilerIrValue)]
   [strict-pos? : bool]
-  [cell : (&mut cell (__tl_dyn-array i64))]) : OptBceMbBoundPrelude
+  [cell : (&mut cell (__tl_dyn-array i64))]
+  [acc : (&mut OptBceGuardBuf)]) : ir.CompilerIrValue
   (if (opt-bce-mb-counter-offset-none? offset)
-    (Some
-      bound
-      (Some
-        (ir.compiler-ir-instr-builder-new)
-        (ir.compiler-ir-value-seq-empty)
-        false))
+    (ir.compiler-ir-clone-value bound)
     (let
       [dst : i64 (opt-bce-version-alloc-var cell)]
-      (Some
-        (Var dst)
-        (if strict-pos?
-          (opt-bce-version-cond
-            cell
-            (& (Lt))
-            offset
-            (& bound)
-            (&
-              (opt-bce-version-cond
-                cell
-                (& (Ge))
-                offset
-                (& (I64 0))
-                (&
-                  (Some
-                    (opt-bce-version-builder-push
-                      (ir.compiler-ir-instr-builder-new)
-                      (&
-                        (BinOp
-                          dst
-                          (Sub)
-                          (ir.compiler-ir-clone-value (& bound))
-                          (ir.compiler-ir-clone-value offset)
-                          (I64))))
-                    (ir.compiler-ir-value-seq-empty)
-                    false)))))
-          (opt-bce-version-cond
-            cell
-            (& (Ge))
-            (& bound)
-            offset
-            (&
-              (opt-bce-version-cond
-                cell
-                (& (Ge))
-                offset
-                (& (I64 0))
-                (&
-                  (Some
-                    (opt-bce-version-builder-push
-                      (ir.compiler-ir-instr-builder-new)
-                      (&
-                        (BinOp
-                          dst
-                          (Sub)
-                          (ir.compiler-ir-clone-value (& bound))
-                          (ir.compiler-ir-clone-value offset)
-                          (I64))))
-                    (ir.compiler-ir-value-seq-empty)
-                    false))))))))))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut acc.instrs)
+        (BinOp
+          dst
+          (Sub)
+          (ir.compiler-ir-clone-value bound)
+          (ir.compiler-ir-clone-value offset)
+          (I64)))
+      (opt-bce-version-cond cell (Ge) offset (& (I64 0)) acc)
+      (if strict-pos?
+        (opt-bce-version-cond cell (Lt) offset bound acc)
+        (opt-bce-version-cond cell (Ge) bound offset acc))
+      (Var dst))))
 
 ;; With nonnegative ordered initial ends, wrap(2*hi0) >= 0 is equivalent
 ;; to hi0 <= MAX/2. Emit this sign test first in the guard chain so the
 ;; existing cold-arm layout recognizes the shared slow successor.
-(define (opt-bce-mb-interval-guard
+(define (opt-bce-mb-interval-guard!
   [bound : (& ir.CompilerIrValue)]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
-  (match acc
-    [(No) (No)]
-    [(Some instrs values counter-seen)
-      (let
-        [twice
-          (opt-bce-version-synth-add
-            cell
-            instrs
-            (ir.compiler-ir-clone-value bound)
-            (ir.compiler-ir-clone-value bound))]
-        (opt-bce-version-cond
-          cell
-          (& (Ge))
-          (& twice.value)
-          (& (I64 0))
-          (& (Some twice.instrs values counter-seen))))]))
+  [acc : (&mut OptBceGuardBuf)]) : unit
+  (when
+    acc.ok?
+    (let
+      [twice : ir.CompilerIrValue
+        (opt-bce-version-synth-add cell (&mut acc.instrs) bound bound)]
+      (opt-bce-version-cond cell (Ge) (& twice) (& (I64 0)) acc)
+      unit)))
 
 (define (opt-bce-mb-guard-conds
   [doms : (& doms OptDomInfo)]
@@ -84181,36 +83239,38 @@
         (not shape.interval?)
         (not (opt-bce-mb-counter-offset-none? (& shape.bound-offset)))
         (opt-value-eq (& shape.seed) (& (I64 0))))]
-    (match (opt-bce-mb-bound-prelude
-      (ir.compiler-ir-clone-value (& shape.bound))
-      (& shape.bound-offset)
-      offset-strict-pos?
-      cell)
-      [(Some limit prelude)
-        (match (opt-bce-mb-counter-range
-          (& shape.seed)
-          (& limit)
-          shape.step
-          shape.delta
-          shape.wrap-step
-          shape.interval?
+    [guard : OptBceGuardBuf (opt-bce-guard-buf-new)]
+    [limit : ir.CompilerIrValue
+      (opt-bce-mb-bound-prelude
+        (& shape.bound)
+        (& shape.bound-offset)
+        offset-strict-pos?
+        cell
+        (&mut guard))]
+    (match (opt-bce-mb-counter-range
+      (& shape.seed)
+      (& limit)
+      shape.step
+      shape.delta
+      shape.wrap-step
+      shape.interval?
+      cell
+      (&mut guard))
+      [(No) (opt-bce-trace-refuse-mb-guard (opt-bce-reason-bound-range))]
+      [(Some first range-limit range-step)
+        (opt-bce-mb-guard-conds-ranged
+          doms
+          descriptor
+          stable?
+          all-blocks
+          shape
+          defs
           cell
-          (& prelude))
-          [(No) (opt-bce-trace-refuse-mb-guard (opt-bce-reason-bound-range))]
-          [(Some first range-limit range-step seeded)
-            (opt-bce-mb-guard-conds-ranged
-              doms
-              descriptor
-              stable?
-              (owned_view.compiler-owned-reference-shared-view all-blocks)
-              (owned_view.compiler-owned-reference-shared-view shape)
-              defs
-              cell
-              (& first)
-              (& range-limit)
-              range-step
-              offset-strict-pos?
-              seeded)])])))
+          (& first)
+          (& range-limit)
+          range-step
+          offset-strict-pos?
+          guard)])))
 
 ;; Minimum number of derived (non-kept) BoundsChecks executed along ANY
 ;; acyclic path from `header` to `latch` inside `blocks`. Handles both
@@ -84646,38 +83706,144 @@
                   [_ unit])))]))
       (and (= stores 1) (= calls 0) (<= instrs-total 32)))))
 
+;; Optional 2-tier split when a loop mixes counter-bounded checks with
+;; conditionally-advanced bounded-phi checks against distinct arrays.
+(define (opt-bce-mb-part-split
+  [doms : (& doms OptDomInfo)]
+  [descriptor : (& descriptor OptBceMbDescriptor)]
+  [stable? : bool]
+  [all-blocks : (& ir.CompilerIrBlockList)]
+  [shape : (& OptBceMbShape)]
+  [defs : (& opt_i64_i64_map.Map)]
+  [cell : (&mut cell (__tl_dyn-array i64))]
+  [first : (& ir.CompilerIrValue)]
+  [limit : (& ir.CompilerIrValue)]
+  [step : i64]
+  [counter-seen : bool]
+  [keep : (& OptBceMbKeep)]
+  [guard-instrs : (& ir.CompilerIrInstrSeq)]
+  [guard-value : (& ir.CompilerIrValue)]) : OptBceMbPartSplit
+  (let
+    [saved-cell : i64 (array-ref cell 0)]
+    [_reset-full : unit (opt-bce-len-eq-reset!)]
+    [empty-lens : opt_bce_mb_upper_vec.Vec
+      (opt_bce_mb_upper_vec.with-capacity 1)]
+    [full-fan : OptBceVersionFan (opt-bce-version-fan-new)]
+    [full-sc : OptBceDeriveScalars
+      (OptBceDeriveScalars
+        shape.latch
+        shape.preheader
+        shape.iphi
+        shape.exact?
+        false
+        true
+        stable?
+        true)]
+    [full-dr : OptBceMbDerive
+      (OptBceMbDerive
+        (opt-bce-guard-buf-new)
+        (opt-bce-mb-keep-empty)
+        0
+        (opt-bce-mb-hoists-new)
+        (opt-bce-mb-fused-new))]
+    (opt-bce-mb-derive-blocks!
+      doms
+      descriptor
+      (ir.compiler-ir-block-list-view (& shape.body-blocks))
+      all-blocks
+      (& shape.body-blocks)
+      defs
+      (& full-sc)
+      (& empty-lens)
+      first
+      limit
+      cell
+      (&mut full-fan)
+      (opt-bce-label-set-copy (& shape.uncovered))
+      keep
+      (&mut full-dr))
+    (if (and
+      (= (opt-bce-mb-keep-count (& full-dr.keep)) 0)
+      (> full-dr.derived 0))
+      (begin
+        (opt-bce-version-fan-flush!
+          (opt-bce-mb-descriptor-type-segment-bases descriptor)
+          all-blocks
+          (& full-dr.hoists)
+          (& full-fan)
+          first
+          limit
+          cell
+          (&mut full-dr.guard))
+        (match (opt-bce-version-guard-finish
+          first
+          limit
+          step
+          true
+          true
+          true
+          true
+          cell
+          full-dr.guard)
+          [(Some full-instrs full-val)
+            (let
+              [full-conds : OptBceFoldCondList
+                (opt-bce-fold-proven-nonnegative
+                  (ir.compiler-ir-block-list-view (& shape.body-blocks))
+                  (& shape.body-blocks)
+                  shape.iphi
+                  (& (opt-bce-mb-keep-empty))
+                  (opt-bce-fold-collect
+                    (& full-instrs)
+                    (& full-val)
+                    (opt-bce-fold-conjunct-fuel)
+                    (opt-bce-fold-collect
+                      guard-instrs
+                      guard-value
+                      (opt-bce-fold-conjunct-fuel)
+                      (opt-bce-fold-cond-list-new))))]
+              (OptBceMbPartSplit.Some
+                full-instrs
+                full-val
+                full-conds
+                counter-seen))]
+          [(No)
+            (set! (array-ref cell 0) saved-cell)
+            (OptBceMbPartSplit.No)]))
+      (begin
+        (set! (array-ref cell 0) saved-cell)
+        (OptBceMbPartSplit.No)))))
+
 (define (opt-bce-mb-guard-conds-ranged
   [doms : (& doms OptDomInfo)]
   [descriptor : (& descriptor OptBceMbDescriptor)]
   [stable? : bool]
-  [all-blocks : ir.CompilerIrBlockList]
-  [shape : OptBceMbShape]
+  [all-blocks : (& ir.CompilerIrBlockList)]
+  [shape : (& OptBceMbShape)]
   [defs : (& opt_i64_i64_map.Map)]
   [cell : (&mut cell (__tl_dyn-array i64))]
   [first : (& ir.CompilerIrValue)]
   [limit : (& ir.CompilerIrValue)]
   [step : i64]
   [offset-strict-pos? : bool]
-  [seeded : OptBceVersionGuardAcc]) : OptBceMbGuardOut
+  [seeded : OptBceGuardBuf]) : OptBceMbGuardOut
   (let
+    [body-labels : OptLabelSet (opt-bce-label-set-copy (& shape.body-labels))]
+    [uncovered : OptLabelSet (opt-bce-label-set-copy (& shape.uncovered))]
+    [inner : OptLabelSet (opt-bce-label-set-copy (& shape.inner))]
     [_reset-len-eq : unit (opt-bce-len-eq-reset!)]
-    ;; A counter-free shape has no seed/bound pair a dominating branch could
-    ;; have decided, so the once-only lookups below are not even asked.
-    ;; VT-1: an OFFSET shape's `shape.bound` is the compare's operand, not the
-    ;; counter's limit, so the once-only lookups below -- which match a
-    ;; dominating branch against `first`/`limit` -- must not be asked about it.
     [ascending-exact? : bool
       (and
         shape.counted?
         (> shape.step 0)
         (= shape.delta 0)
-        (opt-bce-mb-counter-offset-none? shape.bound-offset))]
+        (opt-bce-mb-counter-offset-none? (& shape.bound-offset)))]
     [raw-counter-lens : opt_bce_mb_upper_vec.Vec
       (opt-bce-mb-collect-counter-lens
         (& shape.body-blocks)
         defs
         shape.iphi
-        shape.uncovered)]
+        uncovered)]
     ;; Only split bounded-phi checks off counter-indexed arrays when the loop
     ;; has at most 2 counter-indexed checks: 2-tier splitting emits a third
     ;; loop copy (`__bce_fast_part`), which adds live-range pressure in wider
@@ -84687,36 +83853,49 @@
         raw-counter-lens
         (opt_bce_mb_upper_vec.with-capacity 1))]
     [fan : OptBceVersionFan (opt-bce-version-fan-new)]
-    [no-filter-keep : OptBceMbKeep (OptBceMbKeep.Nil)]
-    [dr : OptBceMbDerive
-      (opt-bce-mb-derive-blocks
-        doms
-        descriptor
-        stable?
-        (ir.compiler-ir-block-list-view shape.body-blocks)
-        (& all-blocks)
-        (& shape.body-blocks)
-        defs
+    [no-filter-keep : OptBceMbKeep (opt-bce-mb-keep-empty)]
+    [dsc : OptBceDeriveScalars
+      (OptBceDeriveScalars
         shape.latch
         shape.preheader
         shape.iphi
         shape.exact?
+        false
+        true
+        stable?
+        false)]
+    [dr : OptBceMbDerive
+      (OptBceMbDerive
+        seeded
+        (opt-bce-mb-keep-empty)
+        0
+        (opt-bce-mb-hoists-new)
+        (opt-bce-mb-fused-new))]
+    [_derive : unit
+      (opt-bce-mb-derive-blocks!
+        doms
+        descriptor
+        (ir.compiler-ir-block-list-view (& shape.body-blocks))
+        all-blocks
+        (& shape.body-blocks)
+        defs
+        (& dsc)
         (& counter-lens)
         first
         limit
         cell
-        (compiler-opt-global-shared-view fan)
-        shape.uncovered
-        false
+        (&mut fan)
+        uncovered
         (& no-filter-keep)
-        (OptBceMbDerive seeded (Nil) 0 (Nil) (opt-bce-mb-fused-new)))]
-    [counter-seen : bool (opt-bce-version-guard-counter-seen? (& dr.guard))]
+        (&mut dr))]
+    [counter-seen : bool (and dr.guard.ok? dr.guard.counter-seen)]
+    [kept-count : i64 (opt-bce-mb-keep-count (& dr.keep))]
     [entered-known-raw? : bool
       (or
         (and
           shape.interval?
           (opt-bce-mb-entry-decides?
-            (& all-blocks)
+            all-blocks
             shape.preheader
             (& (Le))
             first
@@ -84725,7 +83904,7 @@
         (and
           ascending-exact?
           (opt-bce-mb-entry-decides?
-            (& all-blocks)
+            all-blocks
             shape.preheader
             (& (Lt))
             first
@@ -84736,19 +83915,19 @@
         ascending-exact?
         (not shape.interval?)
         (not entered-known-raw?)
-        (opt-label-contains shape.uncovered shape.header)
+        (opt-label-contains uncovered shape.header)
         (opt-bce-simple-value? first)
         (opt-bce-simple-value? limit)
         (opt-bce-mb-preheader-jumps-to-header?
-          (& all-blocks)
+          all-blocks
           shape.preheader
           shape.header))
         (opt-bce-mb-plan-precheck
-          (& all-blocks)
+          all-blocks
           shape.header
           shape.preheader
           shape.iphi
-          shape.body-labels
+          body-labels
           defs
           limit)
         (No))]
@@ -84756,376 +83935,254 @@
       (match (& precheck)
         [(No) false]
         [_ true])]
-    [_trace : unit
-      (opt-bce-trace-derivation! dr.derived (opt-bce-mb-keep-count dr.keep))]
-    (if (or
-      ;; A MONOTONE CURSOR no derivation read. The cursor is recovered only to
-      ;; give its own indexes a range; when none used it (`counter-seen` is set
-      ;; by every derivation that reads the counter's range), the counted shape
-      ;; adds nothing the counter-free one lacks, yet would skip that shape's
-      ;; entry economics. Every open-addressing probe is this case: its `walked`
-      ;; cursor bounds the probe count and indexes nothing, and its masked slot
-      ;; is the counter-free shape's to price. Refusing hands the loop to that
-      ;; shape exactly as before cursors were recovered.
-      (and shape.counted? (not shape.exact?) (not counter-seen))
-      ;; A MONOTONE CURSOR whose clone would keep a check. Partial versioning
-      ;; pays the guard on every entry for a clone that still checks, and that
-      ;; is no longer eligible for the check-free downstream passes (see the
-      ;; bounded-phi note above opt-bce-mb-bounded-update?). An exact counter's
-      ;; trip-range clauses are evidence the loop iterates; a cursor's are not,
-      ;; since it may stall on any trip -- a two-pointer scan advances one
-      ;; cursor at a time. So a cursor is versioned only into a check-free
-      ;; clone, which is where those downstream passes repay the guard.
-      (and
-        shape.counted?
-        (not shape.exact?)
-        (> (opt-bce-mb-keep-count dr.keep) 0))
-      ;; No removable check: cloning the loop would only duplicate it. A body
-      ;; that duplicates CALL SITES owes more than one -- see
-      ;; opt-bce-mb-call-clone-min-derived for the currency and the constant.
-      ;; The call census runs only here, after the derivation, so a shape the
-      ;; derivation was going to refuse anyway never pays for the walk.
-      (<
-        dr.derived
-        (opt-bce-mb-call-clone-min-derived
-          (opt-bce-mb-body-calls
-            (ir.compiler-ir-block-list-view shape.body-blocks)
-            0)
-          (opt-label-count shape.body-labels)))
-      ;; A region-sized clone additionally needs one of them inside an inner
-      ;; loop, where the removal repeats per inner iteration.
-      (and
-        shape.region?
-        (>
-          (opt-bce-mb-body-instrs
-            (ir.compiler-ir-block-list-view
-              (__tl-project-field shape body-blocks))
-            0)
-          (opt-bce-mb-nest-instr-max))
-        (not
-          (opt-bce-mb-derived-in-inner?
-            (ir.compiler-ir-block-list-view
-              (__tl-project-field shape body-blocks))
-            shape.inner
-            dr.keep))))
-      ;; Which of the clauses above it was: a body that derived NOTHING is
-      ;; the pass's oldest rejection and reads differently in a census from a
-      ;; body that derived checks and still owed more of them.
-      (opt-bce-trace-refuse-mb-guard
-        (cond
-          [(and shape.counted? (not shape.exact?) (not counter-seen))
-            (opt-bce-reason-cursor-unused)]
-          [(and
-              shape.counted?
-              (not shape.exact?)
-              (> (opt-bce-mb-keep-count dr.keep) 0))
-            (opt-bce-reason-cursor-partial)]
-          [(= dr.derived 0) (opt-bce-reason-derived-zero)]
-          [(<
-              dr.derived
-              (opt-bce-mb-call-clone-min-derived
-                (opt-bce-mb-body-calls
-                  (ir.compiler-ir-block-list-view shape.body-blocks)
-                  0)
-                (opt-label-count shape.body-labels)))
-            (opt-bce-reason-floor)]
-          [else (opt-bce-reason-region-inner)]))
-      (match (opt-bce-version-guard-finish
-        first
-        limit
-        step
-        (or entered-known-raw? precheck-on? offset-strict-pos?)
-        (and
-          ascending-exact?
-          (opt-bce-mb-entry-decides?
-            (& all-blocks)
-            shape.preheader
-            (& (Ge))
-            first
-            (& (I64 0))
-            8))
-        (and
-          ascending-exact?
-          (opt-bce-version-fan-proves-no-wrap?
-            (opt-bce-mb-descriptor-type-segment-bases descriptor)
-            all-blocks
-            (& dr.hoists)
-            (& fan)
-            step
-            0))
-        (or
-          offset-strict-pos?
-          (and
-            ascending-exact?
-            (or
-              (opt-ubound-len-nonneg?
-                (opt-bce-mb-descriptor-type-segment-bases descriptor)
-                all-blocks
-                limit)
-              (opt-bce-mb-hoists-length-var? (& dr.hoists) limit))))
-        cell
+    [_trace : unit (opt-bce-trace-derivation! dr.derived kept-count)]
+    [reject-reason : i64
+      (cond
+        [(and shape.counted? (not shape.exact?) (not counter-seen))
+          (opt-bce-reason-cursor-unused)]
+        [(and shape.counted? (not shape.exact?) (> kept-count 0))
+          (opt-bce-reason-cursor-partial)]
+        [(<
+            dr.derived
+            (opt-bce-mb-call-clone-min-derived
+              (opt-bce-mb-body-calls
+                (ir.compiler-ir-block-list-view (& shape.body-blocks))
+                0)
+              (opt-label-count body-labels)))
+          (if (= dr.derived 0)
+            (opt-bce-reason-derived-zero)
+            (opt-bce-reason-floor))]
+        [(and
+            shape.region?
+            (>
+              (opt-bce-mb-body-instrs
+                (ir.compiler-ir-block-list-view (& shape.body-blocks))
+                0)
+              (opt-bce-mb-nest-instr-max))
+            (not
+              (opt-bce-mb-derived-in-inner?
+                (ir.compiler-ir-block-list-view (& shape.body-blocks))
+                inner
+                (& dr.keep))))
+          (opt-bce-reason-region-inner)]
+        [else (opt-bce-reason-ok)])]
+    (if (not (= reject-reason (opt-bce-reason-ok)))
+      (opt-bce-trace-refuse-mb-guard reject-reason)
+      (let
+        [uppers : OptBceMbUppers (opt-bce-mb-uppers-for-shape shape)]
+        (opt-bce-mb-upper-conds! cell limit (& uppers) (&mut dr.guard))
         ;; The fan's extremal conditions join the accumulator only here,
         ;; once per loop, instead of twice per fan member.
-        (let
-          [ranged : OptBceVersionGuardAcc
-            (opt-bce-version-fan-flush
-              (opt-bce-mb-descriptor-type-segment-bases descriptor)
-              (& all-blocks)
-              (& dr.hoists)
-              (& fan)
-              0
+        (opt-bce-version-fan-flush!
+          (opt-bce-mb-descriptor-type-segment-bases descriptor)
+          all-blocks
+          (& dr.hoists)
+          (& fan)
+          first
+          limit
+          cell
+          (&mut dr.guard))
+        (when
+          shape.interval?
+          (opt-bce-mb-interval-guard! (& shape.bound) cell (&mut dr.guard)))
+        (match dr
+          [(OptBceMbDerive guard keep derived hoists _)
+            (match (opt-bce-version-guard-finish
               first
               limit
-              cell
-              (opt-bce-mb-upper-conds
-                cell
-                limit
-                (&
-                  (opt-bce-mb-uppers-for-shape
-                    (compiler-opt-global-shared-view shape)))
-                (& dr.guard)))]
-          (if shape.interval?
-            (opt-bce-mb-interval-guard (& shape.bound) cell ranged)
-            ranged)))
-        [(No) (opt-bce-trace-refuse-mb-guard (opt-bce-reason-unsatisfiable))]
-        [(Some guard-instrs guard-value)
-          (let
-            [conjuncts : i64 (opt-bce-guard-conjunct-count (& guard-instrs))]
-            [guard-cost : i64 (opt-bce-guard-cost (& guard-instrs))]
-            [uncond : i64
-              (opt-bce-mb-uncond-derived-count
-                (& shape.body-blocks)
-                shape.header
-                shape.latch
-                shape.uncovered
-                (& dr.keep))]
-            [kept-count : i64 (opt-bce-mb-keep-count (& dr.keep))]
-            [free-refused? : bool
+              step
+              (or entered-known-raw? precheck-on? offset-strict-pos?)
               (and
-                (not shape.counted?)
-                (or
-                  (> conjuncts dr.derived)
-                  (and
-                    (> conjuncts 1)
-                    (opt-bce-mb-has-early-exit?
-                      (& shape.body-blocks)
-                      shape.body-labels
-                      shape.latch))))]
-            [div-penalty : i64
-              (if (opt-bce-guard-has-non-pow2-div? (& guard-instrs))
-                2
-                0)]
-            [max-trips-refused? : bool
-              (if (and
-                shape.counted?
-                shape.exact?
-                (= shape.delta 0)
-                (opt-bce-mb-counter-offset-none? (& shape.bound-offset)))
-                (match (opt-loop-max-trips
-                  (& all-blocks)
+                ascending-exact?
+                (opt-bce-mb-entry-decides?
+                  all-blocks
                   shape.preheader
-                  (& shape.seed)
-                  (& shape.bound)
-                  (if (> shape.step 0)
-                    shape.step
-                    (- 0 shape.step))
-                  (< shape.step 0))
-                  [(Some max-trips)
-                    (let
-                      [trip-checks : i64
-                        (if (> uncond 0)
-                          uncond
-                          dr.derived)]
-                      (>= guard-cost (* 2 (* trip-checks max-trips))))]
-                  [(No) false])
-                false)]
-            [nested-budget : i64
-              (let
-                [counter-count : i64
-                  (opt_bce_mb_upper_vec.len (& counter-lens))]
-                [effective-uncond : i64
-                  (if (and
-                    (>= uncond 1)
-                    (> counter-count uncond)
-                    (not
-                      (opt-bce-mb-has-early-exit?
-                        (& shape.body-blocks)
-                        shape.body-labels
-                        shape.latch)))
-                    counter-count
-                    uncond)]
-                [base : i64 (* 3 effective-uncond)]
-                [check-free : i64
-                  (if (= kept-count 0)
-                    (* 2 dr.derived)
-                    0)]
-                (if (> check-free base)
-                  check-free
-                  base))]
-            [nested-refused? : bool
+                  (& (Ge))
+                  first
+                  (& (I64 0))
+                  8))
               (and
-                shape.nested-entry?
-                (not opt-bce-in-priced-pipeline?)
-                (not
-                  (opt-bce-mb-fill-or-copy-shape?
-                    (& shape.body-blocks)
-                    shape.body-labels
-                    shape.step
-                    shape.delta
-                    kept-count
-                    dr.derived))
-                (> (+ conjuncts div-penalty) nested-budget))]
-            [_trace : unit (opt-bce-trace-guard! conjuncts shape.nested-entry?)]
-            (cond
-              [free-refused?
-                (opt-bce-trace-refuse-mb-guard (opt-bce-reason-free-cost))]
-              [(or max-trips-refused? nested-refused?)
-                (opt-bce-trace-refuse-mb-guard (opt-bce-reason-floor))]
-              [else
+                ascending-exact?
+                (opt-bce-version-fan-proves-no-wrap?
+                  (opt-bce-mb-descriptor-type-segment-bases descriptor)
+                  all-blocks
+                  (& hoists)
+                  (& fan)
+                  step))
+              (or
+                offset-strict-pos?
+                (and
+                  ascending-exact?
+                  (or
+                    (opt-ubound-len-nonneg?
+                      (opt-bce-mb-descriptor-type-segment-bases descriptor)
+                      all-blocks
+                      limit)
+                    (opt-bce-mb-hoists-length-var? (& hoists) limit))))
+              cell
+              guard)
+              [(No)
+                (opt-bce-trace-refuse-mb-guard (opt-bce-reason-unsatisfiable))]
+              [(Some guard-instrs guard-value)
                 (let
-                  [part-split
-                    : OptBceMbPartSplit
-                    ;; `counter-seen`: the full guard below omits the entry,
-                    ;; seed-sign and no-wrap conjuncts because `__bce_guard`
-                    ;; already tested them, which holds only when the counter
-                    ;; guard itself read the counter's range.
-                    (if (and
-                      counter-seen
-                      (> kept-count 0)
-                      (> (opt_bce_mb_upper_vec.len (& counter-lens)) 0)
-                      (<= (opt-label-count shape.body-labels) 8)
-                      (not opt-bce-in-priced-pipeline?)
-                      (match (& precheck)
-                        [(No) true]
-                        [_ false])
-                      (not
-                        (opt-cfg-block-exists?
-                          (& all-blocks)
-                          (ir.compiler-ir-label
-                            (&
-                              (str_cat.str-cat
-                                (ir.compiler-ir-label-text shape.header)
-                                "__bce_guard_phi")))))
-                      (not
-                        (opt-cfg-block-exists?
-                          (& all-blocks)
-                          (ir.compiler-ir-label
-                            (&
-                              (str_cat.str-cat
-                                (ir.compiler-ir-label-text shape.header)
-                                "__bce_fast_part"))))))
-                      (let
-                        [saved-cell : i64 (array-ref cell 0)]
-                        [_reset-full : unit (opt-bce-len-eq-reset!)]
-                        [empty-lens : opt_bce_mb_upper_vec.Vec
-                          (opt_bce_mb_upper_vec.with-capacity 1)]
-                        [full-fan : OptBceVersionFan (opt-bce-version-fan-new)]
-                        [full-dr : OptBceMbDerive
-                          (opt-bce-mb-derive-blocks
-                            doms
-                            descriptor
-                            stable?
-                            (ir.compiler-ir-block-list-view shape.body-blocks)
-                            (& all-blocks)
+                  [conjuncts : i64
+                    (opt-bce-guard-conjunct-count (& guard-instrs))]
+                  [guard-cost : i64 (opt-bce-guard-cost (& guard-instrs))]
+                  [uncond : i64
+                    (opt-bce-mb-uncond-derived-count
+                      (& shape.body-blocks)
+                      shape.header
+                      shape.latch
+                      uncovered
+                      (& keep))]
+                  [free-refused? : bool
+                    (and
+                      (not shape.counted?)
+                      (or
+                        (> conjuncts derived)
+                        (and
+                          (> conjuncts 1)
+                          (opt-bce-mb-has-early-exit?
                             (& shape.body-blocks)
-                            defs
-                            shape.latch
-                            shape.preheader
-                            shape.iphi
-                            shape.exact?
-                            (& empty-lens)
-                            first
-                            limit
-                            cell
-                            (compiler-opt-global-shared-view full-fan)
-                            shape.uncovered
-                            true
-                            (& dr.keep)
-                            (OptBceMbDerive
-                              (Some
-                                (ir.compiler-ir-instr-builder-new)
-                                (ir.compiler-ir-value-seq-empty)
-                                false)
-                              (Nil)
-                              0
-                              (Nil)
-                              (opt-bce-mb-fused-new)))]
+                            body-labels
+                            shape.latch))))]
+                  [div-penalty : i64
+                    (if (opt-bce-guard-has-non-pow2-div? (& guard-instrs))
+                      2
+                      0)]
+                  [max-trips-refused? : bool
+                    (if (and
+                      shape.counted?
+                      shape.exact?
+                      (= shape.delta 0)
+                      (opt-bce-mb-counter-offset-none? (& shape.bound-offset)))
+                      (match (opt-loop-max-trips
+                        all-blocks
+                        shape.preheader
+                        (& shape.seed)
+                        (& shape.bound)
+                        (if (> shape.step 0)
+                          shape.step
+                          (- 0 shape.step))
+                        (< shape.step 0))
+                        [(Some max-trips)
+                          (let
+                            [trip-checks : i64
+                              (if (> uncond 0)
+                                uncond
+                                derived)]
+                            (>= guard-cost (* 2 (* trip-checks max-trips))))]
+                        [(No) false])
+                      false)]
+                  [nested-budget : i64
+                    (let
+                      [counter-count : i64
+                        (opt_bce_mb_upper_vec.len (& counter-lens))]
+                      [effective-uncond : i64
                         (if (and
-                          (= (opt-bce-mb-keep-count (& full-dr.keep)) 0)
-                          (> full-dr.derived 0))
-                          (match (opt-bce-version-guard-finish
-                            first
-                            limit
-                            step
-                            true
-                            true
-                            true
-                            true
-                            cell
-                            (opt-bce-version-fan-flush
-                              (opt-bce-mb-descriptor-type-segment-bases
-                                descriptor)
-                              (& all-blocks)
-                              (& full-dr.hoists)
-                              (& full-fan)
-                              0
+                          (>= uncond 1)
+                          (> counter-count uncond)
+                          (not
+                            (opt-bce-mb-has-early-exit?
+                              (& shape.body-blocks)
+                              body-labels
+                              shape.latch)))
+                          counter-count
+                          uncond)]
+                      [base : i64 (* 3 effective-uncond)]
+                      [check-free : i64
+                        (if (= kept-count 0)
+                          (* 2 derived)
+                          0)]
+                      (if (> check-free base)
+                        check-free
+                        base))]
+                  [nested-refused? : bool
+                    (and
+                      shape.nested-entry?
+                      (not opt-bce-in-priced-pipeline?)
+                      (not
+                        (opt-bce-mb-fill-or-copy-shape?
+                          (& shape.body-blocks)
+                          body-labels
+                          shape.step
+                          shape.delta
+                          kept-count
+                          derived))
+                      (> (+ conjuncts div-penalty) nested-budget))]
+                  [_trace : unit
+                    (opt-bce-trace-guard! conjuncts shape.nested-entry?)]
+                  (cond
+                    [free-refused?
+                      (opt-bce-trace-refuse-mb-guard (opt-bce-reason-free-cost))]
+                    [(or max-trips-refused? nested-refused?)
+                      (opt-bce-trace-refuse-mb-guard (opt-bce-reason-floor))]
+                    [else
+                      (let
+                        [part-split
+                          : OptBceMbPartSplit
+                          ;; `counter-seen`: the full guard omits the entry,
+                          ;; seed-sign and no-wrap conjuncts because `__bce_guard`
+                          ;; already tested them, which holds only when the counter
+                          ;; guard itself read the counter's range.
+                          (if (and
+                            counter-seen
+                            (> kept-count 0)
+                            (> (opt_bce_mb_upper_vec.len (& counter-lens)) 0)
+                            (<= (opt-label-count body-labels) 8)
+                            (not opt-bce-in-priced-pipeline?)
+                            (not precheck-on?)
+                            (not
+                              (opt-cfg-block-exists?
+                                all-blocks
+                                (ir.compiler-ir-label
+                                  (&
+                                    (str_cat.str-cat
+                                      (ir.compiler-ir-label-text shape.header)
+                                      "__bce_guard_phi")))))
+                            (not
+                              (opt-cfg-block-exists?
+                                all-blocks
+                                (ir.compiler-ir-label
+                                  (&
+                                    (str_cat.str-cat
+                                      (ir.compiler-ir-label-text shape.header)
+                                      "__bce_fast_part"))))))
+                            (opt-bce-mb-part-split
+                              doms
+                              descriptor
+                              stable?
+                              all-blocks
+                              shape
+                              defs
+                              cell
                               first
                               limit
-                              cell
-                              full-dr.guard))
-                            [(Some full-instrs full-val)
-                              (let
-                                [full-conds : OptBceFoldCondList
-                                  (opt-bce-fold-proven-nonnegative
-                                    (ir.compiler-ir-block-list-view
-                                      shape.body-blocks)
-                                    (& shape.body-blocks)
-                                    shape.iphi
-                                    (& (OptBceMbKeep.Nil))
-                                    (opt-bce-fold-collect
-                                      (& full-instrs)
-                                      (& full-val)
-                                      (opt-bce-fold-conjunct-fuel)
-                                      (opt-bce-fold-collect
-                                        (& guard-instrs)
-                                        (& guard-value)
-                                        (opt-bce-fold-conjunct-fuel)
-                                        (opt-bce-fold-cond-list-new))))]
-                                (OptBceMbPartSplit.Some
-                                  full-instrs
-                                  full-val
-                                  full-conds
-                                  counter-seen))]
-                            [(No)
-                              (set! (array-ref cell 0) saved-cell)
-                              (OptBceMbPartSplit.No)])
-                          (begin
-                            (set! (array-ref cell 0) saved-cell)
-                            (OptBceMbPartSplit.No))))
-                      (OptBceMbPartSplit.No))]
-                  [fold-conds : OptBceFoldCondList
-                    (opt-bce-fold-proven-nonnegative
-                      (ir.compiler-ir-block-list-view shape.body-blocks)
-                      (& shape.body-blocks)
-                      shape.iphi
-                      (& dr.keep)
-                      (opt-bce-fold-collect
-                        (& guard-instrs)
-                        (& guard-value)
-                        (opt-bce-fold-conjunct-fuel)
-                        (opt-bce-fold-cond-list-new)))]
-                  (Some
-                    guard-instrs
-                    guard-value
-                    dr.keep
-                    (OptBceFoldFacts
-                      fold-conds
-                      all-blocks
-                      shape.body-blocks
-                      shape.iphi
-                      counter-seen)
-                    precheck
-                    part-split))]))]))))
+                              step
+                              counter-seen
+                              (& keep)
+                              (& guard-instrs)
+                              (& guard-value))
+                            (OptBceMbPartSplit.No))]
+                        [fold-conds : OptBceFoldCondList
+                          (opt-bce-fold-proven-nonnegative
+                            (ir.compiler-ir-block-list-view
+                              (& shape.body-blocks))
+                            (& shape.body-blocks)
+                            shape.iphi
+                            (& keep)
+                            (opt-bce-fold-collect
+                              (& guard-instrs)
+                              (& guard-value)
+                              (opt-bce-fold-conjunct-fuel)
+                              (opt-bce-fold-cond-list-new)))]
+                        (Some
+                          guard-instrs
+                          guard-value
+                          keep
+                          (OptBceFoldFacts fold-conds shape.iphi counter-seen)
+                          precheck
+                          part-split))]))])])))))
 
 ;; --- guard-dominated compare folding --------------------------------------------
 ;;
@@ -85281,8 +84338,6 @@
 ;; phis, the clone group for definitions), and the counter's proven lower bound.
 (defstruct OptBceFoldFacts
   (conds OptBceFoldCondList)
-  (blocks ir.CompilerIrBlockList)
-  (body-blocks ir.CompilerIrBlockList)
   (iphi i64)
   (counter-nonneg? bool))
 
@@ -85359,12 +84414,6 @@
 ;; loop derives a handful; this only bounds a malformed chain.
 (define (opt-bce-fold-conjunct-fuel) : i64
   64)
-
-(define (opt-bce-version-guard-counter-seen?
-  [acc : (& acc OptBceVersionGuardAcc)]) : bool
-  (match acc
-    [(OptBceVersionGuardAcc.No) false]
-    [(OptBceVersionGuardAcc.Some _ _ counter-seen) counter-seen]))
 
 ;; The comparisons the fold reasons about. BitTest* forms are deliberately out:
 ;; the guard never emits one, and R1 is about ordered i64 compares.
@@ -85525,9 +84574,20 @@
             (True)
             (Unknown))])]))
 
+(define (opt-bce-swap-compare-op [op : (& ir.CompilerIrBinOp)]) : ir.CompilerIrBinOp
+  (match op
+    [(Lt) (Gt)]
+    [(Le) (Ge)]
+    [(Gt) (Lt)]
+    [(Ge) (Le)]
+    [(Eq) (Eq)]
+    [(Ne) (Ne)]
+    [_ (Eq)]))
+
 ;; The verdict for one comparison evaluated anywhere in the fast clone.
 (define (opt-bce-fold-compare-verdict
   [facts : (& OptBceFoldFacts)]
+  [body-blocks : (& ir.CompilerIrBlockList)]
   [op : (& ir.CompilerIrBinOp)]
   [lhs : (& ir.CompilerIrValue)]
   [rhs : (& ir.CompilerIrValue)]
@@ -85535,8 +84595,6 @@
   (if (not (and (opt-compare-op? op) (opt-bce-fold-i64-type? ty)))
     (Unknown)
     (let
-      [body-blocks : ir.CompilerIrBlockList
-        (owned_view.compiler-owned-reference-shared-view (& facts.body-blocks))]
       [iphi : i64 facts.iphi]
       [monotone? : bool (and facts.counter-nonneg? (>= iphi 0))]
       (cond
@@ -85547,26 +84605,18 @@
         [(and monotone? (opt-bce-fold-counter-operand? body-blocks iphi rhs))
           (match lhs
             [(I64 k)
-              (opt-bce-fold-counter-verdict
-                (&
-                  (opt-swap-compare-op
-                    (owned_view.compiler-owned-reference-shared-view op)))
-                k)]
+              (opt-bce-fold-counter-verdict (& (opt-bce-swap-compare-op op)) k)]
             [_ (Unknown)])]
-        [(opt-bce-fold-nonnegative-operand? body-blocks facts.conds lhs)
+        [(opt-bce-fold-nonnegative-operand? body-blocks (& facts.conds) lhs)
           (match rhs
             [(I64 k) (opt-bce-fold-counter-verdict op k)]
             [_ (Unknown)])]
-        [(opt-bce-fold-nonnegative-operand? body-blocks facts.conds rhs)
+        [(opt-bce-fold-nonnegative-operand? body-blocks (& facts.conds) rhs)
           (match lhs
             [(I64 k)
-              (opt-bce-fold-counter-verdict
-                (&
-                  (opt-swap-compare-op
-                    (owned_view.compiler-owned-reference-shared-view op)))
-                k)]
+              (opt-bce-fold-counter-verdict (& (opt-bce-swap-compare-op op)) k)]
             [_ (Unknown)])]
-        [else (opt-bce-fold-invariant-verdict facts (& body-blocks) op lhs rhs)]))))
+        [else (opt-bce-fold-invariant-verdict facts body-blocks op lhs rhs)]))))
 
 (define (opt-bce-fold-phi-from-instrs?
   [instrs : (& ir.CompilerIrInstrSeq)]
@@ -85581,10 +84631,10 @@
 ;; May the edge `label -> dropped` disappear? Only when nothing in `dropped`
 ;; selects a value on it. A successor that cannot be found rejects.
 (define (opt-bce-fold-drop-edge-ok?
-  [facts : (& facts OptBceFoldFacts)]
+  [all-blocks : (& ir.CompilerIrBlockList)]
   [label : i64]
   [dropped : i64]) : bool
-  (match (opt-cfg-find-block facts.blocks dropped)
+  (match (opt-cfg-find-block all-blocks dropped)
     [(No) false]
     [(Some block)
       (match block
@@ -85593,6 +84643,8 @@
 
 ;; The verdict for one cloned conditional branch, edge hygiene included.
 (define (opt-bce-fold-branch-verdict
+  [all-blocks : (& ir.CompilerIrBlockList)]
+  [body-blocks : (& ir.CompilerIrBlockList)]
   [facts : (& OptBceFoldFacts)]
   [label : i64]
   [cond : (& ir.CompilerIrValue)]
@@ -85601,9 +84653,6 @@
   (match cond
     [(Var raw)
       (let
-        [body-blocks : ir.CompilerIrBlockList
-          (owned_view.compiler-owned-reference-shared-view
-            (& facts.body-blocks))]
         [id : i64 (opt-bce-mb-resolve body-blocks raw 16)]
         (match (opt-bce-mb-find-def
           (ir.compiler-ir-block-list-view body-blocks)
@@ -85614,17 +84663,18 @@
               [(BinOp _ op lhs rhs ty)
                 (match (opt-bce-fold-compare-verdict
                   facts
+                  body-blocks
                   (& op)
                   (& lhs)
                   (& rhs)
                   (& ty))
                   [(Unknown) (Unknown)]
                   [(True)
-                    (if (opt-bce-fold-drop-edge-ok? facts label else-label)
+                    (if (opt-bce-fold-drop-edge-ok? all-blocks label else-label)
                       (True)
                       (Unknown))]
                   [(False)
-                    (if (opt-bce-fold-drop-edge-ok? facts label then-label)
+                    (if (opt-bce-fold-drop-edge-ok? all-blocks label then-label)
                       (False)
                       (Unknown))])]
               [_ (Unknown)])]))]
@@ -85686,43 +84736,32 @@
 ;; Pass B's clone of one loop instruction. A branch the guard already decides
 ;; becomes the jump it always takes; DCE retires the compare and any arm that
 ;; lost its last predecessor. Every other instruction is a region clone into
-;; the fast copy: a kept (underivable) check's ok-label naming a real loop block
-;; goes to its fast clone, one naming a block OUTSIDE the loop stays shared, and
-;; a synthetic mid-block continuation label is uniquified, or the slow and fast
-;; blocks would define it twice. Only header phis carry a preheader input: it
-;; now comes from the guard.
+;; the fast copy.
 (define (opt-bce-mb-clone-instr
   [rw : (&mut rw ir.CompilerIrInstrRewrite)]
   [remap : (& (__tl_dyn-array ir.CompilerIrValue))]
+  [all-blocks : (& ir.CompilerIrBlockList)]
+  [body-blocks : (& ir.CompilerIrBlockList)]
+  [labels : (& OptCloneLabels)]
   [body-labels : OptLabelSet]
-  [all-labels : OptLabelSet]
   [part? : bool]
-  [preheader : i64]
-  [guard-label : i64]
   [facts : (& OptBceFoldFacts)]
   [label : i64]
   [instr : (& ir.CompilerIrInstr)]) : ir.CompilerIrInstr
-  (let
-    [labels : OptCloneLabels
-      (Region
-        body-labels
-        all-labels
-        (opt-bce-mb-suffix part?)
-        preheader
-        guard-label)]
-    (match instr
-      [(Branch cond then-label else-label)
-        (match (opt-bce-fold-branch-verdict
-          facts
-          label
-          (& cond)
-          then-label
-          else-label)
-          [(True) (Jump (opt-bce-mb-fast-label body-labels part? then-label))]
-          [(False) (Jump (opt-bce-mb-fast-label body-labels part? else-label))]
-          [(Unknown)
-            (opt-region-clone-instr-remapped rw remap (& labels) instr)])]
-      [_ (opt-region-clone-instr-remapped rw remap (& labels) instr)])))
+  (match instr
+    [(Branch cond then-label else-label)
+      (match (opt-bce-fold-branch-verdict
+        all-blocks
+        body-blocks
+        facts
+        label
+        (& cond)
+        then-label
+        else-label)
+        [(True) (Jump (opt-bce-mb-fast-label body-labels part? then-label))]
+        [(False) (Jump (opt-bce-mb-fast-label body-labels part? else-label))]
+        [(Unknown) (opt-region-clone-instr-remapped rw remap labels instr)])]
+    [_ (opt-region-clone-instr-remapped rw remap labels instr)]))
 
 ;; Every block label in the function: a kept check's ok-label that names a
 ;; real block outside the loop must NOT be renamed, while a synthetic
@@ -85740,107 +84779,66 @@
 ;; Pass B: clone a loop's instructions, dropping every BoundsCheck the guard
 ;; proved non-failing and remapping the kept underivable ones (partial
 ;; versioning: the fast clone is not necessarily check-free).
-(define (opt-bce-mb-push-clone-instrs!
-  [rw : (&mut rw ir.CompilerIrInstrRewrite)]
-  [label : i64]
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [index : i64]
-  [remap : (& (__tl_dyn-array ir.CompilerIrValue))]
-  [body-labels : OptLabelSet]
-  [all-labels : OptLabelSet]
-  [part? : bool]
-  [preheader : i64]
-  [guard-label : i64]
-  [facts : (& OptBceFoldFacts)]
-  [keep : (& keep OptBceMbKeep)]
-  [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    unit
-    (let
-      [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
-      (if (match instr
-        [(BoundsCheck _ _ _) (not (opt-bce-mb-keep-contains? keep label index))]
-        [_ false])
-        unit
-        (ir.compiler-ir-instr-builder-push!
-          builder
-          (opt-bce-mb-clone-instr
-            rw
-            remap
-            body-labels
-            all-labels
-            part?
-            preheader
-            guard-label
-            facts
-            label
-            instr)))
-      (opt-bce-mb-push-clone-instrs!
-        rw
-        label
-        instrs
-        (+ index 1)
-        remap
-        body-labels
-        all-labels
-        part?
-        preheader
-        guard-label
-        facts
-        keep
-        builder))))
-
 (define (opt-bce-mb-clone-instrs
   [label : i64]
   [instrs : (& ir.CompilerIrInstrSeq)]
-  [index : i64]
   [remap : (& (__tl_dyn-array ir.CompilerIrValue))]
+  [all-blocks : (& ir.CompilerIrBlockList)]
+  [body-blocks : (& ir.CompilerIrBlockList)]
+  [labels : (& OptCloneLabels)]
   [body-labels : OptLabelSet]
-  [all-labels : OptLabelSet]
   [part? : bool]
-  [preheader : i64]
-  [guard-label : i64]
   [facts : (& OptBceFoldFacts)]
   [keep : (& keep OptBceMbKeep)]) : ir.CompilerIrInstrSeq
   (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [builder : ir.CompilerIrInstrBuilder
-      (ir.compiler-ir-instr-builder-with-capacity
-        (ir.compiler-ir-instr-seq-count instrs))]
+      (ir.compiler-ir-instr-builder-with-capacity count)]
     [rw : ir.CompilerIrInstrRewrite (ir.compiler-ir-instr-rewrite-new)]
-    (opt-bce-mb-push-clone-instrs!
-      (&mut rw)
-      label
-      instrs
-      index
-      remap
-      body-labels
-      all-labels
-      part?
-      preheader
-      guard-label
-      facts
-      keep
-      (&mut builder))
+    (for [index (iterator.range 0 count)]
+      (unless
+        (match (ir.compiler-ir-instr-seq-borrow instrs index)
+          [(BoundsCheck _ _ _)
+            (not (opt-bce-mb-keep-contains? keep label index))]
+          [_ false])
+        (ir.compiler-ir-instr-builder-push!
+          (&mut builder)
+          (opt-bce-mb-clone-instr
+            (&mut rw)
+            remap
+            all-blocks
+            body-blocks
+            labels
+            body-labels
+            part?
+            facts
+            label
+            (ir.compiler-ir-instr-seq-borrow instrs index)))))
     (ir.compiler-ir-instr-builder-to-seq builder)))
 
-(define (opt-bce-mb-clone-blocks!
-  [out : (&mut out ir.CompilerIrBlockBuilder)]
+(define (opt-bce-mb-clone-group
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [remap : (& remap (__tl_dyn-array ir.CompilerIrValue))]
+  [all-blocks : (& ir.CompilerIrBlockList)]
+  [body-blocks : (& ir.CompilerIrBlockList)]
   [body-labels : OptLabelSet]
   [all-labels : OptLabelSet]
   [part? : bool]
   [preheader : i64]
   [guard-label : i64]
   [facts : (& facts OptBceFoldFacts)]
-  [keep : (& keep OptBceMbKeep)]) : unit
-  (match blocks
-    [(slice) unit]
-    [(slice block & rest)
-      (match block
+  [keep : (& keep OptBceMbKeep)]) : ir.CompilerIrBlockList
+  (let
+    [out : ir.CompilerIrBlockBuilder
+      (ir.compiler-ir-block-builder-with-capacity (array-length blocks))]
+    [suffix : String (opt-bce-mb-suffix part?)]
+    [labels : OptCloneLabels
+      (Region body-labels all-labels suffix preheader guard-label)]
+    (for [bi (iterator.range 0 (array-length blocks))]
+      (match (& (array-ref blocks bi))
         [(Block label instrs)
           (ir.compiler-ir-block-builder-push!
-            out
+            (&mut out)
             (ir.CompilerIrBlock.Block
               (ir.compiler-ir-label
                 (&
@@ -85850,26 +84848,15 @@
               (opt-bce-mb-clone-instrs
                 label
                 (& instrs)
-                0
                 remap
+                all-blocks
+                body-blocks
+                (& labels)
                 body-labels
-                all-labels
                 part?
-                preheader
-                guard-label
                 facts
-                keep)))
-          (opt-bce-mb-clone-blocks!
-            out
-            rest
-            remap
-            body-labels
-            all-labels
-            part?
-            preheader
-            guard-label
-            facts
-            keep)])]))
+                keep)))]))
+    (ir.compiler-ir-block-builder-to-list out)))
 
 ;; Replace `preheader`'s trailing `Jump header` with
 ;; `%enter = lt seed, bound : i64; branch %enter, guard-label, false-label`.
@@ -85962,7 +84949,7 @@
 (define (opt-bce-mb-rewrite-blocks!
   [out : (&mut out ir.CompilerIrBlockBuilder)]
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
-  [shape : OptBceMbShape]
+  [shape : (& OptBceMbShape)]
   [guard-block : (& guard-block ir.CompilerIrBlock)]
   [fast-blocks : (& fast-blocks ir.CompilerIrBlockList)]
   [remap : (& remap (__tl_dyn-array ir.CompilerIrValue))]
@@ -85978,103 +84965,106 @@
             (ir.compiler-ir-label-text shape.header)
             "__bce_guard")))]
     (for [bi (iterator.range 0 (array-length blocks))]
-      (let
-        [block (& (array-ref blocks bi))]
-        (match block
-          [(Block label instrs)
-            (cond
-              [(= label shape.header)
-                (match precheck
-                  [(Skip skip-label real-exit _)
-                    (ir.compiler-ir-block-builder-push!
-                      out
-                      (ir.CompilerIrBlock.Block
-                        skip-label
-                        (ir.compiler-ir-instr-seq1 (Jump real-exit))))]
-                  [_ unit])
-                (ir.compiler-ir-block-builder-push!
-                  out
-                  (owned_view.compiler-owned-reference-shared-view guard-block))
-                (match split-emitted
-                  [(Some phi-guard-block part-blocks _)
-                    (ir.compiler-ir-block-builder-push!
-                      out
-                      (owned_view.compiler-owned-reference-shared-view
-                        (& phi-guard-block)))
-                    (ir.compiler-ir-block-builder-append-slice!
-                      out
-                      (ir.compiler-ir-block-list-view fast-blocks))
-                    (ir.compiler-ir-block-builder-append-slice!
-                      out
-                      (ir.compiler-ir-block-list-view (& part-blocks)))]
-                  [(No)
-                    (ir.compiler-ir-block-builder-append-slice!
-                      out
-                      (ir.compiler-ir-block-list-view fast-blocks))])
-                (ir.compiler-ir-block-builder-push!
-                  out
-                  (ir.CompilerIrBlock.Block
-                    label
-                    (opt-relabel-phi-instrs
-                      (& instrs)
-                      0
-                      shape.preheader
-                      guard-label)))]
-              [(= label shape.preheader)
-                (ir.compiler-ir-block-builder-push!
-                  out
-                  (ir.CompilerIrBlock.Block
-                    label
-                    (match precheck
-                      [(No)
-                        (opt-unroll-retarget-instrs
-                          (& instrs)
-                          shape.header
-                          guard-label)]
-                      [(Skip skip-label _ _)
-                        (opt-bce-mb-precheck-preheader-instrs
-                          (& instrs)
-                          enter-var
-                          (& shape.seed)
-                          (& shape.bound)
-                          guard-label
-                          skip-label)])))]
-              [(opt-label-contains shape.body-labels label)
-                (ir.compiler-ir-block-builder-push!
-                  out
-                  (owned_view.compiler-owned-reference-shared-view block))]
-              [else
-                (let
-                  [extended1 : ir.CompilerIrInstrSeq
-                    (opt-clone-extend-exit-instrs
-                      (& instrs)
-                      0
-                      remap
-                      (& (Body shape.body-labels "__bce_fast")))]
-                  [extended : ir.CompilerIrInstrSeq
-                    (match split-emitted
-                      [(Some _ _ part-remap)
-                        (opt-clone-extend-exit-instrs
-                          (& extended1)
-                          0
-                          (& part-remap)
-                          (& (Body shape.body-labels "__bce_fast_part")))]
-                      [(No) extended1])]
-                  [final-instrs : ir.CompilerIrInstrSeq
-                    (match precheck
-                      [(Skip skip-label real-exit exit-edge)
-                        (if (= label real-exit)
-                          (opt-bce-mb-extend-skip-exit-phis
-                            (& extended)
-                            header-instrs
-                            shape.preheader
-                            skip-label
-                            exit-edge)
-                          extended)]
-                      [_ extended])]
+      (match (& (array-ref blocks bi))
+        [(Block label instrs)
+          (cond
+            [(= label shape.header)
+              (match precheck
+                [(Skip skip-label real-exit _)
                   (ir.compiler-ir-block-builder-push!
                     out
-                    (ir.CompilerIrBlock.Block label final-instrs)))])])))))
+                    (ir.CompilerIrBlock.Block
+                      skip-label
+                      (ir.compiler-ir-instr-seq1 (Jump real-exit))))]
+                [_ unit])
+              (ir.compiler-ir-block-builder-push!
+                out
+                (owned_view.compiler-owned-reference-shared-view guard-block))
+              (match split-emitted
+                [(Some phi-guard-block part-blocks _)
+                  (ir.compiler-ir-block-builder-push!
+                    out
+                    (owned_view.compiler-owned-reference-shared-view
+                      (& phi-guard-block)))
+                  (ir.compiler-ir-block-builder-append-slice!
+                    out
+                    (ir.compiler-ir-block-list-view fast-blocks))
+                  (ir.compiler-ir-block-builder-append-slice!
+                    out
+                    (ir.compiler-ir-block-list-view (& part-blocks)))]
+                [(No)
+                  (ir.compiler-ir-block-builder-append-slice!
+                    out
+                    (ir.compiler-ir-block-list-view fast-blocks))])
+              (ir.compiler-ir-block-builder-push!
+                out
+                (ir.CompilerIrBlock.Block
+                  label
+                  (opt-relabel-phi-instrs
+                    (& instrs)
+                    0
+                    shape.preheader
+                    guard-label)))]
+            [(= label shape.preheader)
+              (ir.compiler-ir-block-builder-push!
+                out
+                (ir.CompilerIrBlock.Block
+                  label
+                  (match precheck
+                    [(No)
+                      (opt-unroll-retarget-instrs
+                        (& instrs)
+                        shape.header
+                        guard-label)]
+                    [(Skip skip-label _ _)
+                      (opt-bce-mb-precheck-preheader-instrs
+                        (& instrs)
+                        enter-var
+                        (& shape.seed)
+                        (& shape.bound)
+                        guard-label
+                        skip-label)])))]
+            [(opt-label-contains
+                (opt-bce-label-set-copy (& shape.body-labels))
+                label)
+              (ir.compiler-ir-block-builder-push!
+                out
+                (owned_view.compiler-owned-reference-shared-view
+                  (& (array-ref blocks bi))))]
+            [else
+              (let
+                [body-labels : OptLabelSet
+                  (opt-bce-label-set-copy (& shape.body-labels))]
+                [extended1 : ir.CompilerIrInstrSeq
+                  (opt-clone-extend-exit-instrs
+                    (& instrs)
+                    0
+                    remap
+                    (& (Body body-labels "__bce_fast")))]
+                [extended : ir.CompilerIrInstrSeq
+                  (match split-emitted
+                    [(Some _ _ part-remap)
+                      (opt-clone-extend-exit-instrs
+                        (& extended1)
+                        0
+                        (& part-remap)
+                        (& (Body body-labels "__bce_fast_part")))]
+                    [(No) extended1])]
+                [final-instrs : ir.CompilerIrInstrSeq
+                  (match precheck
+                    [(Skip skip-label real-exit exit-edge)
+                      (if (= label real-exit)
+                        (opt-bce-mb-extend-skip-exit-phis
+                          (& extended)
+                          header-instrs
+                          shape.preheader
+                          skip-label
+                          exit-edge)
+                        extended)]
+                    [_ extended])]
+                (ir.compiler-ir-block-builder-push!
+                  out
+                  (ir.CompilerIrBlock.Block label final-instrs)))])]))))
 
 ;; Canonical spelling of a value for cross-block comparison: vars resolved
 ;; through the block list's single-def Mov chains, and through same-width
@@ -86124,24 +85114,22 @@
   [doms : (& doms OptDomInfo)]
   [descriptor : (& descriptor OptBceMbDescriptor)]
   [stable? : bool]
-  [blocks : ir.CompilerIrBlockList]
-  [shape : OptBceMbShape]
+  [blocks : (& ir.CompilerIrBlockList)]
+  [shape : (& OptBceMbShape)]
   [defs : (& opt_i64_i64_map.Map)]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [frame : i64]) : OptUnrollResult
+  [frame : i64]) : OptBceApplyHit
   (let
-    [body-labels : OptLabelSet (__tl-project-field shape body-labels)]
-    [body-blocks : ir.CompilerIrBlockList
-      (compiler-opt-global-shared-view (__tl-project-field shape body-blocks))]
+    [body-labels : OptLabelSet (opt-bce-label-set-copy (& shape.body-labels))]
     (match (opt-bce-mb-guard-conds
       doms
       descriptor
       stable?
-      (& blocks)
-      (& shape)
+      blocks
+      shape
       defs
       cell)
-      [(No) (Result blocks frame false)]
+      [(No) (No)]
       [(Some guard-instrs guard-value keep facts precheck part-split)
         (let
           [remap : (__tl_dyn-array ir.CompilerIrValue)
@@ -86149,7 +85137,7 @@
           [_fill : unit (opt-unroll-remap-fill (&mut remap) 0)]
           [_alloc : unit
             (opt-bce-mb-alloc-defs!
-              (ir.compiler-ir-block-list-view body-blocks)
+              (ir.compiler-ir-block-list-view (& shape.body-blocks))
               (&mut remap)
               cell)]
           [enter-var : i64
@@ -86170,6 +85158,12 @@
                 (str_cat.str-cat
                   (ir.compiler-ir-label-text shape.header)
                   "__bce_guard")))]
+          [fast-label : i64
+            (ir.compiler-ir-label
+              (&
+                (str_cat.str-cat
+                  (ir.compiler-ir-label-text shape.header)
+                  "__bce_fast")))]
           (match part-split
             [(OptBceMbPartSplit.Some
                 phi-guard-instrs
@@ -86188,14 +85182,15 @@
                 [_pfill : unit (opt-unroll-remap-fill (&mut part-remap) 0)]
                 [_palloc : unit
                   (opt-bce-mb-alloc-defs!
-                    (ir.compiler-ir-block-list-view body-blocks)
+                    (ir.compiler-ir-block-list-view (& shape.body-blocks))
                     (&mut part-remap)
                     cell)]
                 [part-blocks : ir.CompilerIrBlockList
-                  (opt-blocks-build
-                    body-blocks
-                    opt-bce-mb-clone-blocks!
+                  (opt-bce-mb-clone-group
+                    (ir.compiler-ir-block-list-view (& shape.body-blocks))
                     (& part-remap)
+                    blocks
+                    (& shape.body-blocks)
                     body-labels
                     all-labels
                     true
@@ -86204,18 +85199,14 @@
                     (& facts)
                     (& keep))]
                 [full-facts : OptBceFoldFacts
-                  (OptBceFoldFacts
-                    full-conds
-                    facts.blocks
-                    facts.body-blocks
-                    facts.iphi
-                    full-counter-seen)]
-                [no-keep : OptBceMbKeep (OptBceMbKeep.Nil)]
+                  (OptBceFoldFacts full-conds facts.iphi full-counter-seen)]
+                [no-keep : OptBceMbKeep (opt-bce-mb-keep-empty)]
                 [fast-blocks : ir.CompilerIrBlockList
-                  (opt-blocks-build
-                    body-blocks
-                    opt-bce-mb-clone-blocks!
+                  (opt-bce-mb-clone-group
+                    (ir.compiler-ir-block-list-view (& shape.body-blocks))
                     (& remap)
+                    blocks
+                    (& shape.body-blocks)
                     body-labels
                     all-labels
                     false
@@ -86235,11 +85226,7 @@
                     phi-guard-label
                     (& phi-guard-instrs)
                     phi-guard-val
-                    (ir.compiler-ir-label
-                      (&
-                        (str_cat.str-cat
-                          (ir.compiler-ir-label-text shape.header)
-                          "__bce_fast")))
+                    fast-label
                     (ir.compiler-ir-label
                       (&
                         (str_cat.str-cat
@@ -86250,7 +85237,7 @@
                     phi-guard-block
                     part-blocks
                     part-remap)]
-                (Result
+                (Some
                   (opt-blocks-build
                     blocks
                     opt-bce-mb-rewrite-blocks!
@@ -86262,15 +85249,15 @@
                     enter-var
                     (& header-instrs)
                     (& split-emitted))
-                  (array-ref cell 0)
-                  true))]
+                  (array-ref cell 0)))]
             [(OptBceMbPartSplit.No)
               (let
                 [fast-blocks : ir.CompilerIrBlockList
-                  (opt-blocks-build
-                    body-blocks
-                    opt-bce-mb-clone-blocks!
+                  (opt-bce-mb-clone-group
+                    (ir.compiler-ir-block-list-view (& shape.body-blocks))
                     (& remap)
+                    blocks
+                    (& shape.body-blocks)
                     body-labels
                     all-labels
                     false
@@ -86283,14 +85270,10 @@
                     guard-label
                     (& guard-instrs)
                     guard-value
-                    (ir.compiler-ir-label
-                      (&
-                        (str_cat.str-cat
-                          (ir.compiler-ir-label-text shape.header)
-                          "__bce_fast")))
+                    fast-label
                     shape.header)]
                 [split-emitted : OptBceMbSplitEmitted (OptBceMbSplitEmitted.No)]
-                (Result
+                (Some
                   (opt-blocks-build
                     blocks
                     opt-bce-mb-rewrite-blocks!
@@ -86302,8 +85285,7 @@
                     enter-var
                     (& header-instrs)
                     (& split-emitted))
-                  (array-ref cell 0)
-                  true))]))])))
+                  (array-ref cell 0)))]))])))
 
 ;; Apply with a settled clone group: the loop's own blocks plus every stub the
 ;; wiring or the exit-phi widening pulled in. The escape test has already been
@@ -86315,79 +85297,73 @@
   [wired-blocks : (& ir.CompilerIrBlockList)]
   [shape : OptBceMbShape]
   [clone-labels : OptLabelSet]
-  [clone-blocks : (& ir.CompilerIrBlockList)]
+  [clone-blocks : ir.CompilerIrBlockList]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [frame : i64]) : OptUnrollResult
-  (opt-bce-mb-apply-wired
-    doms
-    descriptor
-    stable?
-    (owned_view.compiler-owned-reference-shared-view wired-blocks)
-    (OptBceMbShape
-      shape.header
-      shape.latch
-      shape.preheader
-      clone-labels
-      (owned_view.compiler-owned-reference-shared-view clone-blocks)
-      shape.iphi
-      shape.seed
-      shape.bound
-      shape.step
-      shape.delta
-      shape.wrap-step
-      shape.bound-offset
-      shape.uncovered
-      shape.inner
-      shape.region?
-      shape.counted?
-      shape.nested-entry?
-      shape.exact?
-      shape.interval?)
-    (&
-      (opt-bce-mb-collect-defs
-        (ir.compiler-ir-block-list-view clone-blocks)
-        (opt_i64_i64_map.with-capacity 64)))
-    cell
-    frame))
+  [frame : i64]) : OptBceApplyHit
+  (let
+    [group-shape : OptBceMbShape
+      (OptBceMbShape
+        shape.header
+        shape.latch
+        shape.preheader
+        clone-labels
+        clone-blocks
+        shape.iphi
+        shape.seed
+        shape.bound
+        shape.step
+        shape.delta
+        shape.wrap-step
+        shape.bound-offset
+        shape.uncovered
+        shape.inner
+        shape.region?
+        shape.counted?
+        shape.nested-entry?
+        shape.exact?
+        shape.interval?)]
+    (opt-bce-mb-apply-wired
+      doms
+      descriptor
+      stable?
+      wired-blocks
+      (& group-shape)
+      (&
+        (opt-bce-mb-collect-defs
+          (ir.compiler-ir-block-list-view (& group-shape.body-blocks))
+          (opt_i64_i64_map.with-capacity 64)))
+      cell
+      frame)))
 
-;; `blocks` is the function as the far-use repair left it; `original` is what
-;; the caller keeps when the attempt fails, so a repair that the wiring then
-;; refuses costs nothing.
+;; `blocks` is the function as the far-use repair left it; returning `(No)`
+;; leaves the caller's original function untouched.
 (define (opt-bce-mb-apply-repaired
   [doms : (& doms OptDomInfo)]
   [descriptor : (& descriptor OptBceMbDescriptor)]
   [pred-map : (& pred-map OptPredMap)]
-  [original : (& ir.CompilerIrBlockList)]
   [blocks : (& ir.CompilerIrBlockList)]
   [shape : OptBceMbShape]
   [cell : (&mut cell (__tl_dyn-array i64))]
-  [frame : i64]) : OptUnrollResult
+  [frame : i64]) : OptBceApplyHit
   (let
     [body-labels : OptLabelSet shape.body-labels]
-    [body-blocks : ir.CompilerIrBlockList
-      (compiler-opt-global-shared-view (__tl-project-field shape body-blocks))]
+    [body-view (ir.compiler-ir-block-list-view (& shape.body-blocks))]
     [defs : opt_i64_i64_map.Map
-      (opt-bce-mb-collect-defs
-        (ir.compiler-ir-block-list-view body-blocks)
-        (opt_i64_i64_map.with-capacity 64))]
+      (opt-bce-mb-collect-defs body-view (opt_i64_i64_map.with-capacity 64))]
     [outside : opt_i64_i64_map.Map
       (opt-bce-mb-outside-uses
         (opt_i64_i64_map.with-capacity 64)
         (ir.compiler-ir-block-list-view blocks)
         body-labels)]
-    (if (not
-      (opt-bce-mb-defs-escape?
-        (ir.compiler-ir-block-list-view body-blocks)
-        outside))
+    [stable? : bool (opt-bce-mb-stable-blocks? descriptor body-view)]
+    (if (not (opt-bce-mb-defs-escape? body-view outside))
       ;; No direct outside use: the original exit-phi-only scheme, unchanged.
       (opt-bce-mb-apply-wired
         doms
         descriptor
-        (opt-bce-mb-stable-blocks?
-          descriptor
-          (ir.compiler-ir-block-list-view body-blocks))
-        (owned_view.compiler-owned-reference-shared-view blocks)
-        shape
+        stable?
+        blocks
+        (& shape)
         (& defs)
         cell
         frame)
@@ -86396,15 +85372,11 @@
         blocks
         blocks
         body-labels
-        (& body-blocks)
-        (& (opt-bce-mb-body-defs (& body-blocks)))
+        (& shape.body-blocks)
+        (& (opt-bce-mb-body-defs (& shape.body-blocks)))
         cell
         (Nil))
-        [(No)
-          (opt-bce-trace-refuse-result
-            (opt-bce-reason-exit-wiring)
-            (owned_view.compiler-owned-reference-shared-view original)
-            frame)]
+        [(No) (opt-bce-trace-refuse-apply (opt-bce-reason-exit-wiring))]
         [(Some wired-blocks stub-labels)
           (let
             [stub-blocks : ir.CompilerIrBlockList
@@ -86415,30 +85387,28 @@
             [clone-labels : OptLabelSet
               (opt-bce-mb-labels-union stub-labels body-labels)]
             [clone-blocks : ir.CompilerIrBlockList
-              (opt-blocks-append (& body-blocks) (& stub-blocks))]
+              (opt-blocks-append (& shape.body-blocks) (& stub-blocks))]
             [clone-defs : opt_i64_i64_map.Map
               (opt-bce-mb-collect-defs
-                (ir.compiler-ir-block-list-view clone-blocks)
+                (ir.compiler-ir-block-list-view (& clone-blocks))
                 (opt_i64_i64_map.with-capacity 64))]
             [clone-outside : opt_i64_i64_map.Map
               (opt-bce-mb-outside-uses
                 (opt_i64_i64_map.with-capacity 64)
-                (ir.compiler-ir-block-list-view wired-blocks)
+                (ir.compiler-ir-block-list-view (& wired-blocks))
                 clone-labels)]
             (if (not
               (opt-bce-mb-defs-escape?
-                (ir.compiler-ir-block-list-view clone-blocks)
+                (ir.compiler-ir-block-list-view (& clone-blocks))
                 clone-outside))
               (opt-bce-mb-apply-group
                 doms
                 descriptor
-                (opt-bce-mb-stable-blocks?
-                  descriptor
-                  (ir.compiler-ir-block-list-view body-blocks))
+                stable?
                 (& wired-blocks)
                 shape
                 clone-labels
-                (& clone-blocks)
+                clone-blocks
                 cell
                 frame)
               ;; What is left may be nothing but a phi keyed on a jump-only
@@ -86447,22 +85417,15 @@
               ;; a def escaping any other way still keeps the rejection.
               (match (opt-bce-mb-phi-stub-labels
                 pred-map
-                (ir.compiler-ir-block-list-view wired-blocks)
-                wired-blocks
+                (ir.compiler-ir-block-list-view (& wired-blocks))
+                (& wired-blocks)
                 clone-labels
                 clone-defs
                 (Nil))
-                [(No)
-                  (opt-bce-trace-refuse-result
-                    (opt-bce-reason-defs-escape)
-                    (owned_view.compiler-owned-reference-shared-view original)
-                    frame)]
+                [(No) (opt-bce-trace-refuse-apply (opt-bce-reason-defs-escape))]
                 [(Some phi-stubs)
                   (if (= (opt-label-count phi-stubs) 0)
-                    (opt-bce-trace-refuse-result
-                      (opt-bce-reason-defs-escape)
-                      (owned_view.compiler-owned-reference-shared-view original)
-                      frame)
+                    (opt-bce-trace-refuse-apply (opt-bce-reason-defs-escape))
                     (let
                       [wide-labels : OptLabelSet
                         (opt-bce-mb-labels-union phi-stubs clone-labels)]
@@ -86477,26 +85440,21 @@
                       [wide-outside : opt_i64_i64_map.Map
                         (opt-bce-mb-outside-uses
                           (opt_i64_i64_map.with-capacity 64)
-                          (ir.compiler-ir-block-list-view wired-blocks)
+                          (ir.compiler-ir-block-list-view (& wired-blocks))
                           wide-labels)]
                       (if (opt-bce-mb-defs-escape?
-                        (ir.compiler-ir-block-list-view wide-blocks)
+                        (ir.compiler-ir-block-list-view (& wide-blocks))
                         wide-outside)
-                        (opt-bce-trace-refuse-result
-                          (opt-bce-reason-defs-escape)
-                          (owned_view.compiler-owned-reference-shared-view
-                            original)
-                          frame)
+                        (opt-bce-trace-refuse-apply
+                          (opt-bce-reason-defs-escape))
                         (opt-bce-mb-apply-group
                           doms
                           descriptor
-                          (opt-bce-mb-stable-blocks?
-                            descriptor
-                            (ir.compiler-ir-block-list-view body-blocks))
+                          stable?
                           (& wired-blocks)
                           shape
                           wide-labels
-                          (& wide-blocks)
+                          wide-blocks
                           cell
                           frame))))])))]))))
 
@@ -86506,7 +85464,7 @@
   [doms : (& doms OptDomInfo)]
   [blocks : (& ir.CompilerIrBlockList)]
   [shape : OptBceMbShape]
-  [frame : i64]) : OptUnrollResult
+  [frame : i64]) : OptBceApplyHit
   (let
     [cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [_cell : unit (set! (array-ref cell 0) frame)]
@@ -86514,21 +85472,16 @@
       pred-map
       doms
       blocks
-      (__tl-project-field shape header)
-      (__tl-project-field shape body-labels)
-      (& (__tl-project-field shape body-blocks))
+      shape.header
+      shape.body-labels
+      (& shape.body-blocks)
       (&mut cell))
-      [(No)
-        (opt-bce-trace-refuse-result
-          (opt-bce-reason-far-use)
-          (owned_view.compiler-owned-reference-shared-view blocks)
-          frame)]
+      [(No) (opt-bce-trace-refuse-apply (opt-bce-reason-far-use))]
       [(Same)
         (opt-bce-mb-apply-repaired
           doms
           descriptor
           pred-map
-          blocks
           blocks
           shape
           (&mut cell)
@@ -86538,7 +85491,6 @@
           doms
           descriptor
           pred-map
-          blocks
           (& repaired)
           shape
           (&mut cell)
@@ -86555,7 +85507,7 @@
   [descriptor : (& descriptor OptBceMbDescriptor)]
   [pred-map : (& pred-map OptPredMap)]
   [doms : (& doms OptDomInfo)]
-  [blocks : ir.CompilerIrBlockList]
+  [blocks : (& ir.CompilerIrBlockList)]
   [all-loops : (& all-loops opt_natural_loop_vec.Vec)]
   [loops : (& loops (Slice OptNaturalLoop))]
   [entry-label : i64]
@@ -86563,92 +85515,44 @@
   [regions-only? : bool]
   [free? : bool]
   [rejected : OptLabelSet]
-  [frame : i64]) : OptBceVersionScan
-  (match loops
-    [(slice) (Scan blocks frame false (ir.compiler-ir-label-none))]
-    [(slice loop & rest)
-      (if (opt-label-contains rejected (opt-natural-loop-header loop))
-        (opt-bce-mb-loops-scan
-          descriptor
-          pred-map
-          doms
-          blocks
-          all-loops
-          rest
-          entry-label
-          nested?
-          regions-only?
-          free?
-          rejected
-          frame)
-        (match (opt-bce-mb-loop-shape
-          (& blocks)
-          all-loops
-          entry-label
-          nested?
-          free?
-          loop)
-          [(Some shape)
-            (match (cond
-              ;; A REGIONS-ONLY phase offered a non-region candidate: the flat
-              ;; or the ordinary-nest phase owns this loop and reports it, so
-              ;; this step examined nothing.
-              ;; The address-taken gate refuses a tainted loop (#9420).
-              [(or
-                  (and regions-only? (not shape.region?))
-                  (opt-loop-tainted?
-                    (& blocks)
-                    (opt-label-add shape.body-labels shape.header)))
-                (opt-bce-trace-refuse-result
-                  (if (and regions-only? (not shape.region?))
-                    (opt-bce-reason-none)
-                    (opt-bce-reason-addr-taken))
-                  (compiler-opt-global-shared-view blocks)
-                  frame)]
-              [else
-                (opt-bce-mb-apply
-                  descriptor
-                  pred-map
-                  doms
-                  (& blocks)
-                  (compiler-opt-global-shared-view shape)
-                  frame)])
-              [(Result next-blocks next-frame changed)
-                (if changed
-                  (begin
-                    (opt-bce-trace-note! (opt-bce-reason-ok))
-                    (opt-bce-trace-mb-loop! loop true)
-                    (Scan next-blocks next-frame true shape.header))
-                  (begin
-                    (opt-bce-trace-mb-loop! loop false)
-                    (opt-bce-mb-loops-scan
-                      descriptor
-                      pred-map
-                      doms
-                      blocks
-                      all-loops
-                      rest
-                      entry-label
-                      nested?
-                      regions-only?
-                      free?
-                      rejected
-                      frame)))])]
-          [(No)
-            (opt-bce-trace-mb-loop! loop false)
-            (opt-bce-mb-loops-scan
-              descriptor
-              pred-map
-              doms
-              blocks
-              all-loops
-              rest
-              entry-label
-              nested?
-              regions-only?
-              free?
-              rejected
-              frame)]))]))
+  [frame : i64]) : OptBceScanHit
+  (for [li (iterator.range 0 (array-length loops))]
+    (unless
+      (opt-label-contains
+        rejected
+        (opt-natural-loop-header (& (array-ref loops li))))
+      (match (opt-bce-mb-loop-shape
+        blocks
+        all-loops
+        entry-label
+        nested?
+        free?
+        (& (array-ref loops li)))
+        [(Some shape)
+          (let
+            [header : i64 shape.header]
+            [hit : OptBceApplyHit
+              (cond
+                ;; A REGIONS-ONLY phase offered a non-region candidate: the flat
+                ;; or the ordinary-nest phase owns this loop and reports it, so
+                ;; this step examined nothing.
+                ;; The address-taken gate refuses a tainted loop (#9420).
+                [(and regions-only? (not shape.region?))
+                  (opt-bce-trace-refuse-apply (opt-bce-reason-none))]
+                [(opt-loop-tainted?
+                    blocks
+                    (opt-label-add shape.body-labels header))
+                  (opt-bce-trace-refuse-apply (opt-bce-reason-addr-taken))]
+                [else
+                  (opt-bce-mb-apply descriptor pred-map doms blocks shape frame)])]
+            (match hit
+              [(Some next-blocks next-frame)
+                (opt-bce-trace-note! (opt-bce-reason-ok))
+                (opt-bce-trace-mb-loop! (& (array-ref loops li)) true)
+                (return (Some next-blocks next-frame header))]
+              [(No) (opt-bce-trace-mb-loop! (& (array-ref loops li)) false)]))]
+        [(No) (opt-bce-trace-mb-loop! (& (array-ref loops li)) false)])))
+  (No))
 
 ;; Flat loops first, then REGIONS, then ordinary loop NESTS. Every phase
 ;; versions the same way (the clone group is the natural loop's whole block set,
@@ -86694,33 +85598,6 @@
 (define (opt-bce-mb-scan-phase-free? [phase : i64]) : bool
   (>= phase 3))
 
-(define (opt-bce-mb-loops-scan-phased-from
-  [descriptor : (& OptBceMbDescriptor)]
-  [pred-map : (& pred-map OptPredMap)]
-  [doms : (& doms OptDomInfo)]
-  [blocks : ir.CompilerIrBlockList]
-  [all-loops : (& opt_natural_loop_vec.Vec)]
-  [entry-label : i64]
-  [rejected : OptLabelSet]
-  [frame : i64]) : OptBceVersionScan
-  (for [phase (iterator.range 0 (opt-bce-mb-scan-phase-count))]
-    (match (opt-bce-mb-loops-scan
-      descriptor
-      pred-map
-      doms
-      (compiler-opt-global-shared-view blocks)
-      all-loops
-      (opt_natural_loop_vec.view (deref all-loops))
-      entry-label
-      (opt-bce-mb-scan-phase-nested? phase)
-      (opt-bce-mb-scan-phase-regions-only? phase)
-      (opt-bce-mb-scan-phase-free? phase)
-      rejected
-      frame)
-      [(Scan next-blocks next-frame changed applied)
-        (when changed (return (Scan next-blocks next-frame true applied)))]))
-  (Scan blocks frame false (ir.compiler-ir-label-none)))
-
 (define (opt-bce-mb-loops-scan-phased
   [descriptor : (& OptBceMbDescriptor)]
   [pred-map : (& pred-map OptPredMap)]
@@ -86729,16 +85606,25 @@
   [all-loops : (& opt_natural_loop_vec.Vec)]
   [entry-label : i64]
   [rejected : OptLabelSet]
-  [frame : i64]) : OptBceVersionScan
-  (opt-bce-mb-loops-scan-phased-from
-    descriptor
-    pred-map
-    doms
-    (owned_view.compiler-owned-reference-shared-view blocks)
-    all-loops
-    entry-label
-    rejected
-    frame))
+  [frame : i64]) : OptBceScanHit
+  (for [phase (iterator.range 0 (opt-bce-mb-scan-phase-count))]
+    (match (opt-bce-mb-loops-scan
+      descriptor
+      pred-map
+      doms
+      blocks
+      all-loops
+      (opt_natural_loop_vec.view all-loops)
+      entry-label
+      (opt-bce-mb-scan-phase-nested? phase)
+      (opt-bce-mb-scan-phase-regions-only? phase)
+      (opt-bce-mb-scan-phase-free? phase)
+      rejected
+      frame)
+      [(Some next-blocks next-frame applied)
+        (return (Some next-blocks next-frame applied))]
+      [(No) unit]))
+  (No))
 
 ;; --- prescan ---------------------------------------------------------------------
 (define (opt-bce-mb-blocks-have-check?
@@ -87508,27 +86394,19 @@
 (define (opt-bce-tighten-frame [base : i64] [count : i64]) : i64
   (+ base (+ (* count 2) 2)))
 
-(define (opt-bce-hoist-seq1 [a : (& ir.CompilerIrInstr)]) : ir.CompilerIrInstrSeq
+(define (opt-bce-hoist-seq1 [a : ir.CompilerIrInstr]) : ir.CompilerIrInstrSeq
   (let
     [builder : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity 1)]
-    (ir.compiler-ir-instr-builder-push!
-      (&mut builder)
-      (owned_view.compiler-owned-reference-shared-view a))
+    (ir.compiler-ir-instr-builder-push! (&mut builder) a)
     (ir.compiler-ir-instr-builder-to-seq builder)))
 
-(define (opt-bce-hoist-seq2
-  [a : (& ir.CompilerIrInstr)]
-  [b : (& ir.CompilerIrInstr)]) : ir.CompilerIrInstrSeq
+(define (opt-bce-hoist-seq2 [a : ir.CompilerIrInstr] [b : ir.CompilerIrInstr]) : ir.CompilerIrInstrSeq
   (let
     [builder : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity 2)]
-    (ir.compiler-ir-instr-builder-push!
-      (&mut builder)
-      (owned_view.compiler-owned-reference-shared-view a))
-    (ir.compiler-ir-instr-builder-push!
-      (&mut builder)
-      (owned_view.compiler-owned-reference-shared-view b))
+    (ir.compiler-ir-instr-builder-push! (&mut builder) a)
+    (ir.compiler-ir-instr-builder-push! (&mut builder) b)
     (ir.compiler-ir-instr-builder-to-seq builder)))
 
 ;; The `min(cur, len_k)` chain, three blocks per length: a compare block, the
@@ -87537,73 +86415,64 @@
 (define (opt-bce-tighten-min-blocks!
   [out : (&mut out ir.CompilerIrBlockBuilder)]
   [checks : (& ir.CompilerIrInstrSeq)]
-  [step : i64]
   [count : i64]
   [header : i64]
   [base : i64]
-  [cur : (& ir.CompilerIrValue)]
+  [init-cur : (& ir.CompilerIrValue)]
   [ty : (& ast.AstType)]) : unit
-  (if (>= step count)
-    unit
-    (let
-      [length : ir.CompilerIrValue
-        (match (ir.compiler-ir-instr-seq-ref checks step)
-          [(BoundsCheck _ len _) len]
-          [_ (I64 0)])]
-      [min-label : i64 (opt-bce-tighten-step-label header "__pred_min." step)]
-      [hi-label : i64 (opt-bce-tighten-step-label header "__pred_hi." step)]
-      [join-label : i64 (opt-bce-tighten-step-label header "__pred_join." step)]
-      [next-label : i64
-        (if (>= (+ step 1) count)
-          header
-          (opt-bce-tighten-step-label header "__pred_min." (+ step 1)))]
-      [cond-var : i64 (opt-bce-tighten-cond-var base step)]
-      [join-var : i64 (opt-bce-tighten-join-var base step)]
-      (ir.compiler-ir-block-builder-push!
-        out
-        (ir.CompilerIrBlock.Block
-          min-label
-          (opt-bce-hoist-seq2
-            (&
+  (let
+    [cur : ir.CompilerIrValue (ir.compiler-ir-clone-value init-cur)]
+    (for [step (iterator.range 0 count)]
+      (let
+        [length : ir.CompilerIrValue
+          (match (ir.compiler-ir-instr-seq-ref checks step)
+            [(BoundsCheck _ len _) len]
+            [_ (I64 0)])]
+        [min-label : i64 (opt-bce-tighten-step-label header "__pred_min." step)]
+        [hi-label : i64 (opt-bce-tighten-step-label header "__pred_hi." step)]
+        [join-label : i64
+          (opt-bce-tighten-step-label header "__pred_join." step)]
+        [next-label : i64
+          (if (>= (+ step 1) count)
+            header
+            (opt-bce-tighten-step-label header "__pred_min." (+ step 1)))]
+        [cond-var : i64 (opt-bce-tighten-cond-var base step)]
+        [join-var : i64 (opt-bce-tighten-join-var base step)]
+        (ir.compiler-ir-block-builder-push!
+          out
+          (ir.CompilerIrBlock.Block
+            min-label
+            (opt-bce-hoist-seq2
               (BinOp
                 cond-var
                 (Lt)
-                (owned_view.compiler-owned-reference-shared-view cur)
-                (compiler-opt-global-shared-view length)
-                (owned_view.compiler-owned-reference-shared-view ty)))
-            (& (Branch (Var cond-var) join-label hi-label)))))
-      (ir.compiler-ir-block-builder-push!
-        out
-        (ir.CompilerIrBlock.Block
-          hi-label
-          (opt-bce-hoist-seq1 (& (Jump join-label)))))
-      (ir.compiler-ir-block-builder-push!
-        out
-        (ir.CompilerIrBlock.Block
-          join-label
-          (opt-bce-hoist-seq2
-            (&
+                (ir.compiler-ir-clone-value (& cur))
+                (ir.compiler-ir-clone-value (& length))
+                (ast.ty-node-persist ty))
+              (Branch (Var cond-var) join-label hi-label))))
+        (ir.compiler-ir-block-builder-push!
+          out
+          (ir.CompilerIrBlock.Block
+            hi-label
+            (opt-bce-hoist-seq1 (Jump join-label))))
+        (ir.compiler-ir-block-builder-push!
+          out
+          (ir.CompilerIrBlock.Block
+            join-label
+            (opt-bce-hoist-seq2
               (Phi
                 join-var
                 (ir.compiler-ir-phi-input-seq-prepend
-                  (owned_view.compiler-owned-reference-shared-view cur)
+                  cur
                   min-label
                   (&
                     (ir.compiler-ir-phi-input-seq-prepend
                       length
                       hi-label
                       (& (ir.compiler-ir-phi-input-seq-empty)))))
-                (owned_view.compiler-owned-reference-shared-view ty)))
-            (& (Jump next-label)))))
-      (opt-bce-tighten-min-blocks!
-        out
-        checks
-        (+ step 1)
-        count
-        header
-        base
-        (& (Var join-var))
-        ty))))
+                (ast.ty-node-persist ty))
+              (Jump next-label))))
+        (set! cur (Var join-var))))))
 
 ;; The preheader, with the first-iteration checks appended and its jump aimed at
 ;; the min chain.
@@ -87669,28 +86538,34 @@
 ;; blocks, with the same value: the split changed which block branches into the
 ;; exit, not what reaches it.
 (define (opt-bce-tighten-split-phi-inputs
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& ir.CompilerIrPhiInputSeq)]
   [latch : i64]
   [exit-pred : i64]
   [abort-pred : i64]) : ir.CompilerIrPhiInputSeq
   (let
-    [seq : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= seq.len 0)
-      (ir.compiler-ir-phi-input-seq-empty)
-      (let
-        [head (ir.compiler-ir-phi-input-seq-ref seq 0)]
-        [value : ir.CompilerIrValue head.value]
-        [label : i64 head.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq seq.slots (+ seq.start 1) (- seq.len 1))]
-        [tail : ir.CompilerIrPhiInputSeq
-          (opt-bce-tighten-split-phi-inputs rest latch exit-pred abort-pred)]
-        (if (= label latch)
-          (ir.compiler-ir-phi-input-seq-prepend
-            (compiler-opt-global-shared-view value)
-            exit-pred
-            (& (ir.compiler-ir-phi-input-seq-prepend value abort-pred (& tail))))
-          (ir.compiler-ir-phi-input-seq-prepend value label (& tail)))))))
+    [builder : ir.CompilerIrPhiInputBuilder
+      (ir.compiler-ir-phi-input-builder-with-capacity (+ inputs.len 1))]
+    (for [i (iterator.range 0 inputs.len)]
+      (match (ir.compiler-ir-phi-input-seq-borrow inputs i)
+        [(CompilerIrPhiInput value label)
+          (if (= label latch)
+            (begin
+              (ir.compiler-ir-phi-input-builder-push!
+                (&mut builder)
+                (ir.CompilerIrPhiInput
+                  (ir.compiler-ir-clone-value (& value))
+                  exit-pred))
+              (ir.compiler-ir-phi-input-builder-push!
+                (&mut builder)
+                (ir.CompilerIrPhiInput
+                  (ir.compiler-ir-clone-value (& value))
+                  abort-pred)))
+            (ir.compiler-ir-phi-input-builder-push!
+              (&mut builder)
+              (ir.CompilerIrPhiInput
+                (ir.compiler-ir-clone-value (& value))
+                label)))]))
+    (ir.compiler-ir-phi-input-builder-to-seq builder)))
 
 (define (opt-bce-tighten-exit-instrs
   [instrs : (& ir.CompilerIrInstrSeq)]
@@ -87702,21 +86577,19 @@
     [builder : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity count)]
     (for [next (iterator.range 0 count)]
-      (let
-        [instr (ir.compiler-ir-instr-seq-ref instrs next)]
-        (ir.compiler-ir-instr-builder-push!
-          (&mut builder)
-          (match (compiler-opt-global-shared-view instr)
-            [(Phi dst inputs ty)
-              (ir.CompilerIrInstr.Phi
-                dst
-                (opt-bce-tighten-split-phi-inputs
-                  inputs
-                  latch
-                  exit-pred
-                  abort-pred)
-                ty)]
-            [_ instr]))))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (match (ir.compiler-ir-instr-seq-borrow instrs next)
+          [(Phi dst inputs ty)
+            (ir.CompilerIrInstr.Phi
+              dst
+              (opt-bce-tighten-split-phi-inputs
+                (& inputs)
+                latch
+                exit-pred
+                abort-pred)
+              (ast.ty-node-persist (& ty)))]
+          [_ (ir.compiler-ir-instr-seq-ref instrs next)])))
     (ir.compiler-ir-instr-builder-to-seq builder)))
 
 (defstruct OptBceTightenEdit
@@ -87738,121 +86611,97 @@
 (define (opt-bce-tighten-rewrite-blocks!
   [out : (&mut out ir.CompilerIrBlockBuilder)]
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
-  [edit : OptBceTightenEdit]) : unit
-  (match blocks
-    [(slice) unit]
-    [(slice block & rest)
-      (match block
-        [(Block label instrs)
-          (cond
-            [(= label edit.preheader)
-              (ir.compiler-ir-block-builder-push!
-                out
-                (ir.CompilerIrBlock.Block
-                  label
-                  (opt-bce-splice-instrs
-                    (& instrs)
-                    (&
-                      (opt-bce-tighten-checks-at
-                        edit.checks
-                        (& edit.seed)
-                        false))
-                    (opt-bce-tighten-step-label edit.header "__pred_min." 0))))
-              (opt-bce-tighten-min-blocks!
-                out
-                (& edit.checks)
-                0
-                edit.count
-                edit.header
-                edit.base
-                (& edit.limit)
-                (& edit.ty))
-              (opt-bce-tighten-rewrite-blocks!
-                out
-                rest
-                (compiler-opt-global-shared-view edit))]
-            [(= label edit.header)
-              (ir.compiler-ir-block-builder-push!
-                out
-                (ir.CompilerIrBlock.Block
-                  label
-                  (opt-relabel-phi-instrs
-                    (& (opt-bce-hoist-drop-instrs (& instrs) edit.drop))
-                    0
-                    edit.preheader
-                    (opt-bce-tighten-step-label
-                      edit.header
-                      "__pred_join."
-                      (- edit.count 1)))))
-              (opt-bce-tighten-rewrite-blocks!
-                out
-                rest
-                (compiler-opt-global-shared-view edit))]
-            [(= label edit.latch)
-              (ir.compiler-ir-block-builder-push!
-                out
-                (ir.CompilerIrBlock.Block
-                  label
-                  (opt-bce-tighten-latch-instrs
-                    (& instrs)
+  [edit : (& OptBceTightenEdit)]) : unit
+  (for [bi (iterator.range 0 (array-length blocks))]
+    (match (& (array-ref blocks bi))
+      [(Block label instrs)
+        (cond
+          [(= label edit.preheader)
+            (ir.compiler-ir-block-builder-push!
+              out
+              (ir.CompilerIrBlock.Block
+                label
+                (opt-bce-splice-instrs
+                  (& instrs)
+                  (&
+                    (opt-bce-tighten-checks-at
+                      (& edit.checks)
+                      (& edit.seed)
+                      false))
+                  (opt-bce-tighten-step-label edit.header "__pred_min." 0))))
+            (opt-bce-tighten-min-blocks!
+              out
+              (& edit.checks)
+              edit.count
+              edit.header
+              edit.base
+              (& edit.limit)
+              (& edit.ty))]
+          [(= label edit.header)
+            (ir.compiler-ir-block-builder-push!
+              out
+              (ir.CompilerIrBlock.Block
+                label
+                (opt-relabel-phi-instrs
+                  (& (opt-bce-hoist-drop-instrs (& instrs) (& edit.drop)))
+                  0
+                  edit.preheader
+                  (opt-bce-tighten-step-label
                     edit.header
-                    (opt-bce-tighten-label edit.header "__pred_exit")
-                    (compiler-opt-global-shared-view edit.inext)
-                    (Var (opt-bce-tighten-join-var edit.base (- edit.count 1)))
-                    (compiler-opt-global-shared-view edit.ty)
-                    edit.old-cond
-                    (opt-bce-tighten-latch-var edit.base edit.count))))
-              (ir.compiler-ir-block-builder-push!
-                out
-                (ir.CompilerIrBlock.Block
+                    "__pred_join."
+                    (- edit.count 1)))))]
+          [(= label edit.latch)
+            (ir.compiler-ir-block-builder-push!
+              out
+              (ir.CompilerIrBlock.Block
+                label
+                (opt-bce-tighten-latch-instrs
+                  (& instrs)
+                  edit.header
                   (opt-bce-tighten-label edit.header "__pred_exit")
-                  (opt-bce-hoist-seq2
-                    (&
-                      (BinOp
-                        (opt-bce-tighten-exit-var edit.base edit.count)
-                        (Lt)
-                        (compiler-opt-global-shared-view edit.inext)
-                        edit.limit
-                        edit.ty))
-                    (&
-                      (Branch
-                        (Var (opt-bce-tighten-exit-var edit.base edit.count))
-                        (opt-bce-tighten-label edit.header "__pred_abort")
-                        edit.exit-label)))))
-              (ir.compiler-ir-block-builder-push!
-                out
-                (ir.CompilerIrBlock.Block
-                  (opt-bce-tighten-label edit.header "__pred_abort")
-                  (opt-bce-tighten-abort-instrs
-                    (& edit.checks)
-                    (& edit.inext)
-                    edit.exit-label)))
-              (opt-bce-tighten-rewrite-blocks!
-                out
-                rest
-                (compiler-opt-global-shared-view edit))]
-            [(= label edit.exit-label)
-              (ir.compiler-ir-block-builder-push!
-                out
-                (ir.CompilerIrBlock.Block
-                  label
-                  (opt-bce-tighten-exit-instrs
-                    (& instrs)
-                    edit.latch
-                    (opt-bce-tighten-label edit.header "__pred_exit")
-                    (opt-bce-tighten-label edit.header "__pred_abort"))))
-              (opt-bce-tighten-rewrite-blocks!
-                out
-                rest
-                (compiler-opt-global-shared-view edit))]
-            [else
-              (ir.compiler-ir-block-builder-push!
-                out
-                (owned_view.compiler-owned-reference-shared-view block))
-              (opt-bce-tighten-rewrite-blocks!
-                out
-                rest
-                (compiler-opt-global-shared-view edit))])])]))
+                  (ir.compiler-ir-clone-value (& edit.inext))
+                  (Var (opt-bce-tighten-join-var edit.base (- edit.count 1)))
+                  (ast.ty-node-persist (& edit.ty))
+                  edit.old-cond
+                  (opt-bce-tighten-latch-var edit.base edit.count))))
+            (ir.compiler-ir-block-builder-push!
+              out
+              (ir.CompilerIrBlock.Block
+                (opt-bce-tighten-label edit.header "__pred_exit")
+                (opt-bce-hoist-seq2
+                  (BinOp
+                    (opt-bce-tighten-exit-var edit.base edit.count)
+                    (Lt)
+                    (ir.compiler-ir-clone-value (& edit.inext))
+                    (ir.compiler-ir-clone-value (& edit.limit))
+                    (ast.ty-node-persist (& edit.ty)))
+                  (Branch
+                    (Var (opt-bce-tighten-exit-var edit.base edit.count))
+                    (opt-bce-tighten-label edit.header "__pred_abort")
+                    edit.exit-label))))
+            (ir.compiler-ir-block-builder-push!
+              out
+              (ir.CompilerIrBlock.Block
+                (opt-bce-tighten-label edit.header "__pred_abort")
+                (opt-bce-tighten-abort-instrs
+                  (& edit.checks)
+                  (& edit.inext)
+                  edit.exit-label)))]
+          [(= label edit.exit-label)
+            (ir.compiler-ir-block-builder-push!
+              out
+              (ir.CompilerIrBlock.Block
+                label
+                (opt-bce-tighten-exit-instrs
+                  (& instrs)
+                  edit.latch
+                  (opt-bce-tighten-label edit.header "__pred_exit")
+                  (opt-bce-tighten-label edit.header "__pred_abort"))))]
+          [else
+            (ir.compiler-ir-block-builder-push!
+              out
+              (owned_view.compiler-owned-reference-shared-view
+                (& (array-ref blocks bi))))])])))
 
 (define (opt-bce-tighten-latch-of
   [blocks : (& blocks ir.CompilerIrBlockList)]
@@ -87993,60 +86842,58 @@
                                         (opt-blocks-build
                                           blocks
                                           opt-bce-tighten-rewrite-blocks!
-                                          (OptBceTightenEdit
-                                            header
-                                            preheader
-                                            latch
-                                            exit-label
-                                            (ir.compiler-ir-instr-builder-to-seq
-                                              builder)
-                                            drop
-                                            removed
-                                            frame
-                                            cond-var
-                                            seed
-                                            inext
-                                            limit
-                                            ty))
+                                          (&
+                                            (OptBceTightenEdit
+                                              header
+                                              preheader
+                                              latch
+                                              exit-label
+                                              (ir.compiler-ir-instr-builder-to-seq
+                                                builder)
+                                              drop
+                                              removed
+                                              frame
+                                              cond-var
+                                              seed
+                                              inext
+                                              limit
+                                              ty)))
                                         (opt-bce-tighten-frame frame removed))))]))])])]))])))]))
-
-(defenum OptBceHoistScan
-  (Scan ir.CompilerIrBlockList i64 bool i64))
 
 ;; One loop at a time, MOVE first and TIGHTEN second: a check the move reaches
 ;; costs nothing at all, so the restructuring form is only ever offered what the
 ;; move left behind.
 (define (opt-bce-hoist-loops-scan
-  [blocks : ir.CompilerIrBlockList]
+  [blocks : (& ir.CompilerIrBlockList)]
   [all-loops : (& opt_natural_loop_vec.Vec)]
   [loops : (& loops (Slice OptNaturalLoop))]
   [rejected : OptLabelSet]
-  [frame : i64]) : OptBceHoistScan
-  (match loops
-    [(slice) (Scan blocks frame false (ir.compiler-ir-label-none))]
-    [(slice loop & rest)
-      (let
-        [header : i64 (opt-natural-loop-header loop)]
-        ;; The address-taken gate covers both rewriters below, the hoist and
-        ;; the bound tightening, before either runs (#9420).
-        (if (or
-          (opt-label-contains rejected header)
-          (opt-loop-tainted?
-            (& blocks)
-            (opt-label-add (opt-natural-loop-body loop) header)))
-          (opt-bce-hoist-loops-scan blocks all-loops rest rejected frame)
-          (match (opt-bce-hoist-loop blocks loop frame)
-            [(Some next next-frame) (Scan next next-frame true header)]
-            [(No)
-              (match (opt-bce-tighten-loop blocks all-loops loop frame)
-                [(Some next next-frame) (Scan next next-frame true header)]
-                [(No)
-                  (opt-bce-hoist-loops-scan
-                    blocks
-                    all-loops
-                    rest
-                    rejected
-                    frame)])])))]))
+  [frame : i64]) : OptBceScanHit
+  (for [i (iterator.range 0 (array-length loops))]
+    (let
+      [header : i64 (opt-natural-loop-header (& (array-ref loops i)))]
+      ;; The address-taken gate covers both rewriters below, the hoist and
+      ;; the bound tightening, before either runs (#9420).
+      (when
+        (and
+          (not (opt-label-contains rejected header))
+          (not
+            (opt-loop-tainted?
+              blocks
+              (opt-label-add
+                (opt-natural-loop-body (& (array-ref loops i)))
+                header))))
+        (match (opt-bce-hoist-loop blocks (& (array-ref loops i)) frame)
+          [(Some next next-frame) (return (Some next next-frame header))]
+          [(No)
+            (match (opt-bce-tighten-loop
+              blocks
+              all-loops
+              (& (array-ref loops i))
+              frame)
+              [(Some next next-frame) (return (Some next next-frame header))]
+              [(No) unit])]))))
+  (No))
 
 ;; Budgeted application, like the versioner's: one loop per round, each rewrite
 ;; verified on its own, a refused loop retired for the rest of the invocation.
@@ -88065,43 +86912,43 @@
               (compiler-opt-global-shared-view blocks)
               context)]
           (opt-bce-hoist-loops-scan
-            (compiler-opt-global-shared-view blocks)
+            (& blocks)
             (& natural-loops)
             (opt_natural_loop_vec.view natural-loops)
             rejected
             frame))
-          [(Scan next-blocks next-frame changed applied)
-            (if (not changed)
-              (Result func context)
-              (let
-                [next : ir.CompilerIrFunction
-                  (Function
-                    name
-                    params
-                    ret-ty
-                    next-frame
-                    (compiler-opt-global-shared-view next-blocks)
-                    function-abi)]
-                [next-context : OptCfgContext
-                  (opt-cfg-context-build next-blocks)]
-                (match (opt-bce-version-apply-verdict
-                  "bce_hoist"
-                  (ir.compiler-ir-label-none)
-                  applied
-                  (& next)
-                  next-context)
-                  [(Ok)
-                    (opt-bce-hoist-function-budget-result
-                      next-context
-                      next
-                      (- budget 1)
-                      rejected)]
-                  [(Err _)
-                    (opt-bce-hoist-function-budget-result
-                      context
-                      func
-                      budget
-                      (opt-label-add rejected applied))])))])])))
+          [(No) (Result func context)]
+          [(Some next-blocks next-frame applied)
+            (let
+              [next-context : OptCfgContext
+                (opt-cfg-context-build
+                  (compiler-opt-global-shared-view next-blocks))]
+              [next : ir.CompilerIrFunction
+                (Function
+                  name
+                  params
+                  ret-ty
+                  next-frame
+                  next-blocks
+                  function-abi)]
+              (match (opt-bce-version-apply-verdict
+                "bce_hoist"
+                (ir.compiler-ir-label-none)
+                applied
+                (& next)
+                next-context)
+                [(Ok)
+                  (opt-bce-hoist-function-budget-result
+                    next-context
+                    next
+                    (- budget 1)
+                    rejected)]
+                [(Err _)
+                  (opt-bce-hoist-function-budget-result
+                    context
+                    func
+                    budget
+                    (opt-label-add rejected applied))]))])])))
 
 ;; The budgeted driver's post-application verdict. `reject-probe` is
 ;; `ir.compiler-ir-label-none` on every production path and no real label
@@ -88152,37 +86999,135 @@
   [reject-probe : i64]
   [multi? : bool]) : OptFunctionCtxResult
   (if (and (not multi?) (> single-budget 0))
-    (match (compiler-opt-global-shared-view func)
-      [(Function name params ret-ty frame blocks function-abi)
-        (let
-          [_trace : unit (opt-bce-trace-function! name)]
-          (match (opt-bce-version-blocks-scan
+    (let
+      [hit : OptBceScanHit
+        (match (& func)
+          [(Function name _ _ frame blocks _)
+            (opt-bce-trace-function! name)
+            (opt-bce-version-blocks-scan
+              type-segment-bases
+              len-eq
+              (& blocks)
+              (ir.compiler-ir-block-list-view (& blocks))
+              (opt-cfg-entry-label (& blocks))
+              rejected
+              frame)])]
+      (match hit
+        [(Some next-blocks next-frame applied)
+          (match (compiler-opt-global-shared-view func)
+            [(Function name params ret-ty _ _ function-abi)
+              (let
+                [next-context : OptCfgContext
+                  (opt-cfg-context-build
+                    (compiler-opt-global-shared-view next-blocks))]
+                [next : ir.CompilerIrFunction
+                  (Function
+                    name
+                    params
+                    ret-ty
+                    next-frame
+                    next-blocks
+                    function-abi)]
+                (match (opt-bce-version-apply-verdict
+                  "bce_version"
+                  reject-probe
+                  applied
+                  (& next)
+                  (& next-context))
+                  [(Ok)
+                    (opt-bce-function-budget-result
+                      type-segment-bases
+                      direct-call-clean
+                      len-eq
+                      next-context
+                      next
+                      (- single-budget 1)
+                      mb-budget
+                      rejected
+                      reject-probe
+                      false)]
+                  [(Err _)
+                    (opt-bce-trace-verify-rejected! applied)
+                    (opt-bce-function-budget-result
+                      type-segment-bases
+                      direct-call-clean
+                      len-eq
+                      context
+                      func
+                      single-budget
+                      mb-budget
+                      (opt-label-add rejected applied)
+                      reject-probe
+                      false)]))])]
+        [(No)
+          ;; no single-block self-loop matched: try multi-block counted
+          ;; loops over the natural-loop back edges.
+          (opt-bce-function-budget-result
             type-segment-bases
+            direct-call-clean
             len-eq
-            (compiler-opt-global-shared-view blocks)
-            (ir.compiler-ir-block-list-view blocks)
-            (opt-cfg-entry-label blocks)
+            context
+            func
+            single-budget
+            mb-budget
             rejected
-            frame)
-            [(Scan next-blocks next-frame changed applied)
-              (if changed
+            reject-probe
+            true)]))
+    (if (<= mb-budget 0)
+      (Result func context)
+      (let
+        [hit : OptBceScanHit
+          (match (& func)
+            [(Function name params _ frame blocks _)
+              (opt-bce-trace-function! name)
+              (let
+                [loops : opt_natural_loop_vec.Vec
+                  (opt-cfg-natural-loops-with-context
+                    (owned_view.compiler-owned-reference-shared-view (& blocks))
+                    (& context))]
+                [descriptor : OptBceMbDescriptor
+                  (if (< type-segment-bases 0)
+                    (No)
+                    (Some
+                      type-segment-bases
+                      (opt-load-header-set-from-function
+                        type-segment-bases
+                        (& params)
+                        (& blocks))
+                      (owned_view.compiler-owned-reference-shared-view
+                        direct-call-clean)
+                      (owned_view.compiler-owned-reference-shared-view len-eq)))]
+                (opt-bce-mb-loops-scan-phased
+                  (& descriptor)
+                  (& context.pred-map)
+                  (& context.doms)
+                  (& blocks)
+                  (& loops)
+                  (opt-cfg-entry-label (& blocks))
+                  rejected
+                  frame))])]
+        (match hit
+          [(Some mb-blocks mb-frame mb-applied)
+            (match (compiler-opt-global-shared-view func)
+              [(Function name params ret-ty _ _ function-abi)
                 (let
+                  [next-context : OptCfgContext
+                    (opt-cfg-context-build
+                      (compiler-opt-global-shared-view mb-blocks))]
                   [next : ir.CompilerIrFunction
                     (Function
                       name
                       params
                       ret-ty
-                      next-frame
-                      (compiler-opt-global-shared-view next-blocks)
+                      mb-frame
+                      mb-blocks
                       function-abi)]
-                  [next-context : OptCfgContext
-                    (opt-cfg-context-build next-blocks)]
                   (match (opt-bce-version-apply-verdict
                     "bce_version"
                     reject-probe
-                    applied
+                    mb-applied
                     (& next)
-                    next-context)
+                    (& next-context))
                     [(Ok)
                       (opt-bce-function-budget-result
                         type-segment-bases
@@ -88190,16 +87135,13 @@
                         len-eq
                         next-context
                         next
-                        (- single-budget 1)
-                        mb-budget
+                        single-budget
+                        (- mb-budget 1)
                         rejected
                         reject-probe
                         false)]
                     [(Err _)
-                      ;; Last verified state, minus this one loop: the scan
-                      ;; skips `applied` from here on and offers the next
-                      ;; candidate against the same budget.
-                      (opt-bce-trace-verify-rejected! applied)
+                      (opt-bce-trace-verify-rejected! mb-applied)
                       (opt-bce-function-budget-result
                         type-segment-bases
                         direct-call-clean
@@ -88208,108 +87150,10 @@
                         func
                         single-budget
                         mb-budget
-                        (opt-label-add rejected applied)
+                        (opt-label-add rejected mb-applied)
                         reject-probe
-                        false)]))
-                ;; no single-block self-loop matched: try multi-block counted
-                ;; loops over the natural-loop back edges.
-                (opt-bce-function-budget-result
-                  type-segment-bases
-                  direct-call-clean
-                  len-eq
-                  context
-                  func
-                  single-budget
-                  mb-budget
-                  rejected
-                  reject-probe
-                  true))]))])
-    (if (<= mb-budget 0)
-      (Result func context)
-      (match (compiler-opt-global-shared-view func)
-        [(Function name params ret-ty frame blocks function-abi)
-          (let
-            [_trace : unit (opt-bce-trace-function! name)]
-            [loops : opt_natural_loop_vec.Vec
-              (opt-cfg-natural-loops-with-context
-                (compiler-opt-global-shared-view blocks)
-                context)]
-            ;; A negative bases value disables descriptor-length recognition (no
-            ;; type-pool access); a real one classifies the function's
-            ;; descriptor handles for it.
-            [descriptor : OptBceMbDescriptor
-              (if (< type-segment-bases 0)
-                (No)
-                (Some
-                  type-segment-bases
-                  (opt-load-header-set-from-function
-                    type-segment-bases
-                    (& params)
-                    blocks)
-                  (owned_view.compiler-owned-reference-shared-view
-                    direct-call-clean)
-                  (owned_view.compiler-owned-reference-shared-view len-eq)))]
-            (match (opt-bce-mb-loops-scan-phased
-              (& descriptor)
-              (__tl-project-field context pred-map)
-              (__tl-project-field context doms)
-              (& blocks)
-              (& loops)
-              (opt-cfg-entry-label blocks)
-              rejected
-              frame)
-              [(Scan mb-blocks mb-frame mb-changed mb-applied)
-                (if mb-changed
-                  (let
-                    [next-context : OptCfgContext
-                      (opt-cfg-context-build
-                        (compiler-opt-global-shared-view mb-blocks))]
-                    [next : ir.CompilerIrFunction
-                      (Function
-                        name
-                        params
-                        ret-ty
-                        mb-frame
-                        mb-blocks
-                        function-abi)]
-                    (match (opt-bce-version-apply-verdict
-                      "bce_version"
-                      reject-probe
-                      mb-applied
-                      (& next)
-                      next-context)
-                      [(Ok)
-                        ;; The next round retries the single-block scan first,
-                        ;; like the next pipeline iteration would.
-                        (opt-bce-function-budget-result
-                          type-segment-bases
-                          direct-call-clean
-                          len-eq
-                          next-context
-                          next
-                          single-budget
-                          (- mb-budget 1)
-                          rejected
-                          reject-probe
-                          false)]
-                      [(Err _)
-                        ;; Retire this loop and rescan the rest. The single-block
-                        ;; scan already came up empty for this `rejected` set and
-                        ;; a retired multi-block header cannot unlock it, so the
-                        ;; retry stays in the multi-block phase.
-                        (opt-bce-trace-verify-rejected! mb-applied)
-                        (opt-bce-function-budget-result
-                          type-segment-bases
-                          direct-call-clean
-                          len-eq
-                          context
-                          func
-                          single-budget
-                          mb-budget
-                          (opt-label-add rejected mb-applied)
-                          reject-probe
-                          true)]))
-                  (Result func context))]))]))))
+                        true)]))])]
+          [(No) (Result func context)])))))
 
 (define (opt-bce-version-function-verified-with-context-result
   [type-segment-bases : i64]
@@ -88360,129 +87204,102 @@
   [verified? : bool]
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
   ;; `context` must be valid for `func`'s blocks (the entry verify reuses it).
-  (match (compiler-opt-global-shared-view func)
-    [(Function name _ _ _ prescan-blocks _)
-      (cond
-        [(not
-            (or
-              (opt-bce-version-blocks-have-candidate?
-                (ir.compiler-ir-block-list-view prescan-blocks))
-              (opt-bce-mb-blocks-have-candidate? (& prescan-blocks))))
-          (Result func context)]
-        ;; P-B's relation compares lengths loaded at different times, so it is
-        ;; read only in a function no execution of which writes a member's
-        ;; cell (see OptLenEqUse's `on?`); anywhere else the table is empty.
-        [(opt_i64_i64_map.contains?
-            len-eq-clean
-            (ir.compiler-ir-symbol-id name))
-          (opt-bce-version-function-verified-with-context-result
-            type-segment-bases
-            direct-call-clean
-            len-eq
-            context
-            verified?
-            func)]
-        [else
-          (opt-bce-version-function-verified-with-context-result
-            type-segment-bases
-            direct-call-clean
-            (& (opt_i64_i64_map.with-capacity 1))
-            context
-            verified?
-            func)])]))
+  (let
+    [status : i64
+      (match (& func)
+        [(Function name _ _ _ prescan-blocks _)
+          (cond
+            [(not
+                (or
+                  (opt-bce-version-blocks-have-candidate?
+                    (ir.compiler-ir-block-list-view (& prescan-blocks)))
+                  (opt-bce-mb-blocks-have-candidate? (& prescan-blocks))))
+              0]
+            [(opt_i64_i64_map.contains?
+                len-eq-clean
+                (ir.compiler-ir-symbol-id name))
+              1]
+            [else 2])])]
+    (cond
+      [(= status 0) (Result func context)]
+      [(= status 1)
+        (opt-bce-version-function-verified-with-context-result
+          type-segment-bases
+          direct-call-clean
+          len-eq
+          context
+          verified?
+          func)]
+      [else
+        (opt-bce-version-function-verified-with-context-result
+          type-segment-bases
+          direct-call-clean
+          (& (opt_i64_i64_map.with-capacity 1))
+          context
+          verified?
+          func)])))
 
 ;; Type-pool-free entry: descriptor-length recognition stays off (-1), so
 ;; multi-block versioning behaves exactly as before for invariant lengths.
 (define (opt-bce-version-function [func : (& ir.CompilerIrFunction)]) : ir.CompilerIrFunction
-  (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function _ _ _ frame blocks _)
-      (let
-        [_addr-taken : unit (opt-function-addr-taken-install! frame (& blocks))]
-        (match (opt-bce-version-function-with-context-result
-          (- 0 1)
-          (& (opt_i64_i64_map.with-capacity 1))
-          (& (opt_i64_i64_map.with-capacity 1))
-          (& (opt_i64_i64_map.with-capacity 1))
-          (opt-cfg-context-build blocks)
-          false
-          (owned_view.compiler-owned-reference-shared-view func))
-          [(Result next _) next]))]))
+  (opt-bce-version-function-with-types (- 0 1) func))
 
 ;; Test-only driver: `opt-bce-version-function` with ONE loop's application
 ;; forced to fail verification (see `opt-bce-version-apply-verdict`). `probe`
 ;; names the loop to refuse; `ir.compiler-ir-label-none` refuses nothing and
-;; reproduces `opt-bce-version-function` exactly. This is what lets the
-;; optimizer tests observe that a refused loop retires alone and the
-;; function's remaining loops still version.
+;; reproduces `opt-bce-version-function` exactly.
 (define (opt-bce-version-function-reject-probe
   [func : ir.CompilerIrFunction]
   [probe : i64]) : ir.CompilerIrFunction
-  (match (compiler-opt-global-shared-view func)
-    [(Function _ _ _ frame blocks _)
-      (let
-        [_addr-taken : unit (opt-function-addr-taken-install! frame (& blocks))]
-        [_taint : unit (opt-loop-taint-install! frame (& blocks))]
-        [context : OptCfgContext (opt-cfg-context-build blocks)]
-        (match (opt-verify-function-with-context func context)
-          [(Ok)
-            (match (opt-bce-function-budget-result
-              (- 0 1)
-              (& (opt_i64_i64_map.with-capacity 1))
-              (& (opt_i64_i64_map.with-capacity 1))
-              context
-              func
-              (opt-loop-apply-budget)
-              (opt-loop-apply-budget)
-              (Nil)
-              probe
-              false)
-              [(Result next _) next])]
-          [(Err _) func]))]))
+  (let
+    [context : OptCfgContext
+      (match (& func)
+        [(Function _ _ _ frame blocks _)
+          (opt-function-addr-taken-install! frame (& blocks))
+          (opt-loop-taint-install! frame (& blocks))
+          (opt-cfg-context-build
+            (owned_view.compiler-owned-reference-shared-view (& blocks)))])]
+    (match (opt-verify-function-with-context (& func) (& context))
+      [(Ok)
+        (match (opt-bce-function-budget-result
+          (- 0 1)
+          (& (opt_i64_i64_map.with-capacity 1))
+          (& (opt_i64_i64_map.with-capacity 1))
+          context
+          func
+          (opt-loop-apply-budget)
+          (opt-loop-apply-budget)
+          (Nil)
+          probe
+          false)
+          [(Result next _) next])]
+      [(Err _) func])))
 
-;; Test-only: the clause the versioner recorded for this function's loops, as
-;; one of the `opt-bce-reason-*` codes. It runs the two scans exactly as the
-;; driver's first round does -- the single-block scan over the blocks, then, if
-;; that examined nothing, the COUNTED FLAT multi-block phase -- and reports what
-;; the last examined loop left in the tracer's cell. `--trace-passes` prints the
-;; same code for the same loop; the probe exists so the reason vocabulary can be
-;; asserted a class at a time from a unit test instead of by parsing a trace,
-;; and it reads the very cell the tracer prints rather than a second copy of the
-;; clause list.
-;;
-;; The counted flat phase is the one asked for on purpose: `--trace-passes`
-;; reports every phase, and the counter-free phases would otherwise overwrite a
-;; counted verdict with their own (weaker) one for the same loop.
 (define (opt-bce-version-reason-probe-blocks
   [type-segment-bases : i64]
   [blocks : (& ir.CompilerIrBlockList)]
   [remaining : (& remaining (Slice ir.CompilerIrBlock))]
   [frame : i64]) : i64
-  (match remaining
-    [(slice) (opt-bce-reason-none)]
-    [(slice block & rest)
+  (let
+    [empty-map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
+    [entry-label : i64 (opt-cfg-entry-label blocks)]
+    (for [i (iterator.range 0 (array-length remaining))]
+      ;; one block at a time, so the reason the scan records for a loop is
+      ;; not overwritten by the next block it walks past
       (let
-        ;; one block at a time, so the reason the scan records for a loop is
-        ;; not overwritten by the next block it walks past
-        [_scan : OptBceVersionScan
-          (let
-            [walked-blocks : ir.CompilerIrBlockList
-              (ir.compiler-ir-blocks
-                (owned_view.compiler-owned-reference-shared-view block))]
-            (opt-bce-version-blocks-scan
-              type-segment-bases
-              (& (opt_i64_i64_map.with-capacity 1))
-              (owned_view.compiler-owned-reference-shared-view blocks)
-              (ir.compiler-ir-block-list-view walked-blocks)
-              (opt-cfg-entry-label blocks)
-              (Nil)
-              frame))]
-        (if (not (= opt-bce-trace-reason (opt-bce-reason-none)))
-          opt-bce-trace-reason
-          (opt-bce-version-reason-probe-blocks
+        [_ : OptBceScanHit
+          (opt-bce-version-blocks-scan
             type-segment-bases
+            (& empty-map)
             blocks
-            rest
-            frame)))]))
+            (slice-view remaining i 1)
+            entry-label
+            (Nil)
+            frame)]
+        (when
+          (not (= opt-bce-trace-reason (opt-bce-reason-none)))
+          (return opt-bce-trace-reason))))
+    (opt-bce-reason-none)))
 
 (define (opt-bce-version-reason-probe-loops
   [descriptor : (& OptBceMbDescriptor)]
@@ -88491,70 +87308,53 @@
   [all-loops : (& opt_natural_loop_vec.Vec)]
   [remaining : (& remaining (Slice OptNaturalLoop))]
   [frame : i64]) : i64
-  (match remaining
-    [(slice) (opt-bce-reason-none)]
-    [(slice loop & rest)
+  (let
+    [entry-label : i64 (opt-cfg-entry-label blocks)]
+    (for [i (iterator.range 0 (array-length remaining))]
       (let
-        [_scan : OptBceVersionScan
+        [_ : OptBceScanHit
           (opt-bce-mb-loops-scan
             descriptor
-            (__tl-project-field (deref context) pred-map)
-            (__tl-project-field (deref context) doms)
-            (owned_view.compiler-owned-reference-shared-view blocks)
+            (& context.pred-map)
+            (& context.doms)
+            blocks
             all-loops
-            (slice-view remaining 0 1)
-            (opt-cfg-entry-label blocks)
+            (slice-view remaining i 1)
+            entry-label
             false
             false
             false
             (Nil)
             frame)]
-        (if (not (= opt-bce-trace-reason (opt-bce-reason-none)))
-          opt-bce-trace-reason
-          (opt-bce-version-reason-probe-loops
-            descriptor
-            context
-            blocks
-            all-loops
-            rest
-            frame)))]))
+        (when
+          (not (= opt-bce-trace-reason (opt-bce-reason-none)))
+          (return opt-bce-trace-reason))))
+    (opt-bce-reason-none)))
 
-;; Test-only: the clause the versioner recorded for this function's loops, as
-;; one of the `opt-bce-reason-*` codes. It runs the two scans exactly as the
-;; driver's first round does -- the single-block scan over the blocks, then the
-;; COUNTED FLAT multi-block phase over the natural loops -- one candidate at a
-;; time, and reports the first clause a candidate left in the tracer's cell.
-;; `--trace-passes` prints the same code for the same loop; the probe exists so
-;; the reason vocabulary can be asserted a class at a time from a unit test
-;; instead of by parsing a trace, and it reads the very cell the tracer prints
-;; rather than a second copy of the clause list.
-;;
-;; The counted flat phase is the one asked for on purpose: `--trace-passes`
-;; reports every phase, and the counter-free phases would otherwise overwrite a
-;; counted verdict with their own (weaker) one for the same loop.
 (define (opt-bce-version-reason-probe
   [type-segment-bases : i64]
   [func : (& ir.CompilerIrFunction)]) : i64
-  (match (owned_view.compiler-owned-reference-shared-view func)
+  (match func
     [(Function _ params _ frame blocks _)
       (let
         [_addr-taken : unit (opt-function-addr-taken-install! frame (& blocks))]
         [_taint : unit (opt-loop-taint-install! frame (& blocks))]
         [context : OptCfgContext
-          (opt-cfg-context-build (compiler-opt-global-shared-view blocks))]
+          (opt-cfg-context-build
+            (owned_view.compiler-owned-reference-shared-view (& blocks)))]
         [single : i64
           (opt-bce-version-reason-probe-blocks
             type-segment-bases
             (& blocks)
-            (ir.compiler-ir-block-list-view blocks)
+            (ir.compiler-ir-block-list-view (& blocks))
             frame)]
         (if (not (= single (opt-bce-reason-none)))
           single
           (let
             [loops : opt_natural_loop_vec.Vec
               (opt-cfg-natural-loops-with-context
-                (compiler-opt-global-shared-view blocks)
-                context)]
+                (owned_view.compiler-owned-reference-shared-view (& blocks))
+                (& context))]
             [descriptor : OptBceMbDescriptor
               (if (< type-segment-bases 0)
                 (No)
@@ -88563,7 +87363,7 @@
                   (opt-load-header-set-from-function
                     type-segment-bases
                     (& params)
-                    blocks)
+                    (& blocks))
                   (opt_i64_i64_map.with-capacity 1)
                   (opt_i64_i64_map.with-capacity 1)))]
             (opt-bce-version-reason-probe-loops
@@ -88571,7 +87371,7 @@
               (& context)
               (& blocks)
               (& loops)
-              (opt_natural_loop_vec.view loops)
+              (opt_natural_loop_vec.view (& loops))
               frame))))]))
 
 ;; Test entry with type-pool access: descriptor-length recognition is live.
@@ -88589,16 +87389,19 @@
   [type-segment-bases : i64]
   [direct-call-clean : (& opt_i64_i64_map.Map)]
   [func : (& ir.CompilerIrFunction)]) : ir.CompilerIrFunction
-  (match (owned_view.compiler-owned-reference-shared-view func)
+  (match func
     [(Function _ _ _ frame blocks _)
+      (opt-function-addr-taken-install! frame (& blocks))
       (let
-        [_addr-taken : unit (opt-function-addr-taken-install! frame (& blocks))]
+        [context : OptCfgContext
+          (opt-cfg-context-build
+            (owned_view.compiler-owned-reference-shared-view (& blocks)))]
         (match (opt-bce-version-function-with-context-result
           type-segment-bases
           direct-call-clean
           (& (opt_i64_i64_map.with-capacity 1))
           (& (opt_i64_i64_map.with-capacity 1))
-          (opt-cfg-context-build blocks)
+          context
           false
           (owned_view.compiler-owned-reference-shared-view func))
           [(Result next _) next]))]))

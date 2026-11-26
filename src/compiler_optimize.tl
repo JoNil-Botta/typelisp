@@ -5116,10 +5116,14 @@
     (opt-aggregate-split-classify-copy-side! (&mut plan) src size)
     ;; A register-to-register copy carries the destination's word type, so the
     ;; two aggregates must be the same type for that to describe both sides.
+    ;; A side already refused stays in memory, so the copy is word loads or
+    ;; stores there, which the other side's own word types describe.
     (when
       (and
         (>= dst-index 0)
         (>= src-index 0)
+        (not (opt-aggregate-split-refused? plan.cand dst-index))
+        (not (opt-aggregate-split-refused? plan.cand src-index))
         (not
           (opt-type-eq
             type-segment-bases
@@ -11744,9 +11748,7 @@
                     (- fuel 1))]
                 [(Cast _ source from-ty to-ty)
                   (and
-                    (reg.compiler-reg-color-structural-sret-cast?
-                      (& from-ty)
-                      (& to-ty))
+                    (ir.compiler-ir-storage-address-cast? (& from-ty) (& to-ty))
                     (opt-verify-sret-storage-pointer?
                       defs
                       proof
@@ -11856,7 +11858,8 @@
   (match args
     [(Sret _ _)
       (match ty
-        [(or (U64) (Struct _) (StructArgs _ _) (Enum _) (EnumArgs _ _)) (Ok)]
+        ;; Every hidden-result call returns its slot pointer as `u64`.
+        [(U64) (Ok)]
         [_ (Err "optimizer verify: sret call has incompatible result type")])]
     [_ (Ok)]))
 
@@ -23136,7 +23139,7 @@
         var)]
     [_ (NoRoot)]))
 
-;; SRET-SITE. The hidden trailing `__sret` parameter (lower-prepare-internal-
+;; SRET-SITE. The hidden leading `__sret` parameter (lower-prepare-internal-
 ;; return-value) is a raw `u64`, so opt-licm-param-root gives it no root and
 ;; every store through it -- the whole return value of every aggregate-returning
 ;; function -- was an UNKNOWN write in that function's call-memory row, which
@@ -23206,11 +23209,11 @@
 ;; Which callees hand one of their own arguments straight back to the caller?
 ;; The question exists because provenance dies at a `Call` even when the value
 ;; that comes out is the very pointer that went in. The internal ABI returns an
-;; inline aggregate through a hidden trailing slot that the CALLER allocates
+;; inline aggregate through a hidden leading slot that the CALLER allocates
 ;; (lower-prepare-internal-return-value), and the callee's return value is that
 ;; slot's pointer, so
 ;;
-;;     %36 = alloc Vec ; %37 = addr_of %36 ; %38 = call f(n, %37) : Vec
+;;     %36 = alloc Vec ; %37 = addr_of %36 ; %38 = call f(%37, n) : u64
 ;;
 ;; leaves `%38` and `%37` naming ONE object with nothing in the IR to say so.
 ;; Every later `gep %38, <field>` therefore looks like a fixed word of an
@@ -101941,16 +101944,16 @@
 
 ;; --- G1b: call-slot forwarding (SRET<-call) ----------------------------------
 ;;
-;; Lowering hands every call with a nominal result a fresh frame slot and then
-;; copies the result where it belongs. A constructor building this function's
-;; own result ends with
+;; Lowering hands every call with a memory-class result a fresh frame slot and
+;; then copies the result where it belongs. A constructor building this
+;; function's own result ends with
 ;;
 ;;     %t = alloc T
 ;;     %p = addr_of %t storage n
-;;     %r = call F(args..., [sret] %p)     ; F builds its result in the slot
+;;     %r = call F([sret] %p, args...)     ; F builds its result in the slot
 ;;     ...                                 ; the window
 ;;     %d = gep %SRET, J : u8
-;;     copy_bytes %d, %r, S                ; or `tl_memcpy(%d, %r, S)`
+;;     copy_bytes %d, %p, S                ; or `tl_memcpy(%d, %p, S)`
 ;;
 ;; and the copy disappears when F receives `%d` as its slot. That is a
 ;; REORDERING: F writes [d, d + S) at the call instead of the copy writing it
@@ -101968,7 +101971,7 @@
 ;;       hidden result slot, fresh in its caller and named by nothing, and here
 ;;       it is CONFINED (`opt-slot-fwd-confined?`): every value derived from it
 ;;       is only an address operand of a load, store or byte copy, a hidden
-;;       result argument (which the callee only fills), a forwarded trailing
+;;       result argument (which the callee only fills), a forwarded leading
 ;;       slot whose call result (or the slot itself) is returned at once, or a
 ;;       returned value --
 ;;       never stored, merged, or passed as an ordinary argument. No other
@@ -101980,12 +101983,12 @@
 ;;       from `%SRET` (which by (2) cannot reach it), scalar accesses through
 ;;       `%SRET` at constant offsets whose bytes provably miss [J, J + S), and
 ;;       calls none of whose arguments derive from `%SRET`.
-;;   (4) Nothing else observes the temp F no longer writes: `%r`, `%p` and the
-;;       slot `%t` each have exactly one use in the whole function, and `%d`
-;;       (used only by the copy) is a `gep` of the parameter, moved to just
-;;       before the call when it was computed later.
+;;   (4) Nothing else observes the temp F no longer writes: `%r` is unused,
+;;       `%p` is used only by the call and the copy, the slot `%t` only by its
+;;       `addr_of`, and `%d` (used only by the copy) is a `gep` of the
+;;       parameter, moved to just before the call when it was computed later.
 ;;
-;; The rewritten call passes `%d` as an unmarked trailing argument (see
+;; The rewritten call passes `%d` unmarked in the hidden result position (see
 ;; `opt-slot-fwd-retarget-call`), so later passes treat it as an ordinary
 ;; pointer argument.
 ;; The var of this function's hidden result slot parameter, or -1.
@@ -102091,7 +102094,7 @@
       (compiler-opt-global-array-element-shared-view values index))
     unit))
 
-;; Whether `next` returns at once what a call forwarding `slot` as its trailing
+;; Whether `next` returns at once what a call forwarding `slot` as its leading
 ;; argument produced: the call result `dst`, or the slot itself, which the
 ;; callee hands back by the result-slot ABI.
 (define (opt-slot-fwd-returns-forwarded?
@@ -102169,16 +102172,16 @@
               (opt-slot-fwd-returns-forwarded?
                 (& next)
                 dst
-                (& (array-ref values (- (array-length values) 1)))))
+                (& (array-ref values 0))))
               (opt-slot-fwd-count-at!
                 derived
                 allowed
                 (compiler-opt-global-shared-view values)
-                (- (array-length values) 1))
+                0)
               unit))]
-        [(ir.CompilerIrCallArgs.Two _ b)
-          (if (opt-slot-fwd-returns-forwarded? (& next) dst (& b))
-            (opt-slot-fwd-count! derived allowed b)
+        [(ir.CompilerIrCallArgs.Two a _)
+          (if (opt-slot-fwd-returns-forwarded? (& next) dst (& a))
+            (opt-slot-fwd-count! derived allowed a)
             unit)]
         [(ir.CompilerIrCallArgs.One a)
           (if (opt-slot-fwd-returns-forwarded? (& next) dst (& a))
@@ -102493,28 +102496,48 @@
           [(ir.CompilerIrEffect.Pure) true]
           [_ false])])))
 
-;; The hidden result argument of a call: (values, index) of a marked `Sret`
-;; whose slot is the trailing argument.
+;; The call filling a slot: (result var, values, index) of a call whose marked
+;; `Sret` argument is that slot.
 (defenum OptSlotFwdCall
   (NoCall)
-  (Call (__tl_dyn-array ir.CompilerIrValue) i64))
+  (Call i64 (__tl_dyn-array ir.CompilerIrValue) i64))
 
-(define (opt-slot-fwd-match-call
-  [instr : ir.CompilerIrInstr]
-  [result-var : i64]) : OptSlotFwdCall
+(define (opt-slot-fwd-match-call [instr : ir.CompilerIrInstr] [slot : i64]) : OptSlotFwdCall
   (match instr
     [(ir.CompilerIrInstr.Call dst _ args _)
-      (if (= dst result-var)
-        (match args
-          [(ir.CompilerIrCallArgs.Sret values index)
-            (if (and
-              (> (array-length values) 0)
-              (= index (- (array-length values) 1)))
-              (OptSlotFwdCall.Call values index)
-              (OptSlotFwdCall.NoCall))]
-          [_ (OptSlotFwdCall.NoCall)])
-        (OptSlotFwdCall.NoCall))]
+      (match args
+        [(ir.CompilerIrCallArgs.Sret values index)
+          (if (and
+            (>= index 0)
+            (< index (array-length values))
+            (=
+              (ir.compiler-ir-value-var-or
+                (compiler-opt-global-array-element-shared-view values index)
+                -1)
+              slot))
+            (OptSlotFwdCall.Call dst values index)
+            (OptSlotFwdCall.NoCall))]
+        [_ (OptSlotFwdCall.NoCall)])]
     [_ (OptSlotFwdCall.NoCall)]))
+
+;; The index of the last call before `before` and after `after` that fills
+;; `slot`, or -1.
+(define (opt-slot-fwd-find-call
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [after : i64]
+  [before : i64]
+  [slot : i64]) : i64
+  (let
+    [i : i64 (- before 1)]
+    [found : i64 -1]
+    (while (and (< found 0) (> i after))
+      (match (opt-slot-fwd-match-call
+        (ir.compiler-ir-instr-seq-ref instrs i)
+        slot)
+        [(OptSlotFwdCall.Call _ _ _) (set! found i)]
+        [(OptSlotFwdCall.NoCall) unit])
+      (-= i 1))
+    found))
 
 ;; The destination `%d` of a copy into the slot: `(J, def index)` for
 ;; `%d = gep %SRET, J : u8` defined in the block, `(0, -1)` for `%SRET`
@@ -102560,14 +102583,18 @@
       (if (or (< dest 0) (= dest sret))
         -1
         (opt-ctor-fwd-find-def instrs (- copy-index 1) dest))]
-    [call-index : i64 (opt-ctor-fwd-find-def instrs (- copy-index 1) src)]
+    [addr-index : i64 (opt-ctor-fwd-find-addr-of instrs (- copy-index 1) src)]
+    [call-index : i64
+      (if (< addr-index 0)
+        -1
+        (opt-slot-fwd-find-call instrs addr-index copy-index src))]
     (if (or
       (< dest-off 0)
       (< call-index 0)
       (and
         (>= result-var 0)
         (not (= (opt-ctor-fwd-use-count uses result-var) 0)))
-      (not (= (opt-ctor-fwd-use-count uses src) 1))
+      (not (= (opt-ctor-fwd-use-count uses src) 2))
       (and (not (= dest sret)) (not (= (opt-ctor-fwd-use-count uses dest) 1)))
       (not (= (array-ref plan call-index) -1)))
       false
@@ -102575,32 +102602,19 @@
         (ir.compiler-ir-instr-seq-ref instrs call-index)
         src)
         [(OptSlotFwdCall.NoCall) false]
-        [(OptSlotFwdCall.Call values index)
+        [(OptSlotFwdCall.Call call-dst values index)
           (let
-            [slot-ptr : i64
-              (ir.compiler-ir-value-var-or
-                (compiler-opt-global-array-element-shared-view values index)
-                -1)]
-            [addr-index : i64
-              (if (< slot-ptr 0)
-                -1
-                (opt-ctor-fwd-find-addr-of instrs (- call-index 1) slot-ptr))]
             [words : i64
-              (if (< addr-index 0)
-                -1
-                (match (ir.compiler-ir-instr-seq-ref instrs addr-index)
-                  [(ir.CompilerIrInstr.AddrOf _ _ storage-words) storage-words]
-                  [_ -1]))]
+              (match (ir.compiler-ir-instr-seq-ref instrs addr-index)
+                [(ir.CompilerIrInstr.AddrOf _ _ storage-words) storage-words]
+                [_ -1])]
             [temp : i64
-              (if (< addr-index 0)
-                -1
-                (opt-ctor-fwd-addr-of-slot
-                  (& (ir.compiler-ir-instr-seq-ref instrs addr-index))))]
+              (opt-ctor-fwd-addr-of-slot
+                (& (ir.compiler-ir-instr-seq-ref instrs addr-index)))]
             (if (or
-              (< addr-index 0)
               (< temp 0)
               (not (= size (* 8 words)))
-              (not (= (opt-ctor-fwd-use-count uses slot-ptr) 1))
+              (not (= (opt-ctor-fwd-use-count uses call-dst) 0))
               (not (= (opt-ctor-fwd-use-count uses temp) 1))
               (not (opt-slot-fwd-args-underived? derived (& values) index)))
               false
@@ -102634,7 +102648,7 @@
                   false))))]))))
 
 ;; The call with `slot` replacing its hidden result argument. The slot rides
-;; as an unmarked trailing argument, as in lowering's call-slot RVO: the `Sret`
+;; unmarked in the same leading position, as in lowering's call-slot RVO: the `Sret`
 ;; role asserts a provable frame output range (`compiler_ir_return_storage`),
 ;; which a field of the result slot is not; the ABI position is the same.
 (define (opt-slot-fwd-retarget-call [instr : ir.CompilerIrInstr] [slot : i64]) : ir.CompilerIrInstr
@@ -124170,17 +124184,13 @@
   [index : (& index OptFunctionIndex)]
   [state : OptReachState]
   [instr : (& ir.CompilerIrInstr)]) : OptReachState
-  (match instr
-    ;; Register-group ops carry word-class scalar operands (vars/consts);
-    ;; lowering materializes any global/function reference into a var before
-    ;; packing, so the group operands themselves reach nothing new.
-    [(Pack _ _ _) state]
-    [_
-      (ir.compiler-ir-instr-fold-uses
-        (owned_view.compiler-owned-reference-shared-view instr)
-        state
-        opt-reach-use
-        index)]))
+  ;; Every operand counts, register-group `Pack` words included: copy
+  ;; propagation can forward a global read straight into a packed word.
+  (ir.compiler-ir-instr-fold-uses
+    (owned_view.compiler-owned-reference-shared-view instr)
+    state
+    opt-reach-use
+    index))
 
 (define (opt-reach-instr
   [index : OptFunctionIndex]
@@ -128231,18 +128241,15 @@
   [value : ir.CompilerIrValue]) : OptGlobalCellScan
   (opt-global-cell-scan-value scan value))
 
-;; Pack words carry no global operands (the same invariant opt-reach-uses
-;; relies on), so they are not scanned.
+;; Every operand counts, register-group `Pack` words included: copy
+;; propagation can forward a global read straight into a packed word.
 (define (opt-global-cell-scan-uses
   [scan : OptGlobalCellScan]
   [instr : (& ir.CompilerIrInstr)]) : OptGlobalCellScan
-  (match instr
-    [(Pack _ _ _) scan]
-    [_
-      (ir.compiler-ir-instr-fold-uses
-        (owned_view.compiler-owned-reference-shared-view instr)
-        scan
-        opt-global-cell-scan-use)]))
+  (ir.compiler-ir-instr-fold-uses
+    (owned_view.compiler-owned-reference-shared-view instr)
+    scan
+    opt-global-cell-scan-use))
 
 ;; Per-function fact scan: global-ref operand uses (refs), direct set! targets
 ;; (stores), and the RETURNING call-family instructions that remain -- named
@@ -129859,9 +129866,13 @@
   ;; goes: a token expression may only read operands whose value was fixed
   ;; before its region began.
   (rdef (__tl_dyn-array i64))
+  ;; How many operands read each var across the whole function.
   (uses (__tl_dyn-array i64))
   (used-before-def? (__tl_dyn-array bool))
-  (raw? (__tl_dyn-array bool)))
+  (raw? (__tl_dyn-array bool))
+  ;; `1 +` the result var of the one call whose hidden result slot is this
+  ;; var (the slot address), 0 for none, -1 for several.
+  (sret (__tl_dyn-array i64)))
 
 (define (opt-len-eq-defs-new [frame : i64] [raw? : bool]) : OptLenEqDefs
   (let
@@ -129884,9 +129895,10 @@
       (__tl_make-array i64 size)
       (__tl_make-array i64 size)
       (__tl_make-array i64 size)
-      (__tl_make-array i64 raw-size)
+      (__tl_make-array i64 size)
       (__tl_make-array bool raw-size)
-      (__tl_make-array bool raw-size))))
+      (__tl_make-array bool raw-size)
+      (__tl_make-array i64 size))))
 
 ;; The single definition of `var`, or `No`. A var with more than one
 ;; definition names more than one runtime value, so no fact may follow it.
@@ -130053,18 +130065,16 @@
   [tables : OptLenEqDefs]
   [scratch : (&mut scratch (__tl_dyn-array i64))]
   [instr : ir.CompilerIrInstr]) : unit
-  (when
-    (> (array-length tables.uses) 0)
-    (opt-collect-instr-uses-array
-      (compiler-opt-global-shared-view tables.uses)
-      (& instr)))
+  (opt-collect-instr-uses-array
+    (compiler-opt-global-shared-view tables.uses)
+    (& instr))
   (match (opt-instr-def-var (& instr))
     [(Some dst)
       (when
         (and (>= dst 0) (< dst (array-length tables.defs)))
         (when
           (and
-            (< dst (array-length tables.uses))
+            (< dst (array-length tables.used-before-def?))
             (> (array-ref tables.uses dst) 0))
           (set! (array-ref tables.used-before-def? dst) true))
         (set!
@@ -130092,9 +130102,48 @@
               (array-ref tables.ncopy var)
               (+ (array-ref tables.ncopy var) 1)))]
         [_ unit])]
-    [(or (Call _ _ args _) (TailCall _ args _))
-      (opt-len-eq-defs-record-args! (& tables) (& args))]
+    [(Call dst _ args _)
+      (opt-len-eq-defs-record-args! (& tables) (& args))
+      (match (& args)
+        [(Sret _ index)
+          (match (opt-call-memory-arg-at (& args) index)
+            [(Some (Var slot))
+              (when
+                (and (>= slot 0) (< slot (array-length tables.sret)))
+                (set!
+                  (array-ref tables.sret slot)
+                  (opt-len-eq-sret-mark (array-ref tables.sret slot) dst)))]
+            [_ unit])]
+        [_ unit])]
+    [(TailCall _ args _) (opt-len-eq-defs-record-args! (& tables) (& args))]
     [_ unit]))
+
+;; A hidden result slot keeps what its filling call returned only while
+;; nothing else reaches it: the address has exactly two uses -- that fill and
+;; the one read asking -- and is either a parameter (never reassigned) or the
+;; single `addr_of` of a stack slot whose address is taken nowhere else. Any
+;; other call, store, copy or alias of the slot could rewrite the object
+;; between the fill and the read.
+(define (opt-len-eq-sret-sole? [tables : (& tables OptLenEqDefs)] [var : i64]) : bool
+  (and
+    (= (array-ref tables.uses var) 2)
+    (match (opt-len-eq-def tables var)
+      [(Some instr _)
+        (match instr
+          [(AddrOf _ storage _)
+            (and
+              (>= storage 0)
+              (< storage (array-length tables.uses))
+              (= (opt-len-eq-def-count tables storage) 1)
+              (= (array-ref tables.uses storage) 1))]
+          [_ false])]
+      [(No) (= (opt-len-eq-def-count tables var) 0)])))
+
+;; One call fills a hidden result slot; a second one makes it ambiguous.
+(define (opt-len-eq-sret-mark [seen : i64] [dst : i64]) : i64
+  (if (= seen 0)
+    (+ dst 1)
+    -1))
 
 ;; A fresh descriptor is initialized in the allocation block. Each word
 ;; address must be used solely by its store, and the descriptor itself by the
@@ -130339,9 +130388,9 @@
   [ctors : (& opt_i64_i64_map.Map)]
   [var : i64]
   [depth : i64]) : OptLenEqLength
-  (if (or (< var 0) (>= var (array-length tables.n0)) (< depth 0))
-    (No)
-    (if (and (= (array-ref tables.n0 var) 1) (= (array-ref tables.n1 var) 1))
+  (cond
+    [(or (< var 0) (>= var (array-length tables.n0)) (< depth 0)) (No)]
+    [(and (= (array-ref tables.n0 var) 1) (= (array-ref tables.n1 var) 1))
       (match (compiler-opt-global-array-element-shared-view tables.w0 var)
         [(Var slots-var)
           (if (or
@@ -130370,7 +130419,20 @@
                           var)
                         4))
                     (& slots-len))))))]
-        [_ (No)])
+        [_ (No)])]
+    [(and
+        (> (array-ref tables.sret var) 0)
+        (= (array-ref tables.n0 var) 0)
+        (= (array-ref tables.n1 var) 0)
+        (= (array-ref tables.ncopy var) 0)
+        (opt-len-eq-sret-sole? tables var))
+      ;; A hidden result slot holds what its one filling call returned.
+      (opt-len-eq-vec-length
+        tables
+        ctors
+        (- (array-ref tables.sret var) 1)
+        (- depth 1))]
+    [else
       (match (opt-len-eq-def tables var)
         [(Some instr _)
           (match instr
@@ -130393,7 +130455,7 @@
                   (No))
                 (opt-len-eq-ctor-length ctors name (& args)))]
             [_ (No)])]
-        [(No) (No)]))))
+        [(No) (No)])]))
 
 ;; A constructor call's result length: the argument at the parameter index the
 ;; callee's summary names.

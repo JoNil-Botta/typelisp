@@ -1129,8 +1129,6 @@
       (cond
         [(string.eq kind "internal-leading")
           (ir.CompilerIrReturnStorageConvention.InternalLeading)]
-        [(string.eq kind "internal-trailing")
-          (ir.CompilerIrReturnStorageConvention.InternalTrailing)]
         [(string.eq kind "sysv") (ir.CompilerIrReturnStorageConvention.SysV)]
         [(string.eq kind "win64") (ir.CompilerIrReturnStorageConvention.Win64)]
         [else (ir-text-error cur "unknown return-storage convention")])]

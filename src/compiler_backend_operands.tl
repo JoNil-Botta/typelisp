@@ -3847,6 +3847,19 @@
       (LookupMissing)
       (LookupFound slot))))
 
+;; The hidden-argument index of `name` when it is an internal leading
+;; return-storage function, which returns that argument as `u64`, or -1.
+(define (compiler-backend-index-function-leading-sret
+  [index : be_state.CompilerBackendProgramIndex]
+  [name : i64]) : i64
+  (match (compiler-backend-index-function-slot index name)
+    [(LookupFound slot)
+      (let
+        [tables : (& index be_state.CompilerBackendProgramTables)
+          (be_state.compiler-backend-program-tables index)]
+        (array-ref tables.function-leading-sret slot))]
+    [(LookupMissing) -1]))
+
 (define (compiler-backend-index-extern-signature-slot
   [index : be_state.CompilerBackendProgramIndex]
   [name : i64]) : backend_i64_i64_map.Lookup

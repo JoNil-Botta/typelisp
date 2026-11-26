@@ -134541,24 +134541,6 @@
             (opt-copy-global-key bases.cell)
             (ir.compiler-ir-clone-value (& bases.cell-value)))))]))
 
-;; An eligible scalar/pure instruction with every read of the known cell
-;; replaced by its contents. A phi is left alone: its inputs are the
-;; predecessors' values, not this block's.
-(define (opt-load-cse-forward-cell
-  [state : (& OptLoadCseState)]
-  [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
-  (let
-    [env : OptCopyEnv (opt-load-cse-state-cell-env state)]
-    (if (opt-copy-env-empty? env)
-      instr
-      (match (& instr)
-        [(Phi _ _ _) instr]
-        [_
-          (opt-copy-subst-instr
-            (&mut (ir.compiler-ir-instr-rewrite-new))
-            (& env)
-            instr)]))))
-
 (define (opt-load-cse-state-global-store
   [type-segment-bases : i64]
   [canon : (&mut canon (__tl_dyn-array i64))]
@@ -138130,7 +138112,7 @@
 
 ;; --- MF-2: join phis over equal load keys ------------------------------------
 ;;
-;; `opt-load-table-intersect-entry` keeps a key only when both edges cache it in
+;; `opt-load-table-intersect` keeps a key only when both edges cache it in
 ;; the SAME var. Two edges that loaded one word into two names therefore lose
 ;; it, and the next block reloads a word whose content both predecessors already
 ;; hold: a guard diamond's two arms, a versioned loop's fast and slow exits, the
@@ -138148,7 +138130,7 @@
 ;; never a site), and every edge's value names the same word, because all of
 ;; them carry the same key. The joined entry takes the join state's allocation
 ;; epoch, which is the MAX of the incoming epochs and therefore at least as
-;; conservative as the epoch `opt-load-table-intersect-entry` would have kept.
+;; conservative as the epoch `opt-load-table-intersect` would have kept.
 ;;
 ;; PRESSURE, and the budget. The phi lengthens each input's live range to the
 ;; end of its predecessor and adds one value live from the join to its last use.

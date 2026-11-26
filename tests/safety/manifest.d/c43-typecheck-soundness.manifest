@@ -1,0 +1,16 @@
+# Safety corpus cases: C43 typecheck soundness (#10004) - dynamic-array mutation
+# of foreign sealed handles (source and liveness bitmap), a cross-module
+# selected import, and same-name constructor/type attribution across modules.
+# Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+
+sealed_handle_dyn_array_push_reject|check-fail|tests/safety/sealed_handle_dyn_array_push_reject.tl|-|field mutation of sealed handle type sealed_handle_dep/Vecs outside its module family requires unsafe context
+sealed_handle_nested_dyn_array_push_reject|check-fail|tests/safety/sealed_handle_nested_dyn_array_push_reject.tl|-|field mutation of sealed handle type sealed_handle_dep/VecOwner outside its module family requires unsafe context
+sealed_handle_dyn_array_take_reject|check-fail|tests/safety/sealed_handle_dyn_array_take_reject.tl|-|field mutation of sealed handle type sealed_handle_dep/Vecs outside its module family requires unsafe context
+sealed_handle_spmd_dyn_array_push_reject|check-fail|tests/safety/sealed_handle_spmd_dyn_array_push_reject.tl|-|field mutation of sealed handle type sealed_handle_dep/Vecs outside its module family requires unsafe context
+sealed_handle_dyn_array_take_live_reject|check-fail|tests/safety/sealed_handle_dyn_array_take_live_reject.tl|-|field mutation of sealed handle type sealed_handle_dep/Vecs outside its module family requires unsafe context
+sealed_handle_spmd_dyn_array_set_reject|check-fail|tests/safety/sealed_handle_spmd_dyn_array_set_reject.tl|-|field mutation of sealed handle type sealed_handle_dep/Nested outside its module family requires unsafe context
+selected_import_two_modules|check-ok|tests/safety/selected_import_two_modules/main.tl|-|-
+constructor_name_shadow|run-exit|tests/safety/constructor_name_shadow/main.tl|42|-
+macro_type_hygiene|run-exit|tests/safety/macro_type_hygiene/main.tl|42|-
+macro_cfunc_type_hygiene|check-ok|tests/safety/macro_cfunc_type_hygiene/main.tl|-|-
+macro_generated_type_name_ok|run-exit|tests/safety/macro_generated_type_name_ok.tl|42|-

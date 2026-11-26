@@ -90548,3 +90548,303 @@ inl.entry.0.cont:
               [_ false])
             "mask SPMD arg accepts var-to-var copy"))]
       [_ (test.assert-true false "expected SpmdCall instruction")])))
+
+(define (opt-flag-exit-rotated-test-fn
+  [name : String]
+  [params-text : String]
+  [ret-ty : ast.AstType]
+  [frame : i64]
+  [blocks-text : String]) : ir.CompilerIrFunction
+  (Function
+    (opt-test-symbol name)
+    (irt.params params-text)
+    ret-ty
+    frame
+    (irt.blocks blocks-text)
+    Ordinary))
+
+(test
+  optimizer-flag-exit-rotated-bool-latch-with-not-and-dead-mov
+  (let
+    [func : ir.CompilerIrFunction
+      (opt-flag-exit-rotated-test-fn
+        "flag_exit_rot_bool"
+        "p=%0:(Ptr u8)"
+        (I64)
+        16
+        "entry:
+           jump land
+         land:
+           jump body
+         body:
+           %1 = phi [0, land], [%8, latch] : i64
+           %2 = phi [false, land], [%9, latch] : bool
+           %3 = gep %0, %1 : u8
+           %4 = load %3 : u8
+           %5 = cast %4 : u8 to i64
+           %6 = eq %5, 0 : i64
+           branch %6, latch, step
+         step:
+           %7 = add %1, 1 : i64
+           jump latch
+         latch:
+           %8 = phi [%1, body], [%7, step] : i64
+           %9 = phi [true, body], [%2, step] : bool
+           %10 = mov unit : unit
+           %11 = not %9 : bool
+           branch %11, body, exit
+         exit:
+           return %8")]
+    [out : ir.CompilerIrFunction (opt.opt-flag-exit-function (& func))]
+    [blocks : ir.CompilerIrBlockList (opt.opt-function-blocks (& out))]
+    (test.assert-true
+      (opt.opt-verify-ok? (& (opt.opt-verify-function (& out))))
+      "rotated bool-flag conversion passes IR verification")
+    (test.assert-true
+      (opt-flag-exit-test-jumps-to? (& blocks) "latch" "body")
+      "rotated latch gate becomes unconditional jump to loop header")
+    (test.assert-true
+      (match (opt-flag-exit-test-last-instr (& blocks) "body")
+        [(Some (Branch _ on-true on-false))
+          (and
+            (= on-true (ir.compiler-ir-label "exit"))
+            (= on-false (ir.compiler-ir-label "step")))]
+        [_ false])
+      "clearing branch arm redirects straight to exit")
+    (test.assert-i64-eq
+      (opt-flag-exit-test-phi-input-count (& blocks) "latch" 8)
+      1
+      "latch phi drops redirected clear predecessor")))
+
+(test
+  optimizer-flag-exit-rotated-sentinel-mixed-decided-and-gated
+  (let
+    [func : ir.CompilerIrFunction
+      (opt-flag-exit-rotated-test-fn
+        "flag_exit_rot_sentinel"
+        "k=%0:i64, m=%1:i64"
+        (I64)
+        20
+        "entry:
+           jump land
+         land:
+           jump body
+         body:
+           %2 = phi [0, land], [%11, latch] : i64
+           %3 = phi [-2, land], [%12, latch] : i64
+           %4 = eq %2, %0 : i64
+           branch %4, latch, probe
+         probe:
+           %5 = sub %2, 1 : i64
+           %6 = eq %5, %1 : i64
+           branch %6, hit, miss
+         hit:
+           jump merge
+         miss:
+           %7 = add %2, 1 : i64
+           jump merge
+         merge:
+           %9 = phi [%2, hit], [%7, miss] : i64
+           %10 = phi [%5, hit], [%3, miss] : i64
+           jump latch
+         latch:
+           %11 = phi [%2, body], [%9, merge] : i64
+           %12 = phi [-1, body], [%10, merge] : i64
+           %13 = mov -2 : i64
+           %14 = eq %12, -2 : i64
+           branch %14, body, exit
+         exit:
+           return %12")]
+    [out : ir.CompilerIrFunction (opt.opt-flag-exit-function (& func))]
+    [blocks : ir.CompilerIrBlockList (opt.opt-function-blocks (& out))]
+    [gate-label : String "hit__flagexit__merge"]
+    (test.assert-true
+      (opt.opt-verify-ok? (& (opt.opt-verify-function (& out))))
+      "rotated sentinel probe conversion passes IR verification")
+    (test.assert-true
+      (opt-flag-exit-test-jumps-to? (& blocks) "latch" "body")
+      "sentinel latch gate becomes unconditional jump to loop header")
+    (test.assert-true
+      (match (opt-flag-exit-test-last-instr (& blocks) "body")
+        [(Some (Branch _ on-true on-false))
+          (and
+            (= on-true (ir.compiler-ir-label "exit"))
+            (= on-false (ir.compiler-ir-label "probe")))]
+        [_ false])
+      "decided -1 clear arm redirects directly to exit")
+    (test.assert-true
+      (opt-flag-exit-test-jumps-to? (& blocks) "hit" gate-label)
+      "computed clear arm redirects through copied gate block")))
+
+(test
+  optimizer-flag-exit-rotated-refuses-header-phi-gate
+  (let
+    [func : ir.CompilerIrFunction
+      (opt-flag-exit-rotated-test-fn
+        "flag_exit_rot_stale_gate"
+        "c=%0:bool"
+        (I64)
+        12
+        "entry:
+           jump land
+         land:
+           jump body
+         body:
+           %1 = phi [0, land], [%4, latch] : i64
+           %2 = phi [true, land], [%5, latch] : bool
+           branch %0, clear, step
+         clear:
+           jump latch
+         step:
+           %3 = add %1, 1 : i64
+           jump latch
+         latch:
+           %4 = phi [%1, clear], [%3, step] : i64
+           %5 = phi [false, clear], [%2, step] : bool
+           branch %2, body, exit
+         exit:
+           return %4")]
+    [out : ir.CompilerIrFunction (opt.opt-flag-exit-function (& func))]
+    [blocks : ir.CompilerIrBlockList (opt.opt-function-blocks (& out))]
+    (test.assert-true
+      (opt.opt-verify-ok? (& (opt.opt-verify-function (& out))))
+      "refused stale-gate loop stays valid")
+    (test.assert-true
+      (match (opt-flag-exit-test-last-instr (& blocks) "latch")
+        [(Some (Branch _ _ _)) true]
+        [_ false])
+      "latch testing previous iteration header phi is refused")))
+
+(test
+  optimizer-flag-exit-rotated-refuses-impure-skipped-path
+  (let
+    [func : ir.CompilerIrFunction
+      (opt-flag-exit-rotated-test-fn
+        "flag_exit_rot_impure"
+        "p=%0:(MutPtr i64), c=%1:bool"
+        (I64)
+        12
+        "entry:
+           jump land
+         land:
+           jump body
+         body:
+           %2 = phi [0, land], [%6, latch] : i64
+           %3 = phi [true, land], [%7, latch] : bool
+           branch %1, clear, step
+         clear:
+           jump side
+         step:
+           %4 = add %2, 1 : i64
+           jump side
+         side:
+           %5 = phi [false, clear], [%3, step] : bool
+           %8 = phi [%2, clear], [%4, step] : i64
+           store_ptr %0, %8 : i64
+           jump latch
+         latch:
+           %6 = phi [%8, side] : i64
+           %7 = phi [%5, side] : bool
+           branch %7, body, exit
+         exit:
+           return %6")]
+    [out : ir.CompilerIrFunction (opt.opt-flag-exit-function (& func))]
+    [blocks : ir.CompilerIrBlockList (opt.opt-function-blocks (& out))]
+    (test.assert-true
+      (match (opt-flag-exit-test-last-instr (& blocks) "latch")
+        [(Some (Branch _ _ _)) true]
+        [_ false])
+      "rotated loop with store on skipped path is refused")))
+
+(test
+  optimizer-thread-not-bool-phi-swaps-targets
+  (let
+    [blocks : ir.CompilerIrBlockList
+      (irt.blocks
+        "entry:
+           branch %0, tn-alt, tn-guard
+         tn-alt:
+           branch %2, tn-yes, tn-no
+         tn-guard:
+           branch %1, tn-a, tn-b-guard
+         tn-b-guard:
+           branch %2, tn-b, tn-c
+         tn-a:
+           jump tn-merge
+         tn-b:
+           jump tn-merge
+         tn-c:
+           jump tn-merge
+         tn-merge:
+           %4 = phi [10, tn-a], [20, tn-b], [30, tn-c] : i64
+           %5 = phi [true, tn-a], [false, tn-b], [%2, tn-c] : bool
+           %6 = mov %4 : i64
+           %7 = not %5 : bool
+           branch %7, tn-yes, tn-no
+         tn-yes:
+           %8 = phi [%6, tn-merge], [40, tn-alt] : i64
+           return %8
+         tn-no:
+           %9 = phi [%6, tn-merge], [50, tn-alt] : i64
+           return %9")]
+    [type-bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    (test.assert-true
+      (opt.opt-thread-const-branch-blocks-have-candidate? type-bases (& blocks))
+      "candidate pre-screen admits UnOp Not over bool phi")
+    (let
+      [out : ir.CompilerIrBlockList (opt-thread-pass-blocks (& blocks) 4)]
+      (test.assert-true
+        (opt-flag-exit-test-jumps-to? (& out) "tn-a" "tn-no")
+        "true phi input threads to original false target after Not")
+      (test.assert-true
+        (opt-flag-exit-test-jumps-to? (& out) "tn-b" "tn-yes")
+        "false phi input threads to original true target after Not")
+      (test.assert-true
+        (opt-flag-exit-test-jumps-to? (& out) "tn-c" "tn-merge")
+        "non-constant phi input remains at merge")
+      (test.assert-true
+        (opt-thread-first-phi-input-i64?
+          (& out)
+          (ir.compiler-ir-label "tn-no")
+          (ir.compiler-ir-label "tn-a")
+          10)
+        "swapped false target receives translated sibling mov value for true edge")
+      (test.assert-true
+        (opt-thread-first-phi-input-i64?
+          (& out)
+          (ir.compiler-ir-label "tn-yes")
+          (ir.compiler-ir-label "tn-b")
+          20)
+        "swapped true target receives translated sibling mov value for false edge")
+      (test.assert-true
+        (opt-thread-pass-verified? out)
+        "threaded UnOp Not merge passes IR verification"))))
+
+(test
+  optimizer-thread-not-bool-phi-refuses-multi-use
+  (let
+    [blocks : ir.CompilerIrBlockList
+      (irt.blocks
+        "entry:
+           branch %0, tm-alt, tm-guard
+         tm-alt:
+           branch %2, tm-yes, tm-no
+         tm-guard:
+           branch %1, tm-a, tm-b
+         tm-a:
+           jump tm-merge
+         tm-b:
+           jump tm-merge
+         tm-merge:
+           %5 = phi [true, tm-a], [false, tm-b] : bool
+           %7 = not %5 : bool
+           branch %7, tm-yes, tm-no
+         tm-yes:
+           %8 = phi [%7, tm-merge], [true, tm-alt] : bool
+           %9 = cast %8 : bool to i64
+           return %9
+         tm-no:
+           return 0")]
+    (test.assert-true
+      (not (opt-thread-pass-changed? blocks 4))
+      "multi-use UnOp Not over bool phi is refused")))

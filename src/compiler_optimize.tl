@@ -32893,17 +32893,19 @@
           (test.assert-i64-eq pred 0 "flag-exit oldest predecessor stays last")
           (test.assert-i64-eq target 100 "flag-exit oldest target stays last")]))))
 
-;; gate label, the arm inside the loop, the arm outside it, and the dst of the
+;; gate label, the arm inside the loop, the arm outside it, the dst of the
 ;; helper (`not f'`, `eq f' <bool>`) the gate block may hold between its phis
-;; and its branch -- -1 when the branch tests a closure var directly.
+;; and its branch -- -1 when the branch tests a closure var directly -- and the
+;; closure var id the gate tests.
 (defenum OptFlagExitGate
   (No)
-  (Some i64 i64 i64 i64))
+  (Some i64 i64 i64 i64 i64))
 
-;; the branch condition's value under a CLEARED flag, then the helper's dst.
+;; the branch condition's value under a CLEARED flag, the helper's dst, and the
+;; closure var id the gate tests.
 (defenum OptFlagExitGateCond
   (No)
-  (Some bool i64))
+  (Some bool i64 i64))
 
 (defenum OptFlagExitMaybeLabel
   (No)
@@ -33774,14 +33776,15 @@
   [eq? : bool]
   [other : (& ir.CompilerIrValue)]
   [seed : (& ir.CompilerIrValue)]
-  [dst : i64]) : OptFlagExitGateCond
+  [dst : i64]
+  [gate-var : i64]) : OptFlagExitGateCond
   (cond
     [(opt-flag-exit-same-invariant? blocks def-label body index seed other)
-      (Some (not eq?) dst)]
+      (Some (not eq?) dst gate-var)]
     [(and
         (opt-flag-exit-bool-seed? seed)
         (opt-flag-exit-bool-other? seed other))
-      (Some eq? dst)]
+      (Some eq? dst gate-var)]
     [else (No)]))
 
 (define (opt-flag-exit-eq-op? [op : (& op ir.CompilerIrBinOp)]) : bool
@@ -33805,38 +33808,49 @@
   [seed : (& ir.CompilerIrValue)]) : OptFlagExitGateCond
   (match instr
     [(UnOp _ op operand _)
-      (if (and
-        (match op
-          [(Not) true]
-          [_ false])
-        (opt-flag-exit-closure-var? operand closure)
-        (opt-flag-exit-bool-seed? seed))
-        (Some (opt-flag-exit-bool-seed-literal seed) dst)
-        (No))]
+      (match operand
+        [(Var gate-var)
+          (if (and
+            (match op
+              [(Not) true]
+              [_ false])
+            (opt-flag-exit-closure-var? operand closure)
+            (opt-flag-exit-bool-seed? seed))
+            (Some (opt-flag-exit-bool-seed-literal seed) dst gate-var)
+            (No))]
+        [_ (No)])]
     [(BinOp _ op lhs rhs _)
       (if (not (or (opt-flag-exit-eq-op? op) (opt-flag-exit-ne-op? op)))
         (No)
         (cond
           [(opt-flag-exit-closure-var? lhs closure)
-            (opt-flag-exit-gate-verdict
-              blocks
-              def-label
-              body
-              index
-              (opt-flag-exit-eq-op? op)
-              (& rhs)
-              seed
-              dst)]
+            (match lhs
+              [(Var gate-var)
+                (opt-flag-exit-gate-verdict
+                  blocks
+                  def-label
+                  body
+                  index
+                  (opt-flag-exit-eq-op? op)
+                  (& rhs)
+                  seed
+                  dst
+                  gate-var)]
+              [_ (No)])]
           [(opt-flag-exit-closure-var? rhs closure)
-            (opt-flag-exit-gate-verdict
-              blocks
-              def-label
-              body
-              index
-              (opt-flag-exit-eq-op? op)
-              (& lhs)
-              seed
-              dst)]
+            (match rhs
+              [(Var gate-var)
+                (opt-flag-exit-gate-verdict
+                  blocks
+                  def-label
+                  body
+                  index
+                  (opt-flag-exit-eq-op? op)
+                  (& lhs)
+                  seed
+                  dst
+                  gate-var)]
+              [_ (No)])]
           [else (No)]))]
     [_ (No)]))
 
@@ -33851,9 +33865,12 @@
   [seed : (& ir.CompilerIrValue)]
   [uses : (& uses (__tl_dyn-array i64))]) : OptFlagExitGateCond
   (if (opt-flag-exit-closure-var? condition closure)
-    (if (opt-flag-exit-bool-seed? seed)
-      (Some (not (opt-flag-exit-bool-seed-literal seed)) (- 0 1))
-      (No))
+    (match condition
+      [(Var gate-var)
+        (if (opt-flag-exit-bool-seed? seed)
+          (Some (not (opt-flag-exit-bool-seed-literal seed)) (- 0 1) gate-var)
+          (No))]
+      [_ (No)])
     (match condition
       [(Var dst)
         (if (or
@@ -33902,7 +33919,7 @@
             seed
             uses)
             [(No) (No)]
-            [(Some selects extra)
+            [(Some selects extra gate-var)
               (let
                 [exit-label : i64
                   (if selects
@@ -33915,7 +33932,7 @@
                 (if (and
                   (opt-loop-body-label-member? body index continue-label)
                   (not (opt-loop-body-label-member? body index exit-label)))
-                  (Some label continue-label exit-label extra)
+                  (Some label continue-label exit-label extra gate-var)
                   (No)))])]
         [_ (No)]))))
 
@@ -33946,8 +33963,8 @@
                 seed
                 uses)])]
         (match here
-          [(Some gate continue-label exit-label extra)
-            (Some gate continue-label exit-label extra)]
+          [(Some gate continue-label exit-label extra gate-var)
+            (Some gate continue-label exit-label extra gate-var)]
           [(No)
             (opt-flag-exit-find-gate
               blocks
@@ -33986,11 +34003,13 @@
             (opt-flag-exit-block-pure? instrs (+ index 1))
             false))))))
 
-;; G may hold phis, the branch's single-use helper and its branch, and nothing
-;; else: the redirect jumps past all of it.
+;; G may hold phis, the branch's single-use helper, dead pure instructions (such
+;; as the literal `mov` rotation clones into a bottom-tested latch ahead of DCE),
+;; and its branch, and nothing else: the redirect jumps past all of it.
 (define (opt-flag-exit-gate-block-clean?
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [extra : i64]) : bool
+  [extra : i64]
+  [raw-uses : (& raw-uses (__tl_dyn-array i64))]) : bool
   (for [index (iterator.range 0 (- (ir.compiler-ir-instr-seq-count instrs) 1))]
     (let
       [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
@@ -34003,7 +34022,8 @@
             (>= extra 0)
             (match (opt-instr-def-var instr)
               [(Some found) (= found extra)]
-              [(None) false])))
+              [(None) false]))
+          (opt-flag-exit-spacer-dead-instr? instr raw-uses))
         (return false))))
   true)
 
@@ -34745,34 +34765,54 @@
 (define (opt-flag-exit-gate-clean-at?
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [gate : i64]
-  [extra : i64]) : bool
+  [extra : i64]
+  [raw-uses : (& raw-uses (__tl_dyn-array i64))]) : bool
   (match (opt-cfg-find-block blocks gate)
     [(No) false]
     [(Some block)
       (match block
-        [(Block _ instrs) (opt-flag-exit-gate-block-clean? (& instrs) extra)])]))
+        [(Block _ instrs)
+          (opt-flag-exit-gate-block-clean? (& instrs) extra raw-uses)])]))
+
+(define (opt-flag-exit-decided-pred-seen?
+  [edges : (& edges OptFlagExitList)]
+  [limit : i64]
+  [pred : i64]) : bool
+  (for [at (iterator.range 0 limit)]
+    (match (opt-flag-exit-edge-ref edges at)
+      [(Edge found-pred _ _ fresh _)
+        (when (and (= found-pred pred) (< fresh 0)) (return true))]))
+  false)
 
 ;; Each clear predecessor sits inside the loop, reaches the phi block on a Jump
 ;; or one arm of a Branch, does not already reach X (which would double its
-;; predecessor entry there), and is dominated by the gate (so everything the
-;; gate's exit arm can read is live on the redirected edge too).
+;; predecessor entry there), does not redirect outright twice onto X, and is
+;; dominated by the gate -- except for a bottom-tested rotated loop where the
+;; gate IS the unique latch (every clear edge then precedes the gate in the same
+;; iteration, and `opt-flag-exit-fix-edges` proves the skipped run reaches the
+;; gate purely, delivers the clear value to `gate-var`, and resolves every value
+;; X reads to definitions dominating `pred`).
 (define (opt-flag-exit-clear-edges-ok?
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [body : (& body OptLoopBody)]
   [index : (& index OptCfgIndex)]
   [doms : (& doms OptDomInfo)]
+  [latch : i64]
   [gate : i64]
   [exit-label : i64]
   [edges : (& edges OptFlagExitList)]) : bool
   (for [at (iterator.range 0 (opt-flag-exit-list-count edges))]
     (match (opt-flag-exit-edge-ref edges at)
-      [(Edge pred target _ _ _)
+      [(Edge pred target _ fresh _)
         (unless
           (and
             (opt-loop-body-label-member? body index pred)
             (opt-flag-exit-block-edges-to? blocks pred target)
             (not (opt-flag-exit-block-edges-to? blocks pred exit-label))
-            (opt-dom-dominates? doms gate pred))
+            (or
+              (>= fresh 0)
+              (not (opt-flag-exit-decided-pred-seen? edges at pred)))
+            (or (= gate latch) (opt-dom-dominates? doms gate pred)))
           (return false))]))
   true)
 
@@ -35078,6 +35118,7 @@
   (doms OptDomInfo)
   (def-label (__tl_dyn-array i64))
   (gate i64)
+  (gate-var i64)
   (arm-pred i64)
   (exit-label i64)
   (exit-preds OptLabelSet)
@@ -35255,6 +35296,47 @@
                 out-mints))])))
     (Some out-fixes out-mints)))
 
+;; Every in-loop block reachable from a clear edge before `gate` must be able
+;; to reach `gate` itself (ruling out skipped returns, tail calls, or inner
+;; infinite loops). Combined with `opt-flag-exit-path-fill!` requiring a unique
+;; acyclic successor in `reach` at every step, the skipped subgraph is a pure
+;; linear chain `target -> ... -> gate` plus reconciled outside exits.
+(define (opt-flag-exit-seen-reaches-gate?
+  [seen : (& seen (__tl_dyn-array i64))]
+  [reach : (& reach (__tl_dyn-array i64))]) : bool
+  (for [id (iterator.range 0 (array-length seen))]
+    (when
+      (and (= (array-ref seen id) 1) (not (= (array-ref reach id) 1)))
+      (return false)))
+  true)
+
+;; When `gate` does not dominate `pred` (a rotated bottom-tested loop with
+;; `gate == latch`), verify that the gate's tested closure var actually carries
+;; this clear edge's value along the skipped run (ruling out a latch that tests
+;; the previous iteration's header phi instead of the updated latch phi).
+(define (opt-flag-exit-gate-carries-edge?
+  [ctx : (& ctx OptFlagExitFixCtx)]
+  [pos : (& pos (__tl_dyn-array i64))]
+  [labels : (& labels (__tl_dyn-array i64))]
+  [pred : i64]
+  [len : i64]
+  [edge-value : (& ir.CompilerIrValue)]) : bool
+  (if (opt-dom-dominates? (& ctx.doms) ctx.gate pred)
+    true
+    (match (opt-flag-exit-resolve
+      (& ctx.blocks)
+      (& ctx.index)
+      (& ctx.doms)
+      (& ctx.def-label)
+      pos
+      labels
+      pred
+      (Var ctx.gate-var)
+      (- len 1)
+      ctx.fuel)
+      [(No) false]
+      [(Some resolved) (opt-value-eq (& resolved) edge-value)])))
+
 (define (opt-flag-exit-fix-edges
   [ctx : (& OptFlagExitFixCtx)]
   [edges : (& edges OptFlagExitList)]
@@ -35266,7 +35348,7 @@
     [(Nil) (Some fixes mints)]
     [(Dense _ _)
       (match (opt-flag-exit-edge-ref edges 0)
-        [(Edge pred target _ fresh _)
+        [(Edge pred target value fresh _)
           (let
             [arrival : i64
               (if (< fresh 0)
@@ -35284,6 +35366,14 @@
                 labels)]
             (if (or
               (<= len 0)
+              (not
+                (opt-flag-exit-gate-carries-edge?
+                  ctx
+                  pos
+                  labels
+                  pred
+                  len
+                  (& value)))
               (not (opt-flag-exit-agree-exit-phis? ctx pos labels pred len))
               (not
                 (opt-flag-exit-agree-mints?
@@ -36395,6 +36485,7 @@
   [latch : i64]
   [gate : i64]
   [gate-extra : i64]
+  [raw-uses : (& raw-uses (__tl_dyn-array i64))]
   [exit-label : i64]
   [clears : (& clears OptFlagExitList)]
   [drop-preds : OptLabelSet]
@@ -36416,6 +36507,7 @@
         body
         index
         doms
+        latch
         gate
         exit-label
         clears)
@@ -36430,7 +36522,7 @@
         (ir.compiler-ir-block-list-view blocks)
         index
         seen)
-      (opt-flag-exit-gate-clean-at? blocks gate gate-extra)
+      (opt-flag-exit-gate-clean-at? blocks gate gate-extra raw-uses)
       (opt-flag-exit-exit-preds-ok? pred-map exit-label folded)
       (opt-flag-exit-exits-separate? blocks context body exits folded)
       (opt-flag-exit-outside-phis-uniform?
@@ -36518,6 +36610,7 @@
   [clears : OptFlagExitList]
   [gate : i64]
   [gate-extra : i64]
+  [gate-var : i64]
   [arm-pred : i64]
   [dropped : OptLabelSet]
   [continue-label : i64]
@@ -36533,80 +36626,89 @@
     [pred-map : OptPredMap context.pred-map]
     [doms : OptDomInfo context.doms]
     [count : i64 (opt-cfg-index-block-count index)]
-    [ctx : OptFlagExitFixCtx
-      (OptFlagExitFixCtx
-        (owned_view.compiler-owned-reference-shared-view blocks)
-        (compiler-opt-global-shared-view index)
-        (compiler-opt-global-shared-view pred-map)
-        (compiler-opt-global-shared-view doms)
-        (owned_view.compiler-owned-reference-shared-view def-label)
-        gate
-        arm-pred
-        exit-label
-        (opt-pred-map-lookup pred-map exit-label)
-        seen
-        funnels
-        (opt-flag-exit-reach-gate body index pred-map gate count)
-        count
-        (+ (* 4 count) 16))]
-    [pos : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [labels : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    (match (opt-flag-exit-phi-seeds blocks exit-label arm-pred)
-      [(No) (No)]
-      [(Some phi-seeds)
-        (match (opt-flag-exit-mint-seeds
-          blocks
-          def-label
-          mint
-          0
-          (+ frame (opt-flag-exit-gate-count clears 0))
-          (Nil))
+    [reach : (__tl_dyn-array i64)
+      (opt-flag-exit-reach-gate body index pred-map gate count)]
+    (if (not (opt-flag-exit-seen-reaches-gate? (& seen) (& reach)))
+      (No)
+      (let
+        [ctx : OptFlagExitFixCtx
+          (OptFlagExitFixCtx
+            (owned_view.compiler-owned-reference-shared-view blocks)
+            (compiler-opt-global-shared-view index)
+            (compiler-opt-global-shared-view pred-map)
+            (compiler-opt-global-shared-view doms)
+            (owned_view.compiler-owned-reference-shared-view def-label)
+            gate
+            gate-var
+            arm-pred
+            exit-label
+            (opt-pred-map-lookup pred-map exit-label)
+            seen
+            funnels
+            reach
+            count
+            (+ (* 4 count) 16))]
+        [pos : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        [labels : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        (match (opt-flag-exit-phi-seeds blocks exit-label arm-pred)
           [(No) (No)]
-          [(Some mint-seeds)
-            (match (opt-flag-exit-fix-edges
-              (& ctx)
-              clears
-              (&mut pos)
-              (&mut labels)
-              phi-seeds
-              mint-seeds)
+          [(Some phi-seeds)
+            (match (opt-flag-exit-mint-seeds
+              blocks
+              def-label
+              mint
+              0
+              (+ frame (opt-flag-exit-gate-count clears 0))
+              (Nil))
               [(No) (No)]
-              [(Some fixes edge-mints)
-                (match (opt-flag-exit-mints-survivors
-                  doms
-                  def-label
-                  (opt-pred-map-lookup pred-map exit-label)
-                  gate
-                  dropped
-                  (& edge-mints))
+              [(Some mint-seeds)
+                (match (opt-flag-exit-fix-edges
+                  (& ctx)
+                  clears
+                  (&mut pos)
+                  (&mut labels)
+                  phi-seeds
+                  mint-seeds)
                   [(No) (No)]
-                  [(Some mints)
-                    (Some
-                      (OptFlagExitPlan
-                        gate
-                        continue-label
-                        exit-label
-                        seed
-                        cleared
-                        flag-ty
-                        closure
-                        clear-preds
-                        clear-targets
-                        exits
-                        gate-extra
-                        arm-pred
-                        dropped
-                        clears
-                        fixes
-                        (compiler-opt-global-shared-view mints)
-                        (opt-flag-exit-mint-env (& mints) (opt-copy-env-empty))
-                        doms))])])])])))
+                  [(Some fixes edge-mints)
+                    (match (opt-flag-exit-mints-survivors
+                      doms
+                      def-label
+                      (opt-pred-map-lookup pred-map exit-label)
+                      gate
+                      dropped
+                      (& edge-mints))
+                      [(No) (No)]
+                      [(Some mints)
+                        (Some
+                          (OptFlagExitPlan
+                            gate
+                            continue-label
+                            exit-label
+                            seed
+                            cleared
+                            flag-ty
+                            closure
+                            clear-preds
+                            clear-targets
+                            exits
+                            gate-extra
+                            arm-pred
+                            dropped
+                            clears
+                            fixes
+                            (compiler-opt-global-shared-view mints)
+                            (opt-flag-exit-mint-env
+                              (& mints)
+                              (opt-copy-env-empty))
+                            doms))])])])])))))
 
 (define (opt-flag-exit-plan-gated
   [blocks : (& ir.CompilerIrBlockList)]
   [context : (& OptCfgContext)]
   [frame : i64]
   [uses : (& uses (__tl_dyn-array i64))]
+  [raw-uses : (& raw-uses (__tl_dyn-array i64))]
   [def-label : (& (__tl_dyn-array i64))]
   [body : (& OptLoopBody)]
   [latch : i64]
@@ -36616,6 +36718,7 @@
   [raw-clears : (& OptFlagExitList)]
   [gate : i64]
   [gate-extra : i64]
+  [gate-var : i64]
   [arm-pred : i64]
   [dropped : OptLabelSet]
   [continue-label : i64]
@@ -36675,6 +36778,7 @@
         latch
         gate
         gate-extra
+        raw-uses
         exit-label
         clears
         drop-preds
@@ -36711,6 +36815,7 @@
         clears
         gate
         gate-extra
+        gate-var
         arm-pred
         dropped
         continue-label
@@ -36781,7 +36886,7 @@
               seed
               uses))
             [(No) (No)]
-            [(Some gate continue-label exit-label gate-extra)
+            [(Some gate continue-label exit-label gate-extra gate-var)
               (opt-flag-exit-plan-arm
                 blocks
                 (& context)
@@ -36797,6 +36902,7 @@
                 (& clears)
                 gate
                 gate-extra
+                gate-var
                 continue-label
                 exit-label)]))))))
 
@@ -36819,6 +36925,7 @@
   [clears : (& OptFlagExitList)]
   [gate : i64]
   [gate-extra : i64]
+  [gate-var : i64]
   [continue-label : i64]
   [arm : i64]) : OptFlagExitMaybePlan
   (match (opt-flag-exit-plan-gated
@@ -36826,6 +36933,7 @@
     context
     frame
     uses
+    raw-uses
     def-label
     body
     latch
@@ -36835,6 +36943,7 @@
     clears
     gate
     gate-extra
+    gate-var
     gate
     (Nil)
     continue-label
@@ -36859,6 +36968,7 @@
               context
               frame
               uses
+              raw-uses
               def-label
               body
               latch
@@ -36868,6 +36978,7 @@
               clears
               gate
               gate-extra
+              gate-var
               arm-pred
               dropped
               continue-label
@@ -42619,14 +42730,14 @@
   (Some bool))
 
 ;; `Some` carries the cond var, the phi slot (-1 when the condition is defined
-;; outside the merge), the phi-prefix count, the successor no edge may be
-;; threaded to (`label-none` when none is), and the two labels. `Compare` is the
-;; D2 form: the block is a phi prefix, pure Movs, one comparison defining the
-;; branch condition, and the branch; the payload is the phi-prefix count, the
-;; blocked successor, and the two labels.
+;; outside the merge), the phi-prefix count, the body mov limit, the successor
+;; no edge may be threaded to (`label-none` when none is), and the two labels.
+;; `Compare` is the D2 form: the block is a phi prefix, pure Movs, one
+;; comparison defining the branch condition, and the branch; the payload is the
+;; phi-prefix count, the blocked successor, and the two labels.
 (defenum OptThreadMerge
   (No)
-  (Some i64 i64 i64 i64 i64 i64)
+  (Some i64 i64 i64 i64 i64 i64 i64)
   (Compare i64 i64 i64 i64))
 
 ;; The verdict of the live-out rule over everything a merge defines: `No`
@@ -42795,7 +42906,7 @@
     [found : i64 0]
     (for [slot (iterator.range start (ir.compiler-ir-instr-seq-count instrs))]
       (match (ir.compiler-ir-instr-seq-borrow instrs slot)
-        [(or (Branch cond _ _) (Mov _ cond _))
+        [(or (Branch cond _ _) (Mov _ cond _) (UnOp _ (Not) cond _))
           (+= found (opt-thread-count-value-var (& cond) var))]
         [(BinOp _ _ left right _)
           (+=
@@ -43087,6 +43198,85 @@
                 (No)))]
           [_ (No)])))))
 
+(define (opt-thread-bool-phi-slot
+  [type-segment-bases : i64]
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [phi-count : i64]
+  [var : i64]) : i64
+  (let
+    [slot : i64 (opt-thread-phi-slot-for-var instrs phi-count var)]
+    (if (< slot 0)
+      (- 0 1)
+      (match (ir.compiler-ir-instr-seq-borrow instrs slot)
+        [(Phi _ _ ty)
+          (if (opt-type-eq type-segment-bases ty (& (Bool)))
+            slot
+            (- 0 1))]
+        [_ (- 0 1)]))))
+
+;; Negated bool-phi merge: a phi prefix, pure Movs, one single-use
+;; `UnOp Not (Var phi)`, and the branch. Swapping `true-label`/`false-label`
+;; lets the bool-phi threader reuse its exact edge redirect and chain walk.
+(define (opt-thread-not-shape
+  [type-segment-bases : i64]
+  [index : (& index OptCfgIndex)]
+  [doms : (& doms OptDomInfo)]
+  [uses : (& uses (__tl_dyn-array i64))]
+  [scratch : (&mut scratch (__tl_dyn-array i64))]
+  [merge-label : i64]
+  [instrs : (& ir.CompilerIrInstrSeq)]
+  [count : i64]
+  [cond-var : i64]
+  [true-label : i64]
+  [false-label : i64]) : OptThreadMerge
+  (if (< count 3)
+    (No)
+    (let
+      [body-end : i64 (- count 2)]
+      [phi-count : i64 (opt-thread-phi-prefix-count instrs 0)]
+      (if (or
+        (> (- (- count 1) phi-count) (opt-thread-max-body-instrs))
+        (not (opt-thread-body-movs? instrs phi-count body-end)))
+        (No)
+        (match (ir.compiler-ir-instr-seq-borrow instrs body-end)
+          [(UnOp dst (Not) (Var phi-var) _)
+            (let
+              [slot : i64
+                (opt-thread-bool-phi-slot
+                  type-segment-bases
+                  instrs
+                  phi-count
+                  phi-var)]
+              (if (and
+                (= dst cond-var)
+                (= (opt-bool-branch-use-count uses cond-var) 1)
+                (>= slot 0))
+                (match (opt-thread-merge-defs-admissible?
+                  index
+                  doms
+                  uses
+                  scratch
+                  instrs
+                  (OptThreadMergeSpec
+                    merge-label
+                    false-label
+                    true-label
+                    phi-count
+                    body-end
+                    (ir.compiler-ir-label-none)))
+                  [(No) (No)]
+                  [(Some blocked)
+                    (Some
+                      phi-var
+                      slot
+                      phi-count
+                      body-end
+                      blocked
+                      false-label
+                      true-label)])
+                (No)))]
+          [_ (No)])))))
+
 (define (opt-thread-merge-shape
   [type-segment-bases : i64]
   [index : (& index OptCfgIndex)]
@@ -43108,6 +43298,7 @@
                 cond-var
                 (- 0 1)
                 0
+                0
                 (ir.compiler-ir-label-none)
                 true-label
                 false-label)]
@@ -43116,49 +43307,66 @@
                 [body-end : i64 (- count 1)]
                 [phi-count : i64 (opt-thread-phi-prefix-count instrs 0)]
                 [slot : i64
-                  (opt-thread-phi-slot-for-var instrs phi-count cond-var)]
+                  (opt-thread-bool-phi-slot
+                    type-segment-bases
+                    instrs
+                    phi-count
+                    cond-var)]
                 (if (or
                   (< slot 0)
                   (> (- body-end phi-count) (opt-thread-max-body-instrs))
                   (not (opt-thread-body-movs? instrs phi-count body-end)))
-                  (opt-thread-compare-shape
-                    index
-                    doms
-                    uses
-                    scratch
-                    merge-label
-                    instrs
-                    count
-                    cond-var
-                    true-label
-                    false-label)
-                  (match (ir.compiler-ir-instr-seq-borrow instrs slot)
-                    [(Phi _ _ ty)
-                      (if (opt-type-eq type-segment-bases ty (& (Bool)))
-                        (match (opt-thread-merge-defs-admissible?
+                  (let
+                    [not-shape : OptThreadMerge
+                      (opt-thread-not-shape
+                        type-segment-bases
+                        index
+                        doms
+                        uses
+                        scratch
+                        merge-label
+                        instrs
+                        count
+                        cond-var
+                        true-label
+                        false-label)]
+                    (match (& not-shape)
+                      [(No)
+                        (opt-thread-compare-shape
                           index
                           doms
                           uses
                           scratch
+                          merge-label
                           instrs
-                          (OptThreadMergeSpec
-                            merge-label
-                            true-label
-                            false-label
-                            phi-count
-                            body-end
-                            (ir.compiler-ir-label-none)))
-                          [(No) (No)]
-                          [(Some blocked)
-                            (Some
-                              cond-var
-                              slot
-                              phi-count
-                              blocked
-                              true-label
-                              false-label)])
-                        (No))]
-                    [_ (No)])))])]
+                          count
+                          cond-var
+                          true-label
+                          false-label)]
+                      [_ not-shape]))
+                  (match (opt-thread-merge-defs-admissible?
+                    index
+                    doms
+                    uses
+                    scratch
+                    instrs
+                    (OptThreadMergeSpec
+                      merge-label
+                      true-label
+                      false-label
+                      phi-count
+                      body-end
+                      (ir.compiler-ir-label-none)))
+                    [(No) (No)]
+                    [(Some blocked)
+                      (Some
+                        cond-var
+                        slot
+                        phi-count
+                        body-end
+                        blocked
+                        true-label
+                        false-label)])))])]
         [_ (No)]))))
 
 ;; One chain hop: `forward` must be exactly one bool phi defining `var` plus the
@@ -43950,7 +44158,14 @@
               scratch
               merge-label
               (& instrs)))]
-        [(Some cond-var phi-slot phi-count blocked-label true-label false-label)
+        [(Some
+            cond-var
+            phi-slot
+            phi-count
+            mov-limit
+            blocked-label
+            true-label
+            false-label)
           (if (< phi-slot 0)
             (opt-thread-scan-preds!
               budget
@@ -43980,7 +44195,7 @@
                     true-label
                     false-label
                     phi-count
-                    (- (ir.compiler-ir-instr-seq-count (& instrs)) 1)
+                    mov-limit
                     blocked-label)
                   (& (Nil))
                   (& inputs)
@@ -44271,14 +44486,28 @@
             [(Branch (Var cond-var) _ _)
               (let
                 [phi-count : i64 (opt-thread-phi-prefix-count instrs 0)]
-                [slot : i64
-                  (opt-thread-phi-slot-for-var instrs phi-count cond-var)]
-                (if (< slot 0)
-                  false
-                  (match (ir.compiler-ir-instr-seq-borrow instrs slot)
-                    [(Phi _ _ ty)
-                      (opt-type-eq type-segment-bases ty (& (Bool)))]
-                    [_ false])))]
+                (if (>=
+                  (opt-thread-bool-phi-slot
+                    type-segment-bases
+                    instrs
+                    phi-count
+                    cond-var)
+                  0)
+                  true
+                  (if (< count 3)
+                    false
+                    (match (ir.compiler-ir-instr-seq-borrow instrs (- count 2))
+                      [(UnOp dst (Not) (Var phi-var) _)
+                        (and
+                          (= dst cond-var)
+                          (>=
+                            (opt-thread-bool-phi-slot
+                              type-segment-bases
+                              instrs
+                              phi-count
+                              phi-var)
+                            0))]
+                      [_ false]))))]
             [_ false])))]))
 
 ;; Pre-screen for the D2 form. It repeats the cheap half of

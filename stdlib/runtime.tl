@@ -262,6 +262,20 @@
       (os-write 2 data len))
     unit))
 
+;: Write the first `len` bytes (at most 8) of `word`, least significant byte
+;: first, to stderr. Short fixed text on the abort paths is spelled this way so
+;: it needs no string literal in read-only data.
+(define (abort-write-word [word : u64] [len : i64]) : unit
+  (let
+    [cell : u64 word]
+    [data : (MutPtr u64)
+      (unsafe
+        (ptr-addr-of cell))]
+    ;; CELL holds eight initialized bytes and LEN selects at most all of them.
+    (unsafe
+      (os-write 2 (ptr-cast data : (Ptr u8)) len))
+    unit))
+
 ;: Debug-only never-reset arena diagnostics. The backend guard reaches these
 ;: fixed exports only when `compiler-arena-debug` is enabled, so default builds
 ;: carry neither the messages nor the failure paths.
@@ -293,26 +307,14 @@
     (abort-write "tl: never-reset arena pool install\n")
     (os-exit 134)))
 
-;: Write one non-negative integer without constructing a String. The digit
-;: bytes come from static storage and recursion uses only the native stack, so
+;: Write one non-negative integer without constructing a String. Each digit
+;: is written from a stack word and recursion uses only the native stack, so
 ;: this stays safe when the current arena is null or exhausted.
 (define (abort-write-decimal [value : u64]) : unit
   (if (>= value 10)
     (abort-write-decimal (/ value 10))
     unit)
-  (let
-    [digit : u64 (% value 10)]
-    [digits : (Ptr u8)
-      (unsafe
-        (string-data "0123456789"))]
-    (unsafe
-      ;; DIGIT selects one initialized byte in the static table.
-      (os-write
-        2
-        (unsafe
-          (ptr-offset digits (cast digit : i64)))
-        1))
-    unit))
+  (abort-write-word (+ (% value 10) 48) 1))
 
 ;: Write a negative-domain integer magnitude. Keeping the value non-positive
 ;: makes INT64_MIN representable throughout the recursion.
@@ -320,26 +322,15 @@
   (if (<= value -10)
     (abort-write-negative-decimal (/ value 10))
     unit)
-  (let
-    [digit : i64 (- 0 (% value 10))]
-    [digits : (Ptr u8)
-      (unsafe
-        (string-data "0123456789"))]
-    (unsafe
-      ;; DIGIT selects one initialized byte in the static table.
-      (os-write
-        2
-        (unsafe
-          (ptr-offset digits digit))
-        1))
-    unit))
+  (abort-write-word (cast (- 48 (% value 10)) : u64) 1))
 
 ;: Write a signed integer without allocating, including the full INT64_MIN
 ;: range needed by division and bounds diagnostics.
 (define (abort-write-signed-decimal [value : i64]) : unit
   (if (< value 0)
     (begin
-      (abort-write "-")
+      ;; "-"
+      (abort-write-word 0x2d 1)
       (abort-write-negative-decimal value))
     (abort-write-decimal (cast value : u64))))
 
@@ -350,23 +341,18 @@
       (abort-write-hex (/ value 16))
       unit)
     (let
-      [digit : i64 (cast (% value 16) : i64)]
-      [digits : (Ptr u8)
-        (unsafe
-          (string-data "0123456789abcdef"))]
-      (unsafe
-        ;; DIGIT selects one initialized byte in the static table.
-        (os-write
-          2
-          (unsafe
-            (ptr-offset digits digit))
-          1))
-      unit)))
+      [digit : u64 (% value 16)]
+      (abort-write-word
+        (if (< digit 10)
+          (+ digit 48)
+          (+ digit 87))
+        1))))
 
 (cfg
   compiler-backtrace
   (define (abort-write-address [value : i64]) : unit
-    (abort-write "0x")
+    ;; "0x"
+    (abort-write-word 0x7830 2)
     (abort-write-hex (cast value : u64))))
 
 ;; Compare one NUL-terminated environment value with a static TypeLisp string
@@ -642,7 +628,8 @@
       (unsafe
         (abort-write "  ")
         (abort-write-signed-decimal ordinal)
-        (abort-write ": ")
+        ;; ": "
+        (abort-write-word 0x203a 2)
         (if (ptr-null? row)
           (begin
             (abort-write "<unknown> (")
@@ -670,11 +657,13 @@
                   path-length)
                 (if (> line 0)
                   (begin
-                    (abort-write ":")
+                    ;; ":"
+                    (abort-write-word 0x3a 1)
                     (abort-write-signed-decimal line)
                     (if (> column 0)
                       (begin
-                        (abort-write ":")
+                        ;; ":"
+                        (abort-write-word 0x3a 1)
                         (abort-write-signed-decimal column))
                       unit))
                   unit))
@@ -682,7 +671,8 @@
                 (abort-write " (")
                 (abort-write-address pc)
                 (abort-write ")")))
-            (abort-write "\n")))))))
+            ;; "\n"
+            (abort-write-word 0xa 1)))))))
 
 (cfg
   compiler-backtrace
@@ -950,7 +940,8 @@
     (abort-write-decimal committed)
     (abort-write " windows-error=")
     (abort-write-decimal windows-error)
-    (abort-write "\n")
+    ;; "\n"
+    (abort-write-word 0xa 1)
     (os-exit 134)))
 
 ;: Fault handler for an out-of-bounds index. Exported as the fixed `tl_oob_abort`
@@ -1016,11 +1007,14 @@
           (unsafe
             (int->ptr (cast path-address : u64) : (Ptr u8)))
           path-length))
-      (abort-write ":")
+      ;; ":"
+      (abort-write-word 0x3a 1)
       (abort-write-signed-decimal line)
-      (abort-write ":")
+      ;; ":"
+      (abort-write-word 0x3a 1)
       (abort-write-signed-decimal column)
-      (abort-write ": "))))
+      ;; ": "
+      (abort-write-word 0x203a 2))))
 
 ;: Report a source-located bounds failure with its index and length, then exit
 ;: with the legacy bounds-abort status.
@@ -1028,14 +1022,17 @@
   (define (oob-abort-at [site : (Ptr i64)] [index : i64] [length : i64])
     (:export-symbol "tl_oob_abort_at") : never
     (begin
-      (abort-write "tl: ")
+      ;; "tl: "
+      (abort-write-word 0x203a6c74 4)
       (unsafe
         (abort-write-site site))
       (abort-write "array index out of bounds: index=")
       (abort-write-signed-decimal index)
-      (abort-write " length=")
+      ;; " length="
+      (abort-write-word 0x3d6874676e656c20 8)
       (abort-write-signed-decimal length)
-      (abort-write "\n")
+      ;; "\n"
+      (abort-write-word 0xa 1)
       (cfg compiler-backtrace (abort-exit 134) (os-exit 134)))))
 
 ;: Report a source-located integer division or remainder failure with both
@@ -1044,14 +1041,19 @@
   (define (div-abort-at [site : (Ptr i64)] [dividend : i64] [divisor : i64])
     (:export-symbol "tl_div_abort_at") : never
     (begin
-      (abort-write "tl: ")
+      ;; "tl: "
+      (abort-write-word 0x203a6c74 4)
       (unsafe
         (abort-write-site site))
       (abort-write "integer division or remainder error: dividend=")
       (abort-write-signed-decimal dividend)
-      (abort-write " divisor=")
+      ;; " divisor"
+      (abort-write-word 0x726f736976696420 8)
+      ;; "="
+      (abort-write-word 0x3d 1)
       (abort-write-signed-decimal divisor)
-      (abort-write "\n")
+      ;; "\n"
+      (abort-write-word 0xa 1)
       (cfg compiler-backtrace (abort-exit 135) (os-exit 135)))))
 
 ;: Report a source-located invalid shift with its count and operand width, then
@@ -1065,16 +1067,19 @@
     [unsigned-count? : bool])
     (:export-symbol "tl_shift_abort_at") : never
     (begin
-      (abort-write "tl: ")
+      ;; "tl: "
+      (abort-write-word 0x203a6c74 4)
       (unsafe
         (abort-write-site site))
       (abort-write "shift count out of range: count=")
       (if unsigned-count?
         (abort-write-decimal (cast count : u64))
         (abort-write-signed-decimal count))
-      (abort-write " width=")
+      ;; " width="
+      (abort-write-word 0x3d687464697720 7)
       (abort-write-signed-decimal width)
-      (abort-write "\n")
+      ;; "\n"
+      (abort-write-word 0xa 1)
       (cfg compiler-backtrace (abort-exit 129) (os-exit 129)))))
 
 ;: Report a source-located panic message and exit with the legacy panic status.
@@ -1094,14 +1099,17 @@
             10)
           false)]
       (begin
-        (abort-write "tl: ")
+        ;; "tl: "
+        (abort-write-word 0x203a6c74 4)
         (unsafe
           (abort-write-site site))
-        (abort-write "panic: ")
+        ;; "panic: "
+        (abort-write-word 0x203a63696e6170 7)
         (abort-write message)
         (if ends-with-newline?
           unit
-          (abort-write "\n"))
+          ;; "\n"
+          (abort-write-word 0xa 1))
         (cfg compiler-backtrace (abort-exit 134) (os-exit 134))))))
 
 ;: General panic abort: write the supplied message to stderr and exit 134.
@@ -1147,7 +1155,8 @@
       (set! runtime-test-case-failed true)
       (abort-write "  ")
       (abort-write message)
-      (abort-write "\n"))
+      ;; "\n"
+      (abort-write-word 0xa 1))
     (begin
       (abort-write message)
       (os-exit 134))))

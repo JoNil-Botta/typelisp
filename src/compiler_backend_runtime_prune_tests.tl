@@ -115,9 +115,8 @@ tl_oob_abort_at:
 "
         (prune.literal-begin)
         ".L_tl_str_data_a:
-    .ascii \"pan\"
-.L_tl_str_data_b:
-    .ascii \"ic\"
+    .set .L_tl_str_data_b, .L_tl_str_data_a + 3
+    .ascii \"panic\"
 "
         (prune.literal-unit-end)
         ".L_tl_str_data_c:
@@ -125,9 +124,8 @@ tl_oob_abort_at:
 "
         (prune.literal-unit-end)
         ".L_tl_str_data_d:
-    .ascii \"ov\"
-.L_tl_str_data_e:
-    .ascii \"erlap\"
+    .set .L_tl_str_data_e, .L_tl_str_data_d + 2
+    .ascii \"overlap\"
 "
         (prune.literal-unit-end)
         "    .balign 8
@@ -158,13 +156,13 @@ tl_oob_abort_at:
     (test.assert-true
       (string.contains
         (& output)
-        ".L_tl_str_data_a:\n    .ascii \"pan\"\n.L_tl_str_data_b:\n    .ascii \"ic\"\n")
+        ".L_tl_str_data_a:\n    .set .L_tl_str_data_b, .L_tl_str_data_a + 3\n    .ascii \"panic\"\n")
       "a live string keeps its whole suffix-shared run")
     (test.assert-true
       (string.contains
         (& output)
-        ".L_tl_str_data_d:\n    .ascii \"ov\"\n.L_tl_str_data_e:\n    .ascii \"erlap\"\n")
-      "a live string keeps every owner overlapped into its unit")
+        ".L_tl_str_data_d:\n    .set .L_tl_str_data_e, .L_tl_str_data_d + 2\n    .ascii \"overlap\"\n")
+      "a string named through an interior label keeps its whole unit")
     (test.assert-true
       (not (string.contains (& output) ".L_tl_str_lc:"))
       "a header named only by a dead helper is omitted")

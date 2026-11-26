@@ -47482,9 +47482,11 @@ user_fn:
         (&
           (str_cat.str-cat
             head
-            ":\n    .ascii \"head-\"\n"
+            ":\n    .set "
             tail
-            ":\n    .ascii \"tail-end\"\n"
+            ", "
+            head
+            " + 5\n    .ascii \"head-tail-end\"\n"
             unit-end)))
       (string.contains
         (& sectioned)

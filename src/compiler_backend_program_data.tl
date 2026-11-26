@@ -707,6 +707,53 @@
     (be_facts.compiler-backend-escape-string text))
   (byte_buf_core.byte-buf-builder-append-string out "\"\n"))
 
+;; Renders the unit of shared bytes whose records start at `start` and returns
+;; the index of the record after it. Its bytes stay one `.ascii` record, so a
+;; literal's text reads whole in the listing. A label at an interior offset is
+;; set relative to the unit's first label.
+(define (compiler-backend-emit-literal-unit!
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
+  [records : (& records cobj.CompilerObjectDataRecordList)]
+  [start : i64]) : i64
+  (let
+    [first : String ""]
+    [offset : i64 0]
+    [bytes : text_buf.TextBuf (text_buf.empty)]
+    [i : i64 start]
+    [open : bool true]
+    (while (and open (< i records.len))
+      (match (cobj.compiler-object-data-record-list-ref records i)
+        [(Label label)
+          (if (= offset 0)
+            (begin
+              (byte_buf_core.byte-buf-builder-append-string
+                out
+                (str_cat.str-cat label ":\n"))
+              (when (= i start) (set! first label)))
+            (byte_buf_core.byte-buf-builder-append-string
+              out
+              (str_cat.str-cat
+                "    .set "
+                label
+                ", "
+                first
+                " + "
+                (string.int->string offset)
+                "\n")))
+          (+= i 1)]
+        [(Bytes text)
+          (+= offset (string.string-length (& text)))
+          (set! bytes (text_buf.append bytes text))
+          (+= i 1)]
+        [_ (set! open false)]))
+    (when
+      (> offset 0)
+      (compiler-backend-emit-quoted-literal!
+        out
+        "    .ascii \""
+        (text_buf.render bytes)))
+    i))
+
 (define (compiler-backend-literal-section [label : (& label str)]) : String
   (be_operand.compiler-backend-elf-symbol-section
     ".rodata"
@@ -759,7 +806,15 @@
                         (&mut out)
                         (compiler-backend-literal-section (& label)))]
                     [_ unit]))
-                (set! unit-open true))
+                (set! unit-open true)
+                (set!
+                  i
+                  (-
+                    (compiler-backend-emit-literal-unit!
+                      (&mut out)
+                      (& records)
+                      (+ i 1))
+                    1)))
               (begin
                 (set! headers true)
                 (byte_buf_core.byte-buf-builder-append-string
@@ -785,11 +840,6 @@
             (object_asm.compiler-object-asm-render-data-record!
               (&mut out)
               (Label label))]
-          [(Bytes text)
-            (compiler-backend-emit-quoted-literal!
-              (&mut out)
-              "    .ascii \""
-              text)]
           [_
             (object_asm.compiler-object-asm-render-data-record!
               (&mut out)

@@ -285,10 +285,6 @@
 ;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-Choice : i64
   -1)
-
-;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
-(define compiler-builtin-id-fix-CloneShortList : i64
-  -1)
 (define compiler-builtin-id-fix-comptime : i64
   -1)
 
@@ -1059,7 +1055,6 @@
           (id compiler-builtin-id-fix-c 84 "c")
           (id compiler-builtin-id-fix-callback_target 85 "callback-target")
           (id compiler-builtin-id-fix-Choice 86 "Choice")
-          (id compiler-builtin-id-fix-CloneShortList 88 "CloneShortList")
           (id compiler-builtin-id-fix-comptime 89 "comptime")
           (id
             compiler-builtin-id-fix-comptime_dot_comptime_error

@@ -3201,91 +3201,160 @@
     "    .section .typelisp_backtrace,\"a\",@progbits\n"))
 
 ;; The row travels with its call through speculative function emission and
-;; cold-stub placement. Only an assembled row opens the table and marks its
-;; kind as used. The two displacements are relative to their own fields.
+;; cold-stub placement. Only an assembled row marks the table and its kind as
+;; used. A row is 12 bytes: the return address and the path's NUL-terminated
+;; bytes, each relative to its own field, then `line << 12 | column`. The first
+;; row naming a path in an object also defines those bytes. On ELF they sit in
+;; a mergeable string section, so the linker keeps one copy of each path across
+;; objects and drops the copies no surviving row names. Every row of the image
+;; lands in one table that a single lookup scans, so no object keeps a table
+;; of its own. A library object gives every function its own section, and each
+;; row follows its function: an ELF SHF_LINK_ORDER section, or a COFF
+;; associative COMDAT, is kept exactly when the function is. An executable
+;; object keeps its functions in one section, so its rows follow that section.
+;; A shared object is one closed object whose rows all share one section, so
+;; its lookup scans that section alone (LOCAL-TABLE?): `ld -shared` would put
+;; linker-defined `__start_`/`__stop_` symbols in the dynamic symbol table.
 (define (compiler-backend-abort-table-prefix
-  [target : be_state.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget]
+  [library? : bool]
+  [local-table? : bool]) : String
   (str_cat.str-cat
-    "    .macro .tl_abort_row pc, path, line, column, kind\n"
+    "    .macro .tl_abort_row fn, pc, path, text, location, kind\n    .ifndef \\path\n"
     (if (be_state.compiler-backend-target-coff? target)
-      "    .pushsection .rdata$TLAS,\"dr\"\n"
-      "    .pushsection .rodata.tl_abort_sites,\"a\",@progbits\n")
-    "    .ifndef .L_tl_abort_table\n    .balign 4\n.L_tl_abort_table:\n    .endif\n"
-    "    .long \\pc - ., \\path - ., \\line, \\column\n"
+      "    .pushsection .rdata,\"dr\"\n"
+      "    .pushsection .rodata.str1.1,\"aMS\",@progbits,1\n")
+    "\\path:\n    .asciz \"\\text\"\n    .popsection\n    .endif\n"
+    (cond
+      [(not (be_state.compiler-backend-target-coff? target))
+        (if (and library? (not local-table?))
+          "    .pushsection tl_abort_sites,\"ao\",@progbits,\\fn\n"
+          "    .pushsection tl_abort_sites,\"ao\",@progbits,.text\n")]
+      [library? "    .pushsection .rdata$TLAS,\"dr\",associative,\\fn\n"]
+      [else "    .pushsection .rdata$TLAS,\"dr\"\n"])
+    "    .balign 4\n    .ifndef .L_tl_abort_table\n.L_tl_abort_table:\n    .endif\n"
+    "    .long \\pc - ., \\path - ., \\location\n"
     "    .popsection\n    .set .L_tl_abort_used_\\kind, 1\n    .endm\n"))
 
-;; Only volatile scratch registers are touched before the call. The frame
-;; pointer describes both incoming stack alignments (a SysV abort-only leaf
-;; can call from its red zone), and Win64 gets its own outgoing shadow space.
-;; The existing runtime readers see the same four-word descriptor.
+;; The 20-bit line and 12-bit column of an abort row. A coordinate past its
+;; field saturates instead of wrapping into the other one.
+(define (compiler-backend-abort-row-location [line : i64] [column : i64]) : i64
+  (let
+    [line-max : i64 1048575]
+    [column-max : i64 4095]
+    (bit-or
+      (shl (cond [(< line 0) 0] [(> line line-max) line-max] [else line]) 12)
+      (cond [(< column 0) 0] [(> column column-max) column-max] [else column]))))
+
+;; Each object that assembled a row defines the entry stub of every kind it
+;; used and the lookup, all as deduplicated COMDATs: one copy of each reaches
+;; the image, and none roots anything a surviving abort call does not (an
+;; object's own five-byte jump to each used stub keeps only that stub). On ELF
+;; each kind's jump has its own section, so a live jump to one kind keeps no
+;; other kind's stub and handler. lld-link drops only COMDATs, and a COMDAT jump
+;; could be discarded with another object's copy of its leader, so a COFF jump
+;; stays in `.text`. A stub
+;; passes its handler continuation in %r11; the lookup finds the row of the
+;; return address and calls it with the four-word descriptor the runtime
+;; readers expect. Only volatile scratch registers are touched before the
+;; call. The frame pointer describes both incoming stack alignments (a SysV
+;; abort-only leaf can call from its red zone), and Win64 gets its own outgoing
+;; shadow space. A linker may pad between COFF contributions with zeros; a
+;; real row's return-address field is never zero, so the scan steps over them.
 (define (compiler-backend-abort-table-trailer
   [target : be_state.CompilerBackendTarget]
+  [local-table? : bool]
   [site-count : i64]) : String
   (when (= site-count 0) (return ""))
   (let
     [windows? : bool (be_state.compiler-backend-target-coff? target)]
     [debug? : bool (compiler_ir_types.compiler-debug-info-enabled?)]
-    ;; Speculative emission can leave fewer rows than sites. The assembler
-    ;; guard below still requires a surviving row, so one allocated site
-    ;; guarantees exactly one possible caller of the thunk.
-    [scan? : bool (> site-count 1)]
     [site-reg : String
       (if windows?
         "%rcx"
         "%rdi")]
-    [site-offset : i64
-      (if windows?
-        32
-        0)]
+    [table-begin : String
+      (cond
+        [windows? "tl_abort_rows_begin"]
+        [local-table? ".L_tl_abort_table"]
+        [else "__start_tl_abort_sites"])]
+    [table-end : String
+      (cond
+        [windows? "tl_abort_rows_end"]
+        [local-table? ".L_tl_abort_table_end"]
+        [else "__stop_tl_abort_sites"])]
     (str_cat.str-cat
       "    .section .text\n    .ifdef .L_tl_abort_table\n"
-      (if scan?
-        (str_cat.str-cat
-          (if windows?
-            "    .pushsection .rdata$TLAS,\"dr\"\n"
-            "    .pushsection .rodata.tl_abort_sites,\"a\",@progbits\n")
-          ".L_tl_abort_table_end:\n    .popsection\n")
+      (if (and local-table? (not windows?))
+        "    .pushsection tl_abort_sites,\"ao\",@progbits,.text\n.L_tl_abort_table_end:\n    .popsection\n"
         "")
       "    .irp kind, tl_oob_abort_at, tl_div_abort_at, tl_shift_abort_at, tl_panic_at\n"
-      "    .ifdef .L_tl_abort_used_\\kind\n.L_tl_abort_\\kind:\n"
-      "    leaq 1f(%rip), %r11\n    jmp .L_tl_abort_lookup\n1:\n    jmp \\kind\n"
+      ;; An assembler resolves an alias of a symbol defined in the same
+      ;; object to its section, which may be a discarded duplicate. The
+      ;; object's own jump names the stub's symbol instead.
+      "    .ifdef .L_tl_abort_used_\\kind\n"
+      (if windows?
+        "    .section .text\n"
+        "    .section .text..L_tl_abort_\\kind,\"ax\",@progbits\n")
+      ".L_tl_abort_\\kind:\n    jmp tl_site_\\kind\n"
+      (if windows?
+        "    .section .text,\"xr\",discard,tl_site_\\kind\n    .globl tl_site_\\kind\n"
+        "    .section .text.tl_site_\\kind,\"axG\",@progbits,tl_site_\\kind,comdat\n    .globl tl_site_\\kind\n    .hidden tl_site_\\kind\n")
+      "tl_site_\\kind:\n    leaq 1f(%rip), %r11\n    jmp tl_abort_lookup\n1:\n    jmp \\kind\n"
       "    .endif\n    .endr\n"
       (if windows?
-        "    .seh_proc .L_tl_abort_lookup\n.L_tl_abort_lookup:\n    pushq %rbp\n    .seh_pushreg %rbp\n    subq $64, %rsp\n    .seh_stackalloc 64\n    leaq 64(%rsp), %rbp\n    .seh_setframe %rbp, 64\n    .seh_endprologue\n    andq $-16, %rsp\n"
-        (if debug?
-          ".L_tl_abort_lookup:\n    .cfi_startproc\n    pushq %rbp\n    .cfi_def_cfa_offset 16\n    .cfi_offset %rbp, -16\n    movq %rsp, %rbp\n    .cfi_def_cfa_register %rbp\n    andq $-16, %rsp\n    subq $32, %rsp\n"
-          ".L_tl_abort_lookup:\n    pushq %rbp\n    movq %rsp, %rbp\n    andq $-16, %rsp\n    subq $32, %rsp\n"))
-      "    leaq .L_tl_abort_table(%rip), %r10\n"
-      (if scan?
         (str_cat.str-cat
-          "    movq 8(%rbp), %rax\n"
-          "2:\n    leaq .L_tl_abort_table_end(%rip), "
-          site-reg
-          "\n    cmpq "
-          site-reg
-          ", %r10\n    jae 3f\n    movslq (%r10), "
-          site-reg
-          "\n    addq %r10, "
-          site-reg
-          "\n    cmpq %rax, "
-          site-reg
-          "\n    je 4f\n    addq $16, %r10\n    jmp 2b\n3:\n    ud2\n4:\n")
-        "")
+          "    .section .rdata$TLAR,\"dr\",discard,tl_abort_rows_begin\n    .globl tl_abort_rows_begin\n    .balign 4\ntl_abort_rows_begin:\n    .long 0\n"
+          "    .section .rdata$TLAZ,\"dr\",discard,tl_abort_rows_end\n    .globl tl_abort_rows_end\n    .balign 4\ntl_abort_rows_end:\n    .long 0\n"
+          "    .section .text,\"xr\",discard,tl_abort_lookup\n    .globl tl_abort_lookup\n"
+          "    .seh_proc tl_abort_lookup\ntl_abort_lookup:\n    pushq %rbp\n    .seh_pushreg %rbp\n    subq $64, %rsp\n    .seh_stackalloc 64\n    leaq 64(%rsp), %rbp\n    .seh_setframe %rbp, 64\n    .seh_endprologue\n    andq $-16, %rsp\n")
+        (str_cat.str-cat
+          "    .section .text.tl_abort_lookup,\"axG\",@progbits,tl_abort_lookup,comdat\n    .globl tl_abort_lookup\n    .hidden tl_abort_lookup\n"
+          (if local-table?
+            ""
+            "    .hidden __start_tl_abort_sites\n    .hidden __stop_tl_abort_sites\n")
+          (if debug?
+            "tl_abort_lookup:\n    .cfi_startproc\n    pushq %rbp\n    .cfi_def_cfa_offset 16\n    .cfi_offset %rbp, -16\n    movq %rsp, %rbp\n    .cfi_def_cfa_register %rbp\n    andq $-16, %rsp\n    subq $32, %rsp\n"
+            "tl_abort_lookup:\n    pushq %rbp\n    movq %rsp, %rbp\n    andq $-16, %rsp\n    subq $32, %rsp\n")))
       "    leaq "
-      (string.int->string site-offset)
+      table-begin
+      "(%rip), %r10\n    movq 8(%rbp), %rax\n2:\n    leaq "
+      table-end
+      "(%rip), "
+      site-reg
+      "\n    cmpq "
+      site-reg
+      ", %r10\n    jae 3f\n    movslq (%r10), "
+      site-reg
+      "\n    testq "
+      site-reg
+      ", "
+      site-reg
+      "\n    jnz 5f\n    addq $4, %r10\n    jmp 2b\n5:\n    addq %r10, "
+      site-reg
+      "\n    cmpq %rax, "
+      site-reg
+      "\n    je 4f\n    addq $12, %r10\n    jmp 2b\n3:\n    ud2\n4:\n    leaq "
+      (if windows?
+        "32"
+        "0")
       "(%rsp), "
       site-reg
-      "\n    movslq 8(%r10), %rax\n    movq %rax, 16("
+      "\n    movl 8(%r10), %eax\n    shrl $12, %eax\n    movq %rax, 16("
       site-reg
-      ")\n    movslq 12(%r10), %rax\n    movq %rax, 24("
+      ")\n    movl 8(%r10), %eax\n    andl $4095, %eax\n    movq %rax, 24("
       site-reg
-      ")\n    movslq 4(%r10), %rax\n"
-      "    movdqu 4(%r10,%rax), %xmm0\n    movdqu %xmm0, ("
+      ")\n    movslq 4(%r10), %rax\n    leaq 4(%r10,%rax), %rax\n    movq %rax, ("
+      site-reg
+      ;; The path's byte length, counted up to its NUL.
+      ")\n    movq %rax, %r10\n6:\n    cmpb $0, (%r10)\n    je 7f\n    incq %r10\n    jmp 6b\n7:\n    subq %rax, %r10\n    movq %r10, 8("
       site-reg
       ")\n    call *%r11\n    ud2\n"
-      (if debug?
-        ".L_tl_abort_lookup_end:\n"
-        "")
+      (cond
+        [(not debug?) ""]
+        [windows? "    .globl tl_abort_lookup_end\ntl_abort_lookup_end:\n"]
+        [else
+          "    .globl tl_abort_lookup_end\n    .hidden tl_abort_lookup_end\ntl_abort_lookup_end:\n"])
       (cond
         [windows? "    .seh_endproc\n"]
         [debug? "    .cfi_endproc\n"]
@@ -3293,14 +3362,14 @@
       (if debug?
         (str_cat.str-cat
           (compiler-backend-backtrace-map-section target)
-          "    .balign 8\n    .quad .L_tl_abort_lookup\n    .quad .L_tl_abort_lookup_end\n"
+          "    .balign 8\n    .quad tl_abort_lookup\n    .quad tl_abort_lookup_end\n"
           "    .quad tl_backtrace_string_data_begin\n    .quad 0\n"
           "    .quad tl_backtrace_string_data_begin\n    .quad 0\n"
           ;; An empty name and line -1 mark the abort lookup frame, which
           ;; must not consume a slot in the runtime's backtrace frame budget.
-          "    .quad -1\n    .quad 0\n    .text\n")
+          "    .quad -1\n    .quad 0\n")
         "")
-      "    .endif\n")))
+      "    .text\n    .endif\n")))
 
 (define (compiler-backend-backtrace-string-section
   [target : be_state.CompilerBackendTarget]) : String
@@ -3525,6 +3594,12 @@
                 (ci.intern-compat-state-str
                   (be_state.compiler-backend-state-intern ctx.backend-state)
                   path-id)))
+            (be_state.compiler-backend-function-state-set-string!
+              function-state
+              be_state.compiler-backend-function-string-abort-site-function
+              (be_operand.compiler-backend-function-symbol-index
+                ctx.program-index
+                ctx.source-function))
             (be_state.compiler-backend-function-state-set-i64!
               function-state
               be_state.compiler-backend-function-i64-abort-site-line
@@ -3575,19 +3650,24 @@
     (str_cat.str-cat
       label
       ":\n    .tl_abort_row "
+      (be_state.compiler-backend-function-state-string
+        function-state
+        be_state.compiler-backend-function-string-abort-site-function)
+      ", "
       label
-      ", "
-      (be_operand.compiler-backend-string-fat-label path)
-      ", "
+      ", .L_tl_abort_path_"
+      (be_operand.compiler-backend-string-label-suffix path)
+      ", \""
+      (be_facts.compiler-backend-escape-string path)
+      "\", "
       (string.int->string
-        (be_state.compiler-backend-function-state-i64
-          function-state
-          be_state.compiler-backend-function-i64-abort-site-line))
-      ", "
-      (string.int->string
-        (be_state.compiler-backend-function-state-i64
-          function-state
-          be_state.compiler-backend-function-i64-abort-site-column))
+        (compiler-backend-abort-row-location
+          (be_state.compiler-backend-function-state-i64
+            function-state
+            be_state.compiler-backend-function-i64-abort-site-line)
+          (be_state.compiler-backend-function-state-i64
+            function-state
+            be_state.compiler-backend-function-i64-abort-site-column)))
       ", "
       symbol
       "\n")))

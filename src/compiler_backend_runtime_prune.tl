@@ -32,6 +32,13 @@
 (define (literal-end) : String
   "# typelisp literal bundle end\n")
 
+(define (literal-unit-end) : String
+  "# typelisp literal unit end\n")
+
+;; A literal unit sets each label at an interior offset of its bytes.
+(define set-prefix : String
+  "    .set ")
+
 (defstruct RuntimeFragment
   (start i64)
   (end i64))
@@ -109,8 +116,9 @@
     (fragment_vec.push-ref! ranges (RuntimeFragment start end))))
 
 ;; A literal bundle holds string data and {ptr,len} headers. Each entry starts
-;; at a label: labels and `.ascii` prefixes of one suffix-shared string run on
-;; until its `.string` record, and a header is a label and two `.quad`s.
+;; at a label. The labels, `.set` interior labels, and `.ascii` record of one
+;; unit of shared bytes run on until its end marker, so a unit is kept or
+;; dropped whole. A header is a label and two `.quad`s.
 ;; Returns false when a marker is left open; nothing is pruned then.
 (define (find-ranges!
   [data : (Ptr u8)]
@@ -138,6 +146,10 @@
           [(has-prefix? data pos end (& (literal-begin)))
             (set! literal true)
             (set! continued false)]
+          [(has-prefix? data pos end (& (literal-unit-end)))
+            (record-range! ranges start end)
+            (set! start -1)
+            (set! continued false)]
           [(has-prefix? data pos end (& (literal-end)))
             (record-range! ranges start pos)
             (set! start -1)
@@ -154,7 +166,10 @@
                 (set! start pos))
               (set!
                 continued
-                (or label? (has-prefix? data pos end "    .ascii "))))]
+                (or
+                  label?
+                  (has-prefix? data pos end (& set-prefix))
+                  (has-prefix? data pos end "    .ascii "))))]
           [else unit])
         (set! pos end)))
     (not (or bundle literal (>= start 0)))))
@@ -212,9 +227,19 @@
       (let
         [end : i64 (line-end data pos range.end)]
         (when
-          (label-line? data pos end)
+          (or
+            (label-line? data pos end)
+            (has-prefix? data pos end (& set-prefix)))
           (let
-            [hash : i64 (tuple-ref (symbol-token data pos end) 0)]
+            [hash : i64
+              (tuple-ref
+                (symbol-token
+                  data
+                  (if (label-line? data pos end)
+                    pos
+                    (+ pos (string.string-length (& set-prefix))))
+                  end)
+                0)]
             (i64_vec.push-ref! owners fragment)
             (i64_vec.push-ref! next (label_map.get-value-or (& labels) hash 0))
             (label_map.insert-ref! labels hash (i64_vec.len (& owners)))))

@@ -34,8 +34,11 @@
   (Err String)
   (Ok unit))
 
+;; Built from two halves so no literal holds the whole marker: literal bytes
+;; carry no NUL and may run into an adjacent literal, which a binary scanner
+;; would mistake for a frame.
 (define (compiler-lzss-envelope-prefix) : String
-  "__typelisp_embedded_stdlib_tlss_v3__")
+  (str_cat.str-cat "__typelisp_embedded_" "stdlib_tlss_v3__"))
 
 ;; Tokens and symbols.
 (define (compiler-lzss-match-new) : i64

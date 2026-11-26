@@ -65,7 +65,7 @@ assemble_and_link_verify_asm() {
     _alv_archive=$(linux_stdlib_archive_for_asm "$_alv_asm" "$COMPILER")
     as "$_alv_asm" -o "$_alv_obj" 2>"$_alv_err" || return $?
     if [ -n "$_alv_archive" ]; then
-        ld -static -e "$_alv_entry" -z noexecstack --gc-sections "$_alv_obj" \
+        ld -static -e "$_alv_entry" -z noexecstack --gc-sections -z start-stop-gc "$_alv_obj" \
             --start-group "$_alv_archive" --end-group -o "$_alv_bin" \
             2>>"$_alv_err" || return $?
     else

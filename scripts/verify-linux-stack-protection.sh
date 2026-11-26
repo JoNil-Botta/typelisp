@@ -14,7 +14,7 @@ link_linux_bin() {
     _llb_bin=$3
     _llb_archive=$(linux_stdlib_archive_for_asm "$_llb_asm" "$COMPILER")
     if [ -n "$_llb_archive" ]; then
-        ld -e _tl_start -z noexecstack --gc-sections "$_llb_obj" \
+        ld -e _tl_start -z noexecstack --gc-sections -z start-stop-gc "$_llb_obj" \
             --start-group "$_llb_archive" --end-group -o "$_llb_bin"
     else
         ld -e _tl_start "$_llb_obj" -o "$_llb_bin"

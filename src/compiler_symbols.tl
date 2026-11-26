@@ -1739,9 +1739,12 @@
         (build-compiler-symbol-list-in-module
           (& body)
           (& body)
+          (& (ast.ast-decl-path-list-new))
+          0
           symbols
           index
-          name))]
+          name
+          cbi.compiler-builtin-id-fix-empty))]
     [(Unsafe inner-box)
       (let
         [inner : ast.AstDecl (deref inner-box)]
@@ -2506,9 +2509,12 @@
   (build-compiler-symbol-list-in-module
     decls
     decls
+    (& (ast.ast-decl-path-list-new))
+    0
     symbols
     index
-    (compiler-symbol-root-module-id)))
+    (compiler-symbol-root-module-id)
+    cbi.compiler-builtin-id-fix-empty))
 
 (define (compiler-symbol-decl-counts-for-index? [decl : (& ast.AstDecl)]) : bool
   (match decl
@@ -2864,9 +2870,12 @@
 (define (build-compiler-symbol-list-in-module
   [all-decls : (& ast.AstDeclList)]
   [decls : (& ast.AstDeclList)]
+  [paths : (& ast.AstDeclPathList)]
+  [path-index : i64]
   [symbols : CompilerSymbols]
   [index : i64]
-  [module-id : i64]) : ResultCompilerSymbols
+  [module-id : i64]
+  [fallback-provenance-id : i64]) : ResultCompilerSymbols
   (match (ast.ast-decl-list-step decls)
     [(Nil) (Ok symbols)]
     [(Cons decl rest)
@@ -2874,22 +2883,33 @@
         [rest : ast.AstDeclList rest]
         [decl-for-index : ast.AstDecl (compiler-symbols-decl-shared-view decl)]
         [decl-for-add : ast.AstDecl (compiler-symbols-decl-shared-view decl)]
+        [provenance-id : i64
+          (ast.ast-decl-path-list-provenance-id
+            paths
+            path-index
+            fallback-provenance-id)]
         (match decl
           [(or (Import _ _) (IncludeStr _ _) (IncludeStrComptime _ _)
                (IncludeStrLzss _ _) (IncludeBin _ _) (Test _ _ _ _))
             (build-compiler-symbol-list-in-module
               all-decls
               (& rest)
+              paths
+              (+ path-index 1)
               symbols
               index
-              module-id)]
+              module-id
+              fallback-provenance-id)]
           [(Module next-module)
             (build-compiler-symbol-list-in-module
               all-decls
               (& rest)
+              paths
+              (+ path-index 1)
               symbols
               index
-              next-module)]
+              next-module
+              fallback-provenance-id)]
           [(ModuleBody name body-box)
             (let
               [body : ast.AstDeclList (deref body-box)]
@@ -2899,15 +2919,21 @@
                   (build-compiler-symbol-list-in-module
                     all-decls
                     (& body)
+                    (& (ast.ast-decl-path-list-new))
+                    0
                     symbols
                     index
-                    name))]
+                    name
+                    provenance-id))]
               (build-compiler-symbol-list-in-module
                 all-decls
                 (& rest)
+                paths
+                (+ path-index 1)
                 body-symbols
                 (+ index body-count)
-                module-id))]
+                module-id
+                fallback-provenance-id))]
           [_
             (set!
               symbols
@@ -2916,7 +2942,7 @@
                 (& decl-for-index)
                 index
                 module-id
-                cbi.compiler-builtin-id-fix-empty))
+                provenance-id))
             (let
               [next-symbols
                 (try
@@ -2928,9 +2954,12 @@
               (build-compiler-symbol-list-in-module
                 all-decls
                 (& rest)
+                paths
+                (+ path-index 1)
                 next-symbols
                 (+ index 1)
-                module-id))]))]))
+                module-id
+                fallback-provenance-id))]))]))
 
 (define (build-compiler-symbol-list-with-paths-in-module
   [all-decls : (& ast.AstDeclList)]
@@ -3253,6 +3282,7 @@
 (define (compiler-symbols-insert-decls
   [symbols : (& CompilerSymbols)]
   [decls : (& ast.AstDeclList)]
+  [paths : (& ast.AstDeclPathList)]
   [module-id : i64]) : ResultCompilerSymbols
   (let
     [old-count : i64 (compiler-symbols-decl-count symbols)]
@@ -3264,9 +3294,12 @@
         (build-compiler-symbol-list-in-module
           decls
           decls
+          paths
+          0
           grown
           old-count
-          module-id))]
+          module-id
+          cbi.compiler-builtin-id-fix-empty))]
     [macro-modules : sym_i64_env.SymI64Env
       (compiler-symbols-macro-module-set decls)]
     [aliased : CompilerSymbols

@@ -506,6 +506,7 @@
               (match (csym.compiler-symbols-insert-decls
                 (& base-symbols)
                 (& (deref root-box))
+                (& (ast.ast-decl-path-list-new))
                 (csym.compiler-symbol-root-module-id))
                 [(Ok symbols)
                   (match (csym.compiler-symbols-lookup-value-id
@@ -1079,6 +1080,7 @@
                   (match (csym.compiler-symbols-insert-decls
                     (& base-symbols)
                     (& (deref splice-box))
+                    (& (ast.ast-decl-path-list-new))
                     (csym.compiler-symbol-root-module-id))
                     [(Ok appended)
                       (let
@@ -1128,16 +1130,19 @@
                     [(Program splice-box)
                       (let
                         [splice-decls : ast.AstDeclList (deref splice-box)]
+                        [splice-provenance-id : i64 (ci.intern "generated.tl")]
                         [splice-paths : ast.AstDeclPathList
-                          (csym.compiler-symbol-path-list-repeat
+                          (csym.compiler-symbol-path-list-repeat-with-provenance
                             splice-decls
                             "generated.tl"
-                            cbi.compiler-builtin-id-fix-empty)]
+                            cbi.compiler-builtin-id-fix-empty
+                            splice-provenance-id)]
                         [append-index : i64
                           (csym.compiler-symbols-decl-count base-symbols)]
                         (match (csym.compiler-symbols-insert-decls
                           (& base-symbols)
                           (& splice-decls)
+                          (& splice-paths)
                           (csym.compiler-symbol-root-module-id))
                           [(Ok appended-symbols)
                             (match (csym.compiler-registries-append-decls
@@ -1179,6 +1184,18 @@
                                       (csym.compiler-symbols-decl-count
                                         appended-symbols)
                                       (+ append-index 2))
+                                    (=
+                                      (csym.compiler-symbols-provenance-id-at-index-or
+                                        (& appended-symbols)
+                                        append-index
+                                        -1)
+                                      splice-provenance-id)
+                                    (=
+                                      (csym.compiler-symbols-provenance-id-at-index-or
+                                        (& appended-symbols)
+                                        (+ append-index 1)
+                                        -1)
+                                      splice-provenance-id)
                                     (=
                                       (compiler-registry-lookup-score
                                         (csym.compiler-registries-lookup-variant-key-id

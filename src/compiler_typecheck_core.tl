@@ -100177,7 +100177,8 @@
 
 (define (macro-live-symbols-insert-decls!
   [state : TcMacroState]
-  [decls : ast.AstDeclList]
+  [decls : (& ast.AstDeclList)]
+  [paths : (& ast.AstDeclPathList)]
   [module-id : i64]) : bool
   (if (and
     (tc-macro-walk-field state macro-live-symbols-ready)
@@ -100188,7 +100189,8 @@
       [append-index : i64 (csym.compiler-symbols-decl-count current-symbols)]
       (match (csym.compiler-symbols-insert-decls
         (& current-symbols)
-        (& decls)
+        decls
+        paths
         module-id)
         [(Ok symbols)
           (tc-macro-walk-set! state macro-live-symbols-value symbols)
@@ -127085,7 +127087,8 @@
                                           (& expanded))
                                         (macro-live-symbols-insert-decls!
                                           (tc-context-macro-state cur-ctx)
-                                          (tc-global-shared-view expanded)
+                                          (& expanded)
+                                          (& expanded-paths)
                                           cur-module-id))]
                                     [registries-inserted : bool
                                       (and
@@ -127320,7 +127323,8 @@
                                       (& materialized-decls))
                                     (macro-live-symbols-insert-decls!
                                       (tc-context-macro-state cur-ctx)
-                                      (tc-global-shared-view materialized-decls)
+                                      (& materialized-decls)
+                                      (& materialized-paths)
                                       cur-module-id))]
                                 [incremental? : bool
                                   (and

@@ -10455,7 +10455,8 @@
           (test.assert-true
             (tc_core.macro-live-symbols-insert-decls!
               state
-              (tc-test-copy-decl-list (& delta))
+              (& delta)
+              (& delta-paths)
               module-id)
             "fresh symbols committed")
           (test.assert-true

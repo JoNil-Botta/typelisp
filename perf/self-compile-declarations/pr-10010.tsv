@@ -1,0 +1,1 @@
+self_compile/compile_cli_opt1	+4988.401	unified leading hidden-result (sret) convention (#7887): backend sret-reuse pass (~175M Ir in its admit and rename walks) plus ABI-inherent one-register argument shifts across leading-sret callees; flips read_sexpr -2.59%; local same-host delta over main 2240810b2: 107,068,328,307 -> 107,602,428,036 Ir

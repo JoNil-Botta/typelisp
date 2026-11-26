@@ -132,6 +132,15 @@
         path
         (tltest-path-at rest (- index 1)))]))
 
+(define (tltest-path-lanes-eq?
+  [paths : (& paths ast.AstDeclPathList)]
+  [index : i64]
+  [owner-id : i64]
+  [provenance-id : i64]) : bool
+  (and
+    (= (ast.ast-decl-path-list-owner-id paths index -1) owner-id)
+    (= (ast.ast-decl-path-list-provenance-id paths index -1) provenance-id)))
+
 (define (tltest-decl-name [decl : ast.AstDecl]) : String
   (match decl
     [(or (Def _ name _ _) (DefFn _ name _ _ _ _) (DefMacro _ name _ _ _)
@@ -1807,6 +1816,161 @@
             -1)))))
     unit
     (io.panic "test: diagnostic source marker exclusion mismatch")))
+
+;; Owner and physical provenance are independent lanes. A module owner id, a
+;; package-owned display path and the physical source path must all stay
+;; distinct through collection, reachability pruning and harness generation.
+(test
+  test-cli-inline-provenance-lanes-survive-collect-prune-and-harness
+  (if (let
+    [display : String "pkg/provenance_display.tl"]
+    [imported-display : String "pkg/provenance_imported.tl"]
+    [display-id : i64 (ci.intern (string.copy (& display)))]
+    [owner-id : i64 (ci.intern "provenance-owner-module")]
+    [provenance-id : i64 (ci.intern "physical/provenance_source.tl")]
+    [imported-provenance-id : i64 (ci.intern "physical/provenance_imported.tl")]
+    [harness-provenance-id : i64
+      (tltest.tltest-generated-harness-provenance-id)]
+    [runtime-provenance-id : i64
+      (ci.intern-generated-canonical-name "<generated test runtime>")]
+    [empty-id : i64 cbi.compiler-builtin-id-fix-empty]
+    [span : ast.AstSourceSpan (ast.ast-source-span 3 1 3 1)]
+    [helper-id : i64 (ci.intern-generated-name "__tl_provenance_helper")]
+    [decls : ast.AstDeclList
+      (ast.ast-decl-cons
+        (& (ast.ast-decl-module-id owner-id))
+        (&
+          (ast.ast-decl-cons
+            (&
+              (Import
+                (ast.ast-decl-meta-runtime-with-aggregate-markers 0)
+                (Spec
+                  (Module)
+                  (string.copy (& imported-display))
+                  (Some owner-id)
+                  (Some owner-id)
+                  (box span))))
+            (&
+              (ast.ast-decl-cons
+                (&
+                  (ast.ast-decl-def-fn-id
+                    helper-id
+                    (ast.ast-param-list-new)
+                    (Unit)
+                    (ast.ast-node-push (Literal (Unit)))))
+                (&
+                  (ast.ast-decl-cons
+                    (&
+                      (ast.ast-decl-test-id
+                        (ci.intern "provenance-lane-case")
+                        (tltest.tltest-call-expr-id helper-id)
+                        span))
+                    (& (ast.ast-decl-list-new)))))))))]
+    [paths : ast.AstDeclPathList
+      (ast.ast-decl-path-cons-with-owner-and-provenance-id
+        (string.copy (& display))
+        owner-id
+        provenance-id
+        (ast.ast-decl-path-cons-with-owner-and-provenance-id
+          imported-display
+          owner-id
+          imported-provenance-id
+          (ast.ast-decl-path-cons-with-owner-and-provenance-id
+            (string.copy (& display))
+            owner-id
+            provenance-id
+            (ast.ast-decl-path-cons-with-owner-and-provenance-id
+              (string.copy (& display))
+              owner-id
+              provenance-id
+              (ast.ast-decl-path-list-new)))))]
+    (match (tltest.tltest-collect (& display) decls paths)
+      [(Collect runtime-decls runtime-paths tests)
+        (and
+          (not (= display-id owner-id))
+          (not (= display-id provenance-id))
+          (not (= owner-id provenance-id))
+          (= (array-length tests) 1)
+          (tltest-path-lanes-eq? (& runtime-paths) 0 owner-id provenance-id)
+          (tltest-path-lanes-eq?
+            (& runtime-paths)
+            1
+            owner-id
+            imported-provenance-id)
+          (tltest-path-lanes-eq? (& runtime-paths) 2 owner-id provenance-id)
+          (match (tltest.tltest-prune-runtime-decls
+            (tltest.tltest-active-structural-session)
+            (& display)
+            runtime-decls
+            runtime-paths
+            (& tests))
+            [(Decls pruned-decls pruned-paths)
+              (and
+                (= (ast.ast-decl-list-len (& pruned-decls)) 3)
+                (tltest-path-lanes-eq?
+                  (& pruned-paths)
+                  0
+                  owner-id
+                  provenance-id)
+                (tltest-path-lanes-eq?
+                  (& pruned-paths)
+                  1
+                  owner-id
+                  imported-provenance-id)
+                (tltest-path-lanes-eq?
+                  (& pruned-paths)
+                  2
+                  owner-id
+                  provenance-id)
+                (let
+                  [generated : ast.AstDeclPathList
+                    (tltest.tltest-generated-test-paths
+                      (string.copy (& display))
+                      tests)]
+                  [full : ast.AstDeclPathList
+                    (tltest.tltest-paths-with-print-runtime
+                      (Linux)
+                      (compiler_load.compiler-load-decl-path-list-append
+                        (& pruned-paths)
+                        (& generated)))]
+                  (and
+                    (tltest-path-lanes-eq?
+                      (& full)
+                      0
+                      runtime-provenance-id
+                      harness-provenance-id)
+                    (tltest-path-lanes-eq?
+                      (& full)
+                      1
+                      runtime-provenance-id
+                      harness-provenance-id)
+                    (tltest-path-lanes-eq? (& full) 2 owner-id provenance-id)
+                    (tltest-path-lanes-eq?
+                      (& full)
+                      3
+                      owner-id
+                      imported-provenance-id)
+                    (tltest-path-lanes-eq? (& full) 4 owner-id provenance-id)
+                    (tltest-path-lanes-eq? (& full) 5 owner-id provenance-id)
+                    (tltest-path-lanes-eq? (& full) 6 owner-id provenance-id)
+                    (tltest-path-lanes-eq?
+                      (& full)
+                      7
+                      empty-id
+                      harness-provenance-id)
+                    (tltest-path-lanes-eq?
+                      (& full)
+                      8
+                      empty-id
+                      harness-provenance-id)
+                    (tltest-path-lanes-eq?
+                      (& full)
+                      9
+                      empty-id
+                      harness-provenance-id)
+                    (string.eq (tltest-path-at (& full) 5) display))))]))]))
+    unit
+    (io.panic "test CLI inline provenance lane mismatch")))
 
 (test
   test-cli-combined-config-and-naming

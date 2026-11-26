@@ -42,11 +42,11 @@ count = 2 ^[[:space:]]+[a-z]+ _tl_global_cell_writer_loop_reads_cursor\(%rip\), 
 case group-copy-direct
 source tests/integration/group_copy_direct.tl
 in fn _tl_group_copy_direct_wrap
-capture xmm ^[[:space:]]*movups[[:space:]]+\(%rdi\),[[:space:]]+(%xmm([0-9]|1[0-5]))([[:space:]].*)?$
-contains movups {{xmm}}, 8(%rdx)
-capture gp ^[[:space:]]*movq[[:space:]]+16\(%rdi\),[[:space:]]+(%r[a-z0-9]+)([[:space:]].*)?$
-contains movq {{gp}}, 24(%rdx)
-not-match ^[[:space:]]+movq %r(di|dx), %r(9|10|11)$
+capture xmm ^[[:space:]]*movups[[:space:]]+\(%rsi\),[[:space:]]+(%xmm([0-9]|1[0-5]))([[:space:]].*)?$
+contains movups {{xmm}}, 8(%rdi)
+capture gp ^[[:space:]]*movq[[:space:]]+16\(%rsi\),[[:space:]]+(%r[a-z0-9]+)([[:space:]].*)?$
+contains movq {{gp}}, 24(%rdi)
+not-match ^[[:space:]]+movq %r(di|si), %r(9|10|11)$
 
 # A dead call result is not stored.
 case dead-result-store

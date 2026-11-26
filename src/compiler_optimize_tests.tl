@@ -57976,18 +57976,14 @@ done:
     [right2 : opt.OptLoadGlobalBases
       (opt.opt-load-global-bases-bind right 2 20 16 false)]
     [joined : opt.OptLoadGlobalBases
-      (opt.opt-load-global-bases-intersect
-        (opt.compiler-opt-global-shared-view left2)
-        (& right2))]
+      (opt.opt-load-global-bases-intersect (& left2) (& right2))]
     [different : opt.OptLoadGlobalBases
       (opt.opt-load-global-bases-clone
         (opt.compiler-opt-global-shared-view seed))]
     [different2 : opt.OptLoadGlobalBases
       (opt.opt-load-global-bases-bind different 2 20 24 false)]
     [narrowed : opt.OptLoadGlobalBases
-      (opt.opt-load-global-bases-intersect
-        (opt.compiler-opt-global-shared-view left2)
-        (& different2))]
+      (opt.opt-load-global-bases-intersect (& left2) (& different2))]
     [dropped : opt.OptLoadGlobalBases
       (opt.opt-load-global-bases-drop-var left2 1)]
     (and
@@ -58032,16 +58028,16 @@ done:
     [key1 : opt.OptLoadKey (Raw (Var 1) (I64) false)]
     [table1 : opt.OptLoadTable
       (opt.opt-load-table-bind
-        (opt.compiler-opt-global-shared-view profile-state)
+        (& profile-state)
         (ast.ast-node-pool-reader-type-segment-bases)
-        (Nil)
+        (opt.opt-load-table-empty)
         1
         (opt.compiler-opt-global-shared-view key0)
         (Var 10)
         0)]
     [table2 : opt.OptLoadTable
       (opt.opt-load-table-bind
-        (opt.compiler-opt-global-shared-view profile-state)
+        (& profile-state)
         (ast.ast-node-pool-reader-type-segment-bases)
         table1
         1
@@ -58050,37 +58046,31 @@ done:
         0)]
     [table-updated : opt.OptLoadTable
       (opt.opt-load-table-bind
-        (opt.compiler-opt-global-shared-view profile-state)
+        (& profile-state)
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.compiler-opt-global-shared-view table2)
+        (opt.opt-load-table-clone (& table2))
         1
         (opt.compiler-opt-global-shared-view key0)
         (Var 12)
         0)]
     [kinds1 : opt.OptLoadPtrKinds
       (opt.opt-load-kinds-bind
-        (opt.compiler-opt-global-shared-view profile-state)
-        (opt.opt-load-kinds-empty-with-cap
-          (opt.compiler-opt-global-shared-view profile-state)
-          1)
+        (& profile-state)
+        (opt.opt-load-kinds-empty-with-cap (& profile-state) 1)
         1
         (OptLoadLocElement))]
     [kinds2 : opt.OptLoadPtrKinds
-      (opt.opt-load-kinds-bind
-        (opt.compiler-opt-global-shared-view profile-state)
-        kinds1
-        2
-        (OptLoadLocElement))]
+      (opt.opt-load-kinds-bind (& profile-state) kinds1 2 (OptLoadLocElement))]
     [field-ok : opt.OptLoadLocKind
       (opt.opt-load-loc-field-checked
-        (opt.compiler-opt-global-shared-view profile-state)
+        (& profile-state)
         (- opt.opt-load-loc-field-base-limit 1)
         (- opt.opt-load-loc-field-offset-limit 1)
         (- opt.opt-load-loc-field-width-limit 1)
         true)]
     [field-bad : opt.OptLoadLocKind
       (opt.opt-load-loc-field-checked
-        profile-state
+        (& profile-state)
         opt.opt-load-loc-field-base-limit
         0
         8

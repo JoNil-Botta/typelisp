@@ -112,6 +112,7 @@
                         (build.build-package-tlci-capture-exports
                           (& context)
                           (& manifest)
+                          (& (strings.new))
                           mode
                           decls
                           paths
@@ -179,7 +180,7 @@
     (export-test-reuse!)
     (match exports
       [(Err message) (io.panic message)]
-      [(Ok metadata names source)
+      [(Ok metadata names source _)
         (unless
           (and
             (= (array-length names) 0)
@@ -199,7 +200,7 @@
     (export-test-reuse!)
     (match exports
       [(Err message) (io.panic message)]
-      [(Ok metadata names source)
+      [(Ok metadata names source _)
         (unless
           (and
             (= (array-length names) 2)
@@ -222,7 +223,7 @@
     (export-test-reuse!)
     (match exports
       [(Err message) (io.panic message)]
-      [(Ok metadata names source)
+      [(Ok metadata names source _)
         (unless
           (and
             (= (array-length names) 0)

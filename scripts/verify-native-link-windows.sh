@@ -794,7 +794,8 @@ run_windows_archive_smoke() {
     ARCHIVE_LIB_PKG="$ARCHIVE_WORKDIR/archive-lib"
     ARCHIVE_APP_PKG="$ARCHIVE_WORKDIR/archive-app"
     ARCHIVE_LIB="$ARCHIVE_LIB_PKG/target/release/archive_lib.lib"
-    ARCHIVE_OBJ="$ARCHIVE_LIB_PKG/target/release/archive_lib.obj"
+    ARCHIVE_TLI="$ARCHIVE_LIB_PKG/target/release/archive_lib.tli"
+    ARCHIVE_ASM="$ARCHIVE_LIB_PKG/target/release/archive_lib.s"
     ARCHIVE_APP="$ARCHIVE_APP_PKG/target/release/archive_app.exe"
 
     rm -rf "$ARCHIVE_WORKDIR"
@@ -840,9 +841,11 @@ EOF
     fi
     assert_empty "$ARCHIVE_WORKDIR/build-first.stderr"
     [ -s "$ARCHIVE_LIB" ] || fail "archive build did not write $ARCHIVE_LIB"
-    [ -s "$ARCHIVE_OBJ" ] || fail "archive build did not write $ARCHIVE_OBJ"
+    [ -s "$ARCHIVE_TLI" ] || fail "archive build did not write $ARCHIVE_TLI"
+    [ -s "$ARCHIVE_ASM" ] || fail "archive build did not write $ARCHIVE_ASM"
     cp "$ARCHIVE_LIB" "$ARCHIVE_WORKDIR/archive-first.lib"
-    cp "$ARCHIVE_OBJ" "$ARCHIVE_WORKDIR/object-first.obj"
+    cp "$ARCHIVE_TLI" "$ARCHIVE_WORKDIR/archive-first.tli"
+    cp "$ARCHIVE_ASM" "$ARCHIVE_WORKDIR/archive-first.s"
 
     rm -rf "$ARCHIVE_LIB_PKG/target"
     sleep 2
@@ -855,8 +858,11 @@ EOF
         fail "second deterministic archive build failed ($ARCHIVE_SMOKE_NAME)"
     fi
     assert_empty "$ARCHIVE_WORKDIR/build-second.stderr"
-    if ! cmp -s "$ARCHIVE_WORKDIR/object-first.obj" "$ARCHIVE_OBJ"; then
-        fail "clean package builds produced different COFF object inputs ($ARCHIVE_SMOKE_NAME)"
+    if ! cmp -s "$ARCHIVE_WORKDIR/archive-first.s" "$ARCHIVE_ASM"; then
+        fail "clean package builds produced different assembly outputs ($ARCHIVE_SMOKE_NAME)"
+    fi
+    if ! cmp -s "$ARCHIVE_WORKDIR/archive-first.tli" "$ARCHIVE_TLI"; then
+        fail "clean package builds produced nondeterministic .tli bundles ($ARCHIVE_SMOKE_NAME)"
     fi
     if ! cmp -s "$ARCHIVE_WORKDIR/archive-first.lib" "$ARCHIVE_LIB"; then
         fail "clean package builds produced nondeterministic .lib archives ($ARCHIVE_SMOKE_NAME)"

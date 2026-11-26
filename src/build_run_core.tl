@@ -9,6 +9,7 @@
 (import stdlib.vector)
 (import (vector.vector String) as cli_svec)
 (import compiler_driver_core)
+(import tli_cli_core as tli_cli)
 (import compiler_lower)
 (import compiler_backend as backend)
 (import compiler_backend_object as be_object)
@@ -393,6 +394,37 @@
     (source-tool-link-inputs-raw-args inputs)
     (source-tool-args-append (source-tool-link-inputs-archives inputs) archive)
     (source-tool-link-inputs-origins inputs)))
+
+(define (source-tool-link-inputs-add-archive-unique
+  [inputs : SourceToolLinkInputs]
+  [archive : String]) : SourceToolLinkInputs
+  (let
+    [archives : process.ProcessStringList
+      (source-tool-link-inputs-archives inputs)]
+    (if (source-tool-string-list-contains?
+      (& archives)
+      (string.copy (& archive)))
+      inputs
+      (SourceToolLinkInputs
+        (source-tool-link-inputs-libs inputs)
+        (source-tool-link-inputs-search-dirs inputs)
+        (source-tool-link-inputs-raw-args inputs)
+        (source-tool-args-append archives archive)
+        (source-tool-link-inputs-origins inputs)))))
+
+(define (source-tool-link-inputs-with-hydrated-archives
+  [inputs : SourceToolLinkInputs]) : SourceToolLinkInputs
+  (let
+    [hydrated : (__tl_dyn-array String)
+      (compiler_driver_core.compiler-driver-last-hydrated-archive-paths)]
+    [out : SourceToolLinkInputs inputs]
+    (for [i (iterator.range 0 (array-length hydrated))]
+      (let
+        [path : String (string.copy (& (array-ref hydrated i)))]
+        (when
+          (> (string.string-length (& path)) 0)
+          (set! out (source-tool-link-inputs-add-archive-unique out path)))))
+    out))
 
 (define (source-tool-string-list-contains?
   [items : (& items process.ProcessStringList)]
@@ -1359,38 +1391,49 @@
               bin-path
               link-inputs))]))))
 
-(define (source-tool-archiver-command
-  [obj-path : String]
+(define (source-tool-archiver-command-many
+  [obj-paths : process.ProcessStringList]
   [archive-path : String]) : process.ProcessCommand
   (process.command
     (source-tool-resolve-command "ar")
-    (process.args-cons
-      "rcsD"
-      (process.args-cons
-        archive-path
-        (process.args-cons obj-path (process.args-empty))))))
+    (process.args-cons "rcsD" (process.args-cons archive-path obj-paths))))
 
-(define (source-tool-windows-msvc-archiver-args
+(define (source-tool-archiver-command
   [obj-path : String]
+  [archive-path : String]) : process.ProcessCommand
+  (source-tool-archiver-command-many
+    (process.args-cons obj-path (process.args-empty))
+    archive-path))
+
+(define (source-tool-windows-msvc-archiver-args-many
+  [obj-paths : process.ProcessStringList]
   [archive-path : String]) : process.ProcessStringList
   (process.args-cons
     "/NOLOGO"
     (process.args-cons
       "/Brepro"
-      (process.args-cons
-        (str_cat.str-cat "/OUT:" archive-path)
-        (process.args-cons obj-path (process.args-empty))))))
+      (process.args-cons (str_cat.str-cat "/OUT:" archive-path) obj-paths))))
+
+(define (source-tool-windows-msvc-archiver-args
+  [obj-path : String]
+  [archive-path : String]) : process.ProcessStringList
+  (source-tool-windows-msvc-archiver-args-many
+    (process.args-cons obj-path (process.args-empty))
+    archive-path))
+
+(define (source-tool-windows-llvm-archiver-args-many
+  [obj-paths : process.ProcessStringList]
+  [archive-path : String]) : process.ProcessStringList
+  (process.args-cons
+    "--format=coff"
+    (process.args-cons "rcsD" (process.args-cons archive-path obj-paths))))
 
 (define (source-tool-windows-llvm-archiver-args
   [obj-path : String]
   [archive-path : String]) : process.ProcessStringList
-  (process.args-cons
-    "--format=coff"
-    (process.args-cons
-      "rcsD"
-      (process.args-cons
-        archive-path
-        (process.args-cons obj-path (process.args-empty))))))
+  (source-tool-windows-llvm-archiver-args-many
+    (process.args-cons obj-path (process.args-empty))
+    archive-path))
 
 (define (source-tool-ascii-fold-char [c : char]) : char
   (if (and (>= c 'A') (<= c 'Z'))
@@ -1434,8 +1477,8 @@
     command
     (source-tool-windows-llvm-archiver-args obj-path archive-path)))
 
-(define (source-tool-windows-override-archiver-command
-  [obj-path : String]
+(define (source-tool-windows-override-archiver-command-many
+  [obj-paths : process.ProcessStringList]
   [archive-path : String]) : ResultSourceToolCommand
   (let
     [name : String "TYPELISP_WINDOWS_LIB"]
@@ -1446,24 +1489,23 @@
     (cond
       [(source-tool-windows-llvm-archiver-name? command)
         (Ok
-          (source-tool-windows-llvm-archiver-command
+          (process.command
             command
-            obj-path
-            archive-path))]
+            (source-tool-windows-llvm-archiver-args-many obj-paths archive-path)))]
       [(source-tool-windows-msvc-archiver-name? command)
         (Ok
           (process.command
             command
-            (source-tool-windows-msvc-archiver-args obj-path archive-path)))]
+            (source-tool-windows-msvc-archiver-args-many obj-paths archive-path)))]
       [else
         (Err
           "TYPELISP_WINDOWS_LIB must resolve to llvm-ar(.exe) or MSVC lib(.exe); deterministic Windows archives require llvm-ar --format=coff rcsD or lib.exe /Brepro")])))
 
-(define (source-tool-windows-archiver-command
-  [obj-path : String]
+(define (source-tool-windows-archiver-command-many
+  [obj-paths : process.ProcessStringList]
   [archive-path : String]) : ResultSourceToolCommand
   (if (source-tool-env-command-set? "TYPELISP_WINDOWS_LIB")
-    (source-tool-windows-override-archiver-command obj-path archive-path)
+    (source-tool-windows-override-archiver-command-many obj-paths archive-path)
     (let
       [target : String "x86_64-pc-windows-msvc"]
       [tool : String "lib.exe"]
@@ -1473,14 +1515,24 @@
             (process.command-with-env-list
               (process.command
                 (msvc.tool-executable resolved-tool)
-                (source-tool-windows-msvc-archiver-args obj-path archive-path))
+                (source-tool-windows-msvc-archiver-args-many
+                  obj-paths
+                  archive-path))
               (msvc.tool-process-env resolved-tool)))]
         [(ErrMsvcTool _)
           (Ok
-            (source-tool-windows-llvm-archiver-command
+            (process.command
               (source-tool-resolve-command "llvm-ar")
-              obj-path
-              archive-path))]))))
+              (source-tool-windows-llvm-archiver-args-many
+                obj-paths
+                archive-path)))]))))
+
+(define (source-tool-windows-archiver-command
+  [obj-path : String]
+  [archive-path : String]) : ResultSourceToolCommand
+  (source-tool-windows-archiver-command-many
+    (process.args-cons obj-path (process.args-empty))
+    archive-path))
 
 (define (source-tool-clean-temp
   [temp-dir : String]
@@ -1537,21 +1589,31 @@
               (owned_view.compiler-owned-shared-view link-inputs)))]
         (source-tool-run-command-for "linker" target command link-inputs))]))
 
-(define (source-tool-archive
+(define (source-tool-archive-many
   [target : be_state.CompilerBackendTarget]
-  [obj-path : String]
+  [obj-paths : process.ProcessStringList]
   [archive-path : String]) : SourceToolCommandStatus
   (match target
     [(Linux)
       (source-tool-run-command
         "archiver (deterministic Linux archives require rcsD support; use GNU ar or llvm-ar)"
         target
-        (source-tool-archiver-command obj-path archive-path))]
+        (source-tool-archiver-command-many obj-paths archive-path))]
     [(Windows)
       (let
         [command
-          (try (source-tool-windows-archiver-command obj-path archive-path))]
+          (try
+            (source-tool-windows-archiver-command-many obj-paths archive-path))]
         (source-tool-run-command "archiver" target command))]))
+
+(define (source-tool-archive
+  [target : be_state.CompilerBackendTarget]
+  [obj-path : String]
+  [archive-path : String]) : SourceToolCommandStatus
+  (source-tool-archive-many
+    target
+    (process.args-cons obj-path (process.args-empty))
+    archive-path))
 
 (define (source-tool-assemble-and-link
   [target : be_state.CompilerBackendTarget]
@@ -1767,7 +1829,7 @@
             request.files.obj
             request.files.bin
             request.target
-            request.link-inputs
+            (source-tool-link-inputs-with-hydrated-archives request.link-inputs)
             obj
             (if lowered
               "test: failed to write direct object artifact"
@@ -1844,13 +1906,8 @@
                 [(Err message) (Err message)]
                 [(Ok)
                   (let
-                    [tli-archive : String
-                      (compiler_driver_core.compiler-driver-last-hydrated-archive-path)]
                     [effective-link-inputs : SourceToolLinkInputs
-                      (if (> (string.string-length (& tli-archive)) 0)
-                        (source-tool-link-inputs-add-archive
-                          request.link-inputs
-                          tli-archive)
+                      (source-tool-link-inputs-with-hydrated-archives
                         request.link-inputs)]
                     (source-tool-assemble-and-link
                       request.target
@@ -2190,3 +2247,80 @@
       (io.print-error
         (str_cat.str-cat "run: failed to create temp dir: " message))
       1]))
+
+(define (source-tool-append-opt-values
+  [args : process.ProcessStringList]
+  [flag : String]
+  [values : (& cli_svec.Vec)]) : process.ProcessStringList
+  (let
+    [out : process.ProcessStringList args]
+    (for [i (iterator.range 0 (cli_svec.len values))]
+      (set!
+        out
+        (source-tool-args-append
+          (source-tool-args-append out (string.copy (& flag)))
+          (cli_svec.get values i ""))))
+    out))
+
+;; Dependencies build at the dev profile's own opt-level, so `check` and `test`
+;; share target/dev artifacts with `build --profile dev` instead of rebuilding them.
+(define (source-tool-build-package-deps-only!
+  [manifest-path : (& str)]
+  [target : be_state.CompilerBackendTarget]
+  [stdlib-roots : (& cli_svec.Vec)]
+  [cfg-names : (& cli_svec.Vec)]) : SourceToolCommandStatus
+  (let
+    [exe-raw : String (tli_cli.tli-executable-path)]
+    [exe : String
+      (if (> (string.string-length (& exe-raw)) 0)
+        exe-raw
+        (io.arg 0))]
+    [a0 : process.ProcessStringList
+      (source-tool-args-append (process.args-empty) "build")]
+    [a1 : process.ProcessStringList
+      (source-tool-args-append
+        (source-tool-args-append
+          (source-tool-args-append a0 "--deps-only")
+          "--profile")
+        "dev")]
+    [a2 : process.ProcessStringList
+      (source-tool-args-append
+        (source-tool-args-append a1 "--manifest-path")
+        (string.copy manifest-path))]
+    [a3 : process.ProcessStringList
+      (source-tool-args-append
+        (source-tool-args-append a2 "--target")
+        (source-tool-target-name target))]
+    [sysroot : tli_cli.TliSysrootOptions (tli_cli.tli-active-sysroot-options)]
+    [a5 : process.ProcessStringList
+      (if (> (string.string-length (& sysroot.explicit-root)) 0)
+        (source-tool-args-append
+          (source-tool-args-append a3 "--sysroot")
+          sysroot.explicit-root)
+        a3)]
+    [a6 : process.ProcessStringList
+      (if sysroot.disabled
+        (source-tool-args-append a5 "--no-prebuilt-stdlib")
+        a5)]
+    [a7 : process.ProcessStringList
+      (source-tool-append-opt-values a6 "--stdlib-root" stdlib-roots)]
+    [args : process.ProcessStringList
+      (source-tool-append-opt-values a7 "--cfg" cfg-names)]
+    (match (process.output (process.command exe args))
+      [(ErrProcessOutput error)
+        (Err
+          (str_cat.str-cat
+            "failed to build package dependencies: "
+            (process.error-message error)))]
+      [(OkProcessOutput output)
+        (if (= (process.output-status output) 0)
+          Ok
+          (let
+            [stderr-text : String (process.output-stderr output)]
+            [stdout-text : String (process.output-stdout output)]
+            (Err
+              (if (> (string.string-length (& stderr-text)) 0)
+                stderr-text
+                (if (> (string.string-length (& stdout-text)) 0)
+                  stdout-text
+                  "failed to build package dependencies")))))])))

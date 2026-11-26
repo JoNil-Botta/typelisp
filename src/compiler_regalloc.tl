@@ -28495,19 +28495,6 @@
     3
     1))
 
-;; Lowering retypes an inline tuple/array storage pointer to the physical U64
-;; sret parameter. This cast preserves the address, unlike arbitrary casts;
-;; all later uses of its alias still participate in escape invalidation.
-(define (compiler-reg-color-structural-sret-cast?
-  [from-ty : (& ast.AstType)]
-  [to-ty : (& ast.AstType)]) : bool
-  (match to-ty
-    [(U64)
-      (match from-ty
-        [(or (Tuple _) (Array _ _)) true]
-        [_ false])]
-    [_ false]))
-
 (define (compiler-reg-color-propagate-root-instr
   [instr : (& ir.CompilerIrInstr)]
   [range-of-var : (& range-of-var (__tl_dyn-array i64))]
@@ -28531,7 +28518,7 @@
           dst
           (compiler-reg-color-value-root roots (& base))))]
     [(Cast dst src from-ty to-ty)
-      (if (compiler-reg-color-structural-sret-cast? (& from-ty) (& to-ty))
+      (if (ir.compiler-ir-storage-address-cast? (& from-ty) (& to-ty))
         (compiler-reg-color-propagate-root-code
           (compiler-reg-color-set-root!
             roots
@@ -28877,7 +28864,7 @@
     [(or (StorePtr _ src _) (StoreOwned _ src _))
       (compiler-reg-color-invalidate-value! roots invalid src)]
     [(Cast _ src from-ty to-ty)
-      (if (compiler-reg-color-structural-sret-cast? (& from-ty) (& to-ty))
+      (if (ir.compiler-ir-storage-address-cast? (& from-ty) (& to-ty))
         unit
         (compiler-reg-color-invalidate-value! roots invalid src))]
     [(Select payload-box)

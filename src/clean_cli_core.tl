@@ -268,15 +268,26 @@
   [name : (& name str)]
   [path : (& path str)]) : bool
   (let
-    [output-dir : String
-      (build_cli_core.build-package-output-dir manifest-dir name)]
-    [output-prefix : String
-      (str_cat.str-cat (owned_view.compiler-owned-shared-view output-dir) "/")]
+    [release-dir : String
+      (build_cli_core.build-package-output-dir-profile
+        (string.copy (& manifest-dir))
+        name
+        (build_cli_core.BuildProfile.Release))]
+    [release-prefix : String
+      (str_cat.str-cat (string.copy (& release-dir)) "/")]
+    [dev-dir : String
+      (build_cli_core.build-package-output-dir-profile
+        manifest-dir
+        name
+        (build_cli_core.BuildProfile.Dev))]
+    [dev-prefix : String (str_cat.str-cat (string.copy (& dev-dir)) "/")]
     (and
       (not (clean-dangerous-path? path))
       (or
-        (string.eq path output-dir)
-        (source_text.starts-with? path output-prefix)))))
+        (string.eq path release-dir)
+        (source_text.starts-with? path release-prefix)
+        (string.eq path dev-dir)
+        (source_text.starts-with? path dev-prefix)))))
 
 (define (clean-remove-package-file
   [manifest-dir : String]
@@ -432,6 +443,30 @@
                   (build_cli_core.build-package-tlci-path
                     (owned_view.compiler-owned-shared-view manifest-dir)
                     (owned_view.compiler-owned-shared-view name)))))
+            (set!
+              status
+              (clean-merge-status
+                status
+                (clean-remove-package-file
+                  (owned_view.compiler-owned-shared-view manifest-dir)
+                  name
+                  dry-run
+                  (build_cli_core.build-package-tli-path-profile
+                    (owned_view.compiler-owned-shared-view manifest-dir)
+                    (owned_view.compiler-owned-shared-view name)
+                    (build_cli_core.BuildProfile.Dev)))))
+            (set!
+              status
+              (clean-merge-status
+                status
+                (clean-remove-package-file
+                  (owned_view.compiler-owned-shared-view manifest-dir)
+                  name
+                  dry-run
+                  (build_cli_core.build-package-tli-path-profile
+                    (owned_view.compiler-owned-shared-view manifest-dir)
+                    (owned_view.compiler-owned-shared-view name)
+                    (build_cli_core.BuildProfile.Release)))))
             (set!
               status
               (clean-merge-status

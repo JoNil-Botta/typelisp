@@ -593,8 +593,8 @@ sh sed -i 's/wrap_missing_on_linux/wrap_still_missing_on_linux/' "{{dir}}/wrap/t
 run build --manifest-path "{{dir}}/app/typelisp.pkg" --target linux-x86_64 --opt-level 0
 stderr empty
 stdout contains Fresh {{dir}}/app/target/release/wrap_app
-# Replacing the wrapper's vendored archive relinks the binary; the TLCI image,
-# which no native input reaches, stays fresh.
+# Replacing the wrapper's vendored archive relinks the binary; the library
+# archive and interface, which no native input reaches, stay fresh.
 file ffi_add8.s
     .globl ffi_add7
 ffi_add7:
@@ -609,8 +609,11 @@ sh rm "{{dir}}/wrap/vendor/libffi_add7.a" && ar rcs "{{dir}}/wrap/vendor/libffi_
 run build --manifest-path "{{dir}}/app/typelisp.pkg" --target linux-x86_64 --opt-level 0
 stderr empty
 stdout match ^Built .*/app/target/release/wrap_app$
-stdout contains Fresh {{dir}}/wrap/target/release/wrap.tlci
+stdout contains Fresh {{dir}}/wrap/target/release/libwrap.a
+stdout not-contains wrap.tlci
 stdout not-contains wrap_app.tlci
+test -s "{{dir}}/wrap/target/release/wrap.tli"
+test ! -e "{{dir}}/wrap/target/release/wrap.tlci"
 test ! -e "{{dir}}/app/target/release/wrap_app.tlci"
 step active-archive-run
 exec "{{dir}}/app/target/release/wrap_app"
@@ -982,8 +985,10 @@ file worker/src/lib.tl
     [y : i64 (* x 2)]
     (+ y x)))
 end-file
+# A folded `main` returns its i64 constant through a zero-extending 32-bit
+# move on both hosts.
 if-host windows
-sh CCV_o2a='    movq $45, %rax' CCV_o2b='    leaq (%rcx,%rdx), %rax' CCV_o0='    imulq 24(%rsp), %r8'
+sh CCV_o2a='    movl $45, %eax' CCV_o2b='    leaq (%rcx,%rdx), %rax' CCV_o0='    imulq 24(%rsp), %r8'
 else
 sh CCV_o2a='    movl $45, %eax' CCV_o2b='    leaq (%rdi,%rsi), %rax' CCV_o0='    imulq -24(%rsp), %r8'
 end-if

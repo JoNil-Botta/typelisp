@@ -31,8 +31,19 @@ Each seed checks:
 Generated profiles cover arithmetic/casts/match, nested `while`/`for` with
 multi-latch `continue`/`break`, `Box`, `__tl_dyn-array`
 (`array-ref`/`set!`/`array-length`/`__tl_array-push!`), structs, `&`/`&mut`
-borrows, scoped `with-arena`/`with-scratch`, and SPMD `foreach`/`spmd-reduce`
+borrows, scoped `with-arena`/`with-scratch`, first-class arenas
+(`arena.make`/`in-arena`/`with-escape`/`destroy-safe!` with a
+`profile.alloc-live` balance folded into the result), closures (scalar,
+reference and `&mut` captures, immediate invocation, struct-field function
+values), nested `slice-view`/`slice-mut-view` views with explicit `(& view)`
+weakening and `for [i (&mut xs)]`/`for [i (& xs)]` passes, implicit cleanups
+(`with` across early-return/`if`/`match`/loop, `let` discharge, with the exact
+cleanup count in the reported output), and SPMD `foreach`/`spmd-reduce`
 kernels.
+
+The generator's `--mode` selects one profile kind: `arith`, `loops`, `borrow`,
+`arena`, `spmd`, `mixed`, `closures`, `views`, or `cleanup`; the default
+`auto` picks one from the seed.
 
 ## Optional local rustc differential oracle
 

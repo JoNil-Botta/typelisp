@@ -16190,6 +16190,72 @@
     (compiler-lower-internal-windows-byref-sret-shape-ok?)
     "Windows ByRef aggregate and leading sret transport"))
 
+;; #7887: a memory-class struct and a tuple of the same 32-byte layout share
+;; one hidden-result convention on SysV and Win64: a leading `__sret`
+;; parameter, then the source parameters, and a `u64` physical result.
+(define (compiler-lower-unified-sret-source) : String
+  "(defstruct Quad (a i64) (b i64) (c i64) (d i64))
+(define (make-quad [x : i64]) : Quad
+  (Quad x x x x))
+(define (make-tuple [x : i64]) : (Tuple i64 i64 i64 i64)
+  (tuple x x x x))
+(define (main) : i64
+  (let
+    [q : Quad (make-quad 1)]
+    [t : (Tuple i64 i64 i64 i64) (make-tuple 2)]
+    (+ q.d (tuple-ref t 3))))")
+
+(define (lower-test-function-returns-u64?
+  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
+  [name : String]) : bool
+  (match (lower-test-function-seq-find funcs name)
+    [(No) false]
+    [(Some func)
+      (match func
+        [(Function _ _ ret _ _ _)
+          (match ret
+            [(ast.AstType.U64) true]
+            [_ false])])]))
+
+(define (compiler-lower-unified-sret-mode-ok? [mode : lower.CompilerLowerMode]) : bool
+  (match (lower-test-functions
+    (lower.lower-compiler-source-with-mode
+      (compiler-lower-unified-sret-source)
+      mode))
+    [(Some functions)
+      (let
+        [hidden : String (ir.compiler-ir-hidden-sret-param-name)]
+        (and
+          (= (lower-test-function-param-count functions "make-quad") 2)
+          (= (lower-test-function-param-count functions "make-tuple") 2)
+          (string.eq
+            (lower-test-function-param-name functions "make-quad" 0)
+            hidden)
+          (string.eq
+            (lower-test-function-param-name functions "make-tuple" 0)
+            hidden)
+          (string.eq
+            (lower-test-function-param-name functions "make-quad" 1)
+            "x")
+          (string.eq
+            (lower-test-function-param-name functions "make-tuple" 1)
+            "x")
+          (lower-test-function-returns-u64? functions "make-quad")
+          (lower-test-function-returns-u64? functions "make-tuple")
+          (= (lower-test-function-call-count functions "main" "make-quad") 1)
+          (= (lower-test-function-call-count functions "main" "make-tuple") 1)))]
+    [_ false]))
+
+(test
+  compiler-lower-unified-sret-shape
+  (test.assert-true
+    (and
+      (compiler-lower-unified-sret-mode-ok?
+        (lower.CompilerLowerMode.LinuxScalar))
+      (compiler-lower-unified-sret-mode-ok?
+        (lower.CompilerLowerMode.WindowsScalar)))
+    "nominal and structural memory-class returns share one sret convention"))
+
 (test
   compiler-lower-internal-windows-u8-three-shape
   (test.assert-true
@@ -16325,62 +16391,55 @@
       [name : i64 (ci.intern "same")]
       [left-module : i64 (ci.intern "left.src.lib")]
       [right-module : i64 (ci.intern "right.src.lib")]
-      [left : ast.AstDecl
-        (load.compiler-load-package-def-fn-extern
-          "surface_left"
-          "C:/surface_left/"
-          (& (svec.new))
-          "C:/surface_left/src/lib.tl"
-          "left.src.lib"
-          name
-          (& (ast.ast-param-list-new))
-          (& (I64))
-          (No)
-          (& (Unavailable)))]
-      [right : ast.AstDecl
-        (load.compiler-load-package-def-fn-extern
-          "surface_right"
-          "C:/surface_right/"
-          (& (svec.new))
-          "C:/surface_right/src/lib.tl"
-          "right.src.lib"
-          name
-          (& (ast.ast-param-list-new))
-          (& (I64))
-          (No)
-          (& (Unavailable)))]
+      [left-meta : ast.AstExternMetadata
+        (ast.AstExternMetadata.Metadata
+          (ast.AstExternAbi.TypeLisp)
+          (ci.intern-id-from-renderable
+            (ci.intern "_tl_surface_left_src_lib_tl_same"))
+          (ast.ast-extern-link-input-list-new)
+          1
+          (ast.AstImportedSpmdMetadata.Package
+            "surface_left"
+            "0.1.0"
+            (ci.intern-id-from-renderable
+              (ci.intern-generated-canonical-name "left.src.lib/same"))
+            (box (ast.ast-imported-spmd-callable-list-new))))]
+      [right-meta : ast.AstExternMetadata
+        (ast.AstExternMetadata.Metadata
+          (ast.AstExternAbi.TypeLisp)
+          (ci.intern-id-from-renderable
+            (ci.intern "_tl_surface_right_src_lib_tl_same"))
+          (ast.ast-extern-link-input-list-new)
+          1
+          (ast.AstImportedSpmdMetadata.Package
+            "surface_right"
+            "0.1.0"
+            (ci.intern-id-from-renderable
+              (ci.intern-generated-canonical-name "right.src.lib/same"))
+            (box (ast.ast-imported-spmd-callable-list-new))))]
       [lower-state : lower.CompilerLowerState
         (lower.compiler-lower-state-new-with-intern-state
           (ci.intern-compat-state-capture-active))]
-      (match left
-        [(Extern _ _ _ left-meta _)
-          (match right
-            [(Extern _ _ _ right-meta _)
-              (let
-                [left-symbol : i64
-                  (lower.lower-extern-logical-symbol-id
-                    lower-state
-                    (csym.compiler-symbol-module-key-id-by-id left-module name)
-                    "same"
-                    name
-                    (ast.ast-extern-metadata-box-shared-view left-meta))]
-                [right-symbol : i64
-                  (lower.lower-extern-logical-symbol-id
-                    lower-state
-                    (csym.compiler-symbol-module-key-id-by-id right-module name)
-                    "same"
-                    name
-                    (ast.ast-extern-metadata-box-shared-view right-meta))]
-                (and
-                  (not (= left-symbol right-symbol))
-                  (string.eq
-                    (ir.compiler-ir-symbol-text left-symbol)
-                    "left.src.lib/same")
-                  (string.eq
-                    (ir.compiler-ir-symbol-text right-symbol)
-                    "right.src.lib/same")))]
-            [_ false])]
-        [_ false]))
+      [left-symbol : i64
+        (lower.lower-extern-logical-symbol-id
+          lower-state
+          (csym.compiler-symbol-module-key-id-by-id left-module name)
+          "same"
+          name
+          left-meta)]
+      [right-symbol : i64
+        (lower.lower-extern-logical-symbol-id
+          lower-state
+          (csym.compiler-symbol-module-key-id-by-id right-module name)
+          "same"
+          name
+          right-meta)]
+      (and
+        (not (= left-symbol right-symbol))
+        (string.eq (ir.compiler-ir-symbol-text left-symbol) "left.src.lib/same")
+        (string.eq
+          (ir.compiler-ir-symbol-text right-symbol)
+          "right.src.lib/same")))
     "package extern aliases preserve canonical call symbols"))
 
 (test

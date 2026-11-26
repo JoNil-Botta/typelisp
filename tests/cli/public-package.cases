@@ -64,11 +64,18 @@ test ! -e "{{dir}}/target/release/public_tool_pkg.tlci"
 step producer-identity
 run --producer-identity
 stdout capture producer ^([0-9a-f]{40})$
+test -s "{{dir}}/vendor/math/target/release/math.tli"
 test -s "{{dir}}/vendor/math/target/release/math.tlci"
 step package-build-surface
 run build --manifest-path "{{dir}}/surface/typelisp.pkg"
 stderr empty
+test -s "{{dir}}/surface/target/release/public_tool_surface.tli"
 test -s "{{dir}}/surface/target/release/public_tool_surface.tlci"
+step package-inspect-tli
+run inspect "{{dir}}/surface/target/release/public_tool_surface.tli"
+stderr empty
+in stdout
+contains public_tool_surface.src.lib
 step package-inspect-tlci
 run inspect "{{dir}}/surface/target/release/public_tool_surface.tlci"
 stderr empty
@@ -80,14 +87,6 @@ contains package-name: public_tool_surface
 contains producer-compiler-identity: {{producer}}
 contains source-set-binding-schema: 1
 not-contains source-set-digest: unavailable
-contains surface-package-identity: present schema-version=2 bytes=
-contains surface-frontend-ast: present schema-version=21 bytes=
-contains surface-frontend-facts: present schema-version=1 bytes=
-not-contains surface-package-identity: present schema-version=2 bytes=0
-not-contains surface-frontend-ast: present schema-version=21 bytes=0
-not-contains surface-frontend-facts: present schema-version=1 bytes=0
-contains surface-trust-producer-identity: {{producer}}
-contains surface-trust-policy: exact-producer-and-source-binding-required
 contains metadata-version: v1
 contains code: offset=
 not-contains code: offset=0 bytes=0
@@ -102,14 +101,6 @@ contains package-name: math
 contains producer-compiler-identity: {{producer}}
 contains source-set-binding-schema: 1
 not-contains source-set-digest: unavailable
-contains surface-package-identity: present schema-version=2 bytes=
-contains surface-frontend-ast: present schema-version=21 bytes=
-contains surface-frontend-facts: present schema-version=1 bytes=
-not-contains surface-package-identity: present schema-version=2 bytes=0
-not-contains surface-frontend-ast: present schema-version=21 bytes=0
-not-contains surface-frontend-facts: present schema-version=1 bytes=0
-contains surface-trust-producer-identity: {{producer}}
-contains surface-trust-policy: exact-producer-and-source-binding-required
 contains code: offset=
 not-contains code: offset=0 bytes=0
 step package-inspect-bad-tlci
@@ -123,8 +114,13 @@ contains main:
 contains-any _tl_inc: || _tl_math_inc: || _tl_public_tool_pkg_src_math_inc ||     movl $41, %ecx ||     movl $41, %edi
 contains add_one
 contains _tl_math_src_lib_add_one
-contains-any _tl_stdlib_runtime_runtime_os_write || _tl_stdlib_runtime_stdlib_runtime_os_write || _tl_stdlib_runtime_stdlib_runtime_runtime_os_write
 not-contains _tl_public_tool_pkg_vendor_math
+# An O2 build hydrates the prebuilt stdlib and links its runtime from the
+# sysroot archive instead of compiling it into the root.
+not-contains _tl_stdlib_runtime_stdlib_runtime_os_write:
+# The sysroot archive is `libstdlib.a` on every target.
+in file {{dir}}/target/release/public_tool_pkg{{exe}}.runtime-inputs
+contains libstdlib.a
 step package-clean-dry-run
 run clean --dry-run --manifest-path "{{dir}}/typelisp.pkg"
 stderr empty
@@ -218,7 +214,8 @@ stderr contains executable has no `main`
 test ! -e "{{dir}}/target/release/mainless_bin"
 test ! -e "{{dir}}/target/release/mainless_bin.exe"
 test ! -e "{{dir}}/target/release/mainless_bin.s"
-test -s "{{dir}}/vendor/util/target/release/util.tlci"
+test -s "{{dir}}/vendor/util/target/release/util.tli"
+test ! -e "{{dir}}/vendor/util/target/release/util.tlci"
 step package-staticlib-mainless
 file archive/typelisp.pkg
 (package
@@ -232,11 +229,14 @@ file archive/src/lib.tl
 end-file
 run build --manifest-path "{{dir}}/archive/typelisp.pkg"
 stderr empty
-test -f "{{dir}}/archive/target/release/mainless_archive.s"
-in file {{dir}}/archive/target/release/mainless_archive.s
-contains archive_add
-not-contains .globl main
-not-contains .globl _tl_start
+test -s "{{dir}}/archive/target/release/mainless_archive.tli"
+test -s "{{dir}}/archive/target/release/{{lib-prefix}}mainless_archive{{lib-suffix}}"
+test ! -e "{{dir}}/archive/target/release/mainless_archive.tlci"
+run inspect "{{dir}}/archive/target/release/mainless_archive.tli"
+stderr empty
+in stdout
+contains mainless_archive.src.lib
+not-contains mainless_archive/main
 
 case package-host-target-split
 file typelisp.pkg
@@ -307,15 +307,16 @@ test -s "{{dir}}/target/release/split_pkg{{exe}}"
 test -s "{{dir}}/vendor/math/target/release/{{lib-prefix}}split_math{{lib-suffix}}"
 test -s "{{dir}}/vendor/util/target/release/{{lib-prefix}}split_util{{lib-suffix}}"
 test ! -e "{{dir}}/target/release/split_pkg.tlci"
+test -s "{{dir}}/vendor/surface/target/release/split_surface.tli"
 test -s "{{dir}}/vendor/surface/target/release/split_surface.tlci"
-test -s "{{dir}}/vendor/math/target/release/split_math.tlci"
-test -s "{{dir}}/vendor/util/target/release/split_util.tlci"
+test -s "{{dir}}/vendor/math/target/release/split_math.tli"
+test ! -e "{{dir}}/vendor/math/target/release/split_math.tlci"
+test -s "{{dir}}/vendor/util/target/release/split_util.tli"
+test ! -e "{{dir}}/vendor/util/target/release/split_util.tlci"
 in stdout
 contains Built {{native-dir}}/vendor/math/target/release/{{lib-prefix}}split_math{{lib-suffix}}
 contains Built {{native-dir}}/vendor/util/target/release/{{lib-prefix}}split_util{{lib-suffix}}
 contains Built {{native-dir}}/target/release/split_pkg{{exe}}
-contains Built {{native-dir}}/vendor/math/target/release/split_math.tlci
-contains Built {{native-dir}}/vendor/util/target/release/split_util.tlci
 not-contains split_pkg.tlci
 contains Built {{native-dir}}/vendor/surface/target/release/split_surface.tlci
 step package-host-target-split-inspect
@@ -328,38 +329,17 @@ contains package-name: split_surface
 contains producer-compiler-identity: {{producer}}
 contains source-set-binding-schema: 1
 not-contains source-set-digest: unavailable
-contains surface-package-identity: present schema-version=2 bytes=
-contains surface-frontend-ast: present schema-version=21 bytes=
-contains surface-frontend-facts: present schema-version=1 bytes=
-not-contains surface-package-identity: present schema-version=2 bytes=0
-not-contains surface-frontend-ast: present schema-version=21 bytes=0
-not-contains surface-frontend-facts: present schema-version=1 bytes=0
-contains surface-trust-producer-identity: {{producer}}
-contains surface-trust-policy: exact-producer-and-source-binding-required
 contains code: offset=
 not-contains code: offset=0 bytes=0
 step package-host-target-split-native-verify
-run run "{{root}}/src/tests/compiler_tlci_native_producer_smoke.tl" --stdlib-root "{{root}}/stdlib" --stdlib-root "{{root}}/src" -- "{{dir}}/vendor/surface/target/release/split_surface.tlci" split_surface/split-wrap split-root split_surface/split-all split_surface/split-unsupported
+run run "{{root}}/src/tests/compiler_tlci_native_producer_smoke.tl" --stdlib-root "{{root}}/stdlib" --stdlib-root "{{root}}/src" -- "{{dir}}/vendor/surface/target/release/split_surface.tlci" split_surface.src.lib/split-wrap split-root split_surface.src.lib/split-all split_surface.src.lib/split-unsupported
 stdout empty
 stderr empty
 step package-host-target-split-dep-inspect
-run inspect "{{dir}}/vendor/math/target/release/split_math.tlci"
+run inspect "{{dir}}/vendor/math/target/release/split_math.tli"
 stderr empty
 in stdout
-contains host-platform: x86_64-{{host}}
-contains image-classification: metadata-only
-contains package-name: split_math
-contains source-set-binding-schema: 1
-not-contains source-set-digest: unavailable
-contains surface-package-identity: present schema-version=2 bytes=
-contains surface-frontend-ast: present schema-version=21 bytes=
-contains surface-frontend-facts: present schema-version=1 bytes=
-not-contains surface-package-identity: present schema-version=2 bytes=0
-not-contains surface-frontend-ast: present schema-version=21 bytes=0
-not-contains surface-frontend-facts: present schema-version=1 bytes=0
-contains surface-trust-producer-identity: {{producer}}
-contains surface-trust-policy: exact-producer-and-source-binding-required
-contains code: offset=0 bytes=0
+contains split_math.src.lib
 step package-host-target-split-dev
 run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --profile dev
 stderr empty
@@ -367,10 +347,13 @@ test -s "{{dir}}/target/dev/split_pkg{{exe}}"
 test -s "{{dir}}/vendor/math/target/dev/{{lib-prefix}}split_math{{lib-suffix}}"
 test -s "{{dir}}/vendor/util/target/dev/{{lib-prefix}}split_util{{lib-suffix}}"
 test ! -e "{{dir}}/target/dev/split_pkg.tlci"
+test -s "{{dir}}/vendor/surface/target/dev/split_surface.tli"
 test -s "{{dir}}/vendor/surface/target/dev/split_surface.tlci"
 stdout not-contains split_pkg.tlci
-test -s "{{dir}}/vendor/math/target/dev/split_math.tlci"
-test -s "{{dir}}/vendor/util/target/dev/split_util.tlci"
+test -s "{{dir}}/vendor/math/target/dev/split_math.tli"
+test ! -e "{{dir}}/vendor/math/target/dev/split_math.tlci"
+test -s "{{dir}}/vendor/util/target/dev/split_util.tli"
+test ! -e "{{dir}}/vendor/util/target/dev/split_util.tlci"
 
 case package-errors
 file typelisp.pkg
@@ -1706,8 +1689,8 @@ run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}}
 exit 1
 stderr contains error[E0201]
 
-# #9750 residual: a moduleless dependency with generated items keeps its artifact
-# identity on build, so check and build disagree here. Pinned until #9750 closes.
+# #9750 fixed: a moduleless dependency with generated items keeps its canonical
+# dotted identity on both check and build, so free names do not capture importer defs.
 case package-moduleless-dep-generated-macro-free-name-residual
 file typelisp.pkg
 (package (name "free_app") (version "0.1.0") (kind "bin") (entry "src/main.tl")
@@ -1732,8 +1715,8 @@ exit 1
 stderr contains error[E0201]
 step build
 run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}}
-exec "{{dir}}/target/release/free_app{{exe}}"
-exit 5
+exit 1
+stderr contains error[E0201]
 
 
 # #8534, #8963, #9745 and #9081: an archive needs the runtime even when the consumer

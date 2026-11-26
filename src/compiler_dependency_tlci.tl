@@ -5,6 +5,7 @@
 (import stdlib.iterator)
 (import stdlib.arena)
 (import stdlib.byte_buf)
+(import stdlib.crypto_sha256 as sha256)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
@@ -18,6 +19,26 @@
 (cfg
   embedded-stdlib-tlci
   (import compiler_embedded_stdlib_tlci as comptime_host))
+
+(define (compiler-dependency-tlci-sha256 [bytes : (& (__tl_dyn-array u8))]) : (Array
+    u8
+    32)
+  (let
+    [st : sha256.Sha256State (sha256.new)]
+    [n : i64 (array-length (deref bytes))]
+    (when
+      (> n 0)
+      (unsafe
+        (let
+          [_ : sha256.Sha256UpdateResult
+            (sha256.update-from-pointer!
+              (&mut st)
+              (ptr-cast (__tl_array-data (deref bytes)) : (Ptr u8))
+              n)]
+          unit)))
+    (match (sha256.finalize! (&mut st))
+      [(Sha256FinalizeOk digest) (sha256.digest-bytes (& digest))]
+      [_ (make-array u8 32)])))
 
 (define (compiler-dependency-tlci-own-text [text : String]) : String
   (string.substring (& text) 0 (string.string-length text)))
@@ -40,6 +61,12 @@
   (define (compiler-dependency-tlci-verification-force-source?) : bool
     (compiler-dependency-tlci-verification-env?
       "TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE")))
+
+(define (compiler-dependency-tlci-force-source?) : bool
+  (cfg
+    dependency-tlci-verification
+    (compiler-dependency-tlci-verification-force-source?)
+    false))
 
 (cfg
   dependency-tlci-verification
@@ -76,22 +103,22 @@
             (string.int->string observed.entry-bytes)
             "|import-bytes="
             (string.int->string observed.import-bytes)
-            "|surface-enabled="
-            (if observed.surface-enabled
+            "|tli-active="
+            (if observed.tli-active
               "1"
               "0")
-            "|surface-fragments="
-            (string.int->string observed.surface-fragments)
-            "|surface-hits="
-            (string.int->string observed.surface-hits)
-            "|surface-fallbacks="
-            (string.int->string observed.surface-fallbacks)
-            "|surface-decls="
-            (string.int->string observed.surface-decls)
-            "|surface-macro-skipped="
-            (string.int->string observed.surface-macro-skipped)
-            "|surface-typecheck-skipped="
-            (string.int->string observed.surface-typecheck-skipped)
+            "|tli-package-bundles="
+            (string.int->string observed.tli-package-bundles)
+            "|tli-hydrated-package-bundles="
+            (string.int->string observed.tli-hydrated-package-bundles)
+            "|tli-hydrated-modules="
+            (string.int->string observed.tli-hydrated-modules)
+            "|tli-package-hits="
+            (string.int->string observed.tli-package-hits)
+            "|tli-force-source="
+            (if observed.tli-force-source
+              "1"
+              "0")
             "\n"))))))
 
 (define (compiler-dependency-tlci-verification-finish!
@@ -132,20 +159,22 @@
       key
       None
       (tlci.tlci-spmd-callables-empty)
+      (make-array u8 32)
       (Unavailable failure))))
 
 (define (compiler-dependency-tlci-record-image!
   [state : load.CompilerLoadSessionState]
   [key : load.CompilerLoadDependencyCatalogKey]
   [image : tlci.TlciImage]
+  [catalog-sha256 : (Array u8 32)]
   [status : load.CompilerLoadDependencyCatalogStatus]) : i64
   (load.compiler-load-dependency-catalog-record-owned!
     state
     (load.CompilerLoadDependencyCatalogEntry
       key
       (Some (owned_view.compiler-owned-shared-view image))
-      (load.compiler-load-dependency-surface-copy-spmd-callables
-        image.metadata.spmd-callables)
+      (load.compiler-load-copy-spmd-callables image.metadata.spmd-callables)
+      catalog-sha256
       status)))
 
 (define (compiler-dependency-tlci-base-key
@@ -261,17 +290,25 @@
                   [(MetadataOnly)
                     ;; Metadata-only images are trusted for later metadata
                     ;; consumers, but are never handed to the mapping API.
-                    (compiler-dependency-tlci-record-image!
-                      state
-                      key
-                      image
-                      TrustedMetadataOnly)]
+                    (let
+                      [digest : (Array u8 32)
+                        (compiler-dependency-tlci-sha256 (& bytes))]
+                      (compiler-dependency-tlci-record-image!
+                        state
+                        key
+                        image
+                        digest
+                        TrustedMetadataOnly))]
                   [(CodeBearing)
-                    (compiler-dependency-tlci-record-image!
-                      state
-                      key
-                      image
-                      (compiler-dependency-tlci-map-status owner bytes))]
+                    (let
+                      [digest : (Array u8 32)
+                        (compiler-dependency-tlci-sha256 (& bytes))]
+                      (compiler-dependency-tlci-record-image!
+                        state
+                        key
+                        image
+                        digest
+                        (compiler-dependency-tlci-map-status owner bytes)))]
                   [(Rejected message)
                     (compiler-dependency-tlci-record-unavailable!
                       state
@@ -330,15 +367,24 @@
           (if (not
             (io.file-exists?
               (owned_view.compiler-owned-shared-view artifact-path)))
-            (compiler-dependency-tlci-record-unavailable!
-              state
-              (compiler-dependency-tlci-base-key
-                source-set
-                (owned_view.compiler-owned-shared-view artifact-path)
-                source-digest)
-              (Missing
-                (compiler-dependency-tlci-own-text
-                  (owned_view.compiler-owned-shared-view artifact-path))))
+            (let
+              [tli-path : String
+                (load.compiler-load-package-tli-path
+                  (owned_view.compiler-owned-shared-view
+                    source-set.manifest-dir)
+                  (owned_view.compiler-owned-shared-view
+                    source-set.manifest.name))]
+              (if (io.file-exists? tli-path)
+                -1
+                (compiler-dependency-tlci-record-unavailable!
+                  state
+                  (compiler-dependency-tlci-base-key
+                    source-set
+                    (owned_view.compiler-owned-shared-view artifact-path)
+                    source-digest)
+                  (Missing
+                    (compiler-dependency-tlci-own-text
+                      (owned_view.compiler-owned-shared-view artifact-path))))))
             (match (io.try-read-file (& artifact-path))
               [(ErrIoBytes error)
                 (compiler-dependency-tlci-record-unavailable!
@@ -384,7 +430,7 @@
         (arena.Arena owner))
       (compiler-dependency-tlci-prepare-source-set-owned! state source-set))))
 
-(define (compiler-dependency-tlci-prepare-dep!
+(define (compiler-dependency-tlci-prepare-dep-transitive!
   [state : load.CompilerLoadSessionState]
   [manifest-dir : String]
   [dep : load.CompilerPkgDep]) : i64
@@ -403,7 +449,18 @@
       manifest-path
       true)
       [(Ok source-set)
-        (compiler-dependency-tlci-prepare-source-set! state source-set)]
+        (let
+          [sub-deps : load.CompilerPkgDepList
+            (load.compiler-pkg-deps-list
+              (owned_view.compiler-owned-shared-view source-set.manifest.deps))]
+          (for [i
+            (iterator.range 0 (load.compiler-pkg-dep-list-count (& sub-deps)))]
+            (compiler-dependency-tlci-prepare-dep-transitive!
+              (owned_view.compiler-owned-shared-view state)
+              (string.copy (& source-set.manifest-dir))
+              (load.compiler-pkg-dep-list-at (& sub-deps) i))
+            unit)
+          (compiler-dependency-tlci-prepare-source-set! state source-set))]
       [(Err message)
         (let
           [owner : i64
@@ -432,7 +489,7 @@
   [manifest-dir : String]
   [deps : (& deps load.CompilerPkgDepList)]) : unit
   (for [index (iterator.range 0 (load.compiler-pkg-dep-list-count deps))]
-    (compiler-dependency-tlci-prepare-dep!
+    (compiler-dependency-tlci-prepare-dep-transitive!
       (owned_view.compiler-owned-shared-view state)
       (owned_view.compiler-owned-shared-view manifest-dir)
       (load.compiler-pkg-dep-list-at deps index))

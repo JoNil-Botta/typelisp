@@ -41,6 +41,7 @@ INSPECT_OUT="$WORKDIR/inspect.out"
 INSPECT_ERR="$WORKDIR/inspect.err"
 ROOT_EXE="$ROOT_PKG/target/release/metadata_root$NL_BIN_EXT"
 ROOT_ASM="$ROOT_PKG/target/release/metadata_root.s"
+SHARED_TLI="$SHARED_PKG/target/release/metadata_shared.tli"
 SHARED_TLCI="$SHARED_PKG/target/release/metadata_shared.tlci"
 NORMAL_ASM="$WORKDIR/metadata_root.normal.s"
 
@@ -132,37 +133,37 @@ EOF
 TYPELISP_DEPENDENCY_TLCI_VERIFY=1
 export TYPELISP_DEPENDENCY_TLCI_VERIFY
 
-echo "[package-metadata-tlci] trusted metadata build"
+echo "[package-metadata-tlci] trusted pure-library TLI build"
 if ! "$COMPILER" build \
     --manifest-path "$ROOT_PKG/typelisp.pkg" \
     --target "$NL_BOOTSTRAP_TARGET" \
     --opt-level 0 > "$NORMAL_OUT" 2> "$NORMAL_ERR"; then
     cat "$NORMAL_OUT" >&2
     cat "$NORMAL_ERR" >&2
-    fail "trusted metadata package build failed"
+    fail "trusted pure-library TLI package build failed"
 fi
-[ -s "$ROOT_EXE" ] || fail "trusted metadata build did not create root executable"
-[ -s "$ROOT_ASM" ] || fail "trusted metadata build did not create root assembly"
-[ -s "$SHARED_TLCI" ] || fail "trusted metadata build did not create shared tlci"
+[ -s "$ROOT_EXE" ] || fail "trusted pure-library build did not create root executable"
+[ -s "$ROOT_ASM" ] || fail "trusted pure-library build did not create root assembly"
+[ -s "$SHARED_TLI" ] || fail "trusted pure-library build did not create shared .tli"
+[ ! -e "$SHARED_TLCI" ] || fail "pure library unexpectedly emitted companion .tlci"
 assert_contains "$NORMAL_ERR" \
-    "dependency-tlci-verification|phase=prepared|requests=4|entries=3|generation=3|unavailable=0|metadata=3|code=0|code-bytes=0|fixup-bytes=0|entry-bytes=0|import-bytes=0"
+    "dependency-tlci-verification|phase=runtime-finished|requests=-1|entries=0|"
+assert_contains "$NORMAL_ERR" \
+    "|tli-active=1|tli-package-bundles=3|tli-hydrated-package-bundles=3|"
+assert_contains "$NORMAL_ERR" \
+    "|tli-package-hits=3|tli-force-source=0"
 cp "$ROOT_ASM" "$NORMAL_ASM"
 run_program_42 normal
 
-echo "[package-metadata-tlci] inspect zero-entry image"
-if ! "$COMPILER" inspect "$SHARED_TLCI" > "$INSPECT_OUT" 2> "$INSPECT_ERR"; then
+echo "[package-metadata-tlci] inspect pure-library .tli bundle"
+if ! "$COMPILER" inspect "$SHARED_TLI" > "$INSPECT_OUT" 2> "$INSPECT_ERR"; then
     cat "$INSPECT_ERR" >&2
-    fail "metadata-only dependency inspect failed"
+    fail "pure-library .tli inspect failed"
 fi
 assert_empty "$INSPECT_ERR"
-assert_contains "$INSPECT_OUT" "image-classification: metadata-only"
-assert_contains "$INSPECT_OUT" "source-set-binding-schema: 1"
-assert_contains "$INSPECT_OUT" "code: offset=0 bytes=0"
-assert_contains "$INSPECT_OUT" "fixups: offset=0 records=0 bytes=0"
-assert_contains "$INSPECT_OUT" "entries: offset=0 records=0 bytes=0"
-assert_contains "$INSPECT_OUT" "imports: offset=0 records=0 bytes=0"
+assert_contains "$INSPECT_OUT" "metadata_shared.src.lib"
 
-IMAGE_BEFORE=$(sha256sum "$SHARED_TLCI" | awk '{ print $1 }')
+IMAGE_BEFORE=$(sha256sum "$SHARED_TLI" | awk '{ print $1 }')
 ASM_BEFORE=$(sha256sum "$ROOT_ASM" | awk '{ print $1 }')
 sleep 1
 echo "[package-metadata-tlci] identical no-op build"
@@ -172,11 +173,11 @@ if ! "$COMPILER" build \
     --opt-level 0 > "$NOOP_OUT" 2> "$NOOP_ERR"; then
     cat "$NOOP_OUT" >&2
     cat "$NOOP_ERR" >&2
-    fail "metadata-only no-op build failed"
+    fail "pure-library no-op build failed"
 fi
-IMAGE_AFTER=$(sha256sum "$SHARED_TLCI" | awk '{ print $1 }')
+IMAGE_AFTER=$(sha256sum "$SHARED_TLI" | awk '{ print $1 }')
 ASM_AFTER=$(sha256sum "$ROOT_ASM" | awk '{ print $1 }')
-[ "$IMAGE_BEFORE" = "$IMAGE_AFTER" ] || fail "metadata-only image changed on no-op"
+[ "$IMAGE_BEFORE" = "$IMAGE_AFTER" ] || fail "pure-library .tli changed on no-op"
 [ "$ASM_BEFORE" = "$ASM_AFTER" ] || fail "consumer assembly changed on no-op"
 assert_contains "$NOOP_OUT" "Fresh"
 run_program_42 noop
@@ -195,13 +196,15 @@ if ! "$COMPILER" build \
     --opt-level 0 > "$SOURCE_OUT" 2> "$SOURCE_ERR"; then
     cat "$SOURCE_OUT" >&2
     cat "$SOURCE_ERR" >&2
-    fail "forced-source metadata package build failed"
+    fail "forced-source pure-library package build failed"
 fi
 assert_contains "$SOURCE_ERR" \
-    "dependency-tlci-verification|phase=prepared|requests=4|entries=3|generation=3|unavailable=3|metadata=0|code=0|code-bytes=0|fixup-bytes=0|entry-bytes=0|import-bytes=0"
-cmp "$NORMAL_ASM" "$ROOT_ASM" >/dev/null ||
-    fail "trusted metadata and forced-source consumer assembly differ"
+    "dependency-tlci-verification|phase=runtime-finished|requests=-1|"
+assert_contains "$SOURCE_ERR" \
+    "|tli-package-bundles=0|tli-hydrated-package-bundles=0|"
+assert_contains "$SOURCE_ERR" \
+    "|tli-package-hits=0|tli-force-source=1"
 run_program_42 source
 
-echo "[package-metadata-tlci] trusted/forced-source assembly and runtime parity passed"
-echo "[package-metadata-tlci] canonical dependency requests=4 entries=3 metadata=3 native-sections=0"
+echo "[package-metadata-tlci] trusted TLI / forced-source runtime parity passed"
+echo "[package-metadata-tlci] canonical pure-library bundles=3 tlci=0"

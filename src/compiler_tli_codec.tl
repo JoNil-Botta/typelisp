@@ -656,7 +656,13 @@
   (tli-write-name! ctx (& row.name))
   (tli-write-name! ctx (& row.module-name))
   (tli-write-name! ctx (& row.link-symbol))
-  (tli-write-u32! ctx row.flags))
+  (tli-write-u32! ctx row.flags)
+  (tli-write-type! ctx (& row.signature))
+  ;; A dispatch summary never carries a compact body: an empty module name
+  ;; matches no body meta, so the inline-IR slice stays zero.
+  (let
+    [none : String ""]
+    (tli-write-summary! ctx (& none) (& none) (& none) (& row.summary))))
 
 (define (tli-write-module!
   [ctx : (&mut ctx TliWriteContext)]
@@ -2661,24 +2667,37 @@
 
 (define (tli-read-dispatch!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool TliPool)]) : tli.TliDispatchDecl
+  [pool : (& pool TliPool)]
+  [directory : (& directory TliDirectory)]) : tli.TliDispatchDecl
   (tli.TliDispatchDecl
     (tli-read-name! rd pool)
     (tli-read-name! rd pool)
     (tli-read-name! rd pool)
-    (tli-read-flags! rd 0)))
+    (tli-read-flags! rd 1)
+    (tli-read-type! rd pool false 1)
+    (tli-read-summary-tail!
+      rd
+      pool
+      (tli-read-flags!
+        rd
+        (-
+          tli.tli-fn-effect-flags-mask
+          (bit-or tli.tli-fn-has-inline-ir tli.tli-fn-spmd-inlineable)))
+      directory)))
 
 (define (tli-read-dispatches!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool TliPool)]) : (__tl_dyn-array tli.TliDispatchDecl)
+  [pool : (& pool TliPool)]
+  [directory : (& directory TliDirectory)]) : (__tl_dyn-array
+    tli.TliDispatchDecl)
   (let
     [count : i64
-      (tli-read-count! rd 16 (comptime (size-of (type tli.TliDispatchDecl))))]
+      (tli-read-count! rd 17 (comptime (size-of (type tli.TliDispatchDecl))))]
     [items : (__tl_dyn-array tli.TliDispatchDecl)
       (__tl_make-array tli.TliDispatchDecl count)]
     [index : i64 0]
     (while (and rd.cursor.ok? (< index count))
-      (set! (array-ref items index) (tli-read-dispatch! rd pool))
+      (set! (array-ref items index) (tli-read-dispatch! rd pool directory))
       (when
         (> index 0)
         (let
@@ -3268,7 +3287,7 @@
       (tli-read-fn-decls! rd pool directory)
       (tli-read-value-decls! rd pool)
       (tli-read-macro-handles! rd pool)
-      (tli-read-dispatches! rd pool))))
+      (tli-read-dispatches! rd pool directory))))
 
 (defenum TliBudgetedModuleResult
   (Ok tli.TliModuleRecord i64)
@@ -3334,6 +3353,41 @@
               (if rd.cursor.ok?
                 (TliBudgetedModuleResult.Ok record rd.owned-bytes)
                 (TliBudgetedModuleResult.Err (tli-read-error (& rd) start))))))])))
+
+;; Read only the second u32 string-pool id (`source_path`) from record `index`
+;; without decoding types, functions, or values.
+(define (tli-peek-record-source-path-at
+  [directory : (& directory TliDirectory)]
+  [index : i64]) : String
+  (when
+    (or (< index 0) (>= index (array-length directory.entries)))
+    (return ""))
+  (let
+    [entry (& (array-ref directory.entries index))]
+    [start : i64 entry.record-offset]
+    [length : i64 entry.record-len]
+    (when
+      (or
+        (< length 8)
+        (not
+          (cursor.range-present? (array-length directory.bytes) start length)))
+      (return ""))
+    (let
+      [buf : (__tl_dyn-array u8) (__tl_make-array u8 8)]
+      (for [i (iterator.range 0 8)]
+        (set! (array-ref buf i) (array-ref directory.bytes (+ start i))))
+      (let
+        [rd : binary.CompilerIncrementalBinaryReader
+          (binary.CompilerIncrementalBinaryReader
+            (cursor.new buf tli-max-work)
+            0
+            tli-max-owned-bytes
+            tli-max-string-bytes)]
+        [_name : String (tli-read-name! (&mut rd) (& directory.pool))]
+        [source : String (tli-read-name! (&mut rd) (& directory.pool))]
+        (if rd.cursor.ok?
+          source
+          "")))))
 
 (define (tli-read-compact-value!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]

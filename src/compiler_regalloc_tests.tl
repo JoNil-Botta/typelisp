@@ -13691,11 +13691,11 @@
 ;; still invalidate the range even when it has the same physical ABI.
 (define (compiler-reg-sret-color-program) : ir.CompilerIrProgram
   (irt.program
-    "function @sret_one(output=%0:u64) -> u64 vars 1 abi return-storage internal-trailing arg 0 bytes 16 output SretColor result u64 params (u64) source (-> SretColor) {
+    "function @sret_one(output=%0:u64) -> u64 vars 1 abi return-storage internal-leading arg 0 bytes 16 output SretColor result u64 params (u64) source (-> SretColor) {
        entry:
          return %0
        }
-       function @sret_two(output=%0:u64) -> u64 vars 1 abi return-storage internal-trailing arg 0 bytes 16 output SretColor result u64 params (u64) source (-> SretColor) {
+       function @sret_two(output=%0:u64) -> u64 vars 1 abi return-storage internal-leading arg 0 bytes 16 output SretColor result u64 params (u64) source (-> SretColor) {
        entry:
          return %0
        }"))

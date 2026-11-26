@@ -268,10 +268,46 @@
         (tli-test-hash 0)))
     (set!
       (array-ref dispatches (tli-test-slot reversed? 2 0))
-      (tli.TliDispatchDecl "dispatch" "fixture" "dispatch.z" 0))
+      (tli.TliDispatchDecl
+        "dispatch"
+        "fixture"
+        "dispatch.z"
+        0
+        (tli.TliType.Func
+          (__tl_make-array (tli.TliType.I64))
+          (box (tli.TliType.I64)))
+        (tli.TliFnSummary
+          4
+          3
+          (__tl_make-array i64 0)
+          (__tl_make-array tli.TliGlobalWrite 0)
+          -1
+          (cast 0 : u8)
+          0
+          0
+          0
+          (make-array u8 32))))
     (set!
       (array-ref dispatches (tli-test-slot reversed? 2 1))
-      (tli.TliDispatchDecl "dispatch" "fixture" "dispatch.a" 0))
+      (tli.TliDispatchDecl
+        "dispatch"
+        "fixture"
+        "dispatch.a"
+        0
+        (tli.TliType.Func
+          (__tl_make-array (tli.TliType.I64))
+          (box (tli.TliType.I64)))
+        (tli.TliFnSummary
+          16
+          0
+          (__tl_make-array i64 0)
+          (__tl_make-array (tli.TliGlobalWrite "write.a" (cast 1 : u8)))
+          -1
+          (cast 0 : u8)
+          0
+          0
+          0
+          (make-array u8 32))))
     (tli.TliModuleRecord
       "fixture"
       "src/fixture.tl"

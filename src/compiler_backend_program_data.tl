@@ -1724,7 +1724,8 @@
   [type-segment-bases : i64]
   [globals : (& compiler_ir_types.CompilerIrGlobalSeq)]
   [program-index : be_state.CompilerBackendProgramIndex]
-  [index : i64]) : String
+  [index : i64]
+  [selection : i64]) : String
   (if (>= index globals.len)
     ""
     (match (compiler_ir_types.compiler-ir-global-seq-borrow globals index)
@@ -1732,18 +1733,44 @@
         (str_cat.str-cat
           (match value
             [(RuntimeGlobal init)
-              (compiler-backend-global-init-call
-                type-segment-bases
+              (if (compiler-backend-global-init-selected?
+                program-index.backend-state
                 name
-                init
-                ty
-                program-index)]
+                selection)
+                (compiler-backend-global-init-call
+                  type-segment-bases
+                  name
+                  init
+                  ty
+                  program-index)
+                "")]
             [_ ""])
           (compiler-backend-global-initializers-from
             type-segment-bases
             globals
             program-index
-            (+ index 1)))])))
+            (+ index 1)
+            selection))])))
+
+;; Initializer selection: 0 every global, 1 source-loaded stdlib globals, 2
+;; every other global.
+(define (compiler-backend-global-init-selected?
+  [backend-state : be_state.CompilerBackendState]
+  [name : i64]
+  [selection : i64]) : bool
+  (if (= selection 0)
+    true
+    (let
+      [text : String
+        (be_state.compiler-backend-symbol-text-state backend-state name)]
+      [stdlib? : bool
+        (or
+          (be_operand.compiler-backend-string-prefix-at? text "stdlib." 0)
+          (be_operand.compiler-backend-string-prefix-at? text "stdlib/" 0)
+          (be_operand.compiler-backend-string-prefix-at? text "stdlib\\" 0))]
+      (if (= selection 1)
+        stdlib?
+        (not stdlib?)))))
 
 (define (compiler-backend-startup-init-calls
   [backend-state : be_state.CompilerBackendState]) : String
@@ -1767,13 +1794,33 @@
   [type-segment-bases : i64]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [program-index : be_state.CompilerBackendProgramIndex]) : String
-  (str_cat.str-cat
-    (compiler-backend-startup-init-calls program-index.backend-state)
-    (compiler-backend-global-initializers-from
-      type-segment-bases
-      globals
-      program-index
-      0)))
+  (let
+    [startup : String
+      (compiler-backend-startup-init-calls program-index.backend-state)]
+    (if (= (string.string-length (& startup)) 0)
+      (compiler-backend-global-initializers-from
+        type-segment-bases
+        globals
+        program-index
+        0
+        0)
+      ;; Hydrated module initializers may read stdlib globals: a stdlib loaded
+      ;; from source (no prebuilt stdlib) initializes before them, and the
+      ;; program's own globals after them.
+      (str_cat.str-cat
+        (compiler-backend-global-initializers-from
+          type-segment-bases
+          globals
+          program-index
+          0
+          1)
+        startup
+        (compiler-backend-global-initializers-from
+          type-segment-bases
+          globals
+          program-index
+          0
+          2)))))
 
 (define (compiler-backend-runtime-prelude-helper-function?
   [name : String]

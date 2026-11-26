@@ -99325,10 +99325,6 @@
           (array-ref index.preds.edges start)
           (- 0 1))))))
 
-(define (opt-ubound-block-instrs [block : ir.CompilerIrBlock]) : ir.CompilerIrInstrSeq
-  (match block
-    [(Block _ instrs) instrs]))
-
 ;; A length operand whose value is provably nonnegative: a nonnegative literal,
 ;; or a load out of a container's length slot.
 (define (opt-ubound-len-nonneg?

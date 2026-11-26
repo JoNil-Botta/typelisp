@@ -117,9 +117,9 @@ stderr contains sysroot: missing prebuilt stdlib archive:
 
 # Hydrated prebuilt stdlib `.tli` declarations keep the stdlib provider (#8733)
 # even when `stdlib/` exists in cwd with no `--stdlib-root`, or when a package's
-# own `stdlib/` subdirectory holds a same-named file. Like `compile`, `check`
-# defaults to `--target linux-x86_64`, so pass `--target {{host-target}}` so
-# Windows hosts open their prebuilt sysroot instead of falling back to source.
+# own `stdlib/` subdirectory holds a same-named file. `check` defaults to the
+# host target, so both host-default and explicit `--target {{host-target}}`
+# open the prebuilt sysroot on Linux and Windows alike.
 case prebuilt-stdlib-opaque-provider
 file evil/stdlib/crypto_hmac_sha256.tl
 (module stdlib.crypto_hmac_sha256.extra)
@@ -132,14 +132,47 @@ file evil/stdlib/crypto_hmac_sha256.tl
 end-file
 cwd {{root}}
 step repo-root-spoof-check
-run check --target {{host-target}} tests/safety/opaque_provider_stdlib_spoof_reject.tl
+run check tests/safety/opaque_provider_stdlib_spoof_reject.tl
 exit 1
 stderr contains error[E0221]
 stderr contains opaque type stdlib.crypto_secret/SecretStorage outside its module family
 cwd {{dir}}/evil
 step same-name-stdlib-subdir-check
-run check --target {{host-target}} stdlib/crypto_hmac_sha256.tl
+run check stdlib/crypto_hmac_sha256.tl
 exit 1
 stderr contains error[E0221]
 stderr contains opaque type stdlib.crypto_hmac_sha256/HmacSha256Storage outside its module family
 cwd -
+
+# Non-stdlib `--cfg` flags do not defeat prebuilt stdlib hydration, while
+# stdlib-affecting cfgs (`test`) still fall back cleanly to source stdlib;
+# `compile --batch` caches the stdlib override scan and catalog across entries.
+case prebuilt-stdlib-cfg-scoping-and-batch
+step non-stdlib-cfg-manifest
+run compile "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl" --target {{host-target}} --cfg selfhost-compile-manifest -o "{{dir}}/manifest.s"
+stderr empty
+in file {{dir}}/manifest.s
+contains .extern _tl_stdlib_io_stdlib_io_
+not-contains _tl_stdlib_io_stdlib_io_platform_write:
+step non-stdlib-cfg-audit
+run compile "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl" --target {{host-target}} --cfg compiler-dependency-audit -o "{{dir}}/audit.s"
+stderr empty
+in file {{dir}}/audit.s
+contains .extern _tl_stdlib_io_stdlib_io_
+not-contains _tl_stdlib_io_stdlib_io_platform_write:
+step stdlib-cfg-test-fallback
+run compile "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl" --target {{host-target}} --cfg test -o "{{dir}}/test.s"
+stderr empty
+in file {{dir}}/test.s
+contains _tl_stdlib_io_stdlib_io_platform_write:
+not-contains .extern _tl_stdlib_io_stdlib_io_
+sh printf '%s|%s\n%s|%s\n' "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl" "{{dir}}/batch1.s" "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl" "{{dir}}/batch2.s" > "{{dir}}/batch.txt"
+step batch-prebuilt-stdlib
+run compile --batch "{{dir}}/batch.txt" --target {{host-target}} --stdlib-root "{{root}}/stdlib" --cfg selfhost-compile-manifest
+stderr empty
+in file {{dir}}/batch1.s
+contains .extern _tl_stdlib_io_stdlib_io_
+not-contains _tl_stdlib_io_stdlib_io_platform_write:
+in file {{dir}}/batch2.s
+contains .extern _tl_stdlib_io_stdlib_io_
+not-contains _tl_stdlib_io_stdlib_io_platform_write:

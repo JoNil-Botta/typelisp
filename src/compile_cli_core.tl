@@ -1384,6 +1384,17 @@
   (compile-cli-batch-persistent-table-storage-ensure!
     (owned_view.compiler-owned-shared-view state)
     (/ (cli_svec.len (& entries)) 2))
+  (when
+    (not (compile-cli-shared-object-requested?))
+    (with-scratch
+      (tli_cli.tli-batch-cache-warm-for-names!
+        (compiler_driver_core.compiler-driver-target-cfg-from-backend target)
+        (& stdlib-roots.slots)
+        (cli_svec.len (& stdlib-roots))
+        (& cfgs.slots)
+        (cli_svec.len (& cfgs))
+        opt-level
+        true)))
   (let
     [_image-owner : i64
       (compiler_driver_core.compiler-driver-state-surface-arena (& state))]
@@ -1609,6 +1620,18 @@
       (compile-cli-batch-persistent-table-storage-ensure!
         (owned_view.compiler-owned-shared-view state)
         (/ (cli_svec.len (& entries)) 4))]
+    [_warm-tli : unit
+      (when
+        (not (compile-cli-shared-object-requested?))
+        (with-scratch
+          (tli_cli.tli-batch-cache-warm-for-names!
+            (target_cfg.CompilerTargetCfg.Windows)
+            (& stdlib-roots.slots)
+            (cli_svec.len (& stdlib-roots))
+            (& cfgs.slots)
+            (cli_svec.len (& cfgs))
+            opt-level
+            true)))]
     [_image-owner : i64
       (compiler_driver_core.compiler-driver-state-surface-arena (& state))]
     [status : i64
@@ -1756,6 +1779,7 @@
                 state)
               (compiler_driver_core.compiler-driver-state-retain-stdlib-proofs!
                 state)
+              (tli_cli.tli-batch-cache-begin!)
               (be_state.compiler-backend-state-set-shared-object-code-model!
                 (compiler_driver_core.compiler-driver-state-backend (& state))
                 (compile-cli-shared-object-requested?))
@@ -1794,6 +1818,7 @@
               state
               "compile-batch")
             unit)
+          (tli_cli.tli-batch-cache-end!)
           (compiler_driver_core.compiler-driver-state-release-stdlib-proofs!
             state)
           (compiler_driver_core.compiler-driver-state-prefix-cache-clear! state)

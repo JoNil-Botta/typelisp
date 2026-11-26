@@ -219,55 +219,304 @@
           [(ErrIoBool _) (return true)])))
     false))
 
+(define (tli-sysroot-env-stdlib-root) : String
+  (match (env.get "TYPELISP_STDLIB_ROOT")
+    [(EnvSomeString value) value]
+    [(EnvNoString) ""]))
+
+(define (tli-sysroot-env-sysroot) : String
+  (match (env.get "TYPELISP_SYSROOT")
+    [(EnvSomeString value) value]
+    [(EnvNoString) ""]))
+
+(define (tli-sysroot-target-eq?
+  [a : (& target_cfg.CompilerTargetCfg)]
+  [b : target_cfg.CompilerTargetCfg]) : bool
+  (match a
+    [(Linux)
+      (match b
+        [(Linux) true]
+        [(Windows) false])]
+    [(Windows)
+      (match b
+        [(Linux) false]
+        [(Windows) true])]))
+
+(define (tli-sysroot-copy-string-slice
+  [items : (& items (__tl_dyn-array String))]
+  [count : i64]) : (__tl_dyn-array String)
+  (let
+    [out : (__tl_dyn-array String) (__tl_make-array String count)]
+    (for [i (iterator.range 0 count)]
+      (set! (array-ref out i) (string.copy (& (array-ref items i)))))
+    out))
+
+(define (tli-sysroot-string-slice-eq?
+  [a : (& a (__tl_dyn-array String))]
+  [a-len : i64]
+  [b : (& b (__tl_dyn-array String))]
+  [b-len : i64]) : bool
+  (when (!= a-len b-len) (return false))
+  (for [i (iterator.range 0 a-len)]
+    (when
+      (not (string.eq (& (array-ref a i)) (& (array-ref b i))))
+      (return false)))
+  true)
+
+;; Uncached filesystem probe for `--stdlib-root` and `TYPELISP_STDLIB_ROOT`.
+(define (tli-sysroot-stdlib-roots-override-uncached?
+  [roots : (& roots (__tl_dyn-array String))]
+  [count : i64]
+  [env-root : (& str)]) : bool
+  (for [i (iterator.range 0 count)]
+    (let
+      [root : String (string.copy (& (array-ref roots i)))]
+      (when
+        (> (string.string-length (& root)) 0)
+        (when (tli-sysroot-dir-overrides-stdlib? (& root)) (return true))
+        (let
+          [sub : String (fs.path-join (& root) "stdlib")]
+          (when (tli-sysroot-dir-overrides-stdlib? (& sub)) (return true))))))
+  (if (= (string.string-length env-root) 0)
+    false
+    (let
+      [sub : String (fs.path-join env-root "stdlib")]
+      (or
+        (tli-sysroot-dir-overrides-stdlib? env-root)
+        (tli-sysroot-dir-overrides-stdlib? (& sub))))))
+
+;; Batch-scoped cache for `tli-sysroot-stdlib-roots-override?` and opened
+;; stdlib `TliCatalog`s (including lazily decoded `TliModuleRecord`s). All
+;; cached payloads live in `tli-batch-cache-arena` and are destroyed cleanly
+;; by `tli-batch-cache-end!` when the batch completes.
+(define tli-batch-cache-max-slots : i64
+  4)
+
+(defenum TliBatchCatalogOutcome
+  (Inactive)
+  (Error String)
+  (Active
+    tli_codec.TliDirectory
+    (Array u8 32)
+    String
+    String
+    (__tl_dyn-array tli.TliModuleRecord)
+    (__tl_dyn-array bool)
+    (__tl_dyn-array i64)))
+
+(defstruct TliBatchCatalogEntry
+  (sysroot-disabled bool)
+  (sysroot-explicit String)
+  (sysroot-env String)
+  (stdlib-roots (__tl_dyn-array String))
+  (stdlib-env String)
+  (target target_cfg.CompilerTargetCfg)
+  (opt-level i64)
+  (cfg-digest (Array u8 32))
+  (require-archive bool)
+  (outcome TliBatchCatalogOutcome))
+
+(defstruct TliBatchCacheBox
+  (override-valid bool)
+  (override-roots (__tl_dyn-array String))
+  (override-env String)
+  (override-result bool)
+  (catalog-count i64)
+  (catalog-slots (__tl_dyn-array TliBatchCatalogEntry)))
+
+(define tli-batch-cache-enabled : bool
+  false)
+(define tli-batch-cache-arena : i64
+  0)
+(define tli-batch-cache-box-addr : i64
+  0)
+(cfg
+  test
+  (define tli-batch-override-hit-count : i64
+    0))
+(cfg
+  test
+  (define tli-batch-override-miss-count : i64
+    0))
+(cfg
+  test
+  (define tli-batch-catalog-hit-count : i64
+    0))
+(cfg
+  test
+  (define tli-batch-catalog-miss-count : i64
+    0))
+
+(cfg
+  test
+  (define (tli-batch-cache-test-override-hits) : i64
+    tli-batch-override-hit-count))
+
+(cfg
+  test
+  (define (tli-batch-cache-test-override-misses) : i64
+    tli-batch-override-miss-count))
+
+(cfg
+  test
+  (define (tli-batch-cache-test-catalog-hits) : i64
+    tli-batch-catalog-hit-count))
+
+(cfg
+  test
+  (define (tli-batch-cache-test-catalog-misses) : i64
+    tli-batch-catalog-miss-count))
+
+(define (tli-batch-cache-arena-handle) : i64
+  tli-batch-cache-arena)
+
+(define (tli-batch-cache-end!) : unit
+  (set! tli-batch-cache-enabled false)
+  (set! tli-batch-cache-box-addr 0)
+  (when
+    (> tli-batch-cache-arena 0)
+    (let
+      [owner : i64 tli-batch-cache-arena]
+      (set! tli-batch-cache-arena 0)
+      (unsafe
+        ;; lint-allow: raw-arena-op -- releases batch-scoped TLI cache arena deterministically at batch end.
+        (arena.tl_arena_destroy owner)))))
+
+(define (tli-batch-cache-begin!) : unit
+  (tli-batch-cache-end!)
+  (set! tli-batch-cache-enabled true)
+  (cfg
+    test
+    (begin
+      (set! tli-batch-override-hit-count 0)
+      (set! tli-batch-override-miss-count 0)
+      (set! tli-batch-catalog-hit-count 0)
+      (set! tli-batch-catalog-miss-count 0))))
+
+(define (tli-batch-cache-ensure-box!) : i64
+  (when (!= tli-batch-cache-box-addr 0) (return tli-batch-cache-box-addr))
+  (let
+    [enclosing : i64 (arena.tl_arena_current)]
+    [cache-arena : i64
+      (if (> tli-batch-cache-arena 0)
+        tli-batch-cache-arena
+        (arena.tl_arena_make))]
+    (set! tli-batch-cache-arena cache-arena)
+    (unsafe
+      ;; lint-allow: raw-arena-op -- allocate batch-scoped TLI cache box inside its dedicated arena.
+      (arena.tl_arena_set cache-arena))
+    (let
+      [cell : (__tl_dyn-array TliBatchCacheBox)
+        (__tl_make-array
+          (TliBatchCacheBox
+            false
+            (__tl_make-array String 0)
+            ""
+            false
+            0
+            (__tl_make-array TliBatchCatalogEntry tli-batch-cache-max-slots)))]
+      [addr : i64
+        (unsafe
+          (cast (ptr->int (__tl_array-data cell)) : i64))]
+      (unsafe
+        ;; lint-allow: raw-arena-op -- restore caller arena after batch cache box allocation.
+        (arena.tl_arena_set enclosing))
+      (set! tli-batch-cache-box-addr addr)
+      addr)))
+
+(define (tli-sysroot-stdlib-roots-override-cached?
+  [roots : (& (__tl_dyn-array String))]
+  [count : i64]
+  [env-root : (& str)]) : bool
+  (unless
+    tli-batch-cache-enabled
+    (return (tli-sysroot-stdlib-roots-override-uncached? roots count env-root)))
+  (let
+    [addr : i64 (tli-batch-cache-ensure-box!)]
+    (unsafe
+      (let
+        [p-ro : (Ptr TliBatchCacheBox)
+          (int->ptr (cast addr : u64) : (Ptr TliBatchCacheBox))]
+        [holder : TliBatchCacheBox (ptr-read p-ro)]
+        (when
+          (and
+            holder.override-valid
+            (string.eq (& holder.override-env) env-root)
+            (tli-sysroot-string-slice-eq?
+              (& holder.override-roots)
+              (array-length holder.override-roots)
+              roots
+              count))
+          (cfg test (+= tli-batch-override-hit-count 1))
+          (return holder.override-result))))
+    (cfg test (+= tli-batch-override-miss-count 1))
+    (let
+      [result : bool
+        (tli-sysroot-stdlib-roots-override-uncached? roots count env-root)]
+      [enclosing : i64 (arena.tl_arena_current)]
+      (unsafe
+        ;; lint-allow: raw-arena-op -- store cached override key strings in the batch cache arena.
+        (arena.tl_arena_set tli-batch-cache-arena))
+      (let
+        [copied-roots : (__tl_dyn-array String)
+          (tli-sysroot-copy-string-slice roots count)]
+        [copied-env : String (string.copy env-root)]
+        (unsafe
+          ;; lint-allow: raw-arena-op -- restore caller arena after caching override result.
+          (arena.tl_arena_set enclosing)
+          (let
+            [p-ro : (Ptr TliBatchCacheBox)
+              (int->ptr (cast addr : u64) : (Ptr TliBatchCacheBox))]
+            [p-rw : (MutPtr TliBatchCacheBox)
+              (int->ptr (cast addr : u64) : (MutPtr TliBatchCacheBox))]
+            [holder : TliBatchCacheBox (ptr-read p-ro)]
+            (match holder
+              [(TliBatchCacheBox _ _ _ _ cat-count cat-slots)
+                (ptr-write!
+                  p-rw
+                  (TliBatchCacheBox
+                    true
+                    copied-roots
+                    copied-env
+                    result
+                    cat-count
+                    cat-slots))]))))
+      result)))
+
 ;; Fast check: zero filesystem calls when no `--stdlib-root` or
 ;; `TYPELISP_STDLIB_ROOT` is configured. When configured, disable prebuilt
 ;; stdlib if any root overrides an embedded stdlib file with modified bytes.
 (define (tli-sysroot-stdlib-roots-override? [stdlib-roots : (& svec.Vec)]) : bool
   (let
-    [count : i64 (svec.len stdlib-roots)]
-    (for [i (iterator.range 0 count)]
-      (let
-        [root : String (svec.get stdlib-roots i "")]
-        (when
-          (> (string.string-length (& root)) 0)
-          (when (tli-sysroot-dir-overrides-stdlib? (& root)) (return true))
-          (let
-            [sub : String (fs.path-join (& root) "stdlib")]
-            (when (tli-sysroot-dir-overrides-stdlib? (& sub)) (return true))))))
-    (match (env.get "TYPELISP_STDLIB_ROOT")
-      [(EnvNoString) false]
-      [(EnvSomeString root)
-        (if (= (string.string-length (& root)) 0)
-          false
-          (let
-            [sub : String (fs.path-join (& root) "stdlib")]
-            (or
-              (tli-sysroot-dir-overrides-stdlib? (& root))
-              (tli-sysroot-dir-overrides-stdlib? (& sub)))))])))
+    [env-root : String (tli-sysroot-env-stdlib-root)]
+    (tli-sysroot-stdlib-roots-override-cached?
+      (& stdlib-roots.slots)
+      (svec.len stdlib-roots)
+      (& env-root))))
 
 (defenum TliSysrootOpenCatalog
   (Active hydrate.TliCatalog String String)
   (Inactive)
   (Error String))
 
-;; Open a job-scoped TliCatalog in the caller's current arena when prebuilt
-;; stdlib is eligible for this invocation. Returns Active(catalog, sysroot-dir,
-;; archive-path), Inactive (clean source fallback), or Error (explicit bad
-;; sysroot).
-(define (tli-sysroot-open-catalog
+;; Open a job-scoped TliCatalog in the caller's current arena using a
+;; precomputed stdlib-scoped cfg digest.
+(define (tli-sysroot-open-catalog-with-digest
   [options : (& TliSysrootOptions)]
-  [_entry-path : (& str)]
   [target : target_cfg.CompilerTargetCfg]
-  [stdlib-roots : (& svec.Vec)]
-  [cfgs : sym_i64_env.SymI64Env]
-  [_opt-level : i64]
+  [roots : (& (__tl_dyn-array String))]
+  [roots-len : i64]
+  [env-stdlib-root : (& str)]
+  [cfg-digest : (& (Array u8 32))]
   [require-archive : bool]) : TliSysrootOpenCatalog
   (cfg (not embedded-stdlib-tlci) (return Inactive))
   (when options.disabled (return Inactive))
   ;; Settle every sysroot-independent fallback before discovery: discovery
   ;; reads the executable path, so its cost depends on where the compiler is
   ;; installed, and a job that keeps the source stdlib must not pay it.
-  (when (tli-sysroot-stdlib-roots-override? stdlib-roots) (return Inactive))
+  (when
+    (tli-sysroot-stdlib-roots-override-cached? roots roots-len env-stdlib-root)
+    (return Inactive))
   (match (tli-sysroot-discover options target)
     [(Disabled) Inactive]
     [(Missing) Inactive]
@@ -295,12 +544,11 @@
           [(Ok bytes)
             (let
               [build : String (identity.compiler-build-producer-identity)]
-              [cfg-digest : (Array u8 32) (hydrate.tli-hydrate-cfg-digest cfgs)]
               (match (hydrate.tli-catalog-open-lazy
                 (& bytes)
                 (& build)
                 (& triple)
-                (& cfg-digest))
+                cfg-digest)
                 [(Err error)
                   (if explicit?
                     (Error
@@ -355,6 +603,203 @@
                                     "\n"))
                                 Inactive)])])])]))]))]))
 
+;; Open a job-scoped TliCatalog in the caller's current arena when prebuilt
+;; stdlib is eligible for this invocation. Returns Active(catalog, sysroot-dir,
+;; archive-path), Inactive (clean source fallback), or Error (explicit bad
+;; sysroot).
+(define (tli-sysroot-open-catalog
+  [options : (& TliSysrootOptions)]
+  [_entry-path : (& str)]
+  [target : target_cfg.CompilerTargetCfg]
+  [stdlib-roots : (& svec.Vec)]
+  [cfgs : sym_i64_env.SymI64Env]
+  [_opt-level : i64]
+  [require-archive : bool]) : TliSysrootOpenCatalog
+  (let
+    [env-stdlib-root : String (tli-sysroot-env-stdlib-root)]
+    [cfg-digest : (Array u8 32) (hydrate.tli-hydrate-stdlib-cfg-digest cfgs)]
+    (tli-sysroot-open-catalog-with-digest
+      options
+      target
+      (& stdlib-roots.slots)
+      (svec.len stdlib-roots)
+      (& env-stdlib-root)
+      (& cfg-digest)
+      require-archive)))
+
+(define (tli-batch-catalog-entry-matches?
+  [entry : (& TliBatchCatalogEntry)]
+  [options : (& TliSysrootOptions)]
+  [env-sysroot : (& str)]
+  [roots : (& (__tl_dyn-array String))]
+  [roots-len : i64]
+  [env-stdlib-root : (& str)]
+  [target : target_cfg.CompilerTargetCfg]
+  [opt-level : i64]
+  [cfg-digest : (& (Array u8 32))]
+  [require-archive : bool]) : bool
+  (and
+    (= entry.sysroot-disabled options.disabled)
+    (= entry.opt-level opt-level)
+    (= entry.require-archive require-archive)
+    (tli-sysroot-target-eq? (& entry.target) target)
+    (string.eq (& entry.sysroot-explicit) (& options.explicit-root))
+    (string.eq (& entry.sysroot-env) env-sysroot)
+    (string.eq (& entry.stdlib-env) env-stdlib-root)
+    (tli_codec.tli-digest-eq? (& entry.cfg-digest) cfg-digest)
+    (tli-sysroot-string-slice-eq?
+      (& entry.stdlib-roots)
+      (array-length entry.stdlib-roots)
+      roots
+      roots-len)))
+
+(define (tli-batch-cache-lookup-or-open!
+  [options : (& TliSysrootOptions)]
+  [target : target_cfg.CompilerTargetCfg]
+  [roots : (& (__tl_dyn-array String))]
+  [roots-len : i64]
+  [cfg-digest : (& (Array u8 32))]
+  [opt-level : i64]
+  [require-archive : bool]) : i64
+  (let
+    [addr : i64 (tli-batch-cache-ensure-box!)]
+    [env-sysroot : String (tli-sysroot-env-sysroot)]
+    [env-stdlib-root : String (tli-sysroot-env-stdlib-root)]
+    [existing-count : i64
+      (unsafe
+        (let
+          [p-ro : (Ptr TliBatchCacheBox)
+            (int->ptr (cast addr : u64) : (Ptr TliBatchCacheBox))]
+          [holder : TliBatchCacheBox (ptr-read p-ro)]
+          (for [i (iterator.range 0 holder.catalog-count)]
+            (when
+              (tli-batch-catalog-entry-matches?
+                (& (array-ref holder.catalog-slots i))
+                options
+                (& env-sysroot)
+                roots
+                roots-len
+                (& env-stdlib-root)
+                target
+                opt-level
+                cfg-digest
+                require-archive)
+              (cfg test (+= tli-batch-catalog-hit-count 1))
+              (return i)))
+          holder.catalog-count))]
+    (when (>= existing-count tli-batch-cache-max-slots) (return -1))
+    (cfg test (+= tli-batch-catalog-miss-count 1))
+    (let
+      [enclosing : i64 (arena.tl_arena_current)]
+      (unsafe
+        ;; lint-allow: raw-arena-op -- open cached stdlib catalog inside the batch cache arena.
+        (arena.tl_arena_set tli-batch-cache-arena))
+      (let
+        [opened : TliSysrootOpenCatalog
+          (tli-sysroot-open-catalog-with-digest
+            options
+            target
+            roots
+            roots-len
+            (& env-stdlib-root)
+            cfg-digest
+            require-archive)]
+        [outcome : TliBatchCatalogOutcome
+          (match opened
+            [(Inactive) TliBatchCatalogOutcome.Inactive]
+            [(Error message) (TliBatchCatalogOutcome.Error message)]
+            [(Active catalog sysroot-dir archive-path)
+              (let
+                [count : i64 (array-length catalog.states)]
+                [decoded : (__tl_dyn-array bool) (__tl_make-array bool count)]
+                [owned-cell : (__tl_dyn-array i64)
+                  (__tl_make-array catalog.owned-bytes)]
+                (for [i (iterator.range 0 count)]
+                  (when
+                    (= (array-ref catalog.states i) 2)
+                    (set! (array-ref decoded i) true)))
+                (TliBatchCatalogOutcome.Active
+                  catalog.directory
+                  catalog.cfg-digest
+                  sysroot-dir
+                  archive-path
+                  catalog.records
+                  decoded
+                  owned-cell))])]
+        [entry : TliBatchCatalogEntry
+          (TliBatchCatalogEntry
+            options.disabled
+            (string.copy (& options.explicit-root))
+            (string.copy (& env-sysroot))
+            (tli-sysroot-copy-string-slice roots roots-len)
+            (string.copy (& env-stdlib-root))
+            target
+            opt-level
+            (deref cfg-digest)
+            require-archive
+            outcome)]
+        (unsafe
+          ;; lint-allow: raw-arena-op -- restore caller arena after storing batch cache entry.
+          (arena.tl_arena_set enclosing)
+          (let
+            [p-ro : (Ptr TliBatchCacheBox)
+              (int->ptr (cast addr : u64) : (Ptr TliBatchCacheBox))]
+            [p-rw : (MutPtr TliBatchCacheBox)
+              (int->ptr (cast addr : u64) : (MutPtr TliBatchCacheBox))]
+            [holder : TliBatchCacheBox (ptr-read p-ro)]
+            (match holder
+              [(TliBatchCacheBox
+                ov-valid
+                ov-roots
+                ov-env
+                ov-res
+                cat-count
+                cat-slots)
+                (set! (array-ref cat-slots cat-count) entry)
+                (ptr-write!
+                  p-rw
+                  (TliBatchCacheBox
+                    ov-valid
+                    ov-roots
+                    ov-env
+                    ov-res
+                    (+ cat-count 1)
+                    cat-slots))])))
+        existing-count))))
+
+;; Pre-warm the batch TLI cache before entry 0 of `compile --batch` without
+;; touching intern tables, so persistent sysroot bytes sit in the entry-0
+;; live baseline rather than appearing as post-entry-0 drift.
+(define (tli-batch-cache-warm-for-names!
+  [target : target_cfg.CompilerTargetCfg]
+  [roots : (& (__tl_dyn-array String))]
+  [roots-len : i64]
+  [user-cfg-names : (& (__tl_dyn-array String))]
+  [user-cfg-count : i64]
+  [opt-level : i64]
+  [require-archive : bool]) : unit
+  (when
+    tli-batch-cache-enabled
+    (let
+      [is-windows : bool
+        (match target
+          [(Windows) true]
+          [(Linux) false])]
+      [cfg-digest : (Array u8 32)
+        (hydrate.tli-hydrate-stdlib-cfg-digest-for-names
+          is-windows
+          user-cfg-names
+          user-cfg-count)]
+      (tli-batch-cache-lookup-or-open!
+        (& tli-active-sysroot-options-state)
+        target
+        roots
+        roots-len
+        (& cfg-digest)
+        opt-level
+        require-archive)
+      unit)))
+
 ;; Sysroot options of the running command; every compile it starts opens the
 ;; prebuilt stdlib catalog with them.
 (define tli-active-sysroot-options-state : TliSysrootOptions
@@ -389,6 +834,59 @@
   (compiler_load.compiler-load-session-state-note-configured-stdlib-roots!
     load-state
     stdlib-roots)
+  (when
+    tli-batch-cache-enabled
+    (let
+      [cfg-digest : (Array u8 32) (hydrate.tli-hydrate-stdlib-cfg-digest cfgs)]
+      [slot : i64
+        (tli-batch-cache-lookup-or-open!
+          (& tli-active-sysroot-options-state)
+          target
+          (& stdlib-roots.slots)
+          (svec.len stdlib-roots)
+          (& cfg-digest)
+          opt-level
+          require-archive)]
+      (when
+        (>= slot 0)
+        (let
+          [addr : i64 tli-batch-cache-box-addr]
+          (return
+            (unsafe
+              (let
+                [p-ro : (Ptr TliBatchCacheBox)
+                  (int->ptr (cast addr : u64) : (Ptr TliBatchCacheBox))]
+                [holder : TliBatchCacheBox (ptr-read p-ro)]
+                [entry : TliBatchCatalogEntry
+                  (ptr-read
+                    (ptr-offset
+                      (ptr-cast
+                        (__tl_array-data holder.catalog-slots)
+                        : (Ptr TliBatchCatalogEntry))
+                      slot))]
+                (match entry.outcome
+                  [(Inactive) ResultTliCatalogOpen.Ok]
+                  [(Error message)
+                    (ResultTliCatalogOpen.Err (string.copy (& message)))]
+                  [(Active
+                    directory
+                    digest
+                    _sysroot-dir
+                    archive-path
+                    records
+                    decoded
+                    owned-cell)
+                    (compiler_load.compiler-load-session-state-tli-attach-borrowed-stdlib!
+                      load-state
+                      tli-batch-cache-arena
+                      (string.copy (& archive-path))
+                      directory
+                      (& digest)
+                      cfgs
+                      records
+                      decoded
+                      owned-cell)
+                    ResultTliCatalogOpen.Ok]))))))))
   (let
     [enclosing : i64 (arena.tl_arena_current)]
     [tli-arena : i64 (arena.tl_arena_make)]

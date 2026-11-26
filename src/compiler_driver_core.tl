@@ -2045,6 +2045,10 @@
   compile-profile
   (define compiler-driver-load-profile-cache-start-metric : i64
     379))
+(cfg
+  compile-profile
+  (define compiler-driver-load-profile-tli-batch-start-metric : i64
+    383))
 
 (cfg
   compile-profile
@@ -2109,6 +2113,11 @@
       state
       compiler-driver-load-profile-surface-start-metric
       (compiler-driver-profile-arena-bytes surface-arena))
+    (compiler-driver-profile-set!
+      state
+      compiler-driver-load-profile-tli-batch-start-metric
+      (compiler-driver-profile-arena-bytes
+        (tli_cli.tli-batch-cache-arena-handle)))
     (compiler-driver-profile-set!
       state
       compiler-driver-load-profile-intern-start-metric
@@ -2189,7 +2198,12 @@
             compiler-driver-load-profile-type-start-metric))]
       [tli-bytes : i64
         (let
-          [sum : i64 0]
+          [sum : i64
+            (compiler-driver-profile-owner-delta
+              (tli_cli.tli-batch-cache-arena-handle)
+              (compiler-driver-profile-value
+                state
+                compiler-driver-load-profile-tli-batch-start-metric))]
           (for [i (iterator.range 0 (array-length tli-arenas))]
             (let
               [h : i64 (array-ref tli-arenas i)]
@@ -2216,7 +2230,8 @@
           compiler-driver-load-profile-enclosing-handle-metric)]
       [enclosing-is-tli : bool
         (let
-          [hit : bool false]
+          [batch-tli : i64 (tli_cli.tli-batch-cache-arena-handle)]
+          [hit : bool (and (> batch-tli 0) (= enclosing-handle batch-tli))]
           (for [i (iterator.range 0 (array-length tli-arenas))]
             (when
               (and

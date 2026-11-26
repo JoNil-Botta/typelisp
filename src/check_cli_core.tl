@@ -63,7 +63,7 @@
     [has-batch : bool false]
     [sysroot : tli_cli.TliSysrootOptions (tli_cli.tli-sysroot-options)]
     [options : cli_option.CliCompileOptions
-      (cli_option.cli-compile-options (Linux) 1)]
+      (cli_option.cli-compile-options (target_cfg.compiler-target-cfg-host) 1)]
     (tli_cli.tli-reset-active-sysroot-options!)
     (while (cli_option.cli-args-next! (&mut args))
       (cond
@@ -343,10 +343,12 @@
             (io.print-error "selfhost-check: --batch list is empty\n")
             1)
           (begin
+            (tli_cli.tli-batch-cache-begin!)
             (for [index (iterator.range 0 count)]
               (let
                 [path : String (svec.get (& paths) index "")]
                 (selfhost-check-batch-run-entry index (& path) (& options))))
+            (tli_cli.tli-batch-cache-end!)
             (tc.tc-prefix-snapshot-cache-clear!)
             (io.print-format
               "{}"

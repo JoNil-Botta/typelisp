@@ -107,6 +107,11 @@
 (define (tli-extract-cfg-digest [cfgs : sym_i64_env.SymI64Env]) : (Array u8 32)
   (hydrate.tli-hydrate-cfg-digest cfgs))
 
+(define (tli-extract-stdlib-cfg-digest [cfgs : sym_i64_env.SymI64Env]) : (Array
+    u8
+    32)
+  (hydrate.tli-hydrate-stdlib-cfg-digest cfgs))
+
 (define (tli-extract-name [id : i64]) : String
   (string.copy (ast.ast-nominal-name-id-display id)))
 
@@ -2586,7 +2591,10 @@
   [build : String]
   [target : String]) : TliExtractResult
   (let
-    [cfg-digest : (Array u8 32) (tli-extract-cfg-digest request.cfgs)]
+    [cfg-digest : (Array u8 32)
+      (if (!= (bit-and bundle-flags tli.tli-is-stdlib-bundle) 0)
+        (tli-extract-stdlib-cfg-digest request.cfgs)
+        (tli-extract-cfg-digest request.cfgs))]
     [records : (__tl_dyn-array TliExtractModule)
       (tli-extract-open-modules (& request) sources)]
     [job : tc.TcJobState request.job-state]

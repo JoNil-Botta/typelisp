@@ -43,7 +43,7 @@
   (Err String))
 
 (define selfhost-lint-language-target : target_cfg.CompilerTargetCfg
-  (target_cfg.compiler-target-cfg-default))
+  (target_cfg.compiler-target-cfg-host))
 (define selfhost-lint-language-cfg-names : lint_svec.Vec
   (lint_svec.new))
 (define selfhost-lint-flat-output : bool
@@ -70,7 +70,7 @@
   (set! selfhost-lint-flat-output enabled))
 
 (define (selfhost-lint-language-config-reset!) : unit
-  (set! selfhost-lint-language-target (target_cfg.compiler-target-cfg-default))
+  (set! selfhost-lint-language-target (target_cfg.compiler-target-cfg-host))
   (set! selfhost-lint-language-cfg-names (lint_svec.new))
   (set! selfhost-lint-flat-output false))
 
@@ -84,7 +84,7 @@
 (define (selfhost-lint-config-from [start : i64] [count : i64]) : ResultSelfhostLintConfig
   (let
     [options : cli_option.CliCompileOptions
-      (cli_option.cli-compile-options (Linux) 1)]
+      (cli_option.cli-compile-options (target_cfg.compiler-target-cfg-host) 1)]
     [args : cli_option.CliArgs
       (begin
         (selfhost-lint-language-config-reset!)

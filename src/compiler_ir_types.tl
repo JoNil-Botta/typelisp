@@ -14,6 +14,7 @@
 (import stdlib.hashmap)
 (import stdlib.arena)
 (import stdlib.comptime)
+(import stdlib.dense_list)
 (import compiler_owned_view as owned_view)
 (import (hashmap.hashmap String i64) as ir_label_map)
 (import (hashmap.hashmap i64 i64) as ir_i64_i64_map)
@@ -1600,82 +1601,46 @@
     [(Varying) (Vector)]
     [(Mask) (Mask)]))
 
+;: The var `instr` defines, or `none` when it defines none. One of the
+;: hottest primitives of an optimized self-compile: a match lowers to a linear
+;: tag compare chain, so the arms are ordered by dynamic frequency, and the
+;: frequent non-defining shapes (terminators, memory writers) answer near the
+;: front instead of walking the whole chain.
+(define (compiler-ir-instr-dst-or
+  [instr : (& instr CompilerIrInstr)]
+  [none : i64]) : i64
+  (match instr
+    [(or (Alloc dst _) (Gep dst _ _ _) (Mov dst _ _) (Call dst _ _ _)
+         (BinOp dst _ _ _ _) (Load dst _ _) (AddrOf dst _ _) (Phi dst _ _)
+         (Cast dst _ _ _) (UnOp dst _ _ _) (Word dst _ _ _) (Pack dst _ _)
+         (Bitcast dst _ _ _) (LaneId dst _ _) (Splat dst _ _ _)
+         (VectorReduce dst _ _ _ _) (MaskBinOp dst _ _ _ _) (MaskNot dst _ _)
+         (MaskReduce dst _ _ _) (VectorLoad dst _ _ _ _) (TailMask dst _ _ _)
+         (EntryArgc dst) (EntryArgv dst) (EntryEnvp dst) (CpuId dst _ _ _)
+         (Xgetbv dst _) (Syscall dst _) (CallIndirect dst _ _ _)
+         (CallIndirectC dst _ _ _))
+      dst]
+    [(or (Branch _ _ _) (StorePtr _ _ _) (StoreOwned _ _ _) (Return _) (Jump _)
+         (CopyBytes _ _ _) (BoundsCheck _ _ _) (TailCall _ _ _) (Store _ _ _)
+         (TotalEnumBranch _ _ _) (Switch _ _ _ _) (TotalEnumSwitch _ _ _ _ _)
+         (VectorStore _) (PredicatedStore _) (CallCAbiStoreResult _)
+         (CallIndirectCAbiStoreResult _) (TailCallIndirect _ _ _))
+      none]
+    [(SpmdCall payload-box)
+      (match (& (deref payload-box).result)
+        [(Unit) none]
+        [(Value dst _ _) dst])]
+    [(VectorBinOp payload-box) (deref payload-box).dst]
+    [(VectorPrefix payload-box) (deref payload-box).dst]
+    [(VectorCompare payload-box) (deref payload-box).dst]
+    [(Select payload-box) (deref payload-box).dst]
+    [(PredicatedLoad payload-box) (deref payload-box).dst]
+    [(GatherLoad payload-box) (deref payload-box).dst]
+    [(VectorShuffle payload-box) (deref payload-box).dst]))
+
 ;: The var `instr` defines, or -1. Var ids are nonnegative.
 (define (compiler-ir-instr-dst [instr : (& instr CompilerIrInstr)]) : i64
-  (match instr
-    [(or (CompilerIrInstr.Mov dst _ _) (CompilerIrInstr.Alloc dst _)
-         (CompilerIrInstr.AddrOf dst _ _) (CompilerIrInstr.Gep dst _ _ _)
-         (CompilerIrInstr.Load dst _ _) (CompilerIrInstr.Cast dst _ _ _)
-         (CompilerIrInstr.Bitcast dst _ _ _) (CompilerIrInstr.BinOp dst _ _ _ _)
-         (CompilerIrInstr.UnOp dst _ _ _) (CompilerIrInstr.LaneId dst _ _)
-         (CompilerIrInstr.Splat dst _ _ _)
-         (CompilerIrInstr.VectorReduce dst _ _ _ _)
-         (CompilerIrInstr.MaskBinOp dst _ _ _ _)
-         (CompilerIrInstr.MaskNot dst _ _)
-         (CompilerIrInstr.MaskReduce dst _ _ _)
-         (CompilerIrInstr.VectorLoad dst _ _ _ _)
-         (CompilerIrInstr.TailMask dst _ _ _) (CompilerIrInstr.EntryArgc dst)
-         (CompilerIrInstr.EntryArgv dst) (CompilerIrInstr.EntryEnvp dst)
-         (CompilerIrInstr.CpuId dst _ _ _) (CompilerIrInstr.Xgetbv dst _)
-         (CompilerIrInstr.Syscall dst _) (CompilerIrInstr.Call dst _ _ _)
-         (CompilerIrInstr.CallIndirect dst _ _ _)
-         (CompilerIrInstr.CallIndirectC dst _ _ _) (CompilerIrInstr.Phi dst _ _)
-         (CompilerIrInstr.Pack dst _ _) (CompilerIrInstr.Word dst _ _ _))
-      dst]
-    [(CompilerIrInstr.VectorBinOp payload-box)
-      (let
-        [payload-box
-          (owned_view.compiler-owned-reference-shared-view payload-box)]
-        payload-box.dst)]
-    [(CompilerIrInstr.VectorPrefix payload-box)
-      (let
-        [payload-box
-          (owned_view.compiler-owned-reference-shared-view payload-box)]
-        payload-box.dst)]
-    [(CompilerIrInstr.VectorCompare payload-box)
-      (let
-        [payload-box
-          (owned_view.compiler-owned-reference-shared-view payload-box)]
-        payload-box.dst)]
-    [(CompilerIrInstr.Select payload-box)
-      (let
-        [payload-box
-          (owned_view.compiler-owned-reference-shared-view payload-box)]
-        payload-box.dst)]
-    [(CompilerIrInstr.PredicatedLoad payload-box)
-      (let
-        [payload-box
-          (owned_view.compiler-owned-reference-shared-view payload-box)]
-        payload-box.dst)]
-    [(CompilerIrInstr.GatherLoad payload-box)
-      (let
-        [payload-box
-          (owned_view.compiler-owned-reference-shared-view payload-box)]
-        payload-box.dst)]
-    [(CompilerIrInstr.VectorShuffle payload-box)
-      (let
-        [payload-box
-          (owned_view.compiler-owned-reference-shared-view payload-box)]
-        payload-box.dst)]
-    [(CompilerIrInstr.SpmdCall payload-box)
-      (match (let
-        [payload-box
-          (owned_view.compiler-owned-reference-shared-view payload-box)]
-        (compiler-ir-box-field-shared-view payload-box result))
-        [(CompilerIrSpmdCallResult.Unit) -1]
-        [(CompilerIrSpmdCallResult.Value dst _ _) dst])]
-    [(or (CompilerIrInstr.StoreOwned _ _ _) (CompilerIrInstr.StorePtr _ _ _)
-         (CompilerIrInstr.CopyBytes _ _ _) (CompilerIrInstr.BoundsCheck _ _ _)
-         (CompilerIrInstr.VectorStore _) (CompilerIrInstr.PredicatedStore _)
-         (CompilerIrInstr.CallCAbiStoreResult _)
-         (CompilerIrInstr.CallIndirectCAbiStoreResult _)
-         (CompilerIrInstr.TailCall _ _ _) (CompilerIrInstr.Store _ _ _)
-         (CompilerIrInstr.Jump _) (CompilerIrInstr.Branch _ _ _)
-         (CompilerIrInstr.TotalEnumBranch _ _ _) (CompilerIrInstr.Return _)
-         (CompilerIrInstr.TailCallIndirect _ _ _)
-         (CompilerIrInstr.Switch _ _ _ _)
-         (CompilerIrInstr.TotalEnumSwitch _ _ _ _ _))
-      -1]))
+  (compiler-ir-instr-dst-or instr -1))
 
 ;: The value type the instruction states for its destination: the type field
 ;: of a scalar result (a Cast's target, a comparison's `bool`, an SPMD call's
@@ -2840,6 +2805,393 @@
 ;: returned unchanged.
 (define (compiler-ir-instr-with-dst [instr : CompilerIrInstr] [dst : i64]) : CompilerIrInstr
   (compiler-ir-instr-map instr _ compiler-ir-dst-replace _ _ dst))
+
+;; --- Compiled-once use walks and rewrites -----------------------------------
+;;
+;; These helpers hold the single expansion of compiler-ir-instr-visit-uses and
+;; compiler-ir-instr-map that every pass shares, the way
+;; ast-expr-child-ids-into! / ast-expr-with-child-ids-from hold the AstExpr
+;; walk: a pass collects an instruction's uses into a buffer it owns and walks
+;; the buffer instead of expanding a per-variant match of its own. The buffer is
+;; the caller's scratch: one per walk, cleared per instruction, so a warm walk
+;; allocates nothing (allocations live until their arena is reset, so a buffer
+;; per instruction would grow the compile's peak). CompilerIrValue is
+;; move-only, so a use is collected as plain data: its role and the var or
+;; symbol it names. A constant use is never collected: no walk inspects one and
+;; no rewrite replaces one.
+(defenum CompilerIrUseKind
+  (VarUse)
+  (GlobalUse)
+  (GlobalAddrUse)
+  (FunctionUse)
+  (RuntimeGlobalUse)
+  ;; A constant: never collected.
+  (NoUse))
+
+(defstruct CompilerIrUse
+  (role CompilerIrOperandRole)
+  (kind CompilerIrUseKind)
+  (id i64))
+
+(define (compiler-ir-use-fallback) : CompilerIrUse
+  (CompilerIrUse (Scalar) (VarUse) -1))
+
+(defstruct CompilerIrUseList
+  (slots (__tl_dyn-array CompilerIrUse))
+  (len i64))
+
+(dense_list.compiler-dense-list-operations
+  CompilerIrUse
+  CompilerIrUseList
+  compiler-ir-use-list
+  caller-provided-fallback
+  shared-zero-capacity
+  compiler-ir-use-list-empty-storage)
+
+;; Var ids or labels.
+(defstruct CompilerIrIdList
+  (slots (__tl_dyn-array i64))
+  (len i64))
+
+(dense_list.compiler-dense-list-operations
+  i64
+  CompilerIrIdList
+  compiler-ir-id-list
+  caller-provided-fallback
+  shared-zero-capacity
+  compiler-ir-id-list-empty-storage)
+
+(defstruct CompilerIrMaybeValueList
+  (slots (__tl_dyn-array CompilerIrMaybeValue))
+  (len i64))
+
+(dense_list.compiler-dense-list-operations
+  CompilerIrMaybeValue
+  CompilerIrMaybeValueList
+  compiler-ir-maybe-value-list
+  caller-provided-fallback
+  shared-zero-capacity
+  compiler-ir-maybe-value-list-empty-storage)
+
+;; A list's first push takes four slots rather than the list default of one.
+(define (compiler-ir-id-push! [ids : (&mut ids CompilerIrIdList)] [id : i64]) : unit
+  (when (= (array-length ids.slots) 0) (set! ids.slots (__tl_make-array i64 4)))
+  (compiler-ir-id-list-push ids id))
+
+;; A short operand: a non-negative var id, -1 for a constant, -2 for a symbol
+;; or a negative var id (so malformed vars fall through to full walks).
+(define (compiler-ir-value-short-use [value : (& value CompilerIrValue)]) : i64
+  (match value
+    [(Var id)
+      (if (< id 0)
+        -2
+        id)]
+    [(or (Global _) (GlobalAddr _) (Function _) (RuntimeGlobal _)) -2]
+    [_ -1]))
+
+(define (compiler-ir-use-var-id-push!
+  [ids : (&mut ids CompilerIrIdList)]
+  [_role : CompilerIrOperandRole]
+  [value : CompilerIrValue]) : unit
+  (match value
+    [(Var id) (compiler-ir-id-push! ids id)]
+    [_ unit]))
+
+;: The var uses of an instruction with at most two operands, in operand order:
+;: `first` then `second`, each a var id, or negative for an operand that is not
+;: a var: -1 for a constant or an absent operand, -2 for a symbol.
+;: `fits?` is false for every other shape (calls, phis, returns, packs, SIMD
+;: payloads); compiler-ir-instr-use-var-ids-into! collects those. The hottest
+;: walks read this first, so most instructions are counted without a buffer.
+(defstruct CompilerIrShortVarUses
+  (fits? bool)
+  (first i64)
+  (second i64))
+
+;: AddrOf's storage var is not a use (compiler-ir-instr-visit-uses); a walker
+;: that counts it matches AddrOf first. The arms are ordered by dynamic
+;: frequency: a match lowers to a linear tag compare chain, so an arm's
+;: position is its cost.
+(define (compiler-ir-instr-short-var-uses [instr : (& instr CompilerIrInstr)]) : CompilerIrShortVarUses
+  (match instr
+    [(or (Alloc _ _) (Jump _) (LaneId _ _ _) (AddrOf _ _ _) (EntryArgc _)
+         (EntryArgv _) (EntryEnvp _))
+      (CompilerIrShortVarUses true -1 -1)]
+    [(or (Gep _ a b _) (StorePtr a b _) (StoreOwned a b _) (BinOp _ _ a b _)
+         (CopyBytes a b _) (BoundsCheck a b _) (MaskBinOp _ _ a b _)
+         (VectorLoad _ a b _ _) (TailMask _ a b _) (CpuId _ a b _))
+      (CompilerIrShortVarUses
+        true
+        (compiler-ir-value-short-use a)
+        (compiler-ir-value-short-use b))]
+    [(or (Mov _ src _) (Load _ src _) (Branch src _ _) (Cast _ src _ _)
+         (UnOp _ _ src _) (Word _ src _ _) (Store _ src _) (Switch src _ _ _)
+         (TotalEnumSwitch src _ _ _ _) (TotalEnumBranch src _ _)
+         (Bitcast _ src _ _) (Splat _ src _ _) (VectorReduce _ _ src _ _)
+         (MaskNot _ src _) (MaskReduce _ _ src _) (Xgetbv _ src))
+      (CompilerIrShortVarUses true (compiler-ir-value-short-use src) -1)]
+    [_ (CompilerIrShortVarUses false -1 -1)]))
+
+;: Append the var ids `instr` uses to `out`, in operand order and with
+;: repeats; AddrOf's storage var is not one.
+(define (compiler-ir-instr-use-var-ids-into!
+  [instr : (& instr CompilerIrInstr)]
+  [out : (&mut out CompilerIrIdList)]) : unit
+  (let
+    [short : CompilerIrShortVarUses (compiler-ir-instr-short-var-uses instr)]
+    (if short.fits?
+      (begin
+        (when (>= short.first 0) (compiler-ir-id-push! out short.first))
+        (when (>= short.second 0) (compiler-ir-id-push! out short.second)))
+      (compiler-ir-instr-visit-uses
+        (owned_view.compiler-owned-reference-shared-view instr)
+        compiler-ir-use-var-id-push!
+        out))))
+
+(define (compiler-ir-use-push!
+  [out : (&mut out CompilerIrUseList)]
+  [vars? : bool]
+  [role : CompilerIrOperandRole]
+  [value : CompilerIrValue]) : unit
+  (let
+    [use : CompilerIrUse (compiler-ir-value-use role (& value))]
+    (unless
+      (or (= use.kind (NoUse)) (and (not vars?) (= use.kind (VarUse))))
+      (when
+        (= (array-length out.slots) 0)
+        (set! out.slots (__tl_make-array CompilerIrUse 4)))
+      (compiler-ir-use-list-push out use))))
+
+;; `value` as a use under `role`; a constant is a NoUse.
+(define (compiler-ir-value-use
+  [role : CompilerIrOperandRole]
+  [value : (& value CompilerIrValue)]) : CompilerIrUse
+  (match value
+    [(Var id) (CompilerIrUse role (VarUse) id)]
+    [(Global id) (CompilerIrUse role (GlobalUse) id)]
+    [(GlobalAddr id) (CompilerIrUse role (GlobalAddrUse) id)]
+    [(Function id) (CompilerIrUse role (FunctionUse) id)]
+    [(RuntimeGlobal id) (CompilerIrUse role (RuntimeGlobalUse) id)]
+    [_ (CompilerIrUse role (NoUse) -1)]))
+
+;; The uses of `instr`, in operand order: its var uses too when `vars?`.
+(define (compiler-ir-instr-uses-with-into!
+  [instr : (& instr CompilerIrInstr)]
+  [vars? : bool]
+  [out : (&mut out CompilerIrUseList)]) : unit
+  (match instr
+    [(or (Alloc _ _) (Jump _) (LaneId _ _ _) (AddrOf _ _ _) (EntryArgc _)
+         (EntryArgv _) (EntryEnvp _))
+      unit]
+    [_
+      (compiler-ir-instr-visit-uses
+        (owned_view.compiler-owned-reference-shared-view instr)
+        compiler-ir-use-push!
+        out
+        vars?)]))
+
+;: Append the var and symbol uses of `instr` to `out`, in operand order.
+(define (compiler-ir-instr-uses-into!
+  [instr : (& instr CompilerIrInstr)]
+  [out : (&mut out CompilerIrUseList)]) : unit
+  (compiler-ir-instr-uses-with-into! instr true out))
+
+;: Append the symbol uses of `instr` (globals, functions, runtime globals) to
+;: `out`, in operand order. A program-wide symbol scan collects these: most
+;: instructions name only vars and constants, so `out` stays empty for them and
+;: a fresh `out` per instruction allocates nothing.
+(define (compiler-ir-instr-symbol-uses-into!
+  [instr : (& instr CompilerIrInstr)]
+  [out : (&mut out CompilerIrUseList)]) : unit
+  (unless
+    (compiler-ir-short-var-uses-symbol-free?
+      (& (compiler-ir-instr-short-var-uses instr)))
+    (compiler-ir-instr-uses-with-into! instr false out)))
+
+;: Whether a short instruction's operands are all vars and constants.
+(define (compiler-ir-short-var-uses-symbol-free?
+  [short : (& short CompilerIrShortVarUses)]) : bool
+  (and short.fits? (>= short.first -1) (>= short.second -1)))
+
+;: The value a use names.
+(define (compiler-ir-use-value [use : (& use CompilerIrUse)]) : CompilerIrValue
+  (match use.kind
+    [(VarUse) (Var use.id)]
+    [(GlobalUse) (Global use.id)]
+    [(GlobalAddrUse) (GlobalAddr use.id)]
+    [(FunctionUse) (Function use.id)]
+    [(RuntimeGlobalUse) (RuntimeGlobal use.id)]
+    [(NoUse) (Unit)]))
+
+(define (compiler-ir-use-names?
+  [use : (& use CompilerIrUse)]
+  [value : (& value CompilerIrValue)]) : bool
+  (let
+    [named : CompilerIrUse (compiler-ir-value-use (Scalar) value)]
+    (and (= named.id use.id) (= named.kind use.kind))))
+
+(define (compiler-ir-value-collected? [value : (& value CompilerIrValue)]) : bool
+  (match value
+    [(or (Var _) (Global _) (GlobalAddr _) (Function _) (RuntimeGlobal _)) true]
+    [_ false]))
+
+;; Labels in compiler-ir-instr-map order: a phi's input labels, a branch's
+;; true then false label, a switch's case labels, default and (when present)
+;; trap label, a BoundsCheck success label.
+(define (compiler-ir-instr-labels-into!
+  [instr : (& instr CompilerIrInstr)]
+  [out : (&mut out CompilerIrIdList)]) : unit
+  (match instr
+    [(Jump label) (compiler-ir-id-push! out label)]
+    [(or (Branch _ on-true on-false) (TotalEnumBranch _ on-true on-false))
+      (compiler-ir-id-push! out on-true)
+      (compiler-ir-id-push! out on-false)]
+    [(BoundsCheck _ _ ok-label) (compiler-ir-id-push! out ok-label)]
+    [(Switch _ _ cases default-label)
+      (compiler-ir-switch-case-labels-into! cases out)
+      (compiler-ir-id-push! out default-label)]
+    [(TotalEnumSwitch _ _ cases default-label trap-label)
+      (compiler-ir-switch-case-labels-into! cases out)
+      (compiler-ir-id-push! out default-label)
+      (when
+        (!= trap-label (compiler-ir-label-none))
+        (compiler-ir-id-push! out trap-label))]
+    [(Phi _ inputs _)
+      (for [index (iterator.range 0 inputs.len)]
+        (compiler-ir-id-push!
+          out
+          (compiler-ir-phi-input-seq-borrow inputs index).label))]
+    [_ unit]))
+
+(define (compiler-ir-switch-case-labels-into!
+  [cases : (& cases CompilerIrSwitchCaseSeq)]
+  [out : (&mut out CompilerIrIdList)]) : unit
+  (for [index (iterator.range 0 cases.len)]
+    (match (compiler-ir-switch-case-seq-borrow cases index)
+      [(Case _ label) (compiler-ir-id-push! out label)])))
+
+;: One instruction rewrite: `compiler-ir-instr-rewrite-begin!` collects the
+;: uses, the pass records the replacements it wants (`-use!`, `-label!` after
+;: `-labels!`, `-def!`) and `compiler-ir-instr-rewrite-finish` rebuilds the
+;: instruction, or returns it untouched when nothing was replaced.
+(defstruct CompilerIrInstrRewrite
+  (uses CompilerIrUseList)
+  (values CompilerIrMaybeValueList)
+  (labels CompilerIrIdList)
+  (dst i64)
+  (changed? bool)
+  (use-at i64)
+  (label-at i64))
+
+(define (compiler-ir-instr-rewrite-new) : CompilerIrInstrRewrite
+  (CompilerIrInstrRewrite
+    (compiler-ir-use-list-new)
+    (compiler-ir-maybe-value-list-new)
+    (compiler-ir-id-list-new)
+    -1
+    false
+    0
+    0))
+
+(define (compiler-ir-instr-rewrite-begin!
+  [rw : (&mut rw CompilerIrInstrRewrite)]
+  [instr : (& instr CompilerIrInstr)]) : unit
+  (set! rw.uses.len 0)
+  (set! rw.values.len 0)
+  (set! rw.labels.len 0)
+  (set! rw.dst -1)
+  (set! rw.changed? false)
+  (set! rw.use-at 0)
+  (set! rw.label-at 0)
+  (compiler-ir-instr-uses-into! instr (&mut rw.uses)))
+
+(define (compiler-ir-instr-rewrite-use-at
+  [rw : (& rw CompilerIrInstrRewrite)]
+  [index : i64]) : CompilerIrUse
+  (compiler-ir-use-list-get (& rw.uses) index (compiler-ir-use-fallback)))
+
+;: Replace use `index` by `value`; a value naming the use itself keeps it.
+(define (compiler-ir-instr-rewrite-use!
+  [rw : (&mut rw CompilerIrInstrRewrite)]
+  [index : i64]
+  [value : CompilerIrValue]) : unit
+  (unless
+    (compiler-ir-use-names?
+      (& (compiler-ir-instr-rewrite-use-at rw index))
+      (& value))
+    (when
+      (= (array-length rw.values.slots) 0)
+      (set! rw.values.slots (__tl_make-array CompilerIrMaybeValue 4)))
+    (while (< rw.values.len index)
+      (compiler-ir-maybe-value-list-push (&mut rw.values) (No)))
+    (compiler-ir-maybe-value-list-push (&mut rw.values) (Some value))
+    (set! rw.changed? true)))
+
+;: Collect the labels for `compiler-ir-instr-rewrite-label!`.
+(define (compiler-ir-instr-rewrite-labels!
+  [rw : (&mut rw CompilerIrInstrRewrite)]
+  [instr : (& instr CompilerIrInstr)]) : unit
+  (compiler-ir-instr-labels-into! instr (&mut rw.labels)))
+
+(define (compiler-ir-instr-rewrite-label!
+  [rw : (&mut rw CompilerIrInstrRewrite)]
+  [index : i64]
+  [label : i64]) : unit
+  (when
+    (!= label (compiler-ir-id-list-get (& rw.labels) index label))
+    (set! (array-ref rw.labels.slots index) label)
+    (set! rw.changed? true)))
+
+;: Redefine the destination as `dst`.
+(define (compiler-ir-instr-rewrite-def!
+  [rw : (&mut rw CompilerIrInstrRewrite)]
+  [dst : i64]) : unit
+  (set! rw.dst dst)
+  (set! rw.changed? true))
+
+(define (compiler-ir-rewrite-next-use
+  [rw : (&mut rw CompilerIrInstrRewrite)]
+  [_role : CompilerIrOperandRole]
+  [value : CompilerIrValue]) : CompilerIrValue
+  (if (compiler-ir-value-collected? (& value))
+    (let
+      [index : i64 rw.use-at]
+      (set! rw.use-at (+ index 1))
+      (if (< index rw.values.len)
+        (match (replace! (array-ref rw.values.slots index) (No))
+          [(Some replaced) replaced]
+          [(No) value])
+        value))
+    value))
+
+(define (compiler-ir-rewrite-next-def
+  [rw : (& rw CompilerIrInstrRewrite)]
+  [dst : i64]) : i64
+  (if (< rw.dst 0)
+    dst
+    rw.dst))
+
+(define (compiler-ir-rewrite-next-label
+  [rw : (&mut rw CompilerIrInstrRewrite)]
+  [label : i64]) : i64
+  (let
+    [index : i64 rw.label-at]
+    (set! rw.label-at (+ index 1))
+    (compiler-ir-id-list-get (& rw.labels) index label)))
+
+;: `instr` with the recorded replacements; `instr` itself when there are none.
+(define (compiler-ir-instr-rewrite-finish
+  [rw : (&mut rw CompilerIrInstrRewrite)]
+  [instr : CompilerIrInstr]) : CompilerIrInstr
+  (if rw.changed?
+    (compiler-ir-instr-map
+      instr
+      compiler-ir-rewrite-next-use
+      compiler-ir-rewrite-next-def
+      _
+      compiler-ir-rewrite-next-label
+      rw)
+    instr))
 
 ;: Control-flow successor labels of a terminator, not deduplicated: a Jump
 ;: target, a branch's true then false label, a switch's default label, a

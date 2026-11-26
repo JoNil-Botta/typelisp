@@ -2813,10 +2813,10 @@
 ;; compiler-ir-instr-map that every pass shares, the way
 ;; ast-expr-child-ids-into! / ast-expr-with-child-ids-from hold the AstExpr
 ;; walk: a pass collects an instruction's uses into a buffer it owns and walks
-;; the buffer instead of expanding a per-variant match of its own. Buffers
-;; start on shared zero-capacity storage, take four slots on the first push and
-;; double after that; a pass that keeps one buffer across a walk and clears it
-;; per instruction allocates nothing once it is warm. CompilerIrValue is
+;; the buffer instead of expanding a per-variant match of its own. The buffer is
+;; the caller's scratch: one per walk, cleared per instruction, so a warm walk
+;; allocates nothing (allocations live until their arena is reset, so a buffer
+;; per instruction would grow the compile's peak). CompilerIrValue is
 ;; move-only, so a use is collected as plain data: its role and the var or
 ;; symbol it names. A constant use is never collected: no walk inspects one and
 ;; no rewrite replaces one.
@@ -2874,60 +2874,86 @@
   shared-zero-capacity
   compiler-ir-maybe-value-list-empty-storage)
 
+;; A list's first push takes four slots rather than the list default of one.
 (define (compiler-ir-id-push! [ids : (&mut ids CompilerIrIdList)] [id : i64]) : unit
   (when (= (array-length ids.slots) 0) (set! ids.slots (__tl_make-array i64 4)))
   (compiler-ir-id-list-push ids id))
 
-(define (compiler-ir-value-var-id-push!
-  [ids : (&mut ids CompilerIrIdList)]
-  [value : (& value CompilerIrValue)]) : unit
+;; A short operand: the var id, -1 for a constant, -2 for a symbol.
+(define (compiler-ir-value-short-use [value : (& value CompilerIrValue)]) : i64
   (match value
-    [(Var id) (compiler-ir-id-push! ids id)]
-    [_ unit]))
+    [(Var id) id]
+    [(or (Global _) (GlobalAddr _) (Function _) (RuntimeGlobal _)) -2]
+    [_ -1]))
 
 (define (compiler-ir-use-var-id-push!
   [ids : (&mut ids CompilerIrIdList)]
   [_role : CompilerIrOperandRole]
   [value : CompilerIrValue]) : unit
-  (compiler-ir-value-var-id-push! ids (& value)))
+  (match value
+    [(Var id) (compiler-ir-id-push! ids id)]
+    [_ unit]))
 
-;: Append the var ids `instr` uses to `out`, in operand order and with
-;: repeats. AddrOf's storage var is not a use (compiler-ir-instr-visit-uses);
-;: a walker that counts it matches AddrOf first. The arms before the shared
-;: walk are the most frequent shapes, ordered by dynamic frequency: a match
-;: lowers to a linear tag compare chain, so an arm's position is its cost.
-(define (compiler-ir-instr-use-var-ids-into!
-  [instr : (& instr CompilerIrInstr)]
-  [out : (&mut out CompilerIrIdList)]) : unit
+;: The var uses of an instruction with at most two operands, in operand order:
+;: `first` then `second`, each a var id, or negative for an operand that is not
+;: a var: -1 for a constant or an absent operand, -2 for a symbol.
+;: `fits?` is false for every other shape (calls, phis, returns, packs, SIMD
+;: payloads); compiler-ir-instr-use-var-ids-into! collects those. The hottest
+;: walks read this first, so most instructions are counted without a buffer.
+(defstruct CompilerIrShortVarUses
+  (fits? bool)
+  (first i64)
+  (second i64))
+
+;: AddrOf's storage var is not a use (compiler-ir-instr-visit-uses); a walker
+;: that counts it matches AddrOf first. The arms are ordered by dynamic
+;: frequency: a match lowers to a linear tag compare chain, so an arm's
+;: position is its cost.
+(define (compiler-ir-instr-short-var-uses [instr : (& instr CompilerIrInstr)]) : CompilerIrShortVarUses
   (match instr
     [(or (Alloc _ _) (Jump _) (LaneId _ _ _) (AddrOf _ _ _) (EntryArgc _)
          (EntryArgv _) (EntryEnvp _))
-      unit]
+      (CompilerIrShortVarUses true -1 -1)]
     [(or (Gep _ a b _) (StorePtr a b _) (StoreOwned a b _) (BinOp _ _ a b _)
          (CopyBytes a b _) (BoundsCheck a b _) (MaskBinOp _ _ a b _)
          (VectorLoad _ a b _ _) (TailMask _ a b _) (CpuId _ a b _))
-      (compiler-ir-value-var-id-push! out a)
-      (compiler-ir-value-var-id-push! out b)]
+      (CompilerIrShortVarUses
+        true
+        (compiler-ir-value-short-use a)
+        (compiler-ir-value-short-use b))]
     [(or (Mov _ src _) (Load _ src _) (Branch src _ _) (Cast _ src _ _)
          (UnOp _ _ src _) (Word _ src _ _) (Store _ src _) (Switch src _ _ _)
          (TotalEnumSwitch src _ _ _ _) (TotalEnumBranch src _ _)
          (Bitcast _ src _ _) (Splat _ src _ _) (VectorReduce _ _ src _ _)
          (MaskNot _ src _) (MaskReduce _ _ src _) (Xgetbv _ src))
-      (compiler-ir-value-var-id-push! out src)]
-    [_
+      (CompilerIrShortVarUses true (compiler-ir-value-short-use src) -1)]
+    [_ (CompilerIrShortVarUses false -1 -1)]))
+
+;: Append the var ids `instr` uses to `out`, in operand order and with
+;: repeats; AddrOf's storage var is not one.
+(define (compiler-ir-instr-use-var-ids-into!
+  [instr : (& instr CompilerIrInstr)]
+  [out : (&mut out CompilerIrIdList)]) : unit
+  (let
+    [short : CompilerIrShortVarUses (compiler-ir-instr-short-var-uses instr)]
+    (if short.fits?
+      (begin
+        (when (>= short.first 0) (compiler-ir-id-push! out short.first))
+        (when (>= short.second 0) (compiler-ir-id-push! out short.second)))
       (compiler-ir-instr-visit-uses
         (owned_view.compiler-owned-reference-shared-view instr)
         compiler-ir-use-var-id-push!
-        out)]))
+        out))))
 
 (define (compiler-ir-use-push!
   [out : (&mut out CompilerIrUseList)]
+  [vars? : bool]
   [role : CompilerIrOperandRole]
   [value : CompilerIrValue]) : unit
   (let
     [use : CompilerIrUse (compiler-ir-value-use role (& value))]
     (unless
-      (= use.kind (NoUse))
+      (or (= use.kind (NoUse)) (and (not vars?) (= use.kind (VarUse))))
       (when
         (= (array-length out.slots) 0)
         (set! out.slots (__tl_make-array CompilerIrUse 4)))
@@ -2945,9 +2971,10 @@
     [(RuntimeGlobal id) (CompilerIrUse role (RuntimeGlobalUse) id)]
     [_ (CompilerIrUse role (NoUse) -1)]))
 
-;: Append the var and symbol uses of `instr` to `out`, in operand order.
-(define (compiler-ir-instr-uses-into!
+;; The uses of `instr`, in operand order: its var uses too when `vars?`.
+(define (compiler-ir-instr-uses-with-into!
   [instr : (& instr CompilerIrInstr)]
+  [vars? : bool]
   [out : (&mut out CompilerIrUseList)]) : unit
   (match instr
     [(or (Alloc _ _) (Jump _) (LaneId _ _ _) (AddrOf _ _ _) (EntryArgc _)
@@ -2957,7 +2984,31 @@
       (compiler-ir-instr-visit-uses
         (owned_view.compiler-owned-reference-shared-view instr)
         compiler-ir-use-push!
-        out)]))
+        out
+        vars?)]))
+
+;: Append the var and symbol uses of `instr` to `out`, in operand order.
+(define (compiler-ir-instr-uses-into!
+  [instr : (& instr CompilerIrInstr)]
+  [out : (&mut out CompilerIrUseList)]) : unit
+  (compiler-ir-instr-uses-with-into! instr true out))
+
+;: Append the symbol uses of `instr` (globals, functions, runtime globals) to
+;: `out`, in operand order. A program-wide symbol scan collects these: most
+;: instructions name only vars and constants, so `out` stays empty for them and
+;: a fresh `out` per instruction allocates nothing.
+(define (compiler-ir-instr-symbol-uses-into!
+  [instr : (& instr CompilerIrInstr)]
+  [out : (&mut out CompilerIrUseList)]) : unit
+  (unless
+    (compiler-ir-short-var-uses-symbol-free?
+      (& (compiler-ir-instr-short-var-uses instr)))
+    (compiler-ir-instr-uses-with-into! instr false out)))
+
+;: Whether a short instruction's operands are all vars and constants.
+(define (compiler-ir-short-var-uses-symbol-free?
+  [short : (& short CompilerIrShortVarUses)]) : bool
+  (and short.fits? (>= short.first -1) (>= short.second -1)))
 
 ;: The value a use names.
 (define (compiler-ir-use-value [use : (& use CompilerIrUse)]) : CompilerIrValue

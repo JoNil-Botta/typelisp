@@ -894,12 +894,19 @@
     [(AddrOf _ src _storage-words) (compiler-live-set1 src)]
     [_
       (let
-        [ids : ir.CompilerIrIdList (ir.compiler-ir-id-list-new)]
-        [set : CompilerLiveI64Set (compiler-live-set-empty)]
-        (ir.compiler-ir-instr-use-var-ids-into! instr (&mut ids))
-        (for [id (& ids)]
-          (set! set (compiler-live-set-insert set (deref id))))
-        set)]))
+        [short : ir.CompilerIrShortVarUses
+          (ir.compiler-ir-instr-short-var-uses instr)]
+        (if short.fits?
+          (compiler-live-set-insert
+            (compiler-live-set-insert (compiler-live-set-empty) short.first)
+            short.second)
+          (let
+            [ids : ir.CompilerIrIdList (ir.compiler-ir-id-list-new)]
+            [set : CompilerLiveI64Set (compiler-live-set-empty)]
+            (ir.compiler-ir-instr-use-var-ids-into! instr (&mut ids))
+            (for [id (& ids)]
+              (set! set (compiler-live-set-insert set (deref id))))
+            set)))]))
 
 ;; ---------------------------------------------------------------------------
 ;; Direct per-instruction var-id extraction.
@@ -961,18 +968,28 @@
     [(AddrOf _ src _storage-words) (compiler-live-use-ids-push! out 0 src)]
     [_
       (let
-        [ids : ir.CompilerIrIdList
-          (ir.CompilerIrIdList
-            (owned_view.compiler-owned-reference-shared-view out)
-            0)]
-        [n : i64 0]
-        (ir.compiler-ir-instr-use-var-ids-into! instr (&mut ids))
-        (if (> ids.len (array-length out))
-          -1
-          (begin
-            (for [index (iterator.range 0 ids.len)]
-              (set! n (compiler-live-use-ids-push! out n (array-ref out index))))
-            n)))]))
+        [short : ir.CompilerIrShortVarUses
+          (ir.compiler-ir-instr-short-var-uses instr)]
+        (if short.fits?
+          (compiler-live-use-ids-push!
+            out
+            (compiler-live-use-ids-push! out 0 short.first)
+            short.second)
+          (let
+            [ids : ir.CompilerIrIdList
+              (ir.CompilerIrIdList
+                (owned_view.compiler-owned-reference-shared-view out)
+                0)]
+            [n : i64 0]
+            (ir.compiler-ir-instr-use-var-ids-into! instr (&mut ids))
+            (if (> ids.len (array-length out))
+              -1
+              (begin
+                (for [index (iterator.range 0 ids.len)]
+                  (set!
+                    n
+                    (compiler-live-use-ids-push! out n (array-ref out index))))
+                n)))))]))
 
 ;; Edge-precise counterpart of compiler-live-instr-use-ids-into!: a phi's inputs
 ;; are edge uses, so the phi point itself uses nothing.

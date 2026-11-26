@@ -870,7 +870,13 @@
               (Case 0 (ir.compiler-ir-label "arm")))
             (ir.compiler-ir-label "default")
             (ir.compiler-ir-label "trap"))]
-        (opt.opt-inline-clone-instr instr (& (Nil)) 0 10 "cloned"))]
+        (opt.opt-inline-clone-instr
+          (&mut (ir.compiler-ir-instr-rewrite-new))
+          instr
+          (& (Nil))
+          0
+          10
+          "cloned"))]
     [cloned-pending-total : ir.CompilerIrInstr
       (let
         [instr
@@ -881,7 +887,13 @@
               (Case 0 (ir.compiler-ir-label "arm")))
             (ir.compiler-ir-label "default")
             (ir.compiler-ir-label-none))]
-        (opt.opt-inline-clone-instr instr (& (Nil)) 0 10 "pending"))]
+        (opt.opt-inline-clone-instr
+          (&mut (ir.compiler-ir-instr-rewrite-new))
+          instr
+          (& (Nil))
+          0
+          10
+          "pending"))]
     [preheader-forwarded-total : ir.CompilerIrInstr
       (opt.opt-loop-preheaders-retarget-instr
         (TotalEnumSwitch

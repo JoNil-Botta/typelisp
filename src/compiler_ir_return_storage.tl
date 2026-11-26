@@ -224,12 +224,20 @@
                                       (- owner 1))
                                     true))))]
                           [_
-                            (set! ids.len 0)
-                            (ir.compiler-ir-instr-use-var-ids-into!
-                              instr
-                              (&mut ids))
-                            (for [id (& ids)]
-                              (storage-value-use! facts (deref id)))]))
+                            (let
+                              [short : ir.CompilerIrShortVarUses
+                                (ir.compiler-ir-instr-short-var-uses instr)]
+                              (if short.fits?
+                                (begin
+                                  (storage-value-use! facts short.first)
+                                  (storage-value-use! facts short.second))
+                                (begin
+                                  (set! ids.len 0)
+                                  (ir.compiler-ir-instr-use-var-ids-into!
+                                    instr
+                                    (&mut ids))
+                                  (for [id (& ids)]
+                                    (storage-value-use! facts (deref id))))))]))
                       (set! i (+ i 1)))))])
             (set! b (+ b 1))))
         (set! pass (+ pass 1))))))

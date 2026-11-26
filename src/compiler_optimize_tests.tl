@@ -619,7 +619,10 @@
         (let
           [instr
             (ir.clone-compiler-ir-instr (& (array-ref instrs.slots index)))]
-          (opt.opt-collect-instr-uses state instr))))
+          (opt.opt-collect-instr-uses
+            (&mut (ir.compiler-ir-id-list-new))
+            state
+            instr))))
     state))
 
 (define (opt-array-next-adjacent-alloc-ref?
@@ -735,7 +738,10 @@
         (opt-test-addr-of-bound (ir.compiler-ir-block-list-view own))
         (& own))]
     (for [index (iterator.range 0 count)]
-      (match (opt.opt-copy-instr (& state) (& (array-ref instrs.slots index)))
+      (match (opt.opt-copy-instr
+        (&mut (ir.compiler-ir-instr-rewrite-new))
+        (& state)
+        (& (array-ref instrs.slots index)))
         [(Result next-state rewritten)
           (set! (array-ref instrs.slots index) rewritten)
           (set! state next-state)

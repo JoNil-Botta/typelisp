@@ -1,0 +1,5 @@
+path	required	advisory	reason
+benchmarks/json_parse/*	linux-instruction-count-baseline,stage2-benchmark-comparison-correctness	-	C49 realistic-kernel benchmark pair in instruction-main.
+benchmarks/radix_sort/*	linux-instruction-count-baseline,stage2-benchmark-comparison-correctness	-	C49 realistic-kernel benchmark pair in instruction-main.
+benchmarks/fp_stencil_2d/*	linux-instruction-count-baseline,stage2-benchmark-comparison-correctness	-	C49 realistic-kernel benchmark pair in instruction-main.
+benchmarks/btree_arena/*	linux-instruction-count-baseline,stage2-benchmark-comparison-correctness	-	C49 realistic-kernel benchmark pair in instruction-main.

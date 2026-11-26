@@ -60,6 +60,10 @@ Linux opt2 pass uses its positive case list from the CI suite manifest.
 | `phys_nbody` | Fixed-point 2D N-body simulation with integer square root and branchy wall clamps. |
 | `route_http` | Byte-oriented HTTP method/path routing with literal and parameter segments, misses, and query strings. |
 | `graph_dijkstra` | Binary-heap Dijkstra over a deterministic CSR graph. |
+| `json_parse` | Recursive-descent JSON parser over a deterministically generated ~64 KB nested object/array/string-escape/number corpus into a flat arena node pool, plus tree-sum pass. |
+| `radix_sort` | 8-bit LSD radix sort over `(u64 key, i64 val)` pairs with 256-bucket prefix sums and double-buffered scatter. |
+| `fp_stencil_2d` | 5-point 2D Jacobi heat-diffusion stencil over `f64` grids with clamped Dirichlet borders and ping-pong buffers. |
+| `btree_arena` | Arena-backed order-16 B-tree inserting deterministic keys with proactive internal/leaf splits plus mixed point and range queries. |
 | `lex_source` | Compiler lexer byte dispatch over a captured 2.4 MB self-compile source corpus. |
 | `intern_table` | Compiler interner hash, probe, growth, and copy-on-miss behavior over a captured identifier stream. |
 | `liveness_scan` | Ordinary and edge-precise compiler liveness fixpoints over captured function CFGs and use/def sets. |

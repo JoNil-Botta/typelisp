@@ -4814,15 +4814,19 @@
   (match (backend.compiler-backend-emit-source
     (compiler-backend-program-argv-entry-capture-source))
     [(Ok asm)
-      (be_state.backend-and8
-        (asm-has? asm "_tl_start:\n")
-        (asm-has? asm "    movq (%rsp), %rax\n")
-        (asm-has? asm "    movq %rax, .L_tl_argc(%rip)\n")
-        (asm-has? asm "    leaq 8(%rsp), %rax\n")
-        (asm-has? asm "    movq %rax, .L_tl_argv(%rip)\n")
-        (asm-has? asm "    call strlen\n")
-        (asm-lacks? asm ".L_tl_arg_count:\n")
-        (asm-lacks? asm ".L_tl_arg:\n"))]
+      (and
+        (be_state.backend-and8
+          (asm-has? asm "_tl_start:\n")
+          (asm-has? asm "    movq (%rsp), %rax\n")
+          (asm-has? asm "    movq %rax, .L_tl_argc(%rip)\n")
+          (asm-has? asm "    leaq 8(%rsp), %rax\n")
+          (asm-has? asm "    movq %rax, .L_tl_argv(%rip)\n")
+          (asm-has? asm "    call strlen\n")
+          (asm-lacks? asm ".L_tl_arg_count:\n")
+          (asm-lacks? asm ".L_tl_arg:\n"))
+        (asm-has?
+          asm
+          "    movq %rax, .L_tl_argc(%rip)\n    leaq 16(%rsp,%rax,8), %rax\n"))]
     [(Err _) false]))
 
 (define (compiler-backend-arg-runtime-source) : String
@@ -5143,7 +5147,7 @@
           (asm-has?
             asm
             "    js .L_tl_main_stack_abort\n"
-            ".ascii \"typelisp runtime: main-stack reservation failed\\n\"\n"
+            ".ascii \"tl: main-stack reservation failed\\n\"\n"
             ".L_tl_main_stack_abort:\n    movq $1, %rax\n")
           (not
             (let
@@ -18575,6 +18579,263 @@ f:
             "    .long .Lf0_zero - .Lf0_entry_switch_table\n")))]
     [(Err _) false]))
 
+(define (compiler-backend-total-switch-compact-os-asm-ok?) : bool
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [program : ir.CompilerIrProgram
+      (compiler-backend-total-switch-test-program)]
+    [state-nonpic : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [state-pic : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    (be_state.compiler-backend-state-set-optimize-for-size! state-nonpic true)
+    (be_state.compiler-backend-state-set-optimize-for-size! state-pic true)
+    (let
+      [nonpic-ok : bool
+        (match (backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+          state-nonpic
+          (ast.ast-node-pool-context-capture-active)
+          program
+          (be_state.CompilerBackendTarget.Linux)
+          (Scalar)
+          (ir.compiler-source-spans-empty)
+          true
+          false
+          (profile_state.compiler-profile-state-new))
+          [(Ok asm)
+            (let
+              [body : String (compiler-backend-asm-function-body asm "main")]
+              (and
+                (asm-has?
+                  body
+                  "    movswq .Lf0_entry_switch_table(,%r"
+                  ",2), %r")
+                (asm-has?
+                  body
+                  ".Lf0_entry_switch_base:\n    leaq .Lf0_entry_switch_base(%rip), "
+                  "    addq "
+                  "    jmp *%r")
+                (=
+                  (backend.compiler-backend-string-count asm "    .word .Lf0_")
+                  6)
+                (asm-has?
+                  asm
+                  "    .section .rodata\n    .balign 2\n.Lf0_entry_switch_table:\n"
+                  "    .word .Lf0_zero - .Lf0_entry_switch_base\n"
+                  "    .word .Lf0_five - .Lf0_entry_switch_base\n")))]
+          [(Err _) false])]
+      [pic-ok : bool
+        (match (backend.compiler-backend-emit-program-pic-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
+          state-pic
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (compiler-backend-total-switch-test-program)
+          (be_state.CompilerBackendTarget.Linux)
+          (Scalar)
+          (ir.compiler-source-spans-empty)
+          true
+          false
+          (profile_state.compiler-profile-state-new))
+          [(Ok output)
+            (let
+              [asm : String output.asm]
+              [body : String (compiler-backend-asm-function-body asm "main")]
+              (and
+                (asm-has?
+                  body
+                  "    leaq .Lf0_entry_switch_table(%rip), "
+                  "    movswq ("
+                  ".Lf0_entry_switch_base:\n    leaq .Lf0_entry_switch_base(%rip), "
+                  "    addq ")
+                (=
+                  (backend.compiler-backend-string-count asm "    .word .Lf0_")
+                  6)
+                (asm-has?
+                  asm
+                  "    .section .rodata\n    .balign 2\n.Lf0_entry_switch_table:\n"
+                  "    .word .Lf0_zero - .Lf0_entry_switch_base\n")))]
+          [(Err _) false])]
+      (and nonpic-ok pic-ok))))
+
+(test
+  backend-total-switch-compact-os
+  (test.assert-true
+    (compiler-backend-total-switch-compact-os-asm-ok?)
+    "-Os emits 2-byte intra-function relative switch tables for small functions"))
+
+(define (compiler-backend-compact-os-large-copy-fallback-program) : ir.CompilerIrProgram
+  (Program
+    (ir.compiler-ir-global-seq-empty)
+    (ir.compiler-ir-function-seq-prepend
+      (&
+        (Function
+          (ci.intern "main")
+          (ir.compiler-ir-param-seq-empty)
+          (I64)
+          4
+          (ir.compiler-ir-blocks-with-tail
+            (compiler-backend-total-switch-return-block
+              (ir.compiler-ir-label "one")
+              1
+              (compiler-backend-total-switch-return-block
+                (ir.compiler-ir-label "two")
+                2
+                (compiler-backend-total-switch-return-block
+                  (ir.compiler-ir-label "three")
+                  3
+                  (compiler-backend-total-switch-return-block
+                    (ir.compiler-ir-label "four")
+                    4
+                    (compiler-backend-total-switch-return-block
+                      (ir.compiler-ir-label "five")
+                      5
+                      (ir.compiler-ir-blocks
+                        (ir.CompilerIrBlock.Block
+                          (ir.compiler-ir-label "zero")
+                          (compiler-backend-test-instr-seq-prepend
+                            (CopyBytes (Var 1) (Var 2) 8192)
+                            (compiler-backend-test-instr-seq-prepend
+                              (Return (Some (I64 0)))
+                              (ir.compiler-ir-instr-seq-empty))))
+                        (compiler-backend-total-switch-trap-test-block)))))))
+            (ir.CompilerIrBlock.Block
+              (ir.compiler-ir-label "entry")
+              (compiler-backend-test-instr-seq-prepend
+                (TotalEnumSwitch
+                  (Var 0)
+                  0
+                  (compiler-backend-total-switch-test-cases)
+                  (ir.compiler-ir-label "match_total_trap")
+                  (ir.compiler-ir-label "match_total_trap"))
+                (ir.compiler-ir-instr-seq-empty))))
+          Ordinary))
+      (& (ir.compiler-ir-function-seq-empty)))
+    (ir.compiler-ir-extern-seq-empty)
+    (ir.CompilerIrReturnStorageAuthority.None)))
+
+(define (compiler-backend-compact-os-switch-phi-fallback-program) : ir.CompilerIrProgram
+  (let
+    [case-builder : ir.CompilerIrSwitchCaseBuilder
+      (ir.compiler-ir-switch-case-builder-with-capacity 50)]
+    [join-label : i64 (ir.compiler-ir-label "join")]
+    [entry-label : i64 (ir.compiler-ir-label "entry")]
+    (for [i (iterator.range 0 50)]
+      (ir.compiler-ir-switch-case-builder-push!
+        (&mut case-builder)
+        (ir.CompilerIrSwitchCase.Case i join-label)))
+    (let
+      [join-instrs : ir.CompilerIrInstrSeq
+        (compiler-backend-test-instr-seq-prepend
+          (Return (Some (Var 1)))
+          (ir.compiler-ir-instr-seq-empty))]
+      (for [i (iterator.range 0 20)]
+        (set!
+          join-instrs
+          (compiler-backend-test-instr-seq-prepend
+            (Phi
+              (+ i 1)
+              (ir.compiler-ir-phi-input-seq-prepend
+                (I64 (+ i 1))
+                entry-label
+                (& (ir.compiler-ir-phi-input-seq-empty)))
+              (I64))
+            join-instrs)))
+      (Program
+        (ir.compiler-ir-global-seq-empty)
+        (ir.compiler-ir-function-seq-prepend
+          (&
+            (Function
+              (ci.intern "main")
+              (ir.compiler-ir-param-seq-empty)
+              (I64)
+              22
+              (ir.compiler-ir-blocks
+                (ir.CompilerIrBlock.Block
+                  entry-label
+                  (compiler-backend-test-instr-seq-prepend
+                    (Switch
+                      (Var 0)
+                      0
+                      (ir.compiler-ir-switch-case-builder-to-seq case-builder)
+                      join-label)
+                    (ir.compiler-ir-instr-seq-empty)))
+                (ir.CompilerIrBlock.Block join-label join-instrs))
+              Ordinary))
+          (& (ir.compiler-ir-function-seq-empty)))
+        (ir.compiler-ir-extern-seq-empty)
+        (ir.CompilerIrReturnStorageAuthority.None)))))
+
+(define (compiler-backend-total-switch-compact-os-fallback-asm-ok?) : bool
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [state-copy : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [state-phi : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    (be_state.compiler-backend-state-set-optimize-for-size! state-copy true)
+    (be_state.compiler-backend-state-set-optimize-for-size! state-phi true)
+    (let
+      [copy-ok : bool
+        (match (backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+          state-copy
+          (ast.ast-node-pool-context-capture-active)
+          (compiler-backend-compact-os-large-copy-fallback-program)
+          (be_state.CompilerBackendTarget.Linux)
+          (Scalar)
+          (ir.compiler-source-spans-empty)
+          true
+          false
+          (profile_state.compiler-profile-state-new))
+          [(Ok asm)
+            (and
+              (=
+                (backend.compiler-backend-string-count asm "    .long .Lf0_")
+                6)
+              (=
+                (backend.compiler-backend-string-count asm "    .word .Lf0_")
+                0)
+              (asm-has?
+                asm
+                "    .section .rodata\n    .balign 4\n.Lf0_entry_switch_table:\n")
+              (asm-lacks? asm "_switch_base"))]
+          [(Err _) false])]
+      [phi-ok : bool
+        (match (backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+          state-phi
+          (ast.ast-node-pool-context-capture-active)
+          (compiler-backend-compact-os-switch-phi-fallback-program)
+          (be_state.CompilerBackendTarget.Linux)
+          (Scalar)
+          (ir.compiler-source-spans-empty)
+          true
+          false
+          (profile_state.compiler-profile-state-new))
+          [(Ok asm)
+            (and
+              (=
+                (backend.compiler-backend-string-count
+                  asm
+                  "    .long .Lf0_entry_switch_case_")
+                50)
+              (=
+                (backend.compiler-backend-string-count asm "    .word .Lf0_")
+                0)
+              (asm-has?
+                asm
+                "    .section .rodata\n    .balign 4\n.Lf0_entry_switch_table:\n")
+              (asm-lacks? asm "_switch_base"))]
+          [(Err _) false])]
+      (and copy-ok phi-ok))))
+
+(test
+  backend-total-switch-compact-os-fallback
+  (test.assert-true
+    (compiler-backend-total-switch-compact-os-fallback-asm-ok?)
+    "-Os falls back to 4-byte switch tables when CopyBytes or switch+phi worst-case byte bound exceeds 16-bit headroom"))
+
 (define (compiler-backend-total-switch-object-image-ok?) : bool
   (match (be_object.compiler-backend-emit-program-object-image-linux
     (compiler-backend-total-switch-test-program)
@@ -25174,7 +25435,8 @@ entry:
       target
       features
       false
-      false)))
+      false
+      true)))
 
 (define (compiler-backend-runtime-global-inventory-target-ok?
   [target : be_state.CompilerBackendTarget]) : bool
@@ -44217,7 +44479,8 @@ b_keep:
     ;; needs no `.tdata` initial value.
     (has
       ".section .tbss,\"awT\",@nobits\n    .balign 8\n    .globl tl_current_arena\ntl_current_arena:\n    .zero 8\n"
-      ".L_tl_null_arena:\n    .quad 0, 0, 0, 0, 0, 0, 17, 0\n"
+      "    .section .bss\n    .balign 8\n    .globl __tl_null_arena\n__tl_null_arena:\n.L_tl_null_arena:\n    .zero 64\n"
+      "_tl_start:\n    movb $17, .L_tl_null_arena+48(%rip)\n"
       "    leaq .L_tl_null_arena(%rip), %rsi\n    movq %rsi, %fs:tl_current_arena@tpoff\n    ret\n"
       "tl_thread_init:\n"
       "tl_arena_make_atomic:\n"
@@ -46340,6 +46603,7 @@ user_fn:
             backtrace
             63)
           false
+          false
           false))]
     (and
       (asm-has?
@@ -47587,25 +47851,61 @@ user_fn:
 ;; Only a CRT or loader-built TLS block copies `.tdata`; the freestanding
 ;; entry stores the null arena itself, so its arena word is `.tbss`.
 (define (compiler-backend-freestanding-arena-tbss-ok?) : bool
+  (cbi.compiler-builtin-initialize-for-parse!)
   (let
-    [features : runtime_common.CompilerBackendRuntimeFeatures
+    [debug-features : runtime_common.CompilerBackendRuntimeFeatures
+      (runtime_common.CompilerBackendRuntimeFeatures
+        true
+        false
+        false
+        true
+        false
+        false
+        false
+        false
+        31)]
+    [release-features : runtime_common.CompilerBackendRuntimeFeatures
       (be_data.compiler-backend-runtime-features
         (compiler-backend-runtime-helper-full-plan))]
     [freestanding : String
       (be_data.compiler-backend-runtime-data-for-target
         (be_state.CompilerBackendTarget.Linux)
-        features
+        release-features
+        true)]
+    [freestanding-debug : String
+      (be_data.compiler-backend-runtime-data-for-target
+        (be_state.CompilerBackendTarget.Linux)
+        debug-features
         true)]
     [hosted : String
       (be_data.compiler-backend-runtime-data-for-target
         (be_state.CompilerBackendTarget.Linux)
-        features
+        release-features
         false)]
+    [win-freestanding : String
+      (be_data.compiler-backend-runtime-data-for-target
+        (be_state.CompilerBackendTarget.Windows)
+        release-features
+        true)]
+    [win-debug : String
+      (be_data.compiler-backend-runtime-data-for-target
+        (be_state.CompilerBackendTarget.Windows)
+        debug-features
+        true)]
+    [bss-null : String
+      "    .section .bss\n    .balign 8\n    .globl __tl_null_arena\n__tl_null_arena:\n.L_tl_null_arena:\n    .zero 64\n"]
+    [rodata-null : String
+      "    .section .rodata\n    .balign 8\n    .globl __tl_null_arena\n__tl_null_arena:\n.L_tl_null_arena:\n    .quad 0, 0, 0, 0, 0, 0, 17, 0\n"]
     (and
       (not (string.contains (& freestanding) ".tdata"))
       (string.contains
         (& freestanding)
         "    .section .tbss,\"awT\",@nobits\n    .balign 8\n    .globl tl_current_arena\ntl_current_arena:\n    .zero 8\n")
+      (string.contains (& freestanding) (& bss-null))
+      (string.contains (& win-freestanding) (& bss-null))
+      (string.contains (& freestanding-debug) (& rodata-null))
+      (string.contains (& win-debug) (& rodata-null))
+      (string.contains (& hosted) (& rodata-null))
       (string.contains
         (& hosted)
         "    .section .tdata,\"awT\",@progbits\n    .balign 8\n    .globl tl_current_arena\ntl_current_arena:\n    .quad .L_tl_null_arena\n"))))

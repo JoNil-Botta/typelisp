@@ -522,15 +522,19 @@ tl_startup_profile_process_entry_tick:
 ;; handles keep 0 for "none". Every thread installs it before its first
 ;; allocation, so no reader tests for 0; allocators test the null bit only on
 ;; the shared-arena branch the shared bit already sent them to.
-(define (compiler-backend-runtime-null-arena-data) : String
-  "    .section .rodata
-    .balign 8
+(define (compiler-backend-runtime-null-arena-data [in-bss : bool]) : String
+  (str_cat.str-cat
+    (if in-bss
+      "    .section .bss\n"
+      "    .section .rodata\n")
+    "    .balign 8
     .globl __tl_null_arena
 __tl_null_arena:
 .L_tl_null_arena:
-    .quad 0, 0, 0, 0, 0, 0, 17, 0
-
-")
+"
+    (if in-bss
+      "    .zero 64\n\n"
+      "    .quad 0, 0, 0, 0, 0, 0, 17, 0\n\n")))
 
 (define (compiler-backend-runtime-fast-alloc-function
   [current-arena-load : (& current-arena-load str)]

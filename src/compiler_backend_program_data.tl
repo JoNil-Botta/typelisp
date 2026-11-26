@@ -2334,7 +2334,7 @@
     [(be_state.CompilerBackendTarget.Linux)
       (runtime_linux.compiler-backend-runtime-data features freestanding)]
     [(be_state.CompilerBackendTarget.Windows)
-      (runtime_windows.compiler-backend-runtime-data features)]))
+      (runtime_windows.compiler-backend-runtime-data features freestanding)]))
 
 (define (compiler-backend-runtime-fast-alloc-entry? [line : (& str)]) : bool
   (let
@@ -2416,7 +2416,8 @@
   [target : be_state.CompilerBackendTarget]
   [features : runtime_common.CompilerBackendRuntimeFeatures]
   [closed : bool]
-  [archives : bool]) : String
+  [archives : bool]
+  [freestanding : bool]) : String
   (let
     [body : String
       (match target
@@ -2427,7 +2428,8 @@
         [(be_state.CompilerBackendTarget.Windows)
           (runtime_windows.compiler-backend-runtime-functions-for-executable
             features
-            closed)])]
+            closed
+            freestanding)])]
     (if archives
       (compiler-backend-runtime-sectioned-functions target (& body))
       body)))
@@ -3148,13 +3150,13 @@
         (& compiler-backend-entry-size-directive))
       "    .section .rodata
 .L_tl_main_stack_mmap_error:
-    .ascii \"typelisp runtime: main-stack reservation failed\\n\"
+    .ascii \"tl: main-stack reservation failed\\n\"
     .text
 .L_tl_main_stack_abort:
     movq $1, %rax
     movq $2, %rdi
     leaq .L_tl_main_stack_mmap_error(%rip), %rsi
-    movq $48, %rdx
+    movq $34, %rdx
     syscall
     movq $231, %rax
     movq $134, %rdi
@@ -3171,8 +3173,13 @@
   [capture-argv : bool]
   [capture-env : bool]
   [startup-profile : bool]
+  [init-null-arena : bool]
   [global-inits : String]) : String
   (let
+    [null-arena-init-asm : String
+      (if init-null-arena
+        "    movb $17, .L_tl_null_arena+48(%rip)\n"
+        "")]
     [startup-profile-asm : String
       (if startup-profile
         "    movq $228, %rax
@@ -3199,22 +3206,21 @@
             (be_state.compiler-backend-string-shared-view
               (& compiler-backend-entry-type-directive))
             "_tl_start:\n"
+            null-arena-init-asm
             startup-profile-asm
             "    movq (%rsp), %rax\n"
             (if capture-argv
-              "    movq %rax, .L_tl_argc(%rip)
-    leaq 8(%rsp), %rax
-    movq %rax, .L_tl_argv(%rip)
-"
+              "    movq %rax, .L_tl_argc(%rip)\n"
               "")
             (if capture-env
-              (str_cat.str-cat
-                (if capture-argv
-                  "    movq (%rsp), %rax\n"
-                  "")
-                "    leaq 16(%rsp,%rax,8), %rax
+              "    leaq 16(%rsp,%rax,8), %rax
     movq %rax, .L_tl_envp(%rip)
-")
+"
+              "")
+            (if capture-argv
+              "    leaq 8(%rsp), %rax
+    movq %rax, .L_tl_argv(%rip)
+"
               "")
             "    call tl_thread_init\n"))
         (compiler-backend-entry-call-main global-inits))
@@ -3228,6 +3234,7 @@
             (be_state.compiler-backend-string-shared-view
               (& compiler-backend-entry-type-directive))
             "_tl_start:\n"
+            null-arena-init-asm
             startup-profile-asm
             "    call tl_thread_init\n"))
         (compiler-backend-entry-call-main global-inits)))))
@@ -3248,6 +3255,9 @@
           true
           (be_state.compiler-backend-runtime-tail-startup-profile?
             (be_state.compiler-backend-runtime-plan-tail plan))
+          (not
+            (be_state.compiler-backend-runtime-tail-arena-debug?
+              (be_state.compiler-backend-runtime-plan-tail plan)))
           (compiler-backend-global-initializers
             type-segment-bases
             target

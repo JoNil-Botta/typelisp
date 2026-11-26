@@ -1103,6 +1103,31 @@
                     (compiler_ir_types.compiler-ir-symbol-id id))))
               (compiler_regalloc.compiler-reg-add-platform-call-name! id))))))))
 
+;; By function slot (the order `compiler-backend-program-index-functions-into`
+;; binds), the hidden-argument index of each internal leading return-storage
+;; function, or -1.
+(define (compiler-backend-program-index-leading-sret
+  [functions : (& functions compiler_ir_types.CompilerIrFunctionSeq)]) : (__tl_dyn-array
+    i64)
+  (let
+    [count : i64 (compiler_ir_types.compiler-ir-function-seq-count functions)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    (for [k (iterator.range 0 count)]
+      (set!
+        (array-ref out k)
+        (match (owned_view.compiler-owned-element-view functions.slots k)
+          [(Function _ _ _ _ _ (ReturnStorage storage))
+            (compiler-backend-leading-sret-index (& (deref storage)))]
+          [_ -1])))
+    out))
+
+(define (compiler-backend-leading-sret-index
+  [storage : (& storage compiler_ir_types.CompilerIrReturnStorageAbi)]) : i64
+  (match storage.convention
+    [(compiler_ir_types.CompilerIrReturnStorageConvention.InternalLeading)
+      storage.index]
+    [_ -1]))
+
 (define (compiler-backend-program-index-build-with-backend-state-and-profile-state
   [backend-state : be_state.CompilerBackendState]
   [type-segment-bases : i64]
@@ -1144,6 +1169,8 @@
         (owned_view.compiler-owned-shared-view function-names)
         (owned_view.compiler-owned-shared-view function-signatures)
         0)]
+    [function-leading-sret : (__tl_dyn-array i64)
+      (compiler-backend-program-index-leading-sret (& functions))]
     [_seed-private-memory-calls : unit
       (compiler-backend-seed-private-memory-call-names
         type-segment-bases
@@ -1186,6 +1213,7 @@
           function-ids
           function-names
           function-signatures
+          function-leading-sret
           extern-signature-ids
           extern-signatures
           extern-call-infos

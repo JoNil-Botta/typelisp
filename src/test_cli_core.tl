@@ -95,7 +95,7 @@
 (clone_gen.gen-clone InlineTestSelection)
 
 (defenum InlineTest
-  (Case String String i64 i64 i64 String i64 i64 InlineTestSelection))
+  (Case String String i64 i64 i64 i64 String i64 i64 InlineTestSelection))
 
 (clone_gen.gen-clone InlineTest)
 
@@ -750,6 +750,11 @@
                 [(Nil) ""])]
             [decl-owner-id : i64
               (ast.ast-decl-path-list-owner-id (& cur-paths) 0 current-module)]
+            [decl-prov-id : i64
+              (ast.ast-decl-path-list-provenance-id
+                (& cur-paths)
+                0
+                decl-owner-id)]
             [rest-paths : ast.AstDeclPathList
               (match (ast.ast-decl-path-list-step cur-paths)
                 [(Cons _ path-rest)
@@ -774,6 +779,7 @@
                         (ci.intern-str name)
                         decl-path
                         current-module
+                        decl-prov-id
                         (tltest-source-line span)
                         body
                         private-name
@@ -784,16 +790,18 @@
               [(Module name)
                 (set! current-module name)
                 (ast.ast-decl-list-push (&mut runtime-decls-out) decl)
-                (ast.ast-decl-path-list-push-with-owner-id
+                (ast.ast-decl-path-list-push-with-owner-and-provenance-id
                   (&mut runtime-paths-out)
                   decl-path
-                  decl-owner-id)]
+                  decl-owner-id
+                  decl-prov-id)]
               [(Import decl-meta _)
                 (ast.ast-decl-list-push (&mut runtime-decls-out) decl)
-                (ast.ast-decl-path-list-push-with-owner-id
+                (ast.ast-decl-path-list-push-with-owner-and-provenance-id
                   (&mut runtime-paths-out)
                   decl-path
-                  decl-owner-id)]
+                  decl-owner-id
+                  decl-prov-id)]
               [(or (IncludeStr _ _) (IncludeStrComptime _ _)
                    (IncludeStrLzss _ _) (IncludeBin _ _))
                 unit]
@@ -801,10 +809,11 @@
                 (unless
                   (tltest-main-decl? (& decl))
                   (ast.ast-decl-list-push (&mut runtime-decls-out) decl)
-                  (ast.ast-decl-path-list-push-with-owner-id
+                  (ast.ast-decl-path-list-push-with-owner-and-provenance-id
                     (&mut runtime-paths-out)
                     decl-path
-                    decl-owner-id))])
+                    decl-owner-id
+                    decl-prov-id))])
             (set! cur-decls rest-decls)
             (set! cur-paths rest-paths))]))
     (Collect runtime-decls-out runtime-paths-out test-items)))
@@ -828,7 +837,7 @@
 
 (define (tltest-list-line [test : InlineTest]) : String
   (match test
-    [(Case name path _ line _ _ _ _ selection)
+    [(Case name path _ _ line _ _ _ _ selection)
       (str_cat.str-cat
         name
         " "
@@ -907,7 +916,7 @@
 
 (define (tltest-running-line [test : (& InlineTest)]) : String
   (match test
-    [(Case name path _ line _ _ _ _ _)
+    [(Case name path _ _ line _ _ _ _ _)
       (str_cat.str-cat
         "test "
         (string.copy name)
@@ -917,12 +926,12 @@
 
 (define (tltest-ok-line [test : (& InlineTest)]) : String
   (match test
-    [(Case name _ _ _ _ _ _ _ _)
+    [(Case name _ _ _ _ _ _ _ _ _)
       (str_cat.str-cat "ok " (string.copy name) "\n")]))
 
 (define (tltest-failed-line [test : (& InlineTest)]) : String
   (match test
-    [(Case name path _ line _ _ _ _ _)
+    [(Case name path _ _ line _ _ _ _ _)
       (str_cat.str-cat
         "FAILED "
         (string.copy name)
@@ -1163,15 +1172,22 @@
                             (& (tltest-print-runtime-print-decl))
                             (& decls))))))))])))]))
 
+;; Generated runtime, main and combined harness declarations are not physically
+;; present in any source file, so their provenance lane names the synthetic
+;; harness source instead of borrowing a module id or a display path id.
+(define (tltest-generated-harness-provenance-id) : i64
+  (ci.intern-generated-canonical-name "<generated test harness>"))
+
 (define (tltest-paths-with-print-runtime-count
   [count : i64]
   [runtime-path-id : i64]
   [paths : ast.AstDeclPathList]) : ast.AstDeclPathList
   (if (<= count 0)
     paths
-    (ast.ast-decl-path-list-prepend-builder-with-owner-id
+    (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
       "<generated test runtime>"
       runtime-path-id
+      (tltest-generated-harness-provenance-id)
       (tltest-paths-with-print-runtime-count (- count 1) runtime-path-id paths))))
 
 (define (tltest-paths-with-print-runtime
@@ -1192,7 +1208,7 @@
   (if (< index 0)
     out
     (match (& (array-ref tests index))
-      [(Case _ _ _ _ _ _ _ call-id selection)
+      [(Case _ _ _ _ _ _ _ _ call-id selection)
         (match selection
           [(Run)
             (tltest-main-exprs-from
@@ -1226,7 +1242,7 @@
     [count : i64 0]
     (for [index (iterator.range 0 (array-length tests))]
       (match (owned_view.compiler-owned-element-view tests index)
-        [(Case _ _ _ _ _ _ _ _ selection)
+        [(Case _ _ _ _ _ _ _ _ _ selection)
           (let
             [kind : i64
               (match selection
@@ -1270,7 +1286,7 @@
       [test : InlineTest
         (owned_view.compiler-owned-array-element-shared-view tests index)]
       (match test
-        [(Case _ _ module-id _ body _ private-id _ _)
+        [(Case _ _ module-id _ _ body _ private-id _ _)
           (tltest-test-decls-onto
             tests
             (- index 1)
@@ -1304,15 +1320,18 @@
             (& (ast.ast-decl-list-new))))))))
 
 (define (tltest-main-paths [source : String]) : ast.AstDeclPathList
-  (ast.ast-decl-path-cons-with-owner-id
+  (ast.ast-decl-path-cons-with-owner-and-provenance-id
     (owned_view.compiler-owned-shared-view source)
     cbi.compiler-builtin-id-fix-empty
-    (ast.ast-decl-path-cons-with-owner-id
+    (tltest-generated-harness-provenance-id)
+    (ast.ast-decl-path-cons-with-owner-and-provenance-id
       (owned_view.compiler-owned-shared-view source)
       cbi.compiler-builtin-id-fix-empty
-      (ast.ast-decl-path-cons-with-owner-id
+      (tltest-generated-harness-provenance-id)
+      (ast.ast-decl-path-cons-with-owner-and-provenance-id
         source
         cbi.compiler-builtin-id-fix-empty
+        (tltest-generated-harness-provenance-id)
         (ast.ast-decl-path-list-new)))))
 
 (define (tltest-generated-test-decls [tests : (__tl_dyn-array InlineTest)]) : ast.AstDeclList
@@ -1351,16 +1370,18 @@
       [test : InlineTest
         (owned_view.compiler-owned-array-element-shared-view tests index)]
       (match test
-        [(Case _ path module-id _ _ _ _ _ _)
+        [(Case _ path module-id provenance-id _ _ _ _ _ _)
           (tltest-test-paths-onto
             tests
             (- index 1)
-            (ast.ast-decl-path-list-prepend-builder-with-owner-id
+            (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
               (owned_view.compiler-owned-shared-view path)
               module-id
-              (ast.ast-decl-path-list-prepend-builder-with-owner-id
+              provenance-id
+              (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
                 path
                 module-id
+                provenance-id
                 out)))]))))
 
 (define (tltest-main-decl [tests : (__tl_dyn-array InlineTest)]) : ast.AstDecl
@@ -1686,7 +1707,7 @@
       (let
         [body : i64
           (match (& (array-ref tests i))
-            [(Case _ _ _ _ b _ _ _ _) b])]
+            [(Case _ _ _ _ _ b _ _ _ _) b])]
         (set! result (tltest-reach-mark-expr session body result))))
     result))
 
@@ -4875,10 +4896,11 @@
                 (ast.ast-decl-list-push
                   (&mut acc-decls)
                   (ast.ast-decl-module-id (tltest-empty-name-id)))
-                (ast.ast-decl-path-list-push-with-owner-id
+                (ast.ast-decl-path-list-push-with-owner-and-provenance-id
                   (&mut acc-paths)
                   (string.copy (& source0))
-                  cbi.compiler-builtin-id-fix-empty))
+                  cbi.compiler-builtin-id-fix-empty
+                  (compiler_load.compiler-load-source-path-id (& source0))))
               (match (compiler_load.compiler-load-file-with-paths-and-roots-expect-cfg-fallback
                 (& source0)
                 seen
@@ -4992,6 +5014,7 @@
                                 (ci.intern-str name)
                                 decl-path
                                 current-module
+                                decl-prov-id
                                 (tltest-source-line span)
                                 body-box
                                 private-name
@@ -5336,14 +5359,25 @@
                             [test : InlineTest
                               (clone-inline-test (& (array-ref all-tests t)))]
                             (match test
-                              [(Case _ path module-id _ body _ private-id _ _)
+                              [(Case
+                                _
+                                path
+                                module-id
+                                provenance-id
+                                _
+                                body
+                                _
+                                private-id
+                                _
+                                _)
                                 (ast.ast-decl-list-push
                                   (&mut harness-decls)
                                   (ast.ast-decl-module-id module-id))
-                                (ast.ast-decl-path-list-push-with-owner-id
+                                (ast.ast-decl-path-list-push-with-owner-and-provenance-id
                                   (&mut harness-paths)
                                   (string.copy (& path))
-                                  module-id)
+                                  module-id
+                                  provenance-id)
                                 (ast.ast-decl-list-push
                                   (&mut harness-decls)
                                   (ast.ast-decl-def-fn-id
@@ -5351,18 +5385,20 @@
                                     (ast.ast-param-list-new)
                                     (Unit)
                                     body))
-                                (ast.ast-decl-path-list-push-with-owner-id
+                                (ast.ast-decl-path-list-push-with-owner-and-provenance-id
                                   (&mut harness-paths)
                                   path
-                                  module-id)])))
+                                  module-id
+                                  provenance-id)])))
                         ;; Switch to root module and import stdlib.runtime for suite helpers.
                         (ast.ast-decl-list-push
                           (&mut harness-decls)
                           (ast.ast-decl-module-id (tltest-empty-name-id)))
-                        (ast.ast-decl-path-list-push-with-owner-id
+                        (ast.ast-decl-path-list-push-with-owner-and-provenance-id
                           (&mut harness-paths)
                           (string.copy (& harness-path))
-                          cbi.compiler-builtin-id-fix-empty)
+                          cbi.compiler-builtin-id-fix-empty
+                          (tltest-generated-harness-provenance-id))
                         (ast.ast-decl-list-push
                           (&mut harness-decls)
                           (Import
@@ -5373,10 +5409,11 @@
                               (Some cbi.compiler-builtin-id-runtime-module)
                               (Some (tltest-runtime-import-alias-id))
                               (box (ast.ast-decl-span-fallback)))))
-                        (ast.ast-decl-path-list-push-with-owner-id
+                        (ast.ast-decl-path-list-push-with-owner-and-provenance-id
                           (&mut harness-paths)
                           (string.copy (& harness-path))
-                          cbi.compiler-builtin-id-fix-empty)
+                          cbi.compiler-builtin-id-fix-empty
+                          (tltest-generated-harness-provenance-id))
                         ;; Emit one runner function per file in the batch.
                         (for [f (iterator.range 0 file-count)]
                           (let
@@ -5406,28 +5443,31 @@
                                   (I64)
                                   (ast.ast-node-push
                                     (Begin (tltest-main-exprs (& file-tests)))))))
-                            (ast.ast-decl-path-list-push-with-owner-id
+                            (ast.ast-decl-path-list-push-with-owner-and-provenance-id
                               (&mut harness-paths)
                               file-source
-                              cbi.compiler-builtin-id-fix-empty)))
+                              cbi.compiler-builtin-id-fix-empty
+                              (tltest-generated-harness-provenance-id))))
                         ;; Emit argv index parser and dispatched main.
                         (ast.ast-decl-list-push
                           (&mut harness-decls)
                           (tltest-combined-parse-index-decl parse-fn-id))
-                        (ast.ast-decl-path-list-push-with-owner-id
+                        (ast.ast-decl-path-list-push-with-owner-and-provenance-id
                           (&mut harness-paths)
                           (string.copy (& harness-path))
-                          cbi.compiler-builtin-id-fix-empty)
+                          cbi.compiler-builtin-id-fix-empty
+                          (tltest-generated-harness-provenance-id))
                         (ast.ast-decl-list-push
                           (&mut harness-decls)
                           (tltest-combined-main-decl
                             parse-fn-id
                             (& runner-ids)
                             file-count))
-                        (ast.ast-decl-path-list-push-with-owner-id
+                        (ast.ast-decl-path-list-push-with-owner-and-provenance-id
                           (&mut harness-paths)
                           (string.copy (& harness-path))
-                          cbi.compiler-builtin-id-fix-empty)
+                          cbi.compiler-builtin-id-fix-empty
+                          (tltest-generated-harness-provenance-id))
                         (let
                           [full-program : ast.AstProgram
                             (tltest-program-with-print-runtime

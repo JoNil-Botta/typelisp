@@ -11575,16 +11575,27 @@
     owner-id
     rest))
 
-(define (ast-decl-path-cons-with-owner-id
+(define (ast-decl-path-cons-with-owner-and-provenance-id
   [head : String]
   [owner-id : i64]
+  [provenance-id : i64]
   [rest : AstDeclPathList]) : AstDeclPathList
   (let
     [out : AstDeclPathList
       (ast-decl-path-list-with-capacity (+ 1 (ast-decl-path-list-len (& rest))))]
-    (ast-decl-path-list-push-with-owner-id (&mut out) head owner-id)
+    (ast-decl-path-list-push-with-owner-and-provenance-id
+      (&mut out)
+      head
+      owner-id
+      provenance-id)
     (ast-decl-path-list-append-from (&mut out) (& rest) 0)
     out))
+
+(define (ast-decl-path-cons-with-owner-id
+  [head : String]
+  [owner-id : i64]
+  [rest : AstDeclPathList]) : AstDeclPathList
+  (ast-decl-path-cons-with-owner-and-provenance-id head owner-id owner-id rest))
 
 (define (ast-decl-root-path-cons [head : String] [rest : AstDeclPathList]) : AstDeclPathList
   (ast-decl-path-cons-with-owner-id head cbi.compiler-builtin-id-fix-empty rest))

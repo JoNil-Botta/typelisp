@@ -16190,6 +16190,72 @@
     (compiler-lower-internal-windows-byref-sret-shape-ok?)
     "Windows ByRef aggregate and leading sret transport"))
 
+;; #7887: a memory-class struct and a tuple of the same 32-byte layout share
+;; one hidden-result convention on SysV and Win64: a leading `__sret`
+;; parameter, then the source parameters, and a `u64` physical result.
+(define (compiler-lower-unified-sret-source) : String
+  "(defstruct Quad (a i64) (b i64) (c i64) (d i64))
+(define (make-quad [x : i64]) : Quad
+  (Quad x x x x))
+(define (make-tuple [x : i64]) : (Tuple i64 i64 i64 i64)
+  (tuple x x x x))
+(define (main) : i64
+  (let
+    [q : Quad (make-quad 1)]
+    [t : (Tuple i64 i64 i64 i64) (make-tuple 2)]
+    (+ q.d (tuple-ref t 3))))")
+
+(define (lower-test-function-returns-u64?
+  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
+  [name : String]) : bool
+  (match (lower-test-function-seq-find funcs name)
+    [(No) false]
+    [(Some func)
+      (match func
+        [(Function _ _ ret _ _ _)
+          (match ret
+            [(ast.AstType.U64) true]
+            [_ false])])]))
+
+(define (compiler-lower-unified-sret-mode-ok? [mode : lower.CompilerLowerMode]) : bool
+  (match (lower-test-functions
+    (lower.lower-compiler-source-with-mode
+      (compiler-lower-unified-sret-source)
+      mode))
+    [(Some functions)
+      (let
+        [hidden : String (ir.compiler-ir-hidden-sret-param-name)]
+        (and
+          (= (lower-test-function-param-count functions "make-quad") 2)
+          (= (lower-test-function-param-count functions "make-tuple") 2)
+          (string.eq
+            (lower-test-function-param-name functions "make-quad" 0)
+            hidden)
+          (string.eq
+            (lower-test-function-param-name functions "make-tuple" 0)
+            hidden)
+          (string.eq
+            (lower-test-function-param-name functions "make-quad" 1)
+            "x")
+          (string.eq
+            (lower-test-function-param-name functions "make-tuple" 1)
+            "x")
+          (lower-test-function-returns-u64? functions "make-quad")
+          (lower-test-function-returns-u64? functions "make-tuple")
+          (= (lower-test-function-call-count functions "main" "make-quad") 1)
+          (= (lower-test-function-call-count functions "main" "make-tuple") 1)))]
+    [_ false]))
+
+(test
+  compiler-lower-unified-sret-shape
+  (test.assert-true
+    (and
+      (compiler-lower-unified-sret-mode-ok?
+        (lower.CompilerLowerMode.LinuxScalar))
+      (compiler-lower-unified-sret-mode-ok?
+        (lower.CompilerLowerMode.WindowsScalar)))
+    "nominal and structural memory-class returns share one sret convention"))
+
 (test
   compiler-lower-internal-windows-u8-three-shape
   (test.assert-true

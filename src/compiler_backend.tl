@@ -2813,53 +2813,37 @@
               ctx.program-index
               name)]
           [addr : String (str_cat.str-cat symbol "(%rip)" "")]
-          [inline-size : i64
-            (be_state.compiler-backend-inline-aggregate-global-size
-              ctx.backend-state
-              name)]
-          (if (> inline-size 0)
-            ;; IAG-1: the rebind's IR shape is unchanged -- `value` is a
-            ;; pointer to the freshly built aggregate -- so the cell takes the
-            ;; bytes rather than the pointer.
+          ;; Only word cells take a `Store`: an inline cell is written in place.
+          (if (be_facts.compiler-backend-group-type?
+            ctx.type-segment-bases
+            ctx.program-index
+            ty)
+            ;; An internal store must preserve live homes across both words.
             (compiler-backend-with-instr-diagnostic
-              (be_data.compiler-backend-emit-inline-aggregate-store
+              (be_scalar.compiler-backend-emit-group-copy
+                ctx.type-segment-bases
                 ctx.assignments
-                symbol
-                inline-size
+                (& (Global name))
                 value
+                ctx.vars
+                ty
+                ctx.program-index
                 ctx.backend-state)
               instr-diag)
-            (if (be_facts.compiler-backend-group-type?
-              ctx.type-segment-bases
-              ctx.program-index
-              ty)
-              ;; An internal store must preserve live homes across both words.
+            (let
+              [no-exclude : (__tl_dyn-array String) (__tl_make-array String 0)]
               (compiler-backend-with-instr-diagnostic
-                (be_scalar.compiler-backend-emit-group-copy
+                (be_scalar.compiler-backend-emit-store-value-to-address
                   ctx.type-segment-bases
                   ctx.assignments
-                  (& (Global name))
                   value
-                  ctx.vars
                   ty
+                  addr
                   ctx.program-index
+                  no-exclude
+                  0
                   ctx.backend-state)
-                instr-diag)
-              (let
-                [no-exclude : (__tl_dyn-array String)
-                  (__tl_make-array String 0)]
-                (compiler-backend-with-instr-diagnostic
-                  (be_scalar.compiler-backend-emit-store-value-to-address
-                    ctx.type-segment-bases
-                    ctx.assignments
-                    value
-                    ty
-                    addr
-                    ctx.program-index
-                    no-exclude
-                    0
-                    ctx.backend-state)
-                  instr-diag)))))]
+                instr-diag))))]
       [(Jump target)
         (match (be_calls.compiler-backend-emit-trivial-phi-return-edge
           ctx.type-segment-bases
@@ -24745,6 +24729,7 @@
                             (and crt-entry target-policy.linux)))
                           (be_data.compiler-backend-global-initializers
                             type-segment-bases
+                            target
                             (be_state.compiler-backend-global-shared-view
                               globals)
                             program-index)
@@ -26771,6 +26756,7 @@ tl_shared_object_init:
                                 (compiler-backend-shared-object-init
                                   (be_data.compiler-backend-global-initializers
                                     type-segment-bases
+                                    target
                                     globals
                                     program-index))]
                               [else
@@ -26948,6 +26934,7 @@ tl_shared_object_init:
                       target
                       (be_state.compiler-backend-global-shared-view globals)
                       (be_state.compiler-backend-global-shared-view functions)
+                      (& externs)
                       (be_state.compiler-backend-global-shared-view spans)
                       program-index)
                       [(Ok globals-buf collections)

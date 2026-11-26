@@ -11805,6 +11805,10 @@
             2
             3))
         valid)]
+    ;; A global initializer's result pointer names the global's inline cell;
+    ;; `opt-verify-inline-global-storage` checks that cell against the
+    ;; initializer's declared storage.
+    [(GlobalAddr _) true]
     [_ false]))
 
 (define (opt-verify-call-args-uses
@@ -12718,9 +12722,10 @@
   [interns : (& interns ci.InternCompatState)]
   [program : (& program ir.CompilerIrProgram)]) : ResultCompilerOptimizeVerify
   (match program
-    [(ir.CompilerIrProgram.Program _ functions externs authority)
+    [(ir.CompilerIrProgram.Program globals functions externs authority)
       (let
         [bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
+        [_ (try (opt-verify-inline-global-storage (& globals) (& functions)))]
         [catalog : ir.CompilerIrReturnStorageIndex
           (ir.compiler-ir-return-storage-index-authorized
             pools
@@ -12755,6 +12760,58 @@
                 (return (ResultCompilerOptimizeVerify.Err message))])
             (set! i (+ i 1))))
         (ResultCompilerOptimizeVerify.Ok))]))
+
+;; An inline global cell is written by its initializer through the leading
+;; sret pointer, so the cell must be exactly the storage that initializer
+;; declares, and only a runtime-initialized global has an inline cell.
+(define (opt-verify-inline-global-storage
+  [globals : (& globals ir.CompilerIrGlobalSeq)]
+  [functions : (& functions ir.CompilerIrFunctionSeq)]) : ResultCompilerOptimizeVerify
+  (let
+    [inits : opt_i64_i64_map.Map
+      (opt_i64_i64_map.with-capacity (+ (* globals.len 2) 1))]
+    (for [index (iterator.range 0 globals.len)]
+      (match (ir.compiler-ir-global-seq-borrow globals index)
+        [(Global _ _ value (Inline _ _))
+          (match value
+            [(RuntimeGlobal init)
+              (opt_i64_i64_map.insert-ref!
+                (&mut inits)
+                (ir.compiler-ir-symbol-id init)
+                index)]
+            [_
+              (return
+                (Err
+                  "optimizer verify: inline global storage without a runtime initializer"))])]
+        [_ unit]))
+    (for [index (iterator.range 0 functions.len)]
+      (match (ir.compiler-ir-function-seq-borrow functions index)
+        [(Function name _ _ _ _ abi)
+          (let
+            [owner : i64
+              (opt_i64_i64_map.get-value-or
+                (& inits)
+                (ir.compiler-ir-symbol-id name)
+                -1)]
+            (when
+              (>= owner 0)
+              (match (ir.compiler-ir-global-seq-borrow globals owner)
+                [(Global _ _ _ (Inline size align))
+                  (unless
+                    (match abi
+                      [(ReturnStorage boxed)
+                        (and
+                          (= (deref boxed).bytes size)
+                          (= (deref boxed).alignment align))]
+                      [_ false])
+                    (return
+                      (Err
+                        (str_cat.str-cat
+                          "optimizer verify: inline global initializer @"
+                          (ir.compiler-ir-symbol-text name)
+                          " does not declare the cell's storage"))))]
+                [_ unit])))]))
+    (Ok)))
 
 (define (opt-verify-program [program : (& program ir.CompilerIrProgram)]) : ResultCompilerOptimizeVerify
   (let
@@ -23483,7 +23540,7 @@
     (let
       [out : opt_i64_i64_map.Map acc]
       (match (ir.compiler-ir-global-seq-borrow globals index)
-        [(Global name ty _)
+        [(Global name ty _ _)
           (if (opt-licm-array-header-type? type-segment-bases (& ty))
             (opt_i64_i64_map.insert-ref!
               (&mut out)
@@ -26241,7 +26298,7 @@
     [masks : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity (+ count 1))]
     (for [index (iterator.range 0 count)]
       (match (ir.compiler-ir-global-seq-borrow globals index)
-        [(Global name ty _)
+        [(Global name ty _ _)
           (let
             [extent : i64
               (opt-licm-deref-type-extent type-segment-bases (& ty))]
@@ -123133,7 +123190,7 @@
   (if (opt-function-seq-defines? functions "main")
     (for [i (iterator.range 0 (ir.compiler-ir-extern-seq-count externs))]
       (match (ir.compiler-ir-extern-seq-borrow externs i)
-        [(Extern name-id _ _ _ _ _ _ provided _ _)
+        [(Extern name-id _ _ _ _ _ _ provided _ _ _)
           (when
             provided
             (match (opt-function-index-slot-id index name-id)
@@ -123492,7 +123549,7 @@
   [state : (& OptReachState)]
   [global : (& ir.CompilerIrGlobal)]) : OptReachState
   (match global
-    [(Global name _ value)
+    [(Global name _ value _)
       ;; A global with a non-constant initializer is set up before main by a
       ;; generated `__global_init_<name>` function that the backend calls from
       ;; the startup sequence; it is NOT referenced from the global's IR value,
@@ -123582,7 +123639,7 @@
       (let
         [global (ir.compiler-ir-global-seq-ref globals index)]
         (match (compiler-opt-global-shared-view global)
-          [(Global name ty value)
+          [(Global name ty value _)
             (when
               (or
                 (if static-arrays-only?
@@ -123623,7 +123680,7 @@
   (if (>= seq-index (ir.compiler-ir-extern-seq-count externs))
     state
     (match (ir.compiler-ir-extern-seq-borrow externs seq-index)
-      [(Extern name-id _ _ _ _ _ _ provided _ _)
+      [(Extern name-id _ _ _ _ _ _ provided _ _ _)
         (opt-reach-add-provided-extern-seq
           index
           externs
@@ -123703,7 +123760,7 @@
 (define (opt-static-array-globals? [globals : (& ir.CompilerIrGlobalSeq)]) : bool
   (for [index (iterator.range 0 globals.len)]
     (match (ir.compiler-ir-global-seq-borrow globals index)
-      [(Global _ _ value)
+      [(Global _ _ value _)
         (match value
           [(StaticArray _) (return true)]
           [_ unit])]))
@@ -123877,7 +123934,7 @@
       (opt_i64_i64_map.with-capacity (ir.compiler-ir-extern-seq-count externs))]
     (for [at (iterator.range 0 (ir.compiler-ir-extern-seq-count externs))]
       (match (ir.compiler-ir-extern-seq-borrow externs at)
-        [(Extern name _ _ _ _ link _ provided _ body-available)
+        [(Extern name _ _ _ _ link _ provided _ body-available _)
           (unless
             (or provided body-available)
             (opt_i64_i64_map.insert-ref!
@@ -123989,7 +124046,7 @@
         [ra-len : i64 0]
         (for [gi (iterator.range 0 globals.len)]
           (match (ir.compiler-ir-global-seq-borrow globals gi)
-            [(Global gname _ _)
+            [(Global gname _ _ _)
               (opt_i64_i64_map.insert-ref!
                 (&mut global-set)
                 (ir.compiler-ir-symbol-id gname)
@@ -124056,7 +124113,7 @@
         ;; Mirror entries under extern `name-id` when it differs from `link-id`.
         (for [ei (iterator.range 0 externs.len)]
           (match (ir.compiler-ir-extern-seq-borrow externs ei)
-            [(Extern name-id _ _ _ _ link-id _ provided _ _)
+            [(Extern name-id _ _ _ _ link-id _ provided _ _ _)
               (when
                 (and (not provided) (!= name-id link-id))
                 (let
@@ -124690,7 +124747,7 @@
     [next : opt_i64_i64_map.Map out]
     (for [index (iterator.range 0 globals.len)]
       (match (ir.compiler-ir-global-seq-borrow globals index)
-        [(Global name ty _)
+        [(Global name ty _ _)
           (if (opt-licm-array-header-type? type-segment-bases (& ty))
             (opt_i64_i64_map.insert-ref!
               (&mut next)
@@ -125466,7 +125523,7 @@
       (+ index 1)
       disq
       (match (ir.compiler-ir-global-seq-borrow globals index)
-        [(Global name _ value)
+        [(Global name _ value _)
           (match value
             [(I64 n)
               (if (or
@@ -125960,7 +126017,7 @@
               (opt-blocks-visit blocks opt-cl-escape-instr! gep-vars (&mut bad))))]))
     (for [index (iterator.range 0 globals.len)]
       (match (ir.compiler-ir-global-seq-borrow globals index)
-        [(Global name ty value)
+        [(Global name ty value _)
           (match value
             [(RuntimeGlobal init)
               (let
@@ -126762,7 +126819,7 @@
     [out : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
     (for [index (iterator.range 0 (ir.compiler-ir-extern-seq-count externs))]
       (match (ir.compiler-ir-extern-seq-borrow externs index)
-        [(Extern name-id _ _ _ _ _ _ _ _ _)
+        [(Extern name-id _ _ _ _ _ _ _ _ _ _)
           (opt_i64_i64_map.insert-ref! (&mut out) name-id 1)]))
     out))
 
@@ -126777,7 +126834,7 @@
     [out : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
     (for [index (iterator.range 0 (ir.compiler-ir-global-seq-count globals))]
       (match (ir.compiler-ir-global-seq-borrow globals index)
-        [(Global name ty value)
+        [(Global name ty value _)
           (let
             [id : i64 (ir.compiler-ir-symbol-id name)]
             (when
@@ -127593,7 +127650,7 @@
   (if (>= index globals.len)
     type-index
     (match (ir.compiler-ir-global-seq-ref globals index)
-      [(Global name ty _)
+      [(Global name ty _ _)
         (let
           [next-index : opt_i64_i64_map.Map type-index]
           (set! (array-ref types index) ty)
@@ -127619,7 +127676,7 @@
   [count : i64]) : i64
   (for [index (iterator.range 0 globals.len)]
     (match (ir.compiler-ir-global-seq-borrow globals index)
-      [(Global name ty _)
+      [(Global name ty _ _)
         (set!
           count
           (if (and
@@ -127905,7 +127962,7 @@
   [count : i64]) : i64
   (for [at (iterator.range 0 globals.len)]
     (match (ir.compiler-ir-global-seq-borrow globals at)
-      [(Global name ty _)
+      [(Global name ty _ _)
         (set!
           count
           (if (and
@@ -127931,7 +127988,7 @@
   (if (>= at globals.len)
     (Some out next)
     (match (ir.compiler-ir-global-seq-borrow globals at)
-      [(Global name ty _)
+      [(Global name ty _ _)
         (if (not
           (and
             (= scalar? (opt-global-obj-scalar-type? (& ty)))
@@ -128080,7 +128137,7 @@
   (if (>= index globals.len)
     cand
     (match (ir.compiler-ir-global-seq-borrow globals index)
-      [(Global name _ value)
+      [(Global name _ value _)
         (match value
           [(RuntimeGlobal init)
             (let
@@ -128826,7 +128883,7 @@
   [count : i64]) : i64
   (for [at (iterator.range 0 globals.len)]
     (match (ir.compiler-ir-global-seq-borrow globals at)
-      [(Global _ ty _)
+      [(Global _ ty _ _)
         (set!
           count
           (if (opt-global-obj-scalar-type? (& ty))
@@ -128876,7 +128933,7 @@
   (if (>= at globals.len)
     (Some out next)
     (match (ir.compiler-ir-global-seq-borrow globals at)
-      [(Global name ty _)
+      [(Global name ty _ _)
         (if (opt-global-obj-scalar-type? (& ty))
           (opt-global-obj-index-fill globals overflow-bit out (+ at 1) next)
           (let
@@ -130565,6 +130622,68 @@
           (opt-len-eq-refuse-taints! bad (& taint.box))
           (opt-len-eq-refuse-taints! bad (& taint.desc))))]))
 
+;; An inline global's initializer returns its hidden result pointer -- the
+;; global's own cell -- after one byte copy of the value it built into it, and
+;; writes no word of it otherwise; the cell then holds that value's length.
+(define (opt-len-eq-init-result-var
+  [tables : (& tables OptLenEqDefs)]
+  [var : i64]) : i64
+  (if (and
+    (>= var 0)
+    (< var (array-length tables.n0))
+    (= (opt-len-eq-def-count tables var) 0)
+    (= (array-ref tables.n0 var) 0)
+    (= (array-ref tables.n1 var) 0)
+    (= (array-ref tables.ncopy var) 1)
+    (> (array-ref tables.copy var) 0))
+    (- (array-ref tables.copy var) 1)
+    var))
+
+;; How many `TailCall`s the function has.
+(define (opt-len-eq-tail-call-count-instr
+  [seen : i64]
+  [instr : ir.CompilerIrInstr]) : i64
+  (match instr
+    [(TailCall _ _ _) (+ seen 1)]
+    [_ seen]))
+
+(define (opt-len-eq-tail-call-count
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [seen : i64]) : i64
+  (opt-blocks-fold blocks seen opt-len-eq-tail-call-count-instr))
+
+;; An inline global's initializer that ends in its one tail call, forwarding
+;; its own hidden result pointer -- the global's cell -- as the constructor's
+;; result slot: the cell holds that constructor's result, whose length its
+;; summary names.
+(define (opt-len-eq-init-tail-length
+  [ctors : (& ctors opt_i64_i64_map.Map)]
+  [params : (& params ir.CompilerIrParamSeq)]
+  [blocks : (& blocks ir.CompilerIrBlockList)]) : OptLenEqLength
+  (if (= params.len 0)
+    (OptLenEqLength.No)
+    (match (ir.compiler-ir-param-seq-borrow params 0)
+      [(Param _ _ cell)
+        (match blocks
+          [(Array seq)
+            (for [block (iterator.range 0 seq.len)]
+              (match (ir.compiler-ir-block-seq-borrow seq block)
+                [(Block _ instrs)
+                  (for [index (iterator.range 0 instrs.len)]
+                    (match (ir.compiler-ir-instr-seq-borrow instrs index)
+                      ;; A tail call forwards the caller's own result slot
+                      ;; in the leading position as a plain argument.
+                      [(TailCall name args _)
+                        (return
+                          (match (opt-call-memory-arg-at (& args) 0)
+                            [(Some (Var forwarded))
+                              (if (= forwarded cell)
+                                (opt-len-eq-ctor-length ctors name (& args))
+                                (OptLenEqLength.No))]
+                            [_ (OptLenEqLength.No)]))]
+                      [_ unit]))]))
+            (OptLenEqLength.No)])])))
+
 ;; The static initialiser's write: region 0, and a LITERAL length -- two
 ;; initialisers are different functions, so only a literal can be compared
 ;; across them. Every call the initialiser makes must be read-free, or a reader
@@ -130575,10 +130694,12 @@
   [owner : i64]
   [func : (& ir.CompilerIrFunction)]) : unit
   (match func
-    [(Function _ _ _ frame blocks _)
+    [(Function _ params _ frame blocks _)
       (if (not
         (and
-          (= (opt-len-eq-return-count blocks 0) 1)
+          (or
+            (= (opt-len-eq-return-count blocks 0) 1)
+            (= (opt-len-eq-tail-call-count blocks 0) 1))
           (opt-len-eq-blocks-clean?
             ctx.cand
             true
@@ -130590,12 +130711,27 @@
           [raw? : bool (opt_i64_i64_map.contains? (& ctx.raw) owner)]
           [tables : OptLenEqDefs
             (opt-len-eq-defs-build ctx.type-segment-bases frame blocks raw?)]
-          (match (opt-len-eq-length-of
-            tables
-            (& ctx.ctors)
-            (opt-len-eq-ctor-return-var (ir.compiler-ir-block-list-view blocks))
-            2
-            raw?)
+          (match (if (= (opt-len-eq-return-count blocks 0) 1)
+            (opt-len-eq-length-of
+              tables
+              (& ctx.ctors)
+              (opt-len-eq-init-result-var
+                (& tables)
+                (opt-len-eq-ctor-return-var
+                  (ir.compiler-ir-block-list-view blocks)))
+              2
+              raw?)
+            (match (opt-len-eq-init-tail-length
+              (& ctx.ctors)
+              (& params)
+              (& blocks))
+              [(Some len fits?)
+                (OptLenEqLength.Some
+                  (opt-len-eq-canonical
+                    tables
+                    (opt-len-eq-resolve tables len 4))
+                  fits?)]
+              [(No) (OptLenEqLength.No)]))
             [(Some len fits?)
               (match (& len)
                 [(I64 _) (opt-len-eq-writes-push! ctx.writes owner 0 len fits?)]
@@ -130713,7 +130849,7 @@
     [raw : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
     (for [index (iterator.range 0 globals.len)]
       (match (ir.compiler-ir-global-seq-borrow globals index)
-        [(Global name (DynArray _) _)
+        [(Global name (DynArray _) _ _)
           (let
             [id : i64 (ir.compiler-ir-symbol-id name)]
             (when
@@ -131133,7 +131269,7 @@
     scan
     (opt-arg-global-seed-externs
       (match (ir.compiler-ir-extern-seq-borrow externs index)
-        [(Extern name-id _ _ _ _ _ _ provided _ _)
+        [(Extern name-id _ _ _ _ _ _ provided _ _ _)
           (if provided
             (opt-arg-global-scan-opaque scan (ir.compiler-ir-symbol-id name-id))
             scan)])
@@ -131151,7 +131287,7 @@
     scan
     (opt-arg-global-seed-globals
       (match (ir.compiler-ir-global-seq-borrow globals index)
-        [(Global _ _ value)
+        [(Global _ _ value _)
           (match value
             [(or (RuntimeGlobal init) (Function init))
               (opt-arg-global-scan-opaque scan (ir.compiler-ir-symbol-id init))]
@@ -132574,7 +132710,7 @@
     (if (>= index globals.len)
       out
       (match (ir.compiler-ir-global-seq-borrow globals index)
-        [(Global name ty value)
+        [(Global name ty value _)
           (let
             [id : i64 (ir.compiler-ir-symbol-id name)]
             [_add : unit
@@ -134261,7 +134397,7 @@
     [out : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
     (for [i (iterator.range 0 externs.len)]
       (match (ir.compiler-ir-extern-seq-borrow externs i)
-        [(Extern name-id _ _ _ _ _ _ _ _ body-available)
+        [(Extern name-id _ _ _ _ _ _ _ _ body-available _)
           (when
             body-available
             (opt_i64_i64_map.insert-ref!
@@ -134297,7 +134433,7 @@
         (let
           [keep? : bool
             (match (ir.compiler-ir-global-seq-borrow (& globals) i)
-              [(Global gname _ _)
+              [(Global gname _ _ _)
                 (not
                   (opt_i64_i64_map.contains?
                     avail
@@ -134339,7 +134475,8 @@
               links
               provided
               storage
-              _)
+              _
+              cell)
             (ir.compiler-ir-extern-builder-push!
               (&mut e-builder)
               (ir.CompilerIrExtern.Extern
@@ -134352,7 +134489,8 @@
                 links
                 provided
                 storage
-                false))]))
+                false
+                cell))]))
       (OptStrippedProgram
         (ir.compiler-ir-global-builder-snapshot-seq (& g-builder))
         (ir.compiler-ir-function-builder-to-seq f-builder)
@@ -136417,14 +136555,18 @@
     (set! at 0)
     (while (< at globals.len)
       (match (compiler-opt-global-array-element-shared-view globals.slots at)
-        [(Global _ _ (or (ir.CompilerIrValue.Function name) (GlobalAddr name)))
+        [(Global
+            _
+            _
+            (or (ir.CompilerIrValue.Function name) (GlobalAddr name))
+            _)
           (opt-merge-note-symbol! (&mut observed) name)]
         [_ unit])
       (set! at (+ at 1)))
     (set! at 0)
     (while (< at externs.len)
       (match (compiler-opt-global-array-element-shared-view externs.slots at)
-        [(Extern name-id _ _ _ _ symbol-id _ _ _ _)
+        [(Extern name-id _ _ _ _ symbol-id _ _ _ _ _)
           (opt-merge-note-symbol! (&mut observed) name-id)
           (opt-merge-note-symbol! (&mut observed) symbol-id)])
       (set! at (+ at 1)))
@@ -136631,12 +136773,13 @@
       (set!
         (array-ref out at)
         (match (compiler-opt-global-array-element-shared-view globals.slots at)
-          [(Global name ty (ir.CompilerIrValue.RuntimeGlobal init))
+          [(Global name ty (ir.CompilerIrValue.RuntimeGlobal init) storage)
             (ir.CompilerIrGlobal.Global
               name
               ty
               (ir.CompilerIrValue.RuntimeGlobal
-                (opt-merge-renamed renames init)))]
+                (opt-merge-renamed renames init))
+              storage)]
           [_ (compiler-opt-global-array-element-shared-view globals.slots at)]))
       (set! at (+ at 1)))
     (ir.CompilerIrGlobalSeq out globals.len)))

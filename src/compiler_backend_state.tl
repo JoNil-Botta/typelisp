@@ -1212,11 +1212,10 @@
   ;; One-word view into the exact CompilerProfileState owned by this job.
   ;; It is installed at the explicit profile/backend emission boundary.
   (metrics profile_state.CompilerProfileMetrics)
-  ;; IAG-1: symbol id -> inline byte size for every runtime-initialised memory
-  ;; aggregate global this program stores INLINE at its own symbol rather than
-  ;; behind an arena box pointer. Empty until the whole-program classification
-  ;; below publishes it, so any path that reaches emission without it keeps the
-  ;; boxed-cell behaviour.
+  ;; Symbol id -> reserved cell bytes for every global (defined here or an
+  ;; extern TypeLisp data symbol) whose IR storage is `Inline`: the symbol IS
+  ;; the aggregate, so a read of `Global g` is its address. Published from the
+  ;; IR by `compiler-backend-publish-global-storage!` before emission.
   (inline-aggregate-globals backend_i64_i64_map.Map)
   ;; Append-only per-emission capability. Prepared entrypoints replace this
   ;; value before use, so a long-lived backend owner may emit another target.
@@ -1574,9 +1573,8 @@
       (deref (compiler-backend-state-ptr state)).inline-aggregate-globals
       globals)))
 
-;; IAG-1: the inline byte size of `name`'s cell, or 0 when the global keeps the
-;; boxed 8-byte pointer cell. This is the ONE predicate every emission site
-;; consults; a 0 answer is the pre-IAG behaviour everywhere.
+;; The reserved byte size of `name`'s inline cell, or 0 for a word cell. This
+;; is the ONE predicate every emission site consults.
 (define (compiler-backend-inline-aggregate-global-size
   [state : CompilerBackendState]
   [name : i64]) : i64
@@ -4467,14 +4465,7 @@
   (uses-avx2-i64-lane-id bool)
   (uses-avx512-i64-lane-id bool)
   (uses-f64-neg bool)
-  (uses-f32-neg bool)
-  ;; IAG-1 rides this walk. The census is held as a ONE-CELL array, not by
-  ;; value: this struct is copied at every operand of every instruction, so an
-  ;; inline census would triple the copy the whole walk pays. Every mutable
-  ;; row it fills is a dyn-array or a two-cell cursor, so the cell is all the
-  ;; identity the hooks need. A census with
-  ;; `count` 0 is the disabled form: every note below is then a single compare.
-  (iag CompilerBackendIagCensusCell))
+  (uses-f32-neg bool))
 
 (defenum CompilerBackendCollectState
   (Collections CompilerBackendProgramCollections))
@@ -4574,8 +4565,7 @@
           (BackendFloatEntry ty payload-bits))
         (BackendFloatSet seen items)))))
 
-(define (compiler-backend-program-collections-new-with-iag
-  [iag : CompilerBackendIagCensusCell]) : CompilerBackendProgramCollections
+(define (compiler-backend-program-collections-new) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     (compiler-backend-symbol-set-new 256)
     (compiler-backend-symbol-set-new 256)
@@ -4585,8 +4575,7 @@
     false
     false
     false
-    false
-    iag))
+    false))
 
 (define (compiler-backend-program-collections-add-function
   [collections : CompilerBackendProgramCollections]
@@ -4600,8 +4589,7 @@
     collections.uses-avx2-i64-lane-id
     collections.uses-avx512-i64-lane-id
     collections.uses-f64-neg
-    collections.uses-f32-neg
-    collections.iag))
+    collections.uses-f32-neg))
 
 (define (compiler-backend-program-collections-add-reference
   [collections : CompilerBackendProgramCollections]
@@ -4615,8 +4603,7 @@
     collections.uses-avx2-i64-lane-id
     collections.uses-avx512-i64-lane-id
     collections.uses-f64-neg
-    collections.uses-f32-neg
-    collections.iag))
+    collections.uses-f32-neg))
 
 (define (compiler-backend-program-collections-add-string
   [collections : CompilerBackendProgramCollections]
@@ -4630,8 +4617,7 @@
     collections.uses-avx2-i64-lane-id
     collections.uses-avx512-i64-lane-id
     collections.uses-f64-neg
-    collections.uses-f32-neg
-    collections.iag))
+    collections.uses-f32-neg))
 
 (define (compiler-backend-program-collections-add-float
   [collections : CompilerBackendProgramCollections]
@@ -4646,8 +4632,7 @@
     collections.uses-avx2-i64-lane-id
     collections.uses-avx512-i64-lane-id
     collections.uses-f64-neg
-    collections.uses-f32-neg
-    collections.iag))
+    collections.uses-f32-neg))
 
 (define (compiler-backend-program-collections-add-bytes
   [collections : CompilerBackendProgramCollections]
@@ -4661,8 +4646,7 @@
     collections.uses-avx2-i64-lane-id
     collections.uses-avx512-i64-lane-id
     collections.uses-f64-neg
-    collections.uses-f32-neg
-    collections.iag))
+    collections.uses-f32-neg))
 
 (define (compiler-backend-program-collections-mark-avx2-i64-lane-id
   [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
@@ -4675,8 +4659,7 @@
     true
     collections.uses-avx512-i64-lane-id
     collections.uses-f64-neg
-    collections.uses-f32-neg
-    collections.iag))
+    collections.uses-f32-neg))
 
 (define (compiler-backend-program-collections-mark-avx512-i64-lane-id
   [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
@@ -4689,8 +4672,7 @@
     collections.uses-avx2-i64-lane-id
     true
     collections.uses-f64-neg
-    collections.uses-f32-neg
-    collections.iag))
+    collections.uses-f32-neg))
 
 (define (compiler-backend-program-collections-mark-f64-neg
   [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
@@ -5245,44 +5227,6 @@
   (str_cat.str-cat
     (compiler-backend-hex-digit (/ n 16))
     (compiler-backend-hex-digit (% n 16))))
-
-(defstruct CompilerBackendIagCensus
-  ;; Candidate globals, indexed 0..count-1 in `globals` order.
-  (count i64)
-  (words i64)
-  (ids (__tl_dyn-array i64))
-  (sizes (__tl_dyn-array i64))
-  (reasons (__tl_dyn-array i64))
-  (slots backend_i64_i64_map.Map)
-  ;; Per-function facts, indexed by program-index function slot. Each of the
-  ;; three bitset rows is `words` cells wide.
-  (function-count i64)
-  (mentions (__tl_dyn-array i64))
-  (writes (__tl_dyn-array i64))
-  (reach (__tl_dyn-array i64))
-  (callee-reach (__tl_dyn-array i64))
-  (indirect (__tl_dyn-array bool))
-  ;; Union of every writes[] row: the candidates some function rebinds.
-  (written (__tl_dyn-array i64))
-  ;; Direct call edges, appended in function order by the shared walk. The
-  ;; arrays double on demand rather than being pre-sized at one edge per
-  ;; instruction: the conservative bound zero-fills tens of megabytes on a
-  ;; program the size of the compiler, which costs more than the walk it saves.
-  (edge-capacity i64)
-  (edge-src (__tl_dyn-array i64))
-  (edge-dst (__tl_dyn-array i64))
-  ;; [0] the function slot being walked (-1 outside a function body),
-  ;; [1] the edge cursor. Shared, so the census travels by value.
-  (state (__tl_dyn-array i64))
-  ;; Function name -> program-index slot, snapshotted so the shared walk needs
-  ;; no program index of its own.
-  (functions backend_i64_i64_map.Map))
-
-;; One-word handle on a census. The shared collections struct carries this, not
-;; the census itself; `note-*` below reads element 0 as a shared view, so a hook
-;; costs a compare rather than a struct copy.
-(defstruct CompilerBackendIagCensusCell
-  (slots (__tl_dyn-array CompilerBackendIagCensus)))
 
 (define (compiler-backend-peephole-byte-at [data : (Ptr u8)] [index : i64]) : i64
   (cast

@@ -4041,6 +4041,12 @@
 (define (compiler-ir-hidden-sret-param-name) : String
   "$__sret")
 
+;; A global initializer's hidden result pointer names the global's inline cell,
+;; which every `Global g` read also reaches: the same ABI slot, but never the
+;; exclusive caller-provided object `$__sret` promises the optimizer.
+(define (compiler-ir-global-init-sret-param-name) : String
+  "$__sret_cell")
+
 (defstruct CompilerIrParamSeq
   (slots (__tl_dyn-array CompilerIrParam))
   (len i64))
@@ -4058,8 +4064,18 @@
   (slots (__tl_dyn-array CompilerIrFunction))
   (len i64))
 
+;; Where a global's value lives. `Word` cells hold the value itself (a
+;; scalar, a float, a one-word handle, a pointer to static bytes) or, for a
+;; register group, its words. `Inline size align` cells ARE a memory-class
+;; aggregate: the symbol's address is the aggregate's address, so a read of
+;; `Global g` yields that constant address and the `RuntimeGlobal`
+;; initializer writes the value through its leading hidden result pointer.
+(defenum CompilerIrGlobalStorage
+  (Word)
+  (Inline i64 i64))
+
 (defenum CompilerIrGlobal
-  (Global i64 ast.AstType CompilerIrValue))
+  (Global i64 ast.AstType CompilerIrValue CompilerIrGlobalStorage))
 
 (defstruct CompilerIrGlobalSeq
   (slots (__tl_dyn-array CompilerIrGlobal))
@@ -4070,6 +4086,8 @@
   ;; its parser identity. `symbol-id` is the exact ABI/linker spelling interned
   ;; by the parser or generated-symbol owner. A non-function type declares
   ;; undefined data at that symbol. Defined cells belong to CompilerIrGlobal.
+  ;; A data symbol of another TypeLisp object carries that global's storage,
+  ;; so a read of an inline cell names its address; everything else is `Word`.
   (Extern
     i64
     i64
@@ -4080,7 +4098,8 @@
     ast.AstExternLinkInputList
     bool
     CompilerIrReturnStorage
-    bool))
+    bool
+    CompilerIrGlobalStorage))
 
 (defstruct CompilerIrExternSeq
   (slots (__tl_dyn-array CompilerIrExtern))
@@ -4706,7 +4725,8 @@
               _
               provided
               storage
-              body-available)
+              body-available
+              _)
             ;; A provided export or available-externally body also has a
             ;; definition with this identity; the definition is authoritative
             ;; for internal calls.
@@ -6409,7 +6429,8 @@
     (ast.ast-extern-link-input-list-new)
     false
     (CompilerIrReturnStorage.None)
-    false))
+    false
+    (CompilerIrGlobalStorage.Word)))
 
 (define (compiler-ir-clone-value [value : (& CompilerIrValue)]) : CompilerIrValue
   (match value
@@ -6773,11 +6794,12 @@
   [pools : ast.AstNodePoolContext]
   [global : (& CompilerIrGlobal)]) : CompilerIrGlobal
   (match (owned_view.compiler-owned-reference-shared-view global)
-    [(Global name ty value)
+    [(Global name ty value storage)
       (Global
         (compiler-ir-symbol-clone name)
         (compiler-ir-clone-type pools ty)
-        (compiler-ir-clone-value (& value)))]))
+        (compiler-ir-clone-value (& value))
+        (compiler-ir-global-storage-clone (& storage)))]))
 
 (define (compiler-ir-clone-global-seq
   [pools : ast.AstNodePoolContext]
@@ -6807,7 +6829,8 @@
         links
         provided
         storage
-        body-available)
+        body-available
+        cell)
       (Extern
         name-id
         source-name-id
@@ -6818,7 +6841,8 @@
         (clone-ast-extern-link-input-list (& links))
         provided
         (compiler-ir-clone-return-storage pools storage)
-        body-available)]))
+        body-available
+        (compiler-ir-global-storage-clone (& cell)))]))
 
 (define (compiler-ir-clone-extern-seq
   [pools : ast.AstNodePoolContext]
@@ -7415,8 +7439,12 @@
 
 (define (clone-compiler-ir-global [global : (& CompilerIrGlobal)]) : CompilerIrGlobal
   (match global
-    [(Global name ty value)
-      (Global name (ast.clone-ast-type ty) (compiler-ir-clone-value value))]))
+    [(Global name ty value storage)
+      (Global
+        name
+        (ast.clone-ast-type ty)
+        (compiler-ir-clone-value value)
+        (compiler-ir-global-storage-clone storage))]))
 
 (define (clone-compiler-ir-global-seq [seq : (& CompilerIrGlobalSeq)]) : CompilerIrGlobalSeq
   (let
@@ -7440,7 +7468,8 @@
         links
         provided
         storage
-        body-available)
+        body-available
+        cell)
       (Extern
         name-id
         source-name-id
@@ -7451,7 +7480,8 @@
         (clone-ast-extern-link-input-list links)
         provided
         (clone-compiler-ir-return-storage storage)
-        body-available)]))
+        body-available
+        (compiler-ir-global-storage-clone cell))]))
 
 (define (clone-compiler-ir-extern-seq [seq : (& CompilerIrExternSeq)]) : CompilerIrExternSeq
   (let
@@ -8950,7 +8980,7 @@
   [type-segment-bases : i64]
   [global : (& CompilerIrGlobal)]) : String
   (match (owned_view.compiler-owned-reference-shared-view global)
-    [(Global name ty value)
+    [(Global name ty value storage)
       (str_cat.str-cat
         "global @"
         (compiler-ir-symbol-text name)
@@ -8958,7 +8988,32 @@
         (compiler-ir-type-render structural-session type-segment-bases (& ty))
         " = "
         (compiler-ir-value-render value)
+        (compiler-ir-global-storage-render (& storage))
         "\n")]))
+
+(define (compiler-ir-global-storage-clone
+  [storage : (& CompilerIrGlobalStorage)]) : CompilerIrGlobalStorage
+  (match storage
+    [(Word) (CompilerIrGlobalStorage.Word)]
+    [(Inline size align) (CompilerIrGlobalStorage.Inline size align)]))
+
+;; The inline byte size of a global's storage, or 0 for a word cell.
+(define (compiler-ir-global-storage-inline-size
+  [storage : (& CompilerIrGlobalStorage)]) : i64
+  (match storage
+    [(Word) 0]
+    [(Inline size _) size]))
+
+(define (compiler-ir-global-storage-render
+  [storage : (& CompilerIrGlobalStorage)]) : String
+  (match storage
+    [(Word) ""]
+    [(Inline size align)
+      (str_cat.str-cat
+        " inline "
+        (string.int->string size)
+        " "
+        (string.int->string align))]))
 
 (define (compiler-ir-global-seq-render-into
   [structural-session : cis.InternStructuralSessionHandle]
@@ -8996,7 +9051,7 @@
   [type-segment-bases : i64]
   [extern : (& CompilerIrExtern)]) : String
   (match (owned_view.compiler-owned-reference-shared-view extern)
-    [(Extern name _ symbol ty abi _ _ weak storage _)
+    [(Extern name _ symbol ty abi _ _ weak storage _ _)
       (str_cat.str-cat
         "extern @"
         (compiler-ir-symbol-text name)
@@ -11633,7 +11688,7 @@
   (if (>= position (compiler-ir-global-seq-count globals))
     index
     (match (compiler-ir-global-seq-borrow globals position)
-      [(Global _ ty _)
+      [(Global _ ty _ _)
         (compiler-ir-representation-collect-one-globals-from
           type-segment-bases
           (compiler-ir-representation-collect-one-type
@@ -11663,7 +11718,7 @@
   (if (>= position externs.len)
     index
     (match (compiler-ir-extern-seq-borrow externs position)
-      [(Extern _ _ _ ty abi _ _ _ _ _)
+      [(Extern _ _ _ ty abi _ _ _ _ _ _)
         (compiler-ir-representation-collect-one-externs-from
           type-segment-bases
           require-layout

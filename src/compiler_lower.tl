@@ -871,7 +871,7 @@
       [(Enabled table)
         (for [index (iterator.range start globals.len)]
           (match (& (array-ref globals.slots index))
-            [(ir.CompilerIrGlobal.Global global-name _ _)
+            [(ir.CompilerIrGlobal.Global global-name _ _ _)
               (lower_i64_i64_map.insert-ref!
                 (&mut table.global-owners)
                 (ir.compiler-ir-symbol-id global-name)
@@ -910,7 +910,8 @@
               [(ir.CompilerIrGlobal.Global
                   global-sym
                   _
-                  (ir.CompilerIrValue.RuntimeGlobal _))
+                  (ir.CompilerIrValue.RuntimeGlobal _)
+                  _)
                 (let
                   [owner-id : i64
                     (compiler-lower-state-global-owner-module-id
@@ -972,7 +973,8 @@
                 (ir.CompilerIrGlobal.Global
                   guard-id
                   (ast.AstType.Bool)
-                  (ir.CompilerIrValue.Unit)))
+                  (ir.CompilerIrValue.Unit)
+                  (ir.CompilerIrGlobalStorage.Word)))
               (lower-module-ownership-record-global-id!
                 lower-state
                 guard-id
@@ -1000,30 +1002,51 @@
                   [(ir.CompilerIrGlobal.Global
                       g-sym
                       g-ty
-                      (ir.CompilerIrValue.RuntimeGlobal init-sym))
+                      (ir.CompilerIrValue.RuntimeGlobal init-sym)
+                      storage)
                     (when
                       (=
                         (compiler-lower-state-global-owner-module-id
                           lower-state
                           g-sym)
                         owner-id)
-                      (let
-                        [call-ty : ast.AstType (ast.ty-node-persist g-ty)]
-                        [store-ty : ast.AstType (ast.ty-node-persist g-ty)]
-                        (ir.compiler-ir-instr-builder-push!
-                          (&mut init-instrs)
-                          (ir.CompilerIrInstr.Call
-                            next-var
-                            init-sym
-                            (ir.CompilerIrCallArgs.Nil)
-                            call-ty))
-                        (ir.compiler-ir-instr-builder-push!
-                          (&mut init-instrs)
-                          (ir.CompilerIrInstr.Store
-                            g-sym
-                            (ir.CompilerIrValue.Var next-var)
-                            store-ty))
-                        (+= next-var 1)))]
+                      (match storage
+                        ;; The initializer writes the aggregate through its
+                        ;; leading sret pointer into the inline cell itself.
+                        [(Inline _ _)
+                          (ir.compiler-ir-instr-builder-push!
+                            (&mut init-instrs)
+                            (ir.CompilerIrInstr.Mov
+                              next-var
+                              (ir.CompilerIrValue.GlobalAddr g-sym)
+                              (ast.AstType.U64)))
+                          (+= next-var 1)
+                          (ir.compiler-ir-instr-builder-push!
+                            (&mut init-instrs)
+                            (ir.CompilerIrInstr.Call
+                              next-var
+                              init-sym
+                              (ir.compiler-ir-call-args-sret-from-seq
+                                (&
+                                  (ir.compiler-ir-value-seq1
+                                    (ir.CompilerIrValue.Var (- next-var 1))))
+                                0)
+                              (ast.AstType.U64)))]
+                        [(Word)
+                          (ir.compiler-ir-instr-builder-push!
+                            (&mut init-instrs)
+                            (ir.CompilerIrInstr.Call
+                              next-var
+                              init-sym
+                              (ir.CompilerIrCallArgs.Nil)
+                              (ast.ty-node-persist g-ty)))
+                          (ir.compiler-ir-instr-builder-push!
+                            (&mut init-instrs)
+                            (ir.CompilerIrInstr.Store
+                              g-sym
+                              (ir.CompilerIrValue.Var next-var)
+                              (ast.ty-node-persist g-ty)))])
+                      (+= next-var 1))]
                   [_ unit]))
               (ir.compiler-ir-instr-builder-push!
                 (&mut init-instrs)
@@ -15883,7 +15906,11 @@
                 variant-name)]
             (ir.compiler-ir-global-builder-push!
               globals
-              (ir.CompilerIrGlobal.Global object-name (I64) (I64 tag)))))
+              (ir.CompilerIrGlobal.Global
+                object-name
+                (I64)
+                (I64 tag)
+                (ir.CompilerIrGlobalStorage.Word)))))
         (lower-nullary-variant-globals
           intern-state
           enum-name-id
@@ -17336,40 +17363,6 @@
       [(Expr copy-state copy-value _)
         (Ok (Expr copy-state copy-value storage-ty))])))
 
-(define (lower-copy-inline-aggregate-to-heap
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [value : ir.CompilerIrValue]
-  [ty : ast.AstType]
-  [allocator : i64]) : ResultLowerExpr
-  (match (lower-inline-aggregate-copy-size ctx (lower-global-shared-view ty))
-    [(Ok size)
-      (match (lower-reserve-heap-storage state size ty allocator)
-        [(Expr copy-state copy-value _)
-          (Ok
-            (Expr
-              ;; Group-aware store: a 2-word register group must write BOTH
-              ;; words.
-              (if (lower-type-register-resident? ctx ty)
-                (lower-store-inline-value-at-offset
-                  ctx
-                  copy-state
-                  copy-value
-                  0
-                  value
-                  (lower-global-shared-view ty)
-                  size)
-                (lower-copy-bytes-compact
-                  copy-state
-                  (lower-global-shared-view copy-value)
-                  0
-                  value
-                  0
-                  size))
-              copy-value
-              ty))])]
-    [(Err message) (Err (box (lower-diagnostic message)))]))
-
 (define (lower-inline-aggregate-abi-copy-needed?
   [ctx : tc_core.TcContext]
   [ty : (& ty ast.AstType)]) : bool
@@ -17379,15 +17372,32 @@
     (lower-type-inline-storage? ctx ty)
     (not (lower-type-register-resident? ctx ty))))
 
-(define (lower-return-abi-value
+;; The hidden result bytes of a global initializer: every memory-class value
+;; with bytes, whatever register class an ordinary return of the same type
+;; would use, or 0 for a value its word cell stores (a scalar, float, one-word
+;; handle, register group or zero-sized value).
+(define (lower-global-init-sret-size
   [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [value : ir.CompilerIrValue]
-  [ty : ast.AstType]
-  [allocator : i64]) : ResultLowerExpr
-  (if (lower-inline-aggregate-abi-copy-needed? ctx (& ty))
-    (lower-copy-inline-aggregate-to-heap ctx state value ty allocator)
-    (Ok (Expr state value ty))))
+  [ty : ast.AstType]) : i64
+  (if (and
+    (lower-inline-aggregate-abi-copy-needed? ctx (& ty))
+    (> (lower-type-size ctx (& ty)) 0))
+    (match (lower-inline-aggregate-copy-size ctx ty)
+      [(Ok size) size]
+      [(Err _) 0])
+    0))
+
+;; A memory-class `RuntimeGlobal` is stored inline: its cell is the aggregate
+;; and its initializer writes through a leading hidden result pointer to it.
+;; Every other global keeps a word cell (a register group keeps its words).
+(define (lower-runtime-global-storage
+  [ctx : tc_core.TcContext]
+  [ty : ast.AstType]) : ir.CompilerIrGlobalStorage
+  (if (> (lower-global-init-sret-size ctx (ast.clone-ast-type (& ty))) 0)
+    (ir.CompilerIrGlobalStorage.Inline
+      (lower-type-size ctx (& ty))
+      (lower-type-align ctx (& ty)))
+    (ir.CompilerIrGlobalStorage.Word)))
 
 (define (lower-local-storage-value
   [ctx : tc_core.TcContext]
@@ -17605,15 +17615,7 @@
                   (lower-copy-return-bytes state (Var sret-var) value size)
                   (Var sret-var)
                   (U64)))))]
-        ;; Only `__global_init_*` initializers return a memory-class value
-        ;; through `No`; they keep the heap copy until #7905.
-        [(No)
-          (lower-return-abi-value
-            ctx
-            state
-            value
-            ret-ty
-            (lower-tl-alloc-symbol))]
+        [(No) (lower-prepare-internal-return-no ctx state value ret-ty)]
         [(ByRef _)
           (Err
             (box
@@ -17625,7 +17627,25 @@
               (lower-diagnostic
                 "lower: memory return classification is unsupported")))]
         [(Unsupported message) (Err (box (lower-diagnostic message)))]))
-    (lower-return-abi-value ctx state value ret-ty (lower-tl-alloc-symbol))))
+    (lower-prepare-internal-return-no ctx state value ret-ty)))
+
+;; A value returned without hidden storage is already its physical result.
+;; Every memory-class result with bytes travels through the leading sret
+;; pointer (global initializers included), so reaching here with one is a
+;; lowering bug rather than a reason to copy it somewhere.
+(define (lower-prepare-internal-return-no
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [value : ir.CompilerIrValue]
+  [ret-ty : ast.AstType]) : ResultLowerExpr
+  (if (and
+    (lower-inline-aggregate-abi-copy-needed? ctx (& ret-ty))
+    (> (lower-type-size ctx (& ret-ty)) 0))
+    (Err
+      (box
+        (lower-diagnostic
+          "lower: memory-class return missing hidden sret parameter")))
+    (Ok (Expr state value ret-ty))))
 
 (define (lower-raw-pointer-ir-type [ty : ast.AstType]) : ast.AstType
   (match (tc_core.tc-type-strip-region (lower-global-shared-view ty))
@@ -23108,6 +23128,7 @@
                                   (ast.AstType.U64)
                                   0)
                                 (lower-param-list-prepend-sret
+                                  (ir.compiler-ir-hidden-sret-param-name)
                                   (lower-param-list
                                     ctx
                                     (lower-global-shared-view params)
@@ -36158,10 +36179,15 @@
   [names : (& LowerNameCache)]
   [symbol : i64]
   [result-ty : ast.AstType]) : LowerCAbiAggregate
-  ;; Global initializers are invoked by startup code, which owns the stable
-  ;; arena result path rather than a caller stack slot.
+  ;; Startup code calls a global initializer: a memory-class result goes
+  ;; through the leading sret pointer, which names the global's own inline
+  ;; cell; every other result returns the value its word cell stores.
   (if (lower-global-init-function-symbol? names symbol)
-    (No)
+    (let
+      [size : i64 (lower-global-init-sret-size ctx result-ty)]
+      (if (> size 0)
+        (Sret size)
+        (No)))
     (lower-internal-return-class ctx mode result-ty)))
 
 (define (lower-internal-call-register-two
@@ -73975,6 +74001,7 @@
           (&mut builder))
         (ir.compiler-ir-param-builder-to-seq builder))]
     (lower-param-list-prepend-sret
+      (ir.compiler-ir-hidden-sret-param-name)
       source
       (if leading-sret?
         (- source-start 1)
@@ -74627,12 +74654,11 @@
     [_ (LowerReturnSlot (- 0 1) leading)]))
 
 (define (lower-param-list-prepend-sret
+  [name : String]
   [params : ir.CompilerIrParamSeq]
   [sret-var : i64]) : ir.CompilerIrParamSeq
   (if (>= sret-var 0)
-    (ir.compiler-ir-param-seq-prepend
-      (Param (ir.compiler-ir-hidden-sret-param-name) (U64) sret-var)
-      params)
+    (ir.compiler-ir-param-seq-prepend (Param name (U64) sret-var) params)
     params))
 
 (define (lower-supported-function-param-type?
@@ -74682,10 +74708,10 @@
         (tc_core.tc-context-type-get ctx inner))]
     [_ true]))
 
-;; sret ABI: a `__global_init_<name>` initializer's result is stored into
-;; a forever-lived global by the backend's startup sequence (not a normal call
-;; site), so it must return stable arena storage -- never a caller stack sret
-;; slot. Keep these on the arena return path.
+;; A `__global_init_<name>` initializer is called by startup code (the
+;; backend's entry sequence or a module init wrapper), never by source. Its
+;; memory-class result is written through the leading sret pointer straight
+;; into the global's inline cell; any other result is stored into the word cell.
 (define (lower-global-init-function-symbol?
   [names : (& names LowerNameCache)]
   [symbol : i64]) : bool
@@ -74731,6 +74757,13 @@
           names
           logical-name
           (lower-global-shared-view ret-ty))]
+      ;; A global initializer's result pointer is the global's own cell, which
+      ;; `Global g` also reaches, so it does not carry the exclusive hidden
+      ;; result name the optimizer keys on.
+      [sret-name : String
+        (if (lower-global-init-function-symbol? names logical-name)
+          (ir.compiler-ir-global-init-sret-param-name)
+          (ir.compiler-ir-hidden-sret-param-name))]
       [ret-slot : LowerReturnSlot (lower-function-return-slot (& ret-class) 0)]
       [sret? : bool (>= ret-slot.sret-var 0)]
       [source-start : i64 ret-slot.source-start]
@@ -74858,6 +74891,7 @@
                               source-start
                               sret?)
                             (lower-param-list-prepend-sret
+                              sret-name
                               (lower-param-list
                                 ctx
                                 (lower-global-shared-view params)
@@ -75925,7 +75959,8 @@
             (ast.ast-extern-link-input-list-new)
             false
             storage
-            false))))))
+            false
+            (ir.CompilerIrGlobalStorage.Word)))))))
 
 (define (lower-struct-cleanup-decl
   [ctx : tc_core.TcContext]
@@ -77462,7 +77497,8 @@
                             ;; zero-filled static-cell form. The backend emits
                             ;; this pointer-width cache as an 8-byte-aligned
                             ;; common symbol on Linux and Windows.
-                            (Unit))
+                            (Unit)
+                            (ir.CompilerIrGlobalStorage.Word))
                           (ir.compiler-ir-function-builder-to-seq functions)
                           thunk-spans))))]
                 [(Err message) (Err message)])]
@@ -77806,7 +77842,8 @@
                               (ir.CompilerIrGlobal.Global
                                 global-symbol
                                 global-ty
-                                value))
+                                value
+                                (ir.CompilerIrGlobalStorage.Word)))
                             (lower-module-ownership-record-global-id!
                               lower-state
                               global-symbol
@@ -77843,8 +77880,11 @@
                                     (&mut cur-globals)
                                     (ir.CompilerIrGlobal.Global
                                       global-symbol
-                                      global-ty
-                                      (RuntimeGlobal init-symbol)))
+                                      (ast.clone-ast-type (& global-ty))
+                                      (RuntimeGlobal init-symbol)
+                                      (lower-runtime-global-storage
+                                        decl-ctx
+                                        global-ty)))
                                   (lower-module-ownership-record-global-id!
                                     lower-state
                                     global-symbol
@@ -77864,7 +77904,7 @@
                     [(Err message)
                       (set! result (Err (box (lower-diagnostic message))))
                       (set! done true)]))]
-              [(Extern decl-meta name _ metadata ty)
+              [(Extern decl-meta name kind metadata ty)
                 (let
                   [decl-ctx : tc_core.TcContext
                     (tc_core.tc-context-with-module-id
@@ -77917,6 +77957,21 @@
                           (tc_core.tc-type-without-regions
                             (ast.clone-ast-type (& resolved-ty)))
                           (ir.clone-ast-extern-abi (& abi)))]
+                      ;; Another TypeLisp object's runtime-initialized global:
+                      ;; a memory-class value is that object's inline cell.
+                      [cell : ir.CompilerIrGlobalStorage
+                        (if (and
+                          (not c-abi?)
+                          (match (& kind)
+                            [(Value) true]
+                            [(Function) false])
+                          (ast.ast-extern-metadata-runtime-cell?
+                            (& (deref metadata))))
+                          (lower-runtime-global-storage
+                            decl-ctx
+                            (tc_core.tc-type-without-regions
+                              (ast.clone-ast-type (& resolved-ty))))
+                          (ir.CompilerIrGlobalStorage.Word))]
                       (ir.compiler-ir-extern-builder-push!
                         (&mut cur-externs)
                         (ir.CompilerIrExtern.Extern
@@ -77942,7 +77997,8 @@
                             (lower-box-shared-view metadata))
                           false
                           storage
-                          false))
+                          false
+                          cell))
                       (set! cur-decls rest))))]
               [(DefFn decl-meta name params ret body-box metadata)
                 (let
@@ -78058,7 +78114,8 @@
                                         (ast.ast-extern-link-input-list-new)
                                         true
                                         (ir.CompilerIrReturnStorage.None)
-                                        false))])]
+                                        false
+                                        (ir.CompilerIrGlobalStorage.Word)))])]
                               (begin
                                 (cfg
                                   compile-profile
@@ -78114,7 +78171,7 @@
                           (compiler-lower-state-module-ownership-enabled
                             lower-state)
                           (match (& cache-global)
-                            [(ir.CompilerIrGlobal.Global cache-sym _ _)
+                            [(ir.CompilerIrGlobal.Global cache-sym _ _ _)
                               (lower-module-ownership-record-global-id!
                                 lower-state
                                 cache-sym

@@ -32,16 +32,32 @@
       (ir.compiler-ir-global-builder-with-capacity 4)]
     (ir.compiler-ir-global-builder-push!
       (&mut builder)
-      (ir.CompilerIrGlobal.Global pa (I64) (I64 0)))
+      (ir.CompilerIrGlobal.Global
+        pa
+        (I64)
+        (I64 0)
+        (ir.CompilerIrGlobalStorage.Word)))
     (ir.compiler-ir-global-builder-push!
       (&mut builder)
-      (ir.CompilerIrGlobal.Global pb (I64) (I64 0)))
+      (ir.CompilerIrGlobal.Global
+        pb
+        (I64)
+        (I64 0)
+        (ir.CompilerIrGlobalStorage.Word)))
     (ir.compiler-ir-global-builder-push!
       (&mut builder)
-      (ir.CompilerIrGlobal.Global pc (I64) (I64 0)))
+      (ir.CompilerIrGlobal.Global
+        pc
+        (I64)
+        (I64 0)
+        (ir.CompilerIrGlobalStorage.Word)))
     (ir.compiler-ir-global-builder-push!
       (&mut builder)
-      (ir.CompilerIrGlobal.Global pd (I64) (I64 0)))
+      (ir.CompilerIrGlobal.Global
+        pd
+        (I64)
+        (I64 0)
+        (ir.CompilerIrGlobalStorage.Word)))
     (ir.compiler-ir-global-builder-to-seq builder)))
 
 (define (win-param-preassign-function

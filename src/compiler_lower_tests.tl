@@ -6080,7 +6080,7 @@
   [name : String]) : bool
   (for [index (iterator.range 0 globals.len)]
     (match (ir.compiler-ir-global-seq-borrow globals index)
-      [(Global global-name _ _)
+      [(Global global-name _ _ _)
         (when
           (string.eq (ir.compiler-ir-symbol-text global-name) name)
           (return true))]))
@@ -6100,7 +6100,7 @@
   [function-name : String]) : bool
   (for [index (iterator.range 0 globals.len)]
     (match (ir.compiler-ir-global-seq-borrow globals index)
-      [(Global name _ initial)
+      [(Global name _ initial _)
         (when
           (string.eq (ir.compiler-ir-symbol-text name) global-name)
           (return
@@ -6121,7 +6121,7 @@
   [name : (& name str)]) : bool
   (for [index (iterator.range 0 globals.len)]
     (match (ir.compiler-ir-global-seq-borrow globals index)
-      [(Global global-name ty initial)
+      [(Global global-name ty initial _)
         (when
           (string.eq (ir.compiler-ir-symbol-text global-name) name)
           (return
@@ -7042,6 +7042,7 @@
                       abi
                       symbol-id
                       link-inputs
+                      _
                       _
                       _
                       _)
@@ -8750,7 +8751,7 @@
   [global-name : String]) : String
   (for [index (iterator.range 0 globals.len)]
     (match (ir.compiler-ir-global-seq-ref globals index)
-      [(Global name _ initial)
+      [(Global name _ initial _)
         (when
           (string.eq (ir.compiler-ir-symbol-text name) global-name)
           (return
@@ -18921,18 +18922,6 @@
             [_ false])])]
     [(No) false]))
 
-(define (lower-test-function-return-tuple?
-  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
-  [name : String]) : bool
-  (match (lower-test-function-seq-find funcs name)
-    [(Some func)
-      (match func
-        [(Function _ _ ret-ty _ _ _)
-          (match (& ret-ty)
-            [(ast.AstType.Tuple _) true]
-            [_ false])])]
-    [(No) false]))
-
 (define (compiler-lower-global-init-small-array-tuple-source) : String
   "(define (minus-one) : i8 -1)
 (define (get-bool) : bool true)
@@ -18951,45 +18940,48 @@
 (define t-i64 : (Tuple i64 i64) (tuple 5 (get-i64)))
 (define (main) : i64 0)")
 
-;; #8488: `__global_init_*` functions return stable arena pointers (never
-;; reclassified under the ordinary <=16B integer/register-group ABI), while
-;; constant scalar fixed arrays stay on the static data path.
+;; #8488/#7905: small array and tuple `__global_init_*` functions are never
+;; reclassified under the ordinary <=16B integer/register-group ABI: each writes
+;; its global's inline cell through the leading hidden result pointer, returns
+;; that pointer as `u64` and allocates nothing, while constant scalar fixed
+;; arrays stay on the static data path.
 (test
   compiler-lower-global-init-small-array-tuple-return-types
   (match (lower-test-functions
     (lower.lower-compiler-source
       (compiler-lower-global-init-small-array-tuple-source)))
     [(Some functions)
-      (test.assert-true
-        (lower-test-function-return-u64? (& functions) "__global_init_a-i8")
-        "(Array i8 4) global init returns u64 arena pointer")
-      (test.assert-true
-        (lower-test-function-return-u64? (& functions) "__global_init_a-bool")
-        "(Array bool 3) global init returns u64 arena pointer")
-      (test.assert-true
-        (lower-test-function-return-u64? (& functions) "__global_init_a-char")
-        "(Array char 3) global init returns u64 arena pointer")
-      (test.assert-true
-        (lower-test-function-return-u64? (& functions) "__global_init_a-f32")
-        "(Array f32 3) global init returns u64 arena pointer")
-      (test.assert-true
-        (lower-test-function-return-u64? (& functions) "__global_init_a-i64")
-        "(Array i64 2) global init returns u64 arena pointer")
-      (test.assert-true
-        (lower-test-function-return-u64? (& functions) "__global_init_a-str")
-        "(Array String 2) global init returns u64 arena pointer")
+      (let
+        [names : (Array String 9)
+          (array
+            "__global_init_a-i8"
+            "__global_init_a-bool"
+            "__global_init_a-char"
+            "__global_init_a-f32"
+            "__global_init_a-i64"
+            "__global_init_a-str"
+            "__global_init_t-i8"
+            "__global_init_t-f32"
+            "__global_init_t-i64")]
+        (for [name (& names)]
+          (test.assert-true
+            (and
+              (lower-test-function-return-u64? (& functions) (string.copy name))
+              (string.eq
+                (lower-test-function-param-name functions (string.copy name) 0)
+                (ir.compiler-ir-global-init-sret-param-name))
+              (=
+                (lower-test-function-call-count
+                  functions
+                  (string.copy name)
+                  "tl_alloc")
+                0))
+            (str_cat.str-cat
+              (string.copy name)
+              " writes its inline cell through the hidden result pointer"))))
       (test.assert-false
         (lower-test-function-defined? (& functions) "__global_init_a-static")
-        "constant scalar fixed array stays on static path")
-      (test.assert-true
-        (lower-test-function-return-tuple? (& functions) "__global_init_t-i8")
-        "(Tuple i8 i8 i8 i8) global init keeps tuple pointer return")
-      (test.assert-true
-        (lower-test-function-return-tuple? (& functions) "__global_init_t-f32")
-        "(Tuple f32 f32 f32) global init keeps tuple pointer return")
-      (test.assert-true
-        (lower-test-function-return-tuple? (& functions) "__global_init_t-i64")
-        "(Tuple i64 i64) global init keeps tuple pointer return")]
+        "constant scalar fixed array stays on static path")]
     [_ (test.assert-true false "lowering small array/tuple globals failed")]))
 
 (define (compiler-lower-tail-call-stack-param-borrow-source) : String
@@ -19047,3 +19039,100 @@
         1
         "Box deref inside Memory param points to heap and keeps tailcall")]
     [_ (test.assert-true false "lowering tail-call stack param borrow failed")]))
+
+;; #7905: a memory-class aggregate global is an inline cell of its own size
+;; and alignment (a 16-byte tuple included, although an ordinary return of it
+;; is register class); its initializer writes the cell through a leading
+;; `$__sret_cell` pointer, returns `u64` and allocates nothing. A scalar
+;; global keeps a word cell.
+(define (compiler-lower-inline-global-source) : String
+  "(defstruct Triple (a i64) (b i64) (c i64))
+(define (seed [x : i64]) : i64 (+ x 1))
+(define triple : Triple (Triple (seed 1) 2 3))
+(define pair : (Tuple i64 i64) (tuple (seed 4) 5))
+(define count : i64 (seed 6))
+(define (main) : i64 (+ triple.c (+ (tuple-ref pair 1) count)))")
+
+;; The storage of global `name` as "word", "inline:<size>:<align>" or "missing",
+;; and its runtime initializer's symbol text ("" without one).
+(define (lower-test-global-storage-at
+  [globals : (& globals ir.CompilerIrGlobalSeq)]
+  [name : String]) : String
+  (for [index (iterator.range 0 globals.len)]
+    (match (ir.compiler-ir-global-seq-borrow globals index)
+      [(Global global-name _ _ storage)
+        (when
+          (string.eq (ir.compiler-ir-symbol-text global-name) name)
+          (return
+            (match storage
+              [(Word) "word"]
+              [(Inline size align)
+                (str_cat.str-cat
+                  "inline:"
+                  (string.int->string size)
+                  ":"
+                  (string.int->string align))])))]))
+  "missing")
+
+(define (lower-test-global-init-name
+  [globals : (& globals ir.CompilerIrGlobalSeq)]
+  [name : String]) : String
+  (for [index (iterator.range 0 globals.len)]
+    (match (ir.compiler-ir-global-seq-borrow globals index)
+      [(Global global-name _ (RuntimeGlobal init) _)
+        (when
+          (string.eq (ir.compiler-ir-symbol-text global-name) name)
+          (return (ir.compiler-ir-symbol-text init)))]
+      [_ unit]))
+  "")
+
+(define (lower-test-inline-global-init-ok?
+  [functions : (& functions ir.CompilerIrFunctionSeq)]
+  [init : String]) : bool
+  (and
+    (> (string.string-length (& init)) 0)
+    (= (lower-test-function-param-count functions (string.copy (& init))) 1)
+    (string.eq
+      (lower-test-function-param-name functions (string.copy (& init)) 0)
+      (ir.compiler-ir-global-init-sret-param-name))
+    (lower-test-function-returns-u64? functions (string.copy (& init)))
+    (=
+      (lower-test-function-call-count
+        functions
+        (string.copy (& init))
+        "tl_alloc")
+      0)))
+
+(define (compiler-lower-inline-global-shape-ok?) : bool
+  (match (lower.lower-compiler-source (compiler-lower-inline-global-source))
+    [(Ok program _ lower-owner)
+      (let
+        [ok : bool
+          (match program
+            [(Program globals functions _ _authority)
+              (and
+                (string.eq
+                  (lower-test-global-storage-at (& globals) "triple")
+                  "inline:24:8")
+                (string.eq
+                  (lower-test-global-storage-at (& globals) "pair")
+                  "inline:16:8")
+                (string.eq
+                  (lower-test-global-storage-at (& globals) "count")
+                  "word")
+                (lower-test-inline-global-init-ok?
+                  (& functions)
+                  (lower-test-global-init-name (& globals) "triple"))
+                (lower-test-inline-global-init-ok?
+                  (& functions)
+                  (lower-test-global-init-name (& globals) "pair")))])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
+    [(Err _) false]))
+
+(test
+  compiler-lower-inline-global-shape
+  (test.assert-true
+    (compiler-lower-inline-global-shape-ok?)
+    "memory-class globals are inline cells written through the initializer's sret"))

@@ -9387,13 +9387,13 @@ The implementation limit for an emitted native function's final checked frame re
   Compiler-generated over-aligned storage may explicitly select the private
   `tl_alloc_aligned` entry described in §6.2; no source-level allocator API is
   implied.
-- Replacing a global inline aggregate may require a shallow container copy.
-  That implicit storage has program lifetime, independent of the active arena,
-  so leaving a scratch scope cannot invalidate the stored value. The copy does
-  not clone payloads or extend their lifetimes: source-level allocations and
-  borrowed references still obey the ordinary ownership and escape checks.
-  A previously captured assignment receiver continues to designate the old
-  aggregate storage after whole-global replacement (section 5.10).
+- A tuple, fixed-array, struct, or enum global is stored inline in its own
+  static cell (section 7.5); neither its initialization nor a later read or
+  assignment allocates. Replacing it copies the new value shallowly into that
+  same cell, so a previously captured assignment receiver still names the
+  binding's storage (section 5.10). The copy does not clone payloads or extend
+  their lifetimes: source-level allocations and borrowed references still obey
+  the ordinary ownership and escape checks.
 - Fatal page-allocation failures terminate with status 134 without allocating
   while reporting the failure. On Windows, `VirtualAlloc` failures include the
   ordinary/atomic arena kind, reserve/initial-commit/growth-commit operation,
@@ -9881,6 +9881,12 @@ and not a general manual memory management feature.
 
 - Stored in the `.data` or `.rodata` section.
 - Mutable globals use `.data` with an initializer.
+- A runtime-initialized global reserves zeroed storage (`.bss`/common). A
+  memory-class tuple, fixed-array, struct, or enum global reserves the whole
+  aggregate, rounded up to whole 8-byte words and aligned to at least 8 bytes:
+  its symbol's address is the value's address, also when another object reads
+  it as an external TypeLisp data symbol. Its initializer receives that address
+  as its hidden result pointer (section 11) and writes the value in place.
 - String literal bytes are stored in `.rodata`; a `String` value points to
   inline `{ptr,len}` storage whose `ptr` field points into `.rodata`.
 
@@ -10736,7 +10742,8 @@ loaded file's own path, line and column for `.load`.
   order and return transport. Direct calls, closures, indirect calls, dispatch
   thunks, and tail calls use the same position; a tail call forwards the
   caller's own slot. Global initializer functions (`__global_init_*`) are
-  invoked only by startup code and still return a pointer to arena storage.
+  invoked only by startup code, which passes a memory-class global's own
+  inline cell as the hidden result pointer (section 7.5).
   C `extern` declarations, `CFunc` calls, and C exports use the platform C ABI
   instead.
 - Structural values are copied shallowly by representation. Passing or

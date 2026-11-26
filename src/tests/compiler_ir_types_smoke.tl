@@ -266,7 +266,7 @@
   (if (or (< index 0) (>= index globals.len))
     false
     (match (compiler_ir_types.compiler-ir-global-seq-borrow globals index)
-      [(Global name _ _) (string.eq (ci.intern-str name) want)])))
+      [(Global name _ _ _) (string.eq (ci.intern-str name) want)])))
 
 (define (compiler-ir-smoke-global-seq-two
   [first : compiler_ir_types.CompilerIrGlobal]
@@ -285,14 +285,22 @@
   (if (or (< index 0) (>= index externs.len))
     false
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs index)
-      [(Extern _ _ name _ _ _ _ _ _ _) (string.eq name want)])))
+      [(Extern _ _ name _ _ _ _ _ _ _ _) (string.eq name want)])))
 
 (define (compiler-ir-smoke-global-extern-seq-roundtrip-ok?) : bool
   (let
     [first-global : compiler_ir_types.CompilerIrGlobal
-      (Global (compiler-ir-smoke-symbol-id "first-global") (I64) (I64 1))]
+      (Global
+        (compiler-ir-smoke-symbol-id "first-global")
+        (I64)
+        (I64 1)
+        (compiler_ir_types.CompilerIrGlobalStorage.Word))]
     [second-global : compiler_ir_types.CompilerIrGlobal
-      (Global (compiler-ir-smoke-symbol-id "second-global") (Bool) (Bool true))]
+      (Global
+        (compiler-ir-smoke-symbol-id "second-global")
+        (Bool)
+        (Bool true)
+        (compiler_ir_types.CompilerIrGlobalStorage.Word))]
     [compact-globals : compiler_ir_types.CompilerIrGlobalSeq
       (compiler-ir-smoke-global-seq-two first-global second-global)]
     [cloned-globals : compiler_ir_types.CompilerIrGlobalSeq
@@ -2026,7 +2034,8 @@
             (ast.ast-extern-link-input-list-new)
             false
             (compiler_ir_types.CompilerIrReturnStorage.None)
-            false))
+            false
+            (compiler_ir_types.CompilerIrGlobalStorage.Word)))
         (compiler_ir_types.CompilerIrReturnStorageAuthority.None))]
     [bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
     [index : compiler_ir_types.CompilerIrRepresentationIndex

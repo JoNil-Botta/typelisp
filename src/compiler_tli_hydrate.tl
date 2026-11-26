@@ -2005,9 +2005,15 @@
             abi
             (intern.intern-id-from-renderable archive-sym-id)
             (tli-hydrate-link-inputs (& row.extern-link-inputs))
-            (ast.ast-extern-metadata-flags
-              false
-              (string.eq (& archive-sym) (& row.name)))
+            (+
+              (ast.ast-extern-metadata-flags
+                false
+                (string.eq (& archive-sym) (& row.name)))
+              ;; The library global has a runtime initializer, so a
+              ;; memory-class value is stored inline in its cell.
+              (if (and (not row.is-extern) (!= (bit-and row.flags 4) 0))
+                ast.ast-extern-metadata-flag-runtime-cell
+                0))
             (ast.AstImportedSpmdMetadata.No))]
         [decl : ast.AstDecl
           (tli-hydrate-wrap-unsafe

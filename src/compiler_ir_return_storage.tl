@@ -399,6 +399,10 @@
                             (range facts left budget)
                             (range facts right budget)))]
                       [_ (StorageRange.Unknown)])]))))]
+        ;; A global's inline cell is static storage outside this function's
+        ;; facts. The program verifier ties every inline cell to its
+        ;; initializer's declared storage, so the call keeps no range claim.
+        [(ir.CompilerIrValue.GlobalAddr _) (StorageRange.Unproven)]
         [_ (StorageRange.Unknown)]))))
 
 (define (call-shape

@@ -1064,6 +1064,7 @@
           fn-skip
           (__tl_make-array bool 0)
           (__tl_make-array bool 0)
+          (__tl_make-array bool 0)
           fn-links
           (__tl_make-array String 0))]
       [pools : ast.AstNodePoolContext

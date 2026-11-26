@@ -38,7 +38,8 @@
               (ast.ast-extern-link-input-list-new)
               false
               (ir.CompilerIrReturnStorage.Some boxed)
-              false))]
+              false
+              (ir.CompilerIrGlobalStorage.Word)))]
         [_
           (ir.CompilerIrExtern.Extern
             name
@@ -50,7 +51,8 @@
             (ast.ast-extern-link-input-list-new)
             false
             (ir.CompilerIrReturnStorage.None)
-            false)])]))
+            false
+            (ir.CompilerIrGlobalStorage.Word))])]))
 
 (define (caller [params : String] [body : String]) : ir.CompilerIrFunction
   (irt.func
@@ -73,7 +75,8 @@
         links
         provided
         storage
-        body-available)
+        body-available
+        _)
       (ir.CompilerIrExtern.Extern
         name
         source
@@ -90,7 +93,8 @@
         links
         provided
         storage
-        body-available)]))
+        body-available
+        (ir.CompilerIrGlobalStorage.Word))]))
 
 (define (private-body [tail : String]) : String
   (str_cat.str-cat

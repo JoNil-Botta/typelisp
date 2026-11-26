@@ -1214,7 +1214,17 @@
         (ir-text-symbol (ir-text-word! (&mut cur) "")))]
     [ty : ast.AstType (ir-text-typed! (&mut cur))]
     (ir-text-expect! (&mut cur) "=")
-    (Global name ty (ir-text-value! (&mut cur)))))
+    (let
+      [value : ir.CompilerIrValue (ir-text-value! (&mut cur))]
+      (Global
+        name
+        ty
+        value
+        (if (ir-text-accept! (&mut cur) "inline")
+          (let
+            [size : i64 (ir-text-int! (&mut cur))]
+            (ir.CompilerIrGlobalStorage.Inline size (ir-text-int! (&mut cur))))
+          (ir.CompilerIrGlobalStorage.Word))))))
 
 ;; --- entry points -----------------------------------------------------------
 ;: Read one instruction line, such as `%3 = add %1, %2 : i64`.

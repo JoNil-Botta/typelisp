@@ -2860,7 +2860,7 @@
   [value : ir.CompilerIrValue]) : unit
   (ir.compiler-ir-global-builder-push!
     builder
-    (ir.CompilerIrGlobal.Global name ty value)))
+    (ir.CompilerIrGlobal.Global name ty value (ir.CompilerIrGlobalStorage.Word))))
 
 (define (compiler-optimize-runtime-call-identity-self-test) : i64
   (let
@@ -13604,7 +13604,7 @@
   [name : String]) : bool
   (for [index (iterator.range 0 (ir.compiler-ir-global-seq-count globals))]
     (match (ir.compiler-ir-global-seq-borrow globals index)
-      [(Global global-name _ _)
+      [(Global global-name _ _ _)
         (when
           (string.eq (ir.compiler-ir-symbol-text global-name) name)
           (return true))]))
@@ -13648,9 +13648,9 @@
               [same? : bool true]
               (while (and same? (< index aglobals.len))
                 (match (ir.compiler-ir-global-seq-borrow aglobals index)
-                  [(Global aname aty avalue)
+                  [(Global aname aty avalue _)
                     (match (ir.compiler-ir-global-seq-borrow bglobals index)
-                      [(Global bname bty bvalue)
+                      [(Global bname bty bvalue _)
                         (set!
                           same?
                           (and
@@ -13680,6 +13680,7 @@
                       alinks
                       aprovided
                       astorage
+                      _
                       _)
                     (match (ir.compiler-ir-extern-seq-borrow bexterns index)
                       [(Extern
@@ -13692,6 +13693,7 @@
                           blinks
                           bprovided
                           bstorage
+                          _
                           _)
                         (set!
                           same?
@@ -14038,7 +14040,7 @@
         [builder (ir.compiler-ir-global-builder-with-capacity globals.len)]
         (for [index (iterator.range 0 globals.len)]
           (match (ir.compiler-ir-global-seq-ref (& globals) index)
-            [(Global name ty value)
+            [(Global name ty value _)
               (let
                 [static?
                   (match (& ty)
@@ -34380,7 +34382,11 @@
       (ir.compiler-ir-global-builder-with-capacity 1)]
     (ir.compiler-ir-global-builder-push!
       (&mut builder)
-      (ir.CompilerIrGlobal.Global name ty (I64 0)))
+      (ir.CompilerIrGlobal.Global
+        name
+        ty
+        (I64 0)
+        (ir.CompilerIrGlobalStorage.Word)))
     (let
       [globals : ir.CompilerIrGlobalSeq
         (ir.compiler-ir-global-builder-to-seq builder)]
@@ -56823,7 +56829,7 @@ done:
           (match (opt.compiler-opt-global-array-element-shared-view
             globals.slots
             i)
-            [(Global _ _ (ir.CompilerIrValue.RuntimeGlobal init))
+            [(Global _ _ (ir.CompilerIrValue.RuntimeGlobal init) _)
               (set!
                 out
                 (str_cat.str-cat
@@ -56843,7 +56849,11 @@ done:
       (__tl_make-array ir.CompilerIrGlobal 1)]
     (set!
       (array-ref globals 0)
-      (ir.CompilerIrGlobal.Global (opt-test-symbol "cell") (I64) init))
+      (ir.CompilerIrGlobal.Global
+        (opt-test-symbol "cell")
+        (I64)
+        init
+        (ir.CompilerIrGlobalStorage.Word)))
     (opt-merge-test-render
       (opt.opt-merge-identical-functions
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -66138,7 +66148,8 @@ done:
         (if (= (% at 2) 0)
           (DynArray 0)
           (I64))
-        (I64 at)))
+        (I64 at)
+        (ir.CompilerIrGlobalStorage.Word)))
     unit))
 
 (define (opt-mr-mixed-bit [count : i64] [at : i64]) : i64
@@ -68408,7 +68419,8 @@ return 0" true)
     (ast.ast-extern-link-input-list-new)
     provided
     (ir.CompilerIrReturnStorage.None)
-    false))
+    false
+    (ir.CompilerIrGlobalStorage.Word)))
 
 (test
   global-mod-ref-extern-link-identity
@@ -88435,7 +88447,7 @@ return
   [name : i64]) : bool
   (for [index (iterator.range 0 (ir.compiler-ir-global-seq-count globals))]
     (match (ir.compiler-ir-global-seq-borrow globals index)
-      [(Global global-name _ _)
+      [(Global global-name _ _ _)
         (when (= (ir.compiler-ir-symbol-id global-name) name) (return true))]))
   false)
 

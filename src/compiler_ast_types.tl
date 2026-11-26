@@ -793,6 +793,14 @@
 (define (ast-extern-metadata-flags-symbol-matches-source? [flags : i64]) : bool
   (not (= (bit-and flags 2) 0)))
 
+;; A hydrated TypeLisp data symbol whose library global has a runtime
+;; initializer, so a memory-class value lives inline in the library's cell.
+(define ast-extern-metadata-flag-runtime-cell : i64
+  4)
+
+(define (ast-extern-metadata-flags-runtime-cell? [flags : i64]) : bool
+  (not (= (bit-and flags ast-extern-metadata-flag-runtime-cell) 0)))
+
 (defenum AstStructCleanup
   (No)
   (Fn ci.InternSyntaxId))
@@ -13452,6 +13460,10 @@
   (match metadata
     [(Metadata _ _ _ flags _)
       (ast-extern-metadata-flags-symbol-matches-source? flags)]))
+
+(define (ast-extern-metadata-runtime-cell? [metadata : (& AstExternMetadata)]) : bool
+  (match metadata
+    [(Metadata _ _ _ flags _) (ast-extern-metadata-flags-runtime-cell? flags)]))
 
 (define (ast-extern-metadata-imported-spmd [metadata : AstExternMetadata]) : AstImportedSpmdMetadata
   (match metadata

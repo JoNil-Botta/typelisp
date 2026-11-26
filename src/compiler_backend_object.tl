@@ -57,7 +57,7 @@
       (let
         [symbol : String
           (be_operand.compiler-backend-global-symbol-index program-index name)]
-        ;; IAG-1: an inline aggregate global's value is its own address.
+        ;; An inline aggregate global's value is its own address.
         [inline? : bool
           (be_state.compiler-backend-inline-aggregate-global?
             program-index.backend-state
@@ -614,10 +614,9 @@
           (object_target.compiler-backend-object-bytes-from-hex "0fb600"))]
       [else (object_target.compiler-backend-object-bytes-from-hex "488b00")])))
 
-;; IAG-1 (object mirror): copy `size` bytes from `(%rax)` into `(%r11)` with an
-;; unrolled `movq d(%rax), %r10 ; movq %r10, d(%r11)` run. The caller puts the
-;; source pointer in %rax and the cell address in %r11 (LoadRipAddressR11, which
-;; carries the relocation), so this blob needs none of its own.
+;; Copy `size` bytes from `(%rax)` into `(%r11)` with an unrolled
+;; `movq d(%rax), %r10 ; movq %r10, d(%r11)` run. The caller puts the source
+;; pointer in %rax and the destination address in %r11.
 (define (compiler-backend-object-inline-aggregate-copy-bytes [size : i64]) : String
   (let
     [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
@@ -2122,40 +2121,20 @@
       (let
         [symbol : String
           (be_operand.compiler-backend-global-symbol-index program-index name)]
-        [inline-size : i64
-          (be_state.compiler-backend-inline-aggregate-global-size
-            program-index.backend-state
-            name)]
-        (if (> inline-size 0)
-          ;; IAG-1: the cell holds the aggregate, so the rebind copies bytes.
-          (compiler-backend-object-add-nonempty-bytes
-            (object_target.compiler-backend-object-add-text
-              (object_target.compiler-backend-object-add-text-relocation
-                (compiler-backend-object-load-value-to-reg-with-type
-                  parts
-                  (be_state.compiler-backend-global-shared-view function)
-                  value
-                  ty
-                  "%rax"
-                  program-index)
-                function
-                (cobj.CompilerObjectRelocationKind.RipAddress)
-                (be_state.compiler-backend-global-shared-view symbol))
-              (cobj.CompilerObjectX64Instr.LoadRipAddressR11 symbol))
-            (compiler-backend-object-inline-aggregate-copy-bytes inline-size))
-          (object_target.compiler-backend-object-add-text
-            (object_target.compiler-backend-object-add-text-relocation
-              (compiler-backend-object-load-value-to-reg-with-type
-                parts
-                (be_state.compiler-backend-global-shared-view function)
-                value
-                ty
-                "%rax"
-                program-index)
+        ;; Only word cells take a `Store`: an inline cell is written in place.
+        (object_target.compiler-backend-object-add-text
+          (object_target.compiler-backend-object-add-text-relocation
+            (compiler-backend-object-load-value-to-reg-with-type
+              parts
               (be_state.compiler-backend-global-shared-view function)
-              (cobj.CompilerObjectRelocationKind.RipAddress)
-              (be_state.compiler-backend-global-shared-view symbol))
-            (cobj.CompilerObjectX64Instr.StoreRip symbol))))]
+              value
+              ty
+              "%rax"
+              program-index)
+            (be_state.compiler-backend-global-shared-view function)
+            (cobj.CompilerObjectRelocationKind.RipAddress)
+            (be_state.compiler-backend-global-shared-view symbol))
+          (cobj.CompilerObjectX64Instr.StoreRip symbol)))]
     [(compiler_ir_types.CompilerIrInstr.Jump target)
       (let
         [symbol : String
@@ -3361,32 +3340,39 @@
   (if (>= index globals.len)
     parts
     (match (compiler_ir_types.compiler-ir-global-seq-borrow globals index)
-      [(Global name ty value)
+      [(Global name ty value storage)
         (let
           [symbol : String
             (be_state.compiler-backend-state-user-symbol-id
               program-index.backend-state
               name)]
+          [align : i64
+            (be_data.compiler-backend-global-storage-align (& storage))]
           (compiler-backend-object-globals-from
             (if (be_data.compiler-backend-runtime-global? ty value)
               (object_target.compiler-backend-object-add-bss
                 (object_target.compiler-backend-object-add-bss
-                  (object_target.compiler-backend-object-symbol-export-section
-                    parts
-                    (be_state.compiler-backend-global-shared-view symbol)
-                    (Bss)
-                    (Data))
-                  (Label symbol))
-                ;; IAG-1: an inline aggregate global reserves the aggregate.
-                (Zero
                   (let
-                    [inline-size : i64
-                      (be_state.compiler-backend-inline-aggregate-global-size
-                        program-index.backend-state
-                        name)]
-                    (if (> inline-size 0)
-                      inline-size
-                      8))))
+                    [exported : object_target.CompilerBackendObjectTargetParts
+                      (object_target.compiler-backend-object-symbol-export-section
+                        parts
+                        (be_state.compiler-backend-global-shared-view symbol)
+                        (Bss)
+                        (Data))]
+                    ;; Every cell is a whole number of words, so only an
+                    ;; over-aligned inline aggregate needs padding before it.
+                    (if (> align 8)
+                      (object_target.compiler-backend-object-add-bss
+                        exported
+                        (Align align))
+                      exported))
+                  (Label symbol))
+                ;; An inline cell reserves the aggregate itself.
+                (Zero
+                  (match storage
+                    [(Inline size _)
+                      (be_data.compiler-backend-inline-cell-bytes size)]
+                    [(Word) 8])))
               (compiler-backend-object-global-value
                 (object_target.compiler-backend-object-add-data
                   (if (be_state.compiler-backend-state-private-global?
@@ -3656,7 +3642,7 @@
   (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     parts
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs seq-index)
-      [(Extern name-id source-name-id _ ty abi link-symbol-id _ provided _ _)
+      [(Extern name-id source-name-id _ ty abi link-symbol-id _ provided _ _ _)
         (let
           [link-symbol : String
             (be_operand.compiler-backend-link-symbol-id
@@ -3914,27 +3900,19 @@
   [pic-emit? : bool]) : be_state.ResultCompilerBackendObject
   (let
     [target : be_state.CompilerBackendTarget target-policy.target]
-    ;; IAG-1: the object image mirrors the text emitter's inline aggregate
-    ;; cells, and classifies on the same single whole-program walk, before the
-    ;; `.bss` reservations below are sized.
-    [census : be_state.CompilerBackendIagCensusCell
-      (be_data.compiler-backend-iag-prepare
-        type-segment-bases
-        program-index
+    ;; The object image reads the same published inline cells as the text
+    ;; emitter, before the `.bss` reservations below are sized.
+    [_inline-aggregates : unit
+      (be_data.compiler-backend-publish-global-storage!
+        program-index.backend-state
+        (& globals)
+        (& externs))]
+    [collections : be_state.CompilerBackendProgramCollections
+      (be_data.compiler-backend-collect-program-collections
         (be_state.compiler-backend-global-shared-view globals)
         (be_state.compiler-backend-global-shared-view functions))]
-    [collections : be_state.CompilerBackendProgramCollections
-      (be_data.compiler-backend-collect-program-collections-with-iag
-        (be_state.compiler-backend-global-shared-view globals)
-        (be_state.compiler-backend-global-shared-view functions)
-        (be_state.compiler-backend-global-shared-view census))]
     [_frozen-globals-known : unit
       (compiler_regalloc.compiler-reg-frozen-globals-finish!)]
-    [_inline-aggregates : unit
-      (be_data.compiler-backend-iag-finish!
-        program-index.backend-state
-        census
-        program-index)]
     [_
       (try
         (be_facts.compiler-backend-validate-program
@@ -4179,7 +4157,7 @@
   [globals : compiler_ir_types.CompilerIrGlobalSeq]) : bool
   (for [index (iterator.range 0 globals.len)]
     (match (compiler_ir_types.compiler-ir-global-seq-ref globals index)
-      [(Global _ _ value)
+      [(Global _ _ value _)
         (when
           (not (compiler-backend-object-semantic-value-supported? value))
           (return false))]))

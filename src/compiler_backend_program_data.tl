@@ -3,8 +3,6 @@
 (import compiler_backend_program_facts as be_facts)
 (import compiler_backend_state as be_state)
 (import stdlib.iterator)
-(import stdlib.io)
-(import stdlib.env)
 (import compiler_ir_types)
 (import compiler_ast_types)
 (import compiler_builtin_ids as cbi)
@@ -108,7 +106,7 @@
   (if (>= index globals.len)
     collections
     (match (compiler_ir_types.compiler-ir-global-seq-ref globals index)
-      [(Global _ _ value)
+      [(Global _ _ value _)
         (compiler-backend-collect-global-collections-from
           (be_facts.compiler-backend-collect-value-collections
             collections
@@ -121,22 +119,15 @@
   [globals : compiler_ir_types.CompilerIrGlobalSeq]) : be_state.CompilerBackendProgramCollections
   (compiler-backend-collect-global-collections-from collections globals 0))
 
-;; The one whole-program walk. `functions` must be the sequence the program
-;; index was built from (the entry list), so a census row index is that
-;; function's program-index slot; the global-initializer part runs with the
-;; census "outside any function" so a constant that names a global cannot be
-;; mistaken for a read by function 0.
-(define (compiler-backend-collect-program-collections-with-iag
+;; The one whole-program walk.
+(define (compiler-backend-collect-program-collections
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
-  [functions : compiler_ir_types.CompilerIrFunctionSeq]
-  [iag : be_state.CompilerBackendIagCensusCell]) : be_state.CompilerBackendProgramCollections
-  (let
-    [_outside : unit (be_facts.compiler-backend-iag-enter-function! iag -1)]
-    [seeded : be_state.CompilerBackendProgramCollections
-      (compiler-backend-collect-global-collections
-        (be_state.compiler-backend-program-collections-new-with-iag iag)
-        globals)]
-    (compiler-backend-collect-function-collections seeded functions)))
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]) : be_state.CompilerBackendProgramCollections
+  (compiler-backend-collect-function-collections
+    (compiler-backend-collect-global-collections
+      (be_state.compiler-backend-program-collections-new)
+      globals)
+    functions))
 
 (define (compiler-backend-collect-source-path-strings
   [backend-state : be_state.CompilerBackendState]
@@ -694,738 +685,90 @@
         ":\n    .quad 0x80000000\n    .quad 0\n"))
     buf))
 
-;; ============================================================================
-;; IAG-1: inline storage for runtime-initialised aggregate globals.
-;;
-;; A module-level global whose type is a MEMORY aggregate is stored as an
-;; 8-byte cell holding a POINTER to an arena box, so every field read pays two
-;; dependent loads (`movq g(%rip), %r ; movq (%r), %x`). Where the
-;; classification below proves no accepted program can observe the box
-;; identity, the cell IS the aggregate: `.comm g, <size>, 8`,
-;; `CompilerIrValue.Global g` materialises as `leaq g(%rip)` (a link-time
-;; constant address) instead of a load, a constant-offset field read folds to
-;; one `movq g+k(%rip), %r`, and the startup initializer plus every `(set! g v)`
-;; rebind copy <size> bytes into the cell.
-;;
-;; SAFETY. The only way a program can observe box identity is a borrow of `g`
-;; that stays live across a rebind of `g`. Let R(g) be the set of functions
-;; containing `CompilerIrInstr.Store g _ _` -- the one direct cell writer (the
-;; same instruction the W3(c) frozen-global scan keys on). If R(g) is empty
-;; nothing can rebind and the inline form is unconditionally equivalent.
-;; Otherwise EVERY function F that mentions `Global g` or `GlobalAddr g` must
-;; satisfy all three of
-;;
-;;   * F does not itself write the cell -- once inlining folds a setter into a
-;;     reader, a materialisation of `Global g` can straddle that write, and the
-;;     box form would keep reading the OLD box where the inline form reads the
-;;     new bytes;
-;;   * F contains no indirect call, so its callee set is enumerable at all; and
-;;   * no DIRECT callee of F transitively reaches a member of R(g).
-;;
-;; The third obligation is discharged by a bitset dataflow over the direct call
-;; graph: reach[F] carries every candidate whose cell F -- or anything F can
-;; call -- writes, and a function with an indirect call reads as "every
-;; candidate that is rebound anywhere".
-;; ============================================================================
-;; Largest inline cell the startup/rebind copy will unroll, in bytes.
-(define compiler-backend-iag-max-size : i64
-  64)
-(define compiler-backend-iag-reason-ok : i64
-  0)
-(define compiler-backend-iag-reason-no-size : i64
-  1)
-(define compiler-backend-iag-reason-too-large : i64
-  2)
-(define compiler-backend-iag-reason-self-rebind : i64
-  3)
-(define compiler-backend-iag-reason-indirect-call : i64
-  4)
-(define compiler-backend-iag-reason-callee-rebind : i64
-  5)
+;; Inline aggregate globals. The lowerer owns the decision: a memory-class
+;; `RuntimeGlobal` has `Inline size align` IR storage, its cell IS the
+;; aggregate, and its initializer writes it through the leading sret pointer.
+;; The backend only publishes that storage, so every `Global g` read of such a
+;; cell -- including a read of another object's TypeLisp data symbol through
+;; an extern -- materialises the symbol's address.
+(define (compiler-backend-inline-cell-bytes [size : i64]) : i64
+  (if (<= size 8)
+    8
+    (bit-and (+ size 7) (bit-not 7))))
 
-(define (compiler-backend-iag-reason-text [reason : i64]) : String
-  (cond
-    [(= reason compiler-backend-iag-reason-no-size)
-      "no static aggregate size in its initializer"]
-    [(= reason compiler-backend-iag-reason-too-large)
-      "aggregate larger than the inline cell cap"]
-    [(= reason compiler-backend-iag-reason-self-rebind)
-      "a function that reads it also rebinds it"]
-    [(= reason compiler-backend-iag-reason-indirect-call)
-      "a function that reads it makes an indirect call"]
-    [(= reason compiler-backend-iag-reason-callee-rebind)
-      "a callee of a function that reads it can rebind it"]
-    [else "included"]))
+(define (compiler-backend-global-storage-align
+  [storage : (& storage compiler_ir_types.CompilerIrGlobalStorage)]) : i64
+  (match storage
+    [(Inline _ align)
+      (if (> align 8)
+        align
+        8)]
+    [(Word) 8]))
 
-(define (compiler-backend-iag-bit?
-  [words : (& words (__tl_dyn-array i64))]
-  [base : i64]
-  [bit : i64]) : bool
-  (not
-    (=
-      (bit-and
-        (array-ref words (+ base (be_facts.compiler-backend-iag-bit-word bit)))
-        (be_facts.compiler-backend-iag-bit-mask bit))
-      0)))
+(define (compiler-backend-publish-global-storage-entry!
+  [table : (&mut table backend_i64_i64_map.Map)]
+  [name : i64]
+  [storage : (& storage compiler_ir_types.CompilerIrGlobalStorage)]) : unit
+  (match storage
+    [(Inline size _)
+      (backend_i64_i64_map.insert-ref!
+        table
+        (compiler_ir_types.compiler-ir-symbol-id name)
+        (compiler-backend-inline-cell-bytes size))]
+    [(Word) unit]))
 
-;; `dst[dst-base .. ] |= src[src-base .. ]`; true when a bit was added.
-(define (compiler-backend-iag-bits-merge!
-  [dst : (__tl_dyn-array i64)]
-  [dst-base : i64]
-  [src : (__tl_dyn-array i64)]
-  [src-base : i64]
-  [words : i64]) : bool
-  (let
-    [changed : bool false]
-    (for [index (iterator.range 0 words)]
-      (let
-        [old : i64 (array-ref dst (+ dst-base index))]
-        [merged : i64 (bit-or old (array-ref src (+ src-base index)))]
-        (when
-          (not (= merged old))
-          (set! (array-ref dst (+ dst-base index)) merged)
-          (set! changed true))))
-    changed))
-
-(define (compiler-backend-iag-bits-empty?
-  [words : (& words (__tl_dyn-array i64))]
-  [base : i64]
-  [count : i64]) : bool
-  (let
-    [empty : bool true]
-    (for [index (iterator.range 0 count)]
-      (when (not (= (array-ref words (+ base index)) 0)) (set! empty false)))
-    empty))
-
-;; ---------------------------------------------------------------------------
-;; Candidate discovery.
-;;
-;; The escape copy lowering emits for a global initializer's memory-aggregate
-;; result is `%r = call tl_alloc(N) ; copy_bytes %r, %src, N ; return %r`
-;; (src/compiler_lower.tl `lower-return-abi-value` ->
-;; `lower-copy-inline-aggregate-to-heap`). N is the only STATIC record of the
-;; aggregate's byte size that reaches the backend at all --
-;; `compiler-backend-type-size` answers 8 for every nominal struct handle,
-;; because the handle is a pointer -- so the size is recovered from that copy.
-;; A global whose initializer does not carry it is simply not a candidate.
-;; ---------------------------------------------------------------------------
-;; kind 0 -> the returned var id, or -1.
-;; kind 1 -> the byte size of the `copy_bytes` writing var `arg`, or 0.
-(define (compiler-backend-iag-scan-instrs
-  [instrs : compiler_ir_types.CompilerIrInstrSeq]
-  [kind : i64]
-  [arg : i64]) : i64
-  (for [index (iterator.range 0 instrs.len)]
-    (let
-      [instr (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
-      [found : i64
-        (if (= kind 0)
-          (match instr
-            [(Return maybe)
-              (match maybe
-                [(Some value)
-                  (match value
-                    [(Var id) id]
-                    [_ -1])]
-                [(No) -1])]
-            [_ -1])
-          (match instr
-            [(CopyBytes dst _ size)
-              (if (be_operand.compiler-backend-branch-uses-var? dst arg)
-                size
-                0)]
-            [_ 0]))]
-      (when
-        (if (= kind 0)
-          (>= found 0)
-          (> found 0))
-        (return found))))
-  (if (= kind 0)
-    -1
-    0))
-
-(define (compiler-backend-iag-scan-block-seq
-  [blocks : compiler_ir_types.CompilerIrBlockSeq]
-  [kind : i64]
-  [arg : i64]) : i64
-  (for [index
-    (iterator.range 0 (compiler_ir_types.compiler-ir-block-seq-count blocks))]
-    (let
-      [found : i64
-        (match (compiler_ir_types.compiler-ir-block-seq-ref blocks index)
-          [(Block _ instrs) (compiler-backend-iag-scan-instrs instrs kind arg)])]
-      (when
-        (if (= kind 0)
-          (>= found 0)
-          (> found 0))
-        (return found))))
-  (if (= kind 0)
-    -1
-    0))
-
-(define (compiler-backend-iag-scan-blocks
-  [blocks : compiler_ir_types.CompilerIrBlockList]
-  [kind : i64]
-  [arg : i64]) : i64
-  (match blocks
-    [(Array seq) (compiler-backend-iag-scan-block-seq seq kind arg)]))
-
-;; The inline byte size the initializer named by `init` proves, or 0.
-(define (compiler-backend-iag-initializer-size
-  [functions : compiler_ir_types.CompilerIrFunctionSeq]
-  [program-index : be_state.CompilerBackendProgramIndex]
-  [init : i64]) : i64
-  (match (be_operand.compiler-backend-index-function-slot program-index init)
-    [(LookupMissing) 0]
-    [(LookupFound slot)
-      (match (owned_view.compiler-owned-element-view functions.slots slot)
-        [(Function _ _ _ _ blocks _)
-          (let
-            [ret-var : i64
-              (compiler-backend-iag-scan-blocks
-                (be_state.compiler-backend-global-shared-view blocks)
-                0
-                0)]
-            (if (< ret-var 0)
-              0
-              (compiler-backend-iag-scan-blocks blocks 1 ret-var)))])]))
-
-;; True when the global's declared type is a nominal aggregate handle. Only
-;; these are reported as EXCLUDED aggregates by the trace below; a dynamic
-;; array or string handle is a one-word value, never a boxed aggregate.
-(define (compiler-backend-iag-nominal-aggregate-type?
-  [ty : compiler_ast_types.AstType]) : bool
-  (match ty
-    [(or (Struct _) (StructArgs _ _) (Enum _) (EnumArgs _ _) (Tuple _)) true]
-    [_ false]))
-
-;; A global takes the 8-byte boxed pointer cell today exactly when it is
-;; runtime-initialised, is not a register group, and is not a float.
-(define (compiler-backend-iag-boxed-cell?
-  [type-segment-bases : i64]
-  [program-index : be_state.CompilerBackendProgramIndex]
-  [ty : compiler_ast_types.AstType]
-  [value : (& value compiler_ir_types.CompilerIrValue)]) : bool
-  (and
-    (match value
-      [(RuntimeGlobal _) true]
-      [_ false])
-    (not
-      (be_facts.compiler-backend-group-type?
-        type-segment-bases
-        program-index
-        ty))
-    (not (be_operand.compiler-backend-float-type? ty))
-    (= (be_operand.compiler-backend-type-size type-segment-bases ty) 8)))
-
-(define (compiler-backend-iag-candidate-size
-  [type-segment-bases : i64]
-  [program-index : be_state.CompilerBackendProgramIndex]
-  [functions : compiler_ir_types.CompilerIrFunctionSeq]
-  [ty : compiler_ast_types.AstType]
-  [value : compiler_ir_types.CompilerIrValue]) : i64
-  (if (compiler-backend-iag-boxed-cell?
-    type-segment-bases
-    program-index
-    ty
-    value)
-    (match value
-      [(RuntimeGlobal init)
-        (compiler-backend-iag-initializer-size functions program-index init)]
-      [_ 0])
-    0))
-
-;; The disabled census: no candidate, so every hook below leaves immediately.
-(define (compiler-backend-iag-census-disabled) : be_state.CompilerBackendIagCensusCell
-  (compiler-backend-iag-census-cell
-    (be_state.CompilerBackendIagCensus
-      0
-      1
-      (__tl_make-array i64 1)
-      (__tl_make-array i64 1)
-      (__tl_make-array i64 1)
-      (backend_i64_i64_map.with-capacity 1)
-      0
-      (__tl_make-array i64 1)
-      (__tl_make-array i64 1)
-      (__tl_make-array i64 1)
-      (__tl_make-array i64 1)
-      (__tl_make-array bool 1)
-      (__tl_make-array i64 1)
-      0
-      (__tl_make-array i64 1)
-      (__tl_make-array i64 1)
-      (__tl_make-array i64 2)
-      (backend_i64_i64_map.with-capacity 1))))
-
-(define (compiler-backend-iag-census-cell
-  [census : be_state.CompilerBackendIagCensus]) : be_state.CompilerBackendIagCensusCell
-  (let
-    [slots : (__tl_dyn-array be_state.CompilerBackendIagCensus)
-      (__tl_make-array be_state.CompilerBackendIagCensus 1)]
-    (set! (array-ref slots 0) census)
-    (be_state.CompilerBackendIagCensusCell slots)))
-
-;; ---------------------------------------------------------------------------
-;; Dataflow, decision and publication.
-;; ---------------------------------------------------------------------------
-(define (compiler-backend-iag-seed-reach!
-  [census : be_state.CompilerBackendIagCensus]) : unit
-  (let
-    [f : i64 0]
-    (while (< f census.function-count)
-      (let
-        [base : i64 (* f census.words)]
-        [w : i64 0]
-        (while (< w census.words)
-          (set!
-            (array-ref census.reach (+ base w))
-            (bit-or
-              (array-ref census.writes (+ base w))
-              (if (array-ref census.indirect f)
-                (array-ref census.written w)
-                0)))
-          (+= w 1))
-        (+= f 1)))))
-
-;; Transitive closure over the direct call edges, as a reverse-CSR worklist
-;; rather than repeated sweeps of the edge list. A sweep-to-fixpoint costs
-;; rounds x edges; here a function is re-examined only when its own row GREW,
-;; so the total work is bounded by the number of (function, candidate) bits
-;; that ever turn on times that function's in-degree.
-(define (compiler-backend-iag-fixpoint!
-  [census : be_state.CompilerBackendIagCensus]
-  [edge-count : i64]) : unit
-  (let
-    [functions : i64 census.function-count]
-    ;; Reverse adjacency in CSR form: `starts[f] .. starts[f+1]` indexes the
-    ;; CALLERS of `f` in `callers`.
-    [starts : (__tl_dyn-array i64) (__tl_make-array i64 (+ functions 2))]
-    [callers : (__tl_dyn-array i64) (__tl_make-array i64 (+ edge-count 1))]
-    [cursor : (__tl_dyn-array i64) (__tl_make-array i64 (+ functions 2))]
-    ;; Explicit stack plus a membership flag, so a function is queued once.
-    [stack : (__tl_dyn-array i64) (__tl_make-array i64 (+ functions 1))]
-    [queued : (__tl_dyn-array bool) (__tl_make-array bool (+ functions 1))]
-    [top : i64 0]
-    (for [e (iterator.range 0 edge-count)]
-      (let
-        [dst : i64 (array-ref census.edge-dst e)]
-        (set! (array-ref starts (+ dst 1)) (+ (array-ref starts (+ dst 1)) 1))))
-    (for [f (iterator.range 0 functions)]
-      (set!
-        (array-ref starts (+ f 1))
-        (+ (array-ref starts (+ f 1)) (array-ref starts f))))
-    (for [f (iterator.range 0 functions)]
-      (set! (array-ref cursor f) (array-ref starts f)))
-    (for [e (iterator.range 0 edge-count)]
-      (let
-        [dst : i64 (array-ref census.edge-dst e)]
-        [at : i64 (array-ref cursor dst)]
-        (set! (array-ref callers at) (array-ref census.edge-src e))
-        (set! (array-ref cursor dst) (+ at 1))))
-    ;; Seed: every function whose own row already carries a candidate.
-    (for [f (iterator.range 0 functions)]
-      (when
-        (not
-          (compiler-backend-iag-bits-empty?
-            census.reach
-            (* f census.words)
-            census.words))
-        (set! (array-ref stack top) f)
-        (set! (array-ref queued f) true)
-        (+= top 1)))
-    (while (> top 0)
-      (let
-        [node : i64 (array-ref stack (- top 1))]
-        [limit : i64 (array-ref starts (+ node 1))]
-        (-= top 1)
-        (set! (array-ref queued node) false)
-        (for [index (iterator.range (array-ref starts node) limit)]
-          (let
-            [caller : i64 (array-ref callers index)]
-            (when
-              (compiler-backend-iag-bits-merge!
-                (be_state.compiler-backend-global-shared-view census.reach)
-                (* caller census.words)
-                (be_state.compiler-backend-global-shared-view census.reach)
-                (* node census.words)
-                census.words)
-              (when
-                (not (array-ref queued caller))
-                (set! (array-ref stack top) caller)
-                (set! (array-ref queued caller) true)
-                (+= top 1)))))))))
-
-(define (compiler-backend-iag-callee-reach!
-  [census : be_state.CompilerBackendIagCensus]
-  [edge-count : i64]) : unit
-  (for [e (iterator.range 0 edge-count)]
-    (compiler-backend-iag-bits-merge!
-      (be_state.compiler-backend-global-shared-view census.callee-reach)
-      (* (array-ref census.edge-src e) census.words)
-      (be_state.compiler-backend-global-shared-view census.reach)
-      (* (array-ref census.edge-dst e) census.words)
-      census.words)
-    unit))
-
-;; The safety rule, applied to the recorded rows: a candidate that some
-;; function rebinds must not be MENTIONED by a function that rebinds it, that
-;; makes an indirect call, or whose direct callees can reach a rebind.
-(define (compiler-backend-iag-decide!
-  [census : be_state.CompilerBackendIagCensus]) : unit
-  (let
-    [f : i64 0]
-    (while (< f census.function-count)
-      (let
-        [base : i64 (* f census.words)]
-        (when
-          (not
-            (compiler-backend-iag-bits-empty? census.mentions base census.words))
-          (let
-            [c : i64 0]
-            (while (< c census.count)
-              (when
-                (and
-                  (=
-                    (array-ref census.reasons c)
-                    compiler-backend-iag-reason-ok)
-                  (compiler-backend-iag-bit? census.mentions base c)
-                  (compiler-backend-iag-bit? census.written 0 c))
-                (cond
-                  [(array-ref census.indirect f)
-                    (set!
-                      (array-ref census.reasons c)
-                      compiler-backend-iag-reason-indirect-call)]
-                  [(compiler-backend-iag-bit? census.writes base c)
-                    (set!
-                      (array-ref census.reasons c)
-                      compiler-backend-iag-reason-self-rebind)]
-                  [(compiler-backend-iag-bit? census.callee-reach base c)
-                    (set!
-                      (array-ref census.reasons c)
-                      compiler-backend-iag-reason-callee-rebind)]
-                  [else unit]))
-              (+= c 1))))
-        (+= f 1)))))
-
-(define (compiler-backend-iag-publish
-  [census : (& census be_state.CompilerBackendIagCensus)]) : backend_i64_i64_map.Map
+;; Replaces the previous program's table, so a batch entry never sees another
+;; program's cells.
+(define (compiler-backend-publish-global-storage!
+  [backend-state : be_state.CompilerBackendState]
+  [globals : (& globals compiler_ir_types.CompilerIrGlobalSeq)]
+  [externs : (& externs compiler_ir_types.CompilerIrExternSeq)]) : unit
   (let
     [table : backend_i64_i64_map.Map
-      (backend_i64_i64_map.with-capacity (+ (* census.count 2) 1))]
-    (for [c (iterator.range 0 census.count)]
-      (when
-        (= (array-ref census.reasons c) compiler-backend-iag-reason-ok)
-        (backend_i64_i64_map.insert-ref!
-          (&mut table)
-          (array-ref census.ids c)
-          (array-ref census.sizes c))))
-    table))
-
-;; `TYPELISP_TRACE_INLINE_AGGREGATE_GLOBALS=1` reports the classification, so a
-;; caller can see which aggregate globals the safety rule refused and why.
-(define (compiler-backend-iag-trace?) : bool
-  (string.eq (env.var-value "TYPELISP_TRACE_INLINE_AGGREGATE_GLOBALS") "1"))
-
-(define (compiler-backend-iag-trace!
-  [census : be_state.CompilerBackendIagCensus]
-  [program-index : be_state.CompilerBackendProgramIndex]) : unit
-  (for [c (iterator.range 0 census.count)]
-    (io.print-error
-      (str_cat.str-cat
-        (if (= (array-ref census.reasons c) compiler-backend-iag-reason-ok)
-          "inline-aggregate-global: "
-          "inline-aggregate-global excluded: ")
-        (be_state.compiler-backend-symbol-text-index
-          program-index
-          (array-ref census.ids c))
-        " size="
-        (string.int->string (array-ref census.sizes c))
-        (str_cat.str-cat
-          " reason="
-          (compiler-backend-iag-reason-text (array-ref census.reasons c))
-          "\n"
-          "")))))
-
-;; ---------------------------------------------------------------------------
-;; Classification: prepare (before the shared walk) and finish (after it).
-;;
-;; `prepare` finds the candidates and allocates the census rows; the shared
-;; whole-program collections walk then fills them as it goes; `finish!` runs
-;; the small bitset dataflow over the collected rows and publishes the answer.
-;; No IR traversal of IAG-1's own remains.
-;; ---------------------------------------------------------------------------
-(define (compiler-backend-iag-prepare
-  [type-segment-bases : i64]
-  [program-index : be_state.CompilerBackendProgramIndex]
-  [globals : compiler_ir_types.CompilerIrGlobalSeq]
-  [functions : compiler_ir_types.CompilerIrFunctionSeq]) : be_state.CompilerBackendIagCensusCell
-  (when
-    (be_state.compiler-backend-state-library-object?
-      program-index.backend-state)
-    (return (compiler-backend-iag-census-disabled)))
-  (let
-    [global-count : i64 globals.len]
-    [ids : (__tl_dyn-array i64) (__tl_make-array i64 (+ global-count 1))]
-    [sizes : (__tl_dyn-array i64) (__tl_make-array i64 (+ global-count 1))]
-    [reasons : (__tl_dyn-array i64) (__tl_make-array i64 (+ global-count 1))]
-    [slots : backend_i64_i64_map.Map
-      (backend_i64_i64_map.with-capacity (+ (* global-count 2) 1))]
-    [count : i64 0]
-    (for [gi (iterator.range 0 global-count)]
-      (match (compiler_ir_types.compiler-ir-global-seq-ref globals gi)
-        [(Global name ty value)
-          (when
-            (compiler-backend-iag-boxed-cell?
-              type-segment-bases
-              program-index
-              (be_state.compiler-backend-global-shared-view ty)
-              value)
-            (let
-              [size : i64
-                (compiler-backend-iag-candidate-size
-                  type-segment-bases
-                  program-index
-                  (be_state.compiler-backend-global-shared-view functions)
-                  (be_state.compiler-backend-global-shared-view ty)
-                  value)]
-              [reason : i64
-                (cond
-                  [(or (< size 16) (not (= (bit-and size 7) 0)))
-                    compiler-backend-iag-reason-no-size]
-                  [(> size compiler-backend-iag-max-size)
-                    compiler-backend-iag-reason-too-large]
-                  [else compiler-backend-iag-reason-ok])]
-              (when
-                (or
-                  (= reason compiler-backend-iag-reason-ok)
-                  (compiler-backend-iag-nominal-aggregate-type? ty))
-                (set!
-                  (array-ref ids count)
-                  (compiler_ir_types.compiler-ir-symbol-id name))
-                (set! (array-ref sizes count) size)
-                (set! (array-ref reasons count) reason)
-                (backend_i64_i64_map.insert-ref!
-                  (&mut slots)
-                  (compiler_ir_types.compiler-ir-symbol-id name)
-                  count)
-                (+= count 1))))]))
-    (if (= count 0)
-      (compiler-backend-iag-census-disabled)
-      (let
-        [words : i64 (shr (+ count 63) 6)]
-        [function-count : i64 functions.len]
-        [row-cells : i64 (+ (* function-count words) 1)]
-        ;; Seed the edge arrays at about one edge per function and let them
-        ;; double from there.
-        [edge-capacity : i64 (+ function-count 16)]
-        [state : (__tl_dyn-array i64) (__tl_make-array i64 2)]
-        [tables : (& program-index be_state.CompilerBackendProgramTables)
-          (be_state.compiler-backend-program-tables program-index)]
-        (set! (array-ref state be_facts.compiler-backend-iag-state-function) -1)
-        (set! (array-ref state be_facts.compiler-backend-iag-state-cursor) 0)
-        (compiler-backend-iag-census-cell
-          (be_state.CompilerBackendIagCensus
-            count
-            words
-            ids
-            sizes
-            reasons
-            slots
-            function-count
-            (__tl_make-array i64 row-cells)
-            (__tl_make-array i64 row-cells)
-            (__tl_make-array i64 row-cells)
-            (__tl_make-array i64 row-cells)
-            (__tl_make-array bool (+ function-count 1))
-            (__tl_make-array i64 words)
-            edge-capacity
-            (__tl_make-array i64 edge-capacity)
-            (__tl_make-array i64 edge-capacity)
-            state
-            (owned_view.compiler-owned-reference-shared-view
-              (& tables.functions))))))))
-
-;; Runs on the rows the shared walk filled: seed, close over the call graph,
-;; apply the safety rule and publish. Also the ONLY publisher, so a program
-;; with no candidate still clears any answer a previous batch entry left.
-(define (compiler-backend-iag-finish!
-  [backend-state : be_state.CompilerBackendState]
-  [cell : be_state.CompilerBackendIagCensusCell]
-  [program-index : be_state.CompilerBackendProgramIndex]) : unit
-  (if (not (be_facts.compiler-backend-iag-cell-active? cell))
+      (backend_i64_i64_map.with-capacity (+ globals.len externs.len 1))]
+    (for [index (iterator.range 0 globals.len)]
+      (match (compiler_ir_types.compiler-ir-global-seq-borrow globals index)
+        [(Global name _ _ storage)
+          (compiler-backend-publish-global-storage-entry!
+            (&mut table)
+            name
+            (& storage))]))
+    (for [index (iterator.range 0 externs.len)]
+      (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs index)
+        [(Extern name _ _ _ _ _ _ _ _ _ storage)
+          (compiler-backend-publish-global-storage-entry!
+            (&mut table)
+            name
+            (& storage))]))
     (be_state.compiler-backend-state-set-inline-aggregate-globals!
       backend-state
-      (backend_i64_i64_map.with-capacity 1))
-    (let
-      [census : be_state.CompilerBackendIagCensus
-        (be_facts.compiler-backend-iag-census-of cell)]
-      [edge-count : i64
-        (array-ref census.state be_facts.compiler-backend-iag-state-cursor)]
-      [_seed : unit
-        (compiler-backend-iag-seed-reach!
-          (be_state.compiler-backend-global-shared-view census))]
-      [_closure : unit
-        (compiler-backend-iag-fixpoint!
-          (be_state.compiler-backend-global-shared-view census)
-          edge-count)]
-      [_callee : unit
-        (compiler-backend-iag-callee-reach!
-          (be_state.compiler-backend-global-shared-view census)
-          edge-count)]
-      [_decide : unit
-        (compiler-backend-iag-decide!
-          (be_state.compiler-backend-global-shared-view census))]
-      (be_state.compiler-backend-state-set-inline-aggregate-globals!
-        backend-state
-        (compiler-backend-iag-publish census))
-      (when
-        (compiler-backend-iag-trace?)
-        (compiler-backend-iag-trace! census program-index)))))
-
-;; ---------------------------------------------------------------------------
-;; Inline aggregate cell emission (text backend).
-;; ---------------------------------------------------------------------------
-;; Copy `remaining` bytes from `offset(src-reg)` into the inline cell at
-;; `symbol`. Sizes are small compile-time multiples of eight, so the run is
-;; fully unrolled; `xmm` (when non-empty) takes 16 bytes at a time and `gp`
-;; shuttles the rest one word at a time.
-(define (compiler-backend-emit-inline-aggregate-copy-chunks
-  [symbol : String]
-  [src-reg : String]
-  [gp : String]
-  [xmm : String]
-  [offset : i64]
-  [remaining : i64]) : String
-  (if (<= remaining 0)
-    ""
-    (if (and (>= remaining 16) (> (string.string-length xmm) 0))
-      (str_cat.str-cat
-        (str_cat.str-cat
-          "    movups "
-          (be_facts.compiler-backend-copy-address
-            offset
-            (be_state.compiler-backend-global-shared-view src-reg))
-          ", "
-          xmm
-          "\n")
-        (str_cat.str-cat
-          "    movups "
-          xmm
-          ", "
-          (be_state.compiler-backend-inline-aggregate-symbol-operand
-            symbol
-            offset)
-          "\n")
-        (compiler-backend-emit-inline-aggregate-copy-chunks
-          symbol
-          src-reg
-          gp
-          xmm
-          (+ offset 16)
-          (- remaining 16))
-        "")
-      (str_cat.str-cat
-        (str_cat.str-cat
-          "    movq "
-          (be_facts.compiler-backend-copy-address
-            offset
-            (be_state.compiler-backend-global-shared-view src-reg))
-          ", "
-          gp
-          "\n")
-        (str_cat.str-cat
-          "    movq "
-          gp
-          ", "
-          (be_state.compiler-backend-inline-aggregate-symbol-operand
-            symbol
-            offset)
-          "\n")
-        (compiler-backend-emit-inline-aggregate-copy-chunks
-          symbol
-          src-reg
-          gp
-          xmm
-          (+ offset 8)
-          (- remaining 8))
-        ""))))
-
-;; The whole of a `(set! g v)` rebind for an inline aggregate global: `v` is a
-;; pointer to the new aggregate, so the cell takes a byte copy rather than a
-;; pointer store. The pointer is read from its register home when it has one,
-;; else loaded into a scavenged register; the single extra shuttle register is
-;; scavenged at this point, excluding it.
-(define (compiler-backend-emit-inline-aggregate-store
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [symbol : String]
-  [size : i64]
-  [value : compiler_ir_types.CompilerIrValue]
-  [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
-  (let
-    [src-home : String
-      (be_facts.compiler-backend-address-base-filter-direct
-        (be_facts.compiler-backend-value-register-home
-          backend-state
-          assignments
-          value))]
-    [src-reg : String
-      (if (string.eq src-home "")
-        (be_operand.compiler-backend-scavenge-reg-here
-          (be_facts.compiler-backend-addr-scavenge-exclude)
-          0
-          "%r10"
-          backend-state)
-        (owned_view.compiler-owned-shared-view src-home))]
-    [shuttle : String
-      (be_operand.compiler-backend-scavenge-reg-here
-        (be_operand.compiler-backend-one-exclude
-          (be_state.compiler-backend-global-shared-view src-reg))
-        1
-        "%r11"
-        backend-state)]
-    [src-asm
-      (try
-        (if (string.eq src-home "")
-          (be_operand.compiler-backend-emit-load-value
-            assignments
-            value
-            (be_state.compiler-backend-global-shared-view src-reg)
-            backend-state)
-          (be_state.ResultCompilerBackend.Ok "")))]
-    (Ok
-      (str_cat.str-cat
-        src-asm
-        (compiler-backend-emit-inline-aggregate-copy-chunks
-          symbol
-          src-reg
-          shuttle
-          ""
-          0
-          size)
-        ""
-        ""))))
+      table)))
 
 ;; The reserved cell size of a runtime-initialised global: the aggregate itself
-;; for an inline aggregate, two words for a register group, one word otherwise.
+;; (whole words, at least one) for an inline cell, two words for a register
+;; group, one word otherwise.
 (define (compiler-backend-runtime-global-cell-size
   [type-segment-bases : i64]
   [program-index : be_state.CompilerBackendProgramIndex]
-  [name : i64]
+  [storage : (& storage compiler_ir_types.CompilerIrGlobalStorage)]
   [ty : (& compiler_ast_types.AstType)]) : i64
-  (let
-    [inline-size : i64
-      (be_state.compiler-backend-inline-aggregate-global-size
-        program-index.backend-state
-        name)]
-    (if (> inline-size 0)
-      inline-size
+  (match storage
+    [(Inline size _) (compiler-backend-inline-cell-bytes size)]
+    [(Word)
       (if (be_facts.compiler-backend-group-type?
         type-segment-bases
         program-index
         ty)
         16
-        8))))
+        8)]))
+
+;; The base-2 logarithm of a power-of-two alignment, as COFF `.comm` takes it.
+(define (compiler-backend-align-log2 [align : i64]) : i64
+  (let
+    [log : i64 0]
+    (while (< (shl 1 log) align)
+      (+= log 1))
+    log))
 
 (define (compiler-backend-global-value-asm
   [type-segment-bases : i64]
@@ -1515,16 +858,20 @@
 (define (compiler-backend-emit-runtime-global
   [target : be_state.CompilerBackendTarget]
   [symbol : String]
-  [size : i64]) : String
+  [size : i64]
+  [align : i64]) : String
   ;; ELF `.comm` takes the alignment in bytes, COFF its base-2 logarithm.
   (str_cat.str-cat
     "    .comm "
     symbol
     ", "
     (string.int->string size)
-    (if (be_state.compiler-backend-target-elf? target)
-      ", 8\n"
-      ", 3\n")))
+    ", "
+    (string.int->string
+      (if (be_state.compiler-backend-target-elf? target)
+        align
+        (compiler-backend-align-log2 align)))
+    "\n"))
 
 (define (compiler-backend-emit-global
   [type-segment-bases : i64]
@@ -1532,12 +879,13 @@
   [global : compiler_ir_types.CompilerIrGlobal]
   [program-index : be_state.CompilerBackendProgramIndex]) : be_state.ResultCompilerBackend
   (match global
-    [(Global name ty value)
+    [(Global name ty value storage)
       (let
         [symbol : String
           (be_state.compiler-backend-state-user-symbol-id
             program-index.backend-state
             name)]
+        [align : i64 (compiler-backend-global-storage-align (& storage))]
         [private? : bool
           (be_state.compiler-backend-state-private-global?
             program-index.backend-state
@@ -1555,14 +903,14 @@
             (compiler-backend-runtime-global-cell-size
               type-segment-bases
               program-index
-              name
+              (& storage)
               (& ty))
             0)]
         (if (and zeroed? (not library?))
           (Ok
             (str_cat.str-cat
               visibility
-              (compiler-backend-emit-runtime-global target symbol size)))
+              (compiler-backend-emit-runtime-global target symbol size align)))
           (let
             [section : String
               (if library?
@@ -1610,7 +958,10 @@
               (str_cat.str-cat
                 section
                 (if library?
-                  "    .balign 8\n"
+                  (str_cat.str-cat
+                    "    .balign "
+                    (string.int->string align)
+                    "\n")
                   "")
                 visibility
                 (if (and
@@ -1663,9 +1014,11 @@
 
 (define (compiler-backend-global-init-call
   [type-segment-bases : i64]
+  [target : be_state.CompilerBackendTarget]
   [name : i64]
   [init : i64]
   [ty : (& compiler_ast_types.AstType)]
+  [storage : (& storage compiler_ir_types.CompilerIrGlobalStorage)]
   [program-index : be_state.CompilerBackendProgramIndex]) : String
   (let
     [symbol : String
@@ -1676,27 +1029,28 @@
       (be_state.compiler-backend-state-user-symbol-id
         program-index.backend-state
         init)]
-    [inline-size : i64
-      (be_state.compiler-backend-inline-aggregate-global-size
-        program-index.backend-state
-        name)]
+    [inline? : bool
+      (match storage
+        [(Inline _ _) true]
+        [(Word) false])]
     (str_cat.str-cat
+      ;; An inline cell is the initializer's leading sret argument: it writes
+      ;; the aggregate in place, and its returned pointer needs no copy.
+      (if inline?
+        (str_cat.str-cat
+          "    leaq "
+          symbol
+          "(%rip), "
+          (if (be_state.compiler-backend-target-elf? target)
+            "%rdi"
+            "%rcx")
+          "\n")
+        "")
       "    call "
       init-symbol
       "\n"
       (cond
-        ;; IAG-1: the initializer still returns a pointer to an arena-resident
-        ;; aggregate (src/compiler_lower.tl's global-init sret rule). The
-        ;; startup sequence copies it into the inline cell. Nothing else is
-        ;; live between the `__global_init_*` calls, so %r10/%xmm0 are free.
-        [(> inline-size 0)
-          (compiler-backend-emit-inline-aggregate-copy-chunks
-            symbol
-            "%rax"
-            "%r10"
-            "%xmm0"
-            0
-            inline-size)]
+        [inline? ""]
         ;; A register-group init returns word0:word1 in %rax:%rdx; store
         ;; both into the inline 16-byte global slot.
         [(be_facts.compiler-backend-group-type?
@@ -1722,6 +1076,7 @@
 
 (define (compiler-backend-global-initializers-from
   [type-segment-bases : i64]
+  [target : be_state.CompilerBackendTarget]
   [globals : (& compiler_ir_types.CompilerIrGlobalSeq)]
   [program-index : be_state.CompilerBackendProgramIndex]
   [index : i64]
@@ -1729,7 +1084,7 @@
   (if (>= index globals.len)
     ""
     (match (compiler_ir_types.compiler-ir-global-seq-borrow globals index)
-      [(Global name ty value)
+      [(Global name ty value storage)
         (str_cat.str-cat
           (match value
             [(RuntimeGlobal init)
@@ -1739,14 +1094,17 @@
                 selection)
                 (compiler-backend-global-init-call
                   type-segment-bases
+                  target
                   name
                   init
                   ty
+                  (& storage)
                   program-index)
                 "")]
             [_ ""])
           (compiler-backend-global-initializers-from
             type-segment-bases
+            target
             globals
             program-index
             (+ index 1)
@@ -1792,6 +1150,7 @@
 
 (define (compiler-backend-global-initializers
   [type-segment-bases : i64]
+  [target : be_state.CompilerBackendTarget]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [program-index : be_state.CompilerBackendProgramIndex]) : String
   (let
@@ -1800,6 +1159,7 @@
     (if (= (string.string-length (& startup)) 0)
       (compiler-backend-global-initializers-from
         type-segment-bases
+        target
         globals
         program-index
         0
@@ -1810,6 +1170,7 @@
       (str_cat.str-cat
         (compiler-backend-global-initializers-from
           type-segment-bases
+          target
           globals
           program-index
           0
@@ -1817,6 +1178,7 @@
         startup
         (compiler-backend-global-initializers-from
           type-segment-bases
+          target
           globals
           program-index
           0
@@ -2022,7 +1384,7 @@
   (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     index
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs seq-index)
-      [(Extern name-id source-name-id _ _ _ link-symbol _ provided _ _)
+      [(Extern name-id source-name-id _ _ _ link-symbol _ provided _ _ _)
         (let
           [with-startup-role : be_state.CompilerBackendRuntimeIndex
             (compiler-backend-runtime-index-with-startup-profile-role
@@ -2058,7 +1420,7 @@
   (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     index
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs seq-index)
-      [(Extern name-id source-name-id _ _ _ link-symbol _ _ _ _)
+      [(Extern name-id source-name-id _ _ _ link-symbol _ _ _ _ _)
         (compiler-backend-runtime-index-arena-debug-call-link-seq
           (if (and
             (cbi.compiler-builtin-backend-runtime-arena-debug-id? link-symbol)
@@ -2432,7 +1794,7 @@
   (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     buf
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs seq-index)
-      [(Extern name-id source-name-id _ _ abi link-symbol-id _ provided _ _)
+      [(Extern name-id source-name-id _ _ abi link-symbol-id _ provided _ _ _)
         (compiler-backend-emit-extern-seq-into
           backend-state
           externs
@@ -2541,7 +1903,7 @@
         0
         (compiler_ir_types.compiler-ir-extern-seq-count externs))]
       (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs i)
-        [(Extern name source _ _ _ link _ _ _ _)
+        [(Extern name source _ _ _ link _ _ _ _ _)
           (let
             [bit : i64 (compiler-backend-runtime-leaf-bit backend-state link)]
             (when
@@ -3502,6 +2864,7 @@
             (be_state.compiler-backend-runtime-plan-tail plan))
           (compiler-backend-global-initializers
             type-segment-bases
+            target
             globals
             program-index)))]
     [(be_state.CompilerBackendTarget.Windows) ""]))
@@ -3685,50 +3048,34 @@
   (Ok text_buf.TextBuf be_state.CompilerBackendProgramCollections)
   (Err (Box compiler_diagnostic.CompilerDiagnostic)))
 
-;; IAG-1 ordering. The `.comm` size, the `Global` materialisation form and
-;; every fold read one already-published classification, so the whole-program
-;; walk has to precede global emission. That walk is the one the backend
-;; already made -- `compiler-backend-collect-program-collections` -- so it is
-;; MOVED here rather than duplicated: prepare the census, run the single walk
-;; (which fills the census rows as a side effect of visiting operands it was
-;; visiting anyway), finish the classification, then spell the globals.
-;;
-;; The walk runs over the ENTRY function list, the sequence the program index
-;; was built from, so a census row index is that function's program-index slot.
-;; The only function that list can add is the synthesized implicit `main`
-;; (`return 0`), which contributes nothing to any collection.
+;; The `.comm` size, the `Global` materialisation form and every fold read the
+;; published IR storage, so it is published before globals are spelled.
 (define (compiler-backend-emit-globals-and-collections
   [type-segment-bases : i64]
   [target : be_state.CompilerBackendTarget]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [externs : (& externs compiler_ir_types.CompilerIrExternSeq)]
   [spans : compiler_ir_types.CompilerSourceSpans]
   [program-index : be_state.CompilerBackendProgramIndex]) : ResultCompilerBackendGlobalsAndCollections
   (let
-    [census : be_state.CompilerBackendIagCensusCell
-      (compiler-backend-iag-prepare
-        type-segment-bases
-        program-index
-        (be_state.compiler-backend-global-shared-view globals)
-        (be_state.compiler-backend-global-shared-view functions))]
+    [_inline-aggregates : unit
+      (compiler-backend-publish-global-storage!
+        program-index.backend-state
+        (& globals)
+        externs)]
     [collections : be_state.CompilerBackendProgramCollections
       (compiler-backend-collect-source-path-strings
         program-index.backend-state
-        (compiler-backend-collect-program-collections-with-iag
+        (compiler-backend-collect-program-collections
           (be_state.compiler-backend-global-shared-view globals)
-          functions
-          (be_state.compiler-backend-global-shared-view census))
+          functions)
         spans)]
     ;; W3(c): the walk above is the whole-program cell-writer scan. Publishing
     ;; here -- before any function is planned -- is what makes a frozen global's
     ;; read rematerialisable in the allocator.
     [_frozen-globals-known : unit
       (compiler_regalloc.compiler-reg-frozen-globals-finish!)]
-    [_inline-aggregates : unit
-      (compiler-backend-iag-finish!
-        program-index.backend-state
-        census
-        program-index)]
     [globals-buf
       (try
         (compiler-backend-emit-globals-buffer-into

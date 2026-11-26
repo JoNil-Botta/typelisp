@@ -6933,14 +6933,13 @@
                         (comptime.expr-list-cons
                           (comptime.expr-var "b7")
                           (comptime.expr-list-empty)))))))))]
-        [arms : comptime.MatchArmList
-          (comptime.match-arm-list-cons
-            (comptime.match-arm
-              (comptime.pattern-wildcard)
-              (comptime.expr-bool false))
-            (comptime.match-arm-list-empty))]
+        [arms : comptime.MatchArmList (comptime.match-arm-list-empty)]
         [conds : comptime.ExprList (comptime.expr-list-empty)]
         [row-index : i64 (- (comptime.expr-list-length items) 1)]
+        (if (= (comptime.expr-list-length items) (enum-variant-count T))
+          unit
+          (comptime.comptime-error
+            "opt-variant-eq-table: table must cover every variant"))
         (while (>= row-index 0)
           (let
             [row : comptime.Expr (comptime.expr-list-nth items row-index)]

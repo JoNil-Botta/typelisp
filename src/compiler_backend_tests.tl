@@ -47445,8 +47445,9 @@ user_fn:
 (define (compiler-backend-literal-section-strings) : be_state.BackendStringSeq
   (be_state.BackendStringSeq (__tl_make-array "head-tail" "tail-end" "zz") 3))
 
-;; A library object gives each unit and header its own ELF section, and every
-;; build closes each unit with the marker the closed-build pruner splits on.
+;; A library object gives each unit and header its own ELF section and does
+;; not chain owners. Every build closes each unit with the marker the
+;; closed-build pruner splits on.
 (define (compiler-backend-literal-rodata-sections-ok?) : bool
   (let
     [head : String (be_facts.compiler-backend-string-data-label "head-tail")]
@@ -47475,6 +47476,13 @@ user_fn:
             head
             "\",\"a\",@progbits\n"
             head
+            ":\n    .ascii \"head-tail\"\n"
+            unit-end)))
+      (string.contains
+        (& plain)
+        (&
+          (str_cat.str-cat
+            head
             ":\n    .ascii \"head-\"\n"
             tail
             ":\n    .ascii \"tail-end\"\n"
@@ -47491,7 +47499,7 @@ user_fn:
             "\",\"a\",@progbits\n    .balign 8\n"
             header
             ":\n")))
-      (= (backend.compiler-backend-string-count sectioned unit-end) 2)
+      (= (backend.compiler-backend-string-count sectioned unit-end) 3)
       (= (backend.compiler-backend-string-count plain unit-end) 2)
       (= (backend.compiler-backend-string-count plain ".section \".rodata.") 0)
       (= (backend.compiler-backend-string-count plain "    .balign 8\n") 1)

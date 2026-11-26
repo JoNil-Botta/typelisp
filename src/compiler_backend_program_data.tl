@@ -557,9 +557,12 @@
             (+= (array-ref ordered.slots i).offset (array-ref bases owner))
             (set! (array-ref ordered.slots i).owner (array-ref roots owner))))))))
 
+;; Chaining glues unrelated literals into one unit, so a sectioned object,
+;; whose linker collects each unit alone, keeps them apart.
 (define (compiler-backend-literal-records
   [strings : be_state.BackendStringSeq]
-  [start : i64]) : cobj.CompilerObjectDataRecordList
+  [start : i64]
+  [chain : bool]) : cobj.CompilerObjectDataRecordList
   (let
     [ordered : literal_vec.Vec
       (literal_vec.with-capacity (- strings.len start))]
@@ -600,7 +603,7 @@
                 (array-ref ordered.slots i)
                 (CompilerBackendLiteralKey entry.slot-address i 0)))))))
     (compiler-backend-literal-place-interiors! (&mut ordered))
-    (compiler-backend-literal-chain-owners! (&mut ordered))
+    (when chain (compiler-backend-literal-chain-owners! (&mut ordered)))
     (literal_sort.sort!
       (&mut ordered)
       compiler-backend-literal-position-before?)
@@ -723,7 +726,7 @@
     buf
     (let
       [records : cobj.CompilerObjectDataRecordList
-        (compiler-backend-literal-records strings 0)]
+        (compiler-backend-literal-records strings 0 (not sectioned))]
       [out : byte_buf_core.ByteBufBuilder
         (byte_buf_core.byte-buf-builder-with-capacity 4096)]
       [i : i64 0]

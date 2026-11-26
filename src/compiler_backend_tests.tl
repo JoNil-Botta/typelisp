@@ -43737,10 +43737,7 @@ b_keep:
           parts.rodata))]
     (unsafe
       (arena.tl_arena_destroy (arena.raw-handle owner)))
-    (compiler-object-data-record-list-contains-payload?
-      records
-      payload
-      byte-payload?)))
+    (compiler-object-data-record-list-contains-payload? records payload)))
 
 (define (compiler-backend-owned-object-payloads-ok?
   [target : be_state.CompilerBackendTarget]) : bool
@@ -43761,7 +43758,7 @@ b_keep:
             [(Ok assembly)
               (string.contains
                 (& assembly)
-                "    .byte 0x6c,0x6f,0x77,0x65,0x72,0x2d,0x6f,0x77,0x6e,0x65,0x64,0x2d,0x6f,0x62,0x6a,0x65\n    .byte 0x63,0x74,0x2d,0x70,0x61,0x79,0x6c,0x6f,0x61,0x64\n    .byte 0\n")]
+                "    .byte 0x6c,0x6f,0x77,0x65,0x72,0x2d,0x6f,0x77,0x6e,0x65,0x64,0x2d,0x6f,0x62,0x6a,0x65\n    .byte 0x63,0x74,0x2d,0x70,0x61,0x79,0x6c,0x6f,0x61,0x64\n")]
             [(Err _) false])))]
     [(Err diag)
       (io.panic (cdiag.compiler-diagnostic-message (__tl-box-place diag)))]))
@@ -45820,18 +45817,19 @@ b_keep:
   (match (cobj.compiler-object-section-list-find sections kind)
     [(Section _ _ instrs) (cobj.compiler-object-instr-list-count instrs)]))
 
+;; String literals and byte data both carry unterminated `Bytes`, and an empty
+;; literal has no payload record at all.
 (define (compiler-object-data-record-list-contains-payload?
   [records : cobj.CompilerObjectDataRecordList]
-  [text : String]
-  [byte-payload? : bool]) : bool
+  [text : String]) : bool
   (let
     [count : i64 (cobj.compiler-object-data-record-list-count records)]
     [index : i64 0]
-    [found : bool false]
+    [found : bool (= (string.string-length (& text)) 0)]
     (while (and (not found) (< index count))
       (if (match (cobj.compiler-object-data-record-list-ref records index)
-        [(String value) (and (not byte-payload?) (string.eq value text))]
-        [(Bytes value) (and byte-payload? (string.eq value text))]
+        [(String value) (string.eq value text)]
+        [(Bytes value) (string.eq value text)]
         [_ false])
         (set! found true)
         (+= index 1)))
@@ -45939,7 +45937,7 @@ b_keep:
   [text : String]) : bool
   (match (cobj.compiler-object-section-list-find sections kind)
     [(Section _ data _)
-      (compiler-object-data-record-list-contains-payload? data text false)]))
+      (compiler-object-data-record-list-contains-payload? data text)]))
 
 (define (compiler-object-section-contains-f64?
   [sections : (& sections cobj.CompilerObjectSectionList)]

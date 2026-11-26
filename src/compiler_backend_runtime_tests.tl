@@ -66,7 +66,8 @@
   (let
     [features : runtime_common.CompilerBackendRuntimeFeatures
       (compiler-backend-runtime-test-full-features)]
-    [linux : String (runtime_linux.compiler-backend-runtime-data (& features))]
+    [linux : String
+      (runtime_linux.compiler-backend-runtime-data (& features) false)]
     [windows : String
       (runtime_windows.compiler-backend-runtime-data (& features))]
     [header : String
@@ -130,11 +131,11 @@
     [full : runtime_common.CompilerBackendRuntimeFeatures
       (compiler-backend-runtime-test-full-features)]
     [linux-min-data : String
-      (runtime_linux.compiler-backend-runtime-data (& minimal))]
+      (runtime_linux.compiler-backend-runtime-data (& minimal) false)]
     [windows-min-data : String
       (runtime_windows.compiler-backend-runtime-data (& minimal))]
     [linux-full-data : String
-      (runtime_linux.compiler-backend-runtime-data (& full))]
+      (runtime_linux.compiler-backend-runtime-data (& full) false)]
     [windows-full-data : String
       (runtime_windows.compiler-backend-runtime-data (& full))]
     [linux-min-functions : String

@@ -23331,6 +23331,8 @@
                     (array-ref calls.dst k)))]
               [rename : compiler_optimize.OptOperandRewrite
                 (compiler_optimize.OptOperandRewrite.Rename map)]
+              [rw : compiler_ir_types.CompilerIrInstrRewrite
+                (compiler_ir_types.compiler-ir-instr-rewrite-new)]
               [rebuilt : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)
                 (__tl_make-array compiler_ir_types.CompilerIrBlock 0)]
               [start : i64 (array-ref calls.site 0)]
@@ -23377,6 +23379,7 @@
                             (set!
                               (array-ref out j)
                               (compiler_optimize.opt-rewrite-operands
+                                (&mut rw)
                                 (& rename)
                                 instr)))))
                       (when
@@ -26953,7 +26956,6 @@ tl_shared_object_init:
                       target
                       (be_state.compiler-backend-global-shared-view globals)
                       (be_state.compiler-backend-global-shared-view functions)
-                      (be_state.compiler-backend-global-shared-view spans)
                       program-index)
                       [(Ok globals-buf collections)
                         (begin
@@ -27831,12 +27833,18 @@ tl_shared_object_init:
       (if (be_state.compiler-backend-state-archive-runtime? backend-state)
         asm
         (runtime_prune.prune asm))]
-    (if (and
-      (be_state.compiler-backend-state-optimize-for-size? backend-state)
-      (not (be_state.compiler-backend-target-coff? target))
-      (not (compiler_ir_types.compiler-debug-info-enabled?)))
-      (runtime_prune.intern-epilogues kept)
-      kept)))
+    (cond
+      [(or
+          (not
+            (be_state.compiler-backend-state-optimize-for-size? backend-state))
+          (compiler_ir_types.compiler-debug-info-enabled?))
+        kept]
+      [(be_state.compiler-backend-target-coff? target)
+        (be_peephole.compiler-backend-machine-outline kept true)]
+      [else
+        (be_peephole.compiler-backend-machine-outline
+          (runtime_prune.intern-epilogues kept)
+          false)])))
 
 (define (compiler-backend-lower-mode-for-target
   [target : be_state.CompilerBackendTarget]

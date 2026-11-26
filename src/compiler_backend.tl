@@ -26940,7 +26940,6 @@ tl_shared_object_init:
                       (be_state.compiler-backend-global-shared-view globals)
                       (be_state.compiler-backend-global-shared-view functions)
                       (& externs)
-                      (be_state.compiler-backend-global-shared-view spans)
                       program-index)
                       [(Ok globals-buf collections)
                         (begin

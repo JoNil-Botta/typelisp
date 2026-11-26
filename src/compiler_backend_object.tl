@@ -3426,7 +3426,7 @@
     parts
     (let
       [records : cobj.CompilerObjectDataRecordList
-        (be_data.compiler-backend-literal-records strings index)]
+        (be_data.compiler-backend-literal-records strings index true)]
       [out : object_target.CompilerBackendObjectTargetParts parts]
       [site : String ""]
       [i : i64 0]

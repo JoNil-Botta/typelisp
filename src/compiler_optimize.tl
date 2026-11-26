@@ -23312,23 +23312,33 @@
         (opt-global-mod-ref-mask-may-write? mod-ref.index cell-writes name))
       (opt-global-mod-ref-mask-may-write? obj.index obj-writes name))))
 
-(define (opt-licm-global-storage-invariant?
+;; Primary classifier for a global's cell + own-storage invariance:
+;; 0 = invariant, 1 = obj-any, 2 = cell-write, 3 = obj-write.
+(define (opt-licm-global-storage-code
+  [facts : (& facts OptLicmGlobalFacts)]
+  [name : i64]) : i64
+  (cond
+    [(opt-global-mod-ref-any? facts.obj-mask) 1]
+    [(and
+        (not facts.clean?)
+        (opt-global-mod-ref-mask-may-write? facts.index facts.mask name))
+      2]
+    [(opt-global-mod-ref-mask-may-write? facts.obj-index facts.obj-mask name) 3]
+    [else 0]))
+
+(define (opt-licm-global-header-ok?
   [facts : (& facts OptLicmGlobalFacts)]
   [name : i64]) : bool
   (and
-    (opt-licm-global-facts-invariant? facts name)
-    (not
-      (opt-global-mod-ref-mask-may-write? facts.obj-index facts.obj-mask name))))
+    (opt-licm-global-header-admitted? facts name)
+    (= (opt-licm-global-storage-code facts name) 0)))
 
 ;; The head of the chain, as an OPERAND: `gep @g, <literal>`.
 (define (opt-licm-global-header-value?
   [facts : (& facts OptLicmGlobalFacts)]
   [value : (& value ir.CompilerIrValue)]) : bool
   (match value
-    [(Global name)
-      (and
-        (opt-licm-global-header-admitted? facts name)
-        (opt-licm-global-storage-invariant? facts name))]
+    [(Global name) (opt-licm-global-header-ok? facts name)]
     [_ false]))
 
 ;; The head of the chain, as an ADDRESS KIND.
@@ -23337,9 +23347,7 @@
   [kind : OptLicmPtrKind]) : bool
   (match kind
     [(or (GlobalSlot global) (GlobalDataSlot global))
-      (and
-        (opt-licm-global-header-admitted? facts global)
-        (opt-licm-global-storage-invariant? facts global))]
+      (opt-licm-global-header-ok? facts global)]
     [_ false]))
 
 ;; The load THROUGH that address -- the one load this hoist moves.
@@ -25092,7 +25100,7 @@
 
 ;; One `index <u len` row holding in dense block `block` from `position` on.
 (define (opt-licm-deref-row!
-  [sink : OptLicmDerefSink]
+  [sink : (&mut sink OptLicmDerefSink)]
   [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
   [sources : (& sources OptValueSources)]
   [index : (& ir.CompilerIrValue)]
@@ -25102,44 +25110,41 @@
   (match (opt-licm-deref-resolve
     defs
     sources
-    (owned_view.compiler-owned-reference-shared-view index)
+    (ir.compiler-ir-clone-value index)
     (opt-licm-deref-fuel))
     [(Var var)
-      (let
-        [cursor : (__tl_dyn-array i64) sink.cursor]
-        (if (or
-          (not (opt-gvn-stable-var? sources var))
-          (< var 0)
-          (>= (+ var 1) (array-length cursor)))
-          unit
-          (if sink.fill?
-            (let
-              [slot : i64 (array-ref cursor var)]
-              (set! (array-ref sink.lens slot) len)
-              (set! (array-ref sink.blocks slot) block)
-              (set! (array-ref sink.positions slot) position)
-              (set! (array-ref cursor var) (+ slot 1)))
-            (set!
-              (array-ref cursor (+ var 1))
-              (+ (array-ref cursor (+ var 1)) 1)))))]
+      (if (or
+        (not (opt-gvn-stable-var? sources var))
+        (< var 0)
+        (>= (+ var 1) (array-length sink.cursor)))
+        unit
+        (if sink.fill?
+          (let
+            [slot : i64 (array-ref sink.cursor var)]
+            (set! (array-ref sink.lens slot) len)
+            (set! (array-ref sink.blocks slot) block)
+            (set! (array-ref sink.positions slot) position)
+            (set! (array-ref sink.cursor var) (+ slot 1)))
+          (set!
+            (array-ref sink.cursor (+ var 1))
+            (+ (array-ref sink.cursor (+ var 1)) 1))))]
     [(I64 literal)
       (if (< literal 0)
         unit
         (let
-          [cursor : (__tl_dyn-array i64) sink.literal-cursor]
-          [slot : i64 (array-ref cursor 0)]
+          [slot : i64 (array-ref sink.literal-cursor 0)]
           (when
             sink.fill?
             (set! (array-ref sink.literal-indexes slot) literal)
             (set! (array-ref sink.literal-lens slot) len)
             (set! (array-ref sink.literal-blocks slot) block)
             (set! (array-ref sink.literal-positions slot) position))
-          (set! (array-ref cursor 0) (+ slot 1))))]
+          (set! (array-ref sink.literal-cursor 0) (+ slot 1))))]
     [_ unit]))
 
 ;; The rows `cond` taking the `taken?` edge proves.
 (define (opt-licm-deref-cond-rows!
-  [sink : OptLicmDerefSink]
+  [sink : (&mut sink OptLicmDerefSink)]
   [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
   [sources : (& sources OptValueSources)]
   [cond : (& ir.CompilerIrValue)]
@@ -25149,7 +25154,7 @@
   (match (opt-licm-deref-resolve
     defs
     sources
-    (owned_view.compiler-owned-reference-shared-view cond)
+    (ir.compiler-ir-clone-value cond)
     (opt-licm-deref-fuel))
     [(Var var)
       (if (<= fuel 0)
@@ -25162,13 +25167,15 @@
                   [(U64) true]
                   [_ false])]
               (cond
-                [(and taken? (opt-binop-eq (& op) (& (And))))
+                [(or
+                  (and taken? (opt-binop-eq (& op) (& (And))))
+                  (and (not taken?) (opt-binop-eq (& op) (& (Or)))))
                   (opt-licm-deref-cond-rows!
-                    (compiler-opt-global-shared-view sink)
+                    sink
                     defs
                     sources
                     (& lhs)
-                    true
+                    taken?
                     block
                     (- fuel 1))
                   (opt-licm-deref-cond-rows!
@@ -25176,24 +25183,7 @@
                     defs
                     sources
                     (& rhs)
-                    true
-                    block
-                    (- fuel 1))]
-                [(and (not taken?) (opt-binop-eq (& op) (& (Or))))
-                  (opt-licm-deref-cond-rows!
-                    (compiler-opt-global-shared-view sink)
-                    defs
-                    sources
-                    (& lhs)
-                    false
-                    block
-                    (- fuel 1))
-                  (opt-licm-deref-cond-rows!
-                    sink
-                    defs
-                    sources
-                    (& rhs)
-                    false
+                    taken?
                     block
                     (- fuel 1))]
                 [(not unsigned?) unit]
@@ -25244,7 +25234,7 @@
           (- 0 1)))]))
 
 (define (opt-licm-deref-scan-block!
-  [sink : OptLicmDerefSink]
+  [sink : (&mut sink OptLicmDerefSink)]
   [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
   [sources : (& sources OptValueSources)]
   [doms : (& doms OptDomInfo)]
@@ -25260,7 +25250,7 @@
           (match (ir.compiler-ir-instr-seq-borrow instrs cursor)
             [(BoundsCheck check-index length _)
               (opt-licm-deref-row!
-                (compiler-opt-global-shared-view sink)
+                sink
                 defs
                 sources
                 (& check-index)
@@ -25268,56 +25258,53 @@
                 id
                 cursor)]
             [(Branch cond true-label false-label)
-              (if (= true-label false-label)
-                unit
+              (when
+                (not (= true-label false-label))
                 (let
                   [true-id : i64
                     (opt-licm-deref-edge-target doms index id true-label)]
                   [false-id : i64
                     (opt-licm-deref-edge-target doms index id false-label)]
-                  (if (>= true-id 0)
+                  (when
+                    (>= true-id 0)
                     (opt-licm-deref-cond-rows!
-                      (compiler-opt-global-shared-view sink)
+                      sink
                       defs
                       sources
                       (& cond)
                       true
                       true-id
-                      (opt-licm-deref-fuel))
-                    unit)
-                  (if (>= false-id 0)
+                      (opt-licm-deref-fuel)))
+                  (when
+                    (>= false-id 0)
                     (opt-licm-deref-cond-rows!
-                      (compiler-opt-global-shared-view sink)
+                      sink
                       defs
                       sources
                       (& cond)
                       false
                       false-id
-                      (opt-licm-deref-fuel))
-                    unit)))]
+                      (opt-licm-deref-fuel)))))]
             [_ unit])))]))
 
 (define (opt-licm-deref-scan-blocks!
-  [sink : OptLicmDerefSink]
+  [sink : (&mut sink OptLicmDerefSink)]
   [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
   [sources : (& sources OptValueSources)]
   [doms : (& doms OptDomInfo)]
   [index : (& index OptCfgIndex)]
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]) : unit
-  (match blocks
-    [(slice) unit]
-    [(slice block & rest)
-      (match block
-        [(Block label instrs)
-          (opt-licm-deref-scan-block!
-            (compiler-opt-global-shared-view sink)
-            defs
-            sources
-            doms
-            index
-            label
-            (& instrs))])
-      (opt-licm-deref-scan-blocks! sink defs sources doms index rest)]))
+  (for [bi (iterator.range 0 (array-length blocks))]
+    (match (& (array-ref blocks bi))
+      [(Block label instrs)
+        (opt-licm-deref-scan-block!
+          sink
+          defs
+          sources
+          doms
+          index
+          label
+          (& instrs))])))
 
 (define (opt-licm-deref-facts
   [type-segment-bases : i64]
@@ -25372,64 +25359,58 @@
         (& sources)
         (& defs)
         (& scan.roots))]
-    [offsets : (__tl_dyn-array i64) (__tl_make-array i64 (+ frame 1))]
-    [literal-count : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [count-sink : OptLicmDerefSink
+      (OptLicmDerefSink
+        false
+        (__tl_make-array i64 (+ frame 1))
+        (__tl_make-array ir.CompilerIrValue 0)
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 1)
+        (__tl_make-array i64 0)
+        (__tl_make-array ir.CompilerIrValue 0)
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 0))]
     [_count : unit
       (opt-licm-deref-scan-blocks!
-        (OptLicmDerefSink
-          false
-          (compiler-opt-global-shared-view offsets)
-          (__tl_make-array ir.CompilerIrValue 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (compiler-opt-global-shared-view literal-count)
-          (__tl_make-array i64 0)
-          (__tl_make-array ir.CompilerIrValue 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0))
+        (&mut count-sink)
         defs
         sources
         doms
         index
         (ir.compiler-ir-block-list-view blocks))]
+    [offsets : (__tl_dyn-array i64) count-sink.cursor]
     [_prefix : unit
       (for [slot (iterator.range 0 frame)]
         (set!
           (array-ref offsets (+ slot 1))
           (+ (array-ref offsets (+ slot 1)) (array-ref offsets slot))))]
     [total : i64 (array-ref offsets frame)]
-    [literals : i64 (array-ref literal-count 0)]
-    [lens : (__tl_dyn-array ir.CompilerIrValue)
-      (__tl_make-array ir.CompilerIrValue total)]
-    [rows : (__tl_dyn-array i64) (__tl_make-array i64 total)]
-    [positions : (__tl_dyn-array i64) (__tl_make-array i64 total)]
+    [literals : i64 (array-ref count-sink.literal-cursor 0)]
     [cursor : (__tl_dyn-array i64) (__tl_make-array i64 (+ frame 1))]
     [_cursor : unit
       (for [slot (iterator.range 0 (+ frame 1))]
         (set! (array-ref cursor slot) (array-ref offsets slot)))]
-    [literal-cursor : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-    [literal-indexes : (__tl_dyn-array i64) (__tl_make-array i64 literals)]
-    [literal-lens : (__tl_dyn-array ir.CompilerIrValue)
-      (__tl_make-array ir.CompilerIrValue literals)]
-    [literal-blocks : (__tl_dyn-array i64) (__tl_make-array i64 literals)]
-    [literal-positions : (__tl_dyn-array i64) (__tl_make-array i64 literals)]
-    (opt-licm-deref-scan-blocks!
+    [fill-sink : OptLicmDerefSink
       (OptLicmDerefSink
         true
         cursor
-        (compiler-opt-global-shared-view lens)
-        (compiler-opt-global-shared-view rows)
-        (compiler-opt-global-shared-view positions)
-        literal-cursor
-        (compiler-opt-global-shared-view literal-indexes)
-        (compiler-opt-global-shared-view literal-lens)
-        (compiler-opt-global-shared-view literal-blocks)
-        (compiler-opt-global-shared-view literal-positions))
-      defs
-      sources
-      doms
-      index
-      (ir.compiler-ir-block-list-view blocks))
+        (__tl_make-array ir.CompilerIrValue total)
+        (__tl_make-array i64 total)
+        (__tl_make-array i64 total)
+        (__tl_make-array i64 1)
+        (__tl_make-array i64 literals)
+        (__tl_make-array ir.CompilerIrValue literals)
+        (__tl_make-array i64 literals)
+        (__tl_make-array i64 literals))]
+    [_fill : unit
+      (opt-licm-deref-scan-blocks!
+        (&mut fill-sink)
+        defs
+        sources
+        doms
+        index
+        (ir.compiler-ir-block-list-view blocks))]
     (OptLicmDerefFacts
       sources
       cells
@@ -25437,13 +25418,13 @@
       scan
       phis
       offsets
-      lens
-      rows
-      positions
-      literal-indexes
-      literal-lens
-      literal-blocks
-      literal-positions)))
+      fill-sink.lens
+      fill-sink.blocks
+      fill-sink.positions
+      fill-sink.literal-indexes
+      fill-sink.literal-lens
+      fill-sink.literal-blocks
+      fill-sink.literal-positions)))
 
 ;; A descriptor, as one comparable key: a single-definition handle var (copies
 ;; looked through) is its var id, and a header-typed global -- whose own
@@ -26270,31 +26251,23 @@
         (array-ref facts.scan.positions dst)
         (array-ref facts.scan.first-exits at)))))
 
-;; May a Load of `load-ty` through `src`, defined as `dst`, execute at the
-;; site's preheader? Not from a doomed block; always when the loop runs it on
-;; every entry (opt-licm-deref-guaranteed?). Element storage -- by its
-;; provenance class or by its shape -- needs a proven bound. The bound speaks of
-;; one ELEMENT, so it covers the read only when the address strides by the
-;; descriptor's own element type and the read is no wider than that element;
-;; anything else (a word read at a byte index, a raw pointer re-typed over the
-;; buffer) is refused. Every other address needs a fixed word of a trusted
-;; root (opt-licm-deref-fixed-read?).
-(define (opt-licm-deref-load-ok?
+;; Primary preheader-readability classifier for a Load of `load-ty` through
+;; `src`, defined as `dst`: 0 = readable at the preheader, 1 = `element-bound`
+;; (element storage without a proven bound/width), 2 = `deref` (any other
+;; address without readable-storage evidence). When `classify-refusal?` is
+;; false, doomed/unstable loads short-circuit to 2 without resolving the
+;; address; the refusal trace passes true so doomed element loads still report
+;; `element-bound`.
+(define (opt-licm-deref-load-code
   [type-segment-bases : i64]
   [types : (& types OptSsaVarTypes)]
   [ptrs : (& ptrs OptLicmPtrEnv)]
   [site : (& site OptLicmDerefSite)]
   [dst : i64]
   [src : (& ir.CompilerIrValue)]
-  [load-ty : (& ast.AstType)]) : bool
+  [load-ty : (& ast.AstType)]
+  [classify-refusal? : bool]) : i64
   (let
-    [element-kind? : bool
-      (match src
-        [(Var ptr-var)
-          (match (opt-licm-ptr-lookup ptrs ptr-var)
-            [(or (DataElement _) (DataBuffer _)) true]
-            [_ false])]
-        [_ false])]
     [facts (& site.facts)]
     [block : i64
       (if (and
@@ -26304,31 +26277,44 @@
         (array-ref facts.scan.def-blocks dst)
         (- 0 1))]
     [refused? : bool (or (< block 0) (= (array-ref facts.scan.doomed block) 1))]
-    [guaranteed? : bool
-      (and
-        (not refused?)
-        (opt-licm-deref-guaranteed? facts site.header dst block))]
     (cond
-      [refused? false]
-      [guaranteed? true]
+      [(and
+          (not refused?)
+          (opt-licm-deref-guaranteed? facts site.header dst block))
+        0]
+      [(and refused? (not classify-refusal?)) 2]
       [else
         (match (opt-licm-deref-address type-segment-bases types site.facts src)
           [(No)
-            (and
-              (not element-kind?)
-              (opt-licm-deref-fixed-read?
-                type-segment-bases
-                facts
-                src
+            (let
+              [element-kind? : bool
+                (match src
+                  [(Var ptr-var)
+                    (match (opt-licm-ptr-lookup ptrs ptr-var)
+                      [(or (DataElement _) (DataBuffer _)) true]
+                      [_ false])]
+                  [_ false])]
+              (if (and
+                (not refused?)
+                (not element-kind?)
+                (opt-licm-deref-fixed-read?
+                  type-segment-bases
+                  facts
+                  src
+                  0
+                  true
+                  (opt-load-loc-type-size type-segment-bases load-ty)
+                  (not
+                    (=
+                      (opt-licm-deref-type-extent type-segment-bases load-ty)
+                      0))
+                  (opt-licm-deref-fuel)))
                 0
-                true
-                (opt-load-loc-type-size type-segment-bases load-ty)
-                (not
-                  (= (opt-licm-deref-type-extent type-segment-bases load-ty) 0))
-                (opt-licm-deref-fuel)))]
-          [(Opaque) false]
+                2))]
+          [(Opaque) 2]
           [(Element index key stride)
-            (and
+            (if (and
+              (not refused?)
               (opt-licm-deref-element-fits?
                 type-segment-bases
                 types
@@ -26341,7 +26327,9 @@
                 types
                 site
                 (& index)
-                key))])])))
+                key))
+              0
+              1)])])))
 
 ;; Does a `load-ty` read at stride `stride` cover no more than one element of
 ;; descriptor `key`, so that a bound on the index covers the read?
@@ -26464,7 +26452,7 @@
     [(Char) (Char)]
     [(Ptr inner) (Ptr inner)]
     [(MutPtr inner) (MutPtr inner)]
-    [_ (owned_view.compiler-owned-reference-shared-view ty)]))
+    [_ (ast.ty-node-persist ty)]))
 
 (define (opt-licm-guard-subst-plans
   [env : (& env OptCopyEnv)]
@@ -27122,52 +27110,55 @@
       false
       frame-cell)))
 
+(defstruct OptLicmFilterCfg
+  (type-segment-bases i64)
+  (store-summary OptLicmStoreSummary)
+  (legacy-store-summary OptLicmStoreSummary)
+  (any-call? bool)
+  (licm-mode i64)
+  (descriptor-header-hoist? bool))
+
 (define (opt-licm-candidate?
-  [type-segment-bases : i64]
+  [cfg : OptLicmFilterCfg]
   [loop-defs : (& loop-defs opt_i64_i64_map.Map)]
   [hoisted : (& hoisted opt_i64_i64_map.Map)]
   [sources : (& sources OptValueSources)]
   [types : (& types OptSsaVarTypes)]
-  [store-summary : OptLicmStoreSummary]
-  [legacy-store-summary : OptLicmStoreSummary]
   [ptrs : (& ptrs OptLicmPtrEnv)]
   [roots : (& roots OptLicmRootEnv)]
   [store-roots : (& store-roots OptLicmStoreRootList)]
-  [any-call? : bool]
-  [licm-mode : i64]
-  [descriptor-header-hoist? : bool]
   ;; What this loop knows about `Global` operands -- each a hidden rip-relative
   ;; load of that global's cell. See OptLicmGlobalFacts,
   ;; opt-licm-value-invariant? and opt-licm-globals-clean?.
   [globals : (& globals OptLicmGlobalFacts)]
   [hot-uses : (& hot-uses (__tl_dyn-array i64))]
   ;; #7992: where this loop's hoist lands, and the facts that bound an
-  ;; element load there (opt-licm-deref-load-ok?).
+  ;; element load there (opt-licm-deref-load-code).
   [deref-site : (& deref-site OptLicmDerefSite)]
   ;; False asks every question but that one (opt-licm-guard-plan!).
   [deref? : bool]
   [instr : (& instr ir.CompilerIrInstr)]) : bool
-  (match (owned_view.compiler-owned-reference-shared-view instr)
+  (match instr
     [(Mov _ src _)
       (and
-        (opt-licm-mode-late? licm-mode)
-        (opt-licm-global-value-invariant? globals loop-defs hoisted src)
+        (opt-licm-mode-late? cfg.licm-mode)
+        (opt-licm-global-value-invariant? globals loop-defs hoisted (& src))
         ;; In scalar loops, do not lengthen an arbitrary outside value's live
         ;; range merely to move its copy. Literal seeds still unlock
         ;; folding/motion. Vector loops also keep copies: splitting their
         ;; data-pointer live ranges prevents the backend from reloading each
         ;; pointer for every unrolled access.
-        (match src
-          [(Var _) (opt-licm-mode-vector? licm-mode)]
+        (match (& src)
+          [(Var _) (opt-licm-mode-vector? cfg.licm-mode)]
           [_ true]))]
     [(or (Cast _ src _ _) (Bitcast _ src _ _))
       (and
-        (opt-licm-mode-late? licm-mode)
-        (opt-licm-global-value-invariant? globals loop-defs hoisted src)
-        (match src
+        (opt-licm-mode-late? cfg.licm-mode)
+        (opt-licm-global-value-invariant? globals loop-defs hoisted (& src))
+        (match (& src)
           [(Var var)
             (or
-              (opt-licm-mode-vector? licm-mode)
+              (opt-licm-mode-vector? cfg.licm-mode)
               (opt-used-contains hoisted var))]
           [_ true]))]
     ;; Register-group extraction is a pure projection. Native Slice data and
@@ -27176,7 +27167,7 @@
     ;; check on every logical lane. Hoist the projection whenever its packed
     ;; source is invariant; unlike a memory Load this needs no alias proof.
     [(Word _ src _ _)
-      (opt-licm-global-value-invariant? globals loop-defs hoisted src)]
+      (opt-licm-global-value-invariant? globals loop-defs hoisted (& src))]
     [(BinOp dst op lhs rhs _)
       (and
         (opt-used-array-contains hot-uses dst)
@@ -27196,35 +27187,28 @@
     [(or (UnOp dst _ src _) (Splat dst src _ _))
       (and
         (opt-used-array-contains hot-uses dst)
-        (opt-licm-global-value-invariant? globals loop-defs hoisted src))]
-    [(VectorBinOp payload-box)
-      (let
-        [op (compiler-opt-box-field-shared-view payload-box op)]
-        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
-        (and
-          (opt-used-array-contains hot-uses (deref payload-box).dst)
-          ;; A checked vector div/mod/shift may still trap when executed.  Do
-          ;; not speculate it into a preheader for a zero-trip loop.
-          (not (ir.compiler-ir-binop-may-fault? (& op)))
-          (opt-licm-global-values-invariant?
-            globals
-            loop-defs
-            hoisted
-            (& lhs)
-            (& rhs))))]
-    [(VectorCompare payload-box)
-      (let
-        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
-        (and
-          (opt-used-array-contains hot-uses (deref payload-box).dst)
-          (opt-licm-global-values-invariant?
-            globals
-            loop-defs
-            hoisted
-            (& lhs)
-            (& rhs))))]
+        (opt-licm-global-value-invariant? globals loop-defs hoisted (& src)))]
+    [(VectorBinOp payload)
+      (and
+        (opt-used-array-contains hot-uses payload.dst)
+        ;; A checked vector div/mod/shift may still trap when executed.  Do
+        ;; not speculate it into a preheader for a zero-trip loop.
+        (not (ir.compiler-ir-binop-may-fault? (& payload.op)))
+        (opt-licm-global-values-invariant?
+          globals
+          loop-defs
+          hoisted
+          (& payload.lhs)
+          (& payload.rhs)))]
+    [(VectorCompare payload)
+      (and
+        (opt-used-array-contains hot-uses payload.dst)
+        (opt-licm-global-values-invariant?
+          globals
+          loop-defs
+          hoisted
+          (& payload.lhs)
+          (& payload.rhs)))]
     [(Gep dst base offset ty)
       (and
         (opt-gvn-stable-var? sources dst)
@@ -27232,16 +27216,16 @@
         ;; except for the fixed-word class whose in-place read is not one
         ;; instruction. See opt-licm-gep-call-boundary-ok?.
         (opt-licm-gep-call-boundary-ok?
-          type-segment-bases
+          cfg.type-segment-bases
           types
           globals
           ptrs
-          store-summary
-          legacy-store-summary
-          any-call?
-          base
-          offset
-          ty)
+          cfg.store-summary
+          cfg.legacy-store-summary
+          cfg.any-call?
+          (& base)
+          (& offset)
+          (& ty))
         ;; Gep computes an address from SSA values; it does not read through
         ;; that address. A hidden mutable-global read among the operands is
         ;; admitted only when opt-licm-globals-clean? proves the body cannot
@@ -27250,150 +27234,109 @@
         ;; moving a descriptor-length address too early can hide the
         ;; shared bound identity BCE needs. The post-LFTR run can use purity
         ;; after BCE and unrolling have consumed that fact.
-        ;;
-        ;; P18 DELIBERATELY LEAVES THIS ARM ON THE LOOP-WIDE ANSWER, and the
-        ;; reason is register pressure, not conservative bookkeeping. This is
-        ;; the one operand position that starts a CHAIN: `gep @g, <literal>` is
-        ;; a GlobalSlot address, the load through it is the descriptor the cell
-        ;; designates, and that descriptor's length and data words follow it
-        ;; out, so admitting the operand here lets three or four new values per
-        ;; global span the whole loop. A loop over several read-only globals --
-        ;; already OUTSIDE its per-global cell-write set, so the refinement
-        ;; WOULD admit them -- then puts many values in the preheader, most of
-        ;; which land in the frame: the loop-carried accumulator loses its
-        ;; register, and a versioned inner loop grows a long guard on a path
-        ;; that averages about one trip. That is P8's "WHY INVARIANCE LOSES"
-        ;; verdict reproduced with a per-global proof in hand, so the proof
-        ;; changes nothing here. The scalar arms above carry no such chain -- each
-        ;; admits exactly one instruction and at most one new loop-spanning
-        ;; value -- which is why they take the refinement and this arm does not.
         (or
-          ;; IAG-2. `@g` here is the ADDRESS of g's own storage after IAG-1, so
-          ;; the operand itself is a link-time constant; what the per-global
-          ;; rows decide is whether the load behind it stays invariant, and
-          ;; admitting the address without them would move a Gep whose only
-          ;; consumer must then stay in the loop.
+          ;; IAG-2. `@g` here is the ADDRESS of g's own storage after IAG-1.
           (and
-            (opt-licm-global-header-value? globals base)
-            (opt-licm-value-invariant? globals.clean? loop-defs hoisted offset))
+            (opt-licm-global-header-value? globals (& base))
+            (opt-licm-value-invariant?
+              globals.clean?
+              loop-defs
+              hoisted
+              (& offset)))
           (opt-licm-values-invariant?
             globals.clean?
             loop-defs
             hoisted
-            base
-            offset))
+            (& base)
+            (& offset)))
         (or
-          (opt-licm-mode-late? licm-mode)
+          (opt-licm-mode-late? cfg.licm-mode)
           (opt-licm-memory-safe?
-            store-summary
-            legacy-store-summary
+            cfg.store-summary
+            cfg.legacy-store-summary
             store-roots
-            any-call?
-            (opt-licm-root-of-value (& roots) base)
-            ;; #8941: the address's first byte, from the root's var. The gate
-            ;; asks whether the loop writes the byte this address starts at;
-            ;; the load through it asks again with the width it reads, and an
-            ;; address hoisted without its load is still pure.
-            (match (opt-licm-root-env-offset (& roots) (& (Var dst)))
+            cfg.any-call?
+            (opt-licm-root-of-value roots (& base))
+            ;; #8941: the address's first byte, from the root's var.
+            (match (opt-licm-root-env-offset roots (& (Var dst)))
               [(LookupFound address-offset) address-offset]
               [(LookupMissing) 0])
-            (match (opt-licm-root-env-offset (& roots) (& (Var dst)))
+            (match (opt-licm-root-env-offset roots (& (Var dst)))
               [(LookupFound _) 1]
               [(LookupMissing) 0])
             (and
-              (opt-licm-store-summary-header-load-safe? legacy-store-summary)
+              (opt-licm-store-summary-header-load-safe?
+                cfg.legacy-store-summary)
               (opt-licm-header-slot-gep?
-                type-segment-bases
+                cfg.type-segment-bases
                 types
                 globals
                 (& base)
                 (& offset)
                 (& ty)))
-            ;; ALIAS-3 does not speak here. A Gep computes an ADDRESS and reads
-            ;; no word, so it has no static type for the typed-word rule to
-            ;; separate; `ty` on a Gep is the SCALE, not the width of anything
-            ;; read. The load behind this address asks the question in the Load
-            ;; arm below, where the type is the one actually read.
             false)))]
     [(Load dst src load-ty)
       (and
         (opt-gvn-stable-var? sources dst)
-        (opt-gvn-value-stable? sources src)
-        ;; A `Global` SOURCE here is a load THROUGH the pointer that cell holds
-        ;; -- the head of the very chain the Gep arm above prices -- so it keeps
-        ;; the loop-wide answer for the same reason.
-        (or (opt-licm-value-invariant? globals.clean? loop-defs hoisted src))
+        (opt-gvn-value-stable? sources (& src))
+        (opt-licm-value-invariant? globals.clean? loop-defs hoisted (& src))
         (or
-          ;; IAG-2. The one load this hoist moves: the descriptor handle out of
-          ;; a word of g's own storage, in a loop that writes neither g's cell
-          ;; nor g's storage. The cell is statically allocated and always
-          ;; exists, so the preheader read is speculation-free even for a
-          ;; zero-trip loop -- the same argument the loop-scope cell promotion
-          ;; makes for its own preheader load.
-          (opt-licm-global-header-source? globals ptrs src)
+          ;; IAG-2: descriptor handle out of a word of g's own storage.
+          (opt-licm-global-header-source? globals ptrs (& src))
           (opt-licm-memory-safe?
-            store-summary
-            legacy-store-summary
+            cfg.store-summary
+            cfg.legacy-store-summary
             store-roots
-            any-call?
-            (opt-licm-root-of-value roots src)
+            cfg.any-call?
+            (opt-licm-root-of-value roots (& src))
             (match (opt-licm-root-env-offset roots (& src))
               [(LookupFound offset) offset]
               [(LookupMissing) 0])
             (match (opt-licm-root-env-offset roots (& src))
               [(LookupFound _)
-                (opt-load-loc-type-size type-segment-bases (& load-ty))]
+                (opt-load-loc-type-size cfg.type-segment-bases (& load-ty))]
               [(LookupMissing) 0])
             (and
               (opt-licm-store-summary-header-load-safe-for?
-                legacy-store-summary
+                cfg.legacy-store-summary
                 ptrs
-                src)
+                (& src))
               (opt-licm-header-slot-source?
-                type-segment-bases
+                cfg.type-segment-bases
                 types
                 ptrs
-                (opt-licm-mode-late? licm-mode)
-                src))
-            ;; ALIAS-3. The word this load reads, against the classes the
-            ;; body's element writes store. `legacy-store-summary` is the
-            ;; merged one -- rooted stores included -- because the rule is
-            ;; about types, not roots, and a rooted store writes a typed word
-            ;; exactly like any other.
+                (opt-licm-mode-late? cfg.licm-mode)
+                (& src)))
             (opt-licm-store-summary-element-class-safe?
-              type-segment-bases
-              legacy-store-summary
+              cfg.type-segment-bases
+              cfg.legacy-store-summary
               (& load-ty)))
-          ;; Descriptor-header exception: when the body provably cannot write
-          ;; a descriptor header (see the define-site comment), a header-slot
-          ;; load of a loop-invariant descriptor handle moves out even though
-          ;; the return-shaped side-exit poison closed the general path.
+          ;; Descriptor-header exception to return-shaped side-exit poison.
           (and
-            descriptor-header-hoist?
-            ;; FRAME-STORE: the exception is licensed on the descriptor
-            ;; reading; a frame-word load asks the frame reading too.
+            cfg.descriptor-header-hoist?
             (or
-              (not (opt-licm-frame-word-source? ptrs src))
-              (not legacy-store-summary.frame-store?))
+              (not (opt-licm-frame-word-source? ptrs (& src)))
+              (not cfg.legacy-store-summary.frame-store?))
             (opt-licm-header-slot-source?
-              type-segment-bases
+              cfg.type-segment-bases
               types
               ptrs
               true
-              src)))
-        ;; #7992: and the address has to be readable at the preheader whether
-        ;; or not the loop would have read it. Asked last: it walks
-        ;; definitions, and every clause above is cheaper and refuses more.
+              (& src))))
+        ;; #7992: readability at the preheader.
         (or
           (not deref?)
-          (opt-licm-deref-load-ok?
-            type-segment-bases
-            types
-            ptrs
-            deref-site
-            dst
-            (& src)
-            (& load-ty))))]
+          (=
+            (opt-licm-deref-load-code
+              cfg.type-segment-bases
+              types
+              ptrs
+              deref-site
+              dst
+              (& src)
+              (& load-ty)
+              false)
+            0)))]
     [_ false]))
 
 (define (opt-licm-add-hoisted-def
@@ -27436,21 +27379,15 @@
     [(BinOp _ op _ _ _) (not (ir.compiler-ir-binop-may-fault? (& op)))]
     [_ false]))
 
-(define (opt-licm-filter-instr-seq-from
-  [type-segment-bases : i64]
+(define (opt-licm-filter-instr-seq
+  [cfg : OptLicmFilterCfg]
   [loop-defs : (& loop-defs opt_i64_i64_map.Map)]
   [instrs : (& ir.CompilerIrInstrSeq)]
-  [index : i64]
   [sources : (& sources OptValueSources)]
   [types : (& types OptSsaVarTypes)]
-  [store-summary : OptLicmStoreSummary]
-  [legacy-store-summary : OptLicmStoreSummary]
   [ptrs : (& ptrs OptLicmPtrEnv)]
   [roots : (& roots OptLicmRootEnv)]
   [store-roots : (& store-roots OptLicmStoreRootList)]
-  [any-call? : bool]
-  [licm-mode : i64]
-  [descriptor-header-hoist? : bool]
   [globals : (& globals OptLicmGlobalFacts)]
   [hot-uses : (& hot-uses (__tl_dyn-array i64))]
   [deref-site : (& deref-site OptLicmDerefSite)]
@@ -27459,13 +27396,13 @@
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [kept : ir.CompilerIrInstrBuilder
-      (ir.compiler-ir-instr-builder-with-capacity (- count index))]
+      (ir.compiler-ir-instr-builder-with-capacity count)]
     [moved : ir.CompilerIrInstrBuilder
-      (ir.compiler-ir-instr-builder-with-capacity (- count index))]
+      (ir.compiler-ir-instr-builder-with-capacity count)]
     [next-hoisted : opt_i64_i64_map.Map hoisted]
     [changed : bool false]
     [header-prefix-pure? : bool (and is-header? (not opt-licm-guard-on))]
-    (for [cursor (iterator.range index count)]
+    (for [cursor (iterator.range 0 count)]
       (let
         [instr (ir.compiler-ir-instr-seq-ref instrs cursor)]
         [header-check? : bool
@@ -27506,9 +27443,6 @@
                   (opt-licm-value-invariant? false loop-defs next-hoisted lhs)
                   (opt-licm-value-invariant? false loop-defs next-hoisted rhs))]
               [_ false]))]
-        ;; The final run asks only about reads it may guard (plus invariant
-        ;; address/descriptor chains in outer loops so PH-1 loads can plan, and
-        ;; invariant compares in Round 2+ on loops that hoisted guarded loads).
         [ordinary? : bool
           (or
             header-check?
@@ -27519,24 +27453,19 @@
                 (and deref-site.guard? (or load? opt-licm-guard-outer-loop?)))
               (not addr-taken-write?)
               (opt-licm-candidate?
-                type-segment-bases
+                cfg
                 loop-defs
                 next-hoisted
                 sources
                 types
-                store-summary
-                legacy-store-summary
                 ptrs
                 roots
                 store-roots
-                any-call?
-                licm-mode
-                descriptor-header-hoist?
                 globals
                 hot-uses
                 deref-site
                 true
-                instr)))]
+                (& instr))))]
         (if (and
           ordinary?
           (or
@@ -27550,41 +27479,35 @@
             (ir.compiler-ir-instr-builder-push! (&mut moved) instr)
             (set! changed true))
           ;; #7997: a read refused only for want of a bound at the
-          ;; preheader may still move behind its own comparison. The
-          ;; final run moves nothing else.
+          ;; preheader may still move behind its own comparison.
           (begin
-            (if (and
-              deref-site.guard?
-              load?
-              (not ordinary?)
-              (not addr-taken-write?)
-              (opt-licm-candidate?
-                type-segment-bases
-                loop-defs
-                next-hoisted
-                sources
-                types
-                store-summary
-                legacy-store-summary
-                ptrs
-                roots
-                store-roots
-                any-call?
-                licm-mode
-                descriptor-header-hoist?
-                globals
-                hot-uses
-                deref-site
-                false
-                instr))
+            (when
+              (and
+                deref-site.guard?
+                load?
+                (not ordinary?)
+                (not addr-taken-write?)
+                (opt-licm-candidate?
+                  cfg
+                  loop-defs
+                  next-hoisted
+                  sources
+                  types
+                  ptrs
+                  roots
+                  store-roots
+                  globals
+                  hot-uses
+                  deref-site
+                  false
+                  (& instr)))
               (opt-licm-guard-plan!
-                type-segment-bases
+                cfg.type-segment-bases
                 types
                 loop-defs
                 (& next-hoisted)
                 deref-site
-                instr)
-              unit)
+                instr))
             (ir.compiler-ir-instr-builder-push! (&mut kept) instr)))))
     (Result
       (ir.compiler-ir-instr-builder-to-seq kept)
@@ -27592,119 +27515,50 @@
       next-hoisted
       changed)))
 
-(define (opt-licm-filter-instr-seq
-  [type-segment-bases : i64]
-  [loop-defs : (& loop-defs opt_i64_i64_map.Map)]
-  [instrs : (& ir.CompilerIrInstrSeq)]
-  [sources : (& sources OptValueSources)]
-  [types : (& types OptSsaVarTypes)]
-  [store-summary : OptLicmStoreSummary]
-  [legacy-store-summary : OptLicmStoreSummary]
-  [ptrs : (& ptrs OptLicmPtrEnv)]
-  [roots : (& roots OptLicmRootEnv)]
-  [store-roots : (& store-roots OptLicmStoreRootList)]
-  [any-call? : bool]
-  [licm-mode : i64]
-  [descriptor-header-hoist? : bool]
-  [globals : (& globals OptLicmGlobalFacts)]
-  [hot-uses : (& hot-uses (__tl_dyn-array i64))]
-  [deref-site : (& deref-site OptLicmDerefSite)]
-  [is-header? : bool]
-  [hoisted : (& opt_i64_i64_map.Map)]) : OptLicmInstrsResult
-  (opt-licm-filter-instr-seq-from
-    type-segment-bases
-    loop-defs
-    instrs
-    0
-    sources
-    types
-    store-summary
-    legacy-store-summary
-    ptrs
-    roots
-    store-roots
-    any-call?
-    licm-mode
-    descriptor-header-hoist?
-    globals
-    hot-uses
-    deref-site
-    is-header?
-    (owned_view.compiler-owned-reference-shared-view hoisted)))
-
 (define (opt-licm-filter-body-blocks!
   [out : (&mut out ir.CompilerIrBlockBuilder)]
-  [type-segment-bases : i64]
+  [cfg : OptLicmFilterCfg]
   [loop-defs : (& loop-defs opt_i64_i64_map.Map)]
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [sources : (& sources OptValueSources)]
   [types : (& types OptSsaVarTypes)]
-  [store-summary : OptLicmStoreSummary]
-  [legacy-store-summary : OptLicmStoreSummary]
   [ptrs : (& ptrs OptLicmPtrEnv)]
   [roots : (& roots OptLicmRootEnv)]
   [store-roots : (& store-roots OptLicmStoreRootList)]
-  [any-call? : bool]
-  [licm-mode : i64]
-  [descriptor-header-hoist? : bool]
   [globals : (& globals OptLicmGlobalFacts)]
   [hot-uses : (& hot-uses (__tl_dyn-array i64))]
   [deref-site : (& deref-site OptLicmDerefSite)]
   [header : i64]
   [hoisted : opt_i64_i64_map.Map]) : OptLicmBlocksResult
-  (match blocks
-    [(slice) (Result (ir.compiler-ir-instr-seq-empty) hoisted false)]
-    [(slice block & rest)
-      (match block
+  (let
+    [all-moved : ir.CompilerIrInstrSeq (ir.compiler-ir-instr-seq-empty)]
+    [cur-hoisted : opt_i64_i64_map.Map hoisted]
+    [changed : bool false]
+    (for [bi (iterator.range 0 (array-length blocks))]
+      (match (& (array-ref blocks bi))
         [(Block label instrs)
           (match (opt-licm-filter-instr-seq
-            type-segment-bases
+            cfg
             loop-defs
             (& instrs)
             sources
             types
-            store-summary
-            legacy-store-summary
             ptrs
             roots
             store-roots
-            any-call?
-            licm-mode
-            descriptor-header-hoist?
             globals
             hot-uses
             deref-site
             (= label header)
-            (& hoisted))
+            cur-hoisted)
             [(Result kept moved next-hoisted block-changed)
               (ir.compiler-ir-block-builder-push!
                 out
                 (ir.CompilerIrBlock.Block label kept))
-              (match (opt-licm-filter-body-blocks!
-                out
-                type-segment-bases
-                loop-defs
-                rest
-                sources
-                types
-                store-summary
-                legacy-store-summary
-                ptrs
-                roots
-                store-roots
-                any-call?
-                licm-mode
-                descriptor-header-hoist?
-                globals
-                hot-uses
-                deref-site
-                header
-                next-hoisted)
-                [(Result rest-moved final-hoisted rest-changed)
-                  (Result
-                    (opt-instr-seq-concat moved rest-moved)
-                    final-hoisted
-                    (or block-changed rest-changed))])])])]))
+              (set! all-moved (opt-instr-seq-concat all-moved moved))
+              (set! cur-hoisted next-hoisted)
+              (when block-changed (set! changed true))])]))
+    (Result all-moved cur-hoisted changed)))
 
 (define (opt-licm-replace-body-blocks!
   [out : (&mut out ir.CompilerIrBlockBuilder)]
@@ -29071,12 +28925,6 @@
   (code i64)
   (name i64))
 
-(define (opt-licm-refuse-blame-none) : OptLicmRefuseBlame
-  (OptLicmRefuseBlame 0 0))
-
-(define (opt-licm-refuse-blame-some? [blame : OptLicmRefuseBlame]) : bool
-  (not (= blame.code 0)))
-
 (define (opt-licm-refuse-blame-text [blame : OptLicmRefuseBlame]) : String
   (cond
     [(= blame.code 1)
@@ -29089,191 +28937,18 @@
     [(= blame.code 6) "effect=unknown"]
     [else "none"]))
 
-;; Blame modes. `cell` asks which instruction raised `global-write?` (the fact
-;; opt-licm-globals-clean? reads); `header-call` and `header-store` ask which
-;; CALL, and which STORE, closed opt-licm-store-summary-header-load-safe?, kept
-;; apart so the instruction the line names is one of the class the reason names;
-;; `obj` asks which one contributed the named global's own-storage bit.
-(define (opt-licm-refuse-blame-mode-cell) : i64
-  0)
-
-(define (opt-licm-refuse-blame-mode-header) : i64
-  1)
-
-(define (opt-licm-refuse-blame-mode-obj) : i64
-  2)
-
-(define (opt-licm-refuse-blame-mode-header-store) : i64
-  3)
-
-(define (opt-licm-refuse-obj-bit
-  [cells : (& cells OptGlobalCellSummary)]
-  [name : i64]) : i64
-  (let
-    [obj (& cells.obj-mod-ref)]
-    (bit-or
-      (opt-global-mod-ref-cell-bit obj.index name)
-      (opt-global-mod-ref-any))))
-
-(define (opt-licm-refuse-blame-indirect [mode : i64]) : OptLicmRefuseBlame
-  (if (= mode (opt-licm-refuse-blame-mode-header-store))
-    (opt-licm-refuse-blame-none)
-    (OptLicmRefuseBlame 2 0)))
-
-(define (opt-licm-refuse-blame-call
-  [mode : i64]
-  [name : i64]
-  [direct-call-clean : (& direct-call-clean opt_i64_i64_map.Map)]
-  [cells : (& cells OptGlobalCellSummary)]
-  [callee : i64]) : OptLicmRefuseBlame
-  (if (opt-direct-call-noreturn? callee)
-    (opt-licm-refuse-blame-none)
-    (cond
-      [(= mode (opt-licm-refuse-blame-mode-cell))
-        (if (opt-licm-direct-call-keeps-globals-clean?
-          direct-call-clean
-          cells
-          callee)
-          (opt-licm-refuse-blame-none)
-          (OptLicmRefuseBlame 1 callee))]
-      [(= mode (opt-licm-refuse-blame-mode-header-store))
-        (opt-licm-refuse-blame-none)]
-      [(= mode (opt-licm-refuse-blame-mode-header))
-        (if (opt-licm-store-summary-header-load-safe?
-          (opt-licm-store-summary-for-direct-call direct-call-clean callee))
-          (opt-licm-refuse-blame-none)
-          (OptLicmRefuseBlame 1 callee))]
-      [else
-        (if (=
-          (bit-and
-            (opt-global-mod-ref-call-mask cells.obj-mod-ref callee)
-            (opt-licm-refuse-obj-bit cells name))
-          0)
-          (opt-licm-refuse-blame-none)
-          (OptLicmRefuseBlame 1 callee))])))
-
-(define (opt-licm-refuse-blame-store
-  [mode : i64]
-  [name : i64]
-  [cells : (& cells OptGlobalCellSummary)]
-  [ptrs : (& ptrs OptLicmPtrEnv)]
-  [ptr : (& ir.CompilerIrValue)]) : OptLicmRefuseBlame
-  (cond
-    [(= mode (opt-licm-refuse-blame-mode-obj))
-      (if (=
-        (bit-and
-          (opt-licm-store-obj-mask cells ptrs ptr)
-          (opt-licm-refuse-obj-bit cells name))
-        0)
-        (opt-licm-refuse-blame-none)
-        (OptLicmRefuseBlame 4 0))]
-    ;; a CALL is what the header mode blames; a store is this arm's business
-    ;; only in the store mode.
-    [(= mode (opt-licm-refuse-blame-mode-header)) (opt-licm-refuse-blame-none)]
-    [(opt-licm-store-summary-header-load-safe?
-        (opt-licm-store-summary-for-storeptr
-          ptrs
-          (opt-licm-element-class-any)
-          ptr))
-      (opt-licm-refuse-blame-none)]
-    [else (OptLicmRefuseBlame 4 0)]))
-
-(define (opt-licm-refuse-blame-instr
-  [mode : i64]
-  [name : i64]
-  [direct-call-clean : (& direct-call-clean opt_i64_i64_map.Map)]
-  [cells : (& cells OptGlobalCellSummary)]
-  [ptrs : (& ptrs OptLicmPtrEnv)]
-  [instr : (& ir.CompilerIrInstr)]) : OptLicmRefuseBlame
-  (match instr
-    [(or (Call _ callee _ _) (TailCall callee _ _))
-      (opt-licm-refuse-blame-call mode name direct-call-clean cells callee)]
-    [(or (CallIndirect _ _ _ _) (CallIndirectC _ _ _ _) (CallCAbiStoreResult _)
-         (CallIndirectCAbiStoreResult _) (SpmdCall _) (TailCallIndirect _ _ _))
-      (opt-licm-refuse-blame-indirect mode)]
-    [(Store target _ _)
-      (if (= mode (opt-licm-refuse-blame-mode-obj))
-        (opt-licm-refuse-blame-none)
-        (OptLicmRefuseBlame 3 target))]
-    [(or (StorePtr ptr _ _) (StoreOwned ptr _ _))
-      (opt-licm-refuse-blame-store mode name cells ptrs (& ptr))]
-    [(CopyBytes dst _ _)
-      (cond
-        [(= mode (opt-licm-refuse-blame-mode-obj))
-          (opt-licm-refuse-blame-store mode name cells ptrs (& dst))]
-        ;; FRAME-STORE: a copy into a frame object is rooted and contributes
-        ;; no header-or-unknown store, so it is not what this mode blames.
-        [(opt-licm-frame-word-source? ptrs dst) (opt-licm-refuse-blame-none)]
-        [else (OptLicmRefuseBlame 5 0)])]
-    [_ (opt-licm-refuse-blame-none)]))
-
-(define (opt-licm-refuse-blame-seq
-  [mode : i64]
-  [name : i64]
-  [direct-call-clean : (& direct-call-clean opt_i64_i64_map.Map)]
-  [cells : (& cells OptGlobalCellSummary)]
-  [ptrs : (& ptrs OptLicmPtrEnv)]
-  [instrs : (& ir.CompilerIrInstrSeq)]) : OptLicmRefuseBlame
-  (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
-    (let
-      [here : OptLicmRefuseBlame
-        (opt-licm-refuse-blame-instr
-          mode
-          name
-          direct-call-clean
-          cells
-          ptrs
-          (ir.compiler-ir-instr-seq-borrow instrs index))]
-      (when (opt-licm-refuse-blame-some? here) (return here))))
-  (opt-licm-refuse-blame-none))
-
-(define (opt-licm-refuse-blame-blocks
-  [mode : i64]
-  [name : i64]
-  [direct-call-clean : (& direct-call-clean opt_i64_i64_map.Map)]
-  [cells : (& cells OptGlobalCellSummary)]
-  [ptrs : (& ptrs OptLicmPtrEnv)]
-  [blocks : (& blocks ir.CompilerIrBlockList)]) : OptLicmRefuseBlame
-  (let
-    [seq : (& blocks (Slice ir.CompilerIrBlock))
-      (ir.compiler-ir-block-list-view blocks)]
-    [found : OptLicmRefuseBlame (opt-licm-refuse-blame-none)]
-    (for [index (iterator.range 0 (array-length seq))]
-      (when
-        (not (opt-licm-refuse-blame-some? found))
-        (match (& (array-ref seq index))
-          [(Block _ instrs)
-            (set!
-              found
-              (opt-licm-refuse-blame-seq
-                mode
-                name
-                direct-call-clean
-                cells
-                ptrs
-                (& instrs)))])))
-    found))
-
 ;; The context one loop hands the walk. It is the same set of facts
 ;; opt-licm-candidate? is called with, plus the two loop-site numbers the
-;; reasons quote (side-exit kind, header-ref count); bundling them keeps the
-;; walk's own arity at the traversal state.
+;; reasons quote (side-exit kind, header-ref count).
 (defstruct OptLicmRefuseCtx
   (type-segment-bases i64)
   (types OptSsaVarTypes)
   (ptrs OptLicmPtrEnv)
   (globals OptLicmGlobalFacts)
   (store-summary OptLicmStoreSummary)
-  ;; The composed body summary BEFORE the return-shaped side-exit poison is
-  ;; folded in. The poison is a profitability verdict spelled as a fake
-  ;; header-or-unknown store, so blaming a store for it would name an
-  ;; instruction that does not exist; the raw summary is what the call and
-  ;; store arms read, and `side-exit-kind` reports the poison by name.
   (raw-legacy-summary OptLicmStoreSummary)
   (direct-call-clean opt_i64_i64_map.Map)
   (cells OptGlobalCellSummary)
-  ;; The body the filter LEFT and the promotion rewrote, for the blame walks
-  ;; and for `stayed-defs`.
   (body ir.CompilerIrBlockList)
   (stayed-defs opt_i64_i64_map.Map)
   (global-write? bool)
@@ -29282,144 +28957,197 @@
   (side-exit-kind i64)
   (header-count i64)
   (header i64)
-  ;; #7992/#8085: a load is also kept when its word may not be readable at the
-  ;; preheader; that is reported as `element-bound` or `deref`, not as a memory
-  ;; clause.
   (deref-site OptLicmDerefSite))
 
-;; The instruction that contributed a refused fact, in the vocabulary
-;; opt-licm-refuse-blame-text spells, for the reason whose clause that mode asks
-;; about (`name` is the candidate global for the two global-storage modes).
+;; Blame modes: 0 = cell write, 1 = header-load call, 2 = global obj write,
+;; 3 = header-load store.
+(define (opt-licm-refuse-obj-bit [ctx : (& ctx OptLicmRefuseCtx)] [name : i64]) : i64
+  (bit-or
+    (opt-global-mod-ref-cell-bit (& ctx.cells.obj-mod-ref.index) name)
+    (opt-global-mod-ref-any)))
+
+(define (opt-licm-refuse-blame-store
+  [ctx : (& ctx OptLicmRefuseCtx)]
+  [mode : i64]
+  [name : i64]
+  [ptr : (& ir.CompilerIrValue)]) : OptLicmRefuseBlame
+  (cond
+    [(= mode 2)
+      (if (=
+        (bit-and
+          (opt-licm-store-obj-mask (& ctx.cells) (& ctx.ptrs) ptr)
+          (opt-licm-refuse-obj-bit ctx name))
+        0)
+        (OptLicmRefuseBlame 0 0)
+        (OptLicmRefuseBlame 4 0))]
+    [(= mode 1) (OptLicmRefuseBlame 0 0)]
+    [(opt-licm-store-summary-header-load-safe?
+        (opt-licm-store-summary-for-storeptr
+          (& ctx.ptrs)
+          (opt-licm-element-class-any)
+          ptr))
+      (OptLicmRefuseBlame 0 0)]
+    [else (OptLicmRefuseBlame 4 0)]))
+
+(define (opt-licm-refuse-blame-instr
+  [ctx : (& ctx OptLicmRefuseCtx)]
+  [mode : i64]
+  [name : i64]
+  [instr : (& ir.CompilerIrInstr)]) : OptLicmRefuseBlame
+  (match instr
+    [(or (Call _ callee _ _) (TailCall callee _ _))
+      (cond
+        [(or (opt-direct-call-noreturn? callee) (= mode 3))
+          (OptLicmRefuseBlame 0 0)]
+        [(= mode 0)
+          (if (opt-licm-direct-call-keeps-globals-clean?
+            (& ctx.direct-call-clean)
+            (& ctx.cells)
+            callee)
+            (OptLicmRefuseBlame 0 0)
+            (OptLicmRefuseBlame 1 callee))]
+        [(= mode 1)
+          (if (opt-licm-store-summary-header-load-safe?
+            (opt-licm-store-summary-for-direct-call
+              (& ctx.direct-call-clean)
+              callee))
+            (OptLicmRefuseBlame 0 0)
+            (OptLicmRefuseBlame 1 callee))]
+        [else
+          (if (=
+            (bit-and
+              (opt-global-mod-ref-call-mask (& ctx.cells.obj-mod-ref) callee)
+              (opt-licm-refuse-obj-bit ctx name))
+            0)
+            (OptLicmRefuseBlame 0 0)
+            (OptLicmRefuseBlame 1 callee))])]
+    [(or (CallIndirect _ _ _ _) (CallIndirectC _ _ _ _) (CallCAbiStoreResult _)
+         (CallIndirectCAbiStoreResult _) (SpmdCall _) (TailCallIndirect _ _ _))
+      (if (= mode 3)
+        (OptLicmRefuseBlame 0 0)
+        (OptLicmRefuseBlame 2 0))]
+    [(Store target _ _)
+      (if (= mode 2)
+        (OptLicmRefuseBlame 0 0)
+        (OptLicmRefuseBlame 3 target))]
+    [(or (StorePtr ptr _ _) (StoreOwned ptr _ _))
+      (opt-licm-refuse-blame-store ctx mode name (& ptr))]
+    [(CopyBytes dst _ _)
+      (cond
+        [(= mode 2) (opt-licm-refuse-blame-store ctx mode name (& dst))]
+        [(opt-licm-frame-word-source? (& ctx.ptrs) (& dst))
+          (OptLicmRefuseBlame 0 0)]
+        [else (OptLicmRefuseBlame 5 0)])]
+    [_ (OptLicmRefuseBlame 0 0)]))
+
 (define (opt-licm-refuse-blame-at
-  [ctx : (& OptLicmRefuseCtx)]
+  [ctx : (& ctx OptLicmRefuseCtx)]
   [mode : i64]
   [name : i64]) : String
-  (opt-licm-refuse-blame-text
-    (opt-licm-refuse-blame-blocks
-      mode
-      name
-      ctx.direct-call-clean
-      ctx.cells
-      ctx.ptrs
-      ctx.body)))
-
-;; Why the loop-wide answer opt-licm-globals-clean? gives is `false`. The two
-;; causes are the two the loop site distinguishes: `global-write?` (something
-;; here may write a cell) and, when that is clear, the memory-clean direct-call
-;; tier that `globals-clean-strict?` subtracts.
-(define (opt-licm-refuse-clean-reason [ctx : (& ctx OptLicmRefuseCtx)]) : String
-  (if ctx.global-write?
-    (str_cat.str-cat
-      "globals-clean:cell-write:"
-      (opt-licm-refuse-blame-at ctx (opt-licm-refuse-blame-mode-cell) 0))
-    (if ctx.mem-clean-call?
-      "globals-clean:mem-clean-call"
-      "globals-clean:other")))
-
-;; Why the IAG-2 head-of-chain fallback (opt-licm-global-header-value?) did not
-;; admit `name`. The order is the order the code asks the questions in: the
-;; storage table's existence, the two per-global rows, then the pressure gate's
-;; three conditions.
-(define (opt-licm-refuse-iag2-reason [ctx : (& OptLicmRefuseCtx)] [name : i64]) : String
   (let
-    [globals : OptLicmGlobalFacts
-      (owned_view.compiler-owned-reference-shared-view (& ctx.globals))]
-    (cond
-      [(not (opt-licm-refuse-obj-table? ctx)) "iag2:no-table"]
-      [(opt-global-mod-ref-any? globals.obj-mask)
-        (str_cat.str-cat
-          "iag2:obj-any:"
-          (opt-licm-refuse-blame-at ctx (opt-licm-refuse-blame-mode-obj) name))]
-      [(opt-global-mod-ref-mask-may-write? globals.index globals.mask name)
-        (str_cat.str-cat
-          "iag2:p18-cell-write:"
-          (opt-licm-refuse-blame-at ctx (opt-licm-refuse-blame-mode-cell) name))]
-      [(opt-global-mod-ref-mask-may-write?
-          globals.obj-index
-          globals.obj-mask
-          name)
-        (str_cat.str-cat
-          "iag2:obj-write:"
-          (opt-licm-refuse-blame-at ctx (opt-licm-refuse-blame-mode-obj) name))]
-      [(= ctx.side-exit-kind 1) "iag2:side-exit-return"]
-      [(= ctx.header-count 0) "iag2:no-refs"]
-      [else
-        (str_cat.str-cat "iag2:pool:" (string.int->string ctx.header-count))])))
+    [seq : (& ctx (Slice ir.CompilerIrBlock))
+      (ir.compiler-ir-block-list-view (& ctx.body))]
+    (for [bi (iterator.range 0 (array-length seq))]
+      (match (& (array-ref seq bi))
+        [(Block _ instrs)
+          (for [ii
+            (iterator.range 0 (ir.compiler-ir-instr-seq-count (& instrs)))]
+            (let
+              [here : OptLicmRefuseBlame
+                (opt-licm-refuse-blame-instr
+                  ctx
+                  mode
+                  name
+                  (ir.compiler-ir-instr-seq-borrow instrs ii))]
+              (when
+                (not (= here.code 0))
+                (return (opt-licm-refuse-blame-text here)))))]))
+    "none"))
 
-;; Does the program carry IAG-2's storage table at all? A program that does not
-;; seeds every loop at "may write any storage", so no per-global answer exists
-;; to report and the whole class collapses onto one reason.
-(define (opt-licm-refuse-obj-table? [ctx : (& ctx OptLicmRefuseCtx)]) : bool
-  (let
-    [cells : OptGlobalCellSummary ctx.cells]
-    [obj : OptGlobalModRef cells.obj-mod-ref]
-    obj.built?))
-
-;; Does the Gep/Load arm's `Global` operand disjunct HOLD for `name`? The two
-;; halves are the loop-wide answer opt-licm-value-invariant? reads and IAG-2's
-;; head-of-chain admission.
-(define (opt-licm-refuse-global-invariant?
-  [ctx : (& ctx OptLicmRefuseCtx)]
-  [name : i64]) : bool
-  (let
-    [globals (& ctx.globals)]
-    (or
-      globals.clean?
-      (let
-        [value (ir.CompilerIrValue.Global name)]
-        (opt-licm-global-header-value? globals value)))))
-
+;; Why the loop-wide globals-clean and IAG-2 head-of-chain checks refused
+;; `name`, reading the shared opt-licm-global-storage-code classifier.
 (define (opt-licm-refuse-global-reason
-  [ctx : (& OptLicmRefuseCtx)]
+  [ctx : (& ctx OptLicmRefuseCtx)]
   [name : i64]) : String
-  (str_cat.str-cat
-    (str_cat.str-cat (opt-licm-refuse-clean-reason ctx) ";")
-    (opt-licm-refuse-iag2-reason ctx name)))
+  (let
+    [clean : String
+      (cond
+        [ctx.global-write?
+          (str_cat.str-cat
+            "globals-clean:cell-write:"
+            (opt-licm-refuse-blame-at ctx 0 0))]
+        [ctx.mem-clean-call? "globals-clean:mem-clean-call"]
+        [else "globals-clean:other"])]
+    [iag2 : String
+      (if (not ctx.cells.obj-mod-ref.built?)
+        "iag2:no-table"
+        (let
+          [code : i64 (opt-licm-global-storage-code (& ctx.globals) name)]
+          (cond
+            [(= code 1)
+              (str_cat.str-cat
+                "iag2:obj-any:"
+                (opt-licm-refuse-blame-at ctx 2 name))]
+            [(= code 2)
+              (str_cat.str-cat
+                "iag2:p18-cell-write:"
+                (opt-licm-refuse-blame-at ctx 0 name))]
+            [(= code 3)
+              (str_cat.str-cat
+                "iag2:obj-write:"
+                (opt-licm-refuse-blame-at ctx 2 name))]
+            [(= ctx.side-exit-kind 1) "iag2:side-exit-return"]
+            [(= ctx.header-count 0) "iag2:no-refs"]
+            [else
+              (str_cat.str-cat
+                "iag2:pool:"
+                (string.int->string ctx.header-count))])))]
+    (str_cat.str-cat clean ";" iag2)))
+
+(define (opt-licm-refuse-copy-summary [s : (& OptLicmStoreSummary)]) : OptLicmStoreSummary
+  (OptLicmStoreSummary
+    s.call-or-unknown?
+    s.header-or-unknown-store?
+    s.element-only-store?
+    s.element-only-call?
+    s.element-classes
+    s.frame-store?))
 
 ;; The reason a LOAD or address whose own operands are already available
-;; outside the loop stayed in it: the memory gate opt-licm-memory-safe? and the
-;; address-formation interlock read, spelled through the clause that refused.
-(define (opt-licm-refuse-memory-reason [ctx : OptLicmRefuseCtx]) : String
+;; outside the loop stayed in it.
+(define (opt-licm-refuse-memory-reason [ctx : (& ctx OptLicmRefuseCtx)]) : String
   (let
-    [legacy : OptLicmStoreSummary ctx.raw-legacy-summary]
-    [store : OptLicmStoreSummary ctx.store-summary]
+    [legacy : OptLicmStoreSummary
+      (opt-licm-refuse-copy-summary (& ctx.raw-legacy-summary))]
+    [store : OptLicmStoreSummary
+      (opt-licm-refuse-copy-summary (& ctx.store-summary))]
     (cond
       [legacy.call-or-unknown?
         (str_cat.str-cat
           "header-load-safe:call:"
-          (opt-licm-refuse-blame-at ctx (opt-licm-refuse-blame-mode-header) 0))]
+          (opt-licm-refuse-blame-at ctx 1 0))]
       [legacy.header-or-unknown-store?
         (str_cat.str-cat
           "header-load-safe:store:"
-          (opt-licm-refuse-blame-text
-            (opt-licm-refuse-blame-blocks
-              (opt-licm-refuse-blame-mode-header-store)
-              0
-              ctx.direct-call-clean
-              ctx.cells
-              ctx.ptrs
-              ctx.body)))]
+          (opt-licm-refuse-blame-at ctx 3 0))]
       [(= ctx.side-exit-kind 1) "side-exit-return"]
       [(and ctx.any-call? (opt-licm-store-summary-call-boundary? store))
-        (str_cat.str-cat
-          "call-boundary:"
-          (opt-licm-refuse-blame-at ctx (opt-licm-refuse-blame-mode-header) 0))]
-      ;; Nothing in the body writes memory at all, so no call and no store is
-      ;; what kept this candidate: the clause that did is one of the
-      ;; profitability ones (opt-gvn-stable-var?, the hot-consumer gate, the
-      ;; pass mode), which this report deliberately does not speak for.
+        (str_cat.str-cat "call-boundary:" (opt-licm-refuse-blame-at ctx 1 0))]
       [(opt-licm-store-summary-clean? legacy) "not-call-or-store"]
       [else "memory-root"])))
 
-;; Is this value available OUTSIDE the loop as the pass sees it after the
-;; filter ran? A var the filter left defined in the body is not, and the
-;; instruction that reads it is reported as blocked behind that definition
-;; rather than re-deriving a reason that belongs to the other line.
+(define (opt-licm-refuse-global-or-memory
+  [ctx : (& ctx OptLicmRefuseCtx)]
+  [name : i64]) : String
+  (if (or ctx.globals.clean? (opt-licm-global-header-ok? (& ctx.globals) name))
+    (opt-licm-refuse-memory-reason ctx)
+    (opt-licm-refuse-global-reason ctx name)))
+
 (define (opt-licm-refuse-outside?
   [ctx : (& ctx OptLicmRefuseCtx)]
   [value : (& ir.CompilerIrValue)]) : bool
   (match value
-    [(Var var) (not (opt-used-contains ctx.stayed-defs var))]
+    [(Var var) (not (opt-used-contains (& ctx.stayed-defs) var))]
     [_ true]))
 
 (define (opt-licm-refuse-emit!
@@ -29429,83 +29157,41 @@
   [reason : String]) : unit
   (io.print-error
     (str_cat.str-cat
-      (str_cat.str-cat
-        (str_cat.str-cat
-          (str_cat.str-cat
-            (str_cat.str-cat
-              (str_cat.str-cat
-                (str_cat.str-cat
-                  (str_cat.str-cat
-                    "licm-refuse|"
-                    (ir.compiler-ir-symbol-text opt-licm-trace-function))
-                  "|")
-                (ir.compiler-ir-label-text ctx.header))
-              "|%")
-            (string.int->string var))
-          "|")
-        kind)
-      (str_cat.str-cat (str_cat.str-cat "|" reason) "\n"))))
-
-;; Is this Gep the length word or the data word of a descriptor handle? Those
-;; are the two the report names; every other offset off a handle is element
-;; indexing and no candidate of this pass.
-(define (opt-licm-refuse-header-gep-kind
-  [type-segment-bases : i64]
-  [offset : (& ir.CompilerIrValue)]
-  [ty : (& ast.AstType)]) : i64
-  (if (opt-bounds-object-length-slot? type-segment-bases offset ty)
-    1
-    (if (opt-licm-data-slot? offset ty)
-      2
-      0)))
-
-;; Why a read may not execute at the preheader (opt-licm-deref-load-ok?): 0
-;; when it may, 1 (`element-bound`) for element storage without a proven bound,
-;; 2 (`deref`) for any other address without readable-storage evidence. Such a
-;; read stays whatever the memory clauses say, so this is the reason reported
-;; first.
-(define (opt-licm-refuse-deref-code
-  [ctx : (& ctx OptLicmRefuseCtx)]
-  [dst : i64]
-  [ptr-var : i64]
-  [load-ty : (& ast.AstType)]) : i64
-  (let
-    [site (& ctx.deref-site)]
-    [address : ir.CompilerIrValue (Var ptr-var)]
-    (cond
-      [(opt-licm-deref-load-ok?
-          ctx.type-segment-bases
-          (& ctx.types)
-          (& ctx.ptrs)
-          site
-          dst
-          (& address)
-          load-ty)
-        0]
-      [(match (opt-licm-deref-address
-          ctx.type-segment-bases
-          (& ctx.types)
-          (& site.facts)
-          (& address))
-          [(Element _ _ _) true]
-          [_ false])
-        1]
-      [else 2])))
+      "licm-refuse|"
+      (ir.compiler-ir-symbol-text opt-licm-trace-function)
+      "|"
+      (ir.compiler-ir-label-text ctx.header)
+      "|%"
+      (string.int->string var)
+      "|"
+      kind
+      "|"
+      reason
+      "\n")))
 
 (define (opt-licm-refuse-load!
-  [ctx : (& OptLicmRefuseCtx)]
+  [ctx : (& ctx OptLicmRefuseCtx)]
   [dst : i64]
   [ptr-var : i64]
   [load-ty : (& ast.AstType)]
   [blocked? : bool]) : unit
   (let
-    [code : i64 (opt-licm-refuse-deref-code ctx dst ptr-var load-ty)]
-    [readable? : bool (= code 0)]
+    [address : ir.CompilerIrValue (Var ptr-var)]
+    [code : i64
+      (opt-licm-deref-load-code
+        ctx.type-segment-bases
+        (& ctx.types)
+        (& ctx.ptrs)
+        (& ctx.deref-site)
+        dst
+        (& address)
+        load-ty
+        true)]
     [deref : String
       (if (= code 1)
         "element-bound"
         "deref")]
-    (match (opt-licm-ptr-lookup ctx.ptrs ptr-var)
+    (match (opt-licm-ptr-lookup (& ctx.ptrs) ptr-var)
       [(or (GlobalDataSlot name) (GlobalSlot name))
         (opt-licm-refuse-emit!
           ctx
@@ -29513,11 +29199,8 @@
           "global-cell"
           (cond
             [blocked? "chain-head"]
-            [(not readable?) deref]
-            [(opt-licm-refuse-global-invariant? ctx name)
-              (opt-licm-refuse-memory-reason
-                (owned_view.compiler-owned-reference-shared-view ctx))]
-            [else (opt-licm-refuse-global-reason ctx name)]))]
+            [(not (= code 0)) deref]
+            [else (opt-licm-refuse-global-or-memory ctx name)]))]
       [(HeaderSlot _)
         (opt-licm-refuse-emit!
           ctx
@@ -29525,10 +29208,8 @@
           "descriptor-length"
           (cond
             [blocked? "chain-head"]
-            [(not readable?) deref]
-            [else
-              (opt-licm-refuse-memory-reason
-                (owned_view.compiler-owned-reference-shared-view ctx))]))]
+            [(not (= code 0)) deref]
+            [else (opt-licm-refuse-memory-reason ctx)]))]
       [(DataSlot _)
         (opt-licm-refuse-emit!
           ctx
@@ -29536,27 +29217,22 @@
           "descriptor-data"
           (cond
             [blocked? "chain-head"]
-            [(not readable?) deref]
-            [else
-              (opt-licm-refuse-memory-reason
-                (owned_view.compiler-owned-reference-shared-view ctx))]))]
+            [(not (= code 0)) deref]
+            [else (opt-licm-refuse-memory-reason ctx)]))]
       [_
-        (if blocked?
-          unit
+        (unless
+          blocked?
           (opt-licm-refuse-emit!
             ctx
             dst
             "load"
-            (if readable?
-              (opt-licm-refuse-memory-reason
-                (owned_view.compiler-owned-reference-shared-view ctx))
+            (if (= code 0)
+              (opt-licm-refuse-memory-reason ctx)
               deref)))])))
 
-;; One instruction of the kept body. A Gep or a Load whose address class is one
-;; of the four the report names, and whose own operands are outside the loop,
-;; is a refused candidate; everything else produces nothing.
+;; One instruction of the kept body.
 (define (opt-licm-refuse-gep!
-  [ctx : (& OptLicmRefuseCtx)]
+  [ctx : (& ctx OptLicmRefuseCtx)]
   [dst : i64]
   [base : (& ir.CompilerIrValue)]
   [offset : (& ir.CompilerIrValue)]
@@ -29569,36 +29245,32 @@
             ctx
             dst
             "global-cell"
-            ;; The operand disjunct first: when `@g` IS invariant here (the
-            ;; loop-wide answer, or IAG-2's head-of-chain admission) the clause
-            ;; that kept this Gep is a memory one, and blaming the global would
-            ;; name a conjunct that held.
-            (if (opt-licm-refuse-global-invariant? ctx name)
-              (opt-licm-refuse-memory-reason
-                (owned_view.compiler-owned-reference-shared-view ctx))
-              (opt-licm-refuse-global-reason ctx name)))]
+            (opt-licm-refuse-global-or-memory ctx name))]
         [_ unit])]
     [(Var base-var)
-      (let
-        [kind : i64
-          (if (opt-licm-array-header-var?
-            ctx.type-segment-bases
-            ctx.types
-            base-var)
-            (opt-licm-refuse-header-gep-kind ctx.type-segment-bases offset ty)
-            0)]
-        [reason : String
-          (if (= kind 0)
-            ""
-            (if (opt-licm-refuse-outside? ctx base)
-              (opt-licm-refuse-memory-reason
-                (owned_view.compiler-owned-reference-shared-view ctx))
-              "chain-head"))]
-        (cond
-          [(= kind 1)
-            (opt-licm-refuse-emit! ctx dst "descriptor-length" reason)]
-          [(= kind 2) (opt-licm-refuse-emit! ctx dst "descriptor-data" reason)]
-          [else unit]))]
+      (when
+        (opt-licm-array-header-var?
+          ctx.type-segment-bases
+          (& ctx.types)
+          base-var)
+        (let
+          [kind : i64
+            (cond
+              [(opt-bounds-object-length-slot? ctx.type-segment-bases offset ty)
+                1]
+              [(opt-licm-data-slot? offset ty) 2]
+              [else 0])]
+          (when
+            (not (= kind 0))
+            (opt-licm-refuse-emit!
+              ctx
+              dst
+              (if (= kind 1)
+                "descriptor-length"
+                "descriptor-data")
+              (if (opt-licm-refuse-outside? ctx base)
+                (opt-licm-refuse-memory-reason ctx)
+                "chain-head")))))]
     [_ unit]))
 
 (define (opt-licm-refuse-instr!
@@ -29955,23 +29627,24 @@
             (ir.compiler-ir-block-list-count body-blocks))]
         (match (opt-licm-filter-body-blocks!
           (&mut filtered-out)
-          type-segment-bases
+          (OptLicmFilterCfg
+            type-segment-bases
+            store-summary
+            legacy-store-summary
+            any-call?
+            (if late?
+              (if (opt-licm-vector-memory-blocks? (& body-blocks))
+                2
+                1)
+              0)
+            descriptor-header-hoist?)
           loop-defs
           (ir.compiler-ir-block-list-view body-blocks)
           sources
           types
-          store-summary
-          legacy-store-summary
           ptrs
           roots
           store-roots
-          any-call?
-          (if late?
-            (if (opt-licm-vector-memory-blocks? (& body-blocks))
-              2
-              1)
-            0)
-          descriptor-header-hoist?
           globals
           hot-uses
           deref-site
@@ -30329,7 +30002,7 @@
   [late? : bool]
   [loop-defs : (& loop-defs opt_i64_i64_map.Map)]
   [instr : (& ir.CompilerIrInstr)]) : bool
-  (match (owned_view.compiler-owned-reference-shared-view instr)
+  (match instr
     [(or (Mov _ src _) (Cast _ src _ _) (Bitcast _ src _ _))
       (and late? (opt-licm-seed-value? loop-defs (& src)))]
     [(or (Word _ src _ _) (UnOp _ _ src _) (Splat _ src _ _) (Load _ src _))
@@ -30338,12 +30011,12 @@
       (and
         (not (ir.compiler-ir-binop-may-fault? (& op)))
         (opt-licm-seed-values? loop-defs (& lhs) (& rhs)))]
-    [(VectorBinOp (box (fields op lhs rhs)))
+    [(VectorBinOp payload)
       (and
-        (not (ir.compiler-ir-binop-may-fault? (& op)))
-        (opt-licm-seed-values? loop-defs (& lhs) (& rhs)))]
-    [(VectorCompare (box (fields lhs rhs)))
-      (opt-licm-seed-values? loop-defs (& lhs) (& rhs))]
+        (not (ir.compiler-ir-binop-may-fault? (& payload.op)))
+        (opt-licm-seed-values? loop-defs (& payload.lhs) (& payload.rhs)))]
+    [(VectorCompare payload)
+      (opt-licm-seed-values? loop-defs (& payload.lhs) (& payload.rhs))]
     [(Gep _ base offset _)
       (opt-licm-seed-values? loop-defs (& base) (& offset))]
     [_ false]))
@@ -30614,55 +30287,40 @@
 (define (opt-licm-unswitch-labels-contained?
   [labels : OptLabelSet]
   [container : OptLabelSet]) : bool
-  (match labels
-    [(Nil) true]
-    [(Dense _ _)
-      (and
-        (opt-label-contains container (opt-label-ref labels 0))
-        (opt-licm-unswitch-labels-contained? (opt-label-tail labels) container))]))
+  (for [i (iterator.range 0 (opt-label-count labels))]
+    (unless
+      (opt-label-contains container (opt-label-ref labels i))
+      (return false)))
+  true)
 
 ;; LU-2: does `label` enter the nested loop headed by `header` -- itself, its
 ;; preheader, or a run of jump-only stubs and one-instruction dispatch blocks
-;; (followed along their taken edge) that lands on either? A versioned inner
-;; loop's entry guard is such a run: `<header>__bce_guard__bool_and.k` blocks
-;; whose true edges chain into `<header>__bce_fast__preheader`, a stub onto the
-;; fast copy's rotate landing, which the loop analysis names as its preheader.
-;; The selected branch is the first invariant conjunct of that run; the
-;; conjuncts behind it join the dispatch chain (opt-licm-unswitch-chain-from),
-;; so all of them fold on the taken side.
+;; (followed along their taken edge) that lands on either?
 (define (opt-licm-unswitch-reaches-entry?
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
   [label : i64]
   [header : i64]
   [preheader : i64]
   [fuel : i64]) : bool
-  (cond
-    [(= label header) true]
-    [(= label preheader) true]
-    [(<= fuel 0) false]
-    [(not (opt-licm-unswitch-widened?)) false]
-    [else
-      (match (opt-cfg-find-block body-blocks label)
-        [(No) false]
-        [(Some block)
-          (match block
-            [(Block _ instrs)
-              (match (opt-licm-unswitch-chain-link (& instrs))
-                [(Jump next)
-                  (opt-licm-unswitch-reaches-entry?
-                    body-blocks
-                    next
-                    header
-                    preheader
-                    (- fuel 1))]
-                [(Branch _ true-label _)
-                  (opt-licm-unswitch-reaches-entry?
-                    body-blocks
-                    true-label
-                    header
-                    preheader
-                    (- fuel 1))]
-                [_ false])])])]))
+  (let
+    [cur : i64 label]
+    [left : i64 fuel]
+    (while true
+      (cond
+        [(or (= cur header) (= cur preheader)) (return true)]
+        [(or (<= left 0) (not (opt-licm-unswitch-widened?))) (return false)]
+        [else
+          (match (opt-cfg-find-block body-blocks cur)
+            [(No) (return false)]
+            [(Some block)
+              (match block
+                [(Block _ instrs)
+                  (match (opt-licm-unswitch-chain-link (& instrs))
+                    [(Jump next) (set! cur next)]
+                    [(Branch _ true-label _) (set! cur true-label)]
+                    [_ (return false)])])])
+          (-= left 1)]))
+    false))
 
 (define (opt-licm-unswitch-target-enters-nested-loop?
   [loops : (& loops (Slice OptNaturalLoop))]
@@ -30670,36 +30328,33 @@
   [outer-body : OptLabelSet]
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
   [target : i64]) : bool
-  (match loops
-    [(slice) false]
-    [(slice loop & rest)
-      (let
-        [header : i64 (opt-natural-loop-header loop)]
-        [enters? : bool
-          (and
-            (not (= header outer-header))
-            (opt-label-contains outer-body header)
+  (for [i (iterator.range 0 (array-length loops))]
+    (let
+      [loop (& (array-ref loops i))]
+      [header : i64 (opt-natural-loop-header loop)]
+      (when
+        (and
+          (not (= header outer-header))
+          (opt-label-contains outer-body header))
+        (let
+          [preheader : i64
+            (match (opt-natural-loop-preheader loop)
+              [(Some p) p]
+              [(No) (ir.compiler-ir-label-none)])]
+          (when
             (or
               (= target header)
-              (match (opt-natural-loop-preheader loop)
-                [(Some preheader) (= target preheader)]
-                [(No) false])
+              (and
+                (not (= preheader (ir.compiler-ir-label-none)))
+                (= target preheader))
               (opt-licm-unswitch-reaches-entry?
                 body-blocks
                 target
                 header
-                (match (opt-natural-loop-preheader loop)
-                  [(Some preheader) preheader]
-                  [(No) (ir.compiler-ir-label-none)])
-                (opt-licm-unswitch-chain-fuel))))]
-        (or
-          enters?
-          (opt-licm-unswitch-target-enters-nested-loop?
-            rest
-            outer-header
-            outer-body
-            body-blocks
-            target)))]))
+                preheader
+                (opt-licm-unswitch-chain-fuel)))
+            (return true))))))
+  false)
 
 (define (opt-licm-unswitch-instr-supported? [instr : (& ir.CompilerIrInstr)]) : bool
   (match instr
@@ -30717,34 +30372,31 @@
     (unless
       (opt-licm-unswitch-instr-supported?
         (ir.compiler-ir-instr-seq-borrow instrs index))
-      (return false))
-    unit)
+      (return false)))
   true)
 
 (define (opt-licm-unswitch-blocks-supported?
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]) : bool
-  (match blocks
-    [(slice) true]
-    [(slice block & rest)
-      (match block
-        [(Block _ instrs)
+  (for [i (iterator.range 0 (array-length blocks))]
+    (match (& (array-ref blocks i))
+      [(Block _ instrs)
+        (unless
           (and
-            (not (opt-cfg-instr-seq-can-fallthrough? instrs))
-            (opt-licm-unswitch-instrs-supported? (& instrs))
-            (opt-licm-unswitch-blocks-supported? rest))])]))
+            (not (opt-cfg-instr-seq-can-fallthrough? (& instrs)))
+            (opt-licm-unswitch-instrs-supported? (& instrs)))
+          (return false))]))
+  true)
 
 (define (opt-licm-unswitch-labels-fresh?
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [labels : OptLabelSet]) : bool
-  (match labels
-    [(Nil) true]
-    [(Dense _ _)
-      (and
-        (not
-          (opt-cfg-block-exists?
-            blocks
-            (opt-licm-unswitch-clone-label labels (opt-label-ref labels 0))))
-        (opt-licm-unswitch-labels-fresh? blocks (opt-label-tail labels)))]))
+  (for [i (iterator.range 0 (opt-label-count labels))]
+    (when
+      (opt-cfg-block-exists?
+        blocks
+        (opt-licm-unswitch-clone-label labels (opt-label-ref labels i)))
+      (return false)))
+  true)
 
 (define (opt-licm-unswitch-preheader-jumps-to?
   [blocks : (& blocks ir.CompilerIrBlockList)]
@@ -30816,14 +30468,11 @@
   [loops : (& loops (Slice OptNaturalLoop))]
   [outer-header : i64]
   [label : i64]) : bool
-  (match loops
-    [(slice) false]
-    [(slice loop & rest)
-      (or
-        (let
-          [nested : i64 (opt-natural-loop-header loop)]
-          (and (not (= nested outer-header)) (= nested label)))
-        (opt-licm-unswitch-nested-loop-header? rest outer-header label))]))
+  (for [i (iterator.range 0 (array-length loops))]
+    (let
+      [nested : i64 (opt-natural-loop-header (& (array-ref loops i)))]
+      (when (and (not (= nested outer-header)) (= nested label)) (return true))))
+  false)
 
 ;; LU-2: a dispatch block is `[branch %c]`, or `[%c = compare ...; branch %c]`
 ;; -- the shape the versioner's guard conjuncts have, since LICM leaves a
@@ -30909,85 +30558,64 @@
         (ir.compiler-ir-instr-seq-ref instrs 0)
         (Return (No)))]))
 
+(defstruct OptLicmUnswitchChainKey
+  (body-labels OptLabelSet)
+  (header i64)
+  (latch i64)
+  (origin i64)
+  (cond-var i64))
+
 (define (opt-licm-unswitch-chain-from
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [loops : (& loops opt_natural_loop_vec.Vec)]
-  [body-labels : OptLabelSet]
   [loop-defs : (& loop-defs opt_i64_i64_map.Map)]
-  [header : i64]
-  [latch : i64]
-  [origin : i64]
-  [cond-var : i64]
-  [label : i64]
-  [acc : OptLabelSet]
+  [key : OptLicmUnswitchChainKey]
+  [start : i64]
+  [init : OptLabelSet]
   [fuel : i64]) : OptLabelSet
-  (if (or
-    (<= fuel 0)
-    (= label header)
-    (= label latch)
-    (= label origin)
-    (not (opt-label-contains body-labels label))
-    (opt-label-contains acc label)
-    (opt-licm-unswitch-nested-loop-header?
-      (opt_natural_loop_vec.view loops)
-      header
-      label))
-    acc
-    (match (opt-cfg-find-block blocks label)
-      [(No) acc]
-      [(Some block)
-        (match block
-          [(Block _ instrs)
-            (if (<= (ir.compiler-ir-instr-seq-count instrs) 2)
-              (match (opt-licm-unswitch-chain-link (& instrs))
-                [(Jump target)
-                  (opt-licm-unswitch-chain-from
-                    blocks
-                    loops
-                    body-labels
-                    loop-defs
-                    header
-                    latch
-                    origin
-                    cond-var
-                    target
-                    acc
-                    (- fuel 1))]
-                [(Branch cond _ _)
-                  (let
-                    [taken : i64
-                      (opt-licm-unswitch-dispatch-taken
-                        blocks
-                        body-labels
-                        loop-defs
-                        label)]
-                    ;; LU-1: a dispatch block that re-tests the selected
-                    ;; condition is no new conjunct -- the same-condition fold
-                    ;; decides it on both sides -- so the walk passes through
-                    ;; it without adding it, and a run of such re-tests leaves
-                    ;; the chain empty, which is what lets the clone fold.
-                    [same? : bool
-                      (match cond
-                        [(Var var) (= var cond-var)]
-                        [_ false])]
-                    (if (< taken 0)
-                      acc
-                      (opt-licm-unswitch-chain-from
-                        blocks
-                        loops
-                        body-labels
-                        loop-defs
-                        header
-                        latch
-                        origin
-                        cond-var
-                        taken
-                        (if same?
-                          acc
-                          (opt-label-add acc label))
-                        (- fuel 1))))]
-                [_ acc])
-              acc)])])))
+  (let
+    [label : i64 start]
+    [acc : OptLabelSet init]
+    [left : i64 fuel]
+    (while (and
+      (> left 0)
+      (not (= label key.header))
+      (not (= label key.latch))
+      (not (= label key.origin))
+      (opt-label-contains key.body-labels label)
+      (not (opt-label-contains acc label))
+      (not
+        (opt-licm-unswitch-nested-loop-header?
+          (opt_natural_loop_vec.view loops)
+          key.header
+          label)))
+      (match (opt-cfg-find-block blocks label)
+        [(No) (return acc)]
+        [(Some block)
+          (match block
+            [(Block _ instrs)
+              (if (> (ir.compiler-ir-instr-seq-count (& instrs)) 2)
+                (return acc)
+                (match (opt-licm-unswitch-chain-link (& instrs))
+                  [(Jump target) (set! label target)]
+                  [(Branch cond _ _)
+                    (let
+                      [taken : i64
+                        (opt-licm-unswitch-dispatch-taken
+                          blocks
+                          key.body-labels
+                          loop-defs
+                          label)]
+                      [same? : bool
+                        (match cond
+                          [(Var var) (= var key.cond-var)]
+                          [_ false])]
+                      (when (< taken 0) (return acc))
+                      (unless same? (set! acc (opt-label-add acc label)))
+                      (set! label taken))]
+                  [_ (return acc)]))])])
+      (-= left 1))
+    acc))
 
 ;; `cond AND c1 AND ... AND ck`, built in the preheader from ids past the
 ;; caller's frame. The conjuncts are materialized booleans the loop does not
@@ -31009,7 +30637,7 @@
       (opt-licm-unswitch-cond-material!
         body-blocks
         loop-defs
-        (owned_view.compiler-owned-reference-shared-view cond)
+        (ir.compiler-ir-clone-value cond)
         cell
         (&mut builder))]
     (for [cursor (iterator.range index count)]
@@ -31030,7 +30658,7 @@
           (ir.CompilerIrInstr.BinOp
             fresh
             (And)
-            (compiler-opt-global-shared-view result)
+            (ir.compiler-ir-clone-value (& result))
             next
             (Bool)))
         (set! result (Var fresh))))
@@ -31040,23 +30668,19 @@
 (define (opt-licm-unswitch-cond-branch-count
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [var : i64]) : i64
-  (match blocks
-    [(slice) 0]
-    [(slice block & rest)
-      (+
-        (match block
-          [(Block _ instrs)
-            (let
-              [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-              (if (= count 0)
-                0
-                (match (ir.compiler-ir-instr-seq-borrow instrs (- count 1))
-                  [(Branch (Var v) _ _)
-                    (if (= v var)
-                      1
-                      0)]
-                  [_ 0])))])
-        (opt-licm-unswitch-cond-branch-count rest var))]))
+  (let
+    [hits : i64 0]
+    (for [i (iterator.range 0 (array-length blocks))]
+      (match (& (array-ref blocks i))
+        [(Block _ instrs)
+          (let
+            [count : i64 (ir.compiler-ir-instr-seq-count (& instrs))]
+            (when
+              (> count 0)
+              (match (ir.compiler-ir-instr-seq-borrow instrs (- count 1))
+                [(Branch (Var v) _ _) (when (= v var) (+= hits 1))]
+                [_ unit])))]))
+    hits))
 
 ;; LU-2: a body-defined condition the loop cannot change. A versioner's entry
 ;; guard, or any `(< i n)` test the source wrote inside the loop, is a pure
@@ -31355,53 +30979,64 @@
             (ir.compiler-ir-block-list-view body-blocks))
             [(No) (No)]
             [(Some candidate)
-              (Some
-                (OptLicmUnswitchShape
-                  header
-                  preheader
-                  body-labels
-                  body-blocks
-                  candidate.branch-label
-                  candidate.branch-index
-                  candidate.cond
-                  candidate.true-label
-                  candidate.false-label
-                  (opt-licm-unswitch-chain-from
-                    blocks
-                    loops
+              (let
+                [chain-key : OptLicmUnswitchChainKey
+                  (OptLicmUnswitchChainKey
                     body-labels
-                    loop-defs
                     header
                     latch
                     candidate.branch-label
-                    (opt-licm-unswitch-cond-var
-                      (& (compiler-opt-global-shared-view candidate.cond)))
+                    (opt-licm-unswitch-cond-var (& candidate.cond)))]
+                [prefix : OptLabelSet
+                  (if (= (opt-label-count successors) 1)
+                    (opt-licm-unswitch-chain-from
+                      blocks
+                      loops
+                      loop-defs
+                      chain-key
+                      (opt-label-ref successors 0)
+                      (Nil)
+                      (opt-licm-unswitch-chain-fuel))
+                    (Nil))]
+                [chain-labels : OptLabelSet
+                  (opt-licm-unswitch-chain-from
+                    blocks
+                    loops
+                    loop-defs
+                    chain-key
                     candidate.true-label
-                    (if (= (opt-label-count successors) 1)
-                      (opt-licm-unswitch-chain-from
-                        blocks
-                        loops
-                        body-labels
-                        loop-defs
-                        header
-                        latch
-                        candidate.branch-label
-                        (opt-licm-unswitch-cond-var
-                          (& (compiler-opt-global-shared-view candidate.cond)))
-                        (opt-label-ref successors 0)
-                        (Nil)
-                        (opt-licm-unswitch-chain-fuel))
-                      (Nil))
-                    (opt-licm-unswitch-chain-fuel))))])))]))
+                    prefix
+                    (opt-licm-unswitch-chain-fuel))]
+                (Some
+                  (OptLicmUnswitchShape
+                    header
+                    preheader
+                    body-labels
+                    body-blocks
+                    candidate.branch-label
+                    candidate.branch-index
+                    candidate.cond
+                    candidate.true-label
+                    candidate.false-label
+                    chain-labels)))])))]))
+
+(define (opt-licm-unswitch-label-copy [set : (& OptLabelSet)]) : OptLabelSet
+  (match set
+    [(Nil) (Nil)]
+    [(Dense handle len) (Dense handle len)]))
 
 (define (opt-licm-unswitch-clone-instrs
-  [shape : OptLicmUnswitchShape]
+  [shape : (& shape OptLicmUnswitchShape)]
   [label : i64]
   [instrs : (& ir.CompilerIrInstrSeq)]
   [index : i64]
   [remap : (& (__tl_dyn-array ir.CompilerIrValue))]
   [all-labels : OptLabelSet]) : ir.CompilerIrInstrSeq
   (let
+    [body-labels : OptLabelSet
+      (opt-licm-unswitch-label-copy (& shape.body-labels))]
+    [chain-labels : OptLabelSet
+      (opt-licm-unswitch-label-copy (& shape.chain-labels))]
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [builder : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity (- count index))]
@@ -31411,26 +31046,24 @@
         ;; A negated conjunction is only a verdict on ONE conjunct, so the
         ;; clone resolves its branch exactly when the chain is empty.
         (if (and
-          (= (opt-label-count shape.chain-labels) 0)
+          (= (opt-label-count chain-labels) 0)
           (or
             (and (= label shape.branch-label) (= cursor shape.branch-index))
             (opt-licm-unswitch-same-cond-branch?
-              (compiler-opt-global-shared-view shape)
+              shape
               (ir.compiler-ir-instr-seq-borrow instrs cursor))))
           (match (ir.compiler-ir-instr-seq-borrow instrs cursor)
             [(Branch _ _ false-label)
               (ir.CompilerIrInstr.Jump
-                (opt-licm-unswitch-clone-label shape.body-labels false-label))]
+                (opt-licm-unswitch-clone-label body-labels false-label))]
             [_
               (ir.CompilerIrInstr.Jump
-                (opt-licm-unswitch-clone-label
-                  shape.body-labels
-                  shape.false-label))])
+                (opt-licm-unswitch-clone-label body-labels shape.false-label))])
           (opt-region-clone-instr-remapped
             remap
             (&
               (Region
-                shape.body-labels
+                body-labels
                 all-labels
                 (opt-licm-unswitch-suffix)
                 (ir.compiler-ir-label-none)
@@ -31441,26 +31074,26 @@
 (define (opt-licm-unswitch-clone-blocks!
   [out : (&mut out ir.CompilerIrBlockBuilder)]
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
-  [shape : OptLicmUnswitchShape]
-  [remap : (__tl_dyn-array ir.CompilerIrValue)]
+  [shape : (& shape OptLicmUnswitchShape)]
+  [remap : (& remap (__tl_dyn-array ir.CompilerIrValue))]
   [all-labels : OptLabelSet]) : unit
-  (match blocks
-    [(slice) unit]
-    [(slice block & rest)
-      (match block
+  (let
+    [body-labels : OptLabelSet
+      (opt-licm-unswitch-label-copy (& shape.body-labels))]
+    (for [i (iterator.range 0 (array-length blocks))]
+      (match (& (array-ref blocks i))
         [(Block label instrs)
           (ir.compiler-ir-block-builder-push!
             out
             (ir.CompilerIrBlock.Block
-              (opt-licm-unswitch-clone-label shape.body-labels label)
+              (opt-licm-unswitch-clone-label body-labels label)
               (opt-licm-unswitch-clone-instrs
-                (compiler-opt-global-shared-view shape)
+                shape
                 label
                 (& instrs)
                 0
-                (& remap)
-                all-labels)))
-          (opt-licm-unswitch-clone-blocks! out rest shape remap all-labels)])]))
+                remap
+                all-labels)))]))))
 
 (define (opt-licm-unswitch-clone-param-moves-into!
   [params : (& ir.CompilerIrParamSeq)]
@@ -31500,24 +31133,29 @@
 ;; selected branch -- true on the original side, false in the clone when the
 ;; dispatch is the condition alone.
 (define (opt-licm-unswitch-same-cond-branch?
-  [shape : OptLicmUnswitchShape]
+  [shape : (& shape OptLicmUnswitchShape)]
   [instr : (& ir.CompilerIrInstr)]) : bool
   (match instr
     [(Branch (Var var) true-label false-label)
-      (and
-        (opt-label-contains shape.body-labels true-label)
-        (opt-label-contains shape.body-labels false-label)
-        (match shape.cond
-          [(Var cond-var) (= var cond-var)]
-          [_ false]))]
+      (let
+        [body-labels : OptLabelSet
+          (opt-licm-unswitch-label-copy (& shape.body-labels))]
+        (and
+          (opt-label-contains body-labels true-label)
+          (opt-label-contains body-labels false-label)
+          (match (& shape.cond)
+            [(Var cond-var) (= var cond-var)]
+            [_ false])))]
     [_ false]))
 
 (define (opt-licm-unswitch-original-instrs
-  [shape : OptLicmUnswitchShape]
+  [shape : (& shape OptLicmUnswitchShape)]
   [label : i64]
   [instrs : (& ir.CompilerIrInstrSeq)]
   [index : i64]) : ir.CompilerIrInstrSeq
   (let
+    [chain-labels : OptLabelSet
+      (opt-licm-unswitch-label-copy (& shape.chain-labels))]
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [builder : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity (- count index))]
@@ -31527,14 +31165,14 @@
         (if (or
           (and (= label shape.branch-label) (= cursor shape.branch-index))
           (opt-licm-unswitch-same-cond-branch?
-            (compiler-opt-global-shared-view shape)
+            shape
             (ir.compiler-ir-instr-seq-borrow instrs cursor)))
           (match (ir.compiler-ir-instr-seq-borrow instrs cursor)
             [(Branch _ true-label _) (ir.CompilerIrInstr.Jump true-label)]
             [_ (ir.CompilerIrInstr.Jump shape.true-label)])
           ;; Every collected conjunct holds on this side, so each chain
           ;; block's Branch is the Jump it always takes here.
-          (if (opt-label-contains shape.chain-labels label)
+          (if (opt-label-contains chain-labels label)
             (match (ir.compiler-ir-instr-seq-borrow instrs cursor)
               [(Branch _ true-label _) (ir.CompilerIrInstr.Jump true-label)]
               [_ (ir.compiler-ir-instr-seq-ref instrs cursor)])
@@ -31542,13 +31180,15 @@
     (ir.compiler-ir-instr-builder-to-seq builder)))
 
 (define (opt-licm-unswitch-preheader-instrs
-  [shape : OptLicmUnswitchShape]
+  [shape : (& shape OptLicmUnswitchShape)]
   [instrs : (& ir.CompilerIrInstrSeq)]
   [index : i64]
   [fuse-instrs : (& ir.CompilerIrInstrSeq)]
-  [fused-cond : ir.CompilerIrValue]
+  [fused-cond : (& ir.CompilerIrValue)]
   [clone-param-moves : (& ir.CompilerIrInstrSeq)]) : ir.CompilerIrInstrSeq
   (let
+    [body-labels : OptLabelSet
+      (opt-licm-unswitch-label-copy (& shape.body-labels))]
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [prefix-end : i64
       (if (> count index)
@@ -31579,24 +31219,25 @@
     (ir.compiler-ir-instr-builder-push!
       (&mut builder)
       (ir.CompilerIrInstr.Branch
-        fused-cond
+        (ir.compiler-ir-clone-value fused-cond)
         shape.header
-        (opt-licm-unswitch-clone-label shape.body-labels shape.header)))
+        (opt-licm-unswitch-clone-label body-labels shape.header)))
     (ir.compiler-ir-instr-builder-to-seq builder)))
 
 (define (opt-licm-unswitch-rewrite-blocks!
   [out : (&mut out ir.CompilerIrBlockBuilder)]
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
-  [shape : OptLicmUnswitchShape]
-  [cloned : ir.CompilerIrBlockList]
-  [remap : (__tl_dyn-array ir.CompilerIrValue)]
-  [fuse-instrs : ir.CompilerIrInstrSeq]
-  [fused-cond : ir.CompilerIrValue]
-  [clone-param-moves : ir.CompilerIrInstrSeq]) : unit
-  (match blocks
-    [(slice) unit]
-    [(slice block & rest)
-      (match block
+  [shape : (& shape OptLicmUnswitchShape)]
+  [cloned : (& cloned ir.CompilerIrBlockList)]
+  [remap : (& remap (__tl_dyn-array ir.CompilerIrValue))]
+  [fuse-instrs : (& fuse-instrs ir.CompilerIrInstrSeq)]
+  [fused-cond : (& fused-cond ir.CompilerIrValue)]
+  [clone-param-moves : (& clone-param-moves ir.CompilerIrInstrSeq)]) : unit
+  (let
+    [body-labels : OptLabelSet
+      (opt-licm-unswitch-label-copy (& shape.body-labels))]
+    (for [i (iterator.range 0 (array-length blocks))]
+      (match (& (array-ref blocks i))
         [(Block label instrs)
           (cond
             [(= label shape.preheader)
@@ -31605,62 +31246,27 @@
                 (ir.CompilerIrBlock.Block
                   label
                   (opt-licm-unswitch-preheader-instrs
-                    (compiler-opt-global-shared-view shape)
+                    shape
                     (& instrs)
                     0
-                    (& fuse-instrs)
-                    (compiler-opt-global-shared-view fused-cond)
-                    (& clone-param-moves))))
-              (opt-licm-unswitch-rewrite-blocks!
-                out
-                rest
-                (compiler-opt-global-shared-view shape)
-                (compiler-opt-global-shared-view cloned)
-                (compiler-opt-global-shared-view remap)
-                (compiler-opt-global-shared-view fuse-instrs)
-                (compiler-opt-global-shared-view fused-cond)
-                (compiler-opt-global-shared-view clone-param-moves))]
+                    fuse-instrs
+                    fused-cond
+                    clone-param-moves)))]
             [(= label shape.header)
-              (ir.compiler-ir-block-builder-append-list!
+              (ir.compiler-ir-block-builder-append-slice!
                 out
-                (compiler-opt-global-shared-view cloned))
+                (ir.compiler-ir-block-list-view cloned))
               (ir.compiler-ir-block-builder-push!
                 out
                 (ir.CompilerIrBlock.Block
                   label
-                  (opt-licm-unswitch-original-instrs
-                    (compiler-opt-global-shared-view shape)
-                    label
-                    (& instrs)
-                    0)))
-              (opt-licm-unswitch-rewrite-blocks!
-                out
-                rest
-                (compiler-opt-global-shared-view shape)
-                (compiler-opt-global-shared-view cloned)
-                (compiler-opt-global-shared-view remap)
-                (compiler-opt-global-shared-view fuse-instrs)
-                (compiler-opt-global-shared-view fused-cond)
-                (compiler-opt-global-shared-view clone-param-moves))]
-            [(opt-label-contains shape.body-labels label)
+                  (opt-licm-unswitch-original-instrs shape label (& instrs) 0)))]
+            [(opt-label-contains body-labels label)
               (ir.compiler-ir-block-builder-push!
                 out
                 (ir.CompilerIrBlock.Block
                   label
-                  (opt-licm-unswitch-original-instrs
-                    (compiler-opt-global-shared-view shape)
-                    label
-                    (& instrs)
-                    0)))
-              (opt-licm-unswitch-rewrite-blocks!
-                out
-                rest
-                (compiler-opt-global-shared-view shape)
-                (compiler-opt-global-shared-view cloned)
-                (compiler-opt-global-shared-view remap)
-                (compiler-opt-global-shared-view fuse-instrs)
-                (compiler-opt-global-shared-view fused-cond)
-                (compiler-opt-global-shared-view clone-param-moves))]
+                  (opt-licm-unswitch-original-instrs shape label (& instrs) 0)))]
             [else
               (ir.compiler-ir-block-builder-push!
                 out
@@ -31669,33 +31275,32 @@
                   (opt-clone-extend-exit-instrs
                     (& instrs)
                     0
-                    (& remap)
-                    (& (Body shape.body-labels (opt-licm-unswitch-suffix))))))
-              (opt-licm-unswitch-rewrite-blocks!
-                out
-                rest
-                (compiler-opt-global-shared-view shape)
-                (compiler-opt-global-shared-view cloned)
-                (compiler-opt-global-shared-view remap)
-                (compiler-opt-global-shared-view fuse-instrs)
-                (compiler-opt-global-shared-view fused-cond)
-                (compiler-opt-global-shared-view clone-param-moves))])])]))
+                    remap
+                    (& (Body body-labels (opt-licm-unswitch-suffix))))))])]))))
+
+(defenum OptMaybeLicmUnswitchResult
+  (No)
+  (Some ir.CompilerIrBlockList i64))
 
 (define (opt-licm-unswitch-apply
-  [blocks : ir.CompilerIrBlockList]
-  [shape : OptLicmUnswitchShape]
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [shape : (& shape OptLicmUnswitchShape)]
   [params : (& ir.CompilerIrParamSeq)]
-  [frame : i64]) : OptUnrollResult
+  [frame : i64]) : OptMaybeLicmUnswitchResult
   (let
+    [body-labels : OptLabelSet
+      (opt-licm-unswitch-label-copy (& shape.body-labels))]
+    [chain-labels : OptLabelSet
+      (opt-licm-unswitch-label-copy (& shape.chain-labels))]
     [outside : opt_i64_i64_map.Map
       (opt-bce-mb-outside-uses
         (opt_i64_i64_map.with-capacity 64)
         (ir.compiler-ir-block-list-view blocks)
-        (__tl-project-field shape body-labels))]
+        body-labels)]
     (if (opt-bce-mb-defs-escape?
-      (ir.compiler-ir-block-list-view shape.body-blocks)
+      (ir.compiler-ir-block-list-view (& shape.body-blocks))
       outside)
-      (Result blocks frame false)
+      (No)
       (let
         [cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
         [_cell : unit (set! (array-ref cell 0) frame)]
@@ -31709,7 +31314,7 @@
               (opt-licm-loop-defs
                 (& shape.body-blocks)
                 (opt-licm-body-map-capacity (& shape.body-blocks))))
-            shape.chain-labels
+            chain-labels
             0
             (& shape.cond)
             (&mut cell))]
@@ -31720,7 +31325,7 @@
           (opt-licm-unswitch-clone-param-moves! params (&mut remap) (&mut cell))]
         [_alloc : unit
           (opt-bce-mb-alloc-defs!
-            (ir.compiler-ir-block-list-view shape.body-blocks)
+            (ir.compiler-ir-block-list-view (& shape.body-blocks))
             (&mut remap)
             (&mut cell))]
         [all-labels : OptLabelSet
@@ -31728,26 +31333,35 @@
             (ir.compiler-ir-block-list-view blocks)
             (Nil))]
         [cloned : ir.CompilerIrBlockList
-          (opt-blocks-build
-            shape.body-blocks
-            opt-licm-unswitch-clone-blocks!
-            (compiler-opt-global-shared-view shape)
-            (compiler-opt-global-shared-view remap)
-            all-labels)]
+          (let
+            [out : ir.CompilerIrBlockBuilder
+              (ir.compiler-ir-block-builder-with-capacity
+                (ir.compiler-ir-block-list-count (& shape.body-blocks)))]
+            (opt-licm-unswitch-clone-blocks!
+              (&mut out)
+              (ir.compiler-ir-block-list-view (& shape.body-blocks))
+              shape
+              (& remap)
+              all-labels)
+            (ir.compiler-ir-block-builder-to-list out))]
         (match fused
           [(Fused fuse-instrs fused-cond)
-            (Result
-              (opt-blocks-build
-                blocks
-                opt-licm-unswitch-rewrite-blocks!
-                (compiler-opt-global-shared-view shape)
-                cloned
-                remap
-                fuse-instrs
-                fused-cond
-                clone-param-moves)
-              (array-ref cell 0)
-              true)])))))
+            (let
+              [out : ir.CompilerIrBlockBuilder
+                (ir.compiler-ir-block-builder-with-capacity
+                  (ir.compiler-ir-block-list-count blocks))]
+              (opt-licm-unswitch-rewrite-blocks!
+                (&mut out)
+                (ir.compiler-ir-block-list-view blocks)
+                shape
+                (& cloned)
+                (& remap)
+                (& fuse-instrs)
+                (& fused-cond)
+                (& clone-param-moves))
+              (Some
+                (ir.compiler-ir-block-builder-to-list out)
+                (array-ref cell 0)))])))))
 
 ;; --- PH-1: a big loop's guard chain, tested once in the preheader ----------
 ;;
@@ -31813,63 +31427,59 @@
 (define (opt-licm-predicate-walk
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [context : (& context OptCfgContext)]
-  [shape : OptLicmUnswitchShape]
-  [label : i64]
-  [seen : i64]
-  [acc : OptLabelSet]
+  [shape : (& shape OptLicmUnswitchShape)]
+  [start : i64]
   [fuel : i64]) : OptMaybeLabelSetPh
   (let
-    [chain? : bool (opt-label-contains shape.chain-labels label)]
+    [chain-labels : OptLabelSet
+      (opt-licm-unswitch-label-copy (& shape.chain-labels))]
     [cond-var : i64 (opt-licm-unswitch-cond-var (& shape.cond))]
-    (cond
-      [(<= fuel 0) (No)]
-      [(or (= label shape.header) (= label shape.branch-label)) (No)]
-      [else
-        (match (opt-licm-predicate-dispatch blocks label)
-          [(Some cond true-label false-label)
-            (let
-              [same? : bool
-                (match cond
-                  [(Var var) (= var cond-var)]
-                  [_ false])]
-              (cond
-                [(and (not chain?) (not same?))
-                  ;; the chain's continuation: done
-                  (if (= seen (opt-label-count shape.chain-labels))
-                    (Some acc)
-                    (No))]
-                [(not (opt-licm-predicate-one-pred? context label)) (No)]
-                [(and chain? (not (= false-label shape.false-label))) (No)]
-                [else
-                  (opt-licm-predicate-walk
-                    blocks
-                    context
-                    shape
-                    true-label
-                    (if chain?
-                      (+ seen 1)
-                      seen)
-                    (opt-label-add acc label)
-                    (- fuel 1))]))]
-          [(No)
-            (let
-              [stub : i64 (opt-licm-predicate-stub-target blocks label)]
-              (cond
-                [(< stub 0)
-                  ;; the chain's continuation: done
-                  (if (= seen (opt-label-count shape.chain-labels))
-                    (Some acc)
-                    (No))]
-                [(not (opt-licm-predicate-one-pred? context label)) (No)]
-                [else
-                  (opt-licm-predicate-walk
-                    blocks
-                    context
-                    shape
-                    stub
-                    seen
-                    acc
-                    (- fuel 1))]))])])))
+    [label : i64 start]
+    [seen : i64 0]
+    [acc : OptLabelSet (Nil)]
+    [left : i64 fuel]
+    (while true
+      (cond
+        [(<= left 0) (return (No))]
+        [(or (= label shape.header) (= label shape.branch-label)) (return (No))]
+        [else
+          (let
+            [chain? : bool (opt-label-contains chain-labels label)]
+            (match (opt-licm-predicate-dispatch blocks label)
+              [(Some cond true-label false-label)
+                (let
+                  [same? : bool
+                    (match cond
+                      [(Var var) (= var cond-var)]
+                      [_ false])]
+                  (cond
+                    [(and (not chain?) (not same?))
+                      (return
+                        (if (= seen (opt-label-count chain-labels))
+                          (Some acc)
+                          (No)))]
+                    [(not (opt-licm-predicate-one-pred? context label))
+                      (return (No))]
+                    [(and chain? (not (= false-label shape.false-label)))
+                      (return (No))]
+                    [else
+                      (when chain? (+= seen 1))
+                      (set! acc (opt-label-add acc label))
+                      (set! label true-label)]))]
+              [(No)
+                (let
+                  [stub : i64 (opt-licm-predicate-stub-target blocks label)]
+                  (cond
+                    [(< stub 0)
+                      (return
+                        (if (= seen (opt-label-count chain-labels))
+                          (Some acc)
+                          (No)))]
+                    [(not (opt-licm-predicate-one-pred? context label))
+                      (return (No))]
+                    [else (set! label stub)]))]))
+          (-= left 1)]))
+    (No)))
 
 ;; The slow target's phis carry the head's value on every folded edge.
 (define (opt-licm-predicate-slow-phis-ok?
@@ -31962,7 +31572,6 @@
         (+ count (ir.compiler-ir-instr-seq-count fuse-instrs)))]
     (for [cursor (iterator.range 0 count)]
       (let
-        [instr (ir.compiler-ir-instr-seq-ref instrs cursor)]
         [last? : bool (= cursor (- count 1))]
         ;; the conjunction goes before the preheader's jump
         (when
@@ -31978,16 +31587,16 @@
             ;; the head branches on the predicate
             [(and (= label shape.branch-label) (= cursor shape.branch-index))
               (ir.CompilerIrInstr.Branch
-                (owned_view.compiler-owned-reference-shared-view fused-cond)
+                (ir.compiler-ir-clone-value fused-cond)
                 shape.true-label
                 shape.false-label)]
             ;; a folded block takes the edge it always took
             [(and fold? last?)
-              (match (compiler-opt-global-shared-view instr)
+              (match (ir.compiler-ir-instr-seq-borrow instrs cursor)
                 [(Branch _ true-label _) (ir.CompilerIrInstr.Jump true-label)]
-                [_ instr])]
+                [_ (ir.compiler-ir-instr-seq-ref instrs cursor)])]
             [else
-              (match (compiler-opt-global-shared-view instr)
+              (match (ir.compiler-ir-instr-seq-ref instrs cursor)
                 [(Phi dst inputs ty)
                   (ir.CompilerIrInstr.Phi
                     dst
@@ -31997,7 +31606,7 @@
                       fold
                       label)
                     ty)]
-                [_ instr])]))))
+                [_ (ir.compiler-ir-instr-seq-ref instrs cursor)])]))))
     (ir.compiler-ir-instr-builder-to-seq builder)))
 
 (define (opt-licm-predicate-rewrite-blocks!
@@ -32006,33 +31615,23 @@
   [all : (& all ir.CompilerIrBlockList)]
   [shape : (& shape OptLicmUnswitchShape)]
   [fold : OptLabelSet]
-  [fuse-instrs : ir.CompilerIrInstrSeq]
-  [fused-cond : ir.CompilerIrValue]) : unit
-  (match blocks
-    [(slice) unit]
-    [(slice block & rest)
-      (match block
-        [(Block label instrs)
-          (ir.compiler-ir-block-builder-push!
-            out
-            (ir.CompilerIrBlock.Block
+  [fuse-instrs : (& fuse-instrs ir.CompilerIrInstrSeq)]
+  [fused-cond : (& fused-cond ir.CompilerIrValue)]) : unit
+  (for [i (iterator.range 0 (array-length blocks))]
+    (match (& (array-ref blocks i))
+      [(Block label instrs)
+        (ir.compiler-ir-block-builder-push!
+          out
+          (ir.CompilerIrBlock.Block
+            label
+            (opt-licm-predicate-block-instrs
+              shape
+              all
+              fold
               label
-              (opt-licm-predicate-block-instrs
-                shape
-                all
-                fold
-                label
-                (& instrs)
-                (& fuse-instrs)
-                (& fused-cond))))
-          (opt-licm-predicate-rewrite-blocks!
-            out
-            rest
-            all
-            shape
-            fold
-            fuse-instrs
-            fused-cond)])]))
+              (& instrs)
+              fuse-instrs
+              fused-cond)))])))
 
 (define (opt-licm-predicate-trace!
   [shape : (& shape OptLicmUnswitchShape)]
@@ -32048,58 +31647,61 @@
         "\n"))))
 
 (define (opt-licm-predicate-apply
-  [blocks : ir.CompilerIrBlockList]
-  [shape : OptLicmUnswitchShape]
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [shape : (& shape OptLicmUnswitchShape)]
   [frame : i64]
-  [context : (& context OptCfgContext)]) : OptUnrollResult
-  (if (or
-    (not (opt-licm-unswitch-widened?))
-    ;; at least two conditions, so a trip saves at least two instructions
-    (< (opt-label-count shape.chain-labels) 1))
-    (Result blocks frame false)
-    (match (opt-licm-predicate-walk
-      blocks
-      context
-      (compiler-opt-global-shared-view shape)
-      shape.true-label
-      0
-      (Nil)
-      (+
-        (opt-licm-unswitch-chain-fuel)
-        (* 2 (opt-label-count shape.chain-labels))))
-      [(No) (Result blocks frame false)]
-      [(Some fold)
-        (if (not (opt-licm-predicate-slow-phis-ok? blocks shape fold))
-          (Result blocks frame false)
-          (let
-            [cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-            [_cell : unit (set! (array-ref cell 0) frame)]
-            [fused : OptLicmUnswitchFused
-              (opt-licm-unswitch-fuse-conds
-                blocks
-                (& shape.body-blocks)
-                (&
-                  (opt-licm-loop-defs
-                    (& shape.body-blocks)
-                    (opt-licm-body-map-capacity (& shape.body-blocks))))
-                (compiler-opt-global-shared-view shape.chain-labels)
-                0
-                (& shape.cond)
-                (&mut cell))]
-            (match fused
-              [(Fused fuse-instrs fused-cond)
-                (opt-licm-predicate-trace! shape fold)
-                (Result
-                  (opt-blocks-build
-                    blocks
-                    opt-licm-predicate-rewrite-blocks!
-                    blocks
-                    shape
-                    fold
-                    fuse-instrs
-                    fused-cond)
-                  (array-ref cell 0)
-                  true)])))])))
+  [context : (& context OptCfgContext)]) : OptMaybeLicmUnswitchResult
+  (let
+    [chain-labels : OptLabelSet
+      (opt-licm-unswitch-label-copy (& shape.chain-labels))]
+    (if (or
+      (not (opt-licm-unswitch-widened?))
+      ;; at least two conditions, so a trip saves at least two instructions
+      (< (opt-label-count chain-labels) 1))
+      (No)
+      (match (opt-licm-predicate-walk
+        blocks
+        context
+        shape
+        shape.true-label
+        (+ (opt-licm-unswitch-chain-fuel) (* 2 (opt-label-count chain-labels))))
+        [(No) (No)]
+        [(Some fold)
+          (if (not (opt-licm-predicate-slow-phis-ok? blocks shape fold))
+            (No)
+            (let
+              [cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+              [_cell : unit (set! (array-ref cell 0) frame)]
+              [fused : OptLicmUnswitchFused
+                (opt-licm-unswitch-fuse-conds
+                  blocks
+                  (& shape.body-blocks)
+                  (&
+                    (opt-licm-loop-defs
+                      (& shape.body-blocks)
+                      (opt-licm-body-map-capacity (& shape.body-blocks))))
+                  chain-labels
+                  0
+                  (& shape.cond)
+                  (&mut cell))]
+              (match fused
+                [(Fused fuse-instrs fused-cond)
+                  (opt-licm-predicate-trace! shape fold)
+                  (let
+                    [out : ir.CompilerIrBlockBuilder
+                      (ir.compiler-ir-block-builder-with-capacity
+                        (ir.compiler-ir-block-list-count blocks))]
+                    (opt-licm-predicate-rewrite-blocks!
+                      (&mut out)
+                      (ir.compiler-ir-block-list-view blocks)
+                      blocks
+                      shape
+                      fold
+                      (& fuse-instrs)
+                      (& fused-cond))
+                    (Some
+                      (ir.compiler-ir-block-builder-to-list out)
+                      (array-ref cell 0)))])))]))))
 
 (define (opt-licm-unswitch-loops
   [blocks : ir.CompilerIrBlockList]
@@ -32108,42 +31710,28 @@
   [remaining : (& remaining (Slice OptNaturalLoop))]
   [params : (& ir.CompilerIrParamSeq)]
   [frame : i64]) : OptUnrollResult
-  (match remaining
-    [(slice) (Result blocks frame false)]
-    [(slice loop & rest)
-      (match (opt-licm-unswitch-loop-shape blocks context all-loops loop)
-        [(Some shape)
-          (match (if (>
-            (opt-label-count shape.body-labels)
-            (opt-licm-unswitch-clone-max-blocks))
-            (opt-licm-predicate-apply
-              (compiler-opt-global-shared-view blocks)
-              shape
-              frame
-              context)
-            (opt-licm-unswitch-apply
-              (compiler-opt-global-shared-view blocks)
-              shape
-              params
-              frame))
-            [(Result next next-frame changed)
-              (if changed
-                (Result next next-frame true)
-                (opt-licm-unswitch-loops
-                  blocks
-                  context
-                  all-loops
-                  rest
-                  params
-                  frame))])]
-        [(No)
-          (opt-licm-unswitch-loops blocks context all-loops rest params frame)])]))
+  (for [i (iterator.range 0 (array-length remaining))]
+    (match (opt-licm-unswitch-loop-shape
+      (& blocks)
+      context
+      all-loops
+      (& (array-ref remaining i)))
+      [(Some shape)
+        (match (if (>
+          (opt-label-count shape.body-labels)
+          (opt-licm-unswitch-clone-max-blocks))
+          (opt-licm-predicate-apply (& blocks) (& shape) frame context)
+          (opt-licm-unswitch-apply (& blocks) (& shape) params frame))
+          [(Some next next-frame) (return (Result next next-frame true))]
+          [(No) unit])]
+      [(No) unit]))
+  (Result blocks frame false))
 
 (define (opt-licm-unswitch-function-with-context-result
   [context : (& OptCfgContext)]
   [verified? : bool]
   [func : (& func ir.CompilerIrFunction)]) : OptFunctionCtxResult
-  (match (owned_view.compiler-owned-reference-shared-view func)
+  (match func
     [(Function name params _ frame blocks _)
       (opt-loop-function-rewrite
         "licm_unswitch"
@@ -32153,10 +31741,10 @@
         (let
           [loops : opt_natural_loop_vec.Vec
             (opt-cfg-natural-loops-with-context
-              (compiler-opt-global-shared-view blocks)
+              (owned_view.compiler-owned-reference-shared-view (& blocks))
               context)]
           (match (opt-licm-unswitch-loops
-            blocks
+            (owned_view.compiler-owned-reference-shared-view (& blocks))
             context
             loops
             (opt_natural_loop_vec.view loops)
@@ -32166,16 +31754,15 @@
               (if (not changed)
                 (OptBlockRewriteResult.Result next next-frame false)
                 (begin
-                  (if (and
-                    compiler-opt-debug-trace-passes
-                    (not compiler-opt-debug-suppressed?))
+                  (when
+                    (and
+                      compiler-opt-debug-trace-passes
+                      (not compiler-opt-debug-suppressed?))
                     (io.print-error
                       (str_cat.str-cat
-                        (str_cat.str-cat
-                          "licm-unswitch|"
-                          (ir.compiler-ir-symbol-text name))
-                        "|unswitched\n"))
-                    unit)
+                        "licm-unswitch|"
+                        (ir.compiler-ir-symbol-text name)
+                        "|unswitched\n")))
                   (OptBlockRewriteResult.Result
                     (opt-cfg-simplify-blocks (& next))
                     next-frame
@@ -32200,7 +31787,7 @@
       (match (opt-licm-unswitch-function-with-context-result
         (& (opt-cfg-context-build blocks))
         false
-        func)
+        (& func))
         [(Result next _)
           (if (opt-function-eq type-segment-bases func next)
             func
@@ -43183,7 +42770,25 @@
 
 (defenum OptPhiCmpFoldRewrite
   (No)
+  (InPlace)
   (Some ir.CompilerIrBlockList))
+
+(defstruct OptPhiCmpFoldTarget
+  (type-segment-bases i64)
+  (merge-label i64)
+  (phi-var i64)
+  (cmp-var i64)
+  (phi-left bool)
+  (true-label i64)
+  (false-label i64)
+  (var-label i64))
+
+(defstruct OptPhiCmpFoldChainKey
+  (type-segment-bases i64)
+  (merge-label i64)
+  (phi-var i64)
+  (head-label i64)
+  (head-slot i64))
 
 (define (opt-phi-cmp-fold-label-rpo
   [index : (& index OptCfgIndex)]
@@ -43192,24 +42797,16 @@
     [(Some id) (opt-cfg-index-rpo-num index id)]
     [(None) (- 0 1)]))
 
-;; Every predecessor reaches the merge on a forward edge. An unreachable
-;; predecessor has no RPO number and answers no, which is the conservative side.
+;; Every predecessor reaches the merge on a forward edge.
 (define (opt-phi-cmp-fold-preds-forward?
   [index : (& index OptCfgIndex)]
   [preds : OptLabelSet]
   [merge-rpo : i64]) : bool
-  (match preds
-    [(Nil) true]
-    [(Dense _ _)
-      (let
-        [rpo : i64 (opt-phi-cmp-fold-label-rpo index (opt-label-ref preds 0))]
-        (and
-          (>= rpo 0)
-          (< rpo merge-rpo)
-          (opt-phi-cmp-fold-preds-forward?
-            index
-            (opt-label-tail preds)
-            merge-rpo)))]))
+  (for [i (iterator.range 0 (opt-label-count preds))]
+    (let
+      [rpo : i64 (opt-phi-cmp-fold-label-rpo index (opt-label-ref preds i))]
+      (when (or (< rpo 0) (>= rpo merge-rpo)) (return false))))
+  true)
 
 (define (opt-phi-cmp-fold-value-is-var?
   [value : (& value ir.CompilerIrValue)]
@@ -43218,9 +42815,29 @@
     [(Var id) (= id var)]
     [_ false]))
 
+(define (opt-phi-cmp-fold-pair
+  [type-segment-bases : i64]
+  [op : (& op ir.CompilerIrBinOp)]
+  [ty : (& ast.AstType)]
+  [left : (& ir.CompilerIrValue)]
+  [right : (& ir.CompilerIrValue)]) : OptMaybeBool
+  (match (opt-fold-binop
+    type-segment-bases
+    op
+    (&
+      (opt-normalize-const
+        (ir.compiler-ir-clone-value left)
+        (opt-licm-guard-copy-type ty)))
+    (&
+      (opt-normalize-const
+        (ir.compiler-ir-clone-value right)
+        (opt-licm-guard-copy-type ty)))
+    ty)
+    [(Some folded) (opt-value-to-bool (& folded))]
+    [(No) (No)]))
+
 ;; The compare with `input` substituted for the phi, decided by the same folder
-;; sccp uses for a literal comparison. `No` when the pair does not fold, which
-;; refuses the whole site.
+;; sccp uses for a literal comparison. `No` when the pair does not fold.
 (define (opt-phi-cmp-fold-verdict
   [type-segment-bases : i64]
   [op : (& op ir.CompilerIrBinOp)]
@@ -43228,29 +42845,9 @@
   [literal : (& literal ir.CompilerIrValue)]
   [ty : (& ast.AstType)]
   [input : (& input ir.CompilerIrValue)]) : OptMaybeBool
-  (let
-    [lhs : ir.CompilerIrValue
-      (if phi-left
-        (owned_view.compiler-owned-reference-shared-view input)
-        (owned_view.compiler-owned-reference-shared-view literal))]
-    [rhs : ir.CompilerIrValue
-      (if phi-left
-        (owned_view.compiler-owned-reference-shared-view literal)
-        (owned_view.compiler-owned-reference-shared-view input))]
-    (match (opt-fold-binop
-      type-segment-bases
-      op
-      (&
-        (opt-normalize-const
-          lhs
-          (owned_view.compiler-owned-reference-shared-view ty)))
-      (&
-        (opt-normalize-const
-          rhs
-          (owned_view.compiler-owned-reference-shared-view ty)))
-      ty)
-      [(Some folded) (opt-value-to-bool (& folded))]
-      [(No) (No)])))
+  (if phi-left
+    (opt-phi-cmp-fold-pair type-segment-bases op ty input literal)
+    (opt-phi-cmp-fold-pair type-segment-bases op ty literal input)))
 
 ;; Exactly one Var input, at least one literal input, and every literal input
 ;; decided by the folder.
@@ -43260,16 +42857,12 @@
   [phi-left : bool]
   [literal : (& literal ir.CompilerIrValue)]
   [ty : (& ast.AstType)]
-  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
-  [var-label : i64]
-  [var-value : ir.CompilerIrValue]
-  [var-count : i64]
-  [literal-count : i64]) : OptPhiCmpFoldInputs
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]) : OptPhiCmpFoldInputs
   (let
-    [the-var-label : i64 var-label]
-    [the-var-value : ir.CompilerIrValue var-value]
-    [vars : i64 var-count]
-    [literals : i64 literal-count]
+    [the-var-label : i64 (ir.compiler-ir-label-none)]
+    [the-var-value : ir.CompilerIrValue (Unit)]
+    [vars : i64 0]
+    [literals : i64 0]
     (for [index (iterator.range 0 inputs.len)]
       (let
         [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
@@ -43288,63 +42881,55 @@
               ty
               (& input.value))
               [(No) (return (No))]
-              [(Some _) (set! literals (+ literals 1))])])))
+              [(Some _) (+= literals 1)])])))
     (if (and (= vars 1) (> literals 0))
       (Some the-var-label the-var-value literals)
       (No))))
 
-;; The merge block's predecessor list, rewritten. The variable edge keeps its
-;; place and now carries the moved compare's result; a literal edge that
-;; threaded leaves the phi entirely, and one that could not keeps its decided
-;; boolean.
+;; The merge block's predecessor list, rewritten.
 (define (opt-phi-cmp-fold-thread-inputs!
-  [type-segment-bases : i64]
+  [spec : OptPhiCmpFoldTarget]
   [index : (& index OptCfgIndex)]
   [uses : (&mut uses (__tl_dyn-array i64))]
-  [merge-label : i64]
   [merge-instrs : (& ir.CompilerIrInstrSeq)]
   [op : (& op ir.CompilerIrBinOp)]
-  [phi-left : bool]
   [literal : (& literal ir.CompilerIrValue)]
   [ty : (& ast.AstType)]
-  [true-label : i64]
-  [false-label : i64]
-  [var-label : i64]
-  [cmp-var : i64]
-  [inputs : ir.CompilerIrPhiInputSeq]
-  [acc : ir.CompilerIrPhiInputSeq]) : ir.CompilerIrPhiInputSeq
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]) : ir.CompilerIrPhiInputSeq
   (let
-    [out : ir.CompilerIrPhiInputSeq acc]
+    [out : ir.CompilerIrPhiInputSeq (ir.compiler-ir-phi-input-seq-empty)]
     (for [slot (iterator.range 0 inputs.len)]
       (let
-        [input (ir.compiler-ir-phi-input-seq-ref (& inputs) slot)]
-        [value : ir.CompilerIrValue input.value]
+        [input (ir.compiler-ir-phi-input-seq-borrow inputs slot)]
         [label : i64 input.label]
-        (if (= label var-label)
+        (if (= label spec.var-label)
           (set!
             out
-            (ir.compiler-ir-phi-input-seq-prepend (Var cmp-var) label (& out)))
+            (ir.compiler-ir-phi-input-seq-prepend
+              (Var spec.phi-var)
+              label
+              (& out)))
           (match (opt-phi-cmp-fold-verdict
-            type-segment-bases
+            spec.type-segment-bases
             op
-            phi-left
+            spec.phi-left
             literal
             ty
-            value)
+            (& input.value))
             [(No) unit]
             [(Some known)
-              (when
-                (not
-                  (opt-thread-apply-edge!
-                    index
-                    uses
+              (unless
+                (opt-thread-apply-edge!
+                  index
+                  uses
+                  (& (Nil))
+                  merge-instrs
+                  (OptThreadEdgeSpec
                     label
-                    (& (Nil))
-                    merge-label
+                    spec.merge-label
                     (if known
-                      true-label
-                      false-label)
-                    merge-instrs
+                      spec.true-label
+                      spec.false-label)
                     1
                     1
                     0))
@@ -43359,153 +42944,147 @@
 (define (opt-phi-cmp-fold-replace-blocks
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [merge-label : i64]
-  [merge-instrs : (& ir.CompilerIrInstrSeq)]
-  [var-label : i64]
-  [var-instrs : (& ir.CompilerIrInstrSeq)]) : ir.CompilerIrBlockList
-  (opt-blocks-map
-    blocks
-    opt-phi-cmp-fold-replace-block
-    merge-label
-    (owned_view.compiler-owned-reference-shared-view merge-instrs)
-    var-label
-    (owned_view.compiler-owned-reference-shared-view var-instrs)))
-
-(define (opt-phi-cmp-fold-replace-block
-  [merge-label : i64]
   [merge-instrs : ir.CompilerIrInstrSeq]
   [var-label : i64]
-  [var-instrs : ir.CompilerIrInstrSeq]
-  [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
-  (match (& block)
-    [(Block label _)
-      (cond
-        [(= label merge-label) (Block label merge-instrs)]
-        [(= label var-label) (Block label var-instrs)]
-        [else block])]))
+  [var-instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrBlockList
+  (let
+    [seq : (& blocks (Slice ir.CompilerIrBlock))
+      (ir.compiler-ir-block-list-view blocks)]
+    [count : i64 (array-length seq)]
+    [out : ir.CompilerIrBlockBuilder
+      (ir.compiler-ir-block-builder-with-capacity count)]
+    [merge-slot : i64 (- 0 1)]
+    [var-slot : i64 (- 0 1)]
+    (ir.compiler-ir-block-builder-append-slice! (&mut out) seq)
+    (for [i (iterator.range 0 count)]
+      (match (& (array-ref seq i))
+        [(Block label _)
+          (cond
+            [(= label merge-label) (set! merge-slot i)]
+            [(= label var-label) (set! var-slot i)]
+            [else unit])]))
+    (when
+      (>= merge-slot 0)
+      (set!
+        (array-ref out.slots merge-slot)
+        (ir.CompilerIrBlock.Block merge-label merge-instrs)))
+    (when
+      (>= var-slot 0)
+      (set!
+        (array-ref out.slots var-slot)
+        (ir.CompilerIrBlock.Block var-label var-instrs)))
+    (ir.compiler-ir-block-builder-to-list out)))
 
 ;; The rewrite itself. `phi-var` is dead the moment the compare stops reading it
-;; -- its only use WAS that compare -- so the moved compare takes it over as its
-;; own destination and the pass adds no variable to the frame; the merge phi
-;; keeps the compare's old destination, which was already a boolean.
+;; so the moved compare takes it over as its own destination.
 (define (opt-phi-cmp-fold-apply!
-  [type-segment-bases : i64]
+  [spec : OptPhiCmpFoldTarget]
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [index : (& index OptCfgIndex)]
   [uses : (&mut uses (__tl_dyn-array i64))]
-  [merge-label : i64]
   [merge-instrs : (& ir.CompilerIrInstrSeq)]
-  [phi-var : i64]
   [inputs : (& ir.CompilerIrPhiInputSeq)]
-  [cmp-var : i64]
   [op : ir.CompilerIrBinOp]
-  [cmp-ty : ast.AstType]
-  [phi-left : bool]
-  [literal : ir.CompilerIrValue]
-  [true-label : i64]
-  [false-label : i64]
-  [var-label : i64]
+  [cmp-ty : (& ast.AstType)]
+  [literal : (& ir.CompilerIrValue)]
   [var-value : ir.CompilerIrValue]
-  [var-instrs : (& ir.CompilerIrInstrSeq)]) : OptPhiCmpFoldRewrite
+  [var-instrs : ir.CompilerIrInstrSeq]) : OptPhiCmpFoldRewrite
   (let
     [threaded : ir.CompilerIrPhiInputSeq
       (opt-phi-cmp-fold-thread-inputs!
-        type-segment-bases
+        spec
         index
         uses
-        merge-label
         merge-instrs
-        op
-        phi-left
+        (& op)
         literal
-        (& cmp-ty)
-        true-label
-        false-label
-        var-label
-        phi-var
-        (owned_view.compiler-owned-reference-shared-view inputs)
-        (ir.compiler-ir-phi-input-seq-empty))]
+        cmp-ty
+        inputs)]
     [merged : ir.CompilerIrInstrSeq
       (ir.compiler-ir-instr-seq2
-        (Phi cmp-var threaded (Bool))
-        (Branch (Var cmp-var) true-label false-label))]
+        (Phi spec.cmp-var threaded (Bool))
+        (Branch (Var spec.cmp-var) spec.true-label spec.false-label))]
+    [lit-copy : ir.CompilerIrValue (ir.compiler-ir-clone-value literal)]
+    [cmp-instr : ir.CompilerIrInstr
+      (if spec.phi-left
+        (BinOp
+          spec.phi-var
+          op
+          var-value
+          lit-copy
+          (opt-licm-guard-copy-type cmp-ty))
+        (BinOp
+          spec.phi-var
+          op
+          lit-copy
+          var-value
+          (opt-licm-guard-copy-type cmp-ty)))]
     [moved : ir.CompilerIrInstrSeq
       (opt-instr-seq-insert-before-terminator
-        (&
-          (ir.compiler-ir-instr-seq1
-            (BinOp
-              phi-var
-              op
-              (if phi-left
-                (owned_view.compiler-owned-shared-view var-value)
-                (owned_view.compiler-owned-shared-view literal))
-              (if phi-left
-                literal
-                var-value)
-              cmp-ty)))
-        (owned_view.compiler-owned-reference-shared-view var-instrs))]
+        (& (ir.compiler-ir-instr-seq1 cmp-instr))
+        var-instrs)]
     (Some
       (opt-phi-cmp-fold-replace-blocks
         blocks
-        merge-label
-        (& merged)
-        var-label
-        (& moved)))))
+        spec.merge-label
+        merged
+        spec.var-label
+        moved))))
 
-;; Everything the shape needs that a single block cannot answer: the predecessor
-;; set, the RPO refusals, the input classification, and the variable edge's own
-;; terminator.
+(define (opt-phi-cmp-fold-merge-preds-ok?
+  [index : (& index OptCfgIndex)]
+  [merge-label : i64]) : OptLabelSet
+  (let
+    [preds : OptLabelSet (opt-cfg-index-predecessors index merge-label)]
+    [merge-rpo : i64 (opt-phi-cmp-fold-label-rpo index merge-label)]
+    (if (and
+      (>= merge-rpo 0)
+      (opt-phi-cmp-fold-preds-forward? index preds merge-rpo))
+      preds
+      (Nil))))
+
+;; Everything the shape needs that a single block cannot answer.
 (define (opt-phi-cmp-fold-try-shape!
-  [type-segment-bases : i64]
+  [spec : OptPhiCmpFoldTarget]
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [index : (& index OptCfgIndex)]
   [uses : (&mut uses (__tl_dyn-array i64))]
-  [merge-label : i64]
   [merge-instrs : (& ir.CompilerIrInstrSeq)]
-  [phi-var : i64]
   [inputs : (& ir.CompilerIrPhiInputSeq)]
   [phi-ty : (& ast.AstType)]
-  [cmp-var : i64]
-  [op : (& ir.CompilerIrBinOp)]
-  [lhs : (& ir.CompilerIrValue)]
-  [rhs : (& ir.CompilerIrValue)]
-  [cmp-ty : (& ast.AstType)]
-  [true-label : i64]
-  [false-label : i64]) : OptPhiCmpFoldRewrite
+  [op : ir.CompilerIrBinOp]
+  [lhs : (& val ir.CompilerIrValue)]
+  [rhs : (& val ir.CompilerIrValue)]
+  [cmp-ty : (& ast.AstType)]) : OptPhiCmpFoldRewrite
   (let
-    [phi-left : bool (opt-phi-cmp-fold-value-is-var? lhs phi-var)]
-    [literal : ir.CompilerIrValue
+    [phi-left : bool (opt-phi-cmp-fold-value-is-var? lhs spec.phi-var)]
+    [literal : (& val ir.CompilerIrValue)
       (if phi-left
-        (owned_view.compiler-owned-reference-shared-view rhs)
-        (owned_view.compiler-owned-reference-shared-view lhs))]
+        rhs
+        lhs)]
     (if (or
-      (not (opt-bool-branch-compare-op? op))
-      (not (= (opt-bool-branch-use-count uses phi-var) 1))
-      (not (= (opt-bool-branch-use-count uses cmp-var) 1))
-      (not (opt-type-eq type-segment-bases phi-ty cmp-ty))
+      (not (opt-bool-branch-compare-op? (& op)))
+      (not (= (opt-bool-branch-use-count uses spec.phi-var) 1))
+      (not (= (opt-bool-branch-use-count uses spec.cmp-var) 1))
+      (not (opt-type-eq spec.type-segment-bases phi-ty cmp-ty))
       (not (or (opt-int-or-char-type? phi-ty) (opt-bool-type? phi-ty)))
-      (= true-label merge-label)
-      (= false-label merge-label)
-      (not (or phi-left (opt-phi-cmp-fold-value-is-var? rhs phi-var)))
-      (not (opt-const-value? (& literal) cmp-ty)))
+      (= spec.true-label spec.merge-label)
+      (= spec.false-label spec.merge-label)
+      (not (or phi-left (opt-phi-cmp-fold-value-is-var? rhs spec.phi-var)))
+      (not (opt-const-value? literal cmp-ty)))
       (No)
       (let
-        [preds : OptLabelSet (opt-cfg-index-predecessors index merge-label)]
-        [merge-rpo : i64 (opt-phi-cmp-fold-label-rpo index merge-label)]
-        (if (or
-          (< merge-rpo 0)
-          (not (opt-phi-cmp-fold-preds-forward? index preds merge-rpo)))
+        [preds : OptLabelSet
+          (opt-phi-cmp-fold-merge-preds-ok? index spec.merge-label)]
+        (if (= (opt-label-count preds) 0)
           (No)
           (match (opt-phi-cmp-fold-classify
-            type-segment-bases
-            op
+            spec.type-segment-bases
+            (& op)
             phi-left
             literal
             cmp-ty
-            inputs
-            (ir.compiler-ir-label-none)
-            (Unit)
-            0
-            0)
+            inputs)
             [(No) (No)]
             [(Some var-label var-value literal-count)
               (if (not (= (+ literal-count 1) (opt-label-count preds)))
@@ -43516,28 +43095,30 @@
                     (match var-block
                       [(Block _ var-instrs)
                         (if (not
-                          (= (opt-thread-jump-target var-instrs) merge-label))
+                          (=
+                            (opt-thread-jump-target (& var-instrs))
+                            spec.merge-label))
                           (No)
                           (opt-phi-cmp-fold-apply!
-                            type-segment-bases
+                            (OptPhiCmpFoldTarget
+                              spec.type-segment-bases
+                              spec.merge-label
+                              spec.phi-var
+                              spec.cmp-var
+                              phi-left
+                              spec.true-label
+                              spec.false-label
+                              var-label)
                             blocks
                             index
                             uses
-                            merge-label
                             merge-instrs
-                            phi-var
                             inputs
-                            cmp-var
-                            (owned_view.compiler-owned-reference-shared-view op)
-                            (owned_view.compiler-owned-reference-shared-view
-                              cmp-ty)
-                            phi-left
+                            op
+                            cmp-ty
                             literal
-                            true-label
-                            false-label
-                            var-label
                             var-value
-                            (& var-instrs)))])]))]))))))
+                            var-instrs))])]))]))))))
 
 ;; --- T1-2b: jump-separated merges and compare chains ------------------------
 ;;
@@ -43644,45 +43225,41 @@
           (match (ir.compiler-ir-instr-seq-borrow instrs (+ slot 1))
             [(Branch (Var cond-var) true-label false-label)
               (let
-                [phi-left : bool (opt-phi-cmp-fold-value-is-var? lhs phi-var)]
+                [phi-left : bool
+                  (opt-phi-cmp-fold-value-is-var? (& lhs) phi-var)]
+                [phi-right : bool
+                  (or phi-left (opt-phi-cmp-fold-value-is-var? (& rhs) phi-var))]
                 [literal : ir.CompilerIrValue
                   (if phi-left
-                    (owned_view.compiler-owned-shared-view rhs)
+                    rhs
                     lhs)]
                 (if (or
                   (not (= cond-var cmp-var))
                   (not (opt-bool-branch-compare-op? (& op)))
                   (not (= (opt-bool-branch-use-count uses cmp-var) 1))
                   (not (opt-type-eq type-segment-bases phi-ty (& cmp-ty)))
-                  (not
-                    (or phi-left (opt-phi-cmp-fold-value-is-var? rhs phi-var)))
+                  (not phi-right)
                   (not (opt-const-value? (& literal) (& cmp-ty))))
                   (No)
                   (Some op phi-left literal cmp-ty true-label false-label)))]
             [_ (No)])]
         [_ (No)]))))
 
-;; Is `label` the next link of the run that leaves `from-label`? It must be a
-;; link block of its own, reached only from `from-label`, and forward of it in
-;; reverse postorder -- which is what keeps the walk finite and keeps a loop
-;; header out of the run.
+;; Is `label` the next link of the run that leaves `from-label`?
 (define (opt-phi-cmp-fold-chain-block?
-  [type-segment-bases : i64]
+  [key : OptPhiCmpFoldChainKey]
   [index : (& index OptCfgIndex)]
   [uses : (& uses (__tl_dyn-array i64))]
-  [phi-var : i64]
   [phi-ty : (& phi-ty ast.AstType)]
   [from-label : i64]
   [label : i64]) : bool
   (if (or (= label from-label) (= label (ir.compiler-ir-label-none)))
     false
     (let
-      [preds : OptLabelSet (opt-cfg-index-predecessors index label)]
       [from-rpo : i64 (opt-phi-cmp-fold-label-rpo index from-label)]
       [rpo : i64 (opt-phi-cmp-fold-label-rpo index label)]
       (if (or
-        (not (= (opt-label-count preds) 1))
-        (not (= (opt-label-ref preds 0) from-label))
+        (not (opt-thread-sole-pred? index label from-label))
         (< from-rpo 0)
         (<= rpo from-rpo))
         false
@@ -43692,24 +43269,20 @@
             (match block
               [(Block _ instrs)
                 (match (opt-phi-cmp-fold-link
-                  type-segment-bases
+                  key.type-segment-bases
                   uses
-                  phi-var
+                  key.phi-var
                   phi-ty
-                  instrs
+                  (& instrs)
                   0)
                   [(No) false]
                   [(Some _ _ _ _ _ _) true])])])))))
 
-;; The successor that continues the run, or `label-none`. Two continuing
-;; successors would make the run a tree rather than a chain; reporting none
-;; leaves the other compares as readers of %p outside the run, which the reader
-;; count below then refuses.
+;; The successor that continues the run, or `label-none`.
 (define (opt-phi-cmp-fold-chain-next
-  [type-segment-bases : i64]
+  [key : OptPhiCmpFoldChainKey]
   [index : (& index OptCfgIndex)]
   [uses : (& uses (__tl_dyn-array i64))]
-  [phi-var : i64]
   [phi-ty : (& phi-ty ast.AstType)]
   [from-label : i64]
   [true-label : i64]
@@ -43717,19 +43290,17 @@
   (let
     [true-link? : bool
       (opt-phi-cmp-fold-chain-block?
-        type-segment-bases
+        key
         index
         uses
-        phi-var
         phi-ty
         from-label
         true-label)]
     [false-link? : bool
       (opt-phi-cmp-fold-chain-block?
-        type-segment-bases
+        key
         index
         uses
-        phi-var
         phi-ty
         from-label
         false-label)]
@@ -43739,158 +43310,148 @@
       [false-link? false-label]
       [else (ir.compiler-ir-label-none)])))
 
-;; Longer than this and the site is not a classifier chain; the typical one is
-;; the two links of `(and (>= b 48) (<= b 57))`.
 (define (opt-phi-cmp-fold-chain-fuel) : i64
   8)
 
-;; How many links the run holds, or 0 when the head is not a link at all (or the
-;; run is longer than the fuel allows).
+;; How many links the run holds, or 0 when the head is not a link at all.
 (define (opt-phi-cmp-fold-chain-length
-  [type-segment-bases : i64]
+  [key : OptPhiCmpFoldChainKey]
   [index : (& index OptCfgIndex)]
   [uses : (& uses (__tl_dyn-array i64))]
-  [phi-var : i64]
   [phi-ty : (& phi-ty ast.AstType)]
-  [label : i64]
-  [slot : i64]
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [head-instrs : (& head-instrs ir.CompilerIrInstrSeq)]
   [fuel : i64]) : i64
-  (if (<= fuel 0)
-    0
-    (match (opt-phi-cmp-fold-link
-      type-segment-bases
-      uses
-      phi-var
-      phi-ty
-      instrs
-      slot)
-      [(No) 0]
-      [(Some _ _ _ _ true-label false-label)
-        (let
-          [next : i64
-            (opt-phi-cmp-fold-chain-next
-              type-segment-bases
-              index
+  (let
+    [label : i64 key.head-label]
+    [slot : i64 key.head-slot]
+    [links : i64 0]
+    [left : i64 fuel]
+    [cur-block : OptMaybeBlock (No)]
+    (while (> left 0)
+      (let
+        [link : OptPhiCmpFoldLink
+          (if (= links 0)
+            (opt-phi-cmp-fold-link
+              key.type-segment-bases
               uses
-              phi-var
+              key.phi-var
               phi-ty
-              label
-              true-label
-              false-label)]
-          (if (= next (ir.compiler-ir-label-none))
-            1
-            (match (opt-cfg-index-find-block index next)
-              [(No) 0]
-              [(Some block)
-                (match block
-                  [(Block _ next-instrs)
-                    (let
-                      [rest : i64
-                        (opt-phi-cmp-fold-chain-length
-                          type-segment-bases
-                          index
-                          uses
-                          phi-var
-                          phi-ty
-                          next
-                          0
-                          next-instrs
-                          (- fuel 1))]
-                      (if (= rest 0)
-                        0
-                        (+ 1 rest)))])])))])))
-
-;; Run `input` through the chain: take the branch each verdict decides and keep
-;; going while that target is the next link. `No` when a verdict does not fold,
-;; which refuses the whole site -- a partially decided chain would leave the
-;; phi's literal input in place with nothing gained.
-(define (opt-phi-cmp-fold-chain-exit
-  [type-segment-bases : i64]
-  [index : (& index OptCfgIndex)]
-  [uses : (& uses (__tl_dyn-array i64))]
-  [phi-var : i64]
-  [phi-ty : (& phi-ty ast.AstType)]
-  [label : i64]
-  [slot : i64]
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [input : (& ir.CompilerIrValue)]
-  [fuel : i64]) : OptPhiCmpFoldExit
-  (if (<= fuel 0)
-    (No)
-    (match (opt-phi-cmp-fold-link
-      type-segment-bases
-      uses
-      phi-var
-      phi-ty
-      instrs
-      slot)
-      [(No) (No)]
-      [(Some op phi-left literal cmp-ty true-label false-label)
-        (match (opt-phi-cmp-fold-verdict
-          type-segment-bases
-          op
-          phi-left
-          literal
-          (& cmp-ty)
-          input)
-          [(No) (No)]
-          [(Some known)
+              head-instrs
+              slot)
+            (match (& cur-block)
+              [(Some (Block _ instrs))
+                (opt-phi-cmp-fold-link
+                  key.type-segment-bases
+                  uses
+                  key.phi-var
+                  phi-ty
+                  (& instrs)
+                  0)]
+              [(No) (No)]))]
+        (match link
+          [(No) (return 0)]
+          [(Some _ _ _ _ true-label false-label)
+            (+= links 1)
             (let
-              [target : i64
-                (if known
-                  true-label
-                  false-label)]
               [next : i64
                 (opt-phi-cmp-fold-chain-next
-                  type-segment-bases
+                  key
                   index
                   uses
-                  phi-var
                   phi-ty
                   label
                   true-label
                   false-label)]
-              (if (not (= target next))
-                (Some label target)
-                (match (opt-cfg-index-find-block index next)
-                  [(No) (No)]
-                  [(Some block)
-                    (match block
-                      [(Block _ next-instrs)
-                        (opt-phi-cmp-fold-chain-exit
-                          type-segment-bases
-                          index
-                          uses
-                          phi-var
-                          phi-ty
-                          next
-                          0
-                          next-instrs
-                          input
-                          (- fuel 1))])])))])])))
+              (when (= next (ir.compiler-ir-label-none)) (return links))
+              (set! cur-block (opt-cfg-index-find-block index next))
+              (set! label next)
+              (set! slot 0)
+              (-= left 1))])))
+    0))
+
+;; Run `input` through the chain: take the branch each verdict decides and keep
+;; going while that target is the next link.
+(define (opt-phi-cmp-fold-chain-exit
+  [key : OptPhiCmpFoldChainKey]
+  [index : (& index OptCfgIndex)]
+  [uses : (& uses (__tl_dyn-array i64))]
+  [phi-ty : (& phi-ty ast.AstType)]
+  [head-instrs : (& head-instrs ir.CompilerIrInstrSeq)]
+  [input : (& ir.CompilerIrValue)]
+  [fuel : i64]) : OptPhiCmpFoldExit
+  (let
+    [label : i64 key.head-label]
+    [first? : bool true]
+    [left : i64 fuel]
+    [cur-block : OptMaybeBlock (No)]
+    (while (> left 0)
+      (let
+        [link : OptPhiCmpFoldLink
+          (if first?
+            (opt-phi-cmp-fold-link
+              key.type-segment-bases
+              uses
+              key.phi-var
+              phi-ty
+              head-instrs
+              key.head-slot)
+            (match (& cur-block)
+              [(Some (Block _ instrs))
+                (opt-phi-cmp-fold-link
+                  key.type-segment-bases
+                  uses
+                  key.phi-var
+                  phi-ty
+                  (& instrs)
+                  0)]
+              [(No) (No)]))]
+        (match link
+          [(No) (return (No))]
+          [(Some op phi-left literal cmp-ty true-label false-label)
+            (match (opt-phi-cmp-fold-verdict
+              key.type-segment-bases
+              (& op)
+              phi-left
+              (& literal)
+              (& cmp-ty)
+              input)
+              [(No) (return (No))]
+              [(Some known)
+                (let
+                  [target : i64
+                    (if known
+                      true-label
+                      false-label)]
+                  [next : i64
+                    (opt-phi-cmp-fold-chain-next
+                      key
+                      index
+                      uses
+                      phi-ty
+                      label
+                      true-label
+                      false-label)]
+                  (when (not (= target next)) (return (Some label target)))
+                  (set! cur-block (opt-cfg-index-find-block index next))
+                  (set! label next)
+                  (set! first? false)
+                  (-= left 1))])])))
+    (No)))
 
 ;; Exactly one Var input, at least one literal input, and every literal input
 ;; carried all the way to an exit by the chain.
 (define (opt-phi-cmp-fold-chain-classify
-  [type-segment-bases : i64]
+  [key : OptPhiCmpFoldChainKey]
   [index : (& index OptCfgIndex)]
   [uses : (& uses (__tl_dyn-array i64))]
-  [phi-var : i64]
   [phi-ty : (& phi-ty ast.AstType)]
-  [head-label : i64]
-  [head-slot : i64]
   [head-instrs : (& head-instrs ir.CompilerIrInstrSeq)]
-  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
-  [var-label : i64]
-  [var-value : ir.CompilerIrValue]
-  [var-count : i64]
-  [literal-count : i64]) : OptPhiCmpFoldInputs
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]) : OptPhiCmpFoldInputs
   (let
-    [the-var-label : i64 var-label]
-    [the-var-value : ir.CompilerIrValue var-value]
-    [vars : i64 var-count]
-    [literals : i64 literal-count]
+    [the-var-label : i64 (ir.compiler-ir-label-none)]
+    [the-var-value : ir.CompilerIrValue (Unit)]
+    [vars : i64 0]
+    [literals : i64 0]
     (for [at (iterator.range 0 inputs.len)]
       (let
         [input (ir.compiler-ir-phi-input-seq-borrow inputs at)]
@@ -43902,67 +43463,47 @@
             (set! vars 1)]
           [_
             (match (opt-phi-cmp-fold-chain-exit
-              type-segment-bases
+              key
               index
               uses
-              phi-var
               phi-ty
-              head-label
-              head-slot
               head-instrs
               (& input.value)
               (opt-phi-cmp-fold-chain-fuel))
               [(No) (return (No))]
-              [(Some _ _) (set! literals (+ literals 1))])])))
+              [(Some _ _) (+= literals 1)])])))
     (if (and (= vars 1) (> literals 0))
       (Some the-var-label the-var-value literals)
       (No))))
 
 ;; Retarget every literal predecessor's jump onto the exit its value reaches.
-;; The phi input it leaves behind is dropped by the same helper (slot 0 of the
-;; merge is the phi), so the merge is left with its Var input alone. An edge the
-;; repair cannot serve -- a target phi with no input keyed on the deciding chain
-;; block -- keeps its input exactly as it stands, which is the T1-2 rule.
 (define (opt-phi-cmp-fold-chain-thread!
-  [type-segment-bases : i64]
+  [key : OptPhiCmpFoldChainKey]
   [index : (& index OptCfgIndex)]
   [uses : (&mut uses (__tl_dyn-array i64))]
-  [phi-var : i64]
   [phi-ty : (& ast.AstType)]
-  [merge-label : i64]
   [merge-instrs : (& ir.CompilerIrInstrSeq)]
-  [head-label : i64]
-  [head-slot : i64]
   [head-instrs : (& ir.CompilerIrInstrSeq)]
-  [inputs : ir.CompilerIrPhiInputSeq]
-  [changed : bool]) : bool
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]) : bool
   (let
-    [out : bool changed]
+    [out : bool false]
     (for [slot (iterator.range 0 inputs.len)]
       (let
-        [input (ir.compiler-ir-phi-input-seq-ref (& inputs) slot)]
-        [value : ir.CompilerIrValue input.value]
+        [input (ir.compiler-ir-phi-input-seq-borrow inputs slot)]
         [label : i64 input.label]
-        (match (& value)
+        (match (& input.value)
           [(Var _) unit]
           [_
             (match (opt-phi-cmp-fold-chain-exit
-              type-segment-bases
+              key
               index
               uses
-              phi-var
               phi-ty
-              head-label
-              head-slot
               head-instrs
-              (& value)
+              (& input.value)
               (opt-phi-cmp-fold-chain-fuel))
               [(No) unit]
               [(Some from-label exit-label)
-                ;; The chain block `from-label` owns the edge into the exit and
-                ;; carries no phi (chain rail), so it is the merge the repair
-                ;; translates through with zero phis; the sentinel block is the
-                ;; forwarding block whose phi loses `label`.
                 (match (opt-cfg-index-find-block index from-label)
                   [(No) unit]
                   [(Some from-block)
@@ -43972,75 +43513,57 @@
                           (opt-thread-apply-edge!
                             index
                             uses
-                            label
                             (&
                               (Cons
-                                merge-label
+                                key.merge-label
                                 (owned_view.compiler-owned-reference-shared-view
                                   merge-instrs)
                                 (box (OptThreadVia.Nil))))
-                            from-label
-                            exit-label
                             (& from-instrs)
-                            0
-                            0
-                            0)
+                            (OptThreadEdgeSpec
+                              label
+                              from-label
+                              exit-label
+                              0
+                              0
+                              0))
                           (set! out true))])])])])))
     out))
 
-;; The chain form of the site. `head-label`/`head-slot` name C1: the merge's own
-;; tail when the compare shares the merge block, otherwise the block the merge
-;; jumps into. Everything the rewrite mutates it mutates in place (the edges'
-;; terminators, the merge phi's input list, the exits' phis), so the caller's
-;; block list is the answer.
+;; The chain form of the site. Mutates in place and returns `(InPlace)` on
+;; success so the caller keeps its owned block list.
 (define (opt-phi-cmp-fold-chain-try!
-  [type-segment-bases : i64]
-  [blocks : ir.CompilerIrBlockList]
+  [key : OptPhiCmpFoldChainKey]
   [index : (& index OptCfgIndex)]
   [uses : (&mut uses (__tl_dyn-array i64))]
-  [merge-label : i64]
   [merge-instrs : (& ir.CompilerIrInstrSeq)]
-  [phi-var : i64]
   [inputs : (& ir.CompilerIrPhiInputSeq)]
   [phi-ty : (& ast.AstType)]
-  [head-label : i64]
-  [head-slot : i64]
   [head-instrs : (& ir.CompilerIrInstrSeq)]) : OptPhiCmpFoldRewrite
   (let
     [links : i64
       (opt-phi-cmp-fold-chain-length
-        type-segment-bases
+        key
         index
         uses
-        phi-var
         phi-ty
-        head-label
-        head-slot
         head-instrs
         (opt-phi-cmp-fold-chain-fuel))]
-    [preds : OptLabelSet (opt-cfg-index-predecessors index merge-label)]
-    [merge-rpo : i64 (opt-phi-cmp-fold-label-rpo index merge-label)]
+    [preds : OptLabelSet
+      (opt-phi-cmp-fold-merge-preds-ok? index key.merge-label)]
     (if (or
       (= links 0)
-      (not (= (opt-bool-branch-use-count uses phi-var) links))
+      (not (= (opt-bool-branch-use-count uses key.phi-var) links))
       (not (or (opt-int-or-char-type? phi-ty) (opt-bool-type? phi-ty)))
-      (< merge-rpo 0)
-      (not (opt-phi-cmp-fold-preds-forward? index preds merge-rpo)))
+      (= (opt-label-count preds) 0))
       (No)
       (match (opt-phi-cmp-fold-chain-classify
-        type-segment-bases
+        key
         index
         uses
-        phi-var
         phi-ty
-        head-label
-        head-slot
         head-instrs
-        inputs
-        (ir.compiler-ir-label-none)
-        (Unit)
-        0
-        0)
+        inputs)
         [(No) (No)]
         [(Some var-label _ literal-count)
           (if (not (= (+ literal-count 1) (opt-label-count preds)))
@@ -44051,70 +43574,53 @@
                 (match var-block
                   [(Block _ var-instrs)
                     (if (not
-                      (= (opt-thread-jump-target var-instrs) merge-label))
+                      (=
+                        (opt-thread-jump-target (& var-instrs))
+                        key.merge-label))
                       (No)
                       (if (opt-phi-cmp-fold-chain-thread!
-                        type-segment-bases
+                        key
                         index
                         uses
-                        phi-var
                         phi-ty
-                        merge-label
                         merge-instrs
-                        head-label
-                        head-slot
                         head-instrs
-                        (owned_view.compiler-owned-reference-shared-view inputs)
-                        false)
-                        (Some blocks)
+                        inputs)
+                        (InPlace)
                         (No)))])]))]))))
 
-;; The chain entry from a merge block that ends in a plain `jump`: C1 is the
-;; block it lands on, which must be a link block reached from the merge alone.
+;; The chain entry from a merge block that ends in a plain `jump`.
 (define (opt-phi-cmp-fold-chain-try-forward!
-  [type-segment-bases : i64]
-  [blocks : (& ir.CompilerIrBlockList)]
+  [key : OptPhiCmpFoldChainKey]
   [index : (& index OptCfgIndex)]
   [uses : (&mut uses (__tl_dyn-array i64))]
-  [merge-label : i64]
   [merge-instrs : (& ir.CompilerIrInstrSeq)]
-  [phi-var : i64]
   [inputs : (& ir.CompilerIrPhiInputSeq)]
-  [phi-ty : (& ast.AstType)]
-  [head-label : i64]) : OptPhiCmpFoldRewrite
+  [phi-ty : (& ast.AstType)]) : OptPhiCmpFoldRewrite
   (if (not
     (opt-phi-cmp-fold-chain-block?
-      type-segment-bases
+      key
       index
       uses
-      phi-var
       phi-ty
-      merge-label
-      head-label))
+      key.merge-label
+      key.head-label))
     (No)
-    (match (opt-cfg-index-find-block index head-label)
+    (match (opt-cfg-index-find-block index key.head-label)
       [(No) (No)]
       [(Some head-block)
         (match head-block
           [(Block _ head-instrs)
             (opt-phi-cmp-fold-chain-try!
-              type-segment-bases
-              (owned_view.compiler-owned-reference-shared-view blocks)
+              key
               index
               uses
-              merge-label
               merge-instrs
-              phi-var
               inputs
               phi-ty
-              head-label
-              0
               (& head-instrs))])])))
 
-;; A merge that holds the compare itself. T1-2's rewrite keeps first refusal on
-;; the shape it owns -- it is the one that MOVES the compare down onto the
-;; variable edge -- and the chain matcher picks up what it declines, which is
-;; every site whose phi has a second reader further along the run.
+;; A merge that holds the compare itself.
 (define (opt-phi-cmp-fold-try-merge!
   [type-segment-bases : i64]
   [blocks : (& ir.CompilerIrBlockList)]
@@ -44125,43 +43631,47 @@
   [phi-var : i64]
   [inputs : (& ir.CompilerIrPhiInputSeq)]
   [phi-ty : (& ast.AstType)]) : OptPhiCmpFoldRewrite
-  (match (ir.compiler-ir-instr-seq-borrow instrs 1)
+  (match (ir.compiler-ir-instr-seq-ref instrs 1)
     [(BinOp cmp-var op lhs rhs cmp-ty)
       (match (ir.compiler-ir-instr-seq-borrow instrs 2)
         [(Branch (Var cond-var) true-label false-label)
           (if (not (= cond-var cmp-var))
             (No)
             (match (opt-phi-cmp-fold-try-shape!
-              type-segment-bases
+              (OptPhiCmpFoldTarget
+                type-segment-bases
+                merge-label
+                phi-var
+                cmp-var
+                false
+                true-label
+                false-label
+                (ir.compiler-ir-label-none))
               blocks
               index
               uses
-              merge-label
               instrs
-              phi-var
               inputs
               phi-ty
-              cmp-var
-              (& op)
+              op
               (& lhs)
               (& rhs)
-              (& cmp-ty)
-              true-label
-              false-label)
+              (& cmp-ty))
               [(Some next) (Some next)]
+              [(InPlace) (InPlace)]
               [(No)
                 (opt-phi-cmp-fold-chain-try!
-                  type-segment-bases
-                  (owned_view.compiler-owned-reference-shared-view blocks)
+                  (OptPhiCmpFoldChainKey
+                    type-segment-bases
+                    merge-label
+                    phi-var
+                    merge-label
+                    1)
                   index
                   uses
-                  merge-label
                   instrs
-                  phi-var
                   inputs
                   phi-ty
-                  merge-label
-                  1
                   instrs)]))]
         [_ (No)])]
     [_ (No)]))
@@ -44175,10 +43685,10 @@
   (match block
     [(Block merge-label instrs)
       (let
-        [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        [count : i64 (ir.compiler-ir-instr-seq-count (& instrs))]
         (if (not (or (= count 2) (= count 3)))
           (No)
-          (match (ir.compiler-ir-instr-seq-borrow instrs 0)
+          (match (ir.compiler-ir-instr-seq-ref instrs 0)
             [(Phi phi-var inputs phi-ty)
               (if (= count 3)
                 (opt-phi-cmp-fold-try-merge!
@@ -44194,16 +43704,17 @@
                 (match (ir.compiler-ir-instr-seq-borrow instrs 1)
                   [(Jump head-label)
                     (opt-phi-cmp-fold-chain-try-forward!
-                      type-segment-bases
-                      blocks
+                      (OptPhiCmpFoldChainKey
+                        type-segment-bases
+                        merge-label
+                        phi-var
+                        head-label
+                        0)
                       index
                       uses
-                      merge-label
                       (& instrs)
-                      phi-var
                       (& inputs)
-                      (& phi-ty)
-                      head-label)]
+                      (& phi-ty))]
                   [_ (No)]))]
             [_ (No)])))]))
 
@@ -44213,28 +43724,19 @@
   [index : (& index OptCfgIndex)]
   [uses : (&mut uses (__tl_dyn-array i64))]
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]) : OptPhiCmpFoldRewrite
-  (match blocks
-    [(slice) (No)]
-    [(slice block & rest)
-      (match (opt-phi-cmp-fold-try-block!
-        type-segment-bases
-        all-blocks
-        index
-        uses
-        block)
-        [(Some next) (Some next)]
-        [(No)
-          (opt-phi-cmp-fold-first-list!
-            type-segment-bases
-            all-blocks
-            index
-            uses
-            rest)])]))
+  (for [i (iterator.range 0 (array-length blocks))]
+    (match (opt-phi-cmp-fold-try-block!
+      type-segment-bases
+      all-blocks
+      index
+      uses
+      (& (array-ref blocks i)))
+      [(No) unit]
+      [(InPlace) (return (InPlace))]
+      [(Some next) (return (Some next))]))
+  (No))
 
-;; One site per round: the rewrite retargets edges and repairs phis through the
-;; CFG index, so the index and the use census are rebuilt for the next one. The
-;; cap only bounds the loop; it sits well above the sentinel-site count of real
-;; functions.
+;; One site per round.
 (define (opt-phi-cmp-fold-fuel) : i64
   64)
 
@@ -44243,25 +43745,30 @@
   [blocks : ir.CompilerIrBlockList]
   [frame : i64]
   [remaining : i64]) : OptBlockListPassResult
-  (if (<= remaining 0)
-    (Result blocks false)
-    (let
-      [index : OptCfgIndex (opt-cfg-index-build (& blocks))]
-      [uses : (__tl_dyn-array i64) (opt-collect-blocks-uses-array frame blocks)]
-      (match (opt-phi-cmp-fold-first-list!
-        type-segment-bases
-        (& blocks)
-        index
-        (&mut uses)
-        (ir.compiler-ir-block-list-view blocks))
-        [(No) (Result blocks false)]
-        [(Some next)
-          (match (opt-phi-cmp-fold-blocks-raw
-            type-segment-bases
-            next
-            frame
-            (- remaining 1))
-            [(Result final _) (Result final true)])]))))
+  (let
+    [current : ir.CompilerIrBlockList blocks]
+    [left : i64 remaining]
+    [changed? : bool false]
+    (while (> left 0)
+      (let
+        [index : OptCfgIndex (opt-cfg-index-build (& current))]
+        [uses : (__tl_dyn-array i64)
+          (opt-collect-blocks-uses-array frame (& current))]
+        (match (opt-phi-cmp-fold-first-list!
+          type-segment-bases
+          (& current)
+          (& index)
+          (&mut uses)
+          (ir.compiler-ir-block-list-view (& current)))
+          [(No) (return (Result current changed?))]
+          [(InPlace)
+            (set! changed? true)
+            (-= left 1)]
+          [(Some next)
+            (set! current next)
+            (set! changed? true)
+            (-= left 1)])))
+    (Result current changed?)))
 
 ;; The edge retargeting and the phi repair mutate instruction sequences in
 ;; place, so the pass works on a deep block/instruction clone and leaves its
@@ -44337,7 +43844,7 @@
         [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
         (and
           (or (= count 2) (= count 3))
-          (match (ir.compiler-ir-instr-seq-borrow instrs 0)
+          (match (ir.compiler-ir-instr-seq-ref instrs 0)
             [(Phi phi-var inputs phi-ty)
               (and
                 (or (opt-int-or-char-type? phi-ty) (opt-bool-type? phi-ty))
@@ -44601,14 +44108,33 @@
   (No)
   (Some ir.CompilerIrPhiInputSeq))
 
+(defstruct OptThreadEdgeSpec
+  (origin-label i64)
+  (merge-label i64)
+  (target-label i64)
+  (merge-phi-count i64)
+  (merge-mov-limit i64)
+  (drop-slot i64))
+
+(defstruct OptThreadMergeSpec
+  (merge-label i64)
+  (true-label i64)
+  (false-label i64)
+  (phi-count i64)
+  (mov-limit i64)
+  (blocked-label i64))
+
 (define (opt-thread-phi-prefix-count
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [slot : i64]) : i64
-  (if (>= slot (ir.compiler-ir-instr-seq-count instrs))
-    slot
-    (match (ir.compiler-ir-instr-seq-borrow instrs slot)
-      [(Phi _ _ _) (opt-thread-phi-prefix-count instrs (+ slot 1))]
-      [_ slot])))
+  [start : i64]) : i64
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [slot : i64 start]
+    (while (< slot count)
+      (match (ir.compiler-ir-instr-seq-borrow instrs slot)
+        [(Phi _ _ _) (+= slot 1)]
+        [_ (return slot)]))
+    slot))
 
 (define (opt-thread-phi-input-value
   [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
@@ -44622,28 +44148,24 @@
   (No))
 
 (define (opt-thread-phi-inputs-drop
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [label : i64]) : ir.CompilerIrPhiInputSeq
   (let
-    [phi-inputs-at-42477-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-42477-3.len 0)
-      (ir.compiler-ir-phi-input-seq-empty)
+    [i : i64 inputs.len]
+    [out : ir.CompilerIrPhiInputSeq (ir.compiler-ir-phi-input-seq-empty)]
+    (while (> i 0)
+      (-= i 1)
       (let
-        [phi-input-at-42477-3
-          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-42477-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-42477-3.value]
-        [input-label : i64 phi-input-at-42477-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-42477-3.slots
-            (+ phi-inputs-at-42477-3.start 1)
-            (- phi-inputs-at-42477-3.len 1))]
-        (if (= input-label label)
-          (opt-thread-phi-inputs-drop rest label)
-          (ir.compiler-ir-phi-input-seq-prepend
-            value
-            input-label
-            (& (opt-thread-phi-inputs-drop rest label))))))))
+        [input (ir.compiler-ir-phi-input-seq-ref inputs i)]
+        (when
+          (not (= input.label label))
+          (set!
+            out
+            (ir.compiler-ir-phi-input-seq-prepend
+              input.value
+              input.label
+              (& out))))))
+    out))
 
 ;; The use counts are collected once per round and then maintained exactly:
 ;; the only rewrite that ADDS a use is the successor-phi repair below, and a
@@ -44728,82 +44250,56 @@
 
 (define (opt-thread-count-tail-uses
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [slot : i64]
-  [var : i64]
-  [found : i64]) : i64
-  (if (or (< found 0) (>= slot (ir.compiler-ir-instr-seq-count instrs)))
-    found
-    (opt-thread-count-tail-uses
-      instrs
-      (+ slot 1)
-      var
+  [start : i64]
+  [var : i64]) : i64
+  (let
+    [found : i64 0]
+    (for [slot (iterator.range start (ir.compiler-ir-instr-seq-count instrs))]
       (match (ir.compiler-ir-instr-seq-borrow instrs slot)
         [(or (Branch cond _ _) (Mov _ cond _))
-          (+ found (opt-thread-count-value-var (& cond) var))]
+          (+= found (opt-thread-count-value-var (& cond) var))]
         [(BinOp _ _ left right _)
-          (+
+          (+=
             found
             (+
               (opt-thread-count-value-var (& left) var)
               (opt-thread-count-value-var (& right) var)))]
-        [_ (- 0 1)]))))
+        [_ (return (- 0 1))]))
+    found))
 
-;; SimplifyCFG's `MaxSmallBlockSize` (`blockIsSimpleEnoughToThreadThrough`,
-;; SimplifyCFG.cpp:3494-3535). Phis are not counted there -- threading deletes
-;; them -- and are not counted here either; what the cap bounds is the run
-;; between the phi prefix and the terminator, which LLVM clones into the
-;; predecessor and this pass re-expresses on the redirected edge.
 (define (opt-thread-max-body-instrs) : i64
   10)
 
-;; Depth of the `[phi; jump]` forwarding chain the input walk resolves.
-;; JumpThreading recurses through phi operands under a `RecursionSet`
-;; (JumpThreading.cpp:558, 607-625); the compiler's own `cond` ladders build
-;; chains 13 deep (`pl-single-dest?`), so 16 leaves room over them.
 (define (opt-thread-chain-depth) : i64
   16)
 
-;; Slot of the body Mov that defines `var`, or -1. `limit` ends the Mov run: the
-;; terminator for the plain form, the comparison for the D2 form.
+;; Slot of the body Mov that defines `var`, or -1.
 (define (opt-thread-mov-slot-for-var
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [slot : i64]
+  [start : i64]
   [limit : i64]
   [var : i64]) : i64
-  (if (>= slot limit)
-    (- 0 1)
+  (for [slot (iterator.range start limit)]
     (match (ir.compiler-ir-instr-seq-borrow instrs slot)
-      [(Mov dst _ _)
-        (if (= dst var)
-          slot
-          (opt-thread-mov-slot-for-var instrs (+ slot 1) limit var))]
-      [_ (- 0 1)])))
+      [(Mov dst _ _) (when (= dst var) (return slot))]
+      [_ (return (- 0 1))]))
+  (- 0 1))
 
 ;; The widened merge body: pure `Mov`s between the phi prefix and the run's end.
-;; A Mov is the copy SSA construction leaves at a loop exit -- `%205 = mov %174`
-;; in gvn-facts-insert's `while_exit.2` -- and it is re-expressed on a threaded
-;; edge exactly like a phi: what it names is either one of the merge's own phis
-;; (resolved per edge) or a value defined before the merge, which therefore
-;; dominates every predecessor of it. Nothing else is admitted: an instruction
-;; with an effect, or one whose result the edge cannot reproduce, would have to
-;; be cloned into the predecessor the way LLVM clones it, and this pass never
-;; duplicates.
 (define (opt-thread-body-movs?
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [slot : i64]
+  [start : i64]
   [limit : i64]) : bool
-  (if (>= slot limit)
-    true
+  (for [slot (iterator.range start limit)]
     (match (ir.compiler-ir-instr-seq-borrow instrs slot)
-      [(Mov _ _ _) (opt-thread-body-movs? instrs (+ slot 1) limit)]
-      [_ false])))
+      [(Mov _ _ _) unit]
+      [_ (return false)]))
+  true)
 
 ;; Does this block read `var` anywhere other than as a phi input it carries
-;; under the merge's own label? `scratch` is a use census the round owns; only
-;; the one slot this asks about is zeroed and read, so the rest of it is free to
-;; hold whatever an earlier question left there.
+;; under the merge's own label?
 (define (opt-thread-def-foreign-block?
-  [scratch : (__tl_dyn-array i64)]
+  [scratch : (&mut scratch (__tl_dyn-array i64))]
   [merge-label : i64]
   [instrs : (& ir.CompilerIrInstrSeq)]
   [var : i64]) : bool
@@ -44812,7 +44308,7 @@
     (begin
       (set! (array-ref scratch var) 0)
       (opt-collect-instr-seq-uses-array
-        (compiler-opt-global-shared-view scratch)
+        (owned_view.compiler-owned-reference-shared-view scratch)
         instrs)
       (>
         (array-ref scratch var)
@@ -44826,22 +44322,12 @@
     [preds : OptLabelSet (opt-cfg-index-predecessors index label)]
     (and (= (opt-label-count preds) 1) (= (opt-label-ref preds 0) pred-label))))
 
-;; The successor whose region holds every foreign reader of `var`, or `No` when
-;; there is no single such successor. A block dominated by a successor `S` whose
-;; only predecessor is the merge is entered only through `S`, and `S` only
-;; through the merge, so the definition is still on every path into it -- as
-;; long as no edge is threaded past the merge INTO `S`, which is what the
-;; returned label blocks. SimplifyCFG proves the same thing with
-;; `NonLocalUseBlocks` plus a bounded backward `findReaching` walk
-;; (SimplifyCFG.cpp:3477-3530, :3584-3607); it may clone the block into the
-;; edge, so it can accept both sides where this refuses one.
+;; The successor whose region holds every foreign reader of `var`, or `No`.
 (define (opt-thread-def-blocked
   [index : (& index OptCfgIndex)]
   [doms : (& doms OptDomInfo)]
-  [scratch : (__tl_dyn-array i64)]
-  [merge-label : i64]
-  [true-label : i64]
-  [false-label : i64]
+  [scratch : (&mut scratch (__tl_dyn-array i64))]
+  [spec : OptThreadMergeSpec]
   [var : i64]) : OptThreadBlocked
   (let
     [count : i64 (opt-cfg-index-block-count index)]
@@ -44852,20 +44338,21 @@
         [(Some block)
           (match block
             [(Block label instrs)
-              (if (or
-                (= label merge-label)
-                (not
+              (when
+                (and
+                  (not (= label spec.merge-label))
                   (opt-thread-def-foreign-block?
-                    (compiler-opt-global-shared-view scratch)
-                    merge-label
+                    scratch
+                    spec.merge-label
                     (& instrs)
-                    var)))
-                unit
+                    var))
                 (let
                   [owner : i64
                     (cond
-                      [(opt-dom-dominates? doms true-label label) true-label]
-                      [(opt-dom-dominates? doms false-label label) false-label]
+                      [(opt-dom-dominates? doms spec.true-label label)
+                        spec.true-label]
+                      [(opt-dom-dominates? doms spec.false-label label)
+                        spec.false-label]
                       [else (ir.compiler-ir-label-none)])]
                   (if (or
                     (= owner (ir.compiler-ir-label-none))
@@ -44874,109 +44361,97 @@
                       (not (= blocked owner))))
                     (return (No))
                     (set! blocked owner))))])]))
-    (if (= blocked (ir.compiler-ir-label-none))
+    (if (or
+      (= blocked (ir.compiler-ir-label-none))
+      (opt-thread-sole-pred? index blocked spec.merge-label))
       (Some blocked)
-      (if (opt-thread-sole-pred? index blocked merge-label)
-        (Some blocked)
-        (No)))))
+      (No))))
 
 (define (opt-thread-def-admissible
   [index : (& index OptCfgIndex)]
   [doms : (& doms OptDomInfo)]
   [uses : (& uses (__tl_dyn-array i64))]
-  [scratch : (__tl_dyn-array i64)]
+  [scratch : (&mut scratch (__tl_dyn-array i64))]
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [phi-count : i64]
-  [merge-label : i64]
-  [true-label : i64]
-  [false-label : i64]
-  [dst : i64]
-  [blocked : i64]) : OptThreadBlocked
+  [spec : OptThreadMergeSpec]
+  [dst : i64]) : OptThreadBlocked
   (let
     [edge-uses : i64
       (+
-        (opt-thread-count-block-edge-uses index true-label merge-label dst)
-        (if (= true-label false-label)
-          0
-          (opt-thread-count-block-edge-uses index false-label merge-label dst)))]
-    [tail-uses : i64 (opt-thread-count-tail-uses instrs phi-count dst 0)]
-    (if (< tail-uses 0)
-      (No)
-      (if (= (opt-bool-branch-use-count uses dst) (+ tail-uses edge-uses))
-        (Some blocked)
-        (match (opt-thread-def-blocked
+        (opt-thread-count-block-edge-uses
           index
-          doms
-          scratch
-          merge-label
-          true-label
-          false-label
+          spec.true-label
+          spec.merge-label
           dst)
+        (if (= spec.true-label spec.false-label)
+          0
+          (opt-thread-count-block-edge-uses
+            index
+            spec.false-label
+            spec.merge-label
+            dst)))]
+    [tail-uses : i64 (opt-thread-count-tail-uses instrs spec.phi-count dst)]
+    (cond
+      [(< tail-uses 0) (No)]
+      [(= (opt-bool-branch-use-count uses dst) (+ tail-uses edge-uses))
+        (Some spec.blocked-label)]
+      [else
+        (match (opt-thread-def-blocked index doms scratch spec dst)
           [(No) (No)]
           [(Some owner)
             (if (or
               (= owner (ir.compiler-ir-label-none))
-              (= blocked (ir.compiler-ir-label-none))
-              (= blocked owner))
+              (= spec.blocked-label (ir.compiler-ir-label-none))
+              (= spec.blocked-label owner))
               (Some
                 (if (= owner (ir.compiler-ir-label-none))
-                  blocked
+                  spec.blocked-label
                   owner))
-              (No))])))))
+              (No))])])))
 
 ;; Everything the merge defines -- its phis and the body Movs -- has to be
-;; re-expressible at the redirected predecessor. Two ways to be so, and the walk
-;; folds one blocked successor out of both:
-;;   - EDGE-LOCAL: every reader is the merge's own body, its terminator, or a
-;;     phi input one of the two successors carries under the merge's label. The
-;;     threaded edge takes over that input with the value the definition's own
-;;     edge carried, which is what `opt-thread-repair-target-phis!` installs.
-;;   - REGION-LOCAL: the remaining readers all sit in blocks one successor
-;;     dominates, and that successor is entered only from the merge. The
-;;     definition is then still reached on every path into the region, provided
-;;     no edge is threaded past the merge into that successor.
+;; re-expressible at the redirected predecessor.
 (define (opt-thread-merge-defs-admissible?
   [index : (& index OptCfgIndex)]
   [doms : (& doms OptDomInfo)]
   [uses : (& uses (__tl_dyn-array i64))]
-  [scratch : (__tl_dyn-array i64)]
+  [scratch : (&mut scratch (__tl_dyn-array i64))]
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [phi-count : i64]
-  [body-end : i64]
-  [merge-label : i64]
-  [true-label : i64]
-  [false-label : i64]
-  [blocked : i64]) : OptThreadBlocked
-  (for [slot (iterator.range 0 body-end)]
-    (let
-      [dst : i64
-        (match (ir.compiler-ir-instr-seq-borrow instrs slot)
-          [(Phi phi-dst _ _)
-            (if (< slot phi-count)
-              phi-dst
-              (- 0 1))]
-          [(Mov mov-dst _ _)
-            (if (>= slot phi-count)
-              mov-dst
-              (- 0 1))]
-          [_ (- 0 1)])]
-      (if (< dst 0)
-        (return (No))
-        (match (opt-thread-def-admissible
-          index
-          doms
-          uses
-          (compiler-opt-global-shared-view scratch)
-          instrs
-          phi-count
-          merge-label
-          true-label
-          false-label
-          dst
-          blocked)
-          [(No) (return (No))]
-          [(Some next) (set! blocked next)]))))
-  (Some blocked))
+  [spec : OptThreadMergeSpec]) : OptThreadBlocked
+  (let
+    [blocked : i64 spec.blocked-label]
+    (for [slot (iterator.range 0 spec.mov-limit)]
+      (let
+        [dst : i64
+          (match (ir.compiler-ir-instr-seq-borrow instrs slot)
+            [(Phi phi-dst _ _)
+              (if (< slot spec.phi-count)
+                phi-dst
+                (- 0 1))]
+            [(Mov mov-dst _ _)
+              (if (>= slot spec.phi-count)
+                mov-dst
+                (- 0 1))]
+            [_ (- 0 1)])]
+        (if (< dst 0)
+          (return (No))
+          (match (opt-thread-def-admissible
+            index
+            doms
+            uses
+            scratch
+            instrs
+            (OptThreadMergeSpec
+              spec.merge-label
+              spec.true-label
+              spec.false-label
+              spec.phi-count
+              spec.mov-limit
+              blocked)
+            dst)
+            [(No) (return (No))]
+            [(Some next) (set! blocked next)]))))
+    (Some blocked)))
 
 ;; Every comparison the branch can decide per edge is threaded. The ordering
 ;; forms serve "a constant is materialised on an early-exit edge and re-tested
@@ -45024,7 +44499,7 @@
   [index : (& index OptCfgIndex)]
   [doms : (& doms OptDomInfo)]
   [uses : (& uses (__tl_dyn-array i64))]
-  [scratch : (__tl_dyn-array i64)]
+  [scratch : (&mut scratch (__tl_dyn-array i64))]
   [merge-label : i64]
   [instrs : (& ir.CompilerIrInstrSeq)]
   [count : i64]
@@ -45060,33 +44535,25 @@
                   uses
                   scratch
                   instrs
-                  phi-count
-                  body-end
-                  merge-label
-                  true-label
-                  false-label
-                  (ir.compiler-ir-label-none))
+                  (OptThreadMergeSpec
+                    merge-label
+                    true-label
+                    false-label
+                    phi-count
+                    body-end
+                    (ir.compiler-ir-label-none)))
                   [(No) (No)]
                   [(Some blocked)
                     (Compare phi-count blocked true-label false-label)])
                 (No)))]
           [_ (No)])))))
 
-;; The merge may hold any number of phis ahead of its branch -- LLVM does not
-;; count phis against `MaxSmallBlockSize` either, because threading deletes them
-;; (`SimplifyCFG.cpp:3489-3491`) -- and, since T2-5, up to `MaxSmallBlockSize`
-;; pure Movs between them and the branch. The phi the branch reads has to be
-;; `Bool`; every phi and every Mov, that one included, then answers to the same
-;; live-out rule, which is what admits a condition phi a successor also reads on
-;; the merge edge -- LLVM's version likewise works "on a phi with any number of
-;; predecessors and any use count", because it duplicates the branch instead of
-;; demanding a single use.
 (define (opt-thread-merge-shape
   [type-segment-bases : i64]
   [index : (& index OptCfgIndex)]
   [doms : (& doms OptDomInfo)]
   [uses : (& uses (__tl_dyn-array i64))]
-  [scratch : (__tl_dyn-array i64)]
+  [scratch : (&mut scratch (__tl_dyn-array i64))]
   [merge-label : i64]
   [instrs : (& ir.CompilerIrInstrSeq)]) : OptThreadMerge
   (let
@@ -45135,12 +44602,13 @@
                           uses
                           scratch
                           instrs
-                          phi-count
-                          body-end
-                          merge-label
-                          true-label
-                          false-label
-                          (ir.compiler-ir-label-none))
+                          (OptThreadMergeSpec
+                            merge-label
+                            true-label
+                            false-label
+                            phi-count
+                            body-end
+                            (ir.compiler-ir-label-none)))
                           [(No) (No)]
                           [(Some blocked)
                             (Some
@@ -45368,60 +44836,48 @@
 (define (opt-thread-target-phis-repairable?
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [merge-instrs : (& merge-instrs ir.CompilerIrInstrSeq)]
-  [merge-phi-count : i64]
-  [merge-mov-limit : i64]
   [chain : (& chain OptThreadVia)]
-  [merge-label : i64]
-  [origin-label : i64]) : bool
+  [edge : OptThreadEdgeSpec]) : bool
   (for [slot (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
     (match (ir.compiler-ir-instr-seq-borrow instrs slot)
       [(Phi _ inputs _)
         (unless
-          (match (opt-thread-phi-input-value inputs merge-label)
+          (match (opt-thread-phi-input-value inputs edge.merge-label)
             [(Some carried)
               (match (opt-thread-translate-chain-value
                 merge-instrs
-                merge-phi-count
-                merge-mov-limit
+                edge.merge-phi-count
+                edge.merge-mov-limit
                 chain
-                origin-label
+                edge.origin-label
                 (& carried))
                 [(Some _) true]
                 [(No) false])]
             [(No) false])
-          (return false))
-        unit]
+          (return false))]
       [_ (break)]))
   true)
 
-;; The threaded edge takes the place of the merge's own edge into `target`, so
-;; every target phi gains the value it already forwards for the merge, resolved
-;; through the merge's -- and every forwarding block's -- own phis for the edge
-;; being redirected. `opt-thread-target-phis-repairable?` has already proved
-;; every one of those lookups succeeds.
 (define (opt-thread-repair-target-phis!
   [instrs : ir.CompilerIrInstrSeq]
   [uses : (&mut uses (__tl_dyn-array i64))]
   [merge-instrs : (& ir.CompilerIrInstrSeq)]
-  [merge-phi-count : i64]
-  [merge-mov-limit : i64]
   [chain : (& OptThreadVia)]
-  [merge-label : i64]
-  [origin-label : i64]) : unit
-  (for [slot (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
-    (match (ir.compiler-ir-instr-seq-ref instrs slot)
+  [edge : OptThreadEdgeSpec]) : unit
+  (for [slot (iterator.range 0 (ir.compiler-ir-instr-seq-count (& instrs)))]
+    (match (ir.compiler-ir-instr-seq-ref (& instrs) slot)
       [(Phi dst inputs ty)
-        (match (opt-thread-phi-input-value inputs merge-label)
+        (match (opt-thread-phi-input-value (& inputs) edge.merge-label)
           [(Some carried)
             (match (opt-thread-translate-chain-value
               merge-instrs
-              merge-phi-count
-              merge-mov-limit
+              edge.merge-phi-count
+              edge.merge-mov-limit
               chain
-              origin-label
+              edge.origin-label
               (& carried))
               [(Some value)
-                (opt-thread-note-value-use! uses value)
+                (opt-thread-note-value-use! uses (& value))
                 (ir.compiler-ir-instr-seq-set!
                   (&mut instrs)
                   slot
@@ -45429,30 +44885,25 @@
                     dst
                     (ir.compiler-ir-phi-input-seq-prepend
                       value
-                      origin-label
+                      edge.origin-label
                       (& inputs))
                     ty))]
               [(No) unit])]
-          [(No) unit])
-        unit]
+          [(No) unit])]
       [_ (break)])))
 
 (define (opt-thread-drop-phi-prefix-inputs!
   [instrs : ir.CompilerIrInstrSeq]
   [label : i64]) : unit
-  (for [slot (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
-    (match (ir.compiler-ir-instr-seq-ref instrs slot)
+  (for [slot (iterator.range 0 (ir.compiler-ir-instr-seq-count (& instrs)))]
+    (match (ir.compiler-ir-instr-seq-ref (& instrs) slot)
       [(Phi dst inputs ty)
         (ir.compiler-ir-instr-seq-set!
           (&mut instrs)
           slot
-          (Phi dst (opt-thread-phi-inputs-drop inputs label) ty))
-        unit]
+          (Phi dst (opt-thread-phi-inputs-drop (& inputs) label) ty))]
       [_ (break)])))
 
-;; `slot` names one phi; the sentinel below drops the label from every phi in
-;; the block's prefix, which is what a merge holding more than the condition phi
-;; needs when it loses a predecessor.
 (define (opt-thread-drop-all-phi-inputs) : i64
   (- 0 2))
 
@@ -45462,14 +44913,14 @@
   [label : i64]) : unit
   (if (= slot (opt-thread-drop-all-phi-inputs))
     (opt-thread-drop-phi-prefix-inputs! instrs label)
-    (if (or (< slot 0) (>= slot (ir.compiler-ir-instr-seq-count instrs)))
-      unit
-      (match (ir.compiler-ir-instr-seq-ref instrs slot)
+    (when
+      (and (>= slot 0) (< slot (ir.compiler-ir-instr-seq-count (& instrs))))
+      (match (ir.compiler-ir-instr-seq-ref (& instrs) slot)
         [(Phi dst inputs ty)
           (ir.compiler-ir-instr-seq-set!
             (&mut instrs)
             slot
-            (Phi dst (opt-thread-phi-inputs-drop inputs label) ty))]
+            (Phi dst (opt-thread-phi-inputs-drop (& inputs) label) ty))]
         [_ unit]))))
 
 ;; Redirected predecessors per merge block, per round. Both widenings are pure
@@ -45536,272 +44987,195 @@
             [else (No)])]
         [_ (No)]))))
 
-;; Retarget `origin`'s edge into the last block of `chain` (the merge itself for
-;; a direct edge) straight onto `target`, taking over the merge's
-;; `merge -> target` edge. `drop-slot` names the phi that loses `origin` as an
-;; input: every phi of the merge for a direct edge (the sentinel
-;; `opt-thread-drop-all-phi-inputs`), the forwarding phi for a chained one, and
-;; -1 when the merge has no phi at all. The target repair reads the merge's phis
-;; and the chain's, so it runs before the drop.
+;; Retarget `origin`'s edge into the last block of `chain` straight onto
+;; `target`, taking over the merge's `merge -> target` edge.
 (define (opt-thread-apply-edge!
   [index : (& index OptCfgIndex)]
   [uses : (&mut uses (__tl_dyn-array i64))]
-  [origin-label : i64]
   [chain : (& OptThreadVia)]
-  [merge-label : i64]
-  [target-label : i64]
   [merge-instrs : (& ir.CompilerIrInstrSeq)]
-  [merge-phi-count : i64]
-  [merge-mov-limit : i64]
-  [drop-slot : i64]) : bool
+  [edge : OptThreadEdgeSpec]) : bool
   (let
-    [via-label : i64 (opt-thread-chain-last-label merge-label chain)]
+    [via-label : i64 (opt-thread-chain-last-label edge.merge-label chain)]
     [drop-instrs : ir.CompilerIrInstrSeq
       (opt-thread-chain-last-instrs
         (owned_view.compiler-owned-reference-shared-view merge-instrs)
         chain)]
     (if (or
-      (= target-label merge-label)
-      (= target-label via-label)
-      (= target-label origin-label)
-      (= origin-label via-label)
-      (= origin-label merge-label))
+      (= edge.target-label edge.merge-label)
+      (= edge.target-label via-label)
+      (= edge.target-label edge.origin-label)
+      (= edge.origin-label via-label)
+      (= edge.origin-label edge.merge-label))
       false
-      (match (opt-cfg-index-find-block index origin-label)
+      (match (opt-cfg-index-find-block index edge.origin-label)
         [(No) false]
         [(Some origin-block)
           (match origin-block
             [(Block _ origin-instrs)
               (match (opt-thread-origin-retarget
-                origin-instrs
+                (& origin-instrs)
                 via-label
-                target-label)
+                edge.target-label)
                 [(No) false]
                 [(Some terminator)
-                  (match (opt-cfg-index-find-block index target-label)
+                  (match (opt-cfg-index-find-block index edge.target-label)
                     [(No) false]
                     [(Some target-block)
                       (match target-block
                         [(Block _ target-instrs)
                           (if (not
                             (opt-thread-target-phis-repairable?
-                              target-instrs
+                              (& target-instrs)
                               merge-instrs
-                              merge-phi-count
-                              merge-mov-limit
                               chain
-                              merge-label
-                              origin-label))
+                              edge))
                             false
                             (begin
                               (opt-thread-repair-target-phis!
                                 target-instrs
                                 uses
                                 merge-instrs
-                                merge-phi-count
-                                merge-mov-limit
                                 chain
-                                merge-label
-                                origin-label)
+                                edge)
                               (ir.compiler-ir-instr-seq-set!
                                 (&mut origin-instrs)
                                 (-
-                                  (ir.compiler-ir-instr-seq-count origin-instrs)
+                                  (ir.compiler-ir-instr-seq-count
+                                    (& origin-instrs))
                                   1)
                                 terminator)
                               (opt-thread-drop-phi-input!
                                 drop-instrs
-                                drop-slot
-                                origin-label)
+                                edge.drop-slot
+                                edge.origin-label)
                               true))])])])])]))))
 
 (define (opt-thread-apply-edge-budgeted!
   [budget : (&mut budget (__tl_dyn-array i64))]
   [index : (& index OptCfgIndex)]
   [uses : (&mut uses (__tl_dyn-array i64))]
-  [origin-label : i64]
   [chain : (& OptThreadVia)]
-  [merge-label : i64]
-  [target-label : i64]
   [merge-instrs : (& ir.CompilerIrInstrSeq)]
-  [merge-phi-count : i64]
-  [merge-mov-limit : i64]
-  [drop-slot : i64]) : bool
+  [edge : OptThreadEdgeSpec]) : bool
   (if (not (opt-thread-budget-available? budget))
     false
     (let
       [threaded : bool
-        (opt-thread-apply-edge!
-          index
-          uses
-          origin-label
-          chain
-          merge-label
-          target-label
-          merge-instrs
-          merge-phi-count
-          merge-mov-limit
-          drop-slot)]
+        (opt-thread-apply-edge! index uses chain merge-instrs edge)]
       (when threaded (opt-thread-budget-spend! budget))
       threaded)))
 
-;; One phi input list, edge by edge: a literal decides the merge's branch and
-;; its predecessor takes the decided target directly, and a variable input that
-;; a `[phi; jump]` forwarding block defines is walked into, so the literals one
-;; level further back decide the same branch from one block further away. That
-;; recursion is JumpThreading's phi-operand walk (JumpThreading.cpp:607-625) and
-;; it is what collapses the compiler's own `cond` ladders, whose forwarding
-;; merges a depth-1 walk stops at after the first hop.
+;; One phi input list, edge by edge.
 (define (opt-thread-scan-chain-inputs!
   [budget : (&mut budget (__tl_dyn-array i64))]
   [type-segment-bases : i64]
   [index : (& index OptCfgIndex)]
   [uses : (&mut uses (__tl_dyn-array i64))]
-  [merge-label : i64]
   [merge-instrs : (& ir.CompilerIrInstrSeq)]
-  [merge-phi-count : i64]
-  [merge-mov-limit : i64]
-  [blocked-label : i64]
-  [true-label : i64]
-  [false-label : i64]
+  [spec : OptThreadMergeSpec]
   [chain : (& OptThreadVia)]
-  [inputs : (& ir.CompilerIrPhiInputSeq)]
-  [slot : i64]
-  [depth : i64]
-  [changed : bool]) : bool
-  (if (>= slot inputs.len)
-    changed
-    (let
-      [input (ir.compiler-ir-phi-input-seq-ref inputs slot)]
-      [value : ir.CompilerIrValue input.value]
-      [label : i64 input.label]
-      [step : bool
-        (match value
-          [(Bool known)
-            (let
-              [target : i64
-                (if known
-                  true-label
-                  false-label)]
-              (if (= target blocked-label)
-                false
-                (opt-thread-apply-edge-budgeted!
-                  budget
-                  index
-                  uses
-                  label
-                  chain
-                  merge-label
-                  target
-                  merge-instrs
-                  merge-phi-count
-                  merge-mov-limit
-                  (opt-thread-chain-drop-slot chain))))]
-          [(Var var)
-            (if (<= depth 0)
-              false
-              (match (opt-cfg-index-find-block index label)
-                [(No) false]
-                [(Some forward-block)
-                  (match (opt-thread-forward-shape
-                    type-segment-bases
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
+  [depth : i64]) : bool
+  (let
+    [changed : bool false]
+    (for [slot (iterator.range 0 inputs.len)]
+      (let
+        [input (ir.compiler-ir-phi-input-seq-borrow inputs slot)]
+        [label : i64 input.label]
+        [step : bool
+          (match (& input.value)
+            [(Bool known)
+              (let
+                [target : i64
+                  (if known
+                    spec.true-label
+                    spec.false-label)]
+                (if (= target spec.blocked-label)
+                  false
+                  (opt-thread-apply-edge-budgeted!
+                    budget
+                    index
                     uses
-                    forward-block
-                    (opt-thread-chain-last-label merge-label chain)
-                    var)
-                    [(No) false]
-                    [(Some forward-inputs)
-                      (match forward-block
-                        [(Block _ forward-instrs)
-                          (opt-thread-scan-chain-inputs!
-                            budget
-                            type-segment-bases
-                            index
-                            uses
-                            merge-label
-                            merge-instrs
-                            merge-phi-count
-                            merge-mov-limit
-                            blocked-label
-                            true-label
-                            false-label
-                            (&
-                              (opt-thread-chain-append
-                                chain
-                                label
-                                forward-instrs))
-                            (& forward-inputs)
-                            0
-                            (- depth 1)
-                            false)])])]))]
-          [_ false])]
-      (opt-thread-scan-chain-inputs!
-        budget
-        type-segment-bases
-        index
-        uses
-        merge-label
-        merge-instrs
-        merge-phi-count
-        merge-mov-limit
-        blocked-label
-        true-label
-        false-label
-        chain
-        inputs
-        (+ slot 1)
-        depth
-        (or changed step)))))
+                    chain
+                    merge-instrs
+                    (OptThreadEdgeSpec
+                      label
+                      spec.merge-label
+                      target
+                      spec.phi-count
+                      spec.mov-limit
+                      (opt-thread-chain-drop-slot chain)))))]
+            [(Var var)
+              (if (<= depth 0)
+                false
+                (match (opt-cfg-index-find-block index label)
+                  [(No) false]
+                  [(Some forward-block)
+                    (match (opt-thread-forward-shape
+                      type-segment-bases
+                      uses
+                      (& forward-block)
+                      (opt-thread-chain-last-label spec.merge-label chain)
+                      var)
+                      [(No) false]
+                      [(Some forward-inputs)
+                        (match forward-block
+                          [(Block _ forward-instrs)
+                            (opt-thread-scan-chain-inputs!
+                              budget
+                              type-segment-bases
+                              index
+                              uses
+                              merge-instrs
+                              spec
+                              (&
+                                (opt-thread-chain-append
+                                  chain
+                                  label
+                                  forward-instrs))
+                              (& forward-inputs)
+                              (- depth 1))])])]))]
+            [_ false])]
+        (when step (set! changed true))))
+    changed))
 
-;; Last definition of `var` in the block body (its terminator excluded). Any
-;; other defining instruction cancels an earlier constant Mov, so the walk keeps
-;; only the final one.
+;; Last definition of `var` in the block body (its terminator excluded).
 (define (opt-thread-last-const-mov
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [slot : i64]
-  [var : i64]
-  [found : OptThreadConstBool]) : OptThreadConstBool
-  (if (>= slot (- (ir.compiler-ir-instr-seq-count instrs) 1))
-    found
-    (let
-      [instr (ir.compiler-ir-instr-seq-borrow instrs slot)]
-      (opt-thread-last-const-mov
-        instrs
-        (+ slot 1)
-        var
+  [var : i64]) : OptThreadConstBool
+  (let
+    [found : OptThreadConstBool (No)]
+    (for [slot (iterator.range 0 (- (ir.compiler-ir-instr-seq-count instrs) 1))]
+      (let
+        [instr (ir.compiler-ir-instr-seq-borrow instrs slot)]
         (match (opt-instr-def-var instr)
           [(Some dst)
-            (if (= dst var)
-              (match instr
-                [(Mov _ (Bool known) _) (Some known)]
-                [_ (No)])
-              found)]
-          [(None) found])))))
+            (when
+              (= dst var)
+              (set!
+                found
+                (match instr
+                  [(Mov _ (Bool known) _) (Some known)]
+                  [_ (No)])))]
+          [(None) unit])))
+    found))
 
-;; One merge's edges, predecessor by predecessor. `mov?` picks the fold that
-;; decides a predecessor: the last constant `Mov` of the merged condition in the
-;; predecessor's own body, or the merge's `Compare` folded against the values the
-;; predecessor's phi inputs carry.
+;; One merge's edges, predecessor by predecessor.
 (define (opt-thread-scan-preds!
   [budget : (&mut budget (__tl_dyn-array i64))]
   [index : (& index OptCfgIndex)]
   [uses : (&mut uses (__tl_dyn-array i64))]
-  [merge-label : i64]
   [merge-instrs : (& ir.CompilerIrInstrSeq)]
+  [spec : OptThreadMergeSpec]
   [mov? : bool]
-  [phi-count : i64]
-  [mov-limit : i64]
   [cond-var : i64]
-  [blocked-label : i64]
-  [true-label : i64]
-  [false-label : i64]
-  [preds : OptLabelSet]
-  [changed : bool]) : bool
-  (match preds
-    [(Nil) changed]
-    [(Dense _ _)
+  [preds : OptLabelSet]) : bool
+  (let
+    [changed : bool false]
+    (for [i (iterator.range 0 (opt-label-count preds))]
       (let
-        [pred-label : i64 (opt-label-ref preds 0)]
+        [pred-label : i64 (opt-label-ref preds i)]
         [decided : OptThreadConstBool
           (if mov?
             (match (opt-cfg-index-find-block index pred-label)
@@ -45809,63 +45183,51 @@
               [(Some pred-block)
                 (match pred-block
                   [(Block _ pred-instrs)
-                    (opt-thread-last-const-mov (& pred-instrs) 0 cond-var (No))])])
-            (match (ir.compiler-ir-instr-seq-borrow merge-instrs mov-limit)
+                    (opt-thread-last-const-mov (& pred-instrs) cond-var)])])
+            (match (ir.compiler-ir-instr-seq-borrow merge-instrs spec.mov-limit)
               [(BinOp _ op left right ty)
                 (opt-thread-fold-edge-compare
                   merge-instrs
-                  phi-count
-                  mov-limit
+                  spec.phi-count
+                  spec.mov-limit
                   (& op)
                   (& left)
                   (& right)
                   (& ty)
                   pred-label)]
               [_ (No)]))]
-        [step : bool
-          (match decided
-            [(No) false]
-            [(Some known)
-              (let
-                [target : i64
-                  (if known
-                    true-label
-                    false-label)]
-                (if (= target blocked-label)
-                  false
+        (match decided
+          [(No) unit]
+          [(Some known)
+            (let
+              [target : i64
+                (if known
+                  spec.true-label
+                  spec.false-label)]
+              (when
+                (and
+                  (not (= target spec.blocked-label))
                   (opt-thread-apply-edge-budgeted!
                     budget
                     index
                     uses
-                    pred-label
                     (& (Nil))
-                    merge-label
-                    target
                     merge-instrs
-                    (if mov?
-                      0
-                      phi-count)
-                    (if mov?
-                      0
-                      mov-limit)
-                    (if mov?
-                      (- 0 1)
-                      (opt-thread-drop-all-phi-inputs)))))])]
-        (opt-thread-scan-preds!
-          budget
-          index
-          uses
-          merge-label
-          merge-instrs
-          mov?
-          phi-count
-          mov-limit
-          cond-var
-          blocked-label
-          true-label
-          false-label
-          (opt-label-tail preds)
-          (or changed step)))]))
+                    (OptThreadEdgeSpec
+                      pred-label
+                      spec.merge-label
+                      target
+                      (if mov?
+                        0
+                        spec.phi-count)
+                      (if mov?
+                        0
+                        spec.mov-limit)
+                      (if mov?
+                        (- 0 1)
+                        (opt-thread-drop-all-phi-inputs)))))
+                (set! changed true)))])))
+    changed))
 
 ;; Does one of `merge`'s two successors dominate it? Then the edge onto that
 ;; successor is a back edge and the merge is a latch of the loop it closes.
@@ -45915,7 +45277,7 @@
   [index : (& index OptCfgIndex)]
   [doms : (& doms OptDomInfo)]
   [uses : (&mut uses (__tl_dyn-array i64))]
-  [scratch : (__tl_dyn-array i64)]
+  [scratch : (&mut scratch (__tl_dyn-array i64))]
   [merge-label : i64]
   [instrs : (& ir.CompilerIrInstrSeq)]) : bool
   (let
@@ -45943,32 +45305,22 @@
               uses
               scratch
               instrs
-              phi-count
-              (- count 1)
-              merge-label
-              true-label
-              false-label
-              (ir.compiler-ir-label-none))
+              (OptThreadMergeSpec
+                merge-label
+                true-label
+                false-label
+                phi-count
+                (- count 1)
+                (ir.compiler-ir-label-none)))
               [(No) false]
               [(Some blocked)
                 (let
                   [preds : OptLabelSet
-                    (opt-cfg-index-predecessors index merge-label)]
+                    (opt-phi-cmp-fold-merge-preds-ok? index merge-label)]
                   [pred-count : i64 (opt-label-count preds)]
-                  [merge-rpo : i64
-                    (opt-phi-cmp-fold-label-rpo index merge-label)]
                   [facts : (__tl_dyn-array i64) (opt-thread-facts-new)]
                   [changed : bool false]
-                  ;; Every predecessor must be forward of the merge (the JT-2
-                  ;; rail's rule): an edge arriving from below is a back edge,
-                  ;; the merge is a loop header, and redirecting that edge onto
-                  ;; one of the header's arms would enter the loop body past
-                  ;; its header -- a second entry, not a retired compare.
-                  (if (or
-                    (< pred-count 2)
-                    (< merge-rpo 0)
-                    (not
-                      (opt-phi-cmp-fold-preds-forward? index preds merge-rpo)))
+                  (if (< pred-count 2)
                     false
                     (begin
                       (for [i (iterator.range 0 pred-count)]
@@ -45989,35 +45341,35 @@
                                     true-label
                                     false-label)]
                                 (when
-                                  (not (= target blocked))
-                                  (when
+                                  (and
+                                    (not (= target blocked))
                                     (opt-thread-apply-edge-budgeted!
                                       budget
                                       index
                                       uses
-                                      origin
                                       (& (Nil))
-                                      merge-label
-                                      target
                                       instrs
-                                      phi-count
-                                      phi-count
-                                      (opt-thread-drop-all-phi-inputs))
-                                    (when
-                                      (and
-                                        compiler-opt-debug-trace-passes
-                                        (not compiler-opt-debug-suppressed?))
-                                      (io.print-error
-                                        (str_cat.str-cat
-                                          "facts-thread|origin="
-                                          (ir.compiler-ir-label-text origin)
-                                          "|merge="
-                                          (ir.compiler-ir-label-text
-                                            merge-label)
-                                          "|exit="
-                                          (ir.compiler-ir-label-text target)
-                                          "\n")))
-                                    (set! changed true))))])))
+                                      (OptThreadEdgeSpec
+                                        origin
+                                        merge-label
+                                        target
+                                        phi-count
+                                        phi-count
+                                        (opt-thread-drop-all-phi-inputs))))
+                                  (when
+                                    (and
+                                      compiler-opt-debug-trace-passes
+                                      (not compiler-opt-debug-suppressed?))
+                                    (io.print-error
+                                      (str_cat.str-cat
+                                        "facts-thread|origin="
+                                        (ir.compiler-ir-label-text origin)
+                                        "|merge="
+                                        (ir.compiler-ir-label-text merge-label)
+                                        "|exit="
+                                        (ir.compiler-ir-label-text target)
+                                        "\n")))
+                                  (set! changed true)))])))
                       changed)))]))]
         [_ false]))))
 
@@ -46027,7 +45379,7 @@
   [index : (& index OptCfgIndex)]
   [doms : (& doms OptDomInfo)]
   [uses : (&mut uses (__tl_dyn-array i64))]
-  [scratch : (__tl_dyn-array i64)]
+  [scratch : (&mut scratch (__tl_dyn-array i64))]
   [block : (& ir.CompilerIrBlock)]) : bool
   (match block
     [(Block merge-label instrs)
@@ -46037,12 +45389,10 @@
         index
         doms
         uses
-        (compiler-opt-global-shared-view scratch)
+        scratch
         merge-label
         (& instrs))
         [(No)
-          ;; JT-2: a merge of phis that jumps into a compare run; JT-4: a
-          ;; merge of phis whose own branch reads a condition decided above.
           (or
             (opt-thread-phi-chain-try!
               budget
@@ -46050,7 +45400,7 @@
               index
               doms
               uses
-              (compiler-opt-global-shared-view scratch)
+              scratch
               merge-label
               (& instrs))
             (opt-thread-facts-preds-try!
@@ -46067,53 +45417,52 @@
               budget
               index
               uses
-              merge-label
               (& instrs)
+              (OptThreadMergeSpec
+                merge-label
+                true-label
+                false-label
+                0
+                0
+                blocked-label)
               true
-              0
-              0
               cond-var
-              blocked-label
-              true-label
-              false-label
-              (opt-cfg-index-predecessors index merge-label)
-              false)
-            (match (ir.compiler-ir-instr-seq-ref instrs phi-slot)
+              (opt-cfg-index-predecessors index merge-label))
+            (match (ir.compiler-ir-instr-seq-ref (& instrs) phi-slot)
               [(Phi _ inputs _)
                 (opt-thread-scan-chain-inputs!
                   budget
                   type-segment-bases
                   index
                   uses
-                  merge-label
                   (& instrs)
-                  phi-count
-                  (- (ir.compiler-ir-instr-seq-count instrs) 1)
-                  blocked-label
-                  true-label
-                  false-label
+                  (OptThreadMergeSpec
+                    merge-label
+                    true-label
+                    false-label
+                    phi-count
+                    (- (ir.compiler-ir-instr-seq-count (& instrs)) 1)
+                    blocked-label)
                   (& (Nil))
                   (& inputs)
-                  0
-                  (opt-thread-chain-depth)
-                  false)]
+                  (opt-thread-chain-depth))]
               [_ false]))]
         [(Compare phi-count blocked-label true-label false-label)
           (opt-thread-scan-preds!
             budget
             index
             uses
-            merge-label
             (& instrs)
+            (OptThreadMergeSpec
+              merge-label
+              true-label
+              false-label
+              phi-count
+              (- (ir.compiler-ir-instr-seq-count (& instrs)) 2)
+              blocked-label)
             false
-            phi-count
-            (- (ir.compiler-ir-instr-seq-count instrs) 2)
             0
-            blocked-label
-            true-label
-            false-label
-            (opt-cfg-index-predecessors index merge-label)
-            false)])]))
+            (opt-cfg-index-predecessors index merge-label))])]))
 
 ;; A round stops at the first block it threads; the cleanup and the next round
 ;; see what that exposed.
@@ -46123,28 +45472,20 @@
   [index : (& index OptCfgIndex)]
   [doms : (& doms OptDomInfo)]
   [uses : (&mut uses (__tl_dyn-array i64))]
-  [scratch : (__tl_dyn-array i64)]
+  [scratch : (&mut scratch (__tl_dyn-array i64))]
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]) : bool
-  (match blocks
-    [(slice) false]
-    [(slice block & rest)
-      (or
-        (opt-thread-try-block!
-          budget
-          type-segment-bases
-          index
-          doms
-          uses
-          (compiler-opt-global-shared-view scratch)
-          block)
-        (opt-thread-scan-blocks!
-          budget
-          type-segment-bases
-          index
-          doms
-          uses
-          scratch
-          rest))]))
+  (for [i (iterator.range 0 (array-length blocks))]
+    (when
+      (opt-thread-try-block!
+        budget
+        type-segment-bases
+        index
+        doms
+        uses
+        scratch
+        (& (array-ref blocks i)))
+      (return true)))
+  false)
 
 ;; --- per-round generations --------------------------------------------------
 ;; A fixpoint whose every round rebuilds the block list it carries would keep
@@ -46305,7 +45646,7 @@
       index
       doms
       (&mut uses)
-      scratch
+      (&mut scratch)
       (ir.compiler-ir-block-list-view blocks))))
 
 ;; One round threads every edge it can prove, so the fixpoint only has to
@@ -46716,17 +46057,18 @@
   [facts : (&mut facts (__tl_dyn-array i64))]
   [index : (& index OptCfgIndex)]
   [doms : (& doms OptDomInfo)]
-  [child-label : i64]
+  [start : i64]
   [fuel : i64]) : unit
-  (if (<= fuel 0)
-    unit
-    (match (opt-cfg-index-id index child-label)
-      [(None) unit]
-      [(Some child-id)
-        (let
-          [parent-id : i64 (array-ref doms.idom child-id)]
-          (if (or (< parent-id 0) (= parent-id child-id))
-            unit
+  (let
+    [child-label : i64 start]
+    [left : i64 fuel]
+    (while (> left 0)
+      (match (opt-cfg-index-id index child-label)
+        [(None) (return unit)]
+        [(Some child-id)
+          (let
+            [parent-id : i64 (array-ref doms.idom child-id)]
+            (when (or (< parent-id 0) (= parent-id child-id)) (return unit))
             (let
               [parent-label : i64 (opt-cfg-index-label index parent-id)]
               (when
@@ -46740,12 +46082,8 @@
                           facts
                           (& instrs)
                           child-label)])]))
-              (opt-thread-facts-collect-doms!
-                facts
-                index
-                doms
-                parent-label
-                (- fuel 1)))))])))
+              (set! child-label parent-label)
+              (-= left 1)))]))))
 
 ;; Everything known on the edge `origin -> merge`.
 (define (opt-thread-facts-collect!
@@ -46774,10 +46112,11 @@
   (Var i64)
   (Unknown))
 
-(define (opt-thread-chain-operand-of-value [value : ir.CompilerIrValue]) : OptThreadOperand
-  (match (& value)
+(define (opt-thread-chain-operand-of-value [value : (& ir.CompilerIrValue)]) : OptThreadOperand
+  (match value
     [(Var var) (Var var)]
-    [(or (I64 _) (Bool _) (Char _)) (Literal value)]
+    [(or (I64 _) (Bool _) (Char _))
+      (Literal (ir.compiler-ir-clone-value value))]
     [_ (Unknown)]))
 
 (define (opt-thread-chain-operand
@@ -46795,32 +46134,9 @@
             [(Phi _ inputs _)
               (match (opt-thread-phi-input-value inputs origin-label)
                 [(No) (Unknown)]
-                [(Some carried) (opt-thread-chain-operand-of-value carried)])]
+                [(Some carried) (opt-thread-chain-operand-of-value (& carried))])]
             [_ (Unknown)])))]
-    [_
-      (opt-thread-chain-operand-of-value
-        (owned_view.compiler-owned-reference-shared-view value))]))
-
-(define (opt-thread-chain-fold
-  [type-segment-bases : i64]
-  [op : (& ir.CompilerIrBinOp)]
-  [ty : (& ast.AstType)]
-  [left : (& ir.CompilerIrValue)]
-  [right : (& ir.CompilerIrValue)]) : OptMaybeBool
-  (match (opt-fold-binop
-    type-segment-bases
-    op
-    (&
-      (opt-normalize-const
-        (owned_view.compiler-owned-reference-shared-view left)
-        (owned_view.compiler-owned-reference-shared-view ty)))
-    (&
-      (opt-normalize-const
-        (owned_view.compiler-owned-reference-shared-view right)
-        (owned_view.compiler-owned-reference-shared-view ty)))
-    ty)
-    [(Some folded) (opt-value-to-bool (& folded))]
-    [(No) (No)]))
+    [_ (opt-thread-chain-operand-of-value value)]))
 
 (define (opt-thread-chain-var-literal
   [facts : (& facts (__tl_dyn-array i64))]
@@ -46860,7 +46176,7 @@
     [(Literal left)
       (match rhs
         [(Literal right)
-          (opt-thread-chain-fold type-segment-bases op ty (& left) (& right))]
+          (opt-phi-cmp-fold-pair type-segment-bases op ty (& left) (& right))]
         [(Var var) (opt-thread-chain-var-literal facts op var (& left))]
         [(Unknown) (No)])]
     [(Var var)
@@ -47040,7 +46356,7 @@
 (define (opt-thread-chain-blocked
   [index : (& index OptCfgIndex)]
   [doms : (& doms OptDomInfo)]
-  [scratch : (__tl_dyn-array i64)]
+  [scratch : (&mut scratch (__tl_dyn-array i64))]
   [merge-label : i64]
   [merge-instrs : (& merge-instrs ir.CompilerIrInstrSeq)]
   [phi-count : i64]
@@ -47060,19 +46376,19 @@
               [(Some block)
                 (match block
                   [(Block label instrs)
-                    (if (or
-                      (= label merge-label)
-                      (opt-thread-labels-contain?
-                        chain-labels
-                        chain-count
-                        label)
-                      (not
+                    (when
+                      (and
+                        (not (= label merge-label))
+                        (not
+                          (opt-thread-labels-contain?
+                            chain-labels
+                            chain-count
+                            label))
                         (opt-thread-def-foreign-block?
-                          (compiler-opt-global-shared-view scratch)
+                          scratch
                           merge-label
                           (& instrs)
-                          var)))
-                      unit
+                          var))
                       (let
                         [owner : i64
                           (opt-thread-chain-exit-owner
@@ -47090,12 +46406,9 @@
         [_ unit]))
     (if (= blocked (ir.compiler-ir-label-none))
       (Some blocked)
-      ;; Entered from the run alone, so every path into it passed the merge
-      ;; and the phis it reads are defined on all of them.
       (let
         [preds : OptLabelSet (opt-cfg-index-predecessors index blocked)]
-        [n : i64 (opt-label-count preds)]
-        (for [i (iterator.range 0 n)]
+        (for [i (iterator.range 0 (opt-label-count preds))]
           (unless
             (opt-thread-labels-contain?
               chain-labels
@@ -47104,8 +46417,7 @@
             (return (No))))
         (Some blocked)))))
 
-;; Run the edge `origin -> merge` through the run starting at `label` (entered
-;; from `from-label`): the link that decides the exit, and the exit.
+;; Run the edge `origin -> merge` through the run starting at `start-label`.
 (define (opt-thread-chain-exit
   [type-segment-bases : i64]
   [index : (& index OptCfgIndex)]
@@ -47114,76 +46426,73 @@
   [phi-count : i64]
   [facts : (& facts (__tl_dyn-array i64))]
   [origin-label : i64]
-  [from-label : i64]
-  [label : i64]
+  [start-from : i64]
+  [start-label : i64]
   [fuel : i64]) : OptPhiCmpFoldExit
-  (if (or
-    (<= fuel 0)
-    (not (opt-thread-chain-link-block? index uses from-label label)))
-    (No)
-    (match (opt-cfg-index-find-block index label)
-      [(No) (No)]
-      [(Some block)
-        (match block
-          [(Block _ instrs)
-            (match (opt-thread-chain-link uses (& instrs))
-              [(No) (No)]
-              [(Some op cmp-ty lhs rhs true-label false-label)
-                (match (opt-thread-chain-verdict
-                  type-segment-bases
-                  facts
-                  (& op)
-                  (& cmp-ty)
-                  (&
-                    (opt-thread-chain-operand
-                      merge-instrs
-                      phi-count
-                      origin-label
-                      (& lhs)))
-                  (&
-                    (opt-thread-chain-operand
-                      merge-instrs
-                      phi-count
-                      origin-label
-                      (& rhs))))
-                  [(No) (No)]
-                  [(Some known)
-                    (let
-                      [target : i64
-                        (if known
-                          true-label
-                          false-label)]
-                      (if (opt-thread-chain-link-block? index uses label target)
-                        (opt-thread-chain-exit
-                          type-segment-bases
-                          index
-                          uses
-                          merge-instrs
-                          phi-count
-                          facts
-                          origin-label
-                          label
-                          target
-                          (- fuel 1))
-                        (Some label target)))])])])])))
+  (let
+    [from-label : i64 start-from]
+    [label : i64 start-label]
+    [left : i64 fuel]
+    (while (and
+      (> left 0)
+      (opt-thread-chain-link-block? index uses from-label label))
+      (match (opt-cfg-index-find-block index label)
+        [(No) (return (No))]
+        [(Some block)
+          (match block
+            [(Block _ instrs)
+              (match (opt-thread-chain-link uses (& instrs))
+                [(No) (return (No))]
+                [(Some op cmp-ty lhs rhs true-label false-label)
+                  (match (opt-thread-chain-verdict
+                    type-segment-bases
+                    facts
+                    (& op)
+                    (& cmp-ty)
+                    (&
+                      (opt-thread-chain-operand
+                        merge-instrs
+                        phi-count
+                        origin-label
+                        (& lhs)))
+                    (&
+                      (opt-thread-chain-operand
+                        merge-instrs
+                        phi-count
+                        origin-label
+                        (& rhs))))
+                    [(No) (return (No))]
+                    [(Some known)
+                      (let
+                        [target : i64
+                          (if known
+                            true-label
+                            false-label)]
+                        (unless
+                          (opt-thread-chain-link-block? index uses label target)
+                          (return (Some label target)))
+                        (set! from-label label)
+                        (set! label target)
+                        (-= left 1))])])])]))
+    (No)))
 
 (define (opt-thread-phi-chain-trace!
   [kind : String]
   [merge-label : i64]
   [origin-label : i64]
   [exit-label : i64]) : unit
-  (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
+  (when
+    (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
     (io.print-error
       (str_cat.str-cat
-        (str_cat.str-cat
-          (str_cat.str-cat
-            (str_cat.str-cat kind "|merge=")
-            (ir.compiler-ir-label-text merge-label))
-          (str_cat.str-cat "|origin=" (ir.compiler-ir-label-text origin-label)))
-        (str_cat.str-cat
-          (str_cat.str-cat "|exit=" (ir.compiler-ir-label-text exit-label))
-          "\n")))
-    unit))
+        kind
+        "|merge="
+        (ir.compiler-ir-label-text merge-label)
+        "|origin="
+        (ir.compiler-ir-label-text origin-label)
+        "|exit="
+        (ir.compiler-ir-label-text exit-label)
+        "\n"))))
 
 ;; Does the exit carry phis, and if so are they all keyed on `from-label` and
 ;; none on `merge-label`? Re-keying is then exact.
@@ -47227,7 +46536,7 @@
                   (ir.compiler-ir-phi-input-seq-prepend
                     carried
                     merge-label
-                    (& (opt-thread-phi-inputs-drop inputs from-label)))
+                    (& (opt-thread-phi-inputs-drop (& inputs) from-label)))
                   ty))])]
         [_ (return unit)]))
     unit))
@@ -47325,7 +46634,7 @@
   [index : (& index OptCfgIndex)]
   [doms : (& doms OptDomInfo)]
   [uses : (&mut uses (__tl_dyn-array i64))]
-  [scratch : (__tl_dyn-array i64)]
+  [scratch : (&mut scratch (__tl_dyn-array i64))]
   [merge-label : i64]
   [instrs : (& ir.CompilerIrInstrSeq)]) : bool
   (let
@@ -47335,14 +46644,12 @@
       false
       (let
         [head-label : i64 (opt-thread-jump-target instrs)]
-        [merge-rpo : i64 (opt-phi-cmp-fold-label-rpo index merge-label)]
-        [preds : OptLabelSet (opt-cfg-index-predecessors index merge-label)]
+        [preds : OptLabelSet
+          (opt-phi-cmp-fold-merge-preds-ok? index merge-label)]
         [pred-count : i64 (opt-label-count preds)]
         (if (or
           (= head-label (ir.compiler-ir-label-none))
-          (< merge-rpo 0)
           (< pred-count 2)
-          (not (opt-phi-cmp-fold-preds-forward? index preds merge-rpo))
           (not (opt-thread-chain-link-block? index uses merge-label head-label)))
           false
           (let
@@ -47372,9 +46679,9 @@
                 merge-label
                 instrs
                 phi-count
-                chain-labels
+                (& chain-labels)
                 (array-ref counts 0)
-                exit-labels
+                (& exit-labels)
                 (array-ref counts 1))
                 [(No) false]
                 [(Some blocked)
@@ -47395,7 +46702,7 @@
                           uses
                           instrs
                           phi-count
-                          facts
+                          (& facts)
                           origin
                           merge-label
                           head-label
@@ -47414,19 +46721,20 @@
                                           budget
                                           index
                                           uses
-                                          origin
                                           (&
                                             (Cons
                                               merge-label
                                               (owned_view.compiler-owned-reference-shared-view
                                                 instrs)
                                               (box (OptThreadVia.Nil))))
-                                          from-label
-                                          exit-label
                                           (& from-instrs)
-                                          0
-                                          0
-                                          (opt-thread-drop-all-phi-inputs))
+                                          (OptThreadEdgeSpec
+                                            origin
+                                            from-label
+                                            exit-label
+                                            0
+                                            0
+                                            (opt-thread-drop-all-phi-inputs)))
                                         (opt-thread-phi-chain-trace!
                                           "phi-chain-thread"
                                           merge-label
@@ -47649,30 +46957,27 @@
                 ;; nothing and the phi repair has nothing to re-express: the
                 ;; zero-phi arguments below make the threading translation the
                 ;; identity and leave the plain "take over the edge" case.
-                (if (not
-                  (let
-                    [chain (OptThreadVia.Nil)]
+                (let
+                  [edge : OptThreadEdgeSpec
+                    (OptThreadEdgeSpec pred-label via target 0 0 0)]
+                  [empty-merge : ir.CompilerIrInstrSeq
+                    (ir.compiler-ir-instr-seq-empty)]
+                  (if (not
                     (opt-thread-target-phis-repairable?
-                      target-instrs
-                      target-instrs
-                      0
-                      0
-                      chain
-                      via
-                      pred-label)))
-                  successor
-                  (begin
-                    (opt-thread-repair-target-phis!
-                      (compiler-opt-global-shared-view target-instrs)
-                      uses
                       (& target-instrs)
-                      0
-                      0
+                      (& empty-merge)
                       (& (Nil))
-                      via
-                      pred-label)
-                    (opt-cfg-straighten-mark! flag)
-                    target))])]))]))
+                      edge))
+                    successor
+                    (begin
+                      (opt-thread-repair-target-phis!
+                        target-instrs
+                        uses
+                        (& empty-merge)
+                        (& (Nil))
+                        edge)
+                      (opt-cfg-straighten-mark! flag)
+                      target)))])]))]))
 
 ;; The default edge is decided first so the case walk can see it in `accepted`.
 (define (opt-cfg-straighten-switch

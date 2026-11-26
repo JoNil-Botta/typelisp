@@ -68,7 +68,7 @@ tl_oob_abort_at:
   (let
     [program : String
       (str_cat.str-cat
-        "    .tl_abort_row f, .L_pc, .L_path, 4097, tl_oob_abort_at
+        "    .tl_abort_row f, .L_pc, .L_path, \"p.tl\", 4097, tl_oob_abort_at
 "
         (prune.optional-fragment "tl_oob_abort_at:
     ret
@@ -109,18 +109,25 @@ tl_oob_abort_at:
       (str_cat.str-cat
         "main:
     leaq .L_tl_str_la(%rip), %rdi
+    leaq .L_tl_str_le(%rip), %rsi
     ret
     .section .rodata
 "
         (prune.literal-begin)
         ".L_tl_str_data_a:
-    .ascii \"pan\"
-.L_tl_str_data_b:
-    .string \"ic\"
-.L_tl_str_data_c:
-    .string \"dead\"
+    .set .L_tl_str_data_b, .L_tl_str_data_a + 3
+    .ascii \"panic\"
 "
-        (prune.literal-end)
+        (prune.literal-unit-end)
+        ".L_tl_str_data_c:
+    .ascii \"dead\"
+"
+        (prune.literal-unit-end)
+        ".L_tl_str_data_d:
+    .set .L_tl_str_data_e, .L_tl_str_data_d + 2
+    .ascii \"overlap\"
+"
+        (prune.literal-unit-end)
         "    .balign 8
 "
         (prune.literal-begin)
@@ -130,6 +137,9 @@ tl_oob_abort_at:
 .L_tl_str_lc:
     .quad .L_tl_str_data_c
     .quad 4
+.L_tl_str_le:
+    .quad .L_tl_str_data_e
+    .quad 5
 "
         (prune.literal-end)
         "    .text
@@ -146,8 +156,13 @@ tl_oob_abort_at:
     (test.assert-true
       (string.contains
         (& output)
-        ".L_tl_str_data_a:\n    .ascii \"pan\"\n.L_tl_str_data_b:\n    .string \"ic\"\n")
+        ".L_tl_str_data_a:\n    .set .L_tl_str_data_b, .L_tl_str_data_a + 3\n    .ascii \"panic\"\n")
       "a live string keeps its whole suffix-shared run")
+    (test.assert-true
+      (string.contains
+        (& output)
+        ".L_tl_str_data_d:\n    .set .L_tl_str_data_e, .L_tl_str_data_d + 2\n    .ascii \"overlap\"\n")
+      "a string named through an interior label keeps its whole unit")
     (test.assert-true
       (not (string.contains (& output) ".L_tl_str_lc:"))
       "a header named only by a dead helper is omitted")

@@ -853,8 +853,18 @@ may appear only once and composes with the other aggregate metadata; it does
 not change layout or ABI. It keeps the type's representation inside its
 **module family**: the defining module and the modules whose identity is that
 module's name followed by `.` (its dotted descendants, such as `db.pool` for a
-type defined in `db`). Files without a `(module ...)` declaration share the
-entry module, which is one family.
+type defined in `db`), whose source has the same **provider** as the type's.
+The provider is where a source file lies, never the module it declares: the
+stdlib, for the embedded stdlib, a `--stdlib-root`, the working directory's
+`stdlib/` once stdlib resolution has read a module from it, and a prebuilt
+stdlib `.tli`; else the package of the nearest `typelisp.pkg` at or above the file
+(the root package or the dependency that holds it, loaded from source or from
+its prebuilt `.tli`); else no package, which every file outside a package
+shares. So a dependency that declares `(module db.extra)` is outside `db`'s
+family, and so is a file that declares itself a stdlib module. Code from a
+compiler-generated source, such as the inline test harness, has no provider and
+is in no family. Files without a `(module ...)` declaration share the entry
+module, which is one family.
 
 Outside the family the type's name stays visible but is usable only as the
 immediate referent of `Ptr`, `MutPtr`, `&` or `&mut`, including inside
@@ -875,7 +885,8 @@ E0221, even inside `unsafe`:
   dereference that stays a place, as in the reborrow `(& (deref c))`, is not a
   read.
 
-Code a macro expands into a module is checked as that module's code.
+Code a macro expands into a module is checked as that module's code, with the
+provider of the source the expansion site lies in.
 
 A `(type T)` operand may name the type itself. Compile-time code there may ask
 for its `type-kind`, `type-nominal-name`, `type-nominal-module` and `type-key`,
@@ -901,10 +912,6 @@ it expands into, under the same rule. `type-info` reports the type as
 Another module may write `(& a db.Connection)` or `(Ptr db.Connection)` and call
 `db.connection-fd`, but not `(db.Connection 3)`, `c.fd`, or a parameter of type
 `db.Connection`.
-
-Not yet enforced:
-- a module of another package that declares itself inside the family's dotted
-  namespace is still treated as a family member (#8733).
 
 #### 3.5.5 Sealed handle types
 

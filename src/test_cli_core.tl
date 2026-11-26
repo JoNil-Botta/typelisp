@@ -2656,7 +2656,7 @@
     [physical-path : String
       (cond
         [(string.eq path source) diagnostic-source.physical-path]
-        [(>= provenance 0) (ci.intern-str provenance)]
+        [(>= provenance 0) (tc_core.tc-provenance-display-path provenance)]
         [else path])]
     [text : cdiag.CompilerDiagnosticSource
       (driver.compiler-driver-diagnostic-source-read

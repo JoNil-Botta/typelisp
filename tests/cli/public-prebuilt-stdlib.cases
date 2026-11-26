@@ -114,3 +114,32 @@ step opt-level-1
 run compile "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl" --target {{host-target}} --opt-level 1 --sysroot "{{dir}}/missing-sysroot" -o "{{dir}}/missing1.s"
 exit 1
 stderr contains sysroot: missing prebuilt stdlib archive:
+
+# Hydrated prebuilt stdlib `.tli` declarations keep the stdlib provider (#8733)
+# even when `stdlib/` exists in cwd with no `--stdlib-root`, or when a package's
+# own `stdlib/` subdirectory holds a same-named file. Like `compile`, `check`
+# defaults to `--target linux-x86_64`, so pass `--target {{host-target}}` so
+# Windows hosts open their prebuilt sysroot instead of falling back to source.
+case prebuilt-stdlib-opaque-provider
+file evil/stdlib/crypto_hmac_sha256.tl
+(module stdlib.crypto_hmac_sha256.extra)
+(import stdlib.crypto_hmac_sha256 as hmac)
+
+(define (storage-phase [s : hmac.HmacSha256Storage]) : i64
+  s.phase)
+
+(define (main) : i64 0)
+end-file
+cwd {{root}}
+step repo-root-spoof-check
+run check --target {{host-target}} tests/safety/opaque_provider_stdlib_spoof_reject.tl
+exit 1
+stderr contains error[E0221]
+stderr contains opaque type stdlib.crypto_secret/SecretStorage outside its module family
+cwd {{dir}}/evil
+step same-name-stdlib-subdir-check
+run check --target {{host-target}} stdlib/crypto_hmac_sha256.tl
+exit 1
+stderr contains error[E0221]
+stderr contains opaque type stdlib.crypto_hmac_sha256/HmacSha256Storage outside its module family
+cwd -

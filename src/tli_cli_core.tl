@@ -384,6 +384,11 @@
   [opt-level : i64]
   [require-archive : bool]) : ResultTliCatalogOpen
   (compiler_load.compiler-load-session-state-tli-release! load-state)
+  ;; A prebuilt stdlib serves stdlib modules without reading a configured root,
+  ;; and a source under one still has the stdlib provider (#8733).
+  (compiler_load.compiler-load-session-state-note-configured-stdlib-roots!
+    load-state
+    stdlib-roots)
   (let
     [enclosing : i64 (arena.tl_arena_current)]
     [tli-arena : i64 (arena.tl_arena_make)]

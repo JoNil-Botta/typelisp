@@ -147,6 +147,18 @@ done
 index=0
 while IFS= read -r fixture; do
     source="$ROOT/$fixture"
+    # A stdlib test fixture is read from the stdlib of the run's cwd: the
+    # repo's for the trusted routes, the modified copy, the stdlib root of the
+    # forced-source run, for that one. Only a file under a stdlib root has the
+    # stdlib provider its (:opaque) access needs (#8733). Every route spells it
+    # by the same cwd-relative path, which the assembly quotes.
+    case $fixture in
+        stdlib/*)
+            mkdir -p "$(dirname -- "$MODIFIED_ROOT/$fixture")"
+            cp "$source" "$MODIFIED_ROOT/$fixture"
+            source=$fixture
+            ;;
+    esac
     printf '%s|%s\n' \
         "$(batch_path "$source")" \
         "$(batch_path "$DEFAULT_DIR/$index.s")" >> "$DEFAULT_BATCH"

@@ -719,6 +719,17 @@
   (canonical-paths (__tl_dyn-array sym_i64_env.SymI64Env))
   ;; Stdlib suffix -> the first physical path noted for it.
   (suffix-claims (__tl_dyn-array sym_i64_env.SymI64Env))
+  ;; Each configured stdlib root, and the canonical directory of each root a
+  ;; stdlib module was read from. A source anywhere under one has the stdlib
+  ;; provider (#8733). Kept as text:
+  ;; interning a checkout path would put it into the embedded image.
+  ;; The cell holds `compiler-load-no-stdlib-roots` until a root is noted, so
+  ;; a reset allocates nothing that an arena reset could leave dangling.
+  (roots (__tl_dyn-array (__tl_dyn-array String)))
+  ;; Interned `<tli-stdlib>:...` provenance IDs hydrated from a prebuilt
+  ;; stdlib `.tli` in this session (#8733). Distinct from disk paths under a
+  ;; cwd `stdlib/`, and reset when the TLI catalog releases or provenance resets.
+  (tli-stdlib-provenance-ids (__tl_dyn-array sym_i64_env.SymI64Env))
   (noted (__tl_dyn-array bool))
   ;; Whether a prelude read from a configured root failed to load.
   (prelude-load-failed (__tl_dyn-array bool))
@@ -1008,11 +1019,21 @@
   [value : bool]) : unit
   (set! (array-ref cell 0) value))
 
+(define compiler-load-no-stdlib-roots-cell : (__tl_dyn-array String)
+  (__tl_make-array String 0))
+
+;: The process-lived empty stdlib root list.
+(define (compiler-load-no-stdlib-roots) : (__tl_dyn-array String)
+  (unsafe
+    (ptr-read (ptr-addr-of compiler-load-no-stdlib-roots-cell))))
+
 (define (compiler-load-embedded-stdlib-provenance-state-new) : CompilerLoadEmbeddedStdlibProvenanceState
   (CompilerLoadEmbeddedStdlibProvenanceState
     (__tl_make-array (sym_i64_env.sym-i64-empty))
     (__tl_make-array (sym_i64_env.sym-i64-empty))
     (__tl_make-array (sym_i64_env.sym-i64-empty))
+    (__tl_make-array (sym_i64_env.sym-i64-empty))
+    (__tl_make-array (compiler-load-no-stdlib-roots))
     (__tl_make-array (sym_i64_env.sym-i64-empty))
     (compiler-load-session-state-bool-cell false)
     (compiler-load-session-state-bool-cell false)
@@ -1146,6 +1167,10 @@
 
 (define (compiler-load-session-state-tli-release!
   [state : (& CompilerLoadSessionState)]) : unit
+  (owned_view.compiler-owned-cell-set!
+    state.embedded-stdlib-provenance.tli-stdlib-provenance-ids
+    0
+    (sym_i64_env.sym-i64-empty))
   (let
     [addr : i64 (array-ref state.tli-catalog-ptr 0)]
     (when
@@ -1481,7 +1506,7 @@
     path))
 
 (define (compiler-load-session-state-tli-hydrate-module!
-  [state : (& CompilerLoadSessionState)]
+  [state : (& state CompilerLoadSessionState)]
   [module-name : (& str)]
   [seen : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]) : ResultCompilerLoadWithPaths
@@ -1540,6 +1565,9 @@
             (arena.tl_arena_set enclosing))
           (match projected
             [(Ok decls paths modules next-seen)
+              (compiler-load-session-state-note-tli-stdlib-paths!
+                state
+                (& paths))
               (Ok decls paths modules next-seen)]
             [(Err failure)
               (Err
@@ -1551,7 +1579,7 @@
                       (string.copy (& failure.message))))))]))))))
 
 (define (compiler-load-session-state-tli-hydrate-package-file!
-  [state : (& CompilerLoadSessionState)]
+  [state : (& state CompilerLoadSessionState)]
   [package-root : (& str)]
   [owned-path : (& str)]
   [candidate-module : (& str)]
@@ -1645,7 +1673,26 @@
             (ast.ast-node-pool-context-install! prev-pools))
           (unsafe
             (arena.tl_arena_set enclosing))
-          result)))))
+          (match result
+            [(ResultCompilerLoadPackageTliHydrate.Ok
+              decls
+              paths
+              modules
+              next-seen
+              primary-mod-id)
+              (compiler-load-session-state-note-tli-stdlib-paths!
+                state
+                (& paths))
+              (ResultCompilerLoadPackageTliHydrate.Ok
+                decls
+                paths
+                modules
+                next-seen
+                primary-mod-id)]
+            [(ResultCompilerLoadPackageTliHydrate.Missing)
+              (ResultCompilerLoadPackageTliHydrate.Missing)]
+            [(ResultCompilerLoadPackageTliHydrate.Err diag)
+              (ResultCompilerLoadPackageTliHydrate.Err diag)]))))))
 
 (define (compiler-load-session-state-tli-take-pending-source-stdlib!
   [state : (& CompilerLoadSessionState)]) : (__tl_dyn-array String)
@@ -3340,6 +3387,14 @@
     0
     (sym_i64_env.sym-i64-empty))
   (owned_view.compiler-owned-cell-set!
+    state.embedded-stdlib-provenance.roots
+    0
+    (compiler-load-no-stdlib-roots))
+  (owned_view.compiler-owned-cell-set!
+    state.embedded-stdlib-provenance.tli-stdlib-provenance-ids
+    0
+    (sym_i64_env.sym-i64-empty))
+  (owned_view.compiler-owned-cell-set!
     state.embedded-stdlib-provenance.noted
     0
     false)
@@ -3442,6 +3497,15 @@
               outcome)))
         (when
           (= outcome 1)
+          (let
+            [norm-path : String (compiler-load-normalize-path disk-path)]
+            [path-len : i64 (string.string-length (& norm-path))]
+            [suffix-len : i64 (string.string-length (& suffix))]
+            (when
+              (> path-len suffix-len)
+              (compiler-load-session-state-note-stdlib-root!
+                (& state)
+                (& (string.substring (& norm-path) 0 (- path-len suffix-len))))))
           (compiler-load-session-state-note-embedded-module!
             state
             (& (str_cat.str-cat "stdlib/" suffix)))
@@ -4321,6 +4385,9 @@
 (define (compiler-load-resolve-stdlib-root
   [suffix : (& str)]
   [roots : (& svec.Vec)]) : CompilerLoadMaybePath
+  (compiler-load-session-state-note-configured-stdlib-roots!
+    (& compiler-load-active-session-state)
+    roots)
   (compiler-load-resolve-stdlib-root-raw
     suffix
     (&
@@ -4613,6 +4680,9 @@
 (define (compiler-load-resolve-stdlib-module-path
   [module-path : String]
   [stdlib-roots : (& svec.Vec)]) : String
+  (compiler-load-session-state-note-configured-stdlib-roots!
+    (& compiler-load-active-session-state)
+    stdlib-roots)
   (let
     [suffix : String (compiler-load-stdlib-suffix (string.copy module-path))]
     (if (io.file-exists? (string.copy module-path))
@@ -16193,6 +16263,225 @@
 ;: Discover the nearest `typelisp.pkg` at or above the importer's directory.
 (define (compiler-load-discover-manifest [start-path : (& str)]) : CompilerLoadMaybePath
   (compiler-load-discover-manifest-up (compiler-load-dirname start-path) 256))
+
+;: The provider of a source no physical path names: a synthetic `<...>` path,
+;: a `tli:` catalog name, or none. It is the provider of no other source, not
+;: even itself (#8733).
+(define (compiler-load-provider-unknown) : i64
+  -1)
+
+;: The provider of every stdlib source: the embedded copy, a `--stdlib-root`,
+;: or a hydrated stdlib `.tli`.
+(define (compiler-load-provider-stdlib) : i64
+  -2)
+
+;: The provider shared by sources with no `typelisp.pkg` at or above them.
+(define (compiler-load-provider-no-package) : i64
+  -3)
+
+;: STATE's stdlib roots with canonical ROOT added once, in STATE's provenance
+;: arena. A ROOT already present allocates nothing in the provenance arena.
+(define (compiler-load-note-stdlib-root!
+  [state : (& state CompilerLoadSessionState)]
+  [root : (& str)]) : unit
+  (let
+    [canonical : String (compiler-load-canonical-path root)]
+    [count : i64
+      (array-length (& (array-ref state.embedded-stdlib-provenance.roots 0)))]
+    (unless
+      (any? [index (iterator.range 0 count)]
+        (string.eq
+          (&
+            (array-ref
+              (array-ref state.embedded-stdlib-provenance.roots 0)
+              index))
+          (& canonical)))
+      (in-arena
+        (unsafe
+          (arena.Arena
+            (compiler-load-session-state-embedded-provenance-arena state)))
+        (let
+          [grown : (__tl_dyn-array String) (__tl_make-array String (+ count 1))]
+          (for [index (iterator.range 0 count)]
+            (set!
+              (array-ref grown index)
+              (string.copy
+                (&
+                  (array-ref
+                    (array-ref state.embedded-stdlib-provenance.roots 0)
+                    index)))))
+          (set! (array-ref grown count) (string.copy (& canonical)))
+          (owned_view.compiler-owned-cell-set!
+            state.embedded-stdlib-provenance.roots
+            0
+            grown))))))
+
+;: Note ROOT, when not empty, as a stdlib provider root of STATE, in its
+;: provenance arena.
+(define (compiler-load-session-state-note-stdlib-root!
+  [state : (& state CompilerLoadSessionState)]
+  [root : (& str)]) : unit
+  (when
+    (> (string.string-length root) 0)
+    (compiler-load-note-stdlib-root! state root)))
+
+;: Note each configured stdlib root, ROOTS (`--stdlib-root`) and
+;: `TYPELISP_STDLIB_ROOT`, as a stdlib provider root of STATE (#8733), whether
+;: or not a stdlib module is read from it: a prebuilt stdlib serves those
+;: modules without reading the root. Roots are canonicalized once when noted.
+(define (compiler-load-session-state-note-configured-stdlib-roots!
+  [state : (& state CompilerLoadSessionState)]
+  [roots : (& svec.Vec)]) : unit
+  (for [index (iterator.range 0 (svec.len roots))]
+    (compiler-load-session-state-note-stdlib-root!
+      state
+      (& (svec.get roots index ""))))
+  (let
+    [name : String "TYPELISP_STDLIB_ROOT"]
+    (match (env.get (& name))
+      [(EnvNoString) unit]
+      [(EnvSomeString root)
+        (compiler-load-session-state-note-stdlib-root! state (& root))])))
+
+;: Whether canonical SOURCE lies under a stdlib root of this session (#8733): a
+;: configured root (`--stdlib-root`/`TYPELISP_STDLIB_ROOT`), or a root from
+;: which a verified embedded-matching stdlib module was read. An unconfigured
+;: `stdlib/` directory with arbitrary or modified files does not count.
+(define (compiler-load-under-stdlib-root? [source : (& str)]) : bool
+  (let
+    [cell : (__tl_dyn-array (__tl_dyn-array String))
+      (unsafe
+        (ptr-read
+          (ptr-addr-of
+            compiler-load-active-session-state.embedded-stdlib-provenance.roots)))]
+    (any? [index (iterator.range 0 (array-length (& (array-ref cell 0))))]
+      (source_overlay.compiler-source-path-under?
+        (& (array-ref (array-ref cell 0) index))
+        source))))
+
+;: Whether PATH names a module the embedded stdlib serves (#8733): spelled
+;: `stdlib/<suffix>` for an embedded suffix, and read from the image (or from a
+;: disk copy identical to it) this session. A disk file under the cwd's
+;: `stdlib/` is otherwise stdlib only under a configured stdlib root.
+(define (compiler-load-embedded-stdlib-provider-path? [path : (& str)]) : bool
+  (let
+    [normalized : String (compiler-load-normalize-path path)]
+    [module-ids : sym_i64_env.SymI64Env
+      (array-ref
+        (unsafe
+          (ptr-read
+            (ptr-addr-of
+              compiler-load-active-session-state.embedded-stdlib-provenance.module-ids)))
+        0)]
+    (and
+      (compiler-load-embedded-stdlib-contains-path? (& normalized))
+      (match (ci.intern-lookup
+        (compiler-load-canonical-module-id-from-path (& normalized)))
+        [(InternLookupFound id) (sym_i64_env.sym-i64-contains-id module-ids id)]
+        [(InternLookupMissing) false]))))
+
+;: Record a `<tli-stdlib>:...` provenance ID hydrated from a prebuilt stdlib
+;: `.tli` in STATE's provenance arena (#8733).
+(define (compiler-load-session-state-note-tli-stdlib-provenance-id!
+  [state : (& state CompilerLoadSessionState)]
+  [provenance-id : i64]) : unit
+  (when
+    (>= provenance-id 0)
+    (let
+      [ids : sym_i64_env.SymI64Env
+        (owned_view.compiler-owned-element-view
+          state.embedded-stdlib-provenance.tli-stdlib-provenance-ids
+          0)]
+      (unless
+        (sym_i64_env.sym-i64-contains-id ids provenance-id)
+        (in-arena
+          (unsafe
+            (arena.Arena
+              (compiler-load-session-state-embedded-provenance-arena state)))
+          (owned_view.compiler-owned-cell-set!
+            state.embedded-stdlib-provenance.tli-stdlib-provenance-ids
+            0
+            (sym_i64_env.sym-i64-bind-id ids provenance-id 1)))))))
+
+;: Record every `<tli-stdlib>:...` provenance ID present in PATHS after
+;: hydrating a `.tli` closure (#8733).
+(define (compiler-load-session-state-note-tli-stdlib-paths!
+  [state : (& state CompilerLoadSessionState)]
+  [paths : (& ast.AstDeclPathList)]) : unit
+  (let
+    [count : i64 (ast.ast-decl-path-list-len paths)]
+    [last-prov-id : i64 -1]
+    (for [index (iterator.range 0 count)]
+      (let
+        [prov-id : i64 (ast.ast-decl-path-list-provenance-id paths index -1)]
+        (when
+          (and (>= prov-id 0) (!= prov-id last-prov-id))
+          (set! last-prov-id prov-id)
+          (when
+            (compiler-load-string-prefix-at?
+              (& (ci.intern-str prov-id))
+              "<tli-stdlib>:"
+              0)
+            (compiler-load-session-state-note-tli-stdlib-provenance-id!
+              state
+              prov-id)))))))
+
+;: Whether PATH is the provenance path of a stdlib module hydrated from a
+;: prebuilt stdlib `.tli` in this session (#8733). The `<tli-stdlib>:` prefix
+;: separates hydrated stdlib declarations from any same-named disk file under
+;: the cwd's `stdlib/`, and rejecting any existing disk file keeps the prefix
+;: unforgeable even if a file bears that literal name.
+(define (compiler-load-tli-stdlib-provider-path? [path : (& str)]) : bool
+  (and
+    (compiler-load-string-prefix-at? path "<tli-stdlib>:" 0)
+    (not (io.file-exists? (string.copy path)))
+    (let
+      [ids : sym_i64_env.SymI64Env
+        (array-ref
+          (unsafe
+            (ptr-read
+              (ptr-addr-of
+                compiler-load-active-session-state.embedded-stdlib-provenance.tli-stdlib-provenance-ids)))
+          0)]
+      (match (ci.intern-lookup (string.copy path))
+        [(InternLookupFound id) (sym_i64_env.sym-i64-contains-id ids id)]
+        [(InternLookupMissing) false]))))
+
+;: The provider of the source at physical PATH (#8733): stdlib, else the
+;: interned canonical directory of the nearest `typelisp.pkg` at or above it
+;: (the root package or the dependency package that holds the file, as import
+;: resolution reads it), else no package. The answer depends only on where the
+;: file lies, never on the `(module ...)` it declares. A hydrated package
+;: `.tli` names its declarations by their physical path under the canonical
+;: package root, so it has the provider of the same package loaded from source.
+(define (compiler-load-provider-id-for-path [path : (& str)]) : i64
+  (cond
+    [(compiler-load-tli-stdlib-provider-path? path)
+      (compiler-load-provider-stdlib)]
+    [(or
+        (= (string.string-length path) 0)
+        (compiler-load-string-prefix-at? path "<" 0)
+        (compiler-load-string-prefix-at? path "tli:" 0))
+      (compiler-load-provider-unknown)]
+    [(compiler-load-embedded-stdlib-provider-path? path)
+      (compiler-load-provider-stdlib)]
+    [else
+      (let
+        [source : String (compiler-load-canonical-path path)]
+        (if (compiler-load-under-stdlib-root? (& source))
+          (compiler-load-provider-stdlib)
+          ;; The walk ends at the cwd's manifest once it passes the filesystem
+          ;; root; only a manifest above SOURCE itself names its provider.
+          (match (compiler-load-discover-manifest (& source))
+            [(CompilerLoadSomePath manifest)
+              (if (fs.path-absolute? (& manifest))
+                (ci.intern
+                  (source_overlay.compiler-source-path-fold
+                    (&
+                      (compiler-load-canonical-path
+                        (& (compiler-load-dirname (& manifest)))))))
+                (compiler-load-provider-no-package))]
+            [(CompilerLoadNoPath) (compiler-load-provider-no-package)])))]))
 
 ;: Resolve a `pkg:<alias>/...` import by discovering and parsing the nearest
 ;: `typelisp.pkg` relative to the importer, then resolving against its deps.

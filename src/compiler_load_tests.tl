@@ -4821,7 +4821,8 @@
           (load.compiler-load-canonical-stdlib-path "/roots/a/string.tl")
           "/roots/a/string.tl"))]
     [_reset : unit
-      (load.compiler-load-session-state-embedded-provenance-reset! (& state))]
+      (load.compiler-load-session-state-embedded-provenance-reset!
+        (& load.compiler-load-active-session-state))]
     [_note-after-reset : unit
       (load.compiler-load-session-state-note-stdlib-path!
         (owned_view.compiler-owned-shared-view state)
@@ -6067,10 +6068,89 @@
         (= (load.compiler-load-dependency-catalog-owner-arena state) 0)
         (= (array-ref state.dependency-catalog.entries 0).len 0)))))
 
+;; A source's provider follows where it lies (#8733): a disk file under the
+;; cwd's `stdlib/` is stdlib only once that directory is a stdlib root; then
+;; synthetic and catalog names, and the physical path a prebuilt package `.tli`
+;; gives its declarations, which names the provider of the same file from
+;; source.
+(define (compiler-load-provider-ok?) : bool
+  (let
+    [source : String "src/compiler_load.tl"]
+    [hydrated : String
+      (tli_hydrate.tli-hydrate-physical-path
+        false
+        "typelisp"
+        (& (load.compiler-load-canonical-path "."))
+        "typelisp/src/compiler_load.tl")]
+    [_unrooted : unit
+      (load.compiler-load-session-state-embedded-provenance-reset!
+        (& load.compiler-load-active-session-state))]
+    [unrooted : i64
+      (load.compiler-load-provider-id-for-path "stdlib/vector.tl")]
+    [tli-stdlib-path : String
+      (tli_hydrate.tli-hydrate-provenance-path true "stdlib/vector.tl")]
+    [unhydrated-tli-stdlib : i64
+      (load.compiler-load-provider-id-for-path (& tli-stdlib-path))]
+    [_note-tli-stdlib : unit
+      (load.compiler-load-session-state-note-tli-stdlib-provenance-id!
+        (& load.compiler-load-active-session-state)
+        (ci.intern (string.copy (& tli-stdlib-path))))]
+    [hydrated-tli-stdlib : i64
+      (load.compiler-load-provider-id-for-path (& tli-stdlib-path))]
+    [disk-after-tli-stdlib : i64
+      (load.compiler-load-provider-id-for-path "stdlib/vector.tl")]
+    [_dummy-cwd-stdlib : unit
+      (load.compiler-load-note-embedded-equivalent-if-matching!
+        "dummy.tl"
+        "stdlib/dummy.tl")]
+    [unrooted-after-dummy : i64
+      (load.compiler-load-provider-id-for-path "stdlib/crypto_secret/steal.tl")]
+    [_rooted : unit
+      (load.compiler-load-session-state-note-configured-stdlib-roots!
+        (& load.compiler-load-active-session-state)
+        (& (compiler-load-string-vec-one "stdlib")))]
+    [rooted : i64 (load.compiler-load-provider-id-for-path "stdlib/vector.tl")]
+    [windows-case-ok : bool
+      (cfg
+        windows
+        (begin
+          (load.compiler-load-session-state-note-stdlib-root!
+            (& load.compiler-load-active-session-state)
+            "c:/fake-win-stdlib")
+          (=
+            (load.compiler-load-provider-id-for-path
+              "C:\\Fake-Win-Stdlib\\tests\\opaque_probe.tl")
+            (load.compiler-load-provider-stdlib)))
+        true)]
+    [_reset : unit
+      (load.compiler-load-session-state-embedded-provenance-reset!
+        (& load.compiler-load-active-session-state))]
+    (and
+      (not (= unrooted (load.compiler-load-provider-stdlib)))
+      (= unhydrated-tli-stdlib (load.compiler-load-provider-unknown))
+      (= hydrated-tli-stdlib (load.compiler-load-provider-stdlib))
+      (not (= disk-after-tli-stdlib (load.compiler-load-provider-stdlib)))
+      (not (= unrooted-after-dummy (load.compiler-load-provider-stdlib)))
+      (= rooted (load.compiler-load-provider-stdlib))
+      windows-case-ok
+      (=
+        (load.compiler-load-provider-id-for-path "<generated test harness>")
+        (load.compiler-load-provider-unknown))
+      (=
+        (load.compiler-load-provider-id-for-path "tli:opaque_owner")
+        (load.compiler-load-provider-unknown))
+      (not (= (load.compiler-load-provider-id-for-path (& source)) -1))
+      (=
+        (load.compiler-load-provider-id-for-path (& source))
+        (load.compiler-load-provider-id-for-path (& hydrated))))))
+
 (define (compiler-load-self-test) : i64
   (unless
     (compiler-load-dependency-catalog-registry-ok?)
     (return (io.panic "compiler-load: dependency catalog registry mismatch")))
+  (unless
+    (compiler-load-provider-ok?)
+    (return (io.panic "compiler-load: source provider mismatch")))
   (unless
     (compiler-load-embedded-provenance-observer-ok?)
     (return (io.panic "compiler-load: embedded provenance observer mismatch")))

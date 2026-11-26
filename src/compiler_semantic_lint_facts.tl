@@ -547,7 +547,7 @@
           (ci.intern-str name)
           "")
         (if (>= path-id 0)
-          (ci.intern-str path-id)
+          (tc.tc-provenance-display-path path-id)
           fallback-path)
         declaration
         (if member

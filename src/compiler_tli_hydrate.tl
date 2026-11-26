@@ -2229,6 +2229,22 @@
             (str_cat.str-cat (string.copy package-root) "/" rel)))
         (string.copy source-path)))))
 
+(define (tli-hydrate-provenance-path
+  [is-stdlib : bool]
+  [physical-path : (& str)]) : String
+  (if is-stdlib
+    (str_cat.str-cat "<tli-stdlib>:" (string.copy physical-path))
+    (string.copy physical-path)))
+
+(define (tli-hydrate-strip-stdlib-provenance-prefix [path : (& str)]) : String
+  (let
+    [prefix : String "<tli-stdlib>:"]
+    [plen : i64 (string.string-length (& prefix))]
+    [len : i64 (string.string-length path)]
+    (if (and (>= len plen) (tli-hydrate-string-starts-with? path (& prefix)))
+      (string.substring path plen (- len plen))
+      (string.copy path))))
+
 (define (tli-hydrate-project-record-with-context!
   [facts : (&mut TliHydratedFacts)]
   [pools : ast.AstNodePoolContext]
@@ -2253,7 +2269,9 @@
         package-name
         package-root
         (& source-path))]
-    [prov-id : i64 (tli-hydrate-name (& physical-path))]
+    [prov-path : String
+      (tli-hydrate-provenance-path is-stdlib (& physical-path))]
+    [prov-id : i64 (tli-hydrate-name (& prov-path))]
     (in-arena
       (unsafe
         (arena.Arena facts.owner-arena))

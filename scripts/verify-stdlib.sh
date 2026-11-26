@@ -941,9 +941,17 @@ run_stdlib_runnable_job() {
 
     case_id=$(printf '%s' "$fixture" | sed 's#/#_#g;s#\.tl$##')
     _job_dir="$RUN_ROOT/$_job"
-    copied="$_job_dir/$fixture"
-    mkdir -p "$(dirname "$copied")"
-    cp "$fixture" "$copied"
+    if grep -q '^(module stdlib\.' "$fixture"; then
+        # White-box stdlib-family tests live under $ROOT/stdlib and need the
+        # stdlib provider (#8733), so compile them in place under --stdlib-root
+        # instead of copying them outside it.
+        source_path="$ROOT/$fixture"
+        mkdir -p "$_job_dir"
+    else
+        source_path="$_job_dir/$fixture"
+        mkdir -p "$(dirname "$source_path")"
+        cp "$fixture" "$source_path"
+    fi
 
     stem="$_job_dir/$case_id"
     stdout="$stem.stdout"
@@ -954,7 +962,7 @@ run_stdlib_runnable_job() {
     fi
 
     echo "[stdlib] building+running $fixture (--stdlib-root)" >> "$_job_out"
-    stdlib_build_run "$copied" "$stem" "$stdin" >> "$_job_out" 2>> "$_job_err"
+    stdlib_build_run "$source_path" "$stem" "$stdin" >> "$_job_out" 2>> "$_job_err"
 
     if [ "$build_status" -ne 0 ]; then
         {

@@ -6,16 +6,27 @@
 (import compiler_x64_executable_template_catalog as x64_catalog)
 (import stdlib.str_cat_runtime as str_cat)
 
+;; `tl_thread_init` maps a zeroed TLS block for the freestanding Linux entry
+;; and each clone worker, then stores the null arena itself. Only a TLS block
+;; that a CRT or the dynamic loader builds copies the `.tdata` initial value,
+;; so a freestanding image keeps the arena word in `.tbss`. It then has no
+;; `.tdata` and no RELRO page to pad for it.
 (define (compiler-backend-runtime-arena-data
   [arena-debug : bool]
-  [backtrace : bool]) : String
+  [backtrace : bool]
+  [freestanding : bool]) : String
   (str_cat.str-cat
-    "    .section .tdata,\"awT\",@progbits
-    .balign 8
+    (if freestanding
+      "    .section .tbss,\"awT\",@nobits\n"
+      "    .section .tdata,\"awT\",@progbits\n")
+    "    .balign 8
     .globl tl_current_arena
 tl_current_arena:
-    .quad .L_tl_null_arena
-    .section .tbss,\"awT\",@nobits
+"
+    (if freestanding
+      "    .zero 8\n"
+      "    .quad .L_tl_null_arena\n")
+    "    .section .tbss,\"awT\",@nobits
     .balign 8
     .globl tl_thread_local_word
 tl_thread_local_word:
@@ -73,7 +84,8 @@ tl_backtrace_stack_high:
     "    .size tl_region_mark, . - tl_region_mark\n"))
 
 (define (compiler-backend-runtime-data
-  [features : (& features runtime_common.CompilerBackendRuntimeFeatures)]) : String
+  [features : (& features runtime_common.CompilerBackendRuntimeFeatures)]
+  [freestanding : bool]) : String
   (let
     [data : String
       (runtime_common.compiler-backend-runtime-common-data
@@ -81,7 +93,8 @@ tl_backtrace_stack_high:
         (compiler-backend-runtime-arena-data
           (runtime_common.compiler-backend-runtime-arena-debug-text?
             features.arena-debug)
-          features.backtrace))]
+          features.backtrace
+          freestanding))]
     (if (runtime_common.compiler-backend-runtime-features-leaf? features 64)
       (sanitize.runtime-sanitize-data data)
       data)))

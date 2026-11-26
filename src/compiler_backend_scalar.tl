@@ -3202,8 +3202,11 @@
 
 ;; The row travels with its call through speculative function emission and
 ;; cold-stub placement. Only an assembled row marks the table and its kind as
-;; used. A row is 12 bytes: the return address and the path's fat string, each
-;; relative to its own field, then `line << 12 | column`. Every row of the image
+;; used. A row is 12 bytes: the return address and the path's NUL-terminated
+;; bytes, each relative to its own field, then `line << 12 | column`. The first
+;; row naming a path in an object also defines those bytes. On ELF they sit in
+;; a mergeable string section, so the linker keeps one copy of each path across
+;; objects and drops the copies no surviving row names. Every row of the image
 ;; lands in one table that a single lookup scans, so no object keeps a table
 ;; of its own. A library object gives every function its own section, and each
 ;; row follows its function: an ELF SHF_LINK_ORDER section, or a COFF
@@ -3217,7 +3220,11 @@
   [library? : bool]
   [local-table? : bool]) : String
   (str_cat.str-cat
-    "    .macro .tl_abort_row fn, pc, path, location, kind\n"
+    "    .macro .tl_abort_row fn, pc, path, text, location, kind\n    .ifndef \\path\n"
+    (if (be_state.compiler-backend-target-coff? target)
+      "    .pushsection .rdata,\"dr\"\n"
+      "    .pushsection .rodata.str1.1,\"aMS\",@progbits,1\n")
+    "\\path:\n    .asciz \"\\text\"\n    .popsection\n    .endif\n"
     (cond
       [(not (be_state.compiler-backend-target-coff? target))
         (if (and library? (not local-table?))
@@ -3242,7 +3249,11 @@
 ;; Each object that assembled a row defines the entry stub of every kind it
 ;; used and the lookup, all as deduplicated COMDATs: one copy of each reaches
 ;; the image, and none roots anything a surviving abort call does not (an
-;; object's own five-byte jump to each used stub keeps only that stub). A stub
+;; object's own five-byte jump to each used stub keeps only that stub). On ELF
+;; each kind's jump has its own section, so a live jump to one kind keeps no
+;; other kind's stub and handler. lld-link drops only COMDATs, and a COMDAT jump
+;; could be discarded with another object's copy of its leader, so a COFF jump
+;; stays in `.text`. A stub
 ;; passes its handler continuation in %r11; the lookup finds the row of the
 ;; return address and calls it with the four-word descriptor the runtime
 ;; readers expect. Only volatile scratch registers are touched before the
@@ -3281,7 +3292,11 @@
       ;; An assembler resolves an alias of a symbol defined in the same
       ;; object to its section, which may be a discarded duplicate. The
       ;; object's own jump names the stub's symbol instead.
-      "    .ifdef .L_tl_abort_used_\\kind\n    .section .text\n.L_tl_abort_\\kind:\n    jmp tl_site_\\kind\n"
+      "    .ifdef .L_tl_abort_used_\\kind\n"
+      (if windows?
+        "    .section .text\n"
+        "    .section .text..L_tl_abort_\\kind,\"ax\",@progbits\n")
+      ".L_tl_abort_\\kind:\n    jmp tl_site_\\kind\n"
       (if windows?
         "    .section .text,\"xr\",discard,tl_site_\\kind\n    .globl tl_site_\\kind\n"
         "    .section .text.tl_site_\\kind,\"axG\",@progbits,tl_site_\\kind,comdat\n    .globl tl_site_\\kind\n    .hidden tl_site_\\kind\n")
@@ -3329,8 +3344,10 @@
       site-reg
       ")\n    movl 8(%r10), %eax\n    andl $4095, %eax\n    movq %rax, 24("
       site-reg
-      ")\n    movslq 4(%r10), %rax\n"
-      "    movdqu 4(%r10,%rax), %xmm0\n    movdqu %xmm0, ("
+      ")\n    movslq 4(%r10), %rax\n    leaq 4(%r10,%rax), %rax\n    movq %rax, ("
+      site-reg
+      ;; The path's byte length, counted up to its NUL.
+      ")\n    movq %rax, %r10\n6:\n    cmpb $0, (%r10)\n    je 7f\n    incq %r10\n    jmp 6b\n7:\n    subq %rax, %r10\n    movq %r10, 8("
       site-reg
       ")\n    call *%r11\n    ud2\n"
       (cond
@@ -3638,9 +3655,11 @@
         be_state.compiler-backend-function-string-abort-site-function)
       ", "
       label
-      ", "
-      (be_operand.compiler-backend-string-fat-label path)
-      ", "
+      ", .L_tl_abort_path_"
+      (be_operand.compiler-backend-string-label-suffix path)
+      ", \""
+      (be_facts.compiler-backend-escape-string path)
+      "\", "
       (string.int->string
         (compiler-backend-abort-row-location
           (be_state.compiler-backend-function-state-i64

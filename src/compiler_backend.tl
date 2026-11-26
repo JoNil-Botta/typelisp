@@ -26953,7 +26953,6 @@ tl_shared_object_init:
                       target
                       (be_state.compiler-backend-global-shared-view globals)
                       (be_state.compiler-backend-global-shared-view functions)
-                      (be_state.compiler-backend-global-shared-view spans)
                       program-index)
                       [(Ok globals-buf collections)
                         (begin
@@ -27831,12 +27830,18 @@ tl_shared_object_init:
       (if (be_state.compiler-backend-state-archive-runtime? backend-state)
         asm
         (runtime_prune.prune asm))]
-    (if (and
-      (be_state.compiler-backend-state-optimize-for-size? backend-state)
-      (not (be_state.compiler-backend-target-coff? target))
-      (not (compiler_ir_types.compiler-debug-info-enabled?)))
-      (runtime_prune.intern-epilogues kept)
-      kept)))
+    (cond
+      [(or
+          (not
+            (be_state.compiler-backend-state-optimize-for-size? backend-state))
+          (compiler_ir_types.compiler-debug-info-enabled?))
+        kept]
+      [(be_state.compiler-backend-target-coff? target)
+        (be_peephole.compiler-backend-machine-outline kept true)]
+      [else
+        (be_peephole.compiler-backend-machine-outline
+          (runtime_prune.intern-epilogues kept)
+          false)])))
 
 (define (compiler-backend-lower-mode-for-target
   [target : be_state.CompilerBackendTarget]

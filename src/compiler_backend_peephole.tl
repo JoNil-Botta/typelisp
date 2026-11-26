@@ -19086,3 +19086,2777 @@
           1
           0)
         "a restore can be crossed only when it leaves both copy registers intact"))))
+
+;; ============================================================================
+;; C45: -Os Machine Outliner over the closed program text.
+;;
+;; Runs after the runtime prune and the epilogue interning, on the whole
+;; executable's text, in a scratch arena destroyed before it returns.
+;;
+;; osD (ELF only): a block ending in `ret` or in a `jmp` that leaves its
+;; function shares its longest suffix that an earlier block already spells: the
+;; suffix becomes `jmp .L_tl_tail_N` to a label put where the earlier copy
+;; physically sits. The stack and the flags reach the shared copy unchanged, so
+;; it runs exactly as it would have in place.
+;;
+;; osC (ELF and COFF): repeated straight-line runs of non-loop blocks become
+;; `call _tl_outline_N` to one helper ending in `ret`. A helper holds only
+;; plain instructions; `%rsp` appears only as a memory base, rebased by the
+;; 8-byte return address. It neither pushes nor calls, so on Win64 it is a leaf
+;; that needs no `.pdata` row; helpers follow the last function. A Win64 leaf
+;; function without a `.pdata` row of its own is never rewritten to call one.
+;;
+;; Neither touches a runtime fragment (`tl_*`, `__tl_*`), a stdlib crypto
+;; function or a caller of one, or a function that uses the red zone, which a
+;; `call` would overwrite. Profit is measured with an encoded-size
+;; model of each instruction line.
+(import (vector.vector i64 core) as outline_i64s)
+
+(defstruct CompilerBackendOutlineOperands
+  (count i64)
+  (regs i64)
+  (any i64)
+  (last i64)
+  (imm? bool)
+  (imm-small? bool)
+  (imm-one? bool)
+  (imm-wide? bool)
+  (mem? bool)
+  (mem-bytes i64))
+
+(defstruct CompilerBackendOutline
+  (start outline_i64s.Vec)
+  (first outline_i64s.Vec)
+  (last outline_i64s.Vec)
+  (kind outline_i64s.Vec)
+  (block outline_i64s.Vec)
+  (token outline_i64s.Vec)
+  (edit outline_i64s.Vec)
+  (mark outline_i64s.Vec)
+  (token-line outline_i64s.Vec)
+  (token-bytes outline_i64s.Vec)
+  (token-helper outline_i64s.Vec)
+  (token-tail outline_i64s.Vec)
+  (tokens backend_label_i64_map.Map)
+  (fn-flags outline_i64s.Vec)
+  (fn-block outline_i64s.Vec)
+  (block-fn outline_i64s.Vec)
+  (block-term outline_i64s.Vec)
+  (block-target outline_i64s.Vec)
+  (block-flags outline_i64s.Vec)
+  (labels backend_label_i64_map.Map)
+  (taken backend_label_i64_map.Map)
+  (seq outline_i64s.Vec)
+  (seq-line outline_i64s.Vec)
+  (helper-pos outline_i64s.Vec)
+  (helper-len outline_i64s.Vec)
+  (tails i64)
+  (size i64))
+
+;; Line kinds: ignored (blank, comment, other section), label, instruction,
+;; and barrier (a directive or prefix line no run or suffix crosses).
+(define compiler-backend-outline-line-label : i64
+  1)
+(define compiler-backend-outline-line-insn : i64
+  2)
+(define compiler-backend-outline-line-barrier : i64
+  3)
+
+;; Function flags.
+(define compiler-backend-outline-fn-excluded : i64
+  1)
+(define compiler-backend-outline-fn-neg-rsp : i64
+  2)
+(define compiler-backend-outline-fn-neg-rbp : i64
+  4)
+(define compiler-backend-outline-fn-sub-rsp : i64
+  8)
+(define compiler-backend-outline-fn-numeric : i64
+  16)
+
+;; The function has unwind metadata (a Win64 `.pdata` row).
+(define compiler-backend-outline-fn-unwind : i64
+  32)
+
+;; Block flags.
+(define compiler-backend-outline-block-taken : i64
+  1)
+(define compiler-backend-outline-block-indirect : i64
+  2)
+(define compiler-backend-outline-block-loop : i64
+  4)
+(define compiler-backend-outline-block-final : i64
+  8)
+(define compiler-backend-outline-block-tail : i64
+  16)
+
+;; Register facts of one `%name` operand.
+(define compiler-backend-outline-reg-ext : i64
+  1)
+(define compiler-backend-outline-reg-q : i64
+  2)
+(define compiler-backend-outline-reg-w : i64
+  4)
+(define compiler-backend-outline-reg-rex8 : i64
+  8)
+(define compiler-backend-outline-reg-acc : i64
+  16)
+(define compiler-backend-outline-reg-xmm : i64
+  32)
+(define compiler-backend-outline-reg-evex : i64
+  64)
+(define compiler-backend-outline-reg-rsp : i64
+  128)
+(define compiler-backend-outline-reg-rip : i64
+  256)
+(define compiler-backend-outline-max-tail : i64
+  64)
+(define compiler-backend-outline-max-run : i64
+  24)
+
+(define (compiler-backend-outline-byte [data : (Ptr u8)] [i : i64]) : i64
+  (be_state.compiler-backend-peephole-byte-at data i))
+
+(define (compiler-backend-outline-is?
+  [data : (Ptr u8)]
+  [s : i64]
+  [e : i64]
+  [lit : (& str)]) : bool
+  (be_operand.compiler-backend-peephole-range-eq? data s e lit))
+
+(define (compiler-backend-outline-digit? [b : i64]) : bool
+  (and (>= b 48) (<= b 57)))
+
+(define (compiler-backend-outline-word? [b : i64]) : bool
+  (or
+    (compiler-backend-outline-digit? b)
+    (and (>= b 65) (<= b 90))
+    (and (>= b 97) (<= b 122))
+    (= b 95)))
+
+(define (compiler-backend-outline-contains?
+  [data : (Ptr u8)]
+  [s : i64]
+  [e : i64]
+  [lit : (& str)]) : bool
+  (let
+    [n : i64 (string.string-length lit)]
+    [found : bool false]
+    [i : i64 s]
+    (while (and (not found) (<= (+ i n) e))
+      (set!
+        found
+        (be_operand.compiler-backend-peephole-range-eq? data i (+ i n) lit))
+      (+= i 1))
+    found))
+
+(define (compiler-backend-outline-hash [data : (Ptr u8)] [s : i64] [e : i64]) : i64
+  (let
+    [h : i64 7]
+    (for [i (iterator.range s e)]
+      (set! h (+ (* h 131) (compiler-backend-outline-byte data i))))
+    (if (= h 0)
+      1
+      h)))
+
+;; The decimal or 0x-hex value spelled in [s,e), or `fallback` for a symbol.
+(define (compiler-backend-outline-number
+  [data : (Ptr u8)]
+  [s : i64]
+  [e : i64]
+  [fallback : i64]) : i64
+  (let
+    [neg : bool (and (< s e) (= (compiler-backend-outline-byte data s) 45))]
+    [i : i64
+      (if neg
+        (+ s 1)
+        s)]
+    [hex : bool
+      (and
+        (< (+ i 1) e)
+        (= (compiler-backend-outline-byte data i) 48)
+        (= (compiler-backend-outline-byte data (+ i 1)) 120))]
+    [v : i64 0]
+    [ok : bool (< i e)]
+    (when hex (+= i 2))
+    (while (and ok (< i e))
+      (let
+        [b : i64 (compiler-backend-outline-byte data i)]
+        [d : i64
+          (cond
+            [(compiler-backend-outline-digit? b) (- b 48)]
+            [(and hex (>= b 97) (<= b 102)) (- b 87)]
+            [(and hex (>= b 65) (<= b 70)) (- b 55)]
+            [else -1])]
+        (if (or (< d 0) (> v 72057594037927935))
+          (set! ok false)
+          (set!
+            v
+            (+
+              (*
+                v
+                (if hex
+                  16
+                  10))
+              d))))
+      (+= i 1))
+    (cond [(not ok) fallback] [neg (- 0 v)] [else v])))
+
+;; Facts of the register named at [a,e) (the bytes after `%`).
+(define (compiler-backend-outline-reg-bits
+  [data : (Ptr u8)]
+  [a : i64]
+  [e : i64]) : i64
+  (let
+    [ne : i64 a]
+    (while (and
+      (< ne e)
+      (compiler-backend-outline-word? (compiler-backend-outline-byte data ne)))
+      (+= ne 1))
+    (let
+      [n : i64 (- ne a)]
+      [c0 : i64 (compiler-backend-outline-byte data a)]
+      [c1 : i64
+        (if (> n 1)
+          (compiler-backend-outline-byte data (+ a 1))
+          0)]
+      [lc : i64 (compiler-backend-outline-byte data (- ne 1))]
+      (cond
+        [(= n 0) 0]
+        [(compiler-backend-cold-prefix? data a ne "mm")
+          compiler-backend-outline-reg-xmm]
+        [(or
+            (compiler-backend-cold-prefix? data a ne "xmm")
+            (compiler-backend-cold-prefix? data a ne "ymm")
+            (compiler-backend-cold-prefix? data a ne "zmm"))
+          (let
+            [num : i64 (compiler-backend-outline-number data (+ a 3) ne 0)]
+            (bit-or
+              compiler-backend-outline-reg-xmm
+              (if (>= num 8)
+                compiler-backend-outline-reg-ext
+                0)
+              (if (or (>= num 16) (= c0 122))
+                compiler-backend-outline-reg-evex
+                0)))]
+        [(and (= c0 107) (= n 2)) compiler-backend-outline-reg-evex]
+        [(and (= c0 114) (compiler-backend-outline-digit? c1))
+          (bit-or
+            compiler-backend-outline-reg-ext
+            (cond
+              [(= lc 119) compiler-backend-outline-reg-w]
+              [(or (= lc 100) (= lc 98)) 0]
+              [else compiler-backend-outline-reg-q]))]
+        [(compiler-backend-outline-is? data a ne "rip")
+          compiler-backend-outline-reg-rip]
+        [(and (= c0 114) (= n 3))
+          (bit-or
+            compiler-backend-outline-reg-q
+            (cond
+              [(compiler-backend-outline-is? data a ne "rax")
+                compiler-backend-outline-reg-acc]
+              [(compiler-backend-outline-is? data a ne "rsp")
+                compiler-backend-outline-reg-rsp]
+              [else 0]))]
+        [(compiler-backend-outline-is? data a ne "eax")
+          compiler-backend-outline-reg-acc]
+        [(compiler-backend-outline-is? data a ne "esp")
+          compiler-backend-outline-reg-rsp]
+        [(compiler-backend-outline-is? data a ne "spl")
+          (bit-or
+            compiler-backend-outline-reg-rex8
+            compiler-backend-outline-reg-rsp)]
+        [(and (= n 3) (= lc 108) (or (= c1 105) (= c1 112)))
+          compiler-backend-outline-reg-rex8]
+        [(compiler-backend-outline-is? data a ne "al")
+          compiler-backend-outline-reg-acc]
+        [(compiler-backend-outline-is? data a ne "ax")
+          (bit-or
+            compiler-backend-outline-reg-w
+            compiler-backend-outline-reg-acc)]
+        [(compiler-backend-outline-is? data a ne "sp")
+          (bit-or
+            compiler-backend-outline-reg-w
+            compiler-backend-outline-reg-rsp)]
+        [(and
+            (= n 2)
+            (or
+              (= c1 120)
+              (compiler-backend-outline-is? data a ne "si")
+              (compiler-backend-outline-is? data a ne "di")
+              (compiler-backend-outline-is? data a ne "bp")))
+          compiler-backend-outline-reg-w]
+        [else 0]))))
+
+;; SIB and displacement bytes of the memory operand whose displacement starts
+;; at `ds` and whose parenthesis opens at `open`; `shift` is added to a
+;; `%rsp`-based displacement first.
+(define (compiler-backend-outline-mem-bytes
+  [data : (Ptr u8)]
+  [ds : i64]
+  [open : i64]
+  [e : i64]
+  [shift : i64]) : i64
+  (let
+    [bs : i64 (+ open 1)]
+    [be : i64 bs]
+    (while (and
+      (< be e)
+      (not (= (compiler-backend-outline-byte data be) 44))
+      (not (= (compiler-backend-outline-byte data be) 41)))
+      (+= be 1))
+    (let
+      [index? : bool
+        (and
+          (< (+ be 1) e)
+          (= (compiler-backend-outline-byte data be) 44)
+          (= (compiler-backend-outline-byte data (+ be 1)) 37))]
+      [rip? : bool (compiler-backend-outline-is? data bs be "%rip")]
+      [rsp? : bool (compiler-backend-outline-is? data bs be "%rsp")]
+      [sib : i64
+        (if (or index? rsp? (compiler-backend-outline-is? data bs be "%r12"))
+          1
+          0)]
+      [disp : i64
+        (compiler-backend-outline-number data ds open -4611686018427387904)]
+      [value : i64 (cond [(= ds open) 0] [else disp])]
+      [shifted : i64
+        (if rsp?
+          (+ value shift)
+          value)]
+      (cond
+        [rip? 4]
+        [(= bs be) 5]
+        [(= value -4611686018427387904) (+ sib 4)]
+        [(and
+            (= shifted 0)
+            (not (compiler-backend-outline-is? data bs be "%rbp"))
+            (not (compiler-backend-outline-is? data bs be "%r13")))
+          sib]
+        [(and (>= shifted -128) (<= shifted 127)) (+ sib 1)]
+        [else (+ sib 4)]))))
+
+(define (compiler-backend-outline-operands
+  [data : (Ptr u8)]
+  [os : i64]
+  [e : i64]
+  [shift : i64]) : CompilerBackendOutlineOperands
+  (let
+    [ops : CompilerBackendOutlineOperands
+      (CompilerBackendOutlineOperands 0 0 0 -1 false false false false false 0)]
+    [a : i64 os]
+    (while (< a e)
+      (let
+        [b : i64 a]
+        [depth : i64 0]
+        [open : i64 -1]
+        [regs : i64 0]
+        (while (and
+          (< b e)
+          (or (> depth 0) (not (= (compiler-backend-outline-byte data b) 44))))
+          (let
+            [c : i64 (compiler-backend-outline-byte data b)]
+            (cond
+              [(= c 40)
+                (+= depth 1)
+                (when (< open 0) (set! open b))]
+              [(= c 41) (-= depth 1)]
+              [(= c 37)
+                (set!
+                  regs
+                  (bit-or
+                    regs
+                    (compiler-backend-outline-reg-bits data (+ b 1) e)))]
+              [else unit]))
+          (+= b 1))
+        (let
+          [s : i64 a]
+          (while (and (< s b) (= (compiler-backend-outline-byte data s) 32))
+            (+= s 1))
+          (when
+            (and (< s b) (= (compiler-backend-outline-byte data s) 42))
+            (+= s 1))
+          (set! ops.count (+ ops.count 1))
+          (set! ops.any (bit-or ops.any regs))
+          (set! ops.last -1)
+          (cond
+            [(= (compiler-backend-outline-byte data s) 36)
+              (let
+                [v : i64
+                  (compiler-backend-outline-number
+                    data
+                    (+ s 1)
+                    (compiler-backend-cold-line-last data (+ s 1) b)
+                    -4611686018427387904)]
+                (set! ops.imm? true)
+                (set! ops.imm-small? (and (>= v -128) (<= v 127)))
+                (set! ops.imm-one? (= v 1))
+                (set! ops.imm-wide? (or (< v -2147483648) (> v 2147483647))))]
+            [(and (>= open 0) (< open b))
+              (let
+                [seg : bool
+                  (compiler-backend-outline-contains? data s open ":")]
+                (set! ops.mem? true)
+                (set!
+                  ops.mem-bytes
+                  (+
+                    (if seg
+                      1
+                      0)
+                    (compiler-backend-outline-mem-bytes
+                      data
+                      (if seg
+                        (+ s 4)
+                        s)
+                      open
+                      e
+                      shift))))]
+            [(and
+              (= (compiler-backend-outline-byte data s) 37)
+              (not (compiler-backend-outline-contains? data s b ":")))
+              (set! ops.regs (bit-or ops.regs regs))
+              (set! ops.last regs)]
+            [else
+              (set! ops.mem? true)
+              (set! ops.mem-bytes 6)]))
+        (set! a (+ b 1))))
+    ops))
+
+(define (compiler-backend-outline-alu? [data : (Ptr u8)] [s : i64] [r : i64]) : bool
+  (or
+    (compiler-backend-outline-is? data s r "add")
+    (compiler-backend-outline-is? data s r "or")
+    (compiler-backend-outline-is? data s r "adc")
+    (compiler-backend-outline-is? data s r "sbb")
+    (compiler-backend-outline-is? data s r "and")
+    (compiler-backend-outline-is? data s r "sub")
+    (compiler-backend-outline-is? data s r "xor")
+    (compiler-backend-outline-is? data s r "cmp")))
+
+(define (compiler-backend-outline-shift? [data : (Ptr u8)] [s : i64] [r : i64]) : bool
+  (or
+    (compiler-backend-outline-is? data s r "shl")
+    (compiler-backend-outline-is? data s r "shr")
+    (compiler-backend-outline-is? data s r "sar")
+    (compiler-backend-outline-is? data s r "sal")
+    (compiler-backend-outline-is? data s r "rol")
+    (compiler-backend-outline-is? data s r "ror")))
+
+;; Legacy SSE forms with a mandatory 66/F2/F3 prefix (packed singles have
+;; none), and the 0F38/0F3A forms with a three-byte opcode.
+(define (compiler-backend-outline-sse? [data : (Ptr u8)] [s : i64] [me : i64]) : bool
+  (or
+    (compiler-backend-cold-prefix? data s me "cvt")
+    (compiler-backend-cold-prefix? data s me "p")
+    (compiler-backend-cold-prefix? data s me "ucomis")
+    (compiler-backend-cold-prefix? data s me "comis")
+    (compiler-backend-cold-prefix? data s me "movmskp")
+    (compiler-backend-cold-prefix? data s me "movdq")
+    (compiler-backend-cold-prefix? data s me "movap")
+    (compiler-backend-cold-prefix? data s me "movup")
+    (compiler-backend-outline-is? data s me "movsd")
+    (compiler-backend-outline-is? data s me "movss")
+    (and
+      (> (- me s) 3)
+      (= (compiler-backend-outline-byte data (- me 2)) 112)
+      (let
+        [lc : i64 (compiler-backend-outline-byte data (- me 1))]
+        (or (= lc 115) (= lc 100))))
+    (and
+      (> (- me s) 3)
+      (= (compiler-backend-outline-byte data (- me 2)) 115)
+      (let
+        [lc : i64 (compiler-backend-outline-byte data (- me 1))]
+        (or (= lc 115) (= lc 100))))))
+
+(define (compiler-backend-outline-sse-bytes
+  [data : (Ptr u8)]
+  [s : i64]
+  [me : i64]
+  [ops : (& CompilerBackendOutlineOperands)]
+  [rex : i64]) : i64
+  (let
+    [ps? : bool
+      (and
+        (not (compiler-backend-cold-prefix? data s me "cvt"))
+        (not (compiler-backend-cold-prefix? data s me "p"))
+        (= (compiler-backend-outline-byte data (- me 2)) 112)
+        (= (compiler-backend-outline-byte data (- me 1)) 115))]
+    [ucomiss? : bool
+      (or
+        (compiler-backend-outline-is? data s me "ucomiss")
+        (compiler-backend-outline-is? data s me "comiss"))]
+    [map3? : bool
+      (or
+        (compiler-backend-cold-prefix? data s me "pshufb")
+        (compiler-backend-cold-prefix? data s me "pmovzx")
+        (compiler-backend-cold-prefix? data s me "pmovsx")
+        (compiler-backend-cold-prefix? data s me "ptest")
+        (compiler-backend-cold-prefix? data s me "round")
+        (compiler-backend-cold-prefix? data s me "pextr")
+        (compiler-backend-cold-prefix? data s me "pinsrd")
+        (compiler-backend-cold-prefix? data s me "pinsrq")
+        (compiler-backend-cold-prefix? data s me "pinsrb"))]
+    (+
+      (if (or ps? ucomiss?)
+        0
+        1)
+      rex
+      (if map3?
+        3
+        2)
+      1
+      ops.mem-bytes
+      (if ops.imm?
+        1
+        0))))
+
+;; A line holding only an instruction prefix, which applies to the next line.
+(define (compiler-backend-outline-prefix-line?
+  [data : (Ptr u8)]
+  [s : i64]
+  [me : i64]) : bool
+  (or
+    (compiler-backend-outline-is? data s me "rep")
+    (compiler-backend-outline-is? data s me "repz")
+    (compiler-backend-outline-is? data s me "repe")
+    (compiler-backend-outline-is? data s me "repnz")
+    (compiler-backend-outline-is? data s me "repne")
+    (compiler-backend-outline-is? data s me "lock")))
+
+;; Encoded bytes of the instruction whose mnemonic starts at `s` and whose
+;; text ends at `e`, with `shift` added to `%rsp`-based displacements: the
+;; size GNU as picks for the forms this backend emits. Branch targets are
+;; taken as far.
+(define (compiler-backend-outline-insn-bytes
+  [data : (Ptr u8)]
+  [s : i64]
+  [e : i64]
+  [shift : i64]) : i64
+  (let
+    [me : i64 (compiler-backend-cold-token-end data s e)]
+    [os : i64 me]
+    (while (and (< os e) (= (compiler-backend-outline-byte data os) 32))
+      (+= os 1))
+    (let
+      [c0 : i64 (compiler-backend-outline-byte data s)]
+      [lc : i64 (compiler-backend-outline-byte data (- me 1))]
+      (cond
+        [(compiler-backend-outline-prefix-line? data s me)
+          (cond
+            [(>= os e) 1]
+            [(or
+                (compiler-backend-cold-prefix? data os e "movs")
+                (compiler-backend-cold-prefix? data os e "stos")
+                (compiler-backend-cold-prefix? data os e "cmps")
+                (compiler-backend-cold-prefix? data os e "scas")
+                (compiler-backend-cold-prefix? data os e "lods"))
+              (let
+                [sl : i64
+                  (compiler-backend-outline-byte
+                    data
+                    (- (compiler-backend-cold-token-end data os e) 1))]
+                (+
+                  2
+                  (if (or (= sl 113) (= sl 119))
+                    1
+                    0)))]
+            [else (+ 1 (compiler-backend-outline-insn-bytes data os e shift))])]
+        [(or
+            (compiler-backend-outline-is? data s me "ret")
+            (compiler-backend-outline-is? data s me "cltd")
+            (compiler-backend-outline-is? data s me "cdq")
+            (compiler-backend-outline-is? data s me "leave")
+            (compiler-backend-outline-is? data s me "std")
+            (compiler-backend-outline-is? data s me "cld")
+            (compiler-backend-outline-is? data s me "nop"))
+          1]
+        [(or
+            (compiler-backend-outline-is? data s me "cqto")
+            (compiler-backend-outline-is? data s me "cqo")
+            (compiler-backend-outline-is? data s me "cltq")
+            (compiler-backend-outline-is? data s me "cwd")
+            (compiler-backend-outline-is? data s me "cwtd")
+            (compiler-backend-outline-is? data s me "cbw")
+            (compiler-backend-outline-is? data s me "cbtw")
+            (compiler-backend-outline-is? data s me "pause")
+            (compiler-backend-outline-is? data s me "syscall")
+            (compiler-backend-outline-is? data s me "ud2"))
+          2]
+        [(or
+            (compiler-backend-outline-is? data s me "call")
+            (compiler-backend-outline-is? data s me "jmp"))
+          (if (and (< os e) (= (compiler-backend-outline-byte data os) 42))
+            (let
+              [ops : CompilerBackendOutlineOperands
+                (compiler-backend-outline-operands data os e shift)]
+              (+
+                (if (= (bit-and ops.any compiler-backend-outline-reg-ext) 0)
+                  2
+                  3)
+                ops.mem-bytes))
+            5)]
+        [(= c0 106) 6]
+        [(compiler-backend-outline-is? data s me "movabsq") 10]
+        [else
+          (let
+            [ops : CompilerBackendOutlineOperands
+              (compiler-backend-outline-operands data os e shift)]
+            [ext? : bool
+              (!= (bit-and ops.any compiler-backend-outline-reg-ext) 0)]
+            [stack? : bool
+              (or
+                (compiler-backend-cold-prefix? data s me "push")
+                (compiler-backend-cold-prefix? data s me "pop"))]
+            [w16 : bool
+              (and
+                (not (compiler-backend-cold-prefix? data s me "movz"))
+                (not (compiler-backend-cold-prefix? data s me "movs"))
+                (or
+                  (!= (bit-and ops.regs compiler-backend-outline-reg-w) 0)
+                  (and
+                    (= lc 119)
+                    (let
+                      [r : i64 (- me 1)]
+                      (or
+                        (compiler-backend-outline-alu? data s r)
+                        (compiler-backend-outline-shift? data s r)
+                        (compiler-backend-outline-is? data s r "mov")
+                        (compiler-backend-outline-is? data s r "test")
+                        (compiler-backend-outline-is? data s r "inc")
+                        (compiler-backend-outline-is? data s r "dec")
+                        (compiler-backend-outline-is? data s r "neg")
+                        (compiler-backend-outline-is? data s r "not")
+                        (compiler-backend-outline-is? data s r "div")
+                        (compiler-backend-outline-is? data s r "idiv")
+                        (compiler-backend-outline-is? data s r "mul")
+                        (compiler-backend-outline-is? data s r "imul"))))))]
+            [q : bool
+              (and
+                (not stack?)
+                (or
+                  (= lc 113)
+                  (!= (bit-and ops.regs compiler-backend-outline-reg-q) 0)))]
+            [rex : i64
+              (if (or
+                q
+                ext?
+                (!= (bit-and ops.any compiler-backend-outline-reg-rex8) 0))
+                1
+                0)]
+            [xmm? : bool
+              (!= (bit-and ops.any compiler-backend-outline-reg-xmm) 0)]
+            (cond
+              [(and
+                  xmm?
+                  (or
+                    (compiler-backend-outline-is? data s me "movq")
+                    (compiler-backend-outline-is? data s me "movd")))
+                (+
+                  4
+                  (if (or
+                    ext?
+                    (and
+                      (compiler-backend-outline-is? data s me "movq")
+                      (not ops.mem?)))
+                    1
+                    0)
+                  ops.mem-bytes)]
+              [(= c0 118)
+                (+
+                  (cond
+                    [(!= (bit-and ops.any compiler-backend-outline-reg-evex) 0)
+                      4]
+                    [ext? 3]
+                    [else 2])
+                  2
+                  ops.mem-bytes
+                  (if ops.imm?
+                    1
+                    0))]
+              [stack?
+                (cond
+                  [ops.imm?
+                    (if ops.imm-small?
+                      2
+                      5)]
+                  [ops.mem? (+ 2 ops.mem-bytes)]
+                  [else
+                    (if ext?
+                      2
+                      1)])]
+              [(compiler-backend-outline-sse? data s me)
+                (compiler-backend-outline-sse-bytes data s me (& ops) rex)]
+              [else
+                (let
+                  [bare? : bool
+                    (or
+                      (compiler-backend-outline-alu? data s me)
+                      (compiler-backend-outline-shift? data s me)
+                      (compiler-backend-outline-is? data s me "mov")
+                      (compiler-backend-outline-is? data s me "test"))]
+                  [r : i64
+                    (if (and
+                      (not bare?)
+                      (or (= lc 98) (= lc 119) (= lc 108) (= lc 113)))
+                      (- me 1)
+                      me)]
+                  [opc : i64
+                    (if (or
+                      (compiler-backend-cold-prefix? data s me "movz")
+                      (compiler-backend-cold-prefix? data s me "movsb")
+                      (compiler-backend-cold-prefix? data s me "movsw")
+                      (compiler-backend-cold-prefix? data s me "set")
+                      (compiler-backend-cold-prefix? data s me "cmov")
+                      (compiler-backend-cold-prefix? data s me "bsf")
+                      (compiler-backend-cold-prefix? data s me "bsr")
+                      (compiler-backend-cold-prefix? data s me "bt")
+                      (compiler-backend-cold-prefix? data s me "xadd")
+                      (compiler-backend-cold-prefix? data s me "cmpxchg")
+                      (and
+                        (compiler-backend-cold-prefix? data s me "imul")
+                        (= ops.count 2)
+                        (not ops.imm?)))
+                      2
+                      1)]
+                  [width : i64
+                    (cond
+                      [(or
+                          (and (= lc 98) (not bare?))
+                          (compiler-backend-cold-prefix? data s me "set"))
+                        1]
+                      [w16 2]
+                      [else 4])]
+                  [reg-dest? : bool (and (>= ops.last 0) (not ops.mem?))]
+                  [acc? : bool
+                    (and
+                      (>= ops.last 0)
+                      (!= (bit-and ops.last compiler-backend-outline-reg-acc) 0))]
+                  [modrm : i64 1]
+                  [imm : i64 0]
+                  (when
+                    ops.imm?
+                    (cond
+                      [(compiler-backend-outline-alu? data s r)
+                        (if (and ops.imm-small? (!= width 1))
+                          (set! imm 1)
+                          (begin
+                            (set!
+                              imm
+                              (if (> width 4)
+                                4
+                                width))
+                            (when acc? (set! modrm 0))))]
+                      [(compiler-backend-outline-is? data s r "test")
+                        (set! imm width)
+                        (when acc? (set! modrm 0))]
+                      [(compiler-backend-outline-is? data s r "mov")
+                        (cond
+                          [(and q ops.imm-wide?) (return 10)]
+                          [(= width 1)
+                            (set! imm 1)
+                            (when reg-dest? (set! modrm 0))]
+                          [(= width 2) (set! imm 2)]
+                          [else
+                            (set! imm 4)
+                            (when (and reg-dest? (not q)) (set! modrm 0))])]
+                      [(compiler-backend-outline-shift? data s r)
+                        (set!
+                          imm
+                          (if ops.imm-one?
+                            0
+                            1))]
+                      [else
+                        (set!
+                          imm
+                          (if ops.imm-small?
+                            1
+                            4))]))
+                  (+
+                    (if w16
+                      1
+                      0)
+                    rex
+                    opc
+                    modrm
+                    ops.mem-bytes
+                    imm))]))]))))
+
+;; A call that never returns and whose return address names an abort row.
+(define (compiler-backend-outline-noreturn-call?
+  [data : (Ptr u8)]
+  [s : i64]
+  [me : i64]
+  [os : i64]
+  [e : i64]) : bool
+  (and
+    (compiler-backend-outline-is? data s me "call")
+    (or
+      (compiler-backend-cold-prefix? data os e ".L_tl_abort_")
+      (compiler-backend-cold-prefix? data os e "tl_panic")
+      (and
+        (compiler-backend-cold-prefix? data os e "tl_")
+        (compiler-backend-outline-contains? data os e "abort")))))
+
+;; True when the operand text names a numeric local label (`1f`, `2b`) or the
+;; location counter `.`: both mean something else at another address.
+(define (compiler-backend-outline-position-bound?
+  [data : (Ptr u8)]
+  [os : i64]
+  [e : i64]) : bool
+  (let
+    [found : bool false]
+    [i : i64 os]
+    (while (and (not found) (< i e))
+      (let
+        [b : i64 (compiler-backend-outline-byte data i)]
+        [prev : i64
+          (if (> i os)
+            (compiler-backend-outline-byte data (- i 1))
+            32)]
+        [next : i64
+          (if (< (+ i 1) e)
+            (compiler-backend-outline-byte data (+ i 1))
+            32)]
+        (cond
+          [(and
+              (= b 46)
+              (not (compiler-backend-outline-word? prev))
+              (not (= prev 46))
+              (not (compiler-backend-outline-word? next)))
+            (set! found true)]
+          [(and
+              (compiler-backend-outline-digit? b)
+              (not (compiler-backend-outline-word? prev))
+              (not (= prev 46))
+              (not (= prev 36)))
+            (let
+              [j : i64 i]
+              (while (and
+                (< j e)
+                (compiler-backend-outline-digit?
+                  (compiler-backend-outline-byte data j)))
+                (+= j 1))
+              (when
+                (and
+                  (< j e)
+                  (let
+                    [c : i64 (compiler-backend-outline-byte data j)]
+                    (or (= c 102) (= c 98)))
+                  (or
+                    (= (+ j 1) e)
+                    (not
+                      (compiler-backend-outline-word?
+                        (compiler-backend-outline-byte data (+ j 1))))))
+                (set! found true))
+              (set! i (- j 1)))]
+          [else unit]))
+      (+= i 1))
+    found))
+
+;; A tail instruction runs unchanged at the shared copy's address.
+(define (compiler-backend-outline-tail-legal?
+  [data : (Ptr u8)]
+  [s : i64]
+  [me : i64]
+  [os : i64]
+  [e : i64]) : bool
+  (not
+    (or
+      (compiler-backend-cold-prefix? data s me "loop")
+      (compiler-backend-cold-prefix? data s me "int")
+      (compiler-backend-cold-prefix? data s me "iret")
+      (compiler-backend-cold-prefix? data s me "lret")
+      (compiler-backend-cold-prefix? data s me "sys")
+      (compiler-backend-cold-prefix? data s me "enter")
+      (compiler-backend-outline-noreturn-call? data s me os e)
+      (compiler-backend-outline-position-bound? data os e))))
+
+;; A helper instruction runs one return address deeper: no control flow, no
+;; implicit stack use, and `%rsp` only as the base of a decimal displacement,
+;; which the helper rebases.
+(define (compiler-backend-outline-helper-legal?
+  [data : (Ptr u8)]
+  [s : i64]
+  [me : i64]
+  [os : i64]
+  [e : i64]) : bool
+  (and
+    (not
+      (or
+        (= (compiler-backend-outline-byte data s) 106)
+        (compiler-backend-cold-prefix? data s me "call")
+        (compiler-backend-cold-prefix? data s me "ret")
+        (compiler-backend-cold-prefix? data s me "loop")
+        (compiler-backend-cold-prefix? data s me "int")
+        (compiler-backend-cold-prefix? data s me "iret")
+        (compiler-backend-cold-prefix? data s me "lret")
+        (compiler-backend-cold-prefix? data s me "sys")
+        (compiler-backend-cold-prefix? data s me "ud2")
+        (compiler-backend-cold-prefix? data s me "enter")
+        (compiler-backend-cold-prefix? data s me "leave")
+        (compiler-backend-cold-prefix? data s me "push")
+        (compiler-backend-cold-prefix? data s me "pop")
+        (compiler-backend-cold-prefix? data s me "hlt")
+        (compiler-backend-outline-position-bound? data os e)))
+    (let
+      [ok : bool true]
+      [i : i64 os]
+      (while (and ok (< i e))
+        (when
+          (and
+            (= (compiler-backend-outline-byte data i) 37)
+            (!=
+              (bit-and
+                (compiler-backend-outline-reg-bits data (+ i 1) e)
+                compiler-backend-outline-reg-rsp)
+              0))
+          (let
+            [open : i64 (- i 1)]
+            [ds : i64 (compiler-backend-rsp-rebase-int-start data os open)]
+            [from : i64
+              (if (>= ds 0)
+                ds
+                open)]
+            [before : i64
+              (if (> from os)
+                (compiler-backend-outline-byte data (- from 1))
+                32)]
+            (set!
+              ok
+              (and
+                (> i os)
+                (= (compiler-backend-outline-byte data open) 40)
+                (compiler-backend-cold-prefix? data (+ i 1) e "rsp")
+                (or (= before 32) (= before 44))))))
+        (+= i 1))
+      ok)))
+
+(define (compiler-backend-outline-empty) : CompilerBackendOutline
+  (CompilerBackendOutline
+    (outline_i64s.with-capacity 4096)
+    (outline_i64s.with-capacity 4096)
+    (outline_i64s.with-capacity 4096)
+    (outline_i64s.with-capacity 4096)
+    (outline_i64s.with-capacity 4096)
+    (outline_i64s.with-capacity 4096)
+    (outline_i64s.with-capacity 4096)
+    (outline_i64s.with-capacity 4096)
+    (outline_i64s.with-capacity 1024)
+    (outline_i64s.with-capacity 1024)
+    (outline_i64s.with-capacity 1024)
+    (outline_i64s.with-capacity 1024)
+    (backend_label_i64_map.with-capacity 4096)
+    (outline_i64s.with-capacity 256)
+    (outline_i64s.with-capacity 256)
+    (outline_i64s.with-capacity 1024)
+    (outline_i64s.with-capacity 1024)
+    (outline_i64s.with-capacity 1024)
+    (outline_i64s.with-capacity 1024)
+    (backend_label_i64_map.with-capacity 4096)
+    (backend_label_i64_map.with-capacity 1024)
+    (outline_i64s.with-capacity 1024)
+    (outline_i64s.with-capacity 1024)
+    (outline_i64s.with-capacity 64)
+    (outline_i64s.with-capacity 64)
+    0
+    0))
+
+(define (compiler-backend-outline-at [v : (& outline_i64s.Vec)] [i : i64]) : i64
+  (outline_i64s.get v i 0))
+
+(define (compiler-backend-outline-last
+  [v : (& outline_i64s.Vec)]
+  [fallback : i64]) : i64
+  (outline_i64s.get v (- v.len 1) fallback))
+
+(define (compiler-backend-outline-or!
+  [v : (&mut outline_i64s.Vec)]
+  [i : i64]
+  [bits : i64]) : unit
+  (outline_i64s.set-ref! v i (bit-or (outline_i64s.get v i 0) bits)))
+
+;; True when the `n` bytes at `a` equal the `n` bytes at `b`.
+(define (compiler-backend-outline-same?
+  [data : (Ptr u8)]
+  [a : i64]
+  [b : i64]
+  [n : i64]) : bool
+  (let
+    [same : bool true]
+    [i : i64 0]
+    (while (and same (< i n))
+      (set!
+        same
+        (=
+          (compiler-backend-outline-byte data (+ a i))
+          (compiler-backend-outline-byte data (+ b i))))
+      (+= i 1))
+    same))
+
+;; The token of the instruction text [s,e): equal texts share one token.
+(define (compiler-backend-outline-intern!
+  [st : (&mut CompilerBackendOutline)]
+  [data : (Ptr u8)]
+  [line : i64]
+  [s : i64]
+  [me : i64]
+  [os : i64]
+  [e : i64]) : i64
+  (let
+    [h : i64 (compiler-backend-outline-hash data s e)]
+    [found : i64 -1]
+    (while (< found 0)
+      (let
+        [entry : i64 (backend_label_i64_map.get-value-or (& st.tokens) h 0)]
+        (if (= entry 0)
+          (let
+            [token : i64 st.token-line.len]
+            (backend_label_i64_map.insert-ref! (&mut st.tokens) h (+ token 1))
+            (outline_i64s.push-ref! (&mut st.token-line) line)
+            (outline_i64s.push-ref!
+              (&mut st.token-bytes)
+              (compiler-backend-outline-insn-bytes data s e 0))
+            (outline_i64s.push-ref!
+              (&mut st.token-helper)
+              (if (compiler-backend-outline-helper-legal? data s me os e)
+                (compiler-backend-outline-insn-bytes data s e 8)
+                -1))
+            (outline_i64s.push-ref!
+              (&mut st.token-tail)
+              (if (compiler-backend-outline-tail-legal? data s me os e)
+                1
+                0))
+            (set! found token))
+          (let
+            [other : i64
+              (compiler-backend-outline-at (& st.token-line) (- entry 1))]
+            [os2 : i64 (compiler-backend-outline-at (& st.first) other)]
+            [oe : i64 (compiler-backend-outline-at (& st.last) other)]
+            (if (and
+              (= (- oe os2) (- e s))
+              (compiler-backend-outline-same? data os2 s (- e s)))
+              (set! found (- entry 1))
+              (+= h 1))))))
+    found))
+
+(define (compiler-backend-outline-fn-skip?
+  [st : (& CompilerBackendOutline)]
+  [f : i64]) : bool
+  (let
+    [flags : i64 (compiler-backend-outline-at (& st.fn-flags) f)]
+    (or
+      (!=
+        (bit-and
+          flags
+          (bit-or
+            compiler-backend-outline-fn-excluded
+            compiler-backend-outline-fn-neg-rsp))
+        0)
+      (and
+        (!= (bit-and flags compiler-backend-outline-fn-neg-rbp) 0)
+        (= (bit-and flags compiler-backend-outline-fn-sub-rsp) 0)))))
+
+;; Runtime fragments and stdlib crypto functions keep their own instructions.
+(define (compiler-backend-outline-excluded-name?
+  [data : (Ptr u8)]
+  [s : i64]
+  [e : i64]) : bool
+  (or
+    (compiler-backend-cold-prefix? data s e "tl_")
+    (compiler-backend-cold-prefix? data s e "__tl_")
+    (compiler-backend-cold-prefix? data s e "_tl_start")
+    (compiler-backend-cold-prefix? data s e "_tl_stdlib_crypto_")))
+
+;; Every `.L` label named outside a branch may be a computed jump's target.
+(define (compiler-backend-outline-note-refs!
+  [st : (&mut CompilerBackendOutline)]
+  [data : (Ptr u8)]
+  [s : i64]
+  [e : i64]) : unit
+  (let
+    [i : i64 s]
+    (while (< (+ i 1) e)
+      (if (and
+        (= (compiler-backend-outline-byte data i) 46)
+        (= (compiler-backend-outline-byte data (+ i 1)) 76)
+        (or
+          (= i s)
+          (not
+            (compiler-backend-tail-symbol-byte?
+              (compiler-backend-outline-byte data (- i 1))))))
+        (let
+          [j : i64 (+ i 2)]
+          (while (and
+            (< j e)
+            (compiler-backend-tail-symbol-byte?
+              (compiler-backend-outline-byte data j)))
+            (+= j 1))
+          (backend_label_i64_map.insert-ref!
+            (&mut st.taken)
+            (compiler-backend-outline-hash data i j)
+            1)
+          (set! i j))
+        (+= i 1)))))
+
+(define (compiler-backend-outline-new-block!
+  [st : (&mut CompilerBackendOutline)]
+  [f : i64]) : i64
+  (outline_i64s.push-ref! (&mut st.block-fn) f)
+  (outline_i64s.push-ref! (&mut st.block-term) -1)
+  (outline_i64s.push-ref! (&mut st.block-target) 0)
+  (outline_i64s.push-ref! (&mut st.block-flags) 0)
+  (- st.block-fn.len 1))
+
+;; Negative `%rsp`/`%rbp` displacements (red-zone use) and frame allocation.
+(define (compiler-backend-outline-frame-flags
+  [data : (Ptr u8)]
+  [s : i64]
+  [me : i64]
+  [os : i64]
+  [e : i64]) : i64
+  (let
+    [flags : i64
+      (if (and
+        (compiler-backend-outline-is? data s me "subq")
+        (> (- e os) 5)
+        (compiler-backend-outline-is? data (- e 6) e ", %rsp"))
+        compiler-backend-outline-fn-sub-rsp
+        0)]
+    [i : i64 os]
+    (while (< i e)
+      (when
+        (= (compiler-backend-outline-byte data i) 40)
+        (let
+          [ds : i64 (compiler-backend-rsp-rebase-int-start data os i)]
+          (when
+            (and (>= ds 0) (= (compiler-backend-outline-byte data ds) 45))
+            (cond
+              [(compiler-backend-cold-prefix? data i e "(%rsp")
+                (set! flags (bit-or flags compiler-backend-outline-fn-neg-rsp))]
+              [(compiler-backend-cold-prefix? data i e "(%rbp")
+                (set! flags (bit-or flags compiler-backend-outline-fn-neg-rbp))]
+              [else unit]))))
+      (+= i 1))
+    flags))
+
+;; An instruction line as the emitter spells it: a four-space indent, a
+;; lowercase mnemonic, and no tab, `;` statement separator or `#` comment that
+;; could hide a second instruction from the checks above.
+(define (compiler-backend-outline-plain?
+  [data : (Ptr u8)]
+  [pos : i64]
+  [first : i64]
+  [last : i64]) : bool
+  (let
+    [b0 : i64 (compiler-backend-outline-byte data first)]
+    (and
+      (= first (+ pos 4))
+      (>= b0 97)
+      (<= b0 122)
+      (all? [i (iterator.range first last)]
+        (let
+          [b : i64 (compiler-backend-outline-byte data i)]
+          (not (or (= b 9) (= b 59) (= b 35))))))))
+
+;; True for a section name (after `.section`) that holds code.
+(define (compiler-backend-outline-code-name?
+  [data : (Ptr u8)]
+  [s : i64]
+  [e : i64]) : bool
+  (let
+    [n : i64
+      (if (and (< s e) (= (compiler-backend-outline-byte data s) 34))
+        (+ s 1)
+        s)]
+    (compiler-backend-cold-prefix? data n e ".text")))
+
+;; One instruction line of function `f` in block `blk`; returns true when it
+;; ends the block.
+(define (compiler-backend-outline-scan-insn!
+  [st : (&mut CompilerBackendOutline)]
+  [data : (Ptr u8)]
+  [line : i64]
+  [f : i64]
+  [blk : i64]
+  [first : i64]
+  [last : i64]) : bool
+  (let
+    [me : i64 (compiler-backend-cold-token-end data first last)]
+    [os : i64 me]
+    (while (and (< os last) (= (compiler-backend-outline-byte data os) 32))
+      (+= os 1))
+    (let
+      [oe : i64 (compiler-backend-cold-token-end data os last)]
+      [c0 : i64 (compiler-backend-outline-byte data first)]
+      [jmp? : bool (compiler-backend-outline-is? data first me "jmp")]
+      [ret? : bool
+        (or
+          (compiler-backend-outline-is? data first me "ret")
+          (compiler-backend-outline-is? data first me "retq"))]
+      [cond? : bool
+        (and
+          (not jmp?)
+          (or (= c0 106) (compiler-backend-cold-prefix? data first me "loop")))]
+      [indirect? : bool
+        (and jmp? (< os last) (= (compiler-backend-outline-byte data os) 42))]
+      [final? : bool
+        (or
+          jmp?
+          ret?
+          (compiler-backend-outline-is? data first me "ud2")
+          (compiler-backend-outline-noreturn-call? data first me os last))]
+      (compiler-backend-outline-or!
+        (&mut st.fn-flags)
+        f
+        (compiler-backend-outline-frame-flags data first me os last))
+      ;; A caller of stdlib crypto keeps the frame its stack scrub measures.
+      (when
+        (and
+          (or jmp? (compiler-backend-outline-is? data first me "call"))
+          (compiler-backend-cold-prefix? data os last "_tl_stdlib_crypto_"))
+        (compiler-backend-outline-or!
+          (&mut st.fn-flags)
+          f
+          compiler-backend-outline-fn-excluded))
+      (unless
+        (or jmp? cond? (compiler-backend-outline-is? data first me "call"))
+        (compiler-backend-outline-note-refs! st data os last))
+      (let
+        [tok : i64
+          (compiler-backend-outline-intern! st data line first me os last)]
+        (outline_i64s.set-ref! (&mut st.token) line tok))
+      (when
+        (or final? cond?)
+        (outline_i64s.set-ref! (&mut st.block-term) blk line)
+        (when
+          (and (or jmp? cond?) (not indirect?))
+          (outline_i64s.set-ref!
+            (&mut st.block-target)
+            blk
+            (compiler-backend-outline-hash data os oe)))
+        (compiler-backend-outline-or!
+          (&mut st.block-flags)
+          blk
+          (bit-or
+            (if final?
+              compiler-backend-outline-block-final
+              0)
+            (if indirect?
+              compiler-backend-outline-block-indirect
+              0)
+            (if (or ret? (and jmp? (not indirect?)))
+              compiler-backend-outline-block-tail
+              0))))
+      (or final? cond?))))
+
+;; Lines, functions, blocks and tokens of the program text.
+(define (compiler-backend-outline-scan!
+  [st : (&mut CompilerBackendOutline)]
+  [data : (Ptr u8)]
+  [length : i64]) : unit
+  (let
+    [pos : i64 0]
+    [code : bool true]
+    [sections : outline_i64s.Vec (outline_i64s.with-capacity 8)]
+    [opaque : i64 0]
+    [f : i64 -1]
+    [blk : i64 -1]
+    [open? : bool false]
+    [filled? : bool false]
+    [prefix? : bool false]
+    (while (< pos length)
+      (let
+        [nl : i64
+          (be_operand.compiler-backend-peephole-scan-byte-range
+            data
+            pos
+            length
+            10)]
+        [first : i64 (compiler-backend-cold-line-first data pos nl)]
+        [last : i64 (compiler-backend-cold-line-last data first nl)]
+        [line : i64 st.start.len]
+        [kind : i64 0]
+        [owner : i64 -1]
+        [b0 : i64
+          (if (< first last)
+            (compiler-backend-outline-byte data first)
+            35)]
+        (outline_i64s.push-ref! (&mut st.start) pos)
+        (outline_i64s.push-ref! (&mut st.first) first)
+        (outline_i64s.push-ref! (&mut st.last) last)
+        (outline_i64s.push-ref! (&mut st.token) -1)
+        (cond
+          [(= b0 35) unit]
+          [(and
+              (= first pos)
+              (= (compiler-backend-outline-byte data (- last 1)) 58))
+            (when
+              code
+              (let
+                [ne : i64 (- last 1)]
+                [quoted : i64
+                  (if (= b0 34)
+                    (+ first 1)
+                    first)]
+                [numeric? : bool (compiler-backend-outline-digit? b0)]
+                (cond
+                  [(and
+                    (not numeric?)
+                    (not (compiler-backend-cold-prefix? data first ne ".L")))
+                    (set! f st.fn-flags.len)
+                    (outline_i64s.push-ref!
+                      (&mut st.fn-flags)
+                      (if (compiler-backend-outline-excluded-name?
+                        data
+                        quoted
+                        ne)
+                        compiler-backend-outline-fn-excluded
+                        0))
+                    (outline_i64s.push-ref! (&mut st.fn-block) st.block-fn.len)
+                    (set! blk (compiler-backend-outline-new-block! st f))
+                    (set! open? true)
+                    (set! filled? false)]
+                  [(< f 0) unit]
+                  [else
+                    (when
+                      (compiler-backend-cold-prefix?
+                        data
+                        first
+                        ne
+                        ".L_tl_seh_end_")
+                      (compiler-backend-outline-or!
+                        (&mut st.fn-flags)
+                        f
+                        compiler-backend-outline-fn-unwind))
+                    (when
+                      (or (not open?) filled?)
+                      (set! blk (compiler-backend-outline-new-block! st f))
+                      (set! open? true)
+                      (set! filled? false))
+                    (when
+                      numeric?
+                      (compiler-backend-outline-or!
+                        (&mut st.fn-flags)
+                        f
+                        compiler-backend-outline-fn-numeric))])
+                (when
+                  (>= f 0)
+                  (set! kind compiler-backend-outline-line-label)
+                  (set! owner blk)
+                  (backend_label_i64_map.insert-ref!
+                    (&mut st.labels)
+                    (compiler-backend-outline-hash data first ne)
+                    (+ blk 1)))))]
+          [(= b0 46)
+            (let
+              [de : i64 (compiler-backend-cold-token-end data first last)]
+              [ns : i64 de]
+              (while (and
+                (< ns last)
+                (= (compiler-backend-outline-byte data ns) 32))
+                (+= ns 1))
+              (cond
+                [(or
+                    (compiler-backend-cold-prefix? data first de ".rept")
+                    (compiler-backend-cold-prefix? data first de ".irp")
+                    (compiler-backend-cold-prefix? data first de ".macro")
+                    (compiler-backend-cold-prefix? data first de ".if"))
+                  (+= opaque 1)]
+                [(or
+                    (compiler-backend-outline-is? data first de ".endr")
+                    (compiler-backend-outline-is? data first de ".endm")
+                    (compiler-backend-outline-is? data first de ".endif"))
+                  (-= opaque 1)]
+                [(compiler-backend-outline-is? data first de ".section")
+                  (set! code (compiler-backend-outline-code-name? data ns last))]
+                [(compiler-backend-outline-is? data first de ".pushsection")
+                  (outline_i64s.push-ref!
+                    (&mut sections)
+                    (if code
+                      1
+                      0))
+                  (set! code (compiler-backend-outline-code-name? data ns last))]
+                [(compiler-backend-outline-is? data first de ".popsection")
+                  (set!
+                    code
+                    (!= (compiler-backend-outline-last (& sections) 1) 0))
+                  (when
+                    (> sections.len 0)
+                    (set! sections.len (- sections.len 1)))]
+                [(compiler-backend-outline-is? data first de ".text")
+                  (set! code true)]
+                [(or
+                    (compiler-backend-outline-is? data first de ".data")
+                    (compiler-backend-outline-is? data first de ".bss"))
+                  (set! code false)]
+                [(or
+                    (compiler-backend-outline-is? data first de ".long")
+                    (compiler-backend-outline-is? data first de ".quad")
+                    (compiler-backend-outline-is? data first de ".rva")
+                    (compiler-backend-outline-is? data first de ".int"))
+                  (compiler-backend-outline-note-refs! st data ns last)]
+                [(compiler-backend-outline-is? data first de ".size")
+                  (when code (set! f -1) (set! blk -1))]
+                [(and
+                    (>= f 0)
+                    (compiler-backend-outline-is? data first de ".seh_endproc"))
+                  (compiler-backend-outline-or!
+                    (&mut st.fn-flags)
+                    f
+                    compiler-backend-outline-fn-unwind)]
+                [else unit])
+              (when
+                (and code (>= f 0))
+                (set! kind compiler-backend-outline-line-barrier)
+                (set! owner blk)))]
+          [(and code (>= f 0))
+            (when
+              (not open?)
+              (set! blk (compiler-backend-outline-new-block! st f))
+              (set! open? true))
+            (set! filled? true)
+            (set! owner blk)
+            (set!
+              kind
+              (if (or
+                prefix?
+                (> opaque 0)
+                (not (compiler-backend-outline-plain? data pos first last)))
+                compiler-backend-outline-line-barrier
+                compiler-backend-outline-line-insn))
+            (set!
+              prefix?
+              (compiler-backend-outline-prefix-line?
+                data
+                first
+                (compiler-backend-cold-token-end data first last)))
+            (when prefix? (set! kind compiler-backend-outline-line-barrier))
+            (when
+              (compiler-backend-outline-scan-insn!
+                st
+                data
+                line
+                f
+                blk
+                first
+                last)
+              (set! open? false))]
+          [else unit])
+        (when
+          (and (> opaque 0) (!= kind 0))
+          (set! kind compiler-backend-outline-line-barrier))
+        (outline_i64s.push-ref! (&mut st.kind) kind)
+        (outline_i64s.push-ref! (&mut st.block) owner)
+        (outline_i64s.push-ref! (&mut st.edit) 0)
+        (outline_i64s.push-ref! (&mut st.mark) 0)
+        (set!
+          pos
+          (if (< nl length)
+            (+ nl 1)
+            length))))
+    (outline_i64s.push-ref! (&mut st.start) length)
+    (outline_i64s.push-ref! (&mut st.fn-block) st.block-fn.len)
+    ;; Address-taken blocks; a branch to a block of its own function is local.
+    (for [line (iterator.range 0 st.kind.len)]
+      (when
+        (=
+          (compiler-backend-outline-at (& st.kind) line)
+          compiler-backend-outline-line-label)
+        (when
+          (backend_label_i64_map.contains?
+            (& st.taken)
+            (compiler-backend-outline-hash
+              data
+              (compiler-backend-outline-at (& st.first) line)
+              (- (compiler-backend-outline-at (& st.last) line) 1)))
+          (compiler-backend-outline-or!
+            (&mut st.block-flags)
+            (compiler-backend-outline-at (& st.block) line)
+            compiler-backend-outline-block-taken))))
+    (for [b (iterator.range 0 st.block-fn.len)]
+      (when
+        (>= (compiler-backend-outline-local-target (& st) b) 0)
+        (outline_i64s.set-ref!
+          (&mut st.block-flags)
+          b
+          (bit-and
+            (compiler-backend-outline-at (& st.block-flags) b)
+            (bit-not compiler-backend-outline-block-tail)))))))
+
+;; The block of `b`'s direct branch target when it is in `b`'s function, or -1.
+(define (compiler-backend-outline-local-target
+  [st : (& CompilerBackendOutline)]
+  [b : i64]) : i64
+  (let
+    [t : i64 (compiler-backend-outline-at (& st.block-target) b)]
+    [w : i64
+      (if (= t 0)
+        -1
+        (- (backend_label_i64_map.get-value-or (& st.labels) t 0) 1))]
+    (if (and
+      (>= w 0)
+      (=
+        (compiler-backend-outline-at (& st.block-fn) w)
+        (compiler-backend-outline-at (& st.block-fn) b)))
+      w
+      -1)))
+
+;; Successor `k` of CFG node `v`: -1 for an absent edge, -2 past the last. A
+;; function's node after the blocks dispatches its computed jumps to every
+;; address-taken block of the function.
+(define (compiler-backend-outline-succ
+  [st : (& CompilerBackendOutline)]
+  [nblocks : i64]
+  [v : i64]
+  [k : i64]) : i64
+  (if (< v nblocks)
+    (let
+      [f : i64 (compiler-backend-outline-at (& st.block-fn) v)]
+      [flags : i64 (compiler-backend-outline-at (& st.block-flags) v)]
+      (cond
+        [(= k 0)
+          (if (and
+            (= (bit-and flags compiler-backend-outline-block-final) 0)
+            (< (+ v 1) nblocks)
+            (= (compiler-backend-outline-at (& st.block-fn) (+ v 1)) f))
+            (+ v 1)
+            -1)]
+        [(= k 1) (compiler-backend-outline-local-target st v)]
+        [(= k 2)
+          (if (= (bit-and flags compiler-backend-outline-block-indirect) 0)
+            -1
+            (+ nblocks f))]
+        [else -2]))
+    (let
+      [f : i64 (- v nblocks)]
+      [w : i64 (+ (compiler-backend-outline-at (& st.fn-block) f) k)]
+      (cond
+        [(>= w (compiler-backend-outline-at (& st.fn-block) (+ f 1))) -2]
+        [(=
+            (bit-and
+              (compiler-backend-outline-at (& st.block-flags) w)
+              compiler-backend-outline-block-taken)
+            0)
+          -1]
+        [else w]))))
+
+(define (compiler-backend-outline-filled [n : i64] [value : i64]) : outline_i64s.Vec
+  (let
+    [v : outline_i64s.Vec (outline_i64s.with-capacity (+ n 1))]
+    (for [_ (iterator.range 0 n)]
+      (outline_i64s.push-ref! (&mut v) value))
+    v))
+
+;; Iterative Tarjan SCC: a block in a cycle of the CFG is a loop block.
+(define (compiler-backend-outline-loops! [st : (&mut CompilerBackendOutline)]) : unit
+  (let
+    [nblocks : i64 st.block-fn.len]
+    [nodes : i64 (+ nblocks st.fn-flags.len)]
+    [index : outline_i64s.Vec (compiler-backend-outline-filled nodes -1)]
+    [low : outline_i64s.Vec (compiler-backend-outline-filled nodes 0)]
+    [on : outline_i64s.Vec (compiler-backend-outline-filled nodes 0)]
+    [stack : outline_i64s.Vec (outline_i64s.with-capacity 256)]
+    [work-v : outline_i64s.Vec (outline_i64s.with-capacity 256)]
+    [work-k : outline_i64s.Vec (outline_i64s.with-capacity 256)]
+    [counter : i64 0]
+    (for [root (iterator.range 0 nodes)]
+      (when
+        (< (compiler-backend-outline-at (& index) root) 0)
+        (outline_i64s.set-ref! (&mut index) root counter)
+        (outline_i64s.set-ref! (&mut low) root counter)
+        (+= counter 1)
+        (outline_i64s.push-ref! (&mut stack) root)
+        (outline_i64s.set-ref! (&mut on) root 1)
+        (outline_i64s.push-ref! (&mut work-v) root)
+        (outline_i64s.push-ref! (&mut work-k) 0)
+        (while (> work-v.len 0)
+          (let
+            [top : i64 (- work-v.len 1)]
+            [v : i64 (compiler-backend-outline-at (& work-v) top)]
+            [k : i64 (compiler-backend-outline-at (& work-k) top)]
+            [w : i64 (compiler-backend-outline-succ (& st) nblocks v k)]
+            (if (= w -2)
+              (let
+                [lv : i64 (compiler-backend-outline-at (& low) v)]
+                (set! work-v.len top)
+                (set! work-k.len top)
+                (when
+                  (> top 0)
+                  (let
+                    [u : i64 (compiler-backend-outline-at (& work-v) (- top 1))]
+                    (when
+                      (< lv (compiler-backend-outline-at (& low) u))
+                      (outline_i64s.set-ref! (&mut low) u lv))))
+                (when
+                  (= lv (compiler-backend-outline-at (& index) v))
+                  (let
+                    [multi? : bool
+                      (!=
+                        (compiler-backend-outline-at (& stack) (- stack.len 1))
+                        v)]
+                    [done? : bool false]
+                    (while (not done?)
+                      (let
+                        [x : i64
+                          (compiler-backend-outline-at
+                            (& stack)
+                            (- stack.len 1))]
+                        (set! stack.len (- stack.len 1))
+                        (outline_i64s.set-ref! (&mut on) x 0)
+                        (when
+                          (and multi? (< x nblocks))
+                          (compiler-backend-outline-or!
+                            (&mut st.block-flags)
+                            x
+                            compiler-backend-outline-block-loop))
+                        (set! done? (= x v)))))))
+              (begin
+                (outline_i64s.set-ref! (&mut work-k) top (+ k 1))
+                (when
+                  (>= w 0)
+                  (when
+                    (and (= w v) (< v nblocks))
+                    (compiler-backend-outline-or!
+                      (&mut st.block-flags)
+                      v
+                      compiler-backend-outline-block-loop))
+                  (cond
+                    [(< (compiler-backend-outline-at (& index) w) 0)
+                      (outline_i64s.set-ref! (&mut index) w counter)
+                      (outline_i64s.set-ref! (&mut low) w counter)
+                      (+= counter 1)
+                      (outline_i64s.push-ref! (&mut stack) w)
+                      (outline_i64s.set-ref! (&mut on) w 1)
+                      (outline_i64s.push-ref! (&mut work-v) w)
+                      (outline_i64s.push-ref! (&mut work-k) 0)]
+                    [(!= (compiler-backend-outline-at (& on) w) 0)
+                      (let
+                        [iw : i64 (compiler-backend-outline-at (& index) w)]
+                        (when
+                          (< iw (compiler-backend-outline-at (& low) v))
+                          (outline_i64s.set-ref! (&mut low) v iw)))]
+                    [else unit]))))))))))
+
+;; The line of `b`'s suffix instruction at `depth` (1 is the terminator).
+(define (compiler-backend-outline-suffix-line
+  [st : (& CompilerBackendOutline)]
+  [b : i64]
+  [depth : i64]) : i64
+  (let
+    [line : i64 (compiler-backend-outline-at (& st.block-term) b)]
+    [d : i64 1]
+    (while (< d depth)
+      (-= line 1)
+      (when
+        (=
+          (compiler-backend-outline-at (& st.kind) line)
+          compiler-backend-outline-line-insn)
+        (+= d 1)))
+    line))
+
+;; osD: share block suffixes ending in `ret` or a tail `jmp` through a trie
+;; keyed by (parent node, token); a node remembers the first block reaching it.
+(define (compiler-backend-outline-tails! [st : (&mut CompilerBackendOutline)]) : unit
+  (let
+    [nblocks : i64 st.block-fn.len]
+    [k : i64 (+ st.token-line.len 1)]
+    [trie : backend_label_i64_map.Map
+      (backend_label_i64_map.with-capacity 4096)]
+    [canon : outline_i64s.Vec (outline_i64s.with-capacity 4096)]
+    [depths : outline_i64s.Vec (compiler-backend-outline-filled nblocks 0)]
+    [canons : outline_i64s.Vec (compiler-backend-outline-filled nblocks 0)]
+    (for [b (iterator.range 0 nblocks)]
+      (when
+        (and
+          (!=
+            (bit-and
+              (compiler-backend-outline-at (& st.block-flags) b)
+              compiler-backend-outline-block-tail)
+            0)
+          (not
+            (compiler-backend-outline-fn-skip?
+              (& st)
+              (compiler-backend-outline-at (& st.block-fn) b))))
+        (let
+          [line : i64 (compiler-backend-outline-at (& st.block-term) b)]
+          [node : i64 0]
+          [depth : i64 0]
+          [bytes : i64 0]
+          [best : i64 0]
+          [best-canon : i64 -1]
+          [going? : bool true]
+          (while (and
+            going?
+            (>= line 0)
+            (< depth compiler-backend-outline-max-tail))
+            (let
+              [kind : i64 (compiler-backend-outline-at (& st.kind) line)]
+              (cond
+                [(= kind 0) (-= line 1)]
+                [(or
+                    (!= kind compiler-backend-outline-line-insn)
+                    (!= (compiler-backend-outline-at (& st.block) line) b)
+                    (!= (compiler-backend-outline-at (& st.edit) line) 0))
+                  (set! going? false)]
+                [else
+                  (let
+                    [tok : i64 (compiler-backend-outline-at (& st.token) line)]
+                    (if (=
+                      (compiler-backend-outline-at (& st.token-tail) tok)
+                      0)
+                      (set! going? false)
+                      (let
+                        [key : i64 (+ (* node k) tok)]
+                        [found : i64
+                          (backend_label_i64_map.get-value-or (& trie) key 0)]
+                        (+= depth 1)
+                        (+=
+                          bytes
+                          (compiler-backend-outline-at (& st.token-bytes) tok))
+                        (if (= found 0)
+                          (begin
+                            (outline_i64s.push-ref! (&mut canon) b)
+                            (set! node canon.len)
+                            (backend_label_i64_map.insert-ref!
+                              (&mut trie)
+                              key
+                              node))
+                          (set! node found))
+                        (let
+                          [c : i64
+                            (compiler-backend-outline-at (& canon) (- node 1))]
+                          (when
+                            (and (!= c b) (> bytes 5))
+                            (set! best depth)
+                            (set! best-canon c)))
+                        (-= line 1))))])))
+          (when
+            (> best 0)
+            (outline_i64s.set-ref! (&mut depths) b best)
+            (outline_i64s.set-ref! (&mut canons) b best-canon)
+            (let
+              [home : i64 best-canon]
+              (while (>= (compiler-backend-outline-at (& depths) home) best)
+                (set! home (compiler-backend-outline-at (& canons) home)))
+              (let
+                [anchor : i64
+                  (compiler-backend-outline-suffix-line (& st) home best)]
+                (when
+                  (= (compiler-backend-outline-at (& st.mark) anchor) 0)
+                  (set! st.tails (+ st.tails 1))
+                  (outline_i64s.set-ref! (&mut st.mark) anchor st.tails))
+                (let
+                  [label : i64 (compiler-backend-outline-at (& st.mark) anchor)]
+                  [at : i64 (compiler-backend-outline-at (& st.block-term) b)]
+                  [d : i64 1]
+                  (while (<= d best)
+                    (when
+                      (=
+                        (compiler-backend-outline-at (& st.kind) at)
+                        compiler-backend-outline-line-insn)
+                      (outline_i64s.set-ref!
+                        (&mut st.edit)
+                        at
+                        (if (= d best)
+                          (+ 2 (* 4 label))
+                          1))
+                      (+= d 1))
+                    (-= at 1)))))))))))
+
+(define (compiler-backend-outline-separate!
+  [st : (&mut CompilerBackendOutline)]) : unit
+  (when
+    (and (> st.seq.len 0) (>= (compiler-backend-outline-last (& st.seq) -1) 0))
+    (outline_i64s.push-ref! (&mut st.seq) -1)
+    (outline_i64s.push-ref! (&mut st.seq-line) -1)))
+
+;; osC runs: helper-legal, unedited instructions of non-loop blocks.
+(define (compiler-backend-outline-runs! [st : (&mut CompilerBackendOutline)]) : unit
+  (let
+    [run-block : i64 -1]
+    (for [line (iterator.range 0 st.kind.len)]
+      (let
+        [kind : i64 (compiler-backend-outline-at (& st.kind) line)]
+        (unless
+          (= kind 0)
+          (let
+            [b : i64 (compiler-backend-outline-at (& st.block) line)]
+            [tok : i64 (compiler-backend-outline-at (& st.token) line)]
+            (if (and
+              (= kind compiler-backend-outline-line-insn)
+              (>= b 0)
+              (=
+                (bit-and
+                  (compiler-backend-outline-at (& st.block-flags) b)
+                  compiler-backend-outline-block-loop)
+                0)
+              (let
+                [f : i64 (compiler-backend-outline-at (& st.block-fn) b)]
+                (and
+                  (not (compiler-backend-outline-fn-skip? (& st) f))
+                  (=
+                    (bit-and
+                      (compiler-backend-outline-at (& st.fn-flags) f)
+                      compiler-backend-outline-fn-numeric)
+                    0)))
+              (= (compiler-backend-outline-at (& st.edit) line) 0)
+              (= (compiler-backend-outline-at (& st.mark) line) 0)
+              (>= (compiler-backend-outline-at (& st.token-helper) tok) 0))
+              (begin
+                (when
+                  (!= b run-block)
+                  (compiler-backend-outline-separate! st)
+                  (set! run-block b))
+                (outline_i64s.push-ref! (&mut st.seq) tok)
+                (outline_i64s.push-ref! (&mut st.seq-line) line))
+              (begin
+                (compiler-backend-outline-separate! st)
+                (set! run-block -1)))))))
+    (compiler-backend-outline-separate! st)))
+
+;; osC candidates: repeated n-grams of the runs, with their occurrences.
+(defstruct CompilerBackendOutlineCands
+  (occ outline_i64s.Vec)
+  (off outline_i64s.Vec)
+  (count outline_i64s.Vec)
+  (len outline_i64s.Vec)
+  (bytes outline_i64s.Vec)
+  (helper outline_i64s.Vec))
+
+;; One mining level: the occurrences of each repeated n-gram, grouped.
+(defstruct CompilerBackendOutlineLevel
+  (pos outline_i64s.Vec)
+  (off outline_i64s.Vec)
+  (bytes outline_i64s.Vec)
+  (helper outline_i64s.Vec))
+
+(define (compiler-backend-outline-level-clear!
+  [lv : (&mut CompilerBackendOutlineLevel)]) : unit
+  (set! lv.pos.len 0)
+  (set! lv.off.len 0)
+  (set! lv.bytes.len 0)
+  (set! lv.helper.len 0)
+  (outline_i64s.push-ref! (&mut lv.off) 0))
+
+(define (compiler-backend-outline-benefit
+  [n : i64]
+  [bytes : i64]
+  [helper : i64]) : i64
+  (- (* n (- bytes 5)) (+ helper 1)))
+
+;; Groups raw groups `raw` of the pairs (group, position) with two or more
+;; members into `next`, recording each profitable n-gram of `len` tokens.
+(define (compiler-backend-outline-regroup!
+  [pair-g : (& outline_i64s.Vec)]
+  [pair-p : (& outline_i64s.Vec)]
+  [raw-bytes : (& outline_i64s.Vec)]
+  [raw-helper : (& outline_i64s.Vec)]
+  [next : (&mut CompilerBackendOutlineLevel)]
+  [cands : (&mut CompilerBackendOutlineCands)]
+  [len : i64]) : unit
+  (let
+    [nraw : i64 raw-bytes.len]
+    [count : outline_i64s.Vec (compiler-backend-outline-filled nraw 0)]
+    [group : outline_i64s.Vec (compiler-backend-outline-filled nraw -1)]
+    [cursor : outline_i64s.Vec (outline_i64s.with-capacity 64)]
+    (compiler-backend-outline-level-clear! next)
+    (for [i (iterator.range 0 pair-g.len)]
+      (let
+        [g : i64 (compiler-backend-outline-at pair-g i)]
+        (outline_i64s.set-ref!
+          (&mut count)
+          g
+          (+ (compiler-backend-outline-at (& count) g) 1))))
+    (for [r (iterator.range 0 nraw)]
+      (let
+        [n : i64 (compiler-backend-outline-at (& count) r)]
+        (when
+          (>= n 2)
+          (let
+            [start : i64 (compiler-backend-outline-last (& next.off) 0)]
+            (outline_i64s.set-ref! (&mut group) r next.bytes.len)
+            (outline_i64s.push-ref! (&mut cursor) start)
+            (outline_i64s.push-ref! (&mut next.off) (+ start n))
+            (outline_i64s.push-ref!
+              (&mut next.bytes)
+              (compiler-backend-outline-at raw-bytes r))
+            (outline_i64s.push-ref!
+              (&mut next.helper)
+              (compiler-backend-outline-at raw-helper r))))))
+    (for [_ (iterator.range 0 (compiler-backend-outline-last (& next.off) 0))]
+      (outline_i64s.push-ref! (&mut next.pos) 0))
+    (for [i (iterator.range 0 pair-g.len)]
+      (let
+        [g : i64
+          (compiler-backend-outline-at
+            (& group)
+            (compiler-backend-outline-at pair-g i))]
+        (when
+          (>= g 0)
+          (let
+            [at : i64 (compiler-backend-outline-at (& cursor) g)]
+            (outline_i64s.set-ref!
+              (&mut next.pos)
+              at
+              (compiler-backend-outline-at pair-p i))
+            (outline_i64s.set-ref! (&mut cursor) g (+ at 1))))))
+    (when
+      (>= len 2)
+      (for [g (iterator.range 0 next.bytes.len)]
+        (let
+          [lo : i64 (compiler-backend-outline-at (& next.off) g)]
+          [hi : i64 (compiler-backend-outline-at (& next.off) (+ g 1))]
+          [bytes : i64 (compiler-backend-outline-at (& next.bytes) g)]
+          [helper : i64 (compiler-backend-outline-at (& next.helper) g)]
+          (when
+            (and
+              (> bytes 5)
+              (> (compiler-backend-outline-benefit (- hi lo) bytes helper) 0))
+            (outline_i64s.push-ref! (&mut cands.off) cands.occ.len)
+            (outline_i64s.push-ref! (&mut cands.count) (- hi lo))
+            (outline_i64s.push-ref! (&mut cands.len) len)
+            (outline_i64s.push-ref! (&mut cands.bytes) bytes)
+            (outline_i64s.push-ref! (&mut cands.helper) helper)
+            (for [i (iterator.range lo hi)]
+              (outline_i64s.push-ref!
+                (&mut cands.occ)
+                (compiler-backend-outline-at (& next.pos) i)))))))))
+
+;; Level-wise mining: a repeated (n+1)-gram extends a repeated n-gram, so each
+;; level only revisits the occurrences the previous one kept.
+(define (compiler-backend-outline-mine [st : (& CompilerBackendOutline)]) : CompilerBackendOutlineCands
+  (let
+    [cands : CompilerBackendOutlineCands
+      (CompilerBackendOutlineCands
+        (outline_i64s.with-capacity 1024)
+        (outline_i64s.with-capacity 256)
+        (outline_i64s.with-capacity 256)
+        (outline_i64s.with-capacity 256)
+        (outline_i64s.with-capacity 256)
+        (outline_i64s.with-capacity 256))]
+    [cur : CompilerBackendOutlineLevel
+      (CompilerBackendOutlineLevel
+        (outline_i64s.with-capacity 1024)
+        (outline_i64s.with-capacity 256)
+        (outline_i64s.with-capacity 256)
+        (outline_i64s.with-capacity 256))]
+    [next : CompilerBackendOutlineLevel
+      (CompilerBackendOutlineLevel
+        (outline_i64s.with-capacity 1024)
+        (outline_i64s.with-capacity 256)
+        (outline_i64s.with-capacity 256)
+        (outline_i64s.with-capacity 256))]
+    [pair-g : outline_i64s.Vec (outline_i64s.with-capacity 1024)]
+    [pair-p : outline_i64s.Vec (outline_i64s.with-capacity 1024)]
+    [raw-bytes : outline_i64s.Vec (outline_i64s.with-capacity 1024)]
+    [raw-helper : outline_i64s.Vec (outline_i64s.with-capacity 1024)]
+    [keys : backend_label_i64_map.Map
+      (backend_label_i64_map.with-capacity 4096)]
+    [k : i64 (+ st.token-line.len 1)]
+    [nseq : i64 st.seq.len]
+    [len : i64 1]
+    ;; Level 1: the raw groups are the tokens themselves.
+    (for [tok (iterator.range 0 st.token-line.len)]
+      (outline_i64s.push-ref!
+        (&mut raw-bytes)
+        (compiler-backend-outline-at (& st.token-bytes) tok))
+      (outline_i64s.push-ref!
+        (&mut raw-helper)
+        (compiler-backend-outline-at (& st.token-helper) tok)))
+    (for [p (iterator.range 0 nseq)]
+      (let
+        [tok : i64 (compiler-backend-outline-at (& st.seq) p)]
+        (when
+          (>= tok 0)
+          (outline_i64s.push-ref! (&mut pair-g) tok)
+          (outline_i64s.push-ref! (&mut pair-p) p))))
+    (compiler-backend-outline-regroup!
+      (& pair-g)
+      (& pair-p)
+      (& raw-bytes)
+      (& raw-helper)
+      (&mut cur)
+      (&mut cands)
+      1)
+    (while (and (> cur.bytes.len 0) (< len compiler-backend-outline-max-run))
+      (set! pair-g.len 0)
+      (set! pair-p.len 0)
+      (set! raw-bytes.len 0)
+      (set! raw-helper.len 0)
+      (backend_label_i64_map.clear-ref! (&mut keys))
+      (for [g (iterator.range 0 cur.bytes.len)]
+        (for [i
+          (iterator.range
+            (compiler-backend-outline-at (& cur.off) g)
+            (compiler-backend-outline-at (& cur.off) (+ g 1)))]
+          (let
+            [p : i64 (compiler-backend-outline-at (& cur.pos) i)]
+            [q : i64 (+ p len)]
+            [tok : i64
+              (if (< q nseq)
+                (compiler-backend-outline-at (& st.seq) q)
+                -1)]
+            (when
+              (>= tok 0)
+              (let
+                [key : i64 (+ (* g k) tok)]
+                [raw : i64 (backend_label_i64_map.get-value-or (& keys) key 0)]
+                (when
+                  (= raw 0)
+                  (outline_i64s.push-ref!
+                    (&mut raw-bytes)
+                    (+
+                      (compiler-backend-outline-at (& cur.bytes) g)
+                      (compiler-backend-outline-at (& st.token-bytes) tok)))
+                  (outline_i64s.push-ref!
+                    (&mut raw-helper)
+                    (+
+                      (compiler-backend-outline-at (& cur.helper) g)
+                      (compiler-backend-outline-at (& st.token-helper) tok)))
+                  (set! raw raw-bytes.len)
+                  (backend_label_i64_map.insert-ref! (&mut keys) key raw))
+                (outline_i64s.push-ref! (&mut pair-g) (- raw 1))
+                (outline_i64s.push-ref! (&mut pair-p) p))))))
+      (+= len 1)
+      (compiler-backend-outline-regroup!
+        (& pair-g)
+        (& pair-p)
+        (& raw-bytes)
+        (& raw-helper)
+        (&mut next)
+        (&mut cands)
+        len)
+      (compiler-backend-outline-level-copy! (& next) (&mut cur)))
+    cands))
+
+(define (compiler-backend-outline-copy-into!
+  [from : (& outline_i64s.Vec)]
+  [to : (&mut outline_i64s.Vec)]) : unit
+  (set! to.len 0)
+  (for [i (iterator.range 0 from.len)]
+    (outline_i64s.push-ref! to (compiler-backend-outline-at from i))))
+
+(define (compiler-backend-outline-level-copy!
+  [from : (& CompilerBackendOutlineLevel)]
+  [to : (&mut CompilerBackendOutlineLevel)]) : unit
+  (compiler-backend-outline-copy-into! (& from.pos) (&mut to.pos))
+  (compiler-backend-outline-copy-into! (& from.off) (&mut to.off))
+  (compiler-backend-outline-copy-into! (& from.bytes) (&mut to.bytes))
+  (compiler-backend-outline-copy-into! (& from.helper) (&mut to.helper)))
+
+;; Candidate ids fit below 2^28; the benefit sits above them.
+(define compiler-backend-outline-heap-shift : i64
+  268435456)
+
+(define (compiler-backend-outline-heap-push!
+  [heap : (&mut outline_i64s.Vec)]
+  [x : i64]) : unit
+  (outline_i64s.push-ref! heap x)
+  (let
+    [i : i64 (- heap.len 1)]
+    (while (> i 0)
+      (let
+        [parent : i64 (/ (- i 1) 2)]
+        [pv : i64 (compiler-backend-outline-at heap parent)]
+        (if (< pv x)
+          (begin
+            (outline_i64s.set-ref! heap i pv)
+            (outline_i64s.set-ref! heap parent x)
+            (set! i parent))
+          (set! i 0))))))
+
+(define (compiler-backend-outline-heap-pop! [heap : (&mut outline_i64s.Vec)]) : i64
+  (let
+    [top : i64 (compiler-backend-outline-at heap 0)]
+    [n : i64 (- heap.len 1)]
+    [x : i64 (compiler-backend-outline-at heap n)]
+    [i : i64 0]
+    (set! heap.len n)
+    (when
+      (> n 0)
+      (outline_i64s.set-ref! heap 0 x)
+      (while (< (+ (* i 2) 1) n)
+        (let
+          [l : i64 (+ (* i 2) 1)]
+          [c : i64
+            (if (and
+              (< (+ l 1) n)
+              (>
+                (compiler-backend-outline-at heap (+ l 1))
+                (compiler-backend-outline-at heap l)))
+              (+ l 1)
+              l)]
+          [cv : i64 (compiler-backend-outline-at heap c)]
+          (if (> cv x)
+            (begin
+              (outline_i64s.set-ref! heap i cv)
+              (outline_i64s.set-ref! heap c x)
+              (set! i c))
+            (set! i n)))))
+    top))
+
+;; The occurrences of `c` still free, taken left to right without overlap;
+;; with `apply?` they are claimed for helper `helper`.
+(define (compiler-backend-outline-claim!
+  [st : (&mut CompilerBackendOutline)]
+  [cands : (& CompilerBackendOutlineCands)]
+  [used : (&mut outline_i64s.Vec)]
+  [c : i64]
+  [apply? : bool]
+  [helper : i64]) : i64
+  (let
+    [len : i64 (compiler-backend-outline-at (& cands.len) c)]
+    [lo : i64 (compiler-backend-outline-at (& cands.off) c)]
+    [hi : i64 (+ lo (compiler-backend-outline-at (& cands.count) c))]
+    [last-end : i64 -1]
+    [n : i64 0]
+    (for [i (iterator.range lo hi)]
+      (let
+        [p : i64 (compiler-backend-outline-at (& cands.occ) i)]
+        (when
+          (and
+            (>= p last-end)
+            (all? [q (iterator.range p (+ p len))]
+              (= (compiler-backend-outline-at used q) 0)))
+          (+= n 1)
+          (set! last-end (+ p len))
+          (when
+            apply?
+            (when
+              (= n 1)
+              (outline_i64s.push-ref! (&mut st.helper-pos) p)
+              (outline_i64s.push-ref! (&mut st.helper-len) len))
+            (for [q (iterator.range p (+ p len))]
+              (outline_i64s.set-ref! used q 1)
+              (outline_i64s.set-ref!
+                (&mut st.edit)
+                (compiler-backend-outline-at (& st.seq-line) q)
+                (if (= q p)
+                  (+ 3 (* 4 helper))
+                  1)))))))
+    n))
+
+;; Greedy selection by benefit, re-evaluated lazily as occurrences are taken.
+(define (compiler-backend-outline-select! [st : (&mut CompilerBackendOutline)]) : unit
+  (let
+    [cands : CompilerBackendOutlineCands (compiler-backend-outline-mine (& st))]
+    [used : outline_i64s.Vec (compiler-backend-outline-filled st.seq.len 0)]
+    [heap : outline_i64s.Vec (outline_i64s.with-capacity (+ cands.len.len 1))]
+    (for [c (iterator.range 0 cands.len.len)]
+      (compiler-backend-outline-heap-push!
+        (&mut heap)
+        (+
+          (*
+            (compiler-backend-outline-benefit
+              (compiler-backend-outline-at (& cands.count) c)
+              (compiler-backend-outline-at (& cands.bytes) c)
+              (compiler-backend-outline-at (& cands.helper) c))
+            compiler-backend-outline-heap-shift)
+          c)))
+    (while (> heap.len 0)
+      (let
+        [top : i64 (compiler-backend-outline-heap-pop! (&mut heap))]
+        [old : i64 (/ top compiler-backend-outline-heap-shift)]
+        [c : i64 (- top (* old compiler-backend-outline-heap-shift))]
+        [n : i64
+          (compiler-backend-outline-claim! st (& cands) (&mut used) c false 0)]
+        [ben : i64
+          (compiler-backend-outline-benefit
+            n
+            (compiler-backend-outline-at (& cands.bytes) c)
+            (compiler-backend-outline-at (& cands.helper) c))]
+        (cond
+          [(<= ben 0) unit]
+          [(< ben old)
+            (compiler-backend-outline-heap-push!
+              (&mut heap)
+              (+ (* ben compiler-backend-outline-heap-shift) c))]
+          [else
+            (compiler-backend-outline-claim!
+              st
+              (& cands)
+              (&mut used)
+              c
+              true
+              (+ st.helper-pos.len 1))
+            unit])))))
+
+(define (compiler-backend-outline-put!
+  [out : (MutPtr u8)]
+  [write? : bool]
+  [at : i64]
+  [src : (Ptr u8)]
+  [n : i64]) : i64
+  (when
+    (and write? (> n 0))
+    (unsafe
+      (string.str-copy-bytes-into src out at n)))
+  (+ at n))
+
+(define (compiler-backend-outline-put-text!
+  [out : (MutPtr u8)]
+  [write? : bool]
+  [at : i64]
+  [text : (& str)]) : i64
+  (compiler-backend-outline-put!
+    out
+    write?
+    at
+    (unsafe
+      (string-data text))
+    (string.string-length text)))
+
+(define (compiler-backend-outline-put-number!
+  [out : (MutPtr u8)]
+  [write? : bool]
+  [at : i64]
+  [value : i64]) : i64
+  (let
+    [start : i64
+      (if (< value 0)
+        (compiler-backend-outline-put-text! out write? at "-")
+        at)]
+    [v : i64
+      (if (< value 0)
+        (- 0 value)
+        value)]
+    [digits : i64 1]
+    [scale : i64 10]
+    (while (and (<= scale v) (< digits 18))
+      (+= digits 1)
+      (set! scale (* scale 10)))
+    (when
+      write?
+      (let
+        [rest : i64 v]
+        (for [i (iterator.range 0 digits)]
+          (unsafe
+            (ptr-write!
+              (ptr-offset out (- (+ start digits) (+ i 1)))
+              (cast (+ 48 (% rest 10)) : u8)))
+          (set! rest (/ rest 10)))))
+    (+ start digits)))
+
+;; Copies instruction text [s,e) with every `%rsp` displacement moved by the
+;; helper's return address.
+(define (compiler-backend-outline-put-rebased!
+  [out : (MutPtr u8)]
+  [write? : bool]
+  [at : i64]
+  [data : (Ptr u8)]
+  [s : i64]
+  [e : i64]) : i64
+  (let
+    [cursor : i64 s]
+    [pos : i64 at]
+    [i : i64 s]
+    (while (< i e)
+      (if (compiler-backend-cold-prefix? data i e "(%rsp")
+        (let
+          [ds : i64 (compiler-backend-rsp-rebase-int-start data s i)]
+          (if (>= ds 0)
+            (begin
+              (set!
+                pos
+                (compiler-backend-outline-put!
+                  out
+                  write?
+                  pos
+                  (unsafe
+                    (ptr-offset data cursor))
+                  (- ds cursor)))
+              (set!
+                pos
+                (compiler-backend-outline-put-number!
+                  out
+                  write?
+                  pos
+                  (+ (compiler-backend-rsp-rebase-parse-int data ds i) 8))))
+            (begin
+              (set!
+                pos
+                (compiler-backend-outline-put!
+                  out
+                  write?
+                  pos
+                  (unsafe
+                    (ptr-offset data cursor))
+                  (- i cursor)))
+              (set! pos (compiler-backend-outline-put-text! out write? pos "8"))))
+          (set! cursor i)
+          (+= i 5))
+        (+= i 1)))
+    (compiler-backend-outline-put!
+      out
+      write?
+      pos
+      (unsafe
+        (ptr-offset data cursor))
+      (- e cursor))))
+
+(define (compiler-backend-outline-put-helper-name!
+  [out : (MutPtr u8)]
+  [write? : bool]
+  [at : i64]
+  [h : i64]) : i64
+  (compiler-backend-outline-put-number!
+    out
+    write?
+    (compiler-backend-outline-put-text! out write? at "_tl_outline_")
+    h))
+
+;; One deterministic walk serves both the sizing and the writing pass.
+(define (compiler-backend-outline-render-into
+  [st : (& CompilerBackendOutline)]
+  [data : (Ptr u8)]
+  [length : i64]
+  [coff? : bool]
+  [out : (MutPtr u8)]
+  [write? : bool]) : i64
+  (let
+    [at : i64 0]
+    (for [line (iterator.range 0 st.kind.len)]
+      (let
+        [mark : i64 (compiler-backend-outline-at (& st.mark) line)]
+        [edit : i64 (compiler-backend-outline-at (& st.edit) line)]
+        [s : i64 (compiler-backend-outline-at (& st.start) line)]
+        (when
+          (> mark 0)
+          (set!
+            at
+            (compiler-backend-outline-put-text! out write? at ".L_tl_tail_"))
+          (set! at (compiler-backend-outline-put-number! out write? at mark))
+          (set! at (compiler-backend-outline-put-text! out write? at ":\n")))
+        (cond
+          [(= edit 0)
+            (set!
+              at
+              (compiler-backend-outline-put!
+                out
+                write?
+                at
+                (unsafe
+                  (ptr-offset data s))
+                (- (compiler-backend-outline-at (& st.start) (+ line 1)) s)))]
+          [(= edit 1) unit]
+          [(= (bit-and edit 3) 2)
+            (set!
+              at
+              (compiler-backend-outline-put-text!
+                out
+                write?
+                at
+                "    jmp .L_tl_tail_"))
+            (set!
+              at
+              (compiler-backend-outline-put-number! out write? at (shr edit 2)))
+            (set! at (compiler-backend-outline-put-text! out write? at "\n"))]
+          [else
+            (set!
+              at
+              (compiler-backend-outline-put-text! out write? at "    call "))
+            (set!
+              at
+              (compiler-backend-outline-put-helper-name!
+                out
+                write?
+                at
+                (shr edit 2)))
+            (set! at (compiler-backend-outline-put-text! out write? at "\n"))])))
+    (when
+      (> st.helper-pos.len 0)
+      (when
+        (and
+          (> length 0)
+          (!= (compiler-backend-outline-byte data (- length 1)) 10))
+        (set! at (compiler-backend-outline-put-text! out write? at "\n")))
+      (set! at (compiler-backend-outline-put-text! out write? at "    .text\n"))
+      (for [i (iterator.range 0 st.helper-pos.len)]
+        (let
+          [h : i64 (+ i 1)]
+          [p : i64 (compiler-backend-outline-at (& st.helper-pos) i)]
+          (unless
+            coff?
+            (set!
+              at
+              (compiler-backend-outline-put-text! out write? at "    .type "))
+            (set!
+              at
+              (compiler-backend-outline-put-helper-name! out write? at h))
+            (set!
+              at
+              (compiler-backend-outline-put-text! out write? at ",@function\n")))
+          (set! at (compiler-backend-outline-put-helper-name! out write? at h))
+          (set! at (compiler-backend-outline-put-text! out write? at ":\n"))
+          (for [q
+            (iterator.range
+              p
+              (+ p (compiler-backend-outline-at (& st.helper-len) i)))]
+            (let
+              [line : i64 (compiler-backend-outline-at (& st.seq-line) q)]
+              (set!
+                at
+                (compiler-backend-outline-put-text! out write? at "    "))
+              (set!
+                at
+                (compiler-backend-outline-put-rebased!
+                  out
+                  write?
+                  at
+                  data
+                  (compiler-backend-outline-at (& st.first) line)
+                  (compiler-backend-outline-at (& st.last) line)))
+              (set! at (compiler-backend-outline-put-text! out write? at "\n"))))
+          (set!
+            at
+            (compiler-backend-outline-put-text! out write? at "    ret\n"))
+          (unless
+            coff?
+            (set!
+              at
+              (compiler-backend-outline-put-text! out write? at "    .size "))
+            (set!
+              at
+              (compiler-backend-outline-put-helper-name! out write? at h))
+            (set!
+              at
+              (compiler-backend-outline-put-text! out write? at ", . - "))
+            (set!
+              at
+              (compiler-backend-outline-put-helper-name! out write? at h))
+            (set! at (compiler-backend-outline-put-text! out write? at "\n"))))))
+    at))
+
+(define (compiler-backend-outline-plan
+  [data : (Ptr u8)]
+  [length : i64]
+  [coff? : bool]) : CompilerBackendOutline
+  (let
+    [st : CompilerBackendOutline (compiler-backend-outline-empty)]
+    [probe : (__tl_dyn-array u8) (__tl_make-array u8 1)]
+    (compiler-backend-outline-scan! (&mut st) data length)
+    ;; A Win64 leaf without a `.pdata` row must not call: keep it whole.
+    (when
+      coff?
+      (let
+        [g : i64 0]
+        (while (< g st.fn-flags.len)
+          (when
+            (=
+              (bit-and
+                (compiler-backend-outline-at (& st.fn-flags) g)
+                compiler-backend-outline-fn-unwind)
+              0)
+            (compiler-backend-outline-or!
+              (&mut st.fn-flags)
+              g
+              compiler-backend-outline-fn-excluded))
+          (+= g 1))))
+    (compiler-backend-outline-loops! (&mut st))
+    (unless coff? (compiler-backend-outline-tails! (&mut st)))
+    (compiler-backend-outline-runs! (&mut st))
+    (compiler-backend-outline-select! (&mut st))
+    (set!
+      st.size
+      (compiler-backend-outline-render-into
+        (& st)
+        data
+        length
+        coff?
+        (unsafe
+          (__tl_array-data probe))
+        false))
+    st))
+
+;; The -Os Machine Outliner entry: `coff?` keeps osC only (Win64 leaf
+;; helpers); the analysis lives in a scratch arena destroyed before returning,
+;; so only the rewritten text is allocated in the caller's arena.
+(define (compiler-backend-machine-outline [asm : String] [coff? : bool]) : String
+  (let
+    [data : (Ptr u8)
+      (unsafe
+        (string-data (& asm)))]
+    [length : i64 (string.string-length (& asm))]
+    [scratch : arena.Arena (arena.make)]
+    [plan : CompilerBackendOutline
+      (unsafe
+        (in-arena
+          (arena.Arena (arena.raw-handle scratch))
+          (compiler-backend-outline-plan data length coff?)))]
+    [result : String
+      (if (and (= plan.tails 0) (= plan.helper-pos.len 0))
+        asm
+        (let
+          [buf : (__tl_dyn-array u8) (__tl_make-array u8 plan.size)]
+          [dst : (MutPtr u8)
+            (unsafe
+              (__tl_array-data buf))]
+          (compiler-backend-outline-render-into
+            (& plan)
+            data
+            length
+            coff?
+            dst
+            true)
+          (unsafe
+            (string-from-bytes (ptr-cast dst : (Ptr u8)) plan.size))))]
+    (arena.destroy-safe! scratch)
+    result))
+
+(define (compiler-backend-outline-test-bytes [line : String] [shift : i64]) : i64
+  (compiler-backend-outline-insn-bytes
+    (unsafe
+      (string-data (& line)))
+    0
+    (string.string-length (& line))
+    shift))
+
+(test
+  compiler-backend-outline-insn-bytes-match-gas
+  (test.assert-i64-eq
+    (compiler-backend-outline-test-bytes "movq %rsi, 120(%rsp)" 0)
+    5
+    "movq %rsi, 120(%rsp)")
+  (test.assert-i64-eq
+    (compiler-backend-outline-test-bytes "movq %rsi, 120(%rsp)" 8)
+    8
+    "movq %rsi, 120(%rsp)")
+  (test.assert-i64-eq
+    (compiler-backend-outline-test-bytes "leaq (%rsp), %rax" 0)
+    4
+    "leaq (%rsp), %rax")
+  (test.assert-i64-eq
+    (compiler-backend-outline-test-bytes "leaq (%rsp), %rax" 8)
+    5
+    "leaq (%rsp), %rax")
+  (test.assert-i64-eq
+    (compiler-backend-outline-test-bytes "movabsq $1, %rax" 0)
+    10
+    "movabsq $1, %rax")
+  (test.assert-i64-eq
+    (compiler-backend-outline-test-bytes "addq $24, %rsp" 0)
+    4
+    "addq $24, %rsp")
+  (test.assert-i64-eq
+    (compiler-backend-outline-test-bytes "addq $200, %rsp" 0)
+    7
+    "addq $200, %rsp")
+  (test.assert-i64-eq
+    (compiler-backend-outline-test-bytes "popq %r12" 0)
+    2
+    "popq %r12")
+  (test.assert-i64-eq
+    (compiler-backend-outline-test-bytes "movl $5, %eax" 0)
+    5
+    "movl $5, %eax")
+  (test.assert-i64-eq
+    (compiler-backend-outline-test-bytes "cmpq $0, 16(%rsp)" 0)
+    6
+    "cmpq $0, 16(%rsp)")
+  (test.assert-i64-eq
+    (compiler-backend-outline-test-bytes "movups %xmm0, 16(%rsp)" 0)
+    5
+    "movups %xmm0, 16(%rsp)")
+  (test.assert-i64-eq
+    (compiler-backend-outline-test-bytes "testb $1, %al" 0)
+    2
+    "testb $1, %al")
+  (test.assert-i64-eq
+    (compiler-backend-outline-test-bytes "imulq $4, %r8" 0)
+    4
+    "imulq $4, %r8")
+  (test.assert-i64-eq
+    (compiler-backend-outline-test-bytes "movq %fs:0, %rax" 0)
+    9
+    "movq %fs:0, %rax"))
+
+(define compiler-backend-outline-test-input : String
+  "f:
+    movq %rdi, 8(%rsp)
+    movq %rsi, 120(%rsp)
+    leaq 32(%rsp), %rdx
+    movabsq $1311768467463790320, %rcx
+    call fa
+    movl $7, %eax
+    addq $24, %rsp
+    popq %rbx
+    popq %r12
+    ret
+    .size f, . - f
+g:
+    movq %rdi, 8(%rsp)
+    movq %rsi, 120(%rsp)
+    leaq 32(%rsp), %rdx
+    movabsq $1311768467463790320, %rcx
+    call ga
+    xorl %edx, %edx
+    movl $7, %eax
+    addq $24, %rsp
+    popq %rbx
+    popq %r12
+    ret
+    .size g, . - g
+h:
+    movq %rdi, 8(%rsp)
+    movq %rsi, 120(%rsp)
+    leaq 32(%rsp), %rdx
+    movabsq $1311768467463790320, %rcx
+    call ha
+    ret
+    .size h, . - h
+r:
+    movq %rax, -8(%rsp)
+    movq %rdi, 8(%rsp)
+    movq %rsi, 120(%rsp)
+    leaq 32(%rsp), %rdx
+    movabsq $1311768467463790320, %rcx
+    movl $7, %eax
+    addq $24, %rsp
+    popq %rbx
+    popq %r12
+    ret
+    .size r, . - r
+tl_fragment:
+    movq %rdi, 8(%rsp)
+    movq %rsi, 120(%rsp)
+    leaq 32(%rsp), %rdx
+    movabsq $1311768467463790320, %rcx
+    call ta
+    ret
+    .size tl_fragment, . - tl_fragment
+c:
+    movq %rdi, 8(%rsp)
+    movq %rsi, 120(%rsp)
+    leaq 32(%rsp), %rdx
+    movabsq $1311768467463790320, %rcx
+    call _tl_stdlib_crypto_sha256_compress
+    ret
+    .size c, . - c
+l:
+.Ll_top:
+    movq %rdi, 8(%rsp)
+    movq %rsi, 120(%rsp)
+    leaq 32(%rsp), %rdx
+    movabsq $1311768467463790320, %rcx
+    jne .Ll_top
+    ret
+    .size l, . - l
+")
+
+(test
+  compiler-backend-machine-outline-elf
+  (let
+    [output : String
+      (compiler-backend-machine-outline
+        (string.copy (& compiler-backend-outline-test-input))
+        false)]
+    (test.assert-true
+      (string.contains
+        (& output)
+        "f:\n    call _tl_outline_1\n    call fa\n.L_tl_tail_1:\n    movl $7, %eax\n")
+      "a repeated run becomes a call and the first copy of a tail gains the label")
+    (test.assert-true
+      (string.contains
+        (& output)
+        "    call ga\n    xorl %edx, %edx\n    jmp .L_tl_tail_1\n    .size g")
+      "a later identical block suffix jumps to the first copy")
+    (test.assert-true
+      (string.contains (& output) "h:\n    call _tl_outline_1\n    call ha\n")
+      "every free occurrence calls the helper")
+    (test.assert-true
+      (string.contains
+        (& output)
+        "    .type _tl_outline_1,@function\n_tl_outline_1:\n    movq %rdi, 16(%rsp)\n    movq %rsi, 128(%rsp)\n    leaq 40(%rsp), %rdx\n    movabsq $1311768467463790320, %rcx\n    ret\n    .size _tl_outline_1, . - _tl_outline_1\n")
+      "the helper rebases every %rsp displacement past its return address")
+    (test.assert-true
+      (string.contains
+        (& output)
+        "r:\n    movq %rax, -8(%rsp)\n    movq %rdi, 8(%rsp)\n    movq %rsi, 120(%rsp)\n")
+      "a red-zone function keeps its instructions")
+    (test.assert-true
+      (string.contains
+        (& output)
+        "    movl $7, %eax\n    addq $24, %rsp\n    popq %rbx\n    popq %r12\n    ret\n    .size r")
+      "a red-zone function keeps its own tail")
+    (test.assert-true
+      (string.contains (& output) "tl_fragment:\n    movq %rdi, 8(%rsp)\n")
+      "a runtime fragment keeps its instructions")
+    (test.assert-true
+      (string.contains (& output) "c:\n    movq %rdi, 8(%rsp)\n")
+      "a caller of stdlib crypto keeps its instructions")
+    (test.assert-true
+      (string.contains (& output) ".Ll_top:\n    movq %rdi, 8(%rsp)\n")
+      "a loop block keeps its instructions")))
+
+;; Win64: `f` and `h` carry lowered `.pdata` rows and `g` an unlowered
+;; `.seh_endproc`; the leaf `k` has no unwind row, so it may not call.
+(define compiler-backend-outline-coff-test-input : String
+  "f:
+    movq %rdi, 8(%rsp)
+    movq %rsi, 120(%rsp)
+    leaq 32(%rsp), %rdx
+    movabsq $1311768467463790320, %rcx
+    call fa
+    ret
+.L_tl_seh_end_0:
+    .pushsection .pdata,\"dr\"
+    .rva f, .L_tl_seh_end_0, .L_tl_xdata_0
+    .popsection
+g:
+    .seh_proc g
+    movq %rdi, 8(%rsp)
+    movq %rsi, 120(%rsp)
+    leaq 32(%rsp), %rdx
+    movabsq $1311768467463790320, %rcx
+    call ga
+    ret
+    .seh_endproc
+h:
+    movq %rdi, 8(%rsp)
+    movq %rsi, 120(%rsp)
+    leaq 32(%rsp), %rdx
+    movabsq $1311768467463790320, %rcx
+    call ha
+    ret
+.L_tl_seh_end_1:
+    .pushsection .pdata,\"dr\"
+    .rva h, .L_tl_seh_end_1, .L_tl_xdata_0
+    .popsection
+k:
+    movq %rdi, 8(%rsp)
+    movq %rsi, 120(%rsp)
+    leaq 32(%rsp), %rdx
+    movabsq $1311768467463790320, %rcx
+    ret
+")
+
+(test
+  compiler-backend-machine-outline-coff
+  (let
+    [output : String
+      (compiler-backend-machine-outline
+        (string.copy (& compiler-backend-outline-coff-test-input))
+        true)]
+    (test.assert-true
+      (string.contains (& output) "f:\n    call _tl_outline_1\n    call fa\n")
+      "a function with a lowered `.pdata` row calls the helper")
+    (test.assert-true
+      (string.contains
+        (& output)
+        "g:\n    .seh_proc g\n    call _tl_outline_1\n    call ga\n")
+      "a function with an unlowered unwind region calls the helper")
+    (test.assert-true
+      (string.contains (& output) "k:\n    movq %rdi, 8(%rsp)\n")
+      "a leaf without a `.pdata` row keeps its instructions")
+    (test.assert-true
+      (string.contains
+        (& output)
+        "    .text\n_tl_outline_1:\n    movq %rdi, 16(%rsp)\n")
+      "a COFF helper follows the last function without unwind rows")
+    (test.assert-true
+      (not (string.contains (& output) "L_tl_tail_"))
+      "COFF text shares no tails")
+    (test.assert-true
+      (not (string.contains (& output) ".type _tl_outline_"))
+      "COFF helpers carry no ELF symbol types")))

@@ -19103,11 +19103,12 @@
 ;; `call _tl_outline_N` to one helper ending in `ret`. A helper holds only
 ;; plain instructions; `%rsp` appears only as a memory base, rebased by the
 ;; 8-byte return address. It neither pushes nor calls, so on Win64 it is a leaf
-;; that needs no `.pdata` row; helpers follow the last function.
+;; that needs no `.pdata` row; helpers follow the last function. A Win64 leaf
+;; function without a `.pdata` row of its own is never rewritten to call one.
 ;;
-;; Neither touches a runtime fragment (`tl_*`, `__tl_*`), a crypto or scrub
-;; function or a caller of the stack scrub, or a function that uses the red
-;; zone, which a `call` would overwrite. Profit is measured with an encoded-size
+;; Neither touches a runtime fragment (`tl_*`, `__tl_*`), a stdlib crypto
+;; function or a caller of one, or a function that uses the red zone, which a
+;; `call` would overwrite. Profit is measured with an encoded-size
 ;; model of each instruction line.
 (import (vector.vector i64 core) as outline_i64s)
 
@@ -19172,6 +19173,10 @@
   8)
 (define compiler-backend-outline-fn-numeric : i64
   16)
+
+;; The function has unwind metadata (a Win64 `.pdata` row).
+(define compiler-backend-outline-fn-unwind : i64
+  32)
 
 ;; Block flags.
 (define compiler-backend-outline-block-taken : i64
@@ -20152,7 +20157,7 @@
         (!= (bit-and flags compiler-backend-outline-fn-neg-rbp) 0)
         (= (bit-and flags compiler-backend-outline-fn-sub-rsp) 0)))))
 
-;; Runtime fragments, crypto and scrub functions keep their own instructions.
+;; Runtime fragments and stdlib crypto functions keep their own instructions.
 (define (compiler-backend-outline-excluded-name?
   [data : (Ptr u8)]
   [s : i64]
@@ -20161,10 +20166,7 @@
     (compiler-backend-cold-prefix? data s e "tl_")
     (compiler-backend-cold-prefix? data s e "__tl_")
     (compiler-backend-cold-prefix? data s e "_tl_start")
-    (compiler-backend-cold-prefix? data s e "_tl_stdlib_crypto_")
-    (compiler-backend-outline-contains? data s e "scrub_")
-    (compiler-backend-outline-contains? data s e "aes_audit_")
-    (compiler-backend-outline-contains? data s e "gcm_audit_")))
+    (compiler-backend-cold-prefix? data s e "_tl_stdlib_crypto_")))
 
 ;; Every `.L` label named outside a branch may be a computed jump's target.
 (define (compiler-backend-outline-note-refs!
@@ -20308,14 +20310,11 @@
         (&mut st.fn-flags)
         f
         (compiler-backend-outline-frame-flags data first me os last))
+      ;; A caller of stdlib crypto keeps the frame its stack scrub measures.
       (when
         (and
-          (compiler-backend-outline-is? data first me "call")
-          (compiler-backend-cold-prefix?
-            data
-            os
-            last
-            "_tl_stdlib_crypto_stack_scrub_"))
+          (or jmp? (compiler-backend-outline-is? data first me "call"))
+          (compiler-backend-cold-prefix? data os last "_tl_stdlib_crypto_"))
         (compiler-backend-outline-or!
           (&mut st.fn-flags)
           f
@@ -20421,6 +20420,16 @@
                   [(< f 0) unit]
                   [else
                     (when
+                      (compiler-backend-cold-prefix?
+                        data
+                        first
+                        ne
+                        ".L_tl_seh_end_")
+                      (compiler-backend-outline-or!
+                        (&mut st.fn-flags)
+                        f
+                        compiler-backend-outline-fn-unwind))
+                    (when
                       (or (not open?) filled?)
                       (set! blk (compiler-backend-outline-new-block! st f))
                       (set! open? true)
@@ -20489,6 +20498,13 @@
                   (compiler-backend-outline-note-refs! st data ns last)]
                 [(compiler-backend-outline-is? data first de ".size")
                   (when code (set! f -1) (set! blk -1))]
+                [(and
+                    (>= f 0)
+                    (compiler-backend-outline-is? data first de ".seh_endproc"))
+                  (compiler-backend-outline-or!
+                    (&mut st.fn-flags)
+                    f
+                    compiler-backend-outline-fn-unwind)]
                 [else unit])
               (when
                 (and code (>= f 0))
@@ -21520,6 +21536,23 @@
     [st : CompilerBackendOutline (compiler-backend-outline-empty)]
     [probe : (__tl_dyn-array u8) (__tl_make-array u8 1)]
     (compiler-backend-outline-scan! (&mut st) data length)
+    ;; A Win64 leaf without a `.pdata` row must not call: keep it whole.
+    (when
+      coff?
+      (let
+        [g : i64 0]
+        (while (< g st.fn-flags.len)
+          (when
+            (=
+              (bit-and
+                (compiler-backend-outline-at (& st.fn-flags) g)
+                compiler-backend-outline-fn-unwind)
+              0)
+            (compiler-backend-outline-or!
+              (&mut st.fn-flags)
+              g
+              compiler-backend-outline-fn-excluded))
+          (+= g 1))))
     (compiler-backend-outline-loops! (&mut st))
     (unless coff? (compiler-backend-outline-tails! (&mut st)))
     (compiler-backend-outline-runs! (&mut st))
@@ -21692,6 +21725,14 @@ tl_fragment:
     call ta
     ret
     .size tl_fragment, . - tl_fragment
+c:
+    movq %rdi, 8(%rsp)
+    movq %rsi, 120(%rsp)
+    leaq 32(%rsp), %rdx
+    movabsq $1311768467463790320, %rcx
+    call _tl_stdlib_crypto_sha256_compress
+    ret
+    .size c, . - c
 l:
 .Ll_top:
     movq %rdi, 8(%rsp)
@@ -21742,16 +21783,72 @@ l:
       (string.contains (& output) "tl_fragment:\n    movq %rdi, 8(%rsp)\n")
       "a runtime fragment keeps its instructions")
     (test.assert-true
+      (string.contains (& output) "c:\n    movq %rdi, 8(%rsp)\n")
+      "a caller of stdlib crypto keeps its instructions")
+    (test.assert-true
       (string.contains (& output) ".Ll_top:\n    movq %rdi, 8(%rsp)\n")
       "a loop block keeps its instructions")))
+
+;; Win64: `f` and `h` carry lowered `.pdata` rows and `g` an unlowered
+;; `.seh_endproc`; the leaf `k` has no unwind row, so it may not call.
+(define compiler-backend-outline-coff-test-input : String
+  "f:
+    movq %rdi, 8(%rsp)
+    movq %rsi, 120(%rsp)
+    leaq 32(%rsp), %rdx
+    movabsq $1311768467463790320, %rcx
+    call fa
+    ret
+.L_tl_seh_end_0:
+    .pushsection .pdata,\"dr\"
+    .rva f, .L_tl_seh_end_0, .L_tl_xdata_0
+    .popsection
+g:
+    .seh_proc g
+    movq %rdi, 8(%rsp)
+    movq %rsi, 120(%rsp)
+    leaq 32(%rsp), %rdx
+    movabsq $1311768467463790320, %rcx
+    call ga
+    ret
+    .seh_endproc
+h:
+    movq %rdi, 8(%rsp)
+    movq %rsi, 120(%rsp)
+    leaq 32(%rsp), %rdx
+    movabsq $1311768467463790320, %rcx
+    call ha
+    ret
+.L_tl_seh_end_1:
+    .pushsection .pdata,\"dr\"
+    .rva h, .L_tl_seh_end_1, .L_tl_xdata_0
+    .popsection
+k:
+    movq %rdi, 8(%rsp)
+    movq %rsi, 120(%rsp)
+    leaq 32(%rsp), %rdx
+    movabsq $1311768467463790320, %rcx
+    ret
+")
 
 (test
   compiler-backend-machine-outline-coff
   (let
     [output : String
       (compiler-backend-machine-outline
-        (string.copy (& compiler-backend-outline-test-input))
+        (string.copy (& compiler-backend-outline-coff-test-input))
         true)]
+    (test.assert-true
+      (string.contains (& output) "f:\n    call _tl_outline_1\n    call fa\n")
+      "a function with a lowered `.pdata` row calls the helper")
+    (test.assert-true
+      (string.contains
+        (& output)
+        "g:\n    .seh_proc g\n    call _tl_outline_1\n    call ga\n")
+      "a function with an unlowered unwind region calls the helper")
+    (test.assert-true
+      (string.contains (& output) "k:\n    movq %rdi, 8(%rsp)\n")
+      "a leaf without a `.pdata` row keeps its instructions")
     (test.assert-true
       (string.contains
         (& output)

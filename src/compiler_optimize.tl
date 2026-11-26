@@ -82201,11 +82201,6 @@
 (define (opt-bce-mb-keep-empty) : OptBceMbKeep
   (OptBceMbKeep (__tl_make-array OptBceMbKeepEntry 0) 0))
 
-(define (opt-bce-mb-keep-ref [keep : (& keep OptBceMbKeep)] [index : i64]) : OptBceMbKeepEntry
-  (if (<= keep.len 0)
-    (Entry -1 -1)
-    (array-ref keep.items (- (- keep.len 1) index))))
-
 (define (opt-bce-mb-keep-count [keep : (& keep OptBceMbKeep)]) : i64
   keep.len)
 
@@ -82665,10 +82660,7 @@
     (when
       (>= len cap)
       (let
-        [next-cap : i64
-          (if (< cap 4)
-            4
-            (opt-dense-next-capacity cap))]
+        [next-cap : i64 (opt-dense-next-capacity cap)]
         [bigger : (__tl_dyn-array OptBceMbHoistEntry)
           (__tl_make-array OptBceMbHoistEntry next-cap)]
         (for [i (iterator.range 0 len)]

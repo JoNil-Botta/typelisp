@@ -8997,7 +8997,7 @@
 ;; A copy of one node that owns its payloads: fresh child lists and boxes, and
 ;; clones of every type, pattern, literal and byte string, over the same child
 ;; ids. A `Spanned` node's span is the one payload the walk does not visit, so
-;; it is shared with `expr`.
+;; it is cloned here.
 (defmacro (ast-child-clone-type [ty : Expr]) : Expr
   `(clone-ast-type (& ,ty)))
 
@@ -9011,14 +9011,18 @@
   `(string.copy (& ,bytes)))
 
 (define (ast-expr-clone-node [expr : (& AstExpr)]) : AstExpr
-  (ast-expr-map-children
-    (owned_view.compiler-owned-reference-shared-view expr)
-    ast-child-keep
-    ast-child-keep
-    ast-child-clone-type
-    ast-child-clone-pattern
-    ast-child-clone-literal
-    ast-child-clone-bytes))
+  (match expr
+    [(AstExpr.Spanned inner span)
+      (AstExpr.Spanned inner (clone-ast-source-span span))]
+    [_
+      (ast-expr-map-children
+        (owned_view.compiler-owned-reference-shared-view expr)
+        ast-child-keep
+        ast-child-keep
+        ast-child-clone-type
+        ast-child-clone-pattern
+        ast-child-clone-literal
+        ast-child-clone-bytes)]))
 
 (defmacro (ast-expr-child-push-expr! [out : Expr] [child : Expr]) : Expr
   `(ast-expr-child-list-push ,out (AstExprChild.Expr ,child)))

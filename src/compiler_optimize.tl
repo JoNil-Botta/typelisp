@@ -74405,8 +74405,8 @@
 ;;
 ;; Substituting a literal for a value it EQUALS needs no dominance argument --
 ;; it is a constant, available everywhere. The chain is followed through
-;; bit-preserving 64-bit `Mov`s (the relation `opt-bce-version-resolve` walks
-;; inside the loop block) and through 64-bit Add/Sub/Mul of two constants,
+;; bit-preserving 64-bit `Mov`s (the relation `opt-bce-mb-resolve` walks
+;; inside the loop) and through 64-bit Add/Sub/Mul of two constants,
 ;; which is the shape earlier passes leave when they propagate a literal into a
 ;; strength-reduced product (`d0 = mul 0, 2` for the phi of `base + 2*edge`).
 ;; Overflowing arithmetic is not folded -- the recovery reports the value
@@ -74497,23 +74497,6 @@
     [(No) (No)]
     [(Some instrs values _) (Some instrs values true)]))
 
-;; Resolve through Mov copies AND 64-bit int reinterpret casts, same-block: the
-;; multi-block walk over the loop's one block, like
-;; `opt-bce-version-counter-affine`. That walk also sees the phis and the
-;; terminator the block-local index pair stopped short of, and neither is ever a
-;; copy or a reinterpret.
-(define (opt-bce-version-resolve
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  ;; lint-allow: unused-variable
-  [phi-count : i64]
-  ;; lint-allow: unused-variable
-  [last : i64]
-  [var : i64]
-  [fuel : i64]) : i64
-  (let
-    [body-blocks : ir.CompilerIrBlockList (opt-bce-version-body-blocks instrs)]
-    (opt-bce-mb-resolve (& body-blocks) var fuel)))
-
 ;; A loop-local index written as `scale * counter + offset`. The coefficients
 ;; are mathematical signed i64 values, not merely their wrapping bit patterns:
 ;; every fold below rejects coefficient overflow so the range guard may reason
@@ -74587,18 +74570,6 @@
       0
       (owned_view.compiler-owned-reference-shared-view instrs))))
 
-;; Same-block affine recovery for the canonical self-loop: the multi-block
-;; recovery over the loop's one block. Copy/reinterpret chains are resolved
-;; first; Add/Sub/Mul may then contribute one literal coefficient at a time.
-(define (opt-bce-version-counter-affine
-  [instrs : (& ir.CompilerIrInstrSeq)]
-  [iphi : i64]
-  [value : (& ir.CompilerIrValue)]
-  [fuel : i64]) : OptBceCounterAffine
-  (let
-    [body-blocks : ir.CompilerIrBlockList (opt-bce-version-body-blocks instrs)]
-    (opt-bce-mb-counter-affine body-blocks iphi value fuel)))
-
 ;; The invariant value an operand resolves to (a literal, or a var defined
 ;; outside the loop -- possibly behind in-loop copies/reinterprets), if any.
 ;; The guard must reference the RESOLVED value: it is the one whose definition
@@ -74614,26 +74585,6 @@
   (let
     [body-blocks : ir.CompilerIrBlockList (opt-bce-version-body-blocks instrs)]
     (opt-bce-mb-invariant-operand (& body-blocks) defs value)))
-
-;; A same-block derived induction phi: the multi-block recovery over the loop's
-;; one block, with a step of either sign.
-(define (opt-bce-version-derived-induction
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [defs : (& defs opt_i64_i64_map.Map)]
-  [loop-label : i64]
-  [pred-label : i64]
-  [phi-var : i64]
-  [inputs : (& ir.CompilerIrPhiInputSeq)]) : OptBceDerivedInduction
-  (let
-    [body-blocks : ir.CompilerIrBlockList (opt-bce-version-body-blocks instrs)]
-    (opt-bce-mb-derived-induction
-      body-blocks
-      defs
-      loop-label
-      pred-label
-      phi-var
-      inputs
-      true)))
 
 ;; Prove `scale * i + offset` is in range for every
 ;; `i in [seed, bound)`, with positive `scale`.
@@ -76714,6 +76665,8 @@
   [blocks : (& ir.CompilerIrBlockList)]
   [len-eq : (& opt_i64_i64_map.Map)]
   [instrs : (& ir.CompilerIrInstrSeq)]
+  ;; The loop's one block as a block list (opt-bce-version-body-blocks).
+  [body-blocks : (& ir.CompilerIrBlockList)]
   [index : i64]
   [phi-count : i64]
   [last : i64]
@@ -76734,6 +76687,7 @@
       blocks
       len-eq
       instrs
+      body-blocks
       (+ index 1)
       phi-count
       last
@@ -76765,12 +76719,10 @@
                     (& length-invariant))
                     [(Some v) v]
                     [(No) length-invariant])]
-                [body-blocks : ir.CompilerIrBlockList
-                  (opt-bce-version-body-blocks instrs)]
                 [derived-guard : OptBceVersionGuardAcc
                   (opt-bce-mb-derive-index
-                    (& body-blocks)
-                    (& body-blocks)
+                    body-blocks
+                    body-blocks
                     defs
                     loop-label
                     pred-label
@@ -77325,6 +77277,7 @@
     [census-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [_census-seed : unit (set! (array-ref census-cell 0) (array-ref cell 0))]
     [_reset1 : unit (opt-bce-len-eq-reset!)]
+    [body-blocks : ir.CompilerIrBlockList (opt-bce-version-body-blocks instrs)]
     ;; The census gets its own fan table for the same reason it gets its own
     ;; var counter: its records are discarded with its conditions.
     [census : OptBceVersionDerive
@@ -77333,6 +77286,7 @@
         blocks
         len-eq
         instrs
+        (& body-blocks)
         phi-count
         phi-count
         last
@@ -77355,6 +77309,7 @@
         blocks
         len-eq
         instrs
+        (& body-blocks)
         phi-count
         phi-count
         last
@@ -78909,7 +78864,7 @@
             [(No) (opt-bce-mb-find-def rest var)])])]))
 
 ;; Resolve through Mov copies and 64-bit int reinterpret casts anywhere in
-;; the loop (the multi-block analogue of `opt-bce-version-resolve`).
+;; the loop.
 (define (opt-bce-mb-resolve
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [var : i64]
@@ -78933,7 +78888,7 @@
           [_ var])])))
 
 ;; A loop-local index as `scale * counter + offset` (OptBceCounterAffine), over
-;; the loop's blocks. opt-bce-version-counter-affine runs it over one block.
+;; the loop's blocks.
 (define (opt-bce-mb-counter-affine
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
   [iphi : i64]

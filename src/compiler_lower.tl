@@ -1338,17 +1338,8 @@
 (define (lower-clone-sym-i64-env [env : (& sym_i64_env.SymI64Env)]) : sym_i64_env.SymI64Env
   (sym_i64_env.SymI64Env env.store-address env.head env.abi-reserved))
 
-(define (lower-clone-ast-param [param : (& ast.AstParam)]) : ast.AstParam
-  (match param
-    [(ast.AstParam.Param name ty mutable?)
-      (ast.AstParam.Param name (ast.clone-ast-type ty) mutable?)]))
-
-;; The span is the one owned payload ast-expr-clone-node shares.
 (define (lower-clone-ast-expr [expr : (& ast.AstExpr)]) : ast.AstExpr
-  (match expr
-    [(ast.AstExpr.Spanned inner span)
-      (ast.AstExpr.Spanned inner (ir.clone-ast-source-span span))]
-    [_ (ast.ast-expr-clone-node expr)]))
+  (ast.ast-expr-clone-node expr))
 
 (define (lower-mode-abi [mode : CompilerLowerMode]) : LowerModeAbi
   (match mode

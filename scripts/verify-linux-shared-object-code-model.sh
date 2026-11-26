@@ -380,3 +380,29 @@ if ! "$DL/driver" "$DL/libworker.so" > "$DL/driver.stdout" 2> "$DL/driver.stderr
     exit 1
 fi
 echo "[shared-object] dlopen test: two threads allocate through the DSO's arenas"
+
+# A --no-entry library object is sectioned: each literal unit gets its own
+# quoted `.rodata.<label>` section, whose relocated descriptors must still move
+# out of read-only data.
+LIB="$WORKDIR/library"
+mkdir -p "$LIB"
+if ! TYPELISP_BACKEND_CODE_MODEL=shared-object "$COMPILER" compile \
+    "$ROOT/tests/shared-object/library.tl" --no-entry -o "$LIB/library.s" \
+    --stdlib-root "$ROOT/stdlib" > "$LIB/compile.stdout" 2> "$LIB/compile.stderr"; then
+    echo "shared-object library compile failed" >&2
+    sed 's/^/  /' "$LIB/compile.stderr" >&2
+    exit 1
+fi
+if ! grep -q '^\.section "\.rodata\.' "$LIB/library.s"; then
+    echo "shared-object library object has no sectioned literal" >&2
+    exit 1
+fi
+as "$LIB/library.s" -o "$LIB/library.o"
+ld -shared -o "$LIB/library.so" "$LIB/library.o"
+case "$(readelf -d "$LIB/library.so")" in
+    *TEXTREL*)
+        echo "shared-object library DSO has text relocations" >&2
+        exit 1
+        ;;
+esac
+echo "[shared-object] --no-entry library DSO has no text relocation"

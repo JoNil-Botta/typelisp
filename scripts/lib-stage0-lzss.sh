@@ -481,9 +481,11 @@ function tlch_check_index(    tcount, groups, directory, i, record, name, name_l
                         fail("impossible raw length")
                     raw_len = raw_len * 10 + digit
                     header_digits++
-                } else if (byte == 0 && header_digits == 0) {
-                    # The runtime decoder also embeds NUL-terminated marker-only
-                    # strings. These are not frames; every decimal header is.
+                } else if (header_digits == 0) {
+                    # The runtime decoder also embeds the marker as a string
+                    # literal, which shares its bytes with the next literal
+                    # and so ends in any byte. It is not a frame; every frame
+                    # has a decimal header.
                     reset_scan()
                 } else if (byte == 10 && header_digits > 0) {
                     compressed_bytes = 0

@@ -184,6 +184,31 @@ print_asm_fingerprint() {
     echo "[build-invariance]   $label sha256=$hash bytes=$bytes lines=$lines path=$file" >&2
 }
 
+require_opt1_build_inputs() {
+    # Reuse the build identity stamps and embedded stdlib TLCI image produced
+    # by bootstrap-compiler without mutating them.
+    for _req_file in \
+        "$ROOT/target/build-stage0/git-hash.txt" \
+        "$ROOT/target/build-stage0/tree-hash.txt" \
+        "$ROOT/target/embedded-stdlib-tlci/stdlib.tlci" \
+        "$ROOT/target/embedded-stdlib-tlci/stdlib.tlci.tlch" \
+        "$ROOT/target/embedded-stdlib-tlci/source-hash.txt"; do
+        if [ ! -s "$_req_file" ]; then
+            echo "[build-invariance] missing bootstrap build input (run bootstrap-compiler first): $_req_file" >&2
+            exit 1
+        fi
+    done
+
+    compiler_identity=$("$COMPILER" --producer-identity 2>/dev/null | tr -d '\r\n')
+    if printf '%s\n' "$compiler_identity" | grep -Eq '^[0-9a-f]{40}$'; then
+        stamped_identity=$(tr -d '\r\n' < "$ROOT/target/build-stage0/tree-hash.txt")
+        if [ "$stamped_identity" != "$compiler_identity" ]; then
+            echo "[build-invariance] target/build-stage0/tree-hash.txt ($stamped_identity) does not match $COMPILER --producer-identity ($compiler_identity)" >&2
+            exit 1
+        fi
+    fi
+}
+
 compile_stage() {
     opt_level=$1
     stage_label=$2
@@ -202,6 +227,8 @@ compile_stage() {
         -o "$asm" \
         --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) \
+        --cfg compiler-build-identity \
+        --cfg embedded-stdlib-tlci \
         --backend-mode scalar \
         --opt-level "$opt_level" \
         --stdlib-root stdlib \
@@ -221,6 +248,8 @@ build_opt1_compiler() {
     outdir="$WORKDIR/opt1"
     mkdir -p "$outdir"
 
+    require_opt1_build_inputs
+
     opt1_asm="$outdir/opt1.s"
     opt1_obj="$outdir/opt1.$NL_OBJ_EXT"
     opt1_bin="$outdir/opt1$NL_BIN_EXT"
@@ -235,6 +264,20 @@ build_opt1_compiler() {
     if [ ! -x "$opt1_bin" ]; then
         echo "[build-invariance] opt1 compiler is not executable: $opt1_bin" >&2
         exit 1
+    fi
+
+    # Expose the incoming compiler's prebuilt stdlib sysroot beside OPT1_COMPILER
+    # so both producers hydrate the exact same stdlib.tli + libstdlib.a on
+    # integration, src/tests, and backend-tests builds without altering argv.
+    compiler_sysroot_dir=$(dirname -- "$COMPILER")
+    if [ -d "$compiler_sysroot_dir/lib" ]; then
+        ln -s "$compiler_sysroot_dir/lib" "$outdir/lib"
+        if [ -f "$compiler_sysroot_dir/lib/x86_64-unknown-linux-gnu/stdlib.tli" ]; then
+            if ! "$opt1_bin" inspect sysroot --target "$NL_BOOTSTRAP_TARGET" >/dev/null 2>&1; then
+                echo "[build-invariance] opt1 compiler failed to open linked sysroot: $outdir/lib" >&2
+                exit 1
+            fi
+        fi
     fi
 }
 
@@ -449,8 +492,12 @@ run_batch_chunk() {
         $(native_target_cfg_args) \
         --backend-mode scalar \
         --opt-level "$batch_opt_level" \
-        --stdlib-root stdlib --stdlib-root src \
-        --no-prebuilt-stdlib
+        --stdlib-root stdlib --stdlib-root src
+    if build_invariance_chunk_is_selfhost "$batch_case_chunk"; then
+        # Preserve full source-stdlib invariance and the reference envelope's
+        # canonical argv contract on selfhost_main_opt1 / selfhost_main_opt2.
+        set -- "$@" --no-prebuilt-stdlib
+    fi
     batch_suffix=${batch_chunk_path##*/entries.}
     batch_memory_report="$WORKDIR/backend-memory/$batch_compiler_label.opt$batch_opt_level.chunk${batch_suffix%.txt}.memory"
     if [ "$batch_compiler_label" = opt1-built ] && build_invariance_chunk_is_codegen_smoke "$batch_case_chunk"; then
@@ -581,8 +628,7 @@ run_batch_sentinel() {
         --backend-mode scalar \
         --opt-level "$opt_level" \
         --stdlib-root stdlib \
-        --stdlib-root src \
-        --no-prebuilt-stdlib; then
+        --stdlib-root src; then
         print_log_pair "build-invariance $sentinel_compiler_label standalone sentinel $sentinel_name failed" "$stdout" "$stderr"
         exit 1
     fi

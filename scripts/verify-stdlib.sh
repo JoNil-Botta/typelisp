@@ -111,6 +111,14 @@ stdlib_run_fixture_binary() {
     )
 }
 
+stdlib_host_path() {
+    if [ "$HOST_OS" = windows ] && command -v cygpath >/dev/null 2>&1; then
+        cygpath -m "$1"
+    else
+        printf '%s\n' "$1"
+    fi
+}
+
 . "$ROOT/scripts/lib-gate.sh"
 gate_compiler
 gate_require_compiler
@@ -881,6 +889,8 @@ done < "$TEST_MANIFEST"
 printf 'pipe-001|1\n' >> "$POOL_QUEUE"
 
 check_count=0
+CHECK_ROWS="$WORKDIR/check-rows.psv"
+: > "$CHECK_ROWS"
 while IFS='|' read -r fixture want stderr_snippet extra; do
     case "$fixture" in
         '' | \#*) continue ;;
@@ -927,10 +937,48 @@ while IFS='|' read -r fixture want stderr_snippet extra; do
     fi
 
     check_count=$((check_count + 1))
-    job_id=$(printf 'chk-%03d' "$check_count")
-    printf '%s|%s|%s\n' "$fixture" "$want" "$stderr_snippet" > "$POOL_JOBS_DIR/$job_id.row"
-    printf '%s|1\n' "$job_id" >> "$POOL_QUEUE"
+    printf '%s|%s|%s\n' "$fixture" "$want" "$stderr_snippet" >> "$CHECK_ROWS"
 done < "$CHECK_MANIFEST"
+
+STDLIB_CHECK_CHUNK_SIZE=48
+check_batch_count=0
+if [ "$check_count" -gt 0 ]; then
+    CHECK_COPIES_ROOT="$RUN_ROOT/check-copies"
+    mkdir -p "$CHECK_COPIES_ROOT/stdlib"
+    cp -R "$ROOT/stdlib/tests" "$CHECK_COPIES_ROOT/stdlib/tests"
+    CHECK_COPIES_HOST=$(stdlib_host_path "$CHECK_COPIES_ROOT")
+    check_batch_count=$(awk -F '|' \
+        -v chunk_size="$STDLIB_CHECK_CHUNK_SIZE" \
+        -v jobs_dir="$POOL_JOBS_DIR" \
+        -v queue_file="$POOL_QUEUE" \
+        -v copies_host="$CHECK_COPIES_HOST" '
+        {
+            if (in_chunk == 0 || in_chunk >= chunk_size) {
+                if (cur_rows != "") {
+                    close(cur_rows)
+                    close(cur_list)
+                }
+                batch_idx++
+                job_id = sprintf("chk-batch-%03d", batch_idx)
+                cur_rows = jobs_dir "/" job_id ".rows"
+                cur_list = jobs_dir "/" job_id ".list"
+                print job_id "|1" >> queue_file
+                in_chunk = 0
+            }
+            print $0 > cur_rows
+            print copies_host "/" $1 > cur_list
+            in_chunk++
+        }
+        END {
+            if (cur_rows != "") {
+                close(cur_rows)
+                close(cur_list)
+            }
+            close(queue_file)
+            print batch_idx + 0
+        }
+    ' "$CHECK_ROWS")
+fi
 
 run_stdlib_runnable_job() {
     _job=$1
@@ -1034,54 +1082,169 @@ run_stdlib_pipe_job() {
     return 0
 }
 
-run_stdlib_check_job() {
+run_stdlib_check_batch_job() {
     _job=$1
     _job_out="$POOL_JOBS_DIR/$_job.stdout"
     _job_err="$POOL_JOBS_DIR/$_job.stderr"
-    IFS='|' read -r fixture want stderr_snippet < "$POOL_JOBS_DIR/$_job.row"
-
-    case_id=$(printf '%s' "$fixture" | sed 's#/#_#g;s#\.tl$##')
+    _rows="$POOL_JOBS_DIR/$_job.rows"
+    _list="$POOL_JOBS_DIR/$_job.list"
+    _list_host=$(stdlib_host_path "$_list")
     _job_dir="$RUN_ROOT/$_job"
-    copied="$_job_dir/$fixture"
-    mkdir -p "$(dirname "$copied")"
-    cp "$fixture" "$copied"
+    mkdir -p "$_job_dir"
+    _batch_out="$_job_dir/batch.stdout"
+    _batch_err="$_job_dir/batch.stderr"
 
-    stem="$_job_dir/$case_id.check"
-    stdout="$stem.stdout"
-    stderr="$stem.stderr"
-
-    echo "[stdlib] checking $fixture (--stdlib-root)" >> "$_job_out"
     set +e
-    "$COMPILER" check "$copied" --stdlib-root "$ROOT/stdlib" \
-        > "$stdout" 2> "$stderr"
-    got=$?
+    "$COMPILER" check --batch "$_list_host" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        --stdlib-root "$ROOT/stdlib" \
+        < /dev/null > "$_batch_out" 2> "$_batch_err"
+    _rc=$?
     set -e
 
-    if [ "$want" = pass ]; then
-        if [ "$got" -ne 0 ]; then
-            {
-                echo "FAIL: $fixture expected check success, got exit $got"
-                show_streams "$stdout" "$stderr"
-            } >> "$_job_err" 2>&1
-            return 1
-        fi
-    else
-        if [ "$got" -eq 0 ]; then
-            {
-                echo "FAIL: $fixture expected check failure, got success"
-                show_streams "$stdout" "$stderr"
-            } >> "$_job_err" 2>&1
-            return 1
-        fi
-        if ! grep -F "$stderr_snippet" "$stderr" >/dev/null 2>&1; then
-            {
-                echo "FAIL: $fixture stderr did not contain expected diagnostic"
-                echo "expected substring: $stderr_snippet"
-                show_streams "$stdout" "$stderr"
-            } >> "$_job_err" 2>&1
-            return 1
-        fi
+    if [ "$_rc" -ne 0 ] || [ -s "$_batch_err" ]; then
+        {
+            echo "FAIL: stdlib check batch $_job failed (exit $_rc)"
+            show_streams "$_batch_out" "$_batch_err"
+        } >> "$_job_err" 2>&1
+        return 1
     fi
+
+    if ! awk -v rows_file="$_rows" -v batch_file="$_batch_out" -v out_log="$_job_out" -v job_id="$_job" '
+        function show_entry_streams(out_n, err_n,    k) {
+            if (out_n > 0) {
+                print "stdout:" > "/dev/stderr"
+                for (k = 1; k <= out_n; k++) print "  " out_buf[k] > "/dev/stderr"
+            }
+            if (err_n > 0) {
+                print "stderr:" > "/dev/stderr"
+                for (k = 1; k <= err_n; k++) print "  " err_buf[k] > "/dev/stderr"
+            }
+        }
+        BEGIN {
+            total = 0
+            while ((getline rline < rows_file) > 0) {
+                sub(/\r$/, "", rline)
+                n = split(rline, f, "|")
+                if (n < 3) {
+                    print "FAIL: malformed check batch row in " job_id > "/dev/stderr"
+                    failed = 1
+                    exit 1
+                }
+                m_fix[total] = f[1]
+                m_want[total] = f[2]
+                snip = f[3]
+                for (j = 4; j <= n; j++) snip = snip "|" f[j]
+                m_snip[total] = snip
+                total++
+            }
+            close(rows_file)
+            if (total == 0) {
+                print "FAIL: empty check batch in " job_id > "/dev/stderr"
+                failed = 1
+                exit 1
+            }
+            failed = 0
+            for (i = 0; i < total; i++) {
+                if ((getline hdr < batch_file) <= 0) {
+                    print "FAIL: " job_id " truncated before entry " i " (" m_fix[i] ")" > "/dev/stderr"
+                    failed = 1
+                    exit 1
+                }
+                sub(/\r$/, "", hdr)
+                if (hdr !~ /^CHECK_BATCH_ENTRY\|[0-9]+\|[0-9]+\|[0-9]+\|[0-9]+\|/) {
+                    print "FAIL: " job_id " malformed batch header at entry " i ": " hdr > "/dev/stderr"
+                    failed = 1
+                    exit 1
+                }
+                split(hdr, hf, "|")
+                if ((hf[2] + 0) != i) {
+                    print "FAIL: " job_id " entry index mismatch: expected " i ", got " hf[2] > "/dev/stderr"
+                    failed = 1
+                    exit 1
+                }
+                code = hf[3] + 0
+                out_n = hf[4] + 0
+                err_n = hf[5] + 0
+                delete out_buf
+                delete err_buf
+                for (k = 1; k <= out_n; k++) {
+                    if ((getline line < batch_file) <= 0) {
+                        print "FAIL: " m_fix[i] " truncated batch stdout" > "/dev/stderr"
+                        failed = 1
+                        exit 1
+                    }
+                    sub(/\r$/, "", line)
+                    out_buf[k] = line
+                }
+                for (k = 1; k <= err_n; k++) {
+                    if ((getline line < batch_file) <= 0) {
+                        print "FAIL: " m_fix[i] " truncated batch stderr" > "/dev/stderr"
+                        failed = 1
+                        exit 1
+                    }
+                    sub(/\r$/, "", line)
+                    err_buf[k] = line
+                }
+                print "[stdlib] checking " m_fix[i] " (--stdlib-root)" >> out_log
+                if (m_want[i] == "pass") {
+                    if (code != 0) {
+                        print "FAIL: " m_fix[i] " expected check success, got exit " code > "/dev/stderr"
+                        show_entry_streams(out_n, err_n)
+                        failed = 1
+                        exit 1
+                    }
+                } else {
+                    if (code == 0) {
+                        print "FAIL: " m_fix[i] " expected check failure, got success" > "/dev/stderr"
+                        show_entry_streams(out_n, err_n)
+                        failed = 1
+                        exit 1
+                    }
+                    matched = 0
+                    for (k = 1; k <= err_n; k++) {
+                        if (index(err_buf[k], m_snip[i]) > 0) {
+                            matched = 1
+                            break
+                        }
+                    }
+                    if (!matched) {
+                        print "FAIL: " m_fix[i] " stderr did not contain expected diagnostic" > "/dev/stderr"
+                        print "expected substring: " m_snip[i] > "/dev/stderr"
+                        show_entry_streams(out_n, err_n)
+                        failed = 1
+                        exit 1
+                    }
+                }
+            }
+            if ((getline end_hdr < batch_file) <= 0) {
+                print "FAIL: " job_id " missing CHECK_BATCH_END trailer" > "/dev/stderr"
+                failed = 1
+                exit 1
+            }
+            sub(/\r$/, "", end_hdr)
+            if (end_hdr != ("CHECK_BATCH_END|" total)) {
+                print "FAIL: " job_id " bad CHECK_BATCH_END trailer: " end_hdr > "/dev/stderr"
+                failed = 1
+                exit 1
+            }
+            if ((getline extra_line < batch_file) > 0) {
+                print "FAIL: " job_id " unexpected trailing batch output: " extra_line > "/dev/stderr"
+                failed = 1
+                exit 1
+            }
+            close(batch_file)
+            close(out_log)
+        }
+        END {
+            if (failed) exit 1
+        }
+    ' 2>> "$_job_err"; then
+        return 1
+    fi
+
+    _batch_checked=$(wc -l < "$_rows" | tr -d ' ')
+    printf '%s\n' "$_batch_checked" > "$POOL_JOBS_DIR/$_job.checked"
     return 0
 }
 
@@ -1093,7 +1256,7 @@ bounded_pool_run_job() {
     case "$_bp_job" in
         run-*) run_stdlib_runnable_job "$_bp_job" || _job_rc=$? ;;
         pipe-001) run_stdlib_pipe_job "$_bp_job" || _job_rc=$? ;;
-        chk-*) run_stdlib_check_job "$_bp_job" || _job_rc=$? ;;
+        chk-batch-*) run_stdlib_check_batch_job "$_bp_job" || _job_rc=$? ;;
         *)
             echo "FAIL: unknown stdlib pool job: $_bp_job" >> "$POOL_JOBS_DIR/$_bp_job.stderr"
             _job_rc=1
@@ -1103,7 +1266,7 @@ bounded_pool_run_job() {
     return "$_job_rc"
 }
 
-echo "[stdlib] running $run_count runnable fixture(s), 1 pipe regression, and $check_count check fixture(s) with $STDLIB_WORKERS worker(s)"
+echo "[stdlib] running $run_count runnable fixture(s), 1 pipe regression, and $check_count check fixture(s) in $check_batch_count batch(es) with $STDLIB_WORKERS worker(s)"
 bounded_pool_init "$POOL_DIR" "$STDLIB_WORKERS" "$POOL_QUEUE" || exit 1
 bounded_pool_start "$POOL_DIR" "$STDLIB_WORKERS"
 pool_status=0
@@ -1134,15 +1297,20 @@ fi
 
 checked=0
 replay_idx=0
-while [ "$replay_idx" -lt "$check_count" ]; do
+while [ "$replay_idx" -lt "$check_batch_count" ]; do
     replay_idx=$((replay_idx + 1))
-    job_id=$(printf 'chk-%03d' "$replay_idx")
+    job_id=$(printf 'chk-batch-%03d' "$replay_idx")
     [ ! -s "$POOL_JOBS_DIR/$job_id.stdout" ] || cat "$POOL_JOBS_DIR/$job_id.stdout"
     [ ! -s "$POOL_JOBS_DIR/$job_id.stderr" ] || cat "$POOL_JOBS_DIR/$job_id.stderr" >&2
     if [ -f "$POOL_JOBS_DIR/$job_id.status" ]; then
         read -r _rc < "$POOL_JOBS_DIR/$job_id.status"
         [ "$_rc" -eq 0 ] || exit 1
-        checked=$((checked + 1))
+        if [ ! -f "$POOL_JOBS_DIR/$job_id.checked" ]; then
+            echo "FAIL: stdlib check batch $job_id left no checked count" >&2
+            exit 1
+        fi
+        read -r _batch_checked < "$POOL_JOBS_DIR/$job_id.checked"
+        checked=$((checked + _batch_checked))
     fi
 done
 

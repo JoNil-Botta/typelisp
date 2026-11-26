@@ -10,9 +10,16 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 HOST_OS=linux
+HOST_TARGET=linux-x86_64
 case "$(uname -s)" in
-    Linux*) HOST_OS=linux ;;
-    MINGW* | MSYS* | CYGWIN*) HOST_OS=windows ;;
+    Linux*)
+        HOST_OS=linux
+        HOST_TARGET=linux-x86_64
+        ;;
+    MINGW* | MSYS* | CYGWIN*)
+        HOST_OS=windows
+        HOST_TARGET=windows-x86_64
+        ;;
 esac
 . "$ROOT/scripts/lib-gate.sh"
 gate_compiler
@@ -304,55 +311,155 @@ reject_diag() {
     esac
 }
 
-# Each witness is a separate selfhost cli `check` invocation, run exactly once.
-# A crash is a real compiler bug, not a flake — do not retry it (see the
-# no-retry policy in scripts/ci-verify.sh).
+# Each witness is checked once in a single `check --batch` stream (each entry
+# tears down its own arena and resets compiler state). A crash is a real
+# compiler bug, not a flake — do not retry it (see the no-retry policy in
+# scripts/ci-verify.sh).
 
-# Sets the global `expected` to 1 when the (rc,out) pair matches the witness
-# expectation: a reject witness ($2 non-empty) must fail AND carry the diagnostic
-# substring; a positive witness must pass cleanly. The substring test is a
-# pattern match, not a pipe into `grep -q`: under pipefail, grep exiting at an
-# early match makes the writer of a large output fail with EPIPE.
-witness_expected() {
-    expected=0
-    if [ -n "$2" ]; then
-        if [ "$1" -ne 0 ]; then
-            case $3 in
-                *"$2"*) expected=1 ;;
-            esac
-        fi
-    elif [ "$1" -eq 0 ]; then
-        expected=1
-    fi
-}
+WORKDIR="$ROOT/target/stdlib-selfhost-verify"
+rm -rf "$WORKDIR"
+mkdir -p "$WORKDIR"
 
-fail=0
+BATCH_LIST="$WORKDIR/witnesses.list"
+BATCH_META="$WORKDIR/witnesses.meta"
+BATCH_OUT="$WORKDIR/batch.stdout"
+BATCH_ERR="$WORKDIR/batch.stderr"
+: > "$BATCH_LIST"
+: > "$BATCH_META"
+
 checked=0
 for witness in stdlib/tests/*.tl; do
     checked=$((checked + 1))
     expect="$(reject_diag "$witness")"
-    if out="$("$COMPILER" check "$witness" --stdlib-root stdlib 2>&1)"; then
-        rc=0
-    else
-        rc=$?
-    fi
-    witness_expected "$rc" "$expect" "$out"
-    if [ "$expected" -eq 1 ]; then
-        if [ -n "$expect" ]; then echo "  ok (reject): $witness"; else echo "  ok: $witness"; fi
-    elif [ -n "$expect" ]; then
-        if [ "$rc" -eq 0 ]; then
-            echo "FAIL: $witness expected selfhost rejection but it passed" >&2
-        else
-            echo "FAIL: $witness rejected without expected diagnostic '$expect'" >&2
-        fi
-        printf '  got: %s\n' "$out" >&2
-        fail=1
-    else
-        echo "FAIL: $witness expected to pass the selfhost frontend but was rejected (rc=$rc)" >&2
-        printf '  got: %s\n' "$out" >&2
-        fail=1
-    fi
+    printf '%s\n' "$witness" >> "$BATCH_LIST"
+    printf '%s\t%s\n' "$witness" "$expect" >> "$BATCH_META"
 done
+
+if [ "$checked" -eq 0 ]; then
+    echo "verify-stdlib-selfhost: no stdlib/tests/*.tl witnesses found" >&2
+    exit 1
+fi
+
+batch_list_host="$BATCH_LIST"
+if [ "$HOST_OS" = windows ] && command -v cygpath >/dev/null 2>&1; then
+    batch_list_host="$(cygpath -m "$BATCH_LIST")"
+fi
+
+if "$COMPILER" check --batch "$batch_list_host" \
+    --target "$HOST_TARGET" \
+    --stdlib-root stdlib \
+    < /dev/null > "$BATCH_OUT" 2> "$BATCH_ERR"; then
+    batch_rc=0
+else
+    batch_rc=$?
+fi
+
+if [ "$batch_rc" -ne 0 ] || [ -s "$BATCH_ERR" ]; then
+    echo "verify-stdlib-selfhost: check --batch failed (rc=$batch_rc)" >&2
+    if [ -s "$BATCH_ERR" ]; then
+        sed 's/^/  /' "$BATCH_ERR" >&2 || true
+    fi
+    echo "verify-stdlib-selfhost: FAILED" >&2
+    exit 1
+fi
+
+fail=0
+if ! awk -F '\t' -v meta_file="$BATCH_META" -v batch_file="$BATCH_OUT" '
+    BEGIN {
+        total = 0
+        while ((getline mline < meta_file) > 0) {
+            sub(/\r$/, "", mline)
+            tab = index(mline, "\t")
+            if (tab == 0) {
+                print "FAIL: malformed witness meta row: " mline > "/dev/stderr"
+                exit 1
+            }
+            m_wit[total] = substr(mline, 1, tab - 1)
+            m_exp[total] = substr(mline, tab + 1)
+            total++
+        }
+        close(meta_file)
+        if (total == 0) {
+            print "FAIL: empty witness list" > "/dev/stderr"
+            exit 1
+        }
+        failed = 0
+        for (i = 0; i < total; i++) {
+            if ((getline hdr < batch_file) <= 0) {
+                print "FAIL: batch stream truncated before entry " i " (" m_wit[i] ")" > "/dev/stderr"
+                exit 1
+            }
+            sub(/\r$/, "", hdr)
+            if (hdr !~ /^CHECK_BATCH_ENTRY\|[0-9]+\|[0-9]+\|[0-9]+\|[0-9]+\|/) {
+                print "FAIL: malformed batch header at entry " i ": " hdr > "/dev/stderr"
+                exit 1
+            }
+            split(hdr, hf, "|")
+            if ((hf[2] + 0) != i) {
+                print "FAIL: batch entry index mismatch: expected " i ", got " hf[2] > "/dev/stderr"
+                exit 1
+            }
+            code = hf[3] + 0
+            out_n = hf[4] + 0
+            err_n = hf[5] + 0
+            combined = ""
+            for (k = 1; k <= out_n; k++) {
+                if ((getline line < batch_file) <= 0) {
+                    print "FAIL: " m_wit[i] " truncated batch stdout" > "/dev/stderr"
+                    exit 1
+                }
+                sub(/\r$/, "", line)
+                combined = (combined == "" ? line : combined "\n" line)
+            }
+            for (k = 1; k <= err_n; k++) {
+                if ((getline line < batch_file) <= 0) {
+                    print "FAIL: " m_wit[i] " truncated batch stderr" > "/dev/stderr"
+                    exit 1
+                }
+                sub(/\r$/, "", line)
+                combined = (combined == "" ? line : combined "\n" line)
+            }
+            wit = m_wit[i]
+            expect = m_exp[i]
+            if (expect != "") {
+                if (code != 0 && index(combined, expect) > 0) {
+                    print "  ok (reject): " wit
+                } else {
+                    if (code == 0) {
+                        print "FAIL: " wit " expected selfhost rejection but it passed" > "/dev/stderr"
+                    } else {
+                        print "FAIL: " wit " rejected without expected diagnostic '\''" expect "'\''" > "/dev/stderr"
+                    }
+                    printf "  got: %s\n", combined > "/dev/stderr"
+                    failed = 1
+                }
+            } else if (code == 0) {
+                print "  ok: " wit
+            } else {
+                print "FAIL: " wit " expected to pass the selfhost frontend but was rejected (rc=" code ")" > "/dev/stderr"
+                printf "  got: %s\n", combined > "/dev/stderr"
+                failed = 1
+            }
+        }
+        if ((getline end_hdr < batch_file) <= 0) {
+            print "FAIL: missing CHECK_BATCH_END trailer" > "/dev/stderr"
+            exit 1
+        }
+        sub(/\r$/, "", end_hdr)
+        if (end_hdr != ("CHECK_BATCH_END|" total)) {
+            print "FAIL: bad CHECK_BATCH_END trailer: " end_hdr > "/dev/stderr"
+            exit 1
+        }
+        if ((getline extra_line < batch_file) > 0) {
+            print "FAIL: unexpected trailing batch output: " extra_line > "/dev/stderr"
+            exit 1
+        }
+        close(batch_file)
+        if (failed) exit 1
+    }
+'; then
+    fail=1
+fi
 
 if [ "$fail" -ne 0 ]; then
     echo "verify-stdlib-selfhost: FAILED" >&2

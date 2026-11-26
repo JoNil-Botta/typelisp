@@ -309,35 +309,6 @@ inline_test_plan_chunks() {
                 arr[j + 1] = kf
             }
         }
-        # Detect cross-module `defstruct` vs `defenum` same-name collisions
-        # between file f'\''s closure and an already-accumulated chunk closure.
-        function chunk_has_type_conflict(f, cs, ce,    i, j, u, nm) {
-            for (i = 1; i <= cl_cnt[f]; i++) {
-                u = cl_node[f, i]
-                for (j = 1; j <= sdef_cnt[u]; j++) {
-                    nm = sdef[u, j]
-                    if ((nm in ce) && ce[nm] != u) return 1
-                }
-                for (j = 1; j <= edef_cnt[u]; j++) {
-                    nm = edef[u, j]
-                    if ((nm in cs) && cs[nm] != u) return 1
-                }
-            }
-            return 0
-        }
-        function chunk_record_types(f, cs, ce,    i, j, u, nm) {
-            for (i = 1; i <= cl_cnt[f]; i++) {
-                u = cl_node[f, i]
-                for (j = 1; j <= sdef_cnt[u]; j++) {
-                    nm = sdef[u, j]
-                    if (!(nm in cs)) cs[nm] = u
-                }
-                for (j = 1; j <= edef_cnt[u]; j++) {
-                    nm = edef[u, j]
-                    if (!(nm in ce)) ce[nm] = u
-                }
-            }
-        }
         function file_has_chunk_type_dup(b, idx,    f, j, k, m, g, nm) {
             f = bfile[b, idx]
             for (k = 1; k <= sdef_cnt[f]; k++) {
@@ -375,11 +346,11 @@ inline_test_plan_chunks() {
         # Partition sorted arr[1..n] into k contiguous slices balanced by a
         # capped file weight so a single huge shared module (already in every
         # heavy chunk'\''s closure) does not force the remaining files into one
-        # oversized tail chunk, peeling out cross-module struct/enum collisions.
-        # Then promote each chunk'\''s largest non-chunk-imported file to index 1
-        # (the root-module leader) and relocate any importer of that leader to
-        # the next unprocessed chunk when collision-free, or defer it to deff.
-        function plan_contiguous_combined(arr, n, k, bcap, use_leader,    i, j, m, b, nb, tot, target, acc, f, u, best, best_dup, cur_dup, imp, leader, dst, job, cs, ce, dst_cs, dst_ce, defn, deff, cvis, u_lines, f_lines) {
+        # oversized tail chunk. Then promote each chunk'\''s largest
+        # non-chunk-imported file to index 1 (the root-module leader) and
+        # relocate any importer of that leader to the next unprocessed chunk,
+        # or defer it to deff.
+        function plan_contiguous_combined(arr, n, k, bcap, use_leader,    i, j, m, b, nb, tot, target, acc, f, u, best, best_dup, cur_dup, imp, leader, dst, job, defn, deff, cvis, u_lines, f_lines) {
             if (n <= 0) return
             sort_asc_path(arr, n)
             nb = (k > 0 && k < n) ? k : n
@@ -391,23 +362,14 @@ inline_test_plan_chunks() {
             b = 1
             acc = 0
             defn = 0
-            delete cs
-            delete ce
             for (i = 1; i <= n; i++) {
                 f = arr[i]
                 if (b < nb && bcount[b] > 0 && acc + split_weight(f) / 2 > target && (n - i + 1) >= (nb - b)) {
                     b++
                     acc = 0
-                    delete cs
-                    delete ce
-                }
-                if (chunk_has_type_conflict(f, cs, ce)) {
-                    deff[++defn] = f
-                    continue
                 }
                 bcount[b]++
                 bfile[b, bcount[b]] = f
-                chunk_record_types(f, cs, ce)
                 acc += split_weight(f)
             }
             nb = b
@@ -444,21 +406,13 @@ inline_test_plan_chunks() {
                     leader = bfile[b, 1]
                     if (nb > 1) {
                         dst = (b < nb) ? (b + 1) : 0
-                        if (dst > 0) {
-                            delete dst_cs
-                            delete dst_ce
-                            for (m = 1; m <= bcount[dst]; m++) {
-                                chunk_record_types(bfile[dst, m], dst_cs, dst_ce)
-                            }
-                        }
                         j = 1
                         for (i = 2; i <= bcount[b]; i++) {
                             f = bfile[b, i]
                             if ((f SUBSEP leader) in reaches) {
-                                if (dst > 0 && !chunk_has_type_conflict(f, dst_cs, dst_ce)) {
+                                if (dst > 0) {
                                     bcount[dst]++
                                     bfile[dst, bcount[dst]] = f
-                                    chunk_record_types(f, dst_cs, dst_ce)
                                 } else {
                                     deff[++defn] = f
                                 }
@@ -864,36 +818,38 @@ inline_test_self_test_chunks() {
         inline_test_plan_chunks discovered.txt "$_comb_dir" "$_comb_dir/queue"
     )
     if [ ! -f "$_comb_dir/chunk-001.combined" ] ||
-        [ ! -f "$_comb_dir/chunk-003.combined" ] ||
+        [ ! -f "$_comb_dir/chunk-002.combined" ] ||
+        [ -f "$_comb_dir/chunk-003.list" ] ||
         [ "$(cat "$_comb_dir"/chunk-*.list | LC_ALL=C sort)" != "$(printf '%s\n' src/a.tl src/b.tl src/c.tl stdlib/s1.tl stdlib/s2.tl)" ]; then
-        echo "inline test chunk self-test: combined chunk planner did not separate struct/enum conflicts or partition sources" >&2
+        echo "inline test chunk self-test: combined chunk planner did not group and partition sources" >&2
         exit 1
     fi
 
     _reloc_dir=$(mktemp -d "$INLINE_TEST_SELF_TEST_ROOT/reloc.XXXXXX")
     mkdir -p "$_reloc_dir/src"
     awk 'BEGIN { for (i = 0; i < 60; i++) print ";; pad"; print "(test a unit)" }' > "$_reloc_dir/src/a_big.tl"
-    printf '(import a_big)\n(defstruct Clash (v i64))\n(test b unit)\n' > "$_reloc_dir/src/b_imp.tl"
+    printf '(import a_big)\n(test b unit)\n' > "$_reloc_dir/src/b_imp.tl"
     printf '(test c unit)\n' > "$_reloc_dir/src/c_pad.tl"
     printf '(test d unit)\n' > "$_reloc_dir/src/d_pad.tl"
-    printf '(defenum Clash (V))\n(test e unit)\n' > "$_reloc_dir/src/e_enum.tl"
+    printf '(test e unit)\n' > "$_reloc_dir/src/e_pad.tl"
     printf '(test f unit)\n' > "$_reloc_dir/src/f_pad.tl"
+    printf '(test g unit)\n' > "$_reloc_dir/src/g_pad.tl"
+    printf '(test h unit)\n' > "$_reloc_dir/src/h_pad.tl"
     (
         cd "$_reloc_dir" || exit 1
-        printf '%s\n' src/a_big.tl src/b_imp.tl src/c_pad.tl src/d_pad.tl src/e_enum.tl src/f_pad.tl > discovered.txt
+        printf '%s\n' src/a_big.tl src/b_imp.tl src/c_pad.tl src/d_pad.tl src/e_pad.tl src/f_pad.tl src/g_pad.tl src/h_pad.tl > discovered.txt
         INLINE_TEST_COMBINED_LIGHT_CHUNKS=2
         inline_test_plan_chunks discovered.txt "$_reloc_dir" "$_reloc_dir/queue"
     )
-    if [ "$(cat "$_reloc_dir"/chunk-*.list | LC_ALL=C sort)" != "$(printf '%s\n' src/a_big.tl src/b_imp.tl src/c_pad.tl src/d_pad.tl src/e_enum.tl src/f_pad.tl)" ]; then
+    if [ "$(cat "$_reloc_dir"/chunk-*.list | LC_ALL=C sort)" != "$(printf '%s\n' src/a_big.tl src/b_imp.tl src/c_pad.tl src/d_pad.tl src/e_pad.tl src/f_pad.tl src/g_pad.tl src/h_pad.tl)" ]; then
         echo "inline test chunk self-test: leader relocation lost or duplicated a source" >&2
         exit 1
     fi
-    for _reloc_list in "$_reloc_dir"/chunk-*.list; do
-        if grep -qxF 'src/b_imp.tl' "$_reloc_list" && grep -qxF 'src/e_enum.tl' "$_reloc_list"; then
-            echo "inline test chunk self-test: leader relocation re-introduced a struct/enum collision" >&2
-            exit 1
-        fi
-    done
+    if [ "$(head -n 1 "$_reloc_dir/chunk-001.list")" != "src/a_big.tl" ] ||
+        grep -qxF 'src/b_imp.tl' "$_reloc_dir/chunk-001.list"; then
+        echo "inline test chunk self-test: leader relocation did not move importer out of leader chunk" >&2
+        exit 1
+    fi
 
     # A large single_hub group must split across multiple balanced chunks when
     # its total split_weight exceeds INLINE_TEST_COMBINED_HUB_TARGET_WEIGHT, and

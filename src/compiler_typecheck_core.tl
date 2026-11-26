@@ -3402,7 +3402,14 @@
   (pools ast.AstNodePoolContext)
   (source-names ci.InternSourceNameSessionHandle)
   (body-state TcBodyState)
-  (semantic-observer TcSemanticObserver))
+  (semantic-observer TcSemanticObserver)
+  ;; The provider (`compiler-load-provider-id-for-path`) of the source this
+  ;; context checks, which an (:opaque) family also requires (#8733), plus a
+  ;; 1-entry cache of the provenance ID that produced it so consecutive decls
+  ;; in one file skip the provider map lookup. Kept in TcContextShared so
+  ;; by-value TcContext stays 6 words.
+  (provider-id i64)
+  (provider-provenance-id i64))
 
 ;; A typecheck context is a Copy handle: the address of its TcContextShared
 ;; block, the body's job state (the most frequently read capability) and the
@@ -3420,10 +3427,7 @@
   (module-id i64)
   (type-module-id i64)
   (module u64)
-  (program-decls u64)
-  ;; The provider (`compiler-load-provider-id-for-path`) of the source this
-  ;; context checks, which an (:opaque) family also requires (#8733).
-  (provider-id i64))
+  (program-decls u64))
 
 ;; Observations borrow the exact checked context and environment only for the
 ;; callback. Consumers copy payloads before function scratch or pools retire.
@@ -3493,14 +3497,7 @@
         (TcSemanticObserverData
           context
           callback
-          (TcContext
-            0
-            (TcJobState 0)
-            0
-            0
-            0
-            0
-            (cload.compiler-load-provider-unknown)))))
+          (TcContext 0 (TcJobState 0) 0 0 0 0))))
     (TcSemanticObserver
       (cast
         (unsafe
@@ -3843,6 +3840,15 @@
       (int->ptr (+ address (cast slot-offset : u64)) : (MutPtr u64))
       (+ address (cast field-offset : u64)))))
 
+(define (tc-context-shared-i64-set!
+  [address : u64]
+  [slot-offset : i64]
+  [value : i64]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr (+ address (cast slot-offset : u64)) : (MutPtr i64))
+      value)))
+
 (define (tc-context-expr-cell-address-live [ctx : TcContext]) : u64
   (let
     [pools : ast.AstNodePoolContext
@@ -3914,13 +3920,14 @@
         (tc-body-state-new-with-job-state-and-source-names
           job-state
           source-names)
-        (TcSemanticObserver 0)))
+        (TcSemanticObserver 0)
+        (cload.compiler-load-provider-unknown)
+        -1))
     job-state
     module-id
     module-id
     (tc-context-string-bits module)
-    (tc-context-program-bits program)
-    (cload.compiler-load-provider-unknown)))
+    (tc-context-program-bits program)))
 
 (define (tc-context-new-with-source-names
   [program : ast.AstProgram]
@@ -3966,13 +3973,14 @@
           pools
           source-names
           body-state
-          observer))
+          observer
+          (cload.compiler-load-provider-unknown)
+          -1))
       job-state
       module-id
       module-id
       (tc-context-string-bits module)
-      (tc-context-program-bits program)
-      (cload.compiler-load-provider-unknown))))
+      (tc-context-program-bits program))))
 
 (define (tc-context-new
   [program : ast.AstProgram]
@@ -26339,31 +26347,54 @@
     module-id
     module-id
     (tc-context-string-bits module)
-    ctx.program-decls
-    ctx.provider-id))
+    ctx.program-decls))
 
 (define (tc-context-provider-id [ctx : TcContext]) : i64
-  ctx.provider-id)
+  (tc-context-shared-field ctx provider-id i64))
+
+(define (tc-context-provider-provenance-id [ctx : TcContext]) : i64
+  (tc-context-shared-field ctx provider-provenance-id i64))
+
+(define (tc-context-restore-provider!
+  [ctx : TcContext]
+  [provider-id : i64]
+  [provenance-id : i64]) : unit
+  (tc-context-shared-i64-set!
+    ctx.shared
+    (comptime (offset-of (type TcContextShared) provider-id))
+    provider-id)
+  (tc-context-shared-i64-set!
+    ctx.shared
+    (comptime (offset-of (type TcContextShared) provider-provenance-id))
+    provenance-id))
 
 ;; CTX re-reading code typecheck already admitted, as lowering does: its
 ;; (:opaque) uses keep the module-family test but not the provider's (#8733).
 (define (tc-context-with-admitted-provider [ctx : TcContext]) : TcContext
-  (set! ctx.provider-id (ctfe_support.ctfe-provider-admitted))
+  (tc-context-restore-provider! ctx (ctfe_support.ctfe-provider-admitted) -1)
   ctx)
 
-;; CTX checking the source PROVENANCE-ID names, whose provider an (:opaque)
-;; module family also requires (#8733).
-(define (tc-context-with-provenance-id [ctx : TcContext] [provenance-id : i64]) : TcContext
-  (set! ctx.provider-id (tc-provider-id-for-provenance ctx provenance-id))
-  ctx)
+;; Set CTX's active provider to the provider of PROVENANCE-ID (#8733). Skips
+;; the provider map lookup when PROVENANCE-ID matches the previous declaration.
+(define (tc-context-set-provenance-id! [ctx : TcContext] [provenance-id : i64]) : unit
+  (if (and
+    (>= provenance-id 0)
+    (= provenance-id (tc-context-provider-provenance-id ctx)))
+    unit
+    (tc-context-restore-provider!
+      ctx
+      (tc-provider-id-for-provenance ctx provenance-id)
+      (if (>= provenance-id 0)
+        provenance-id
+        -1))))
 
-(define (tc-context-with-decl-path-provenance
+(define (tc-context-set-decl-path-provenance!
   [ctx : TcContext]
-  [paths : (& ast.AstDeclPathList)]) : TcContext
+  [paths : (& ast.AstDeclPathList)]) : unit
   ;; A walk without a path lane keeps the source of the declaration it is in.
   (if (= (ast.ast-decl-path-list-len paths) 0)
-    ctx
-    (tc-context-with-provenance-id
+    unit
+    (tc-context-set-provenance-id!
       ctx
       (ast.ast-decl-path-list-provenance-id paths 0 -1))))
 
@@ -26390,8 +26421,7 @@
         type-module-id
         type-module-id
         (tc-context-string-bits type-module)
-        ctx.program-decls
-        ctx.provider-id))))
+        ctx.program-decls))))
 
 (define (tc-context-dotted-module-id-or-suffix
   [dotted-modules : sym_i64_env.SymI64Env]
@@ -50249,36 +50279,42 @@
               next-module)]
           [(ModuleBody target-module body-box)
             (let
-              [_
-                (try
-                  ;; The body's declarations share its path, so its source.
+              [prev-provider : i64 (tc-context-provider-id ctx)]
+              [prev-prov-id : i64 (tc-context-provider-provenance-id ctx)]
+              [_set-provider
+                : unit
+                ;; The body's declarations share its path, so its source.
+                (tc-context-set-decl-path-provenance! ctx (& paths))]
+              [body-res : ResultTcSourcePolicyDiagnostic
+                (tc-source-decl-list-policy-diagnostic-in-module
+                  (tc-context-with-module-id
+                    ctx
+                    (tc-env-key-name-text target-module)
+                    target-module)
+                  (ast.ast-decl-list-box-shared-view body-box)
+                  (ast.ast-decl-path-list-new)
+                  decl-path
+                  target-module)]
+              [_restore-provider : unit
+                (tc-context-restore-provider! ctx prev-provider prev-prov-id)]
+              (match body-res
+                [(Err diag) (Err diag)]
+                [(Ok)
                   (tc-source-decl-list-policy-diagnostic-in-module
-                    (tc-context-with-decl-path-provenance
-                      (tc-context-with-module-id
-                        ctx
-                        (tc-env-key-name-text target-module)
-                        target-module)
-                      (& paths))
-                    (ast.ast-decl-list-box-shared-view body-box)
-                    (ast.ast-decl-path-list-new)
-                    decl-path
-                    target-module))]
-              (tc-source-decl-list-policy-diagnostic-in-module
-                ctx
-                rest
-                rest-paths
-                fallback-path
-                module-id))]
+                    ctx
+                    rest
+                    rest-paths
+                    fallback-path
+                    module-id)]))]
           [_
+            (tc-context-set-decl-path-provenance! ctx (& paths))
             (match (tc-source-decl-policy-ok
-              (tc-context-with-decl-path-provenance
-                (tc-context-with-module-id
-                  ctx
-                  (if (csym.compiler-symbol-root-module-id? module-id)
-                    ""
-                    (tc-env-key-name-text module-id))
-                  module-id)
-                (& paths))
+              (tc-context-with-module-id
+                ctx
+                (if (csym.compiler-symbol-root-module-id? module-id)
+                  ""
+                  (tc-env-key-name-text module-id))
+                module-id)
               (tc-global-shared-view decl))
               [(Ok)
                 (tc-source-decl-list-policy-diagnostic-in-module
@@ -50308,15 +50344,21 @@
     [(Program decls-box)
       (let
         [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
+        [prev-provider : i64 (tc-context-provider-id ctx)]
+        [prev-prov-id : i64 (tc-context-provider-provenance-id ctx)]
         (tc-job-state-set-opaque-program!
           (tc-context-job-state ctx)
           (tc-opaque-decls-declare? (& decls)))
-        (tc-source-decl-list-policy-diagnostic-in-module
-          ctx
-          decls
-          paths
-          ""
-          (csym.compiler-symbol-root-module-id)))]))
+        (let
+          [result : ResultTcSourcePolicyDiagnostic
+            (tc-source-decl-list-policy-diagnostic-in-module
+              ctx
+              decls
+              paths
+              ""
+              (csym.compiler-symbol-root-module-id))]
+          (tc-context-restore-provider! ctx prev-provider prev-prov-id)
+          result))]))
 
 (define (tc-type-list-eq [a : ast.AstTypeList] [b : ast.AstTypeList]) : bool
   (and
@@ -79153,12 +79195,27 @@
 ;; expansion runs before the job knows whether the program declares an opaque
 ;; aggregate, so the binding does not wait on that flag.
 (define (tc-ctfe-env [ctx : TcContext]) : ctfe_support.CtfeEnv
-  (ctfe_support.ctfe-env-with-representation
-    (tc-ctfe-env-unbound ctx)
-    (ctfe_support.CtfeRepresentation
-      (tc-context-module-id ctx)
-      (tc-context-provider-id ctx)
-      (tc-opaque-module-providers ctx))))
+  (let
+    [state : TcMacroState (tc-context-macro-state ctx)]
+    [representation : ctfe_support.CtfeRepresentation
+      (ctfe_support.CtfeRepresentation
+        (tc-context-module-id ctx)
+        (tc-context-provider-id ctx)
+        (tc-opaque-module-providers ctx))]
+    (if (tc-macro-walk-field state macro-expand-ctfe-env-ready)
+      (ctfe_support.ctfe-env-rebase-pools-and-representation
+        (tc-ctfe-env-sync-import-stubs! state)
+        (tc-context-pools ctx)
+        representation)
+      (if (tc-macro-walk-field state ctfe-needs-metadata)
+        (ctfe_support.ctfe-env-with-representation
+          (tc-ctfe-env-unbound ctx)
+          representation)
+        (ctfe_support.ctfe-env-empty-with-representation-and-pools-and-source-names-and-macro-state
+          (tc-context-pools ctx)
+          (tc-context-source-names ctx)
+          (tc-macro-ctfe-state state)
+          representation)))))
 
 (define (tc-ctfe-env-unbound [ctx : TcContext]) : ctfe_support.CtfeEnv
   (let
@@ -93678,26 +93735,43 @@
               index
               cbi.compiler-builtin-id-fix-empty)))))))
 
+(define (tc-symbols-decls-data-addr [decls : (& (__tl_dyn-array ast.AstDecl))]) : u64
+  (unsafe
+    (cast (ptr->int (__tl_array-data (deref decls))) : u64)))
+
 ;; The provider of the (:opaque) aggregates each module declares, for the CTFE
 ;; mirror of `tc-opaque-foreign-index?`. A module whose aggregates two
-;; providers declare maps to the unknown provider, which matches none. Rebuilt
-;; when the symbol table grows, such as after declaration-emitting macros.
+;; providers declare maps to the unknown provider, which matches none. Updated
+;; incrementally when declarations are appended via `macro-live-symbols-insert-decls!`
+;; and rebuilt on fresh symbol tables.
 (define (tc-opaque-module-providers [ctx : TcContext]) : tc_i64_i64_map.Map
   (let
     [state : TcMacroState (tc-context-macro-state ctx)]
     [symbols : (& ctx csym.CompilerSymbols) (tc-context-symbols ctx)]
     [count : i64 (csym.compiler-symbols-decl-count symbols)]
+    [decls : (__tl_dyn-array ast.AstDecl) (csym.compiler-symbols-decls symbols)]
+    [data-addr : u64 (tc-symbols-decls-data-addr (& decls))]
+    [prev-count : i64
+      (tc-macro-walk-field state macro-opaque-module-providers-decls)]
+    [same-table? : bool
+      (and
+        (>= prev-count 0)
+        (<= prev-count count)
+        (=
+          (tc-macro-walk-field state macro-opaque-module-providers-decls-data)
+          data-addr))]
     [modules : tc_i64_i64_map.Map
       (tc-macro-walk-field state macro-opaque-module-providers)]
-    (if (=
-      (tc-macro-walk-field state macro-opaque-module-providers-decls)
-      count)
+    (if (and same-table? (= prev-count count))
       modules
       (let
-        [decls : (__tl_dyn-array ast.AstDecl)
-          (csym.compiler-symbols-decls symbols)]
-        (tc_i64_i64_map.clear-ref! (&mut modules))
-        (for [index (iterator.range 0 count)]
+        [start : i64
+          (if same-table?
+            prev-count
+            (begin
+              (tc_i64_i64_map.clear-ref! (&mut modules))
+              0))]
+        (for [index (iterator.range start count)]
           (when
             (ast.ast-decl-opaque? (& (array-ref decls index)))
             (let
@@ -93737,6 +93811,10 @@
                     (cload.compiler-load-provider-unknown)))))))
         (tc-macro-walk-set! state macro-opaque-module-providers modules)
         (tc-macro-walk-set! state macro-opaque-module-providers-decls count)
+        (tc-macro-walk-set!
+          state
+          macro-opaque-module-providers-decls-data
+          data-addr)
         (tc-macro-walk-field state macro-opaque-module-providers)))))
 
 ;; The name of TY when TY is a struct or enum declared (:opaque) whose module
@@ -99360,6 +99438,7 @@
   (macro-provider-cache tc_i64_i64_map.Map)
   (macro-opaque-module-providers tc_i64_i64_map.Map)
   (macro-opaque-module-providers-decls i64)
+  (macro-opaque-module-providers-decls-data u64)
   ;; Canonical dependency-catalog route metrics. The fixed cell belongs to the
   ;; TcJobState's lazy macro-walk storage, so interleaved jobs and resets never
   ;; observe or erase one another's verification counters.
@@ -99517,6 +99596,7 @@
     (tc_i64_i64_map.with-capacity 64)
     (tc_i64_i64_map.with-capacity 16)
     -1
+    (cast 0 : u64)
     (__tl_make-array i64 13)
     false
     (sym_i64_env.sym-i64-empty)
@@ -100257,6 +100337,24 @@
         paths
         module-id)
         [(Ok symbols)
+          (let
+            [prev-count : i64
+              (tc-macro-walk-field state macro-opaque-module-providers-decls)]
+            (when
+              (and
+                (>= prev-count 0)
+                (<= prev-count append-index)
+                (=
+                  (tc-macro-walk-field
+                    state
+                    macro-opaque-module-providers-decls-data)
+                  (tc-symbols-decls-data-addr
+                    (& (csym.compiler-symbols-decls (& current-symbols))))))
+              (tc-macro-walk-set!
+                state
+                macro-opaque-module-providers-decls-data
+                (tc-symbols-decls-data-addr
+                  (& (csym.compiler-symbols-decls (& symbols)))))))
           (tc-macro-walk-set! state macro-live-symbols-value symbols)
           (tc-macro-walk-set!
             state
@@ -100353,6 +100451,11 @@
           [registries
             (try (macro-live-registries-build-current state program symbols))]
           (tc-macro-walk-set! state macro-live-symbols-value symbols)
+          (tc-macro-walk-set! state macro-opaque-module-providers-decls -1)
+          (tc-macro-walk-set!
+            state
+            macro-opaque-module-providers-decls-data
+            (cast 0 : u64))
           (set!
             (array-ref (tc-macro-walk-field state macro-live-registries-cell) 0)
             registries)
@@ -116476,7 +116579,11 @@
     (tc_i64_i64_map.clear-ref! (&mut modules))
     (tc-macro-walk-set! state macro-provider-cache providers)
     (tc-macro-walk-set! state macro-opaque-module-providers modules)
-    (tc-macro-walk-set! state macro-opaque-module-providers-decls -1)))
+    (tc-macro-walk-set! state macro-opaque-module-providers-decls -1)
+    (tc-macro-walk-set!
+      state
+      macro-opaque-module-providers-decls-data
+      (cast 0 : u64))))
 
 ;; The provider (`compiler-load-provider-id-for-path`) of the source
 ;; PROVENANCE-ID names in CTX's source-name table, either lane included (#8733).
@@ -126980,9 +127087,7 @@
               ;; A macro's comptime code runs as its expansion site's code,
               ;; module and provider both (SPEC 3.5.4).
               [_set-decl-provider : unit
-                (set!
-                  cur-ctx
-                  (tc-context-with-provenance-id cur-ctx decl-provenance-id))]
+                (tc-context-set-provenance-id! cur-ctx decl-provenance-id)]
               (match (tc-global-shared-view decl)
                 [(Module next-module)
                   (begin
@@ -136083,14 +136188,13 @@
                       (Err (box (tc-global-shared-view diagnostics))))
                     (set! done true)])]
               [_
+                (tc-context-set-decl-path-provenance! ctx (& cur-paths))
                 (let
                   [decl-base-ctx : TcContext
-                    (tc-context-with-decl-path-provenance
-                      (tc-context-with-module-id
-                        ctx
-                        (tc-global-shared-view cur-module)
-                        cur-module-id)
-                      (& cur-paths))]
+                    (tc-context-with-module-id
+                      ctx
+                      (tc-global-shared-view cur-module)
+                      cur-module-id)]
                   [path-owner-id : i64
                     (ast.ast-decl-path-list-owner-id
                       (& cur-paths)

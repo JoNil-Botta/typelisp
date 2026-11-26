@@ -16472,23 +16472,23 @@
       (compiler-load-provider-unknown)]
     [(compiler-load-embedded-stdlib-provider-path? path)
       (compiler-load-provider-stdlib)]
-    [(compiler-load-under-stdlib-root? (& (compiler-load-canonical-path path)))
-      (compiler-load-provider-stdlib)]
     [else
       (let
         [source : String (compiler-load-canonical-path path)]
-        ;; The walk ends at the cwd's manifest once it passes the filesystem
-        ;; root; only a manifest above SOURCE itself names its provider.
-        (match (compiler-load-discover-manifest (& source))
-          [(CompilerLoadSomePath manifest)
-            (if (fs.path-absolute? (& manifest))
-              (ci.intern
-                (source_overlay.compiler-source-path-fold
-                  (&
-                    (compiler-load-canonical-path
-                      (& (compiler-load-dirname (& manifest)))))))
-              (compiler-load-provider-no-package))]
-          [(CompilerLoadNoPath) (compiler-load-provider-no-package)]))]))
+        (if (compiler-load-under-stdlib-root? (& source))
+          (compiler-load-provider-stdlib)
+          ;; The walk ends at the cwd's manifest once it passes the filesystem
+          ;; root; only a manifest above SOURCE itself names its provider.
+          (match (compiler-load-discover-manifest (& source))
+            [(CompilerLoadSomePath manifest)
+              (if (fs.path-absolute? (& manifest))
+                (ci.intern
+                  (source_overlay.compiler-source-path-fold
+                    (&
+                      (compiler-load-canonical-path
+                        (& (compiler-load-dirname (& manifest)))))))
+                (compiler-load-provider-no-package))]
+            [(CompilerLoadNoPath) (compiler-load-provider-no-package)])))]))
 
 ;: Resolve a `pkg:<alias>/...` import by discovering and parsing the nearest
 ;: `typelisp.pkg` relative to the importer, then resolving against its deps.

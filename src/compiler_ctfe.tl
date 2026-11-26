@@ -1498,29 +1498,60 @@
     0
     (arena.tl_arena_current)))
 
-(define (ctfe-env-new
+(define ctfe-empty-module-providers-cell : ctfe_key_map.Map
+  (ctfe_key_map.with-capacity 1))
+
+;; Process-lived empty module-provider map for unchecked CTFE environments;
+;; avoids allocating a map on every `ctfe-env-new` call.
+(define (ctfe-empty-module-providers) : ctfe_key_map.Map
+  (unsafe
+    (ptr-read (ptr-addr-of ctfe-empty-module-providers-cell))))
+
+(define (ctfe-env-new-with-representation
   [pools : ast.AstNodePoolContext]
   [layouts : CtfeLayoutInfoList]
   [reflections : CtfeReflectInfoList]
   [source-names : ci.InternSourceNameSessionHandle]
-  [macro-state : CompilerCtfeMacroState]) : CtfeEnv
+  [macro-state : CompilerCtfeMacroState]
+  [representation : CtfeRepresentation]) : CtfeEnv
   (compiler-ctfe-macro-state-bind-source-names! macro-state source-names)
   (CtfeEnv
     (ctfe-env-arena-box-new (ctfe-env-arena-new))
     -1
     (None)
     (ctfe-env-metadata-box-new
-      (CtfeEnvMetadata
-        pools
-        layouts
-        reflections
-        source-names
-        0
-        (CtfeRepresentation
-          (ctfe-representation-unchecked)
-          -1
-          (ctfe_key_map.with-capacity 1))))
+      (CtfeEnvMetadata pools layouts reflections source-names 0 representation))
     macro-state))
+
+(define (ctfe-env-new
+  [pools : ast.AstNodePoolContext]
+  [layouts : CtfeLayoutInfoList]
+  [reflections : CtfeReflectInfoList]
+  [source-names : ci.InternSourceNameSessionHandle]
+  [macro-state : CompilerCtfeMacroState]) : CtfeEnv
+  (ctfe-env-new-with-representation
+    pools
+    layouts
+    reflections
+    source-names
+    macro-state
+    (CtfeRepresentation
+      (ctfe-representation-unchecked)
+      -1
+      (ctfe-empty-module-providers))))
+
+(define (ctfe-env-empty-with-representation-and-pools-and-source-names-and-macro-state
+  [pools : ast.AstNodePoolContext]
+  [source-names : ci.InternSourceNameSessionHandle]
+  [macro-state : CompilerCtfeMacroState]
+  [representation : CtfeRepresentation]) : CtfeEnv
+  (ctfe-env-new-with-representation
+    pools
+    (ctfe-layout-info-list-empty)
+    (ctfe-reflect-info-list-empty)
+    source-names
+    macro-state
+    representation))
 
 (define (ctfe-env-empty-with-pools-and-source-names-and-macro-state
   [pools : ast.AstNodePoolContext]
@@ -2371,6 +2402,27 @@
           metadata.source-names
           metadata.type-literals
           metadata.representation))
+      env.macro-state)))
+
+(define (ctfe-env-rebase-pools-and-representation
+  [env : CtfeEnv]
+  [pools : ast.AstNodePoolContext]
+  [representation : CtfeRepresentation]) : CtfeEnv
+  (let
+    [env-view : CtfeEnv env]
+    [metadata : CtfeEnvMetadata (ctfe-env-metadata-read env-view.metadata)]
+    (CtfeEnv
+      env.arena-store
+      env.head
+      env.syntax-pools
+      (ctfe-env-metadata-box-new
+        (CtfeEnvMetadata
+          pools
+          metadata.layouts
+          metadata.reflections
+          metadata.source-names
+          metadata.type-literals
+          representation))
       env.macro-state)))
 
 ;; `env` reading `reflections` as its reflection metadata.

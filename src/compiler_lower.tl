@@ -1327,8 +1327,7 @@
     ctx.module-id
     ctx.type-module-id
     ctx.module
-    ctx.program-decls
-    ctx.provider-id))
+    ctx.program-decls))
 
 (define (lower-clone-state [state : (& LowerState)]) : LowerState
   (LowerState state.address))

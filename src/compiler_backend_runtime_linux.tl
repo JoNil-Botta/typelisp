@@ -840,12 +840,15 @@ tl_arena_destroy:
     (compiler-backend-runtime-linux-arena-functions-base profile arena-debug)))
 
 ;; The arena-debug root registration after a fresh arena is mapped (%rax).
+;; `.L_tl_arena_debug_register_root` scans the root table with `%rcx`, so save
+;; `%rcx` in the 8-byte stack alignment slot (`tl_alloc` keeps the segment end
+;; in `%rcx` across this hook).
 (define (compiler-backend-runtime-linux-register-root-hook [arena-debug : bool]) : String
   (if arena-debug
-    "    movq %rax, %rdi
-    subq $8, %rsp
+    "    pushq %rcx
+    movq %rax, %rdi
     call .L_tl_arena_debug_register_root
-    addq $8, %rsp
+    popq %rcx
 "
     ""))
 

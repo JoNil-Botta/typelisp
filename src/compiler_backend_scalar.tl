@@ -3222,7 +3222,7 @@
       [(not (be_state.compiler-backend-target-coff? target))
         (if (and library? (not local-table?))
           "    .pushsection tl_abort_sites,\"ao\",@progbits,\\fn\n"
-          "    .pushsection tl_abort_sites,\"ao\",@progbits,.L_tl_abort_text\n")]
+          "    .pushsection tl_abort_sites,\"ao\",@progbits,.text\n")]
       [library? "    .pushsection .rdata$TLAS,\"dr\",associative,\\fn\n"]
       [else "    .pushsection .rdata$TLAS,\"dr\"\n"])
     "    .balign 4\n    .ifndef .L_tl_abort_table\n.L_tl_abort_table:\n    .endif\n"
@@ -3274,11 +3274,9 @@
         [else "__stop_tl_abort_sites"])]
     (str_cat.str-cat
       "    .section .text\n    .ifdef .L_tl_abort_table\n"
-      (cond
-        [windows? ""]
-        [local-table?
-          ".L_tl_abort_text:\n    .pushsection tl_abort_sites,\"ao\",@progbits,.L_tl_abort_text\n.L_tl_abort_table_end:\n    .popsection\n"]
-        [else ".L_tl_abort_text:\n"])
+      (if (and local-table? (not windows?))
+        "    .pushsection tl_abort_sites,\"ao\",@progbits,.text\n.L_tl_abort_table_end:\n    .popsection\n"
+        "")
       "    .irp kind, tl_oob_abort_at, tl_div_abort_at, tl_shift_abort_at, tl_panic_at\n"
       ;; An assembler resolves an alias of a symbol defined in the same
       ;; object to its section, which may be a discarded duplicate. The

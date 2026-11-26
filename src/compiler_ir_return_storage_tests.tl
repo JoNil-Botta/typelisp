@@ -725,3 +725,150 @@
   (test.assert-false
     (incoming-identity-range? "%2 = gep %0, 8 : u8\n%2 = mov %2 : u64" 2)
     "identity copies cannot turn an interior pointer into the output root"))
+
+(define (global-addr-sret-case-code
+  [program-text : String]
+  [caller-index : i64]) : i64
+  (match (irt.program program-text)
+    [(ir.CompilerIrProgram.Program globals functions externs _)
+      (let
+        [pools : ast.AstNodePoolContext
+          (ast.ast-node-pool-reader-context-current)]
+        [bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
+        [interns : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+        [canonical : ir.CompilerIrReturnStorageIndex
+          (ir.compiler-ir-return-storage-index-claims
+            bases
+            (ir.compiler-ir-type-pool-count pools)
+            (& functions)
+            (& externs))]
+        [authority : ir.CompilerIrReturnStorageAuthority
+          (ir.compiler-ir-return-storage-authority-capture
+            pools
+            interns
+            0
+            canonical)]
+        [index : ir.CompilerIrReturnStorageIndex
+          (ir.compiler-ir-return-storage-index-authorized
+            pools
+            interns
+            0
+            functions
+            externs
+            authority)]
+        [cells : storage.GlobalCells (storage.global-cells-build (& globals))]
+        (match (ir.compiler-ir-function-seq-ref functions caller-index)
+          [(ir.CompilerIrFunction.Function _ params _ vars blocks abi)
+            (let
+              [facts : storage.StorageFacts
+                (storage.facts bases params abi blocks vars)]
+              [code : i64 0]
+              [b : i64 0]
+              (while (< b facts.blocks.len)
+                (match (ir.compiler-ir-block-seq-ref facts.blocks b)
+                  [(ir.CompilerIrBlock.Block _ instrs)
+                    (let
+                      [i : i64 0]
+                      (while (< i (ir.compiler-ir-instr-seq-count instrs))
+                        (let
+                          [instr : ir.CompilerIrInstr
+                            (ir.compiler-ir-instr-seq-ref instrs i)]
+                          (match (storage.marked-pointer (& instr))
+                            [(ir.CompilerIrMaybeValue.Some _)
+                              (set!
+                                code
+                                (proof-code
+                                  (storage.instruction-proof-with-globals
+                                    bases
+                                    (& index)
+                                    (& facts)
+                                    (& cells)
+                                    (& instr))))]
+                            [(ir.CompilerIrMaybeValue.No) unit])
+                          (set! i (+ i 1)))))])
+                (set! b (+ b 1)))
+              code)]))]))
+
+(test
+  return-storage-global-addr-sret-bounds
+  (test.assert-i64-eq
+    (global-addr-sret-case-code
+      "global @ok_inline : SretValue = runtime-init@make inline 24 8
+       function @make(out=%0:u64) -> u64 vars 2 abi return-storage internal-leading arg 0 bytes 24 align 8 output SretValue result u64 params (u64) source (-> SretValue) {
+       entry:
+         return %0
+       }
+       function @caller() -> u64 vars 3 {
+       entry:
+         %0 = mov &@ok_inline : u64
+         %1 = call make([sret arg 0] %0) : u64
+         return %1
+       }"
+      1)
+    1
+    "matching inline global cell proves GlobalAddr sret call")
+  (test.assert-i64-eq
+    (global-addr-sret-case-code
+      "global @word_cell : i64 = 0
+       function @make(out=%0:u64) -> u64 vars 2 abi return-storage internal-leading arg 0 bytes 24 align 8 output SretValue result u64 params (u64) source (-> SretValue) {
+       entry:
+         return %0
+       }
+       function @caller() -> u64 vars 3 {
+       entry:
+         %0 = mov &@word_cell : u64
+         %1 = call make([sret arg 0] %0) : u64
+         return %1
+       }"
+      1)
+    -1
+    "Word global cell is rejected as GlobalAddr sret operand")
+  (test.assert-i64-eq
+    (global-addr-sret-case-code
+      "global @small_inline : SretValue = runtime-init@small inline 16 8
+       function @make(out=%0:u64) -> u64 vars 2 abi return-storage internal-leading arg 0 bytes 24 align 8 output SretValue result u64 params (u64) source (-> SretValue) {
+       entry:
+         return %0
+       }
+       function @caller() -> u64 vars 3 {
+       entry:
+         %0 = mov &@small_inline : u64
+         %1 = call make([sret arg 0] %0) : u64
+         return %1
+       }"
+      1)
+    -1
+    "undersized inline global cell is rejected as GlobalAddr sret operand")
+  (test.assert-i64-eq
+    (global-addr-sret-case-code
+      "global @align8_inline : SretValue = runtime-init@make inline 32 8
+       function @make(out=%0:u64) -> u64 vars 2 abi return-storage internal-leading arg 0 bytes 32 align 16 output SretValue result u64 params (u64) source (-> SretValue) {
+       entry:
+         return %0
+       }
+       function @caller() -> u64 vars 3 {
+       entry:
+         %0 = mov &@align8_inline : u64
+         %1 = call make([sret arg 0] %0) : u64
+         return %1
+       }"
+      1)
+    -1
+    "under-aligned inline global cell is rejected as GlobalAddr sret operand")
+  (test.assert-i64-eq
+    (global-addr-sret-case-code
+      "global @ok_inline : SretValue = runtime-init@make inline 24 8
+       global @word_cell : i64 = 0
+       function @make(out=%0:u64) -> u64 vars 2 abi return-storage internal-leading arg 0 bytes 24 align 8 output SretValue result u64 params (u64) source (-> SretValue) {
+       entry:
+         return %0
+       }
+       function @caller(cond=%0:bool) -> u64 vars 4 {
+       entry:
+         %1 = select %0, &@ok_inline, &@word_cell lanes 0 : u64
+         %2 = call make([sret arg 0] %1) : u64
+         return %2
+       }"
+      1)
+    -1
+    "select mixing inline and Word global cells is rejected"))

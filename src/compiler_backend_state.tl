@@ -2900,8 +2900,13 @@
   0)
 (define compiler-backend-function-string-abort-site-path : i64
   1)
-(define compiler-backend-function-string-count : i64
+
+;; The assembly symbol of the function that owns the located abort site. A
+;; library object's abort row is retained exactly when this symbol's section is.
+(define compiler-backend-function-string-abort-site-function : i64
   2)
+(define compiler-backend-function-string-count : i64
+  3)
 (define compiler-backend-function-i64-array-addr-of-forwarding-src : i64
   0)
 (define compiler-backend-function-i64-array-fuse-use-counts : i64
@@ -3429,6 +3434,9 @@
       (array-ref strings compiler-backend-function-string-abort-site-path)
       "")
     (set!
+      (array-ref strings compiler-backend-function-string-abort-site-function)
+      "")
+    (set!
       (array-ref
         i64-arrays
         compiler-backend-function-i64-array-addr-of-forwarding-src)
@@ -3869,6 +3877,11 @@
       "")
     (set!
       (array-ref data.strings compiler-backend-function-string-abort-site-path)
+      "")
+    (set!
+      (array-ref
+        data.strings
+        compiler-backend-function-string-abort-site-function)
       "")
     (set!
       (array-ref

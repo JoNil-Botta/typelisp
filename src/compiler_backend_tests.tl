@@ -32002,7 +32002,7 @@ entry:
           (asm-has? asm "    cqto\n")
           (asm-has? asm "    idivq %r8\n")
           (asm-has? asm "    movq %rdx, %rax\n")
-          (asm-has? asm ", 1, 46, tl_div_abort_at\n"))
+          (asm-has? asm ", 4142, tl_div_abort_at\n"))
         (asm-lacks? asm "    call tl_div_abort\n" ".globl tl_div_abort\n")
         (not
           (let
@@ -49337,3 +49337,57 @@ user_fn:
         (string.contains (& param) "return %0")
         (not (string.contains (& param) "return %2")))
       (str_cat.str-cat "a reassigned parameter keeps its own reads: " param))))
+
+(define (compiler-backend-object-bss-label-zero-bytes
+  [image : (& cobj.CompilerObjectImage)]
+  [label : (& str)]) : i64
+  (match (cobj.compiler-object-section-list-find image.sections (Bss))
+    [(Section _ records _)
+      (let
+        [count : i64 (cobj.compiler-object-data-record-list-count (& records))]
+        [found : i64 -1]
+        (for [i (iterator.range 0 (- count 1))]
+          (match (cobj.compiler-object-data-record-list-ref (& records) i)
+            [(Label name)
+              (when
+                (string.eq (& name) label)
+                (match (cobj.compiler-object-data-record-list-ref
+                  (& records)
+                  (+ i 1))
+                  [(Zero bytes) (set! found bytes)]
+                  [_ unit]))]
+            [_ unit]))
+        found)]))
+
+(test
+  object-mode-bss-register-group-size-is-16
+  (let
+    [source : String
+      "(defstruct Pair (x i64) (y i64))
+(define (mk-pair [v : i64]) : Pair (Pair v (+ v 1)))
+(define gpair : Pair (mk-pair 20))
+(define (main) : i64 (+ gpair.x gpair.y))"]
+    (match (backend.compiler-backend-emit-source-object-image-for-target
+      (string.copy (& source))
+      (be_state.CompilerBackendTarget.Linux))
+      [(Ok image)
+        (test.assert-i64-eq
+          (compiler-backend-object-bss-label-zero-bytes (& image) "_tl_gpair")
+          16
+          "ELF object mode reserves 16 bytes in .bss for a register-group global")]
+      [(Err _)
+        (test.assert-true
+          false
+          "ELF object image emission for register-group global succeeded")])
+    (match (backend.compiler-backend-emit-source-object-image-for-target
+      source
+      (be_state.CompilerBackendTarget.Windows))
+      [(Ok image)
+        (test.assert-i64-eq
+          (compiler-backend-object-bss-label-zero-bytes (& image) "_tl_gpair")
+          16
+          "COFF object mode reserves 16 bytes in .bss for a register-group global")]
+      [(Err _)
+        (test.assert-true
+          false
+          "COFF object image emission for register-group global succeeded")])))

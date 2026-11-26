@@ -19742,7 +19742,7 @@
       (opt.opt-inline-checked-min-site-depth))
     (string.eq
       (opt.opt-inline-checked-clause-text
-        (opt.opt-inline-checked-clause-site-depth))
+        opt.opt-inline-checked-clause-site-depth)
       "site-depth")
     ;; ARM: the sibling arm returns a literal, so the two arms run the caller
     ;; out between them
@@ -40544,7 +40544,7 @@ exit:
     [(No) -1]
     [(Some block)
       (match block
-        [(Block _ instrs) (opt.opt-bce-mb-guard-compare-count instrs 0)])]))
+        [(Block _ instrs) (opt.opt-bce-guard-conjunct-count (& instrs))])]))
 
 (define (compiler-optimize-bce-mask-self-test) : i64
   (cond
@@ -90106,3 +90106,306 @@ inl.entry.0.cont:
         (not (string.contains (& store-ir) "rotr "))
         (string.contains (& store-ir) "bit_or "))
       "intervening store_ptr blocks rotate fusion")))
+
+(define (opt-inline-global-len-eq-program) : ir.CompilerIrProgram
+  (irt.program
+    "global @ig_copy_a : i64 = runtime-init@ig_init_copy_a inline 16 8
+     global @ig_copy_b : i64 = runtime-init@ig_init_copy_b inline 16 8
+     global @ig_tail_a : i64 = runtime-init@ig_init_tail_a inline 16 8
+     global @ig_tail_b : i64 = runtime-init@ig_init_tail_b inline 16 8
+     global @ig_mutated : i64 = runtime-init@ig_init_mutated inline 16 8
+     global @ig_mixed_rt : i64 = runtime-init@ig_init_mixed_rt inline 16 8
+     global @ig_mixed_rrt : i64 = runtime-init@ig_init_mixed_rrt inline 16 8
+     function @ig_ctor(out=%0:u64, n=%1:i64) -> u64 vars 9 {
+     entry:
+       %7 = alloc i64
+       %2 = addr_of %7
+       %3 = gep %2, 0 : u8
+       store_ptr %3, 0 : i64
+       %4 = gep %2, 8 : u8
+       store_ptr %4, %1 : i64
+       %5 = gep %0, 0 : u8
+       store_ptr %5, %2 : u64
+       %6 = gep %0, 8 : u8
+       store_ptr %6, %1 : i64
+       return %0
+     }
+     function @ig_nop(p=%0:u64) -> u64 vars 2 {
+     entry:
+       return 0
+     }
+     function @ig_init_copy_a(cell=%0:u64) -> u64 vars 6 {
+     entry:
+       %1 = alloc i64
+       %2 = addr_of %1
+       %3 = call ig_ctor(%2, 4) : u64
+       copy_bytes %0, %3, 16
+       return %0
+     }
+     function @ig_init_copy_b(cell=%0:u64) -> u64 vars 6 {
+     entry:
+       %1 = alloc i64
+       %2 = addr_of %1
+       %3 = call ig_ctor(%2, 4) : u64
+       copy_bytes %0, %3, 16
+       return %0
+     }
+     function @ig_init_tail_a(cell=%0:u64) -> u64 vars 4 {
+     entry:
+       tailcall ig_ctor(%0, 4) : u64
+     }
+     function @ig_init_tail_b(cell=%0:u64) -> u64 vars 4 {
+     entry:
+       tailcall ig_ctor(%0, 4) : u64
+     }
+     function @ig_init_mutated(cell=%0:u64) -> u64 vars 8 {
+     entry:
+       %1 = alloc i64
+       %2 = addr_of %1
+       %3 = call ig_ctor(%2, 4) : u64
+       copy_bytes %0, %3, 16
+       %4 = call ig_nop(%0) : u64
+       return %0
+     }
+     function @ig_init_mixed_rt(cell=%0:u64, c=%1:bool) -> u64 vars 8 {
+     entry:
+       branch %1, fast, slow
+     fast:
+       %2 = alloc i64
+       %3 = addr_of %2
+       %4 = call ig_ctor(%3, 4) : u64
+       copy_bytes %0, %4, 16
+       return %0
+     slow:
+       tailcall ig_ctor(%0, 99) : u64
+     }
+     function @ig_init_mixed_rrt(cell=%0:u64, c=%1:bool, d=%2:bool) -> u64 vars 10 {
+     entry:
+       branch %1, a, mid
+     mid:
+       branch %2, b, tail_arm
+     a:
+       %3 = alloc i64
+       %4 = addr_of %3
+       %5 = call ig_ctor(%4, 4) : u64
+       copy_bytes %0, %5, 16
+       return %0
+     b:
+       %6 = alloc i64
+       %7 = addr_of %6
+       %8 = call ig_ctor(%7, 7) : u64
+       copy_bytes %0, %8, 16
+       return %0
+     tail_arm:
+       tailcall ig_ctor(%0, 4) : u64
+     }"))
+
+(test
+  len-eq-inline-global-init-soundness
+  (match (opt-inline-global-len-eq-program)
+    [(Program globals functions _ _)
+      (let
+        [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+        [facts : opt.OptProgramFacts (opt.opt-program-facts-build functions)]
+        [call-mem : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 8)]
+        [_ : unit
+          (opt_i64_i64_map.insert-ref!
+            (&mut call-mem)
+            (ir.compiler-ir-symbol-id (opt-test-symbol "ig_nop"))
+            0)]
+        [cells : opt.OptGlobalCellSummary
+          (opt.opt-global-cell-summary-build-with-call-memory
+            bases
+            (& globals)
+            functions
+            facts
+            call-mem)]
+        [copy-a : i64 (opt-le-family (& cells) (opt-test-symbol "ig_copy_a"))]
+        [copy-b : i64 (opt-le-family (& cells) (opt-test-symbol "ig_copy_b"))]
+        [tail-a : i64 (opt-le-family (& cells) (opt-test-symbol "ig_tail_a"))]
+        [tail-b : i64 (opt-le-family (& cells) (opt-test-symbol "ig_tail_b"))]
+        [mutated : i64 (opt-le-family (& cells) (opt-test-symbol "ig_mutated"))]
+        [mixed-rt : i64
+          (opt-le-family (& cells) (opt-test-symbol "ig_mixed_rt"))]
+        [mixed-rrt : i64
+          (opt-le-family (& cells) (opt-test-symbol "ig_mixed_rrt"))]
+        (test.assert-true
+          (and (> copy-a 0) (= copy-a copy-b))
+          "sole-use copy-into-cell inline initializers join one length-equality family")
+        (test.assert-true
+          (and (> tail-a 0) (= tail-a tail-b) (= tail-a copy-a))
+          "tail-call forwarding inline initializers join the same family")
+        (test.assert-i64-eq
+          mutated
+          0
+          "post-copy use/mutation of the inline cell refuses length-equality admission")
+        (test.assert-i64-eq
+          mixed-rt
+          0
+          "mixed 1-return + 1-tailcall initializer refuses length-equality admission")
+        (test.assert-i64-eq
+          mixed-rrt
+          0
+          "mixed 2-return + 1-tailcall initializer refuses length-equality admission"))]))
+
+(define (opt-verify-program-authorized [program : ir.CompilerIrProgram]) : ir.CompilerIrProgram
+  (match program
+    [(ir.CompilerIrProgram.Program globals functions externs _)
+      (let
+        [pools : ast.AstNodePoolContext
+          (ast.ast-node-pool-reader-context-current)]
+        [interns : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+        [canonical : ir.CompilerIrReturnStorageIndex
+          (ir.compiler-ir-return-storage-index-claims
+            (ast.ast-node-pool-context-type-segment-bases pools)
+            (ir.compiler-ir-type-pool-count pools)
+            (& functions)
+            (& externs))]
+        [authority : ir.CompilerIrReturnStorageAuthority
+          (ir.compiler-ir-return-storage-authority-capture
+            pools
+            interns
+            0
+            canonical)]
+        (ir.CompilerIrProgram.Program globals functions externs authority))]))
+
+(define (opt-verify-program-err-contains? [text : String] [needle : String]) : bool
+  (let
+    [program : ir.CompilerIrProgram
+      (opt-verify-program-authorized (irt.program text))]
+    (match (opt.opt-verify-program (& program))
+      [(Ok) false]
+      [(Err message) (string.contains (& message) needle)])))
+
+(test
+  verify-inline-global-storage-and-sret-soundness
+  ;; Control: valid inline global, matching ReturnStorage initializer, valid
+  ;; GlobalAddr sret call.
+  (let
+    [ok-program : ir.CompilerIrProgram
+      (opt-verify-program-authorized
+        (irt.program
+          "global @ok_cell : SretValue = runtime-init@ok_init inline 24 8
+           function @ok_init(out=%0:u64) -> u64 vars 2 abi return-storage internal-leading arg 0 bytes 24 align 8 output SretValue result u64 params (u64) source (-> SretValue) {
+           entry:
+             return %0
+           }
+           function @startup() -> u64 vars 3 {
+           entry:
+             %0 = mov &@ok_cell : u64
+             %1 = call ok_init([sret arg 0] %0) : u64
+             return %1
+           }"))]
+    (test.assert-true
+      (opt.opt-verify-ok? (& (opt.opt-verify-program (& ok-program))))
+      "valid inline global and matching sret initializer verify"))
+  ;; 1. Word RuntimeGlobal whose initializer declares ReturnStorage is rejected.
+  (test.assert-true
+    (opt-verify-program-err-contains?
+      "global @word_g : SretValue = runtime-init@word_init
+       function @word_init(out=%0:u64) -> u64 vars 2 abi return-storage internal-leading arg 0 bytes 24 align 8 output SretValue result u64 params (u64) source (-> SretValue) {
+       entry:
+         return %0
+       }"
+      "word global initializer")
+    "word runtime global with ReturnStorage initializer is rejected")
+  ;; 2. Inline global whose initializer is absent from functions is rejected.
+  (test.assert-true
+    (opt-verify-program-err-contains?
+      "global @ghost_cell : SretValue = runtime-init@missing_init inline 24 8
+       function @noop() -> i64 vars 1 {
+       entry:
+         return 0
+       }"
+      "is missing")
+    "inline global with absent initializer is rejected")
+  ;; 3. Inline global targeted by Store is rejected.
+  (test.assert-true
+    (opt-verify-program-err-contains?
+      "global @stored_cell : SretValue = runtime-init@stored_init inline 24 8
+       function @stored_init(out=%0:u64) -> u64 vars 2 abi return-storage internal-leading arg 0 bytes 24 align 8 output SretValue result u64 params (u64) source (-> SretValue) {
+       entry:
+         return %0
+       }
+       function @bad_store() -> i64 vars 1 {
+       entry:
+         store @stored_cell, 0 : i64
+         return 0
+       }"
+      "store targets inline global")
+    "Store targeting an inline global is rejected")
+  ;; 4. GlobalAddr of an 8-byte Word global passed as sret to a wider callee
+  ;;    is rejected (SSA path via opt-verify-sret-storage-pointer?).
+  (test.assert-true
+    (opt-verify-program-err-contains?
+      "global @tiny_word : i64 = 0
+       function @wide_callee(out=%0:u64) -> u64 vars 2 abi return-storage internal-leading arg 0 bytes 24 align 8 output SretValue result u64 params (u64) source (-> SretValue) {
+       entry:
+         return %0
+       }
+       function @bad_caller() -> u64 vars 3 {
+       entry:
+         %0 = mov &@tiny_word : u64
+         %1 = call wide_callee([sret arg 0] %0) : u64
+         return %1
+       }"
+      "sret argument")
+    "GlobalAddr of Word global passed as sret is rejected in SSA IR")
+  ;; 5. Same check in non-SSA final IR (exercises return_storage verifier path).
+  (test.assert-true
+    (opt-verify-program-err-contains?
+      "global @tiny_word : i64 = 0
+       function @wide_callee(out=%0:u64) -> u64 vars 2 abi return-storage internal-leading arg 0 bytes 24 align 8 output SretValue result u64 params (u64) source (-> SretValue) {
+       entry:
+         return %0
+       }
+       function @bad_final_caller() -> u64 vars 4 {
+       entry:
+         %2 = mov 1 : i64
+         %2 = mov 2 : i64
+         %0 = mov &@tiny_word : u64
+         %1 = call wide_callee([sret arg 0] %0) : u64
+         return %1
+       }"
+      "sret argument")
+    "GlobalAddr of Word global passed as sret is rejected in non-SSA IR")
+  ;; 6. GlobalAddr of an Inline global smaller than the callee's ABI is rejected.
+  (test.assert-true
+    (opt-verify-program-err-contains?
+      "global @small_cell : SretValue = runtime-init@small_init inline 16 8
+       function @small_init(out=%0:u64) -> u64 vars 2 abi return-storage internal-leading arg 0 bytes 16 align 8 output SretValue result u64 params (u64) source (-> SretValue) {
+       entry:
+         return %0
+       }
+       function @wide_callee(out=%0:u64) -> u64 vars 2 abi return-storage internal-leading arg 0 bytes 24 align 8 output SretValue result u64 params (u64) source (-> SretValue) {
+       entry:
+         return %0
+       }
+       function @bad_size_caller() -> u64 vars 3 {
+       entry:
+         %0 = mov &@small_cell : u64
+         %1 = call wide_callee([sret arg 0] %0) : u64
+         return %1
+       }"
+      "smaller than callee ABI")
+    "GlobalAddr of undersized inline global passed as sret is rejected")
+  ;; 7. GlobalAddr of an Inline global under-aligned for callee ABI is rejected.
+  (test.assert-true
+    (opt-verify-program-err-contains?
+      "global @align8_cell : SretValue = runtime-init@align8_init inline 32 8
+       function @align8_init(out=%0:u64) -> u64 vars 2 abi return-storage internal-leading arg 0 bytes 32 align 8 output SretValue result u64 params (u64) source (-> SretValue) {
+       entry:
+         return %0
+       }
+       function @align16_callee(out=%0:u64) -> u64 vars 2 abi return-storage internal-leading arg 0 bytes 32 align 16 output SretValue result u64 params (u64) source (-> SretValue) {
+       entry:
+         return %0
+       }
+       function @bad_align_caller() -> u64 vars 3 {
+       entry:
+         %0 = mov &@align8_cell : u64
+         %1 = call align16_callee([sret arg 0] %0) : u64
+         return %1
+       }"
+      "alignment is smaller than callee ABI")
+    "GlobalAddr of under-aligned inline global passed as sret is rejected"))

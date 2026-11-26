@@ -3332,6 +3332,7 @@
     [_ parts]))
 
 (define (compiler-backend-object-globals-from
+  [type-segment-bases : i64]
   [parts : object_target.CompilerBackendObjectTargetParts]
   [target : be_state.CompilerBackendTarget]
   [globals : (& compiler_ir_types.CompilerIrGlobalSeq)]
@@ -3349,6 +3350,7 @@
           [align : i64
             (be_data.compiler-backend-global-storage-align (& storage))]
           (compiler-backend-object-globals-from
+            type-segment-bases
             (if (be_data.compiler-backend-runtime-global? ty value)
               (object_target.compiler-backend-object-add-bss
                 (object_target.compiler-backend-object-add-bss
@@ -3367,12 +3369,14 @@
                         (Align align))
                       exported))
                   (Label symbol))
-                ;; An inline cell reserves the aggregate itself.
+                ;; Reserve the cell's full size: inline bytes for an inline
+                ;; aggregate, 16 bytes for a register group, 8 bytes otherwise.
                 (Zero
-                  (match storage
-                    [(Inline size _)
-                      (be_data.compiler-backend-inline-cell-bytes size)]
-                    [(Word) 8])))
+                  (be_data.compiler-backend-runtime-global-cell-size
+                    type-segment-bases
+                    program-index
+                    (& storage)
+                    (& ty))))
               (compiler-backend-object-global-value
                 (object_target.compiler-backend-object-add-data
                   (if (be_state.compiler-backend-state-private-global?
@@ -3399,11 +3403,18 @@
             (+ index 1)))])))
 
 (define (compiler-backend-object-globals
+  [type-segment-bases : i64]
   [parts : object_target.CompilerBackendObjectTargetParts]
   [target : be_state.CompilerBackendTarget]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [program-index : be_state.CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
-  (compiler-backend-object-globals-from parts target globals program-index 0))
+  (compiler-backend-object-globals-from
+    type-segment-bases
+    parts
+    target
+    globals
+    program-index
+    0))
 
 ;; Object data outlives lower IR, which can own these literal headers/bytes.
 ;; Copy payloads into the object destination before the lower owner retires.
@@ -3952,6 +3963,7 @@
                     (compiler-backend-object-strings
                       (compiler-backend-object-closure-descriptors
                         (compiler-backend-object-globals
+                          type-segment-bases
                           (compiler-backend-object-functions
                             type-segment-bases
                             (object_target.compiler-backend-object-parts-empty)

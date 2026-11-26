@@ -292,18 +292,6 @@
 (defmacro (compiler-backend-global-shared-view [place : Expr]) : Expr
   `(owned_view.compiler-owned-shared-view ,place))
 
-(define (compiler-backend-i64-array-shared-view
-  [items : (& items (__tl_dyn-array i64))]) : (__tl_dyn-array i64)
-  (unsafe
-    (ptr-read
-      (ptr-cast (__tl_array-data (array items)) : (Ptr (__tl_dyn-array i64))))))
-
-(define (compiler-backend-string-array-shared-view
-  [items : (& items (__tl_dyn-array String))]) : (__tl_dyn-array String)
-  (unsafe
-    (ptr-read
-      (ptr-cast (__tl_array-data (array items)) : (Ptr (__tl_dyn-array String))))))
-
 (define (compiler-backend-string-shared-view [value : (& value str)]) : String
   (unsafe
     (ptr-read (ptr-cast (__tl_array-data (array value)) : (Ptr String)))))

@@ -28574,5 +28574,5 @@ tl_shared_object_init:
 
 (define (compiler-backend-test-get-compiler-backend-rsp-rebase-no-push) : (__tl_dyn-array
     String)
-  (be_state.compiler-backend-string-array-shared-view
-    (& be_peephole.compiler-backend-rsp-rebase-no-push)))
+  (unsafe
+    (ptr-read (ptr-addr-of be_peephole.compiler-backend-rsp-rebase-no-push))))

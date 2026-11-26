@@ -522,10 +522,10 @@
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstSpmdSpecialization)
-      (__tl_make-array ast.AstSpmdSpecialization count)]
-    (for [index (iterator.range 0 count)]
-      (set!
-        (array-ref slots index)
+      (__tl_make-array ast.AstSpmdSpecialization 0)]
+    (for [_index (iterator.range 0 count)]
+      (__tl_array-push!
+        slots
         (ast.AstSpmdSpecialization
           (codec.surface-ast-read-i64! reader)
           (box (surface-ast-read-spmd-param-class-list! reader))

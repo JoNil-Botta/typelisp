@@ -2922,6 +2922,15 @@
   (Sret i64)
   (Unsupported String))
 
+;; Where a function body keeps its hidden result pointer. Memory-class nominal
+;; and structural results share one convention: the caller-owned pointer is
+;; the first physical parameter after `leading` hidden words (`__tl_env` for a
+;; closure body), so the source parameters start after it. `sret-var` is -1
+;; when the result has no hidden pointer.
+(defstruct LowerReturnSlot
+  (sret-var i64)
+  (source-start i64))
+
 (defenum ResultLowerState
   (Ok LowerState)
   (Err (Box cdiag.CompilerDiagnostic)))
@@ -17539,38 +17548,15 @@
                             ret-ty
                             classification)))])])])])]))
 
-(define (lower-prepare-internal-return-no
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [value : ir.CompilerIrValue]
-  [ret-ty : ast.AstType]) : ResultLowerExpr
-  (let
-    [sret-var : i64 (lower-current-sret-var state env)]
-    (if (and
-      (>= sret-var 0)
-      (lower-type-inline-struct-or-enum? ctx ret-ty)
-      (lower-inline-aggregate-abi-copy-needed? ctx ret-ty))
-      (match (lower-inline-aggregate-copy-size
-        ctx
-        (lower-global-shared-view ret-ty))
-        [(Ok size)
-          (Ok
-            (Expr
-              (lower-copy-return-bytes state (Var sret-var) value size)
-              (Var sret-var)
-              ret-ty))]
-        [(Err message) (Err (box (lower-diagnostic message)))])
-      (lower-return-abi-value ctx state value ret-ty (lower-tl-alloc-symbol)))))
-
 (define (lower-prepare-internal-return-value
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [value : ir.CompilerIrValue]
   [ret-ty : ast.AstType]) : ResultLowerExpr
-  (if (lower-internal-structural-resolved-type?
-    (lower-global-shared-view ret-ty))
+  (if (or
+    (lower-internal-structural-resolved-type? (lower-global-shared-view ret-ty))
+    (lower-type-inline-struct-or-enum? ctx (& ret-ty)))
     (let
       [class : LowerCAbiAggregate
         (lower-internal-return-class-for-symbol
@@ -17614,13 +17600,21 @@
               (Err
                 (box
                   (lower-diagnostic
-                    "lower: structural return missing hidden sret parameter")))
+                    "lower: memory-class return missing hidden sret parameter")))
               (Ok
                 (Expr
-                  (lower-copy-bytes state (Var sret-var) 0 value 0 size)
+                  (lower-copy-return-bytes state (Var sret-var) value size)
                   (Var sret-var)
                   (U64)))))]
-        [(No) (lower-prepare-internal-return-no ctx state env value ret-ty)]
+        ;; Only `__global_init_*` initializers return a memory-class value
+        ;; through `No`; they keep the heap copy until #7905.
+        [(No)
+          (lower-return-abi-value
+            ctx
+            state
+            value
+            ret-ty
+            (lower-tl-alloc-symbol))]
         [(ByRef _)
           (Err
             (box
@@ -17632,7 +17626,7 @@
               (lower-diagnostic
                 "lower: memory return classification is unsupported")))]
         [(Unsupported message) (Err (box (lower-diagnostic message)))]))
-    (lower-prepare-internal-return-no ctx state env value ret-ty)))
+    (lower-return-abi-value ctx state value ret-ty (lower-tl-alloc-symbol))))
 
 (define (lower-raw-pointer-ir-type [ty : ast.AstType]) : ast.AstType
   (match (tc_core.tc-type-strip-region (lower-global-shared-view ty))
@@ -22988,8 +22982,6 @@
       [param-count : i64 (lower-param-count params)]
       [ret-ty : ast.AstType
         (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ret))]
-      [global-init? : bool
-        (lower-global-init-function-symbol? names logical-name)]
       [ret-class : LowerCAbiAggregate
         (lower-internal-return-class-for-symbol
           ctx
@@ -22997,28 +22989,12 @@
           names
           logical-name
           (lower-global-shared-view ret-ty))]
-      [structural-sret? : bool
-        (match (& ret-class)
-          [(LowerCAbiAggregate.Sret _) true]
-          [_ false])]
-      [nominal-sret? : bool
-        (and
-          (not structural-sret?)
-          (not global-init?)
-          (lower-type-inline-struct-or-enum? ctx ret-ty)
-          (not (lower-type-register-resident? ctx ret-ty)))]
-      [source-start : i64
-        (if structural-sret?
-          2
-          1)]
+      [ret-slot : LowerReturnSlot (lower-function-return-slot (& ret-class) 1)]
+      [sret? : bool (>= ret-slot.sret-var 0)]
+      [source-start : i64 ret-slot.source-start]
       [structural-params? : bool
         (lower-internal-param-list-contains-structural? ctx params)]
-      [sret-var : i64
-        (if structural-sret?
-          1
-          (if nominal-sret?
-            (+ source-start param-count)
-            (- 0 1)))]
+      [sret-var : i64 ret-slot.sret-var]
       [function-spans : ir.CompilerSourceSpans
         (lower-record-function-span
           (compiler-lower-state-from-name-cache names)
@@ -23028,12 +23004,7 @@
           body)]
       [state : LowerState
         (lower-state-new
-          (+
-            source-start
-            param-count
-            (if nominal-sret?
-              1
-              0))
+          (+ source-start param-count)
           0
           0
           (ir.compiler-ir-label "entry")
@@ -23124,46 +23095,29 @@
                         sret-var))
                       [(ResultLowerState.Ok final-state)
                         (let
-                          [source-params : ir.CompilerIrParamSeq
+                          [all-params : ir.CompilerIrParamSeq
                             (if structural-params?
                               (lower-captured-internal-param-list
                                 ctx
                                 mode
                                 (lower-global-shared-view params)
                                 source-start
-                                structural-sret?)
-                              (let
-                                [source : ir.CompilerIrParamSeq
+                                sret?)
+                              (ir.compiler-ir-param-seq-prepend
+                                (ir.CompilerIrParam.Param
+                                  "__tl_env"
+                                  (ast.AstType.U64)
+                                  0)
+                                (lower-param-list-prepend-sret
                                   (lower-param-list
                                     ctx
                                     (lower-global-shared-view params)
-                                    source-start)]
-                                [with-sret : ir.CompilerIrParamSeq
-                                  (if structural-sret?
-                                    (ir.compiler-ir-param-seq-prepend
-                                      (ir.CompilerIrParam.Param
-                                        (ir.compiler-ir-hidden-sret-param-name)
-                                        (ast.AstType.U64)
-                                        1)
-                                      source)
-                                    source)]
-                                (ir.compiler-ir-param-seq-prepend
-                                  (ir.CompilerIrParam.Param
-                                    "__tl_env"
-                                    (ast.AstType.U64)
-                                    0)
-                                  with-sret)))]
-                          [all-params : ir.CompilerIrParamSeq
-                            (if nominal-sret?
-                              (lower-param-list-append-sret
-                                source-params
-                                sret-var)
-                              source-params)]
+                                    source-start)
+                                  sret-var)))]
                           [blocks : ir.CompilerIrBlockList
                             (lower-state-build-function-blocks final-state)]
                           (if (lower-result-slot-abi-violated?
                             (lower-global-shared-view blocks)
-                            nominal-sret?
                             sret-var
                             (lower-state-next-var final-state))
                             (ResultLowerFunction.Err
@@ -23188,8 +23142,7 @@
                                     ret-ty
                                     all-params
                                     ret-ir-ty
-                                    sret-var
-                                    structural-sret?)))
+                                    sret-var)))
                               (lower-state-spans final-state))))]
                       [(ResultLowerState.Err message)
                         (ResultLowerFunction.Err message)])]
@@ -34970,27 +34923,19 @@
                 (tc_core.tc-resolve-type
                   ctx
                   (tc_core.tc-context-type-get ctx result-id)))]
-            [leading-sret? : bool
+            [sret? : bool
               (match (lower-internal-return-class
                 ctx
                 mode
                 (tc_core.tc-context-type-get ctx result-id))
                 [(Sret _) true]
                 [_ false])]
-            [trailing-sret? : bool
-              (and
-                (not leading-sret?)
-                (lower-type-inline-struct-or-enum? ctx resolved)
-                (not (lower-type-register-resident? ctx resolved)))]
-            (if (or leading-sret? trailing-sret?)
+            (if sret?
               (let
                 [physical : ast.AstTypeList (ast.ast-type-list-new)]
                 [pointer-id : i64
                   (tc_core.tc-context-type-push-value ctx (ast.AstType.U64))]
-                [hidden-index : i64 0]
-                (when
-                  leading-sret?
-                  (ast.ast-type-list-push (&mut physical) pointer-id))
+                (ast.ast-type-list-push (&mut physical) pointer-id)
                 (for [index
                   (iterator.range 0 (ast.ast-type-list-len (& (deref source))))]
                   (ast.ast-type-list-push
@@ -35006,10 +34951,6 @@
                             (& (deref source))
                             index
                             (ast.ast-type-id-fallback)))))))
-                (when
-                  trailing-sret?
-                  (set! hidden-index (ast.ast-type-list-len (& physical)))
-                  (ast.ast-type-list-push (&mut physical) pointer-id))
                 (let
                   [size : i64 (lower-type-size ctx resolved)]
                   [align : i64 (lower-type-align ctx resolved)]
@@ -35021,10 +34962,8 @@
                   (ir.CompilerIrReturnStorage.Some
                     (box
                       (ir.CompilerIrReturnStorageAbi
-                        (if leading-sret?
-                          (ir.CompilerIrReturnStorageConvention.InternalLeading)
-                          (ir.CompilerIrReturnStorageConvention.InternalTrailing))
-                        hidden-index
+                        (ir.CompilerIrReturnStorageConvention.InternalLeading)
+                        0
                         size
                         align
                         resolved
@@ -35396,9 +35335,18 @@
   [ctx : tc_core.TcContext]
   [mode : CompilerLowerMode]
   [ty : ast.AstType]) : LowerCAbiAggregate
-  (if (lower-internal-structural-type? ctx (lower-global-shared-view ty))
-    (lower-internal-return-aggregate-class ctx mode ty)
-    (No)))
+  (cond
+    [(lower-internal-structural-type? ctx (lower-global-shared-view ty))
+      (lower-internal-return-aggregate-class ctx mode ty)]
+    ;; A memory-class struct/enum shares the structural hidden-result
+    ;; convention: a leading caller-owned pointer, returned as `u64`.
+    [(and
+        (lower-type-inline-struct-or-enum? ctx (& ty))
+        (lower-inline-aggregate-abi-copy-needed? ctx (& ty)))
+      (match (lower-inline-aggregate-copy-size ctx ty)
+        [(Ok size) (Sret size)]
+        [(Err message) (Unsupported message)])]
+    [else (No)]))
 
 (define (lower-internal-param-physical-type
   [ctx : tc_core.TcContext]
@@ -35469,14 +35417,6 @@
                     (& (deref args))
                     index
                     (ast.ast-type-id-fallback)))))))
-        (let
-          [ret-ty : ast.AstType (tc_core.tc-context-type-get ctx ret-id)]
-          (when
-            (and
-              (not leading-sret?)
-              (lower-type-inline-struct-or-enum? ctx ret-ty)
-              (not (lower-type-register-resident? ctx ret-ty)))
-            (ast.ast-type-list-push (&mut params) pointer-id)))
         (ast.ast-ty-func-with-pools
           pools
           params
@@ -36160,70 +36100,53 @@
                     origin)]
                 [(Err message) (Err message)]))])])))
 
-;; sret ABI caller side: append the sret pointer as the trailing arg to a
-;; value list (matching the callee's `__sret` param).
-(define (lower-value-seq-append-one
-  [values : ir.CompilerIrValueSeq]
-  [extra : ir.CompilerIrValue]) : ir.CompilerIrValueSeq
-  (ir.compiler-ir-value-seq-append-one (& values) (& extra)))
-
-;; For a call whose result is an inline aggregate, allocate the result slot on
-;; the caller's stack and append its pointer as the hidden trailing arg. Uses
-;; the same gate/size as the callee's sret return, so the call's return value is
-;; that pointer and callers consume the result exactly as before. Non-aggregate
-;; results pass through unchanged.
-(define (lower-call-append-sret-arg
+;; A memory-class result, nominal or structural: reserve the result slot in
+;; the caller's frame and pass its pointer as the leading hidden argument with
+;; the call-scoped sret role. The callee returns that pointer as `u64`; the
+;; call's value is the slot itself. A nominal slot's own `addr_of` is the
+;; argument, as for a C sret call, so the passes that scalarize the slot once
+;; the callee is inlined still see it. A Tuple/Array slot address is retyped
+;; to the physical `u64` word first, as a by-reference argument copy is: the
+;; backend transports a structural-typed argument by value.
+(define (lower-call-sret-values
   [ctx : tc_core.TcContext]
   [state : LowerState]
+  [target : LowerCallTarget]
   [values : ir.CompilerIrValueSeq]
-  [result-ty : ast.AstType]) : ResultLowerArgs
-  ;; Structural Tuple/Array sret is a leading ABI argument handled by the
-  ;; internal call path below. This legacy helper is nominal Struct/Enum only.
-  (if (and
-    (lower-type-inline-struct-or-enum? ctx result-ty)
-    (lower-inline-aggregate-abi-copy-needed? ctx result-ty))
-    (match (lower-inline-aggregate-copy-size
-      ctx
-      (lower-global-shared-view result-ty))
-      [(Ok size)
-        (match (lower-reserve-inline-storage state size result-ty)
-          [(Expr slot-state slot-ptr _)
-            (Ok slot-state (lower-value-seq-append-one values slot-ptr))])]
-      [(Err message) (Err (box (lower-diagnostic message)))])
-    (Ok state values)))
-
-;; A nominal-sret call returns either the storage pointer it was passed or
-;; fresh heap storage (`try` early exits), so its result var points into fresh
-;; storage that nothing else names; it shares the return slot's root.
-(define (lower-call-result-derive-return-slot!
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [result-var : i64]
-  [values : (& values ir.CompilerIrValueSeq)]
-  [result-ty : ast.AstType]) : unit
-  (if (and
-    (> values.len 0)
-    (lower-type-inline-struct-or-enum? ctx result-ty)
-    (lower-inline-aggregate-abi-copy-needed? ctx result-ty))
-    (lower-state-storage-derive!
-      state
-      result-var
-      (ir.compiler-ir-value-seq-ref values (- values.len 1)))
-    unit))
-
-;; Keep the ownership role on the IR argument carrier. The ABI still sees the
-;; same physical values, but colouring need not guess from position.
-(define (lower-call-args-with-nominal-sret
-  [ctx : tc_core.TcContext]
-  [values : ir.CompilerIrValueSeq]
-  [result-ty : ast.AstType]) : ir.CompilerIrCallArgs
-  (if (and
-    (lower-type-inline-struct-or-enum? ctx result-ty)
-    (lower-inline-aggregate-abi-copy-needed? ctx result-ty))
-    (let
-      [index : i64 (- values.len 1)]
-      (ir.compiler-ir-call-args-sret-from-seq (& values) index))
-    (ir.compiler-ir-call-args-from-seq (& values))))
+  [result-ty : ast.AstType]
+  [size : i64]
+  [origin : ast.AstExpr]) : ResultLowerExpr
+  (match (lower-reserve-inline-storage state size result-ty)
+    [(Expr slot-state slot-ptr _)
+      (match (if (lower-internal-structural-type?
+        ctx
+        (lower-global-shared-view result-ty))
+        (lower-cast-value
+          slot-state
+          (lower-global-shared-view slot-ptr)
+          (lower-global-shared-view result-ty)
+          (U64))
+        (Expr slot-state (lower-global-shared-view slot-ptr) (U64)))
+        [(Expr pointer-state sret-pointer _)
+          (match (lower-state-alloc-var pointer-state)
+            [(Alloc allocated call-var)
+              (Ok
+                (Expr
+                  (lower-state-emit-at-expr
+                    ctx
+                    allocated
+                    (lower-call-target-instr
+                      allocated
+                      target
+                      false
+                      call-var
+                      (ir.compiler-ir-call-args-sret-from-seq
+                        (& (lower-value-seq-prepend-one sret-pointer values))
+                        0)
+                      (U64))
+                    origin)
+                  slot-ptr
+                  result-ty))])])]))
 
 (define (lower-value-seq-prepend-one
   [head : ir.CompilerIrValue]
@@ -36488,36 +36411,14 @@
       [(Ok args-state physical-values)
         (match (lower-global-shared-view result-class)
           [(Sret size)
-            (match (lower-reserve-inline-storage args-state size result-ty)
-              [(Expr slot-state slot-ptr _)
-                (match (lower-cast-value
-                  slot-state
-                  (lower-global-shared-view slot-ptr)
-                  (lower-global-shared-view result-ty)
-                  (U64))
-                  [(Expr cast-state sret-pointer _)
-                    (match (lower-state-alloc-var cast-state)
-                      [(Alloc allocated call-var)
-                        (Ok
-                          (Expr
-                            (lower-state-emit-at-expr
-                              ctx
-                              allocated
-                              (lower-call-target-instr
-                                allocated
-                                target
-                                false
-                                call-var
-                                (ir.compiler-ir-call-args-sret-from-seq
-                                  (&
-                                    (lower-value-seq-prepend-one
-                                      sret-pointer
-                                      physical-values))
-                                  0)
-                                (U64))
-                              origin)
-                            slot-ptr
-                            result-ty))])])])]
+            (lower-call-sret-values
+              ctx
+              args-state
+              target
+              physical-values
+              result-ty
+              size
+              origin)]
           [(No)
             (lower-call-values
               ctx
@@ -36916,41 +36817,33 @@
   [values : ir.CompilerIrValueSeq]
   [result-ty : ast.AstType]
   [origin : ast.AstExpr]) : ResultLowerExpr
-  (match (lower-call-append-sret-arg
+  (match (lower-internal-return-class
     ctx
-    state
-    values
+    (lower-state-mode state)
     (lower-global-shared-view result-ty))
-    [(Ok sret-state sret-values)
-      (match (lower-state-alloc-var sret-state)
+    [(Sret size)
+      (lower-call-sret-values ctx state target values result-ty size origin)]
+    [(Unsupported message)
+      (Err (box (lower-diagnostic-at-expr ctx origin message)))]
+    [_
+      (match (lower-state-alloc-var state)
         [(Alloc allocated var-id)
           (let
             [result-ir-ty : ast.AstType
               (lower-one-word-register-storage-type ctx result-ty)]
-            [_derived : unit
-              (lower-call-result-derive-return-slot!
-                ctx
-                allocated
-                var-id
-                (& sret-values)
-                (lower-global-shared-view result-ty))]
             [instr : ir.CompilerIrInstr
               (lower-call-target-instr
                 allocated
                 target
                 false
                 var-id
-                (lower-call-args-with-nominal-sret
-                  ctx
-                  sret-values
-                  (lower-global-shared-view result-ty))
+                (ir.compiler-ir-call-args-from-seq (& values))
                 result-ir-ty)]
             (Ok
               (Expr
                 (lower-state-emit-at-expr ctx allocated instr origin)
                 (Var var-id)
-                result-ty)))])]
-    [(Err message) (Err message)]))
+                result-ty)))])]))
 
 (define (lower-indirect-call-args
   [ctx : tc_core.TcContext]
@@ -72359,7 +72252,7 @@
                 args
                 lowered-func-ty)
                 [(Ok args-state values)
-                  (match (lower-tail-call-append-current-sret-arg
+                  (match (lower-tail-call-prepend-current-sret-arg
                     ctx
                     args-state
                     values
@@ -72373,7 +72266,10 @@
                           (TailCallIndirect
                             func-value
                             (ir.compiler-ir-call-args-from-seq (& tail-values))
-                            (lower-one-word-register-storage-type ctx ret-ty))
+                            (lower-tail-call-physical-return-type
+                              ctx
+                              ret-ty
+                              sret-var))
                           origin))]
                     [(Err message) (Err message)])]
                 [(Err message) (Err message)])]))
@@ -72463,16 +72359,14 @@
         (lower-state-owner state))]
     (lower_i64_i64_map.contains? (& early-returns) logical-id)))
 
-;; Every function with a nominal result slot must return that slot on every
+;; Every function with a hidden result slot must return that slot on every
 ;; path (`compiler-ir-block-list-slot-return-violations`): callers may hand a
 ;; callee fresh storage as its slot and read the result there.
 (define (lower-result-slot-abi-violated?
   [blocks : ir.CompilerIrBlockList]
-  [nominal-sret? : bool]
   [sret-var : i64]
   [var-count : i64]) : bool
   (and
-    nominal-sret?
     (>= sret-var 0)
     (>
       (ir.compiler-ir-block-list-slot-return-violations
@@ -72487,14 +72381,13 @@
 ;; function's own slot (call-slot RVO); `lower-box` passes a fresh box.
 ;;
 ;; Correctness rests on two facts:
-;;   * The result-slot ABI: a function with a nominal result slot returns that
+;;   * The result-slot ABI: a function with a hidden result slot returns that
 ;;     slot on every path (`try` early exits build their `Err` there too), which
 ;;     lowering checks for every function it emits
 ;;     (`lower-result-slot-abi-violated?`). `Stored` still carries the call's
 ;;     returned pointer.
 ;;   * No argument can alias the slot. The slot is either freshly reserved by
-;;     the original caller (`lower-call-append-sret-arg`,
-;;     `lower-internal-call-values`, `lower-c-abi-call-values`, a new box) or
+;;     the original caller (`lower-call-sret-values`, `lower-c-abi-call-values`, a new box) or
 ;;     forwarded unchanged from it (call-slot RVO and direct tail calls), so no
 ;;     name reaches it, and a function writes its own slot only at return
 ;;     points. The callee may therefore build its result in the slot while it
@@ -72588,12 +72481,10 @@
                           (match (lower-state-alloc-var slot-state)
                             [(LowerAlloc.Alloc allocated call-var)
                               (let
-                                [result-ir-ty : ast.AstType
-                                  (lower-one-word-register-storage-type
-                                    ctx
-                                    ret-ty)]
                                 [sret-values : ir.CompilerIrValueSeq
-                                  (lower-value-seq-append-one values slot-value)]
+                                  (lower-value-seq-prepend-one
+                                    slot-value
+                                    values)]
                                 [call-name : i64
                                   (lower-resolve-call-name-id-with-display
                                     allocated
@@ -72609,7 +72500,7 @@
                                       call-name
                                       (ir.compiler-ir-call-args-from-seq
                                         sret-values)
-                                      result-ir-ty)
+                                      (ast.AstType.U64))
                                     origin)]
                                 [writeback-state : LowerState
                                   (lower-apply-arg-writebacks
@@ -72953,7 +72844,7 @@
     [_ false]))
 
 ;; Whether a tail call with formal parameter types `types` (plus `leading-int`
-;; leading GP args such as `__tl_env` and an optional hidden nominal sret slot
+;; leading GP args such as `__tl_env`, then the leading hidden result slot
 ;; when `sret-var >= 0`) writes any outgoing stack argument on SysV. Only
 ;; outgoing stack arguments can overwrite an incoming SysV Memory-class
 ;; parameter; register-only tail jumps leave incoming stack params untouched.
@@ -72965,7 +72856,12 @@
   [leading-int : i64]
   [sret-var : i64]) : bool
   (let
-    [int-idx : i64 leading-int]
+    [int-idx : i64
+      (+
+        leading-int
+        (if (>= sret-var 0)
+          1
+          0))]
     [float-idx : i64 0]
     [count : i64 (ast.ast-type-list-len types)]
     (for [index (iterator.range 0 count)]
@@ -73026,7 +72922,7 @@
                 (begin
                   (when (>= int-idx 6) (return true))
                   (+= int-idx 1))))])))
-    (and (>= sret-var 0) (>= int-idx 6))))
+    false))
 
 ;; Prove the storage selected by a place is outside this frame (and outside
 ;; incoming SysV stack-param storage whenever `outgoing-stack-args?` can
@@ -73453,7 +73349,9 @@
             outgoing-stack-args?))]
       [_ true])))
 
-(define (lower-tail-call-append-current-sret-arg
+;; A tail call forwards this function's own caller-owned result slot as the
+;; callee's leading hidden argument; both return it as `u64`.
+(define (lower-tail-call-prepend-current-sret-arg
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [values : ir.CompilerIrValueSeq]
@@ -73463,8 +73361,16 @@
     (>= sret-var 0)
     (lower-type-inline-struct-or-enum? ctx ret-ty)
     (lower-inline-aggregate-abi-copy-needed? ctx ret-ty))
-    (Ok state (lower-value-seq-append-one values (Var sret-var)))
+    (Ok state (lower-value-seq-prepend-one (Var sret-var) values))
     (Ok state values)))
+
+(define (lower-tail-call-physical-return-type
+  [ctx : tc_core.TcContext]
+  [ret-ty : ast.AstType]
+  [sret-var : i64]) : ast.AstType
+  (if (>= sret-var 0)
+    (ast.AstType.U64)
+    (lower-one-word-register-storage-type ctx ret-ty)))
 
 (define (lower-tail-call
   [ctx : tc_core.TcContext]
@@ -73544,7 +73450,7 @@
               name
               args)
               [(ResultLowerArgs.Ok args-state values)
-                (match (lower-tail-call-append-current-sret-arg
+                (match (lower-tail-call-prepend-current-sret-arg
                   ctx
                   args-state
                   values
@@ -73561,7 +73467,10 @@
                           (ir.CompilerIrInstr.TailCall
                             target-id
                             (ir.compiler-ir-call-args-from-seq (& tail-values))
-                            (lower-one-word-register-storage-type ctx ret-ty))
+                            (lower-tail-call-physical-return-type
+                              ctx
+                              ret-ty
+                              sret-var))
                           origin)))]
                   [(ResultLowerArgs.Err message) (ResultLowerState.Err message)])]
               [(ResultLowerArgs.Err message) (ResultLowerState.Err message)])]
@@ -74066,11 +73975,11 @@
           source-start
           (&mut builder))
         (ir.compiler-ir-param-builder-to-seq builder))]
-    (if leading-sret?
-      (ir.compiler-ir-param-seq-prepend
-        (Param (ir.compiler-ir-hidden-sret-param-name) (U64) (- source-start 1))
-        source)
-      source)))
+    (lower-param-list-prepend-sret
+      source
+      (if leading-sret?
+        (- source-start 1)
+        (- 0 1)))))
 
 (define (lower-internal-param-list-into!
   [ctx : tc_core.TcContext]
@@ -74659,8 +74568,7 @@
   [output : ast.AstType]
   [physical-params : (& physical-params ir.CompilerIrParamSeq)]
   [physical-result : ast.AstType]
-  [sret-var : i64]
-  [leading? : bool]) : ir.CompilerIrFunctionAbi
+  [sret-var : i64]) : ir.CompilerIrFunctionAbi
   (if (< sret-var 0)
     (ir.CompilerIrFunctionAbi.Ordinary)
     (let
@@ -74684,9 +74592,7 @@
       (ir.CompilerIrFunctionAbi.ReturnStorage
         (box
           (ir.CompilerIrReturnStorageAbi
-            (if leading?
-              (ir.CompilerIrReturnStorageConvention.InternalLeading)
-              (ir.CompilerIrReturnStorageConvention.InternalTrailing))
+            (ir.CompilerIrReturnStorageConvention.InternalLeading)
             hidden-index
             (lower-type-size ctx resolved)
             (lower-type-align ctx resolved)
@@ -74704,8 +74610,7 @@
   [output : ast.AstType]
   [physical-params : ir.CompilerIrParamSeq]
   [physical-result : ast.AstType]
-  [sret-var : i64]
-  [leading? : bool]) : ir.CompilerIrFunctionAbi
+  [sret-var : i64]) : ir.CompilerIrFunctionAbi
   (lower-return-storage-function-abi-from-types
     ctx
     (tc_core.tc-type-list-without-regions
@@ -74713,15 +74618,23 @@
     output
     (& physical-params)
     physical-result
-    sret-var
-    leading?))
+    sret-var))
 
-(define (lower-param-list-append-sret
+(define (lower-function-return-slot
+  [ret-class : (& LowerCAbiAggregate)]
+  [leading : i64]) : LowerReturnSlot
+  (match ret-class
+    [(Sret _) (LowerReturnSlot leading (+ leading 1))]
+    [_ (LowerReturnSlot (- 0 1) leading)]))
+
+(define (lower-param-list-prepend-sret
   [params : ir.CompilerIrParamSeq]
   [sret-var : i64]) : ir.CompilerIrParamSeq
-  (ir.compiler-ir-param-seq-append-one
-    params
-    (Param (ir.compiler-ir-hidden-sret-param-name) (U64) sret-var)))
+  (if (>= sret-var 0)
+    (ir.compiler-ir-param-seq-prepend
+      (Param (ir.compiler-ir-hidden-sret-param-name) (U64) sret-var)
+      params)
+    params))
 
 (define (lower-supported-function-param-type?
   [ctx : tc_core.TcContext]
@@ -74812,8 +74725,6 @@
       [param-count : i64 (lower-param-count params)]
       [ret-ty : ast.AstType
         (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ret))]
-      [global-init? : bool
-        (lower-global-init-function-symbol? names logical-name)]
       [ret-class : LowerCAbiAggregate
         (lower-internal-return-class-for-symbol
           ctx
@@ -74821,28 +74732,12 @@
           names
           logical-name
           (lower-global-shared-view ret-ty))]
-      [structural-sret? : bool
-        (match (& ret-class)
-          [(LowerCAbiAggregate.Sret _) true]
-          [_ false])]
-      [nominal-sret? : bool
-        (and
-          (not structural-sret?)
-          (not global-init?)
-          (lower-type-inline-struct-or-enum? ctx ret-ty)
-          (not (lower-type-register-resident? ctx ret-ty)))]
-      [source-start : i64
-        (if structural-sret?
-          1
-          0)]
+      [ret-slot : LowerReturnSlot (lower-function-return-slot (& ret-class) 0)]
+      [sret? : bool (>= ret-slot.sret-var 0)]
+      [source-start : i64 ret-slot.source-start]
       [structural-params? : bool
         (lower-internal-param-list-contains-structural? ctx params)]
-      [sret-var : i64
-        (if structural-sret?
-          0
-          (if nominal-sret?
-            (+ source-start param-count)
-            (- 0 1)))]
+      [sret-var : i64 ret-slot.sret-var]
       [type-env : tc_core.TcTypeEnv
         (tc_core.tc-bind-return-type
           (tc_core.tc-bind-params
@@ -74859,12 +74754,7 @@
           body)]
       [state : LowerState
         (lower-state-new
-          (+
-            source-start
-            param-count
-            (if nominal-sret?
-              1
-              0))
+          (+ source-start param-count)
           0
           0
           (ir.compiler-ir-label "entry")
@@ -74960,39 +74850,24 @@
                       sret-var))
                     [(ResultLowerState.Ok final-state)
                       (let
-                        [source-params : ir.CompilerIrParamSeq
+                        [all-params : ir.CompilerIrParamSeq
                           (if structural-params?
                             (lower-internal-param-list
                               ctx
                               mode
                               (lower-global-shared-view params)
                               source-start
-                              structural-sret?)
-                            (let
-                              [source : ir.CompilerIrParamSeq
-                                (lower-param-list
-                                  ctx
-                                  (lower-global-shared-view params)
-                                  source-start)]
-                              (if structural-sret?
-                                (ir.compiler-ir-param-seq-prepend
-                                  (ir.CompilerIrParam.Param
-                                    (ir.compiler-ir-hidden-sret-param-name)
-                                    (ast.AstType.U64)
-                                    (- source-start 1))
-                                  source)
-                                source)))]
-                        [all-params : ir.CompilerIrParamSeq
-                          (if nominal-sret?
-                            (lower-param-list-append-sret
-                              source-params
-                              sret-var)
-                            source-params)]
+                              sret?)
+                            (lower-param-list-prepend-sret
+                              (lower-param-list
+                                ctx
+                                (lower-global-shared-view params)
+                                source-start)
+                              sret-var))]
                         [blocks : ir.CompilerIrBlockList
                           (lower-state-build-function-blocks final-state)]
                         (if (lower-result-slot-abi-violated?
                           (lower-global-shared-view blocks)
-                          nominal-sret?
                           sret-var
                           (lower-state-next-var final-state))
                           (ResultLowerFunction.Err
@@ -75017,8 +74892,7 @@
                                   ret-ty
                                   all-params
                                   ret-ir-ty
-                                  sret-var
-                                  structural-sret?)))
+                                  sret-var)))
                             (lower-state-spans final-state))))]
                     [(ResultLowerState.Err message)
                       (ResultLowerFunction.Err message)])]
@@ -77186,33 +77060,13 @@
             ctx
             mode
             (lower-global-shared-view ret-ty))]
-        [leading-sret? : bool
-          (match ret-class
-            [(Sret _) true]
-            [_ false])]
-        [nominal-sret? : bool
-          (and
-            (not leading-sret?)
-            (lower-type-inline-struct-or-enum? ctx ret-ty)
-            (not (lower-type-register-resident? ctx ret-ty)))]
-        [source-start : i64
-          (if leading-sret?
-            1
-            0)]
+        [ret-slot : LowerReturnSlot
+          (lower-function-return-slot (& ret-class) 0)]
+        [leading-sret? : bool (>= ret-slot.sret-var 0)]
+        [source-start : i64 ret-slot.source-start]
         [source-count : i64 (lower-dispatch-param-type-count clean-param-types)]
-        [sret-var : i64
-          (if leading-sret?
-            0
-            (if nominal-sret?
-              (+ source-start source-count)
-              (- 0 1)))]
-        [param-count : i64
-          (+
-            source-start
-            source-count
-            (if nominal-sret?
-              1
-              0))]
+        [sret-var : i64 ret-slot.sret-var]
+        [param-count : i64 (+ source-start source-count)]
         [physical-ret-ty : ast.AstType
           (lower-internal-return-physical-type
             ctx
@@ -77261,17 +77115,13 @@
               [blocks : ir.CompilerIrBlockBuilder
                 (ir.compiler-ir-block-builder-with-capacity
                   (+ 2 (ir.compiler-ir-block-list-count tail-blocks)))]
-              [base-params : ir.CompilerIrParamSeq
+              [physical-params : ir.CompilerIrParamSeq
                 (lower-dispatch-physical-param-list
                   ctx
                   mode
                   (& clean-param-types)
                   source-start
                   leading-sret?)]
-              [physical-params : ir.CompilerIrParamSeq
-                (if nominal-sret?
-                  (lower-param-list-append-sret base-params sret-var)
-                  base-params)]
               [function-abi : ir.CompilerIrFunctionAbi
                 (lower-return-storage-function-abi-from-types
                   ctx
@@ -77279,8 +77129,7 @@
                   ret-ty
                   (& physical-params)
                   (ast.clone-ast-type (& physical-ret-ty))
-                  sret-var
-                  leading-sret?)]
+                  sret-var)]
               (ir.compiler-ir-block-builder-push!
                 (&mut blocks)
                 (lower-dispatch-entry-block

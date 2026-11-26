@@ -322,7 +322,6 @@
     [conv : i64
       (match (& abi.convention)
         [(ir.CompilerIrReturnStorageConvention.InternalLeading) 0]
-        [(ir.CompilerIrReturnStorageConvention.InternalTrailing) 1]
         [(ir.CompilerIrReturnStorageConvention.SysV) 2]
         [(ir.CompilerIrReturnStorageConvention.Win64) 3])]
     (tli.TliCompactReturnStorage.Some
@@ -353,7 +352,6 @@
         [conv-ir : ir.CompilerIrReturnStorageConvention
           (match conv
             [0 (ir.CompilerIrReturnStorageConvention.InternalLeading)]
-            [1 (ir.CompilerIrReturnStorageConvention.InternalTrailing)]
             [2 (ir.CompilerIrReturnStorageConvention.SysV)]
             [_ (ir.CompilerIrReturnStorageConvention.Win64)])]
         (ir.CompilerIrReturnStorage.Some

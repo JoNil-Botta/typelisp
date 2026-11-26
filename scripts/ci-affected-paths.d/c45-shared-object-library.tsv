@@ -1,0 +1,2 @@
+path	required	advisory	reason
+tests/shared-object/library.tl	stage2-linux-shared-object-code-model,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Direct --no-entry fixture input in verify-linux-shared-object-code-model.sh.

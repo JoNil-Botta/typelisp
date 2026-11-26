@@ -3878,19 +3878,17 @@
             startup-profile-asm
             "    movq (%rsp), %rax\n"
             (if capture-argv
-              "    movq %rax, .L_tl_argc(%rip)
-    leaq 8(%rsp), %rax
-    movq %rax, .L_tl_argv(%rip)
-"
+              "    movq %rax, .L_tl_argc(%rip)\n"
               "")
             (if capture-env
-              (str_cat.str-cat
-                (if capture-argv
-                  "    movq (%rsp), %rax\n"
-                  "")
-                "    leaq 16(%rsp,%rax,8), %rax
+              "    leaq 16(%rsp,%rax,8), %rax
     movq %rax, .L_tl_envp(%rip)
-")
+"
+              "")
+            (if capture-argv
+              "    leaq 8(%rsp), %rax
+    movq %rax, .L_tl_argv(%rip)
+"
               "")
             "    call tl_thread_init\n"))
         (compiler-backend-entry-call-main global-inits))

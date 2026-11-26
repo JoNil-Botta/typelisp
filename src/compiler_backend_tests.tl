@@ -4809,15 +4809,19 @@
   (match (backend.compiler-backend-emit-source
     (compiler-backend-program-argv-entry-capture-source))
     [(Ok asm)
-      (be_state.backend-and8
-        (asm-has? asm "_tl_start:\n")
-        (asm-has? asm "    movq (%rsp), %rax\n")
-        (asm-has? asm "    movq %rax, .L_tl_argc(%rip)\n")
-        (asm-has? asm "    leaq 8(%rsp), %rax\n")
-        (asm-has? asm "    movq %rax, .L_tl_argv(%rip)\n")
-        (asm-has? asm "    call strlen\n")
-        (asm-lacks? asm ".L_tl_arg_count:\n")
-        (asm-lacks? asm ".L_tl_arg:\n"))]
+      (and
+        (be_state.backend-and8
+          (asm-has? asm "_tl_start:\n")
+          (asm-has? asm "    movq (%rsp), %rax\n")
+          (asm-has? asm "    movq %rax, .L_tl_argc(%rip)\n")
+          (asm-has? asm "    leaq 8(%rsp), %rax\n")
+          (asm-has? asm "    movq %rax, .L_tl_argv(%rip)\n")
+          (asm-has? asm "    call strlen\n")
+          (asm-lacks? asm ".L_tl_arg_count:\n")
+          (asm-lacks? asm ".L_tl_arg:\n"))
+        (asm-has?
+          asm
+          "    movq %rax, .L_tl_argc(%rip)\n    leaq 16(%rsp,%rax,8), %rax\n"))]
     [(Err _) false]))
 
 (define (compiler-backend-arg-runtime-source) : String

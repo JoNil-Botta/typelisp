@@ -59706,6 +59706,7 @@
               (compiler-opt-global-shared-view load-state)]
             (match (if load-cse?
               (opt-load-cse-dispatch
+                (&mut rw)
                 type-segment-bases
                 (&mut no-canon)
                 hs
@@ -135116,6 +135117,7 @@
                 instr))]))]))
 
 (define (opt-load-cse-dispatch
+  [rw : (&mut rw ir.CompilerIrInstrRewrite)]
   [type-segment-bases : i64]
   [canon : (&mut canon (__tl_dyn-array i64))]
   [hs : (& hs OptLoadHeaderSet)]
@@ -135225,11 +135227,7 @@
               instr
               (match (& instr)
                 [(Phi _ _ _) instr]
-                [_
-                  (opt-copy-subst-instr
-                    (&mut (ir.compiler-ir-instr-rewrite-new))
-                    (& env)
-                    instr)]))]
+                [_ (opt-copy-subst-instr rw (& env) instr)]))]
           (Result next-state forwarded)))]))
 
 ;; --- pure direct-call dedupe (CSE-CALL) ---------------------------------------
@@ -141841,6 +141839,7 @@
       (if promote.active?
         (+ read-cursor (array-ref promote.counts block-id))
         0)]
+    [rw : ir.CompilerIrInstrRewrite (ir.compiler-ir-instr-rewrite-new)]
     [staged : ir.CompilerIrInstr (Jump 0)]
     (for [index (iterator.range 0 count)]
       (set! staged (ir.compiler-ir-instr-seq-ref instrs index))
@@ -141875,6 +141874,7 @@
       (set!
         current
         (match (opt-load-cse-dispatch
+          (&mut rw)
           type-segment-bases
           canon
           hs

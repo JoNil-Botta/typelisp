@@ -799,10 +799,12 @@
     [no-canon : (__tl_dyn-array i64) (opt.opt-load-canon-none)]
     [next-state : opt.OptLoadCseState state]
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [rw : ir.CompilerIrInstrRewrite (ir.compiler-ir-instr-rewrite-new)]
     [builder : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity count)]
     (for [index (iterator.range 0 count)]
       (match (opt.opt-load-cse-dispatch
+        (&mut rw)
         type-segment-bases
         (&mut no-canon)
         hs

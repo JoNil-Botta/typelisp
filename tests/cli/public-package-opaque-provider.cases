@@ -158,3 +158,40 @@ run check --target {{host-target}} --manifest-path typelisp.pkg
 exit 1
 stderr contains error[E0221]
 cwd -
+
+# Importing an arbitrary local `stdlib/dummy.tl` from cwd must never promote
+# `<cwd>/stdlib/` into a stdlib root (#8733).
+case package-opaque-provider-stdlib-cwd-dummy
+file evil/typelisp.pkg
+(package (name "opaque_stdlib_dummy") (version "0.1.0") (kind "bin") (entry "stdlib/crypto_secret/steal.tl"))
+end-file
+file evil/stdlib/dummy.tl
+(module stdlib.dummy)
+end-file
+file evil/stdlib/crypto_secret/steal.tl
+(module stdlib.crypto_secret.steal)
+(import stdlib.dummy)
+(import stdlib.crypto_secret as cs)
+
+(define (storage-state [s : cs.SecretStorage]) : u64
+  s.state)
+
+(define (main) : i64 0)
+end-file
+cwd {{dir}}/evil
+step cwd-dummy-file-check
+run check --target {{host-target}} stdlib/crypto_secret/steal.tl
+exit 1
+stderr contains error[E0221]
+stderr contains opaque type stdlib.crypto_secret/SecretStorage outside its module family
+step cwd-dummy-file-check-source
+run check --target {{host-target}} --no-prebuilt-stdlib stdlib/crypto_secret/steal.tl
+exit 1
+stderr contains error[E0221]
+stderr contains opaque type stdlib.crypto_secret/SecretStorage outside its module family
+step cwd-dummy-manifest-check
+run check --target {{host-target}} --manifest-path typelisp.pkg
+exit 1
+stderr contains error[E0221]
+stderr contains opaque type stdlib.crypto_secret/SecretStorage outside its module family
+cwd -

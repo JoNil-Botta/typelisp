@@ -26368,11 +26368,10 @@
     (comptime (offset-of (type TcContextShared) provider-provenance-id))
     provenance-id))
 
-;; CTX re-reading code typecheck already admitted, as lowering does: its
-;; (:opaque) uses keep the module-family test but not the provider's (#8733).
-(define (tc-context-with-admitted-provider [ctx : TcContext]) : TcContext
-  (tc-context-restore-provider! ctx (ctfe_support.ctfe-provider-admitted) -1)
-  ctx)
+;; Mark CTX as re-reading code typecheck already admitted, as lowering does:
+;; its (:opaque) uses keep the module-family test but not the provider's (#8733).
+(define (tc-context-with-admitted-provider! [ctx : TcContext]) : unit
+  (tc-context-restore-provider! ctx (ctfe_support.ctfe-provider-admitted) -1))
 
 ;; Set CTX's active provider to the provider of PROVENANCE-ID (#8733). Skips
 ;; the provider map lookup when PROVENANCE-ID matches the previous declaration.
@@ -55177,12 +55176,31 @@
 ;; through the ordinary expression typechecker instead of demanding an
 ;; annotation. This mirrors the former Rust typechecker, whose first pass over
 ;; the declarations runs `check_expr(value)` for an un-annotated `Decl::Def`.
+(define (tc-decl-value-provenance-id
+  [ctx : TcContext]
+  [module-id : i64]
+  [name : i64]) : i64
+  (let
+    [symbols : (& ctx csym.CompilerSymbols) (tc-context-symbols ctx)]
+    [handle : i64
+      (csym.compiler-symbols-lookup-value-in-module-id-or
+        symbols
+        module-id
+        name
+        -1)]
+    (if (< handle 0)
+      -1
+      (csym.compiler-symbols-provenance-id-at-index-or
+        symbols
+        (csym.compiler-symbol-handle-index handle)
+        -1))))
+
 (define (tc-top-decl-type-with-env
   [ctx : TcContext]
   [env : TcTypeEnv]
   [decl : ast.AstDecl]) : ResultTcType
   (match (tc-global-shared-view decl)
-    [(Def decl-meta _ maybe-ty expr-box)
+    [(Def decl-meta name maybe-ty expr-box)
       (let
         [expr : ast.AstExpr (tc-context-expr-get ctx expr-box)]
         (match maybe-ty
@@ -55193,7 +55211,30 @@
               (& expr))
               [(Literal lit) (Ok (tc-literal-type lit))]
               [(Ann _ ty-id) (Ok (tc-resolve-type ctx (ast.ty-node-get ty-id)))]
-              [_ (tc-expr ctx env expr)])]))]
+              [_
+                (if (=
+                  (tc-context-provider-id ctx)
+                  (ctfe_support.ctfe-provider-admitted))
+                  (tc-expr ctx env expr)
+                  (let
+                    [prev-provider : i64 (tc-context-provider-id ctx)]
+                    [prev-prov-id : i64 (tc-context-provider-provenance-id ctx)]
+                    [decl-prov-id : i64
+                      (tc-decl-value-provenance-id
+                        ctx
+                        (tc-context-module-id ctx)
+                        name)]
+                    [_set-provider : unit
+                      (when
+                        (>= decl-prov-id 0)
+                        (tc-context-set-provenance-id! ctx decl-prov-id))]
+                    [res : ResultTcType (tc-expr ctx env expr)]
+                    [_restore-provider : unit
+                      (tc-context-restore-provider!
+                        ctx
+                        prev-provider
+                        prev-prov-id)]
+                    res))])]))]
     [_ (tc-top-decl-type ctx decl)]))
 
 (define (tc-field-type-list [ctx : TcContext] [fields : ast.AstFieldDefList]) : ast.AstTypeList
@@ -127028,6 +127069,8 @@
     [cur-module : String module]
     [cur-module-id : i64 module-id]
     [cur-orig-decls : ast.AstDeclList orig-decls]
+    [prev-provider : i64 (tc-context-provider-id ctx)]
+    [prev-prov-id : i64 (tc-context-provider-provenance-id ctx)]
     [cur-ctx : TcContext ctx]
     [cur-top-env : TcTypeEnv top-env]
     [cur-can-share : bool can-share]
@@ -127732,6 +127775,7 @@
                             (set! result (Err diag))
                             (set! done true)]))])]))])))
     (macro-segmented-program-end! walk-state)
+    (tc-context-restore-provider! ctx prev-provider prev-prov-id)
     result))
 
 (define (macro-expr-needs-compat-expansion?
@@ -136056,6 +136100,8 @@
   ;; Keep it iterative so a large program does not consume one native stack frame
   ;; per declaration on Windows selfhost binaries.
   (let
+    [prev-provider : i64 (tc-context-provider-id ctx)]
+    [prev-prov-id : i64 (tc-context-provider-provenance-id ctx)]
     [dotted-modules : sym_i64_env.SymI64Env
       (match (tc-context-program ctx)
         [(Program decls-box)
@@ -136334,6 +136380,7 @@
                           decl))
                       (set! cur-decls rest)
                       (set! cur-paths rest-paths)]))]))]))
+    (tc-context-restore-provider! ctx prev-provider prev-prov-id)
     result))
 
 ;; The job's type-walk table is bound for the whole check and restored on
@@ -136386,6 +136433,7 @@
     prefix-cache
     (tc-prefix-snapshot-cache-provenance-from-job load-state pools source-names))
   (tc-nominal-owner-cache-reset-for-job! body-state.job-state)
+  (macro-provider-caches-reset! (tc-job-state-macro-state body-state.job-state))
   (tc-install-pools! pools)
   (match (csym.build-compiler-symbols-diagnostic-with-paths
     (& program)

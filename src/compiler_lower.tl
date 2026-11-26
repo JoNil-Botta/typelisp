@@ -78865,8 +78865,6 @@
   [entry-path : String]
   [names : LowerNameEnv]
   [mode : CompilerLowerMode]) : ResultCompilerLower
-  ;; Lowering re-reads code typecheck admitted (#8733).
-  (set! ctx (tc_core.tc-context-with-admitted-provider ctx))
   (match (compiler-lower-state-pointer-proof-request lower-state)
     [(Disabled) unit]
     [(Requested input)
@@ -78880,84 +78878,95 @@
           (if (> (string.string-length (& entry-path)) 0)
             (lower-global-shared-view entry-path)
             "<source>")))])
-  ;; Checked typechecking can probe aggregate layout with helper contexts
-  ;; before final lowering. Emitted code must use one internally consistent
-  ;; layout view for all functions in this pass.
-  (tc_core.tc-agg-caches-reset-for-job! (tc_core.tc-context-job-state ctx))
-  (tc_core.tc-nominal-owner-cache-reset-for-job!
-    (tc_core.tc-context-job-state ctx))
-  (match program
-    [(Program decls-box)
-      (let
-        [decls : ast.AstDeclList (deref decls-box)]
-        (match (lower-decls
-          lower-state
-          ctx
-          top-env
-          decls
-          paths
-          entry-path
-          (ir.compiler-ir-global-seq-empty)
-          (ir.compiler-ir-function-seq-empty)
-          (ir.compiler-ir-extern-seq-empty)
-          (ir.compiler-source-spans-empty)
-          names
-          mode)
-          [(Ok payload)
+  (let
+    [prev-provider : i64 (tc_core.tc-context-provider-id ctx)]
+    [prev-prov-id : i64 (tc_core.tc-context-provider-provenance-id ctx)]
+    ;; Lowering re-reads code typecheck admitted (#8733).
+    (tc_core.tc-context-with-admitted-provider! ctx)
+    ;; Checked typechecking can probe aggregate layout with helper contexts
+    ;; before final lowering. Emitted code must use one internally consistent
+    ;; layout view for all functions in this pass.
+    (tc_core.tc-agg-caches-reset-for-job! (tc_core.tc-context-job-state ctx))
+    (tc_core.tc-nominal-owner-cache-reset-for-job!
+      (tc_core.tc-context-job-state ctx))
+    (let
+      [result : ResultCompilerLower
+        (match program
+          [(Program decls-box)
             (let
-              [success : LowerDeclsSuccess (deref payload)]
-              [canonical-storage : ir.CompilerIrReturnStorageIndex
-                (ir.compiler-ir-return-storage-index-claims
-                  (ast.ast-node-pool-context-type-segment-bases
-                    (tc_core.tc-context-pools-ref ctx))
-                  (ir.compiler-ir-type-pool-count
-                    (tc_core.tc-context-pools ctx))
-                  success.functions
-                  success.externs)]
-              [storage-authority : ir.CompilerIrReturnStorageAuthority
-                (let
-                  [interns : ci.InternCompatState
-                    (compiler-lower-state-interns lower-state)]
-                  (ir.compiler-ir-return-storage-authority-capture
-                    (tc_core.tc-context-pools ctx)
-                    interns
-                    (if (lower-mode-windows-c-abi? mode)
-                      1
-                      0)
-                    canonical-storage))]
-              [program : ir.CompilerIrProgram
-                (Program
-                  success.globals
-                  success.functions
-                  success.externs
-                  storage-authority)]
-              ;; Returning the public IR is the explicit text boundary:
-              ;; diagnostics, optimizers, and backend emitters may inspect
-              ;; symbol spellings, while construction above uses handles.
-              (lower-materialize-generated-role-symbols! lower-state)
-              (let
-                [debug-error : String (lower-debug-types-error lower-state)]
-                (when
-                  (> (string.string-length (& debug-error)) 0)
-                  (return
-                    (ResultCompilerLower.Err
-                      (box (lower-diagnostic debug-error))))))
-              (match (compiler-lower-state-pointer-proof-request lower-state)
-                [(Disabled) unit]
-                [(Requested input)
-                  (pointer_proof.pointer-proof-input-bind!
-                    input
-                    (lower-global-shared-view program)
-                    (lower-global-shared-view success.spans))])
-              (Ok program success.spans lower-state))]
-          [(Err message)
-            (match (compiler-lower-state-pointer-proof-request lower-state)
-              [(Requested input)
-                (pointer_proof.pointer-proof-input-fail!
-                  input
-                  "pointer proof: requested lowering did not complete")]
-              [_ unit])
-            (Err message)]))]))
+              [decls : ast.AstDeclList (deref decls-box)]
+              (match (lower-decls
+                lower-state
+                ctx
+                top-env
+                decls
+                paths
+                entry-path
+                (ir.compiler-ir-global-seq-empty)
+                (ir.compiler-ir-function-seq-empty)
+                (ir.compiler-ir-extern-seq-empty)
+                (ir.compiler-source-spans-empty)
+                names
+                mode)
+                [(Ok payload)
+                  (let
+                    [success : LowerDeclsSuccess (deref payload)]
+                    [canonical-storage : ir.CompilerIrReturnStorageIndex
+                      (ir.compiler-ir-return-storage-index-claims
+                        (ast.ast-node-pool-context-type-segment-bases
+                          (tc_core.tc-context-pools-ref ctx))
+                        (ir.compiler-ir-type-pool-count
+                          (tc_core.tc-context-pools ctx))
+                        success.functions
+                        success.externs)]
+                    [storage-authority : ir.CompilerIrReturnStorageAuthority
+                      (let
+                        [interns : ci.InternCompatState
+                          (compiler-lower-state-interns lower-state)]
+                        (ir.compiler-ir-return-storage-authority-capture
+                          (tc_core.tc-context-pools ctx)
+                          interns
+                          (if (lower-mode-windows-c-abi? mode)
+                            1
+                            0)
+                          canonical-storage))]
+                    [program : ir.CompilerIrProgram
+                      (Program
+                        success.globals
+                        success.functions
+                        success.externs
+                        storage-authority)]
+                    ;; Returning the public IR is the explicit text boundary:
+                    ;; diagnostics, optimizers, and backend emitters may inspect
+                    ;; symbol spellings, while construction above uses handles.
+                    (lower-materialize-generated-role-symbols! lower-state)
+                    (let
+                      [debug-error : String
+                        (lower-debug-types-error lower-state)]
+                      (if (> (string.string-length (& debug-error)) 0)
+                        (ResultCompilerLower.Err
+                          (box (lower-diagnostic debug-error)))
+                        (begin
+                          (match (compiler-lower-state-pointer-proof-request
+                            lower-state)
+                            [(Disabled) unit]
+                            [(Requested input)
+                              (pointer_proof.pointer-proof-input-bind!
+                                input
+                                (lower-global-shared-view program)
+                                (lower-global-shared-view success.spans))])
+                          (Ok program success.spans lower-state)))))]
+                [(Err message)
+                  (match (compiler-lower-state-pointer-proof-request
+                    lower-state)
+                    [(Requested input)
+                      (pointer_proof.pointer-proof-input-fail!
+                        input
+                        "pointer proof: requested lowering did not complete")]
+                    [_ unit])
+                  (Err message)]))])]
+      (tc_core.tc-context-restore-provider! ctx prev-provider prev-prov-id)
+      result)))
 
 ;; Internal `expanded` workers assume macro expansion has already run; the
 ;; public `-mode` wrappers below own the expand -> specialize -> typecheck

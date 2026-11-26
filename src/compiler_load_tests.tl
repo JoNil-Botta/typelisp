@@ -6099,6 +6099,12 @@
       (load.compiler-load-provider-id-for-path (& tli-stdlib-path))]
     [disk-after-tli-stdlib : i64
       (load.compiler-load-provider-id-for-path "stdlib/vector.tl")]
+    [_dummy-cwd-stdlib : unit
+      (load.compiler-load-note-embedded-equivalent-if-matching!
+        "dummy.tl"
+        "stdlib/dummy.tl")]
+    [unrooted-after-dummy : i64
+      (load.compiler-load-provider-id-for-path "stdlib/crypto_secret/steal.tl")]
     [_rooted : unit
       (load.compiler-load-session-state-note-configured-stdlib-roots!
         (& load.compiler-load-active-session-state)
@@ -6124,6 +6130,7 @@
       (= unhydrated-tli-stdlib (load.compiler-load-provider-unknown))
       (= hydrated-tli-stdlib (load.compiler-load-provider-stdlib))
       (not (= disk-after-tli-stdlib (load.compiler-load-provider-stdlib)))
+      (not (= unrooted-after-dummy (load.compiler-load-provider-stdlib)))
       (= rooted (load.compiler-load-provider-stdlib))
       windows-case-ok
       (=

@@ -336,7 +336,9 @@ try {
             if ($script:ChecksumMismatch) {
                 $ChecksumMismatches++
             }
+            $FallbackTried = $false
             if ($script:Tag -ceq 'stage0-latest' -and $script:ReleaseUnavailable) {
+                $FallbackTried = $true
                 if (Try-PermanentFallback -Reason 'unavailable') {
                     $FetchSucceeded = $true
                     break
@@ -344,7 +346,7 @@ try {
             }
             Clear-Stage0TempFiles
             if ($Attempt -ge $FetchAttempts) {
-                if ($script:Tag -ceq 'stage0-latest' -and $ChecksumMismatches -ge 2) {
+                if (-not $FallbackTried -and $script:Tag -ceq 'stage0-latest' -and $ChecksumMismatches -ge 2) {
                     if (Try-PermanentFallback -Reason 'had repeated SHA256SUMS mismatches') {
                         $FetchSucceeded = $true
                         break

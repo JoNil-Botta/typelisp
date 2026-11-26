@@ -410,13 +410,15 @@ while :; do
     if [ "$CHECKSUM_MISMATCH" -eq 1 ]; then
         checksum_mismatches=$((checksum_mismatches + 1))
     fi
+    fallback_tried=0
     if [ -z "$AT_COMMIT" ] && [ "$TAG" = stage0-latest ] && [ "$RELEASE_MISSING" -eq 1 ]; then
+        fallback_tried=1
         if try_permanent_fallback "unavailable"; then
             break
         fi
     fi
     if [ "$attempt" -ge "$FETCH_ATTEMPTS" ]; then
-        if [ -z "$AT_COMMIT" ] && [ "$TAG" = stage0-latest ] && [ "$checksum_mismatches" -ge 2 ]; then
+        if [ "$fallback_tried" -eq 0 ] && [ -z "$AT_COMMIT" ] && [ "$TAG" = stage0-latest ] && [ "$checksum_mismatches" -ge 2 ]; then
             if try_permanent_fallback "had repeated SHA256SUMS mismatches"; then
                 break
             fi

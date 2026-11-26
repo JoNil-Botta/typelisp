@@ -86,7 +86,7 @@ fi
 case "$(uname -s)" in
     Linux*)
         SINGLE_ASSET=typelisp-stage0-linux
-        BUNDLE_ASSET=
+        BUNDLE_ASSET=${TYPELISP_STAGE0_BUNDLE_ASSET:-}
         OUTPUT=typelisp
         NEED_EXEC=1
         SYSROOT_TRIPLE=x86_64-unknown-linux-gnu
@@ -126,6 +126,7 @@ ASSET_KIND=single
 
 download_asset() {
     asset=$1
+    mark_missing=${2:-1}
     target="$TMP_DIR/$asset"
     if asset_status=$(curl -fsSL -w '%{http_code}' "$BASE_URL/$asset" -o "$target"); then
         if [ ! -s "$target" ]; then
@@ -137,7 +138,9 @@ download_asset() {
         ASSET_TMP=$target
         return 0
     fi
-    [ "$asset_status" != 404 ] || RELEASE_MISSING=1
+    if [ "$mark_missing" -eq 1 ] && [ "$asset_status" = 404 ]; then
+        RELEASE_MISSING=1
+    fi
     rm -f "$target"
     return 1
 }
@@ -169,6 +172,7 @@ verify_optional_sum() {
     if [ "$HAVE_SUMS" -eq 1 ]; then
         if grep "  $opt_asset\$" "$SUMS_TMP" > "$SUMS_SELECTED"; then
             if ! (cd "$TMP_DIR" && sha256sum -c "$(basename "$SUMS_SELECTED")"); then
+                CHECKSUM_MISMATCH=1
                 echo "[stage0] SHA256SUMS verification failed for $opt_asset (republish in progress?)" >&2
                 return 1
             fi
@@ -192,13 +196,14 @@ fetch_and_verify() {
     ASSET_TMP=
     ASSET_KIND=single
     RELEASE_MISSING=0
+    CHECKSUM_MISMATCH=0
     SYSROOT_TLI_TMP=
     SYSROOT_LIB_TMP=
     HAVE_SUMS=0
 
     if [ -n "$BUNDLE_ASSET" ]; then
         echo "[stage0] downloading $BUNDLE_ASSET from $REPO@$TAG"
-        if download_asset "$BUNDLE_ASSET"; then
+        if download_asset "$BUNDLE_ASSET" 0; then
             ASSET_KIND=bundle
         else
             echo "[stage0] bundled Linux stage0 asset not present yet; trying $SINGLE_ASSET"
@@ -220,10 +225,12 @@ fetch_and_verify() {
             exit 1
         fi
         if ! grep "  $ASSET\$" "$SUMS_TMP" > "$SUMS_SELECTED"; then
+            CHECKSUM_MISMATCH=1
             echo "[stage0] SHA256SUMS does not yet list $ASSET (republish in progress?)" >&2
             return 1
         fi
         if ! (cd "$TMP_DIR" && sha256sum -c "$(basename "$SUMS_SELECTED")"); then
+            CHECKSUM_MISMATCH=1
             echo "[stage0] SHA256SUMS verification failed for $ASSET (republish in progress?)" >&2
             return 1
         fi
@@ -251,6 +258,7 @@ fetch_and_verify() {
         # Absent on older releases; only fail if SHA256SUMS claims they exist.
         if [ "$HAVE_SUMS" -eq 1 ] &&
             grep -E "  ($SYSROOT_TLI_ASSET|$SYSROOT_LIB_ASSET)\$" "$SUMS_TMP" >/dev/null; then
+            CHECKSUM_MISMATCH=1
             echo "[stage0] SHA256SUMS lists sysroot assets that are not visible yet (republish in progress?)" >&2
             return 1
         fi
@@ -351,31 +359,80 @@ FETCH_RETRY_DELAY=${TYPELISP_STAGE0_FETCH_RETRY_DELAY:-5}
 case "$FETCH_ATTEMPTS" in '' | *[!0-9]*) FETCH_ATTEMPTS=6 ;; esac
 case "$FETCH_RETRY_DELAY" in '' | *[!0-9]*) FETCH_RETRY_DELAY=5 ;; esac
 
+retry_delay_for_attempt() {
+    _rdfa_attempt=$1
+    _rdfa_delay=$FETCH_RETRY_DELAY
+    if [ "$_rdfa_delay" -le 0 ]; then
+        printf '0\n'
+        return 0
+    fi
+    if [ -z "$AT_COMMIT" ] && [ "$TAG" = stage0-latest ]; then
+        _rdfa_cap=30
+        [ "$_rdfa_delay" -le "$_rdfa_cap" ] || _rdfa_cap=$_rdfa_delay
+        _rdfa_i=1
+        while [ "$_rdfa_i" -lt "$_rdfa_attempt" ] && [ "$_rdfa_delay" -lt "$_rdfa_cap" ]; do
+            _rdfa_delay=$((_rdfa_delay * 2))
+            _rdfa_i=$((_rdfa_i + 1))
+        done
+        [ "$_rdfa_delay" -le "$_rdfa_cap" ] || _rdfa_delay=$_rdfa_cap
+    fi
+    printf '%s\n' "$_rdfa_delay"
+}
+
+try_permanent_fallback() {
+    _tpf_reason=$1
+    if ! fallback_tag=$(newest_permanent_release main); then
+        return 1
+    fi
+    echo "[stage0] $REQUESTED_TAG $_tpf_reason; falling back to $REPO@$fallback_tag" >&2
+    _tpf_saved_tag=$TAG
+    _tpf_saved_base_url=$BASE_URL
+    TAG=$fallback_tag
+    BASE_URL="https://github.com/$REPO/releases/download/$TAG"
+    rm -rf "$TMP_DIR"
+    mkdir -p "$TMP_DIR"
+    if fetch_and_verify; then
+        return 0
+    fi
+    TAG=$_tpf_saved_tag
+    BASE_URL=$_tpf_saved_base_url
+    rm -rf "$TMP_DIR"
+    mkdir -p "$TMP_DIR"
+    return 1
+}
+
 attempt=1
+checksum_mismatches=0
 while :; do
     if fetch_and_verify; then
         break
     fi
+    if [ "$CHECKSUM_MISMATCH" -eq 1 ]; then
+        checksum_mismatches=$((checksum_mismatches + 1))
+    fi
     if [ -z "$AT_COMMIT" ] && [ "$TAG" = stage0-latest ] && [ "$RELEASE_MISSING" -eq 1 ]; then
-        if fallback_tag=$(newest_permanent_release main); then
-            echo "[stage0] $REQUESTED_TAG unavailable; falling back to $REPO@$fallback_tag" >&2
-            TAG=$fallback_tag
-            BASE_URL="https://github.com/$REPO/releases/download/$TAG"
-            if fetch_and_verify; then
-                break
-            fi
+        if try_permanent_fallback "unavailable"; then
+            break
         fi
     fi
     if [ "$attempt" -ge "$FETCH_ATTEMPTS" ]; then
+        if [ -z "$AT_COMMIT" ] && [ "$TAG" = stage0-latest ] && [ "$checksum_mismatches" -ge 2 ]; then
+            if try_permanent_fallback "had repeated SHA256SUMS mismatches"; then
+                break
+            fi
+        fi
         echo "failed to fetch a consistent stage0 from $REPO@$TAG after $attempt attempt(s)" >&2
         echo "(the release may be mid-republish, or the asset is genuinely missing)" >&2
         exit 1
     fi
-    echo "[stage0] attempt $attempt/$FETCH_ATTEMPTS did not yield a consistent release (likely a republish in progress); retrying in ${FETCH_RETRY_DELAY}s" >&2
+    retry_delay=$(retry_delay_for_attempt "$attempt")
+    echo "[stage0] attempt $attempt/$FETCH_ATTEMPTS did not yield a consistent release (likely a republish in progress); retrying in ${retry_delay}s" >&2
     attempt=$((attempt + 1))
     rm -rf "$TMP_DIR"
     mkdir -p "$TMP_DIR"
-    sleep "$FETCH_RETRY_DELAY"
+    if [ "$retry_delay" -gt 0 ]; then
+        sleep "$retry_delay"
+    fi
 done
 
 # Publish a ready-to-execute asset so concurrent readers need no repair window.

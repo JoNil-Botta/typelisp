@@ -36,6 +36,7 @@ SC_WAIT_SECONDS=${TYPELISP_SELF_COMPILE_WAIT_SECONDS:-1800}
 SC_POLL_SECONDS=${TYPELISP_SELF_COMPILE_POLL_SECONDS:-60}
 SC_JOB_SETTLE_SECONDS=120
 SC_API_ATTEMPTS=3
+SC_RETRY_DELAY=${TYPELISP_SELF_COMPILE_RETRY_DELAY:-10}
 SC_WALK_LIMIT=${TYPELISP_SELF_COMPILE_WALK_LIMIT:-200}
 SC_OUT=target/self-compile
 SC_GATE_RECORD=$SC_OUT/measurement/record.tsv
@@ -95,8 +96,10 @@ sc_decimal() {
 
 sc_validate_seconds TYPELISP_SELF_COMPILE_WAIT_SECONDS "$SC_WAIT_SECONDS"
 sc_validate_seconds TYPELISP_SELF_COMPILE_POLL_SECONDS "$SC_POLL_SECONDS"
+sc_validate_seconds TYPELISP_SELF_COMPILE_RETRY_DELAY "$SC_RETRY_DELAY"
 SC_WAIT_SECONDS=$(sc_decimal "$SC_WAIT_SECONDS")
 SC_POLL_SECONDS=$(sc_decimal "$SC_POLL_SECONDS")
+SC_RETRY_DELAY=$(sc_decimal "$SC_RETRY_DELAY")
 [ "$SC_WAIT_SECONDS" -le 1800 ] || sc_fail "TYPELISP_SELF_COMPILE_WAIT_SECONDS may not exceed 1800 (D-C15)"
 case "$SC_TOLERANCE_PPM" in
     "" | *[!0-9]*) sc_fail "TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM must be a non-negative integer: $SC_TOLERANCE_PPM" ;;
@@ -275,6 +278,38 @@ sc_json_ok() {
     jq -e . "$1" >/dev/null 2>&1
 }
 
+# sc_retry_delay_for ATTEMPT  ->  bounded exponential backoff (in seconds)
+# from SC_RETRY_DELAY: SC_RETRY_DELAY * 2^(ATTEMPT-1), capped at 60s (or
+# SC_RETRY_DELAY when larger). Zero disables sleeping (used in self-tests).
+sc_retry_delay_for() {
+    _srdf_delay=$SC_RETRY_DELAY
+    if [ "$_srdf_delay" -le 0 ]; then
+        printf '0\n'
+        return 0
+    fi
+    _srdf_cap=60
+    [ "$_srdf_delay" -le "$_srdf_cap" ] || _srdf_cap=$_srdf_delay
+    _srdf_i=1
+    while [ "$_srdf_i" -lt "$1" ] && [ "$_srdf_delay" -lt "$_srdf_cap" ]; do
+        _srdf_delay=$((_srdf_delay * 2))
+        _srdf_i=$((_srdf_i + 1))
+    done
+    [ "$_srdf_delay" -le "$_srdf_cap" ] || _srdf_delay=$_srdf_cap
+    printf '%s\n' "$_srdf_delay"
+}
+
+sc_retry_sleep() {
+    _srs_delay=$(sc_retry_delay_for "$1")
+    [ "$_srs_delay" -le 0 ] || sleep "$_srs_delay"
+}
+
+sc_log_stderr_tail() {
+    if [ -s "$2" ]; then
+        sc_log "$1 stderr (tail):"
+        tail -n 20 "$2" | sed 's/^/[self-compile]   /' >&2
+    fi
+}
+
 # sc_api ENDPOINT OUT  ->  the response body in OUT, from the first successful
 # attempt. Each attempt writes its own OUT.attempt-N.
 sc_api() {
@@ -286,18 +321,36 @@ sc_api() {
             cp "$2.attempt-$_sa_try" "$2"
             return 0
         fi
+        sc_log "gh api $1 failed (attempt $_sa_try/$SC_API_ATTEMPTS)"
+        sc_log_stderr_tail "gh api $1" "$2.attempt-$_sa_try.stderr"
         [ "$_sa_try" -lt "$SC_API_ATTEMPTS" ] || return 1
+        sc_retry_sleep "$_sa_try"
         _sa_try=$((_sa_try + 1))
-        sleep 10
     done
 }
 
 # sc_download_artifact ID DEST  ->  the artifact with that id, unpacked in DEST.
 sc_download_artifact() {
-    mkdir -p "$2" || return 1
-    gh api -H 'Accept: application/vnd.github+json' \
-        "repos/$GITHUB_REPOSITORY/actions/artifacts/$1/zip" > "$2.zip" 2> "$2.zip.stderr" &&
-        unzip -q -o "$2.zip" -d "$2"
+    [ -n "$2" ] && [ "$2" != / ] || return 1
+    _sda_try=1
+    while :; do
+        rm -rf -- "$2" "$2.zip"
+        mkdir -p "$2" || return 1
+        _sda_err="$2.attempt-$_sda_try.stderr"
+        if gh api -H 'Accept: application/vnd.github+json' \
+            "repos/$GITHUB_REPOSITORY/actions/artifacts/$1/zip" > "$2.zip" 2> "$_sda_err" &&
+            unzip -q -o "$2.zip" -d "$2" 2>> "$_sda_err"; then
+            return 0
+        fi
+        sc_log "downloading artifact $1 failed (attempt $_sda_try/$SC_API_ATTEMPTS)"
+        sc_log_stderr_tail "artifact $1" "$_sda_err"
+        if [ "$_sda_try" -ge "$SC_API_ATTEMPTS" ]; then
+            rm -rf -- "$2" "$2.zip"
+            return 1
+        fi
+        sc_retry_sleep "$_sda_try"
+        _sda_try=$((_sda_try + 1))
+    done
 }
 
 # sc_fetch_run_artifact KIND COMMIT JOB ARTIFACT DEST

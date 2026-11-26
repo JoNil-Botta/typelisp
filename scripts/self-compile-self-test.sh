@@ -414,6 +414,176 @@ EOF
     st_fails "fallback record offered as a reference" _st_check x.tsv
 }
 
+st_api() {
+    _d=$1
+    # Verify bounded exponential backoff schedule and zero-delay override.
+    st_eq "api retry backoff schedule" \
+        "$(SC_RETRY_DELAY=10; printf '%s %s %s %s' "$(sc_retry_delay_for 1)" "$(sc_retry_delay_for 2)" "$(sc_retry_delay_for 3)" "$(sc_retry_delay_for 6)")" \
+        "10 20 40 60"
+    st_eq "api retry zero delay" "$(SC_RETRY_DELAY=0; sc_retry_delay_for 3)" 0
+
+    # sc_api: transient failures then success on attempt 3, with stderr logging.
+    printf '0\n' > "$_d/api-ok.count"
+    _st_rc=0
+    (
+        SC_API_ATTEMPTS=3
+        SC_RETRY_DELAY=0
+        gh() {
+            _c=$(cat "$_d/api-ok.count")
+            _c=$((_c + 1))
+            printf '%s\n' "$_c" > "$_d/api-ok.count"
+            if [ "$_c" -lt 3 ]; then
+                echo "gh: Bad Gateway (HTTP 502) try=$_c" >&2
+                return 1
+            fi
+            printf '{"ok":true}\n'
+        }
+        sc_api "repos/$ST_REPO/runs" "$_d/api-ok.json"
+    ) 2>"$_d/api-ok.log" || _st_rc=$?
+    st_eq "sc_api transient-then-success exit" "$_st_rc" 0
+    st_eq "sc_api transient-then-success attempts" "$(cat "$_d/api-ok.count")" 3
+    st_eq "sc_api transient-then-success body" "$(cat "$_d/api-ok.json")" '{"ok":true}'
+    st_succeeds "sc_api transient failure logs stderr tail" grep -F "Bad Gateway (HTTP 502) try=2" "$_d/api-ok.log"
+
+    # sc_api: exhausted failures log stderr tail and stop at SC_API_ATTEMPTS.
+    printf '0\n' > "$_d/api-fail.count"
+    _st_rc=0
+    (
+        SC_API_ATTEMPTS=3
+        SC_RETRY_DELAY=0
+        gh() {
+            _c=$(cat "$_d/api-fail.count")
+            _c=$((_c + 1))
+            printf '%s\n' "$_c" > "$_d/api-fail.count"
+            echo "gh: Service Unavailable (HTTP 503) try=$_c" >&2
+            return 1
+        }
+        sc_api "repos/$ST_REPO/fail" "$_d/api-fail.json"
+    ) 2>"$_d/api-fail.log" || _st_rc=$?
+    st_eq "sc_api exhausted failure exit" "$_st_rc" 1
+    st_eq "sc_api exhausted failure attempts" "$(cat "$_d/api-fail.count")" 3
+    st_fails "sc_api exhausted leaves no output file" test -e "$_d/api-fail.json"
+    st_succeeds "sc_api exhausted logs stderr tail" grep -F "Service Unavailable (HTTP 503) try=3" "$_d/api-fail.log"
+
+    # sc_download_artifact: transient gh failure + partial corrupt unzip then success.
+    printf '0\n' > "$_d/dl-ok.count"
+    _st_rc=0
+    (
+        SC_API_ATTEMPTS=3
+        SC_RETRY_DELAY=0
+        GITHUB_REPOSITORY=$ST_REPO
+        gh() {
+            _c=$(cat "$_d/dl-ok.count")
+            _c=$((_c + 1))
+            printf '%s\n' "$_c" > "$_d/dl-ok.count"
+            if [ "$_c" -eq 1 ]; then
+                printf 'truncated'
+                echo "gh: Bad Gateway (HTTP 502) dl=1" >&2
+                return 1
+            elif [ "$_c" -eq 2 ]; then
+                printf 'corrupt-zip'
+                return 0
+            fi
+            printf 'good-zip'
+        }
+        unzip() {
+            _u_zip=
+            _u_dest=
+            while [ "$#" -gt 0 ]; do
+                case "$1" in
+                    -q | -o) shift ;;
+                    -d) _u_dest=$2; shift 2 ;;
+                    *) _u_zip=$1; shift ;;
+                esac
+            done
+            if [ "$(cat "$_u_zip")" = corrupt-zip ]; then
+                printf 'poison\n' > "$_u_dest/poison.txt"
+                echo "unzip: End-of-central-directory signature not found" >&2
+                return 1
+            fi
+            if [ -e "$_u_dest/poison.txt" ]; then
+                echo "unzip: stale poison file survived retry cleanup" >&2
+                return 1
+            fi
+            printf 'verified\n' > "$_u_dest/record.tsv"
+        }
+        sc_download_artifact 1234 "$_d/dl-ok"
+    ) 2>"$_d/dl-ok.log" || _st_rc=$?
+    st_eq "sc_download_artifact transient-then-success exit" "$_st_rc" 0
+    st_eq "sc_download_artifact transient-then-success attempts" "$(cat "$_d/dl-ok.count")" 3
+    st_eq "sc_download_artifact extracted payload" "$(cat "$_d/dl-ok/record.tsv")" verified
+    st_fails "sc_download_artifact cleaned partial extraction before retry" test -e "$_d/dl-ok/poison.txt"
+    st_succeeds "sc_download_artifact logs gh stderr tail" grep -F "Bad Gateway (HTTP 502) dl=1" "$_d/dl-ok.log"
+    st_succeeds "sc_download_artifact logs unzip stderr tail" grep -F "End-of-central-directory signature not found" "$_d/dl-ok.log"
+
+    # sc_download_artifact: exhausted failure cleans DEST and DEST.zip and logs stderr.
+    printf '0\n' > "$_d/dl-fail.count"
+    _st_rc=0
+    (
+        SC_API_ATTEMPTS=3
+        SC_RETRY_DELAY=0
+        GITHUB_REPOSITORY=$ST_REPO
+        gh() {
+            _c=$(cat "$_d/dl-fail.count")
+            _c=$((_c + 1))
+            printf '%s\n' "$_c" > "$_d/dl-fail.count"
+            printf 'corrupt-zip'
+        }
+        unzip() {
+            _u_dest=
+            while [ "$#" -gt 0 ]; do
+                case "$1" in
+                    -d) _u_dest=$2; shift 2 ;;
+                    *) shift ;;
+                esac
+            done
+            printf 'poison\n' > "$_u_dest/poison.txt"
+            echo "unzip: bad archive" >&2
+            return 1
+        }
+        sc_download_artifact 5678 "$_d/dl-fail"
+    ) 2>"$_d/dl-fail.log" || _st_rc=$?
+    st_eq "sc_download_artifact exhausted exit" "$_st_rc" 1
+    st_eq "sc_download_artifact exhausted attempts" "$(cat "$_d/dl-fail.count")" 3
+    st_fails "sc_download_artifact exhausted cleans DEST" test -e "$_d/dl-fail"
+    st_fails "sc_download_artifact exhausted cleans DEST.zip" test -e "$_d/dl-fail.zip"
+    st_succeeds "sc_download_artifact exhausted logs stderr tail" grep -F "unzip: bad archive" "$_d/dl-fail.log"
+
+    # --cached-base-only sets SC_API_ATTEMPTS=1: single-attempt behavior intact.
+    printf '0\n' > "$_d/cached-api.count"
+    printf '0\n' > "$_d/cached-dl.count"
+    _st_rc=0
+    (
+        SC_API_ATTEMPTS=1
+        SC_RETRY_DELAY=0
+        GITHUB_REPOSITORY=$ST_REPO
+        gh() {
+            _c=$(cat "$_d/cached-api.count")
+            printf '%s\n' "$((_c + 1))" > "$_d/cached-api.count"
+            echo "gh: timeout" >&2
+            return 1
+        }
+        sc_api "repos/$ST_REPO/runs" "$_d/cached-api.json"
+    ) 2>/dev/null || _st_rc=$?
+    st_eq "single-attempt sc_api exit" "$_st_rc" 1
+    st_eq "single-attempt sc_api count" "$(cat "$_d/cached-api.count")" 1
+    _st_rc=0
+    (
+        SC_API_ATTEMPTS=1
+        SC_RETRY_DELAY=0
+        GITHUB_REPOSITORY=$ST_REPO
+        gh() {
+            _c=$(cat "$_d/cached-dl.count")
+            printf '%s\n' "$((_c + 1))" > "$_d/cached-dl.count"
+            echo "gh: timeout" >&2
+            return 1
+        }
+        sc_download_artifact 9999 "$_d/cached-dl"
+    ) 2>/dev/null || _st_rc=$?
+    st_eq "single-attempt sc_download_artifact exit" "$_st_rc" 1
+    st_eq "single-attempt sc_download_artifact count" "$(cat "$_d/cached-dl.count")" 1
+}
+
 # Fixture API: endpoints map to files under $ST_API; a missing file is an
 # API error. Artifacts are directories under $ST_ART/<run>/<name>.
 st_api_file() {
@@ -2008,7 +2178,7 @@ sc_self_test() {
     st_succeeds "pipeline/substitution tool-start counter" fixture_metrics_self_test "$_st_root/metrics"
     st_succeeds "disabled instrumentation installs no counter" fixture_metrics_disabled_self_test "$_st_root/metrics-disabled"
     fixture_metrics_overhead_sample
-    for _st_part in arithmetic records gate declarations selection resolve ledger account chain fallback e2e; do
+    for _st_part in arithmetic records gate declarations selection api resolve ledger account chain fallback e2e; do
         mkdir -p "$_st_root/$_st_part"
         fixture_metrics_run "$_st_part" "st_$_st_part" "$_st_root/$_st_part"
     done

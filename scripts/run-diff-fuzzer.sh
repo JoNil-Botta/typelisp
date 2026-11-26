@@ -6,6 +6,8 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 SCRIPT_PATH="$ROOT/scripts/$(basename -- "$0")"
+# shellcheck source=scripts/lib-linux-entry.sh
+. "$ROOT/scripts/lib-linux-entry.sh"
 
 usage() {
     cat >&2 <<'EOF'
@@ -46,6 +48,29 @@ run_with_timeout() {
         timeout 15s "$@"
     else
         "$@"
+    fi
+}
+
+# Assemble and link one `compile --verify-ir` artifact the way
+# scripts/lib-native-link.sh links a Linux program: resolve the entry symbol
+# and, when the assembly references prebuilt stdlib symbols, link the sysroot
+# libstdlib.a next to the compiler. Without the archive every seed fails on
+# the undefined stdlib symbols the runtime shims no longer emit.
+assemble_and_link_verify_asm() {
+    _alv_asm=$1
+    _alv_obj=$2
+    _alv_bin=$3
+    _alv_err=$4
+    _alv_entry=$(linux_entry_symbol_for_asm "$_alv_asm") || return $?
+    _alv_archive=$(linux_stdlib_archive_for_asm "$_alv_asm" "$COMPILER")
+    as "$_alv_asm" -o "$_alv_obj" 2>"$_alv_err" || return $?
+    if [ -n "$_alv_archive" ]; then
+        ld -static -e "$_alv_entry" -z noexecstack --gc-sections "$_alv_obj" \
+            --start-group "$_alv_archive" --end-group -o "$_alv_bin" \
+            2>>"$_alv_err" || return $?
+    else
+        ld -static -e "$_alv_entry" "$_alv_obj" -o "$_alv_bin" \
+            2>>"$_alv_err" || return $?
     fi
 }
 
@@ -130,8 +155,8 @@ if [ "${1:-}" = "--_worker" ]; then
                 save_failure "verify-ir-opt${opt}-fail" "rc=$vrc"
             fi
             lrc=0
-            as "$WORK/v${opt}.s" -o "$WORK/v${opt}.o" 2>"$WORK/link${opt}.err" && \
-                ld -static -e _tl_start "$WORK/v${opt}.o" -o "$WORK/bin${opt}" 2>>"$WORK/link${opt}.err" || lrc=$?
+            assemble_and_link_verify_asm "$WORK/v${opt}.s" "$WORK/v${opt}.o" \
+                "$WORK/bin${opt}" "$WORK/link${opt}.err" || lrc=$?
             if [ "$lrc" -ne 0 ]; then
                 save_failure "build-opt${opt}-fail" "link-rc=$lrc"
             fi
@@ -190,8 +215,8 @@ if [ "${1:-}" = "--_worker" ]; then
                 save_failure "verify-ir-avx2-fail" "rc=$v_avx_rc"
             fi
             l_avx_rc=0
-            as "$WORK/v_avx2.s" -o "$WORK/v_avx2.o" 2>"$WORK/link_avx2.err" && \
-                ld -static -e _tl_start "$WORK/v_avx2.o" -o "$WORK/bin_avx2" 2>>"$WORK/link_avx2.err" || l_avx_rc=$?
+            assemble_and_link_verify_asm "$WORK/v_avx2.s" "$WORK/v_avx2.o" \
+                "$WORK/bin_avx2" "$WORK/link_avx2.err" || l_avx_rc=$?
             if [ "$l_avx_rc" -ne 0 ]; then
                 save_failure "build-avx2-fail" "link-rc=$l_avx_rc"
             fi

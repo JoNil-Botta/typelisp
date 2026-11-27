@@ -291,6 +291,8 @@
 ;; by `tli-batch-cache-end!` when the batch completes.
 (define tli-batch-cache-max-slots : i64
   4)
+(define tli-batch-cache-max-extra-slots : i64
+  16)
 
 (defenum TliBatchCatalogOutcome
   (Inactive)
@@ -316,13 +318,30 @@
   (require-archive bool)
   (outcome TliBatchCatalogOutcome))
 
+(defenum TliBatchExtraOutcome
+  (Error String)
+  (Active
+    tli_codec.TliDirectory
+    (Array u8 32)
+    (__tl_dyn-array tli.TliModuleRecord)
+    (__tl_dyn-array bool)
+    (__tl_dyn-array i64)))
+
+(defstruct TliBatchExtraEntry
+  (path String)
+  (target target_cfg.CompilerTargetCfg)
+  (cfg-digest (Array u8 32))
+  (outcome TliBatchExtraOutcome))
+
 (defstruct TliBatchCacheBox
   (override-valid bool)
   (override-roots (__tl_dyn-array String))
   (override-env String)
   (override-result bool)
   (catalog-count i64)
-  (catalog-slots (__tl_dyn-array TliBatchCatalogEntry)))
+  (catalog-slots (__tl_dyn-array TliBatchCatalogEntry))
+  (extra-count i64)
+  (extra-slots (__tl_dyn-array TliBatchExtraEntry)))
 
 (define tli-batch-cache-enabled : bool
   false)
@@ -414,7 +433,9 @@
             ""
             false
             0
-            (__tl_make-array TliBatchCatalogEntry tli-batch-cache-max-slots)))]
+            (__tl_make-array TliBatchCatalogEntry tli-batch-cache-max-slots)
+            0
+            (__tl_make-array TliBatchExtraEntry tli-batch-cache-max-extra-slots)))]
       [addr : i64
         (unsafe
           (cast (ptr->int (__tl_array-data cell)) : i64))]
@@ -474,7 +495,7 @@
               (int->ptr (cast addr : u64) : (MutPtr TliBatchCacheBox))]
             [holder : TliBatchCacheBox (ptr-read p-ro)]
             (match holder
-              [(TliBatchCacheBox _ _ _ _ cat-count cat-slots)
+              [(TliBatchCacheBox _ _ _ _ cat-count cat-slots ex-count ex-slots)
                 (ptr-write!
                   p-rw
                   (TliBatchCacheBox
@@ -483,7 +504,9 @@
                     copied-env
                     result
                     cat-count
-                    cat-slots))]))))
+                    cat-slots
+                    ex-count
+                    ex-slots))]))))
       result)))
 
 ;; Fast check: zero filesystem calls when no `--stdlib-root` or
@@ -788,7 +811,9 @@
                 ov-env
                 ov-res
                 cat-count
-                cat-slots)
+                cat-slots
+                ex-count
+                ex-slots)
                 (set! (array-ref cat-slots cat-count) entry)
                 (ptr-write!
                   p-rw
@@ -798,12 +823,161 @@
                     ov-env
                     ov-res
                     (+ cat-count 1)
-                    cat-slots))])))
+                    cat-slots
+                    ex-count
+                    ex-slots))])))
         existing-count))))
 
 ;; Pre-warm the batch TLI cache before entry 0 of `compile --batch` without
 ;; touching intern tables, so persistent sysroot bytes sit in the entry-0
 ;; live baseline rather than appearing as post-entry-0 drift.
+(define (tli-batch-extra-entry-matches?
+  [entry : (& TliBatchExtraEntry)]
+  [path : (& str)]
+  [target : target_cfg.CompilerTargetCfg]
+  [cfg-digest : (& (Array u8 32))]) : bool
+  (and
+    (string.eq (& entry.path) path)
+    (tli-sysroot-target-eq? (& entry.target) target)
+    (tli_codec.tli-digest-eq? (& entry.cfg-digest) cfg-digest)))
+
+(define (tli-batch-cache-lookup-or-open-extra!
+  [path : (& str)]
+  [target : target_cfg.CompilerTargetCfg]
+  [cfg-digest : (& (Array u8 32))]) : i64
+  (let
+    [addr : i64 (tli-batch-cache-ensure-box!)]
+    [existing-count : i64
+      (unsafe
+        (let
+          [p-ro : (Ptr TliBatchCacheBox)
+            (int->ptr (cast addr : u64) : (Ptr TliBatchCacheBox))]
+          [holder : TliBatchCacheBox (ptr-read p-ro)]
+          (for [i (iterator.range 0 holder.extra-count)]
+            (when
+              (tli-batch-extra-entry-matches?
+                (& (array-ref holder.extra-slots i))
+                path
+                target
+                cfg-digest)
+              (return i)))
+          holder.extra-count))]
+    (when (>= existing-count tli-batch-cache-max-extra-slots) (return -1))
+    (let
+      [triple : String (tli-sysroot-target-triple target)]
+      [build : String (identity.compiler-build-producer-identity)]
+      [enclosing : i64 (arena.tl_arena_current)]
+      (unsafe
+        ;; lint-allow: raw-arena-op -- open cached extra TLI bundle inside the batch cache arena.
+        (arena.tl_arena_set tli-batch-cache-arena))
+      (let
+        [outcome : TliBatchExtraOutcome
+          (match (tli-inspect-read-file path)
+            [(Err error)
+              (TliBatchExtraOutcome.Error
+                (str_cat.str-cat
+                  "extra tli: cannot read '"
+                  (string.copy path)
+                  "': "
+                  error
+                  "\n"))]
+            [(Ok bytes)
+              (match (hydrate.tli-catalog-open-directory
+                (& bytes)
+                (& build)
+                (& triple))
+                [(Err failure)
+                  (TliBatchExtraOutcome.Error
+                    (str_cat.str-cat
+                      "extra tli: "
+                      (string.copy path)
+                      ": "
+                      (string.copy (& failure.message))
+                      " at byte "
+                      (string.int->string failure.offset)
+                      "\n"))]
+                [(Ok directory)
+                  (if (!= (bit-and directory.flags tli.tli-is-stdlib-bundle) 0)
+                    (TliBatchExtraOutcome.Error
+                      (str_cat.str-cat
+                        "extra tli: "
+                        (string.copy path)
+                        ": unexpected stdlib bundle flag\n"))
+                    (let
+                      [count : i64 (array-length directory.entries)]
+                      [owned : i64
+                        (+
+                          directory.owned-bytes
+                          80
+                          (*
+                            count
+                            (+
+                              32
+                              (comptime (size-of (type tli.TliModuleRecord))))))]
+                      (if (> owned tli_codec.tli-max-owned-bytes)
+                        (TliBatchExtraOutcome.Error
+                          (str_cat.str-cat
+                            "extra tli: "
+                            (string.copy path)
+                            ": TLI catalog exceeds the owned-byte limit\n"))
+                        (TliBatchExtraOutcome.Active
+                          directory
+                          (deref cfg-digest)
+                          (__tl_make-array tli.TliModuleRecord count)
+                          (__tl_make-array bool count)
+                          (__tl_make-array owned)))))])])]
+        [entry : TliBatchExtraEntry
+          (TliBatchExtraEntry
+            (string.copy path)
+            target
+            (deref cfg-digest)
+            outcome)]
+        (unsafe
+          ;; lint-allow: raw-arena-op -- restore caller arena after storing extra batch cache entry.
+          (arena.tl_arena_set enclosing)
+          (let
+            [p-ro : (Ptr TliBatchCacheBox)
+              (int->ptr (cast addr : u64) : (Ptr TliBatchCacheBox))]
+            [p-rw : (MutPtr TliBatchCacheBox)
+              (int->ptr (cast addr : u64) : (MutPtr TliBatchCacheBox))]
+            [holder : TliBatchCacheBox (ptr-read p-ro)]
+            (match holder
+              [(TliBatchCacheBox
+                ov-valid
+                ov-roots
+                ov-env
+                ov-res
+                cat-count
+                cat-slots
+                ex-count
+                ex-slots)
+                (set! (array-ref ex-slots ex-count) entry)
+                (ptr-write!
+                  p-rw
+                  (TliBatchCacheBox
+                    ov-valid
+                    ov-roots
+                    ov-env
+                    ov-res
+                    cat-count
+                    cat-slots
+                    (+ ex-count 1)
+                    ex-slots))])))
+        existing-count))))
+
+(define tli-active-extra-tli-paths-state : svec.Vec
+  (svec.new))
+
+(define (tli-set-active-extra-tli-paths! [paths : (& svec.Vec)]) : unit
+  (let
+    [copy : svec.Vec (svec.new)]
+    (for [i (iterator.range 0 (svec.len paths))]
+      (svec.push-ref! (&mut copy) (string.copy (& (array-ref paths.slots i)))))
+    (set! tli-active-extra-tli-paths-state copy)))
+
+(define (tli-reset-active-extra-tli-paths!) : unit
+  (set! tli-active-extra-tli-paths-state (svec.new)))
+
 (define (tli-batch-cache-warm-for-names!
   [target : target_cfg.CompilerTargetCfg]
   [roots : (& (__tl_dyn-array String))]
@@ -832,6 +1006,22 @@
         (& cfg-digest)
         opt-level
         require-archive)
+      (let
+        [extra-count : i64 (svec.len (& tli-active-extra-tli-paths-state))]
+        (when
+          (> extra-count 0)
+          (let
+            [extra-digest : (Array u8 32)
+              (hydrate.tli-hydrate-cfg-digest-for-names
+                is-windows
+                user-cfg-names
+                user-cfg-count)]
+            (for [i (iterator.range 0 extra-count)]
+              (tli-batch-cache-lookup-or-open-extra!
+                (& (array-ref tli-active-extra-tli-paths-state.slots i))
+                target
+                (& extra-digest))
+              unit))))
       unit)))
 
 ;; Sysroot options of the running command; every compile it starts opens the
@@ -851,6 +1041,156 @@
 (defenum ResultTliCatalogOpen
   (Ok)
   (Err String))
+
+;; Open one metadata-only `--extra-tli <path>` bundle (`require-archive=false`)
+;; and attach it to `load-state`, reusing `tli-batch-cache-arena` during
+;; `compile --batch`.
+(define (tli-open-extra-tli-file-for-session!
+  [load-state : (& compiler_load.CompilerLoadSessionState)]
+  [tli-path : (& str)]
+  [target : target_cfg.CompilerTargetCfg]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultTliCatalogOpen
+  (let
+    [cfg-digest : (Array u8 32) (hydrate.tli-hydrate-cfg-digest cfgs)]
+    (when
+      tli-batch-cache-enabled
+      (let
+        [slot : i64
+          (tli-batch-cache-lookup-or-open-extra! tli-path target (& cfg-digest))]
+        (when
+          (>= slot 0)
+          (let
+            [addr : i64 tli-batch-cache-box-addr]
+            (return
+              (unsafe
+                (let
+                  [p-ro : (Ptr TliBatchCacheBox)
+                    (int->ptr (cast addr : u64) : (Ptr TliBatchCacheBox))]
+                  [holder : TliBatchCacheBox (ptr-read p-ro)]
+                  [entry : TliBatchExtraEntry
+                    (ptr-read
+                      (ptr-offset
+                        (ptr-cast
+                          (__tl_array-data holder.extra-slots)
+                          : (Ptr TliBatchExtraEntry))
+                        slot))]
+                  (match entry.outcome
+                    [(Error message)
+                      (ResultTliCatalogOpen.Err (string.copy (& message)))]
+                    [(Active directory digest records decoded owned-cell)
+                      (match (compiler_load.compiler-load-session-state-tli-attach-borrowed-bundle!
+                        load-state
+                        tli-batch-cache-arena
+                        false
+                        ""
+                        ""
+                        ""
+                        ""
+                        directory
+                        (& digest)
+                        cfgs
+                        records
+                        decoded
+                        owned-cell)
+                        [(Ok _) ResultTliCatalogOpen.Ok]
+                        [(Err msg)
+                          (ResultTliCatalogOpen.Err
+                            (str_cat.str-cat
+                              "extra tli: "
+                              (string.copy tli-path)
+                              ": "
+                              msg
+                              "\n"))])]))))))))
+    (let
+      [triple : String (tli-sysroot-target-triple target)]
+      [build : String (identity.compiler-build-producer-identity)]
+      [enclosing : i64 (arena.tl_arena_current)]
+      [bundle-arena : i64 (arena.tl_arena_make)]
+      (unsafe
+        ;; lint-allow: raw-arena-op -- per-bundle arena destroyed deterministically at job end.
+        (arena.tl_arena_set bundle-arena))
+      (let
+        [result : ResultTliCatalogOpen
+          (match (tli-inspect-read-file tli-path)
+            [(Err error)
+              (ResultTliCatalogOpen.Err
+                (str_cat.str-cat
+                  "extra tli: cannot read '"
+                  (string.copy tli-path)
+                  "': "
+                  error
+                  "\n"))]
+            [(Ok bytes)
+              (match (hydrate.tli-catalog-open-directory
+                (& bytes)
+                (& build)
+                (& triple))
+                [(Err failure)
+                  (ResultTliCatalogOpen.Err
+                    (str_cat.str-cat
+                      "extra tli: "
+                      (string.copy tli-path)
+                      ": "
+                      (string.copy (& failure.message))
+                      " at byte "
+                      (string.int->string failure.offset)
+                      "\n"))]
+                [(Ok directory)
+                  (if (!= (bit-and directory.flags tli.tli-is-stdlib-bundle) 0)
+                    (ResultTliCatalogOpen.Err
+                      (str_cat.str-cat
+                        "extra tli: "
+                        (string.copy tli-path)
+                        ": unexpected stdlib bundle flag\n"))
+                    (match (compiler_load.compiler-load-session-state-tli-attach-bundle!
+                      load-state
+                      bundle-arena
+                      false
+                      ""
+                      ""
+                      ""
+                      ""
+                      (tlci.tlci-spmd-callables-empty)
+                      directory
+                      (& cfg-digest)
+                      cfgs)
+                      [(Ok _) ResultTliCatalogOpen.Ok]
+                      [(Err msg)
+                        (ResultTliCatalogOpen.Err
+                          (str_cat.str-cat
+                            "extra tli: "
+                            (string.copy tli-path)
+                            ": "
+                            msg
+                            "\n"))]))])])]
+        (unsafe
+          ;; lint-allow: raw-arena-op -- restore caller arena.
+          (arena.tl_arena_set enclosing))
+        (match result
+          [(Ok) ResultTliCatalogOpen.Ok]
+          [(Err msg)
+            (let
+              [owned-msg : String (string.copy (& msg))]
+              (unsafe
+                ;; lint-allow: raw-arena-op -- destroy failed bundle arena.
+                (arena.tl_arena_destroy bundle-arena))
+              (ResultTliCatalogOpen.Err owned-msg))])))))
+
+(define (tli-open-extra-tli-bundles-for-session!
+  [load-state : (& compiler_load.CompilerLoadSessionState)]
+  [target : target_cfg.CompilerTargetCfg]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultTliCatalogOpen
+  (let
+    [count : i64 (svec.len (& tli-active-extra-tli-paths-state))]
+    (for [i (iterator.range 0 count)]
+      (match (tli-open-extra-tli-file-for-session!
+        load-state
+        (& (array-ref tli-active-extra-tli-paths-state.slots i))
+        target
+        cfgs)
+        [(Err msg) (return (ResultTliCatalogOpen.Err msg))]
+        [(Ok) unit]))
+    ResultTliCatalogOpen.Ok))
 
 ;; Attach the active options' catalog to `load-state` in its own arena, or
 ;; leave the session without one when prebuilt stdlib is inactive.
@@ -885,7 +1225,7 @@
         (>= slot 0)
         (let
           [addr : i64 tli-batch-cache-box-addr]
-          (return
+          [stdlib-res : ResultTliCatalogOpen
             (unsafe
               (let
                 [p-ro : (Ptr TliBatchCacheBox)
@@ -920,7 +1260,12 @@
                       records
                       decoded
                       owned-cell)
-                    ResultTliCatalogOpen.Ok]))))))))
+                    ResultTliCatalogOpen.Ok])))]
+          (return
+            (match stdlib-res
+              [(Err msg) (ResultTliCatalogOpen.Err msg)]
+              [(Ok)
+                (tli-open-extra-tli-bundles-for-session! load-state target cfgs)]))))))
   (let
     [enclosing : i64 (arena.tl_arena_current)]
     [tli-arena : i64 (arena.tl_arena_make)]
@@ -949,12 +1294,12 @@
             archive-path
             catalog
             cfgs)
-          ResultTliCatalogOpen.Ok]
+          (tli-open-extra-tli-bundles-for-session! load-state target cfgs)]
         [(Inactive)
           (unsafe
             ;; lint-allow: raw-arena-op -- moved from the audited compiler_driver_core module.
             (arena.tl_arena_destroy tli-arena))
-          ResultTliCatalogOpen.Ok]
+          (tli-open-extra-tli-bundles-for-session! load-state target cfgs)]
         [(Error message)
           (let
             [owned-message : String (string.copy (& message))]

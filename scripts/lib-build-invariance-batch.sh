@@ -255,12 +255,61 @@ build_invariance_write_src_weights() {
 # and a test-program chunk keeps the light memory class. Any src/ source with
 # >100k transitive LOC is isolated as a singleton so heavy non-compiler_* tests
 # cannot pile into one multi-entry straggler chunk.
+#
+# When `use_src_core_tli=1`, eligible src/ test entries hydrate compiler modules
+# from the producer's byte-verified `src_core.tli` via `--extra-tli`. Those
+# entries never mix with full-source src/ entries or non-src/ test programs,
+# and pack up to 10 cases per chunk so 4 workers run them in parallel well
+# within 2048 MiB. Selfhost main compiles, the 8 GiB codegen/backend memory
+# gates, and the three tests invoking `: Decls`-generated macros stay on full
+# source.
+build_invariance_source_uses_src_core_tli() {
+    _bib_tli_name=$1
+    _bib_tli_source=$2
+    case "$_bib_tli_name" in
+        selfhost_main_*) return 1 ;;
+    esac
+    case "$_bib_tli_source" in
+        src/*) ;;
+        *) return 1 ;;
+    esac
+    case "$_bib_tli_source" in
+        src/main.tl | \
+        src/tests/compiler_codegen_smoke_suite.tl | \
+        src/tests/compiler_backend_smoke.tl | \
+        src/tests/compiler_frontend_smoke_suite.tl | \
+        src/tests/compiler_parse_smoke.tl | \
+        src/tests/tlci_loader_smoke.tl)
+            return 1
+            ;;
+    esac
+    return 0
+}
+
+# Fail-closed check: every row in a chunk must be src_core.tli-eligible before
+# the runner may pass `--extra-tli`.
+build_invariance_chunk_uses_src_core_tli() {
+    awk -F'|' '
+        NF != 5 { exit 1 }
+        $1 ~ /^selfhost_main_/ { exit 1 }
+        $2 !~ /^src\// { exit 1 }
+        $2 == "src/main.tl" ||
+            $2 == "src/tests/compiler_codegen_smoke_suite.tl" ||
+            $2 == "src/tests/compiler_backend_smoke.tl" ||
+            $2 == "src/tests/compiler_frontend_smoke_suite.tl" ||
+            $2 == "src/tests/compiler_parse_smoke.tl" ||
+            $2 == "src/tests/tlci_loader_smoke.tl" { exit 1 }
+        END { if (NR == 0) exit 1 }
+    ' "$1"
+}
+
 build_invariance_write_chunks() {
     _bib_chunk_records=$1
     _bib_chunk_dir=$2
     _bib_chunk_size=$3
     _bib_chunk_weights=${4:-}
     _bib_chunk_root=${5:-.}
+    _bib_chunk_src_core_tli=${6:-0}
     # A new invocation gets a fresh directory. Reject stale plans rather than
     # deleting a caller-supplied path or accidentally reusing earlier chunks.
     if ! mkdir "$_bib_chunk_dir"; then
@@ -277,7 +326,8 @@ build_invariance_write_chunks() {
         _bib_chunk_weights=$_bib_chunk_tmp_weights
     fi
     awk -F'|' -v chunk_dir="$_bib_chunk_dir" -v chunk_size="$_bib_chunk_size" \
-        -v weights_file="$_bib_chunk_weights" '
+        -v weights_file="$_bib_chunk_weights" \
+        -v use_src_core_tli="$_bib_chunk_src_core_tli" '
         BEGIN {
             if (weights_file != "") {
                 while ((getline wline < weights_file) > 0) {
@@ -288,14 +338,35 @@ build_invariance_write_chunks() {
                 }
                 close(weights_file)
             }
+            hydrated_limit = (chunk_size < 10 ? chunk_size : 10)
         }
         function compiler_source(source) {
             return source ~ /^src\//
         }
+        function hydrated_src_source(name, source) {
+            if (!use_src_core_tli) return 0
+            if (name ~ /^selfhost_main_/) return 0
+            if (!compiler_source(source)) return 0
+            if (source == "src/main.tl" ||
+                source == "src/tests/compiler_codegen_smoke_suite.tl" ||
+                source == "src/tests/compiler_backend_smoke.tl" ||
+                source == "src/tests/compiler_frontend_smoke_suite.tl" ||
+                source == "src/tests/compiler_parse_smoke.tl" ||
+                source == "src/tests/tlci_loader_smoke.tl") {
+                return 0
+            }
+            return 1
+        }
         function singleton(name, source) {
+            if (hydrated_src_source(name, source)) return 0
             return name ~ /^selfhost_main_/ ||
                 source ~ /^src\/tests\/compiler_[^/]*\.tl$/ ||
                 (compiler_source(source) && (source in src_loc) && src_loc[source] > 100000)
+        }
+        function lane_of(name, source) {
+            if (hydrated_src_source(name, source)) return 2
+            if (compiler_source(source)) return 1
+            return 0
         }
         function finish_chunk() {
             if (chunk_entries > 0) {
@@ -306,22 +377,23 @@ build_invariance_write_chunks() {
         }
         $1 != "" {
             alone = singleton($1, $2)
-            heavy = compiler_source($2)
+            lane = lane_of($1, $2)
             if (chunk_entries > 0 && (alone || chunk_alone) &&
                 !(alone && chunk_alone && $3 == chunk_source && $5 == chunk_opt)) {
                 finish_chunk()
             }
-            if (chunk_entries > 0 && heavy != chunk_heavy) finish_chunk()
+            if (chunk_entries > 0 && lane != chunk_lane) finish_chunk()
             if (chunk_entries == 0) {
                 cases_path = chunk_dir "/cases." sprintf("%04d", chunk_index) ".txt"
                 chunk_source = $3
                 chunk_opt = $5
                 chunk_alone = alone
-                chunk_heavy = heavy
+                chunk_lane = lane
+                chunk_limit = (lane == 2 ? hydrated_limit : chunk_size)
             }
             print $0 >> cases_path
             chunk_entries += 1
-            if (chunk_entries >= chunk_size) finish_chunk()
+            if (chunk_entries >= chunk_limit) finish_chunk()
         }
         END { finish_chunk() }
     ' "$_bib_chunk_records"
@@ -346,11 +418,13 @@ build_invariance_chunk_is_codegen_smoke() {
 # >= 1.8x headroom. The opt1-built complete codegen smoke (3.5 GiB) keeps the
 # full 8 GiB ownership-regression cap; whole-compiler opt2 selfhost compiles
 # (3.7 GiB) get 6 GiB; the opt1 selfhost compile (1.1 GiB) and opt2-built
-# codegen smoke get 4 GiB. Other src/ chunks use 3-tier right-sized caps by max
-# transitive LOC across their src/ entries (fail-closed to 4 GiB if any src/
-# entry is unmeasured): >400k LOC -> 4096 MiB (rank 3), 100k-400k LOC -> 3072
-# MiB (rank 4, peaks <1.65 GiB), <100k LOC -> 2048 MiB (rank 5, peaks <730
-# MiB). Chunks of test programs alone (under 0.6 GiB) get 2048 MiB (rank 6).
+# codegen smoke get 4 GiB. Hydrated `src/` test chunks using `--extra-tli
+# src_core.tli` (measured <= 1.05 GiB across all 43 entries at once) get
+# 2048 MiB (rank 5). Full-source `src/` chunks use 3-tier right-sized caps by
+# max transitive LOC across their src/ entries (fail-closed to 4 GiB if any
+# src/ entry is unmeasured): >400k LOC -> 4096 MiB (rank 3), 100k-400k LOC ->
+# 3072 MiB (rank 4, peaks <1.65 GiB), <100k LOC -> 2048 MiB (rank 5, peaks
+# <730 MiB). Chunks of test programs alone (under 0.6 GiB) get 2048 MiB (rank 6).
 # Within each rank/producer, check-build-invariance.sh orders chunks LPT
 # (heaviest-first) by build_invariance_chunk_weight so 4 workers pack cleanly
 # inside 14336 MiB without a long compile running alone at the tail.
@@ -359,6 +433,7 @@ build_invariance_chunk_class() {
     _bib_class_producer=$2
     _bib_class_weights=${3:-}
     _bib_class_root=${4:-.}
+    _bib_class_src_core_tli=${5:-0}
     if build_invariance_chunk_is_codegen_smoke "$_bib_class_chunk"; then
         if [ "$_bib_class_producer" = opt1-built ]; then
             printf '8192 2\n'
@@ -370,6 +445,8 @@ build_invariance_chunk_class() {
             selfhost_main_opt2) printf '6144 1\n' ;;
             *) printf '4096 4\n' ;;
         esac
+    elif [ "$_bib_class_src_core_tli" -eq 1 ] && build_invariance_chunk_uses_src_core_tli "$_bib_class_chunk"; then
+        printf '2048 5\n'
     elif awk -F'|' '$2 ~ /^src\// { found = 1; exit } END { exit !found }' "$_bib_class_chunk"; then
         _bib_class_tmp_weights=""
         if [ -z "$_bib_class_weights" ]; then

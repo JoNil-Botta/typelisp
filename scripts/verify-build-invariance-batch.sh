@@ -338,6 +338,75 @@ test "$(build_invariance_chunk_weight "$CHUNK_ROOT/fake-chunks/cases.0000.txt" "
 test "$(build_invariance_chunk_weight "$CHUNK_ROOT/fake-chunks/cases.0001.txt" "$FAKE_WEIGHTS" "$FAKE_ROOT")" -eq 150002
 test "$(build_invariance_chunk_weight "$CHUNK_ROOT/fake-chunks/cases.0002.txt" "$FAKE_WEIGHTS" "$FAKE_ROOT")" -eq 502
 
+# Hydrated src_core.tli mode: eligible src/ tests batch separately from
+# full-source src/ entries and ordinary test programs (capped at 10 per chunk,
+# 2048 MiB rank 5), while selfhost main, the 8 GiB codegen/backend gates, and
+# the generated-macro tests stay on full source with their original caps.
+# Build path strings via $FAKE_SRC/$FAKE_TESTS so ci-affected does not treat
+# these pure string-classification probes as file-content dependencies.
+for full_case in \
+    "selfhost_main_opt1|$FAKE_SRC/main.tl" \
+    "selfhost_main_opt2|$FAKE_SRC/main.tl" \
+    "integration_codegen|$FAKE_TESTS/compiler_codegen_smoke_suite.tl" \
+    "integration_backend|$FAKE_TESTS/compiler_backend_smoke.tl" \
+    "integration_frontend|$FAKE_TESTS/compiler_frontend_smoke_suite.tl" \
+    "integration_parse|$FAKE_TESTS/compiler_parse_smoke.tl" \
+    "integration_tlci|$FAKE_TESTS/tlci_loader_smoke.tl" \
+    'integration_ordinary|tests/integration/a.tl'; do
+    if build_invariance_source_uses_src_core_tli "${full_case%%|*}" "${full_case#*|}"; then
+        echo "unexpected src_core.tli eligibility for $full_case" >&2
+        exit 1
+    fi
+done
+build_invariance_source_uses_src_core_tli integration_doc "$FAKE_TESTS/doc_html_smoke.tl"
+build_invariance_source_uses_src_core_tli integration_tc "$FAKE_TESTS/compiler_typecheck_smoke.tl"
+
+{
+    record ord-a tests/integration/a.tl "$WORKDIR/left" 2
+    record hyd-1 "$FAKE_TESTS/compiler_bounds_check_smoke.tl" "$WORKDIR/left" 2
+    record hyd-2 "$FAKE_TESTS/doc_html_smoke.tl" "$WORKDIR/left" 2
+    record full-codegen "$FAKE_TESTS/compiler_codegen_smoke_suite.tl" "$WORKDIR/left" 2
+    record full-frontend "$FAKE_TESTS/compiler_frontend_smoke_suite.tl" "$WORKDIR/left" 2
+    record hyd-3 "$FAKE_TESTS/compiler_typecheck_smoke.tl" "$WORKDIR/left" 2
+    record ord-b tests/integration/b.tl "$WORKDIR/left" 2
+} > "$CHUNK_ROOT/tli-cases.txt"
+build_invariance_write_chunks "$CHUNK_ROOT/tli-cases.txt" "$CHUNK_ROOT/tli-chunks" 64 "$WEIGHTS" "$ROOT" 1
+test "$(find "$CHUNK_ROOT/tli-chunks" -name 'cases.*.txt' | wc -l)" -eq 6
+test "$(cut -d '|' -f 1 "$CHUNK_ROOT/tli-chunks/cases.0000.txt" | paste -sd, -)" = ord-a
+test "$(cut -d '|' -f 1 "$CHUNK_ROOT/tli-chunks/cases.0001.txt" | paste -sd, -)" = hyd-1,hyd-2
+test "$(cut -d '|' -f 1 "$CHUNK_ROOT/tli-chunks/cases.0002.txt" | paste -sd, -)" = full-codegen
+test "$(cut -d '|' -f 1 "$CHUNK_ROOT/tli-chunks/cases.0003.txt" | paste -sd, -)" = full-frontend
+test "$(cut -d '|' -f 1 "$CHUNK_ROOT/tli-chunks/cases.0004.txt" | paste -sd, -)" = hyd-3
+test "$(cut -d '|' -f 1 "$CHUNK_ROOT/tli-chunks/cases.0005.txt" | paste -sd, -)" = ord-b
+build_invariance_chunk_uses_src_core_tli "$CHUNK_ROOT/tli-chunks/cases.0001.txt"
+build_invariance_chunk_uses_src_core_tli "$CHUNK_ROOT/tli-chunks/cases.0004.txt"
+for non_tli_chunk in cases.0000.txt cases.0002.txt cases.0003.txt cases.0005.txt; do
+    if build_invariance_chunk_uses_src_core_tli "$CHUNK_ROOT/tli-chunks/$non_tli_chunk"; then
+        echo "non-eligible chunk marked for src_core.tli: $non_tli_chunk" >&2
+        exit 1
+    fi
+done
+test "$(build_invariance_chunk_class "$CHUNK_ROOT/tli-chunks/cases.0001.txt" opt1-built "$WEIGHTS" "$ROOT" 1)" = '2048 5'
+test "$(build_invariance_chunk_class "$CHUNK_ROOT/tli-chunks/cases.0002.txt" opt1-built "$WEIGHTS" "$ROOT" 1)" = '8192 2'
+test "$(build_invariance_chunk_class "$CHUNK_ROOT/tli-chunks/cases.0003.txt" opt1-built "$WEIGHTS" "$ROOT" 1)" = '4096 3'
+# Mixed chunk fails closed and never gets --extra-tli.
+cat "$CHUNK_ROOT/tli-chunks/cases.0001.txt" "$CHUNK_ROOT/tli-chunks/cases.0002.txt" > "$CHUNK_ROOT/tli-mixed.txt"
+if build_invariance_chunk_uses_src_core_tli "$CHUNK_ROOT/tli-mixed.txt"; then
+    echo "mixed chunk acquired src_core.tli flag" >&2
+    exit 1
+fi
+# Hydrated src/ chunks split at 10 entries to keep 4 workers parallel.
+: > "$CHUNK_ROOT/tli-cap-cases.txt"
+i=0
+while [ "$i" -lt 12 ]; do
+    record "hyd-cap-$i" "$FAKE_TESTS/small_$i.tl" "$WORKDIR/left" 2 >> "$CHUNK_ROOT/tli-cap-cases.txt"
+    i=$((i + 1))
+done
+build_invariance_write_chunks "$CHUNK_ROOT/tli-cap-cases.txt" "$CHUNK_ROOT/tli-cap-chunks" 64 "$WEIGHTS" "$ROOT" 1
+test "$(find "$CHUNK_ROOT/tli-cap-chunks" -name 'cases.*.txt' | wc -l)" -eq 2
+test "$(wc -l < "$CHUNK_ROOT/tli-cap-chunks/cases.0000.txt")" -eq 10
+test "$(wc -l < "$CHUNK_ROOT/tli-cap-chunks/cases.0001.txt")" -eq 2
+
 # Worker pool: jobs start in queue order, only inside the memory budget, exactly
 # once; a drained pool passes only with one successful result per queued job.
 POOL="$WORKDIR/pool"

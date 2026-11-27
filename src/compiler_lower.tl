@@ -10860,7 +10860,7 @@
           fields
           index
           (ast.ast-field-def-fallback))
-          [(Def _ _ cleanup)
+          [(Def _ _ cleanup _)
             (match cleanup
               [(Fn cleanup-name)
                 (let
@@ -12200,7 +12200,7 @@
       fields
       index
       (ast.ast-field-def-fallback))
-      [(Def _ ty _)
+      [(Def _ ty _ _)
         (lower-used-types-add-field-list-at
           session
           pools
@@ -16596,7 +16596,7 @@
         fields
         field-index
         (ast.ast-field-def-fallback))
-        [(Def name ty _)
+        [(Def name ty _ _)
           (let
             [name-id : i64 (ci.intern-syntax-id-value name)]
             [name-str : String (tc_core.tc-env-key-name-text name-id)]
@@ -16902,7 +16902,7 @@
         fields
         field-index
         (ast.ast-field-def-fallback))
-        [(Def name ty _)
+        [(Def name ty _ _)
           (let
             [name-id : i64 (ci.intern-syntax-id-value name)]
             [name-str : String (tc_core.tc-env-key-name-text name-id)]
@@ -18280,7 +18280,7 @@
       fields
       index
       (ast.ast-field-def-fallback))
-      [(Def _ ty _)
+      [(Def _ ty _ _)
         (unless
           (lower-supported-reference-type-with-stack?
             ctx
@@ -19399,7 +19399,7 @@
         fields
         field-index
         (ast.ast-field-def-fallback))
-        [(Def name ty _)
+        [(Def name ty _ _)
           (let
             [name-id : i64 (ci.intern-syntax-id-value name)]
             [name-str : String (tc_core.tc-env-key-name-text name-id)]
@@ -21625,7 +21625,7 @@
       fields
       index
       (ast.ast-field-def-fallback))
-      [(Def name ty _)
+      [(Def name ty _ _)
         (when
           (string.eq
             (tc_core.tc-env-key-name-text (ci.intern-syntax-id-value name))
@@ -69216,7 +69216,7 @@
           fields
           field-index
           (ast.ast-field-def-fallback))
-          [(Def field-name _ _)
+          [(Def field-name _ _ _)
             (let
               [ty : ast.AstType
                 (tc_core.tc-context-type-get
@@ -69802,7 +69802,7 @@
           fields
           index
           (ast.ast-field-def-fallback))
-          [(Def field-name _ _)
+          [(Def field-name _ _ _)
             (let
               [info
                 (try
@@ -76502,7 +76502,7 @@
   [field : ast.AstFieldDef]
   [acc : ast.AstExprList]) : parser.ResultAstExprList
   (match field
-    [(Def field-name ty cleanup)
+    [(Def field-name ty cleanup _)
       (match cleanup
         [(No) (Ok acc)]
         [(Fn cleanup-name)

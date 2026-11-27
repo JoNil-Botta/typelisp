@@ -8462,7 +8462,7 @@
       fields
       index
       (ast.ast-field-def-fallback))
-      [(Def _ ty _)
+      [(Def _ ty _ _)
         (compiler-load-lazy-alias-demand-merge
           (compiler-load-session-state-lazy-type-demand
             (owned_view.compiler-owned-reference-shared-view state)
@@ -10088,7 +10088,7 @@
       fields
       index
       (ast.ast-field-def-fallback))
-      [(Def _ _ cleanup)
+      [(Def _ _ cleanup _)
         (when (ast.ast-field-cleanup? cleanup) (return true))
         unit]))
   false)
@@ -16519,13 +16519,14 @@
 
 ;: Whether PATH is the provenance path of a stdlib module hydrated from a
 ;: prebuilt stdlib `.tli` in this session (#8733). The `<tli-stdlib>:` prefix
-;: separates hydrated stdlib declarations from any same-named disk file under
-;: the cwd's `stdlib/`, and rejecting any existing disk file keeps the prefix
-;: unforgeable even if a file bears that literal name.
+;: separates hydrated stdlib declarations from disk files. On Linux, reject
+;: any existing disk file with that literal name to prevent spoofing. Windows
+;: rejects the prefix's characters in filenames, so there is no disk collision
+;: to check. The session registry authenticates the name on both hosts.
 (define (compiler-load-tli-stdlib-provider-path? [path : (& str)]) : bool
   (and
     (compiler-load-string-prefix-at? path "<tli-stdlib>:" 0)
-    (not (io.file-exists? (string.copy path)))
+    (cfg windows true (not (io.file-exists? (string.copy path))))
     (let
       [ids : sym_i64_env.SymI64Env
         (array-ref

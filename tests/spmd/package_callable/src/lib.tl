@@ -4,8 +4,21 @@
 ;; qualified resolution chooses these physical source declarations. The three
 ;; result policies share one native dependency catalog and must stay byte-for-
 ;; byte equivalent to forced-source CTFE.
-(defmacro (package-answer) : i64
-  `42)
+(defmacro (package-answer [F : type]) : i64
+  (let
+    [index : i64 0]
+    [valid : bool true]
+    [arity : i64 (function-param-count F)]
+    (while (if valid
+      (< index arity)
+      false)
+      (let
+        [parameter : Expr (function-param-type F index)]
+        (set! valid (string-eq (type-kind parameter) "ref")))
+      (set! index (+ index 1)))
+    (if valid
+      `42
+      `0)))
 
 (defmacro (package-increment [value : i64]) : i64
   `(+ ,value 1))

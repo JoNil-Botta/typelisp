@@ -1,4 +1,5 @@
 ;; compiler_backend_object_target_tests.tl - Focused direct-object leaf tests.
+(import compiler_object_windows_sections as coff_sections)
 (import compiler_backend_object_target as object_target)
 (import compiler_backend_object_target_linux as object_linux)
 (import compiler_backend_object_target_windows as object_windows)
@@ -64,13 +65,13 @@
     (test.assert-true
       (cobj.compiler-object-section-contains-label?
         windows-sections
-        (Pdata)
+        coff_sections.pdata-id
         ".L_tl_start_pdata_begin")
       "Windows leaf emits entry unwind pdata")
     (test.assert-true
       (cobj.compiler-object-section-contains-label?
         windows-sections
-        (Xdata)
+        coff_sections.xdata-id
         ".L_tl_start_xdata")
       "Windows leaf emits entry unwind xdata")
     (test.assert-true
@@ -79,7 +80,7 @@
           (object_windows.compiler-backend-object-manifest-label-shared-view)]
         (cobj.compiler-object-section-contains-label?
           windows-sections
-          (Rsrc)
+          coff_sections.rsrc-id
           label))
       "Windows leaf emits the UTF-8 manifest resource")
     (test.assert-true
@@ -112,6 +113,21 @@
         true
         true
         false)]
+    [empty-windows
+      (object_windows.compiler-backend-object-target-windows-image
+        (object_target.compiler-backend-object-parts-empty)
+        false
+        false
+        false
+        true)]
+    (test.assert-i64-eq
+      linux-image.sections.len
+      4
+      "empty Linux base sections remain declared")
+    (test.assert-i64-eq
+      empty-windows.sections.len
+      4
+      "empty Windows base sections remain and unused metadata is omitted")
     (test.assert-true
       (not
         (cobj.compiler-object-symbol-list-contains?

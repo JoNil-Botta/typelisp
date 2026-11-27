@@ -637,7 +637,7 @@
   (Owned))
 
 (defenum AstFieldDef
-  (Def ci.InternSyntaxId AstType AstFieldCleanup))
+  (Def ci.InternSyntaxId AstType AstFieldCleanup bool))
 
 (defstruct AstFieldDefList
   (slots (__tl_dyn-array AstFieldDef))
@@ -6335,8 +6335,8 @@
 
 (define (clone-ast-field-def [item : (& AstFieldDef)]) : AstFieldDef
   (match item
-    [(AstFieldDef.Def name ty cleanup)
-      (AstFieldDef.Def name (clone-ast-type ty) cleanup)]))
+    [(AstFieldDef.Def name ty cleanup opaque?)
+      (AstFieldDef.Def name (clone-ast-type ty) cleanup opaque?)]))
 
 (define (clone-ast-field-def-list [items : (& AstFieldDefList)]) : AstFieldDefList
   (let
@@ -7108,10 +7108,40 @@
   [name : ci.InternSyntaxId]
   [ty : AstType]
   [cleanup : AstFieldCleanup]) : AstFieldDef
-  (Def name ty cleanup))
+  (Def name ty cleanup false))
+
+(define (ast-field-def-with-opacity-id
+  [name : ci.InternSyntaxId]
+  [ty : AstType]
+  [cleanup : AstFieldCleanup]
+  [opaque? : bool]) : AstFieldDef
+  (Def name ty cleanup opaque?))
+
+(define (ast-field-def-opaque? [field : (& AstFieldDef)]) : bool
+  (match field
+    [(Def _ _ _ opaque?) opaque?]))
+
+(define ast-struct-has-opaque-field-bit : i64
+  8)
+
+(define (ast-struct-markers-with-field
+  [markers : i64]
+  [field : (& AstFieldDef)]) : i64
+  (if (ast-field-def-opaque? field)
+    (bit-or markers ast-struct-has-opaque-field-bit)
+    markers))
+
+(define (ast-decl-opaque-field? [decl : (& AstDecl)] [index : i64]) : bool
+  (match decl
+    [(or (DefStruct _ _ _ _ fields) (DefStructLifetimes _ _ _ _ _ fields))
+      (and
+        (>= index 0)
+        (< index fields.len)
+        (ast-field-def-opaque? (& (array-ref fields.slots index))))]
+    [_ false]))
 
 (define (ast-field-def-fallback) : AstFieldDef
-  (Def (ci.intern-syntax-id-from-raw 0) (Unit) No))
+  (Def (ci.intern-syntax-id-from-raw 0) (Unit) No false))
 
 (dense_list.compiler-dense-list-operations
   AstFieldDef
@@ -11266,15 +11296,23 @@
     [(Runtime _) false]
     [(Comptime _ _) true]))
 
-;; Aggregate markers are declaration metadata, not runtime representation.
-;; Bit 0 is :must-use and bit 1 is :opaque; higher bits are reserved for future
-;; aggregate markers.
-(define (ast-decl-meta-aggregate-markers [meta : (& AstDeclMeta)]) : i64
+(define (ast-decl-meta-markers [meta : (& AstDeclMeta)]) : i64
   (match (__tl-box-place meta.value)
     [(or (Runtime markers) (Comptime _ markers)) markers]))
 
+;; Only :must-use and :opaque are whole-aggregate markers on the public surface.
+;; The parser also records qualified type literals on macros and opaque fields on structs.
+(define (ast-decl-meta-aggregate-markers [meta : (& AstDeclMeta)]) : i64
+  (bit-and (ast-decl-meta-markers meta) 3))
+
+(define (ast-decl-markers [decl : (& decl AstDecl)]) : i64
+  (ast-decl-meta-markers (& (ast-decl-meta decl))))
+
 (define (ast-decl-aggregate-markers [decl : (& decl AstDecl)]) : i64
   (ast-decl-meta-aggregate-markers (& (ast-decl-meta decl))))
+
+(define (ast-decl-has-opaque-field? [decl : (& AstDecl)]) : bool
+  (!= (bit-and (ast-decl-markers decl) ast-struct-has-opaque-field-bit) 0))
 
 (define (ast-decl-must-use? [decl : (& decl AstDecl)]) : bool
   (not (= (bit-and (ast-decl-aggregate-markers decl) 1) 0)))
@@ -11307,8 +11345,7 @@
 
 (define (ast-decl-comptime-decl [inner : AstDecl]) : AstDecl
   (ast-decl-with-meta
-    (AstDeclMeta
-      (box (AstDeclMetaValue.Comptime No (ast-decl-aggregate-markers inner))))
+    (AstDeclMeta (box (AstDeclMetaValue.Comptime No (ast-decl-markers inner))))
     inner))
 
 (define (ast-decl-comptime-decl-with-meta
@@ -11316,11 +11353,11 @@
   [inner : AstDecl]) : AstDecl
   (ast-decl-with-meta
     (AstDeclMeta
-      (box (AstDeclMetaValue.Comptime meta (ast-decl-aggregate-markers inner))))
+      (box (AstDeclMetaValue.Comptime meta (ast-decl-markers inner))))
     inner))
 
 (define (ast-decl-with-aggregate-markers [inner : AstDecl] [markers : i64]) : AstDecl
-  (if (= markers (ast-decl-aggregate-markers inner))
+  (if (= markers (ast-decl-markers inner))
     inner
     (ast-decl-with-meta
       (match (__tl-box-place (__tl-project-field (ast-decl-meta inner) value))
@@ -12248,11 +12285,12 @@
   [remap : (& remap AstProgramCompactionRemap)]
   [field : (& AstFieldDef)]) : AstFieldDef
   (match (owned_view.compiler-owned-reference-shared-view field)
-    [(Def name ty cleanup)
+    [(Def name ty cleanup opaque?)
       (Def
         name
         (ast-compaction-remap-type remap ty)
-        (ast-compaction-remap-field-cleanup cleanup))]))
+        (ast-compaction-remap-field-cleanup cleanup)
+        opaque?)]))
 
 (define (ast-compaction-remap-field-cleanup [cleanup : AstFieldCleanup]) : AstFieldCleanup
   (match cleanup

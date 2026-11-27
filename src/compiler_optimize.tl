@@ -526,13 +526,13 @@
   (CompilerOptOwnedState
     (OptInlineOwnedState
       (unsafe
-        (arena.Arena 0))
+        (arena.from-raw-handle 0))
       (__tl_make-array i64 0)
       (__tl_make-array i64 0)
       (opt-global-mod-ref-none))
     (OptDebugState
       (unsafe
-        (arena.Arena 0))
+        (arena.from-raw-handle 0))
       (cis.InternStructuralSessionHandle 0)
       ""
       (compiler-opt-debug-text-buf-cell-empty)
@@ -586,7 +586,7 @@
     (CompilerOptOwnedState
       (OptInlineOwnedState
         (unsafe
-          (arena.Arena 0))
+          (arena.from-raw-handle 0))
         (__tl_make-array i64 0)
         (__tl_make-array i64 0)
         (opt-global-mod-ref-none))
@@ -9079,7 +9079,7 @@
         (set! size (* size 2)))
       (in-arena
         (unsafe
-          (arena.Arena (ir.compiler-ir-label-arena)))
+          (arena.from-raw-handle (ir.compiler-ir-label-arena)))
         (set! opt-cfg-label-slot (__tl_make-array i64 size))
         (set! opt-cfg-label-stamp (__tl_make-array i64 size)))
       ;; A fresh stamp array reads as generation 0, so restart the counter
@@ -9141,7 +9141,7 @@
         (set! size (* size 2)))
       (in-arena
         (unsafe
-          (arena.Arena (ir.compiler-ir-label-arena)))
+          (arena.from-raw-handle (ir.compiler-ir-label-arena)))
         (let
           [next : (__tl_dyn-array i64) (__tl_make-array i64 size)]
           (for [index (iterator.range 0 (array-length opt-label-marker-rows))]
@@ -20632,18 +20632,6 @@
 ;; an earlier instruction already selected for the same hoist. Stores, calls,
 ;; allocations, bounds checks, phis, vector memory ops, and trapping arithmetic
 ;; are left in place.
-(defenum OptLicmInstrsResult
-  (Result ir.CompilerIrInstrSeq ir.CompilerIrInstrSeq opt_i64_i64_map.Map bool))
-
-;; What filtering a loop body's blocks moved out, the hoisted map after it, and
-;; whether any block changed; the kept blocks go into the caller's builder.
-(defenum OptLicmBlocksResult
-  (Result ir.CompilerIrInstrSeq opt_i64_i64_map.Map bool))
-
-;; Result of applying LICM to a block list: the rewritten blocks plus whether
-;; any loop actually hoisted. When nothing changed the caller can skip the
-;; rewritten-CFG context rebuild and post-pass verify -- the input context
-;; stays valid for the unchanged function.
 (defstruct OptLicmStoreSummary
   (call-or-unknown? bool)
   (header-or-unknown-store? bool)
@@ -20756,33 +20744,8 @@
 
 ;; --- the pointer-provenance environment -------------------------------------
 ;;
-;; var id -> the provenance class of the pointer that var holds, for the vars
-;; whose class is known.
-;;
-;; INVARIANT: at most one class per var. `bind` with `Unknown` REMOVES the var's
-;; class rather than recording one, `lookup` of a var carrying no class answers
-;; `Unknown`, and rebinding a var replaces its class outright. Absence and
-;; `Unknown` are therefore the same fact, and nothing is ever shadowed: there is
-;; no second binding for a var to uncover.
-;;
-;; No reader needs an ORDER or PERSISTENCE, which is what lets this be a table.
-;; `opt-licm-ptr-lookup`, `opt-licm-ptr-env-bound?` and
-;; `opt-licm-ptr-unbind` are its only readers -- no consumer folds over it or
-;; walks it for anything but one var -- and with at most one binding per var,
-;; "first match from the front" and "the var's class" are the same answer. And
-;; the environment is threaded through one strictly linear fold per
-;; function (opt-licm-provenance-state-blocks over blocks over instruction
-;; sequences, one state in and one state out), and the one place a second walk
-;; starts from a saved environment -- opt-licm-apply-loop, which seeds each
-;; loop's state with the function's provenance env -- runs with
-;; `track-provenance?` false and so never binds or unbinds at all.
-;;
-;; So the environment is a var-indexed table, in exactly the shape
-;; opt-ssa-var-types-set already uses for the TYPE environment threaded beside
-;; it: a vector grown on demand to the highest var bound so far, updated in
-;; place and handed back as the value. Every operation is O(1) (an association
-;; list would scan every live binding once per instruction), and `Unknown`
-;; fills the slots no bind has reached.
+;; Each var has a single pointer kind. A missing slot or Unknown carries no
+;; provenance. Only the function-wide walk updates the table.
 (defstruct OptLicmPtrEnv
   (kinds opt_licm_ptr_kind_vec.Vec))
 
@@ -20832,6 +20795,10 @@
 (defstruct OptLicmStoreRootList
   (items opt_licm_store_root_vec.Vec))
 
+(defstruct OptLicmProvenance
+  (ptrs OptLicmPtrEnv)
+  (roots OptLicmRootEnv))
+
 (defstruct OptLicmStoreState
   (summary OptLicmStoreSummary)
   ;; `summary` excludes proven-rooted stores so a distinct checked root can use
@@ -20839,8 +20806,6 @@
   ;; composing the two summaries once per loop gives unrooted loads the
   ;; decision over every store without merging every ordinary effect twice.
   (rooted-summary OptLicmStoreSummary)
-  (ptrs OptLicmPtrEnv)
-  (roots OptLicmRootEnv)
   (store-roots OptLicmStoreRootList)
   (any-call? bool)
   ;; Did anything in the body possibly write a GLOBAL CELL? This is the exact
@@ -22265,47 +22230,29 @@
 
 ;; Drop a var's class. A var the table has never reached is already `Unknown`,
 ;; so an out-of-range id is a no-op rather than a reason to grow the table.
-(define (opt-licm-ptr-unbind [env : OptLicmPtrEnv] [var : i64]) : OptLicmPtrEnv
-  (let
-    [kinds : opt_licm_ptr_kind_vec.Vec env.kinds]
-    (if (or (< var 0) (>= var (opt_licm_ptr_kind_vec.len (& kinds))))
-      unit
-      (opt_licm_ptr_kind_vec.set-ref! (&mut kinds) var (OptLicmPtrKind.Unknown)))
-    (OptLicmPtrEnv kinds)))
+(define (opt-licm-ptr-unbind! [env : (&mut OptLicmPtrEnv)] [var : i64]) : unit
+  (when
+    (and (>= var 0) (< var (opt_licm_ptr_kind_vec.len (& env.kinds))))
+    (opt_licm_ptr_kind_vec.set-ref!
+      (&mut env.kinds)
+      var
+      (OptLicmPtrKind.Unknown))))
 
-;; Membership probe: absence and `Unknown` are the same fact, so this is the
-;; lookup with its payload thrown away. It is kept because it says what it
-;; means at the two places that ask it.
-(define (opt-licm-ptr-env-bound? [env : (& OptLicmPtrEnv)] [var : i64]) : bool
-  (match (opt-licm-ptr-lookup env var)
-    [(Unknown) false]
-    [_ true]))
-
-(define (opt-licm-ptr-unbind-bound [env : (& OptLicmPtrEnv)] [var : i64]) : OptLicmPtrEnv
-  (opt-licm-ptr-unbind
-    (owned_view.compiler-owned-reference-shared-view env)
-    var))
-
-(define (opt-licm-ptr-bind
-  [env : OptLicmPtrEnv]
+(define (opt-licm-ptr-bind!
+  [env : (&mut OptLicmPtrEnv)]
   [var : i64]
-  [kind : OptLicmPtrKind]) : OptLicmPtrEnv
-  (match kind
-    ;; Binding `Unknown` is how the walk RETIRES a class, at a redefinition of
-    ;; the var or at a copy whose source carries none. It must not record one.
-    [(Unknown) (opt-licm-ptr-unbind env var)]
-    [_
-      (let
-        [kinds : opt_licm_ptr_kind_vec.Vec env.kinds]
-        (if (< var 0)
-          (OptLicmPtrEnv kinds)
-          (begin
-            (while (<= (opt_licm_ptr_kind_vec.len (& kinds)) var)
-              (opt_licm_ptr_kind_vec.push-ref!
-                (&mut kinds)
-                (OptLicmPtrKind.Unknown)))
-            (opt_licm_ptr_kind_vec.set-ref! (&mut kinds) var kind)
-            (OptLicmPtrEnv kinds))))]))
+  [kind : OptLicmPtrKind]) : unit
+  (if (match kind
+    [(Unknown) true]
+    [_ false])
+    (opt-licm-ptr-unbind! env var)
+    (when
+      (>= var 0)
+      (while (<= (opt_licm_ptr_kind_vec.len (& env.kinds)) var)
+        (opt_licm_ptr_kind_vec.push-ref!
+          (&mut env.kinds)
+          (OptLicmPtrKind.Unknown)))
+      (opt_licm_ptr_kind_vec.set-ref! (&mut env.kinds) var kind))))
 
 (define (opt-licm-ptr-lookup [env : (& env OptLicmPtrEnv)] [var : i64]) : OptLicmPtrKind
   (let
@@ -22325,17 +22272,38 @@
         [(InlineHeader id) (InlineHeader id)]
         [(LocalHeader id) (LocalHeader id)]))))
 
+;; Value-taking entry points also serve the standalone provenance tests.
+(define (opt-licm-ptr-bind
+  [env : OptLicmPtrEnv]
+  [var : i64]
+  [kind : OptLicmPtrKind]) : OptLicmPtrEnv
+  (opt-licm-ptr-bind! (&mut env) var kind)
+  env)
+
+(define (opt-licm-ptr-unbind [env : OptLicmPtrEnv] [var : i64]) : OptLicmPtrEnv
+  (opt-licm-ptr-bind env var (Unknown)))
+
+(define (opt-licm-ptr-unbind-bound [env : (& OptLicmPtrEnv)] [var : i64]) : OptLicmPtrEnv
+  (opt-licm-ptr-unbind
+    (owned_view.compiler-owned-reference-shared-view env)
+    var))
+
+(define (opt-licm-ptr-env-bound? [env : (& OptLicmPtrEnv)] [var : i64]) : bool
+  (match (opt-licm-ptr-lookup env var)
+    [(Unknown) false]
+    [_ true]))
+
 (define (opt-licm-type-env-bind
-  [types : (& OptSsaVarTypes)]
+  [types : OptSsaVarTypes]
   [var : i64]
   [ty : (& ast.AstType)]) : OptSsaVarTypes
   (opt-ssa-var-types-set
-    (owned_view.compiler-owned-reference-shared-view types)
+    types
     var
     (owned_view.compiler-owned-reference-shared-view ty)))
 
 (define (opt-licm-type-env-add-param
-  [types : (& OptSsaVarTypes)]
+  [types : OptSsaVarTypes]
   [param : (& ir.CompilerIrParam)]) : OptSsaVarTypes
   (match param
     [(Param _ ty var) (opt-licm-type-env-bind types var (& ty))]))
@@ -22349,17 +22317,9 @@
     (opt-licm-type-env-add-params-from
       params
       (opt-licm-type-env-add-param
-        (& types)
+        types
         (ir.compiler-ir-param-seq-borrow params position))
       (+ position 1))))
-
-(define (opt-licm-type-env-add-params
-  [params : (& ir.CompilerIrParamSeq)]
-  [types : (& OptSsaVarTypes)]) : OptSsaVarTypes
-  (opt-licm-type-env-add-params-from
-    params
-    (owned_view.compiler-owned-reference-shared-view types)
-    0))
 
 (define (opt-licm-non-pointer-value-type? [ty : (& ast.AstType)]) : bool
   (match ty
@@ -22369,24 +22329,24 @@
 (define (opt-licm-type-env-add-instr
   [types : OptSsaVarTypes]
   [instr : (& ir.CompilerIrInstr)]) : OptSsaVarTypes
-  (match (owned_view.compiler-owned-reference-shared-view instr)
+  (match instr
     [(or (Mov dst _ ty) (Load dst _ ty) (Call dst _ _ ty)
          (CallIndirect dst _ _ ty) (CallIndirectC dst _ _ ty) (Phi dst _ ty)
          (Alloc dst ty))
-      (opt-licm-type-env-bind (& types) dst (& ty))]
+      (opt-licm-type-env-bind types dst (& ty))]
     [(AddrOf dst src _)
       (match (opt-ssa-var-types-lookup (& types) src)
         [(Some ty)
           (if (opt-licm-non-pointer-value-type? (& ty))
-            (opt-licm-type-env-bind (& types) dst (& ty))
+            (opt-licm-type-env-bind types dst (& ty))
             types)]
         [(No) types])]
     [(SpmdCall payload-box)
-      (match (deref payload-box).result
+      (match (& payload-box.result)
         [(Unit) types]
         [(Value dst class ty)
           (match class
-            [(Uniform) (opt-licm-type-env-bind (& types) dst (& ty))]
+            [(Uniform) (opt-licm-type-env-bind types dst (& ty))]
             [_ types])])]
     [_ types]))
 
@@ -22420,7 +22380,7 @@
   [blocks : (& blocks ir.CompilerIrBlockList)]) : OptSsaVarTypes
   (opt-licm-type-env-add-blocks
     (ir.compiler-ir-block-list-view blocks)
-    (opt-licm-type-env-add-params params (& (opt-ssa-var-types-new)))))
+    (opt-licm-type-env-add-params-from params (opt-ssa-var-types-new) 0)))
 
 (define (opt-licm-param-root
   [type-segment-bases : i64]
@@ -22460,7 +22420,7 @@
       (let
         [root : OptLicmRoot
           (if (and
-            (match (compiler-opt-global-shared-view ty)
+            (match ty
               [(U64) true]
               [_ false])
             (string.eq name (opt-licm-sret-param-name)))
@@ -22699,7 +22659,7 @@
   [env : (&mut env OptLicmRootEnv)]
   [ptrs : (& ptrs OptLicmPtrEnv)]
   [instr : (& ir.CompilerIrInstr)]) : unit
-  (match (owned_view.compiler-owned-reference-shared-view instr)
+  (match instr
     [(Alloc dst _)
       (opt-licm-root-env-set-offset! env dst (LookupFound 0))
       (opt-licm-root-env-bind! env dst (Fresh dst))]
@@ -22750,7 +22710,7 @@
         [(No) (opt-licm-root-env-remove! env dst)]
         [(Some root) (opt-licm-root-env-bind! env dst root)])]
     ;; A descriptor-data Load may be rebound by
-    ;; opt-licm-provenance-state-instr immediately after this update.
+    ;; opt-licm-provenance-note! immediately after this update.
     [(Load dst _ _) (opt-licm-root-env-remove! env dst)]
     [(Call dst name args _)
       (if (ir.compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
@@ -23401,16 +23361,10 @@
         [_ (Unknown)])]
     [_ (Unknown)]))
 
-(define (opt-licm-store-state-with-provenance
-  [ptrs : OptLicmPtrEnv]
-  [roots : OptLicmRootEnv]
-  [cell-writes : i64]
-  [obj-writes : i64]) : OptLicmStoreState
+(define (opt-licm-store-state-new [cell-writes : i64] [obj-writes : i64]) : OptLicmStoreState
   (OptLicmStoreState
     (opt-licm-store-summary-empty)
     (opt-licm-store-summary-empty)
-    ptrs
-    roots
     (opt-licm-store-roots-new)
     false
     false
@@ -23428,42 +23382,16 @@
 (define (opt-licm-store-state-add-summary-keeping-globals
   [state : OptLicmStoreState]
   [summary : OptLicmStoreSummary]) : OptLicmStoreState
-  (OptLicmStoreState
-    (opt-licm-store-summary-merge state.summary summary)
-    state.rooted-summary
-    state.ptrs
-    state.roots
-    state.store-roots
-    state.any-call?
-    state.global-write?
-    state.mem-clean-call?
-    state.global-cell-writes
-    state.global-obj-writes))
+  (set! state.summary (opt-licm-store-summary-merge state.summary summary))
+  state)
 
 (define (opt-licm-store-state-add-summary
   [state : OptLicmStoreState]
   [summary : OptLicmStoreSummary]) : OptLicmStoreState
-  (set! state.summary (opt-licm-store-summary-merge state.summary summary))
   (set!
     state.global-write?
     (or state.global-write? (opt-licm-store-summary-global-write? summary)))
-  state)
-
-(define (opt-licm-store-state-bind-ptr
-  [state : OptLicmStoreState]
-  [var : i64]
-  [kind : OptLicmPtrKind]) : OptLicmStoreState
-  (OptLicmStoreState
-    state.summary
-    state.rooted-summary
-    (opt-licm-ptr-bind state.ptrs var kind)
-    state.roots
-    state.store-roots
-    state.any-call?
-    state.global-write?
-    state.mem-clean-call?
-    state.global-cell-writes
-    state.global-obj-writes))
+  (opt-licm-store-state-add-summary-keeping-globals state summary))
 
 (define (opt-licm-store-state-add-rooted-store
   [state : OptLicmStoreState]
@@ -23477,45 +23405,34 @@
   [offset : i64]
   [width : i64]
   [summary : OptLicmStoreSummary]) : OptLicmStoreState
-  (OptLicmStoreState
-    state.summary
-    (opt-licm-store-summary-merge state.rooted-summary summary)
-    state.ptrs
-    state.roots
-    (opt-licm-store-roots-add state.store-roots root offset width)
-    state.any-call?
-    (or state.global-write? (opt-licm-store-summary-global-write? summary))
-    state.mem-clean-call?
-    state.global-cell-writes
-    state.global-obj-writes))
+  (set!
+    state.rooted-summary
+    (opt-licm-store-summary-merge state.rooted-summary summary))
+  (set!
+    state.store-roots
+    (opt-licm-store-roots-add state.store-roots root offset width))
+  (set!
+    state.global-write?
+    (or state.global-write? (opt-licm-store-summary-global-write? summary)))
+  state)
 
 (define (opt-licm-store-state-mark-call [state : OptLicmStoreState]) : OptLicmStoreState
   (set! state.any-call? true)
   state)
 
-;; Fold one instruction's cell-write mask into the body state. A zero mask --
-;; the answer for everything that provably writes no cell -- returns the state
-;; untouched, so a loop whose instructions all answer zero keeps the empty set
-;; it was seeded with.
 (define (opt-licm-store-state-add-cell-writes
   [state : OptLicmStoreState]
   [mask : i64]) : OptLicmStoreState
-  (if (= mask 0)
-    state
-    (begin
-      (set! state.global-cell-writes (bit-or state.global-cell-writes mask))
-      state)))
+  (set! state.global-cell-writes (bit-or state.global-cell-writes mask))
+  state)
 
 ;; IAG-2's analog of opt-licm-store-state-add-cell-writes, for the set of
 ;; globals whose OWN STORAGE the body may write.
 (define (opt-licm-store-state-add-obj-writes
   [state : OptLicmStoreState]
   [mask : i64]) : OptLicmStoreState
-  (if (= mask 0)
-    state
-    (begin
-      (set! state.global-obj-writes (bit-or state.global-obj-writes mask))
-      state)))
+  (set! state.global-obj-writes (bit-or state.global-obj-writes mask))
+  state)
 
 ;; Which global's OWN STORAGE a write through this pointer may land on. The
 ;; classes that answer 0 are the ones the memory model keeps disjoint from a
@@ -23550,72 +23467,22 @@
       [_ (opt-global-mod-ref-any)])))
 
 (define (opt-licm-store-state-mark-global-write [state : OptLicmStoreState]) : OptLicmStoreState
-  (OptLicmStoreState
-    state.summary
-    state.rooted-summary
-    state.ptrs
-    state.roots
-    state.store-roots
-    state.any-call?
-    true
-    state.mem-clean-call?
-    state.global-cell-writes
-    state.global-obj-writes))
+  (set! state.global-write? true)
+  state)
 
 (define (opt-licm-store-state-mark-mem-clean-call [state : OptLicmStoreState]) : OptLicmStoreState
   (set! state.mem-clean-call? true)
   state)
 
-;; Fold a DIRECT call (`Call` or `TailCall`) into the body state: the call
-;; boundary plus the callee's store facts. A non-returning trap helper
-;; contributes NEITHER -- see opt-direct-call-noreturn? for the full argument.
-;; It is not a call boundary for `any-call?`, and it adds no store summary, so
-;; a loop whose only call is a bounds/divide/shift trap reads as call-free to
-;; every invariance question the loop passes ask.
+;; A non-returning trap is neither a call boundary nor a write for LICM.
+;; For returning calls the memory summary and global-cell flag are separate:
+;; a caller can pass storage the callee may write even when the callee names
+;; no globals. A global address can also travel through a parameter.
 ;;
-;; The store summary and the global-cell flag part company here, and this is the
-;; only place they do. A callee that writes through the objects its parameters
-;; name is `call-or-unknown?` to every memory question -- it can invalidate a
-;; load of any of those objects -- while the call-memory fixpoint proves it has
-;; no direct global write. That weaker proof is enough only when the whole
-;; program contains no `GlobalAddr`: a cell address can otherwise arrive through
-;; an SSA copy, Phi, caller parameter, or returned reference, so inspecting just
-;; the call's immediate operands is not a sound alias test. The program-wide
-;; address-taken set closes every such path. A summary whose writes are all to
-;; descriptor ELEMENT storage needs no such condition because that storage is
-;; disjoint from every global cell. Everything else about the call --
-;; the `any-call?` boundary the register-pressure interlock prices, the store
-;; summary the memory proofs read -- is unchanged.
-;;
-;; A MEMORY-clean callee -- the stronger fact -- is admitted here, but only to
-;; the loop-scope cell PROMOTION and only under a live-in budget. Refusing it
-;; was never a soundness claim; it was an unpaid trade, and the two halves of
-;; that trade are separable.
-;;
-;; THE TRADE SPLITS IN TWO. `globals-clean?` drives two unrelated things: the
-;; INVARIANCE question opt-licm-candidate? asks of a `Global` operand, and the
-;; loop-scope cell promotion (opt-licm-global-promote). The gain is the
-;; PROMOTION's; the loss is the INVARIANCE relaxation's. So invariance keeps
-;; the refusal (see `globals-clean-strict?` at the loop site) and only
-;; promotion is relaxed.
-;;
-;; WHY INVARIANCE LOSES. Relaxing it opens a whole hoist CHAIN rooted at the
-;; cell read -- the cell load, the descriptor it designates, that descriptor's
-;; length and data words -- and every link is a new loop-spanning value.
-;; _tl_bench_gvn_table_lookup is the shape: a hash-chain walk over two array
-;; globals, two links each, whose preheader grows from 2 callee-saved pushes to
-;; 6. The loop saves 2-3 instructions per iteration and pays 8 for the extra
-;; push/pop pairs on every CALL, and the chain it walks is one or two nodes
-;; long. The promotion cannot do this: it rewrites `@g` operands in place and
-;; moves no dependent load, so it adds exactly one loop-spanning value per cell.
-;;
-;; WHY THE PROMOTION STILL NEEDS A BUDGET. That one value per cell still has to
-;; live across the whole loop, and in a body that already enters with more live
-;; values than the register file can hold it does not get a register: it lands
-;; in a frame slot, the preheader pays a load AND a spill store on every loop
-;; ENTRY, each use trades a rip-relative load for an equal-length frame load,
-;; and the frame grows (it_intern_slice's probe loop is the shape).
-;; opt-licm-global-promote-live-in-budget is what refuses it.
+;; If every written parameter points into a fresh object in this frame, use
+;; rooted frame stores for those objects. Keep the call boundary and the
+;; callee's cell/object rows. Unknown writes and non-frame arguments keep
+;; the ordinary direct-call verdict.
 (define (opt-licm-direct-call-keeps-globals-clean?
   [direct-call-clean : (& direct-call-clean opt_i64_i64_map.Map)]
   [global-cells : (& global-cells OptGlobalCellSummary)]
@@ -23629,42 +23496,13 @@
         (opt-direct-call-clean-unconditional-global-bit))
       (= (opt_i64_i64_map.len (& global-cells.addr-taken)) 0))))
 
-;; SRET-SITE. A direct callee whose call-memory row names PARAMETER writes
-;; and nothing unknown writes, through those parameters, the objects its
-;; arguments name -- and when every such argument at THIS site is the address
-;; of an object `alloc` created in this activation (OptLicmPtrKind.LocalObject
-;; / LocalSlot, root Fresh), every one of those writes lands in this frame.
-;; A frame object is a distinct allocation from every global cell, every
-;; descriptor and every element buffer (the P16 argument at OptLicmPtrKind),
-;; so such a call can change none of the words the descriptor-header and
-;; global-cell proofs read. The per-callee bits cannot say this: the same
-;; callee called with a global's address would write that global, which is
-;; exactly why opt-direct-call-clean-unconditional-global-bit is not set for
-;; any callee with a parameter write, and why, in a program with one
-;; address-taken global, opt-licm-direct-call-keeps-globals-clean? refuses
-;; every `sret`-returning helper at every site.
-;;
-;; The shape is sccp_lattice's dispatch loop: `sccp-value` (and the
-;; `sccp-fold-*` helpers) return an `SccpValue` through a hidden slot the
-;; caller allocates, and without this every descriptor word of `sccp-tokens`
-;; and the `sccp-instr-base` cell reloads per record
-;; (`licm-refuse ... global-cell|header-load-safe:call:call=sccp-value`).
-;;
-;; What the call still is: a CALL. It keeps `any-call?`, its cell and
-;; storage rows (P18, IAG-2), and the element-only-call summary -- header-load
-;; safe, a call boundary for the hoist/allocate interlock, "any class" for the
-;; typed-word rule -- and it contributes one rooted FRAME store per frame
-;; object it writes, exactly what a `store_ptr` through that object's address
-;; contributes (the StorePtr arm of opt-licm-store-state-instr), so a load of
-;; the same object is blocked as before. Callees with an unknown write, or any
-;; written parameter whose argument is not such an object, take the ordinary
-;; direct-call path.
 (defenum OptLicmFrameCall
   (No)
   (Some OptLicmStoreState))
 
 (define (opt-licm-call-frame-state
   [state : OptLicmStoreState]
+  [provenance : (& OptLicmProvenance)]
   [call-memory : (& call-memory opt_i64_i64_map.Map)]
   [name : i64]
   [args : (& ir.CompilerIrCallArgs)]) : OptLicmFrameCall
@@ -23687,8 +23525,10 @@
                   (match value
                     [(Var var)
                       (if (opt-licm-frame-object-kind?
-                        (opt-licm-ptr-lookup out.ptrs var))
-                        (match (opt-licm-root-env-lookup (& out.roots) var)
+                        (opt-licm-ptr-lookup (& provenance.ptrs) var))
+                        (match (opt-licm-root-env-lookup
+                          (& provenance.roots)
+                          var)
                           [(Fresh id)
                             (set!
                               out
@@ -23708,6 +23548,7 @@
 
 (define (opt-licm-store-state-direct-call
   [state : OptLicmStoreState]
+  [provenance : (& OptLicmProvenance)]
   [direct-call-clean : (& direct-call-clean opt_i64_i64_map.Map)]
   [global-cells : (& global-cells OptGlobalCellSummary)]
   [name : i64]
@@ -23736,6 +23577,7 @@
         (if summary.call-or-unknown?
           (opt-licm-call-frame-state
             (compiler-opt-global-shared-view called)
+            provenance
             global-cells.call-memory
             name
             args)
@@ -23766,19 +23608,6 @@
               (opt-licm-store-state-mark-global-write called)
               summary))]))))
 
-(define (opt-licm-store-state-invalidate-ptr-def
-  [state : OptLicmStoreState]
-  [var : i64]) : OptLicmStoreState
-  (set! state.ptrs (opt-licm-ptr-unbind-bound (& state.ptrs) var))
-  state)
-
-(define (opt-licm-store-state-invalidate-ptr-instr
-  [state : OptLicmStoreState]
-  [instr : (& instr ir.CompilerIrInstr)]) : OptLicmStoreState
-  (match (opt-instr-def-var instr)
-    [(Some var) (opt-licm-store-state-invalidate-ptr-def state var)]
-    [(None) state]))
-
 (define (opt-licm-store-summary-for-storeptr
   [ptrs : (& ptrs OptLicmPtrEnv)]
   ;; ALIAS-3: the class set this write contributes when it IS an element write.
@@ -23797,439 +23626,360 @@
         [_ (opt-licm-store-summary-header-or-unknown-store)])]
     [_ (opt-licm-store-summary-header-or-unknown-store)]))
 
-(define (opt-licm-provenance-classify-load
+(define (opt-licm-provenance-classify-load!
   [type-segment-bases : i64]
-  [types : (& types OptSsaVarTypes)]
-  [state : OptLicmStoreState]
+  [types : (& OptSsaVarTypes)]
+  [ptrs : (&mut OptLicmPtrEnv)]
   [dst : i64]
   [src : (& ir.CompilerIrValue)]
-  [load-ty : (& ast.AstType)]) : OptLicmStoreState
+  [load-ty : (& ast.AstType)]) : unit
   (match src
     [(Var ptr-var)
-      (match (opt-licm-ptr-lookup state.ptrs ptr-var)
+      (match (opt-licm-ptr-lookup ptrs ptr-var)
         [(or (DataSlot object) (InlineHeader object) (LocalHeader object))
-          (opt-licm-store-state-bind-ptr state dst (DataBuffer object))]
-        ;; LICM-GDP: the word in a header-typed global's data-pointer slot is
-        ;; the buffer's data pointer. Only the element-vs-header CLASS is ever
-        ;; read off `DataBuffer` (its object component is ignored by every
-        ;; store summary), so the loaded var stands as its own object.
+          (opt-licm-ptr-bind! ptrs dst (DataBuffer object))]
         [(GlobalDataSlot _)
-          (if (opt-licm-array-header-type? type-segment-bases load-ty)
-            ;; A load DECLARED as a handle is not the data pointer this arm
-            ;; names (a nested handle read through a global's box); it keeps
-            ;; the type-driven classification below.
-            (if (opt-licm-array-header-var? type-segment-bases types ptr-var)
-              (opt-licm-store-state-bind-ptr state dst (DataBuffer ptr-var))
-              state)
-            (opt-licm-store-state-bind-ptr state dst (DataBuffer dst)))]
+          (if (not (opt-licm-array-header-type? type-segment-bases load-ty))
+            (opt-licm-ptr-bind! ptrs dst (DataBuffer dst))
+            (when
+              (opt-licm-array-header-var? type-segment-bases types ptr-var)
+              (opt-licm-ptr-bind! ptrs dst (DataBuffer ptr-var))))]
         [_
-          (if (or
-            (opt-licm-array-header-var? type-segment-bases types ptr-var)
-            (and
-              (not (opt-licm-array-header-type? type-segment-bases load-ty))
-              (= (opt-load-loc-type-size type-segment-bases load-ty) 8)
-              (opt-licm-var-header-at-byte-zero?
-                type-segment-bases
-                types
-                ptr-var)))
-            (opt-licm-store-state-bind-ptr state dst (DataBuffer ptr-var))
-            state)])]
-    [_ state]))
+          (when
+            (or
+              (opt-licm-array-header-var? type-segment-bases types ptr-var)
+              (and
+                (not (opt-licm-array-header-type? type-segment-bases load-ty))
+                (= (opt-load-loc-type-size type-segment-bases load-ty) 8)
+                (opt-licm-var-header-at-byte-zero?
+                  type-segment-bases
+                  types
+                  ptr-var)))
+            (opt-licm-ptr-bind! ptrs dst (DataBuffer ptr-var)))])]
+    [_ unit]))
 
-(define (opt-licm-provenance-state-instr
+(define (opt-licm-provenance-note!
   [type-segment-bases : i64]
-  [types : (& types OptSsaVarTypes)]
-  [state : (& OptLicmStoreState)]
-  [instr : ir.CompilerIrInstr]) : OptLicmStoreState
-  (let
-    [invalid : OptLicmStoreState
-      (opt-licm-store-state-invalidate-ptr-instr
-        (owned_view.compiler-owned-reference-shared-view state)
-        instr)]
-    [_roots : unit
-      (opt-licm-root-env-update-instr!
-        (&mut invalid.roots)
-        (& invalid.ptrs)
-        (& instr))]
-    (match instr
-      [(Mov dst src _)
-        (match src
-          [(Var src-var)
-            (opt-licm-store-state-bind-ptr
-              (compiler-opt-global-shared-view invalid)
-              dst
-              (opt-licm-ptr-lookup invalid.ptrs src-var))]
-          [_ invalid])]
-      [(Gep dst base offset ty)
-        (opt-licm-store-state-bind-ptr
-          (compiler-opt-global-shared-view invalid)
-          dst
+  [types : (& OptSsaVarTypes)]
+  [state : (&mut OptLicmProvenance)]
+  [instr : (& ir.CompilerIrInstr)]) : unit
+  (match (opt-instr-def-var instr)
+    [(Some dst) (opt-licm-ptr-unbind! (&mut state.ptrs) dst)]
+    [(None) unit])
+  (opt-licm-root-env-update-instr! (&mut state.roots) (& state.ptrs) instr)
+  (match instr
+    [(Mov dst src _)
+      (match src
+        [(Var var)
+          (let
+            [kind (opt-licm-ptr-lookup (& state.ptrs) var)]
+            (opt-licm-ptr-bind! (&mut state.ptrs) dst kind))]
+        [_ unit])]
+    [(Gep dst base offset ty)
+      (let
+        [kind
           (opt-licm-gep-kind
             type-segment-bases
             types
-            invalid.ptrs
+            (& state.ptrs)
             base
             offset
-            ty))]
-      [(Load dst src load-ty)
-        (opt-licm-provenance-classify-load
-          type-segment-bases
-          types
-          invalid
-          dst
-          (& src)
-          (& load-ty))]
-      ;; P16: the frame objects of this function, and the two ways their
-      ;; address travels. `Alloc` names the object; `addr_of` forms the pointer
-      ;; the rest of the function uses (Mov copies it through the arm above);
-      ;; and a callee that returns the argument it was handed -- the internal
-      ;; sret shape -- hands the same pointer back out.
-      ;; The value written INTO a descriptor's data slot is the buffer that
-      ;; slot names, so it is element storage from that point on -- the same
-      ;; fact the `DataSlot -> DataBuffer` load arm above records, read off the
-      ;; store instead of off a later load.
-      ;;
-      ;; Without this arm the fact is lost as soon as the load-CSE forwards the
-      ;; slot's store to its later load (T2-2/MF-1 makes the two keys agree by
-      ;; resolving the descriptor copy): the loaded buffer var disappears and
-      ;; the store address is derived from the raw `tl_alloc` result instead, so
-      ;; every write through it degrades from `element-only` to
-      ;; `header-or-unknown`, LICM stops hoisting the SOURCE descriptor's words
-      ;; out of the copy loop, and bce_version/copy_call no longer see the
-      ;; contiguous shape they turn into `tl_mem_copy_fwd`.
-      ;;
-      ;; Only the element-vs-header CLASS is read off `DataBuffer`; its object
-      ;; component is ignored by every store summary
-      ;; (opt-licm-store-summary-for-storeptr), so binding it here cannot make
-      ;; an aliasing claim about the object the slot belongs to.
-      [(StorePtr ptr value _)
-        (match ptr
-          [(Var ptr-var)
-            (match (opt-licm-ptr-lookup invalid.ptrs ptr-var)
-              [(or (DataSlot object) (InlineHeader object) (LocalHeader object))
-                (match value
-                  [(Var value-var)
-                    (opt-licm-store-state-bind-ptr
-                      invalid
-                      value-var
-                      (DataBuffer object))]
-                  [_ invalid])]
-              [_ invalid])]
-          [_ invalid])]
-      [(StoreOwned ptr value ty)
-        (opt-licm-provenance-state-instr
-          type-segment-bases
-          types
-          (& invalid)
-          (StorePtr ptr value ty))]
-      [(Alloc dst _)
-        (opt-licm-store-state-bind-ptr invalid dst (LocalObject dst))]
-      [(AddrOf dst src _)
-        (opt-licm-store-state-bind-ptr
-          (compiler-opt-global-shared-view invalid)
-          dst
-          (opt-licm-ptr-lookup invalid.ptrs src))]
-      [(Call dst name args _)
-        (match (opt-licm-root-env-return-alias-value
-          (& invalid.roots)
-          name
-          (& args))
-          [(Some value)
-            (match value
-              [(Var src-var)
-                (opt-licm-store-state-bind-ptr
-                  (compiler-opt-global-shared-view invalid)
-                  dst
-                  (opt-licm-ptr-lookup invalid.ptrs src-var))]
-              [_ invalid])]
-          [(No) invalid])]
-      [_ invalid])))
+            ty)]
+        (opt-licm-ptr-bind! (&mut state.ptrs) dst kind))]
+    [(Load dst src ty)
+      (opt-licm-provenance-classify-load!
+        type-segment-bases
+        types
+        (&mut state.ptrs)
+        dst
+        src
+        ty)]
+    ;; Storing a raw buffer into a descriptor's data slot gives it the same
+    ;; element-storage class a subsequent load would have. This survives
+    ;; load-CSE forwarding without making an object identity claim.
+    [(or (StorePtr ptr value _) (StoreOwned ptr value _))
+      (match ptr
+        [(Var ptr-var)
+          (match (opt-licm-ptr-lookup (& state.ptrs) ptr-var)
+            [(or (DataSlot object) (InlineHeader object) (LocalHeader object))
+              (match value
+                [(Var var)
+                  (opt-licm-ptr-bind! (&mut state.ptrs) var (DataBuffer object))]
+                [_ unit])]
+            [_ unit])]
+        [_ unit])]
+    [(Alloc dst _) (opt-licm-ptr-bind! (&mut state.ptrs) dst (LocalObject dst))]
+    [(AddrOf dst src _)
+      (let
+        [kind (opt-licm-ptr-lookup (& state.ptrs) src)]
+        (opt-licm-ptr-bind! (&mut state.ptrs) dst kind))]
+    [(Call dst name args _)
+      (match (opt-licm-root-env-return-alias-value (& state.roots) name args)
+        [(Some (Var src))
+          (let
+            [kind (opt-licm-ptr-lookup (& state.ptrs) src)]
+            (opt-licm-ptr-bind! (&mut state.ptrs) dst kind))]
+        [_ unit])]
+    [_ unit]))
 
 ;; An INDIRECT call may land on any function of the program, so it may reach
 ;; any `Store` in it: the one call class the per-global table cannot refine.
-(define (opt-licm-store-state-indirect-call [state : (& OptLicmStoreState)]) : OptLicmStoreState
+(define (opt-licm-store-state-indirect-call [state : OptLicmStoreState]) : OptLicmStoreState
   (opt-licm-store-state-add-summary
     (opt-licm-store-state-add-obj-writes
       (opt-licm-store-state-add-cell-writes
-        (opt-licm-store-state-mark-call
-          (owned_view.compiler-owned-reference-shared-view state))
+        (opt-licm-store-state-mark-call state)
         (opt-global-mod-ref-any))
       (opt-global-mod-ref-any))
     (opt-licm-store-summary-call-or-unknown)))
 
-(define (opt-licm-store-state-instr
-  [marks : (& marks (__tl_dyn-array bool))]
-  [type-segment-bases : i64]
-  [types : (& types OptSsaVarTypes)]
-  [state : (& OptLicmStoreState)]
-  [direct-call-clean : (& direct-call-clean opt_i64_i64_map.Map)]
-  [global-cells : (& global-cells OptGlobalCellSummary)]
-  [track-provenance? : bool]
-  [instr : (& ir.CompilerIrInstr)]) : OptLicmStoreState
-  (let
-    [provenance : OptLicmStoreState
-      (if track-provenance?
-        (opt-licm-provenance-state-instr
-          type-segment-bases
-          types
-          state
-          (owned_view.compiler-owned-reference-shared-view instr))
-        (owned_view.compiler-owned-reference-shared-view state))]
-    (when
-      (opt-addr-taken-def? marks instr)
-      (set!
-        provenance
-        (opt-licm-store-state-add-summary
-          provenance
-          (opt-licm-store-summary-frame-store))))
-    (match (owned_view.compiler-owned-reference-shared-view instr)
-      [(or (Call _ name args _) (TailCall name args _))
-        (opt-licm-store-state-direct-call
-          provenance
-          direct-call-clean
-          global-cells
-          name
-          (& args))]
-      [(or (CallIndirect _ _ _ _) (CallIndirectC _ _ _ _)
-           (CallCAbiStoreResult _) (CallIndirectCAbiStoreResult _) (SpmdCall _)
-           (TailCallIndirect _ _ _))
-        (opt-licm-store-state-indirect-call (& provenance))]
-      ;; FRAME-STORE: `alloc` creates a fresh frame object. It writes no word
-      ;; any load in the body could have read -- there was no such word -- so
-      ;; it contributes nothing to the store summary and nothing to the cell
-      ;; and storage rows. Without this arm it fell to the effect arm below,
-      ;; where its MemoryWrite class is a header-or-unknown store that writes
-      ;; every cell: an inlined callee's temporaries, allocated inside the loop
-      ;; that absorbed it, closed every descriptor and cell proof in that loop.
-      ;; The provenance pass binds its pointer kind and root
-      ;; (opt-licm-provenance-state-instr); nothing is needed here.
-      [(Alloc _ _) provenance]
-      [(StorePtr ptr _ store-ty)
-        (let
-          ;; IAG-2: which global's own storage this write may land on.
-          [obj-mask : i64
-            (opt-licm-store-obj-mask global-cells provenance.ptrs ptr)]
-          [provenance : OptLicmStoreState
-            (opt-licm-store-state-add-obj-writes provenance obj-mask)]
-          [root : OptLicmRoot (opt-licm-root-of-value (& provenance.roots) ptr)]
-          [legacy-summary : OptLicmStoreSummary
-            (opt-licm-store-summary-for-storeptr
-              provenance.ptrs
-              (opt-licm-element-class-bits type-segment-bases (& store-ty))
-              (& ptr))]
-          ;; #8941: the bytes this store writes, from its root's var, when
-          ;; both its offset and its width are known.
-          [store-width : i64
-            (opt-load-loc-type-size type-segment-bases (& store-ty))]
-          [store-offset : opt_i64_i64_map.Lookup
-            (opt-licm-root-env-offset (& provenance.roots) (& ptr))]
-          (match root
-            [(or (Fresh _) (Exclusive _))
-              (match store-offset
-                [(LookupFound offset)
-                  (opt-licm-store-state-add-rooted-store-range
-                    provenance
-                    root
-                    offset
-                    store-width
-                    legacy-summary)]
-                [(LookupMissing)
-                  (opt-licm-store-state-add-rooted-store
-                    provenance
-                    root
-                    legacy-summary)])]
-            [_ (opt-licm-store-state-add-summary provenance legacy-summary)]))]
-      [(StoreOwned ptr value ty)
-        (opt-licm-store-state-instr
-          marks
-          type-segment-bases
-          types
-          (& provenance)
-          direct-call-clean
-          global-cells
-          false
-          (& (StorePtr ptr value ty)))]
-      ;; Vector stores use the same base-pointer provenance as StorePtr. Treat
-      ;; them as element writes so descriptor data/length loads can move out of
-      ;; an enclosing repetition loop while remaining blocked by an aliasing
-      ;; store to that descriptor.
-      [(VectorStore (box (fields base [store-ty ty])))
-        (let
-          [obj-mask : i64
-            (opt-licm-store-obj-mask global-cells provenance.ptrs base)]
-          [provenance : OptLicmStoreState
-            (opt-licm-store-state-add-obj-writes provenance obj-mask)]
-          [root : OptLicmRoot
-            (opt-licm-root-of-value (& provenance.roots) base)]
-          [legacy-summary : OptLicmStoreSummary
-            (opt-licm-store-summary-for-storeptr
-              provenance.ptrs
-              (opt-licm-element-class-bits
-                type-segment-bases
-                (& (owned_view.compiler-owned-shared-view store-ty)))
-              (& base))]
-          (match root
-            [(or (Fresh _) (Exclusive _))
-              (opt-licm-store-state-add-rooted-store
-                provenance
-                root
-                legacy-summary)]
-            [_ (opt-licm-store-state-add-summary provenance legacy-summary)]))]
-      [(PredicatedStore (box (fields base [store-ty ty])))
-        (let
-          [obj-mask : i64
-            (opt-licm-store-obj-mask
-              global-cells
-              (__tl-project-field provenance ptrs)
-              base)]
-          [provenance : OptLicmStoreState
-            (opt-licm-store-state-add-obj-writes provenance obj-mask)]
-          [root : OptLicmRoot
-            (opt-licm-root-of-value (& provenance.roots) base)]
-          [legacy-summary : OptLicmStoreSummary
-            (opt-licm-store-summary-for-storeptr
-              (__tl-project-field provenance ptrs)
-              (opt-licm-element-class-bits
-                type-segment-bases
-                (& (owned_view.compiler-owned-shared-view store-ty)))
-              (& base))]
-          (match root
-            [(or (Fresh _) (Exclusive _))
-              (opt-licm-store-state-add-rooted-store
-                provenance
-                root
-                legacy-summary)]
-            [_ (opt-licm-store-state-add-summary provenance legacy-summary)]))]
-      [(CopyBytes dst _ _)
-        (let
-          [obj-mask : i64
-            (opt-licm-store-obj-mask global-cells provenance.ptrs dst)]
-          [provenance : OptLicmStoreState
-            (opt-licm-store-state-add-obj-writes provenance obj-mask)]
-          ;; FRAME-STORE: a byte copy INTO one of this activation's frame
-          ;; objects -- the aggregate copy-out every constructor ends with --
-          ;; is a frame store, rooted as a `store_ptr` through that address
-          ;; would be. Every other copy keeps the header-or-unknown reading.
-          [frame? : bool (opt-licm-frame-word-source? provenance.ptrs dst)]
-          [root : OptLicmRoot (opt-licm-root-of-value (& provenance.roots) dst)]
-          (if frame?
-            (match root
-              [(Fresh _)
-                (opt-licm-store-state-add-rooted-store
-                  provenance
-                  root
-                  (opt-licm-store-summary-frame-store))]
-              [_
-                (opt-licm-store-state-add-summary
-                  provenance
-                  (opt-licm-store-summary-header-or-unknown-store))])
-            (opt-licm-store-state-add-summary
-              provenance
-              (opt-licm-store-summary-header-or-unknown-store))))]
-      ;; A named global-cell write is the one write whose target is a SYMBOL
-      ;; rather than a pointer, so it can be classified by name instead of by
-      ;; may-alias. A cell holds a descriptor HANDLE (or a scalar); the two
-      ;; header words a handle points at live in the object, never in the cell,
-      ;; so `Store G` cannot invalidate a descriptor data/length load -- the
-      ;; same allocation-layer argument the load table's granular kill makes
-      ;; (see opt-load-entry-survives-global-cell-store?). It therefore
-      ;; contributes the element-only class, which leaves
-      ;; opt-licm-store-summary-header-load-safe? true and the descriptor-header
-      ;; hoist available, while the global-write flag is raised EXPLICITLY so
-      ;; `Global` operand promotion still refuses: that pass reasons about cell
-      ;; CONTENTS, which is exactly what this instruction changes.
-      [(Store name _ _)
-        (let
-          [cell-mask : i64
-            (opt-global-mod-ref-instr-store-mask global-cells.mod-ref name)]
-          ;; IAG-2: `(set! g v)` copies a whole struct over g's cell, so it
-          ;; writes g's own storage as well as changing what the cell holds.
-          [obj (& global-cells.obj-mod-ref)]
-          [obj-mask : i64
-            (opt-global-mod-ref-id-bit
-              obj.index
-              (ir.compiler-ir-symbol-id name))]
-          (opt-licm-store-state-add-summary-keeping-globals
-            ;; P18: a named cell write names exactly ONE cell, which is the
-            ;; whole reason the per-global set is finer than `global-write?`
-            ;; here.
-            (opt-licm-store-state-add-obj-writes
-              (opt-licm-store-state-add-cell-writes
-                (opt-licm-store-state-mark-global-write provenance)
-                cell-mask)
-              obj-mask)
-            ;; A whole-cell copy writes every word of the cell, so it names no
-            ;; single class: it contributes "any class" and the ALIAS-3 rule
-            ;; proves nothing about it, exactly as before.
-            (opt-licm-store-summary-element-only-store
-              (opt-licm-element-class-any))))]
-      [_
-        (let
-          [effect (opt-instr-effect marks instr)]
-          [mask (opt-global-mod-ref-effect-mask effect)]
-          (opt-licm-store-state-add-summary
-            (opt-licm-store-state-add-obj-writes
-              (opt-licm-store-state-add-cell-writes provenance mask)
-              mask)
-            (opt-licm-store-summary-from-effect effect)))])))
-
-(define (opt-licm-store-state-instrs
-  [marks : (& marks (__tl_dyn-array bool))]
-  [type-segment-bases : i64]
-  [types : (& types OptSsaVarTypes)]
-  [direct-call-clean : (& direct-call-clean opt_i64_i64_map.Map)]
-  [global-cells : (& global-cells OptGlobalCellSummary)]
-  [track-provenance? : bool]
+(define (opt-licm-store-through-pointer
   [state : OptLicmStoreState]
-  [instr : ir.CompilerIrInstr]) : OptLicmStoreState
-  (opt-licm-store-state-instr
-    marks
-    type-segment-bases
-    types
-    (& state)
-    direct-call-clean
-    global-cells
-    track-provenance?
-    (& instr)))
+  [provenance : (& provenance OptLicmProvenance)]
+  [cells : (& OptGlobalCellSummary)]
+  [type-segment-bases : i64]
+  [ptr : (& ir.CompilerIrValue)]
+  [ty : (& ast.AstType)]
+  [exact-range? : bool]) : OptLicmStoreState
+  (let
+    [ptrs : (& provenance OptLicmPtrEnv) (& provenance.ptrs)]
+    [roots : (& provenance OptLicmRootEnv) (& provenance.roots)]
+    [state : OptLicmStoreState
+      (opt-licm-store-state-add-obj-writes
+        state
+        (opt-licm-store-obj-mask cells ptrs ptr))]
+    [summary : OptLicmStoreSummary
+      (opt-licm-store-summary-for-storeptr
+        ptrs
+        (opt-licm-element-class-bits type-segment-bases ty)
+        ptr)]
+    [root : OptLicmRoot (opt-licm-root-of-value roots ptr)]
+    (match root
+      [(or (Fresh _) (Exclusive _))
+        (match (if exact-range?
+          (opt-licm-root-env-offset roots ptr)
+          (opt_i64_i64_map.LookupMissing))
+          [(LookupFound offset)
+            (opt-licm-store-state-add-rooted-store-range
+              state
+              root
+              offset
+              (opt-load-loc-type-size type-segment-bases ty)
+              summary)]
+          [(LookupMissing)
+            (opt-licm-store-state-add-rooted-store state root summary)])]
+      [_ (opt-licm-store-state-add-summary state summary)])))
+
+(define (opt-licm-store-state-instr
+  [marks : (& (__tl_dyn-array bool))]
+  [type-segment-bases : i64]
+  [provenance : (& OptLicmProvenance)]
+  [direct-call-clean : (& opt_i64_i64_map.Map)]
+  [global-cells : (& cells OptGlobalCellSummary)]
+  [state : OptLicmStoreState]
+  [instr : (& ir.CompilerIrInstr)]) : OptLicmStoreState
+  (when
+    (opt-addr-taken-def? marks instr)
+    (set!
+      state
+      (opt-licm-store-state-add-summary
+        state
+        (opt-licm-store-summary-frame-store))))
+  (match instr
+    [(or (Call _ name args _) (TailCall name args _))
+      (opt-licm-store-state-direct-call
+        state
+        provenance
+        direct-call-clean
+        global-cells
+        name
+        args)]
+    [(or (CallIndirect _ _ _ _) (CallIndirectC _ _ _ _) (CallCAbiStoreResult _)
+         (CallIndirectCAbiStoreResult _) (SpmdCall _) (TailCallIndirect _ _ _))
+      (opt-licm-store-state-indirect-call state)]
+    ;; Alloc contributes provenance, with no write to an existing object.
+    [(Alloc _ _) state]
+    [(or (StorePtr ptr _ store-ty) (StoreOwned ptr _ store-ty))
+      (opt-licm-store-through-pointer
+        state
+        provenance
+        global-cells
+        type-segment-bases
+        ptr
+        store-ty
+        true)]
+    ;; Vector writes use the same root and alias classes but have no exact byte span.
+    [(VectorStore payload)
+      (opt-licm-store-through-pointer
+        state
+        provenance
+        global-cells
+        type-segment-bases
+        (& payload.base)
+        (& payload.ty)
+        false)]
+    [(PredicatedStore payload)
+      (opt-licm-store-through-pointer
+        state
+        provenance
+        global-cells
+        type-segment-bases
+        (& payload.base)
+        (& payload.ty)
+        false)]
+    [(CopyBytes dst _ _)
+      (let
+        [obj-mask : i64
+          (opt-licm-store-obj-mask global-cells (& provenance.ptrs) dst)]
+        [state : OptLicmStoreState
+          (opt-licm-store-state-add-obj-writes state obj-mask)]
+        ;; FRAME-STORE: a byte copy INTO one of this activation's frame
+        ;; objects -- the aggregate copy-out every constructor ends with --
+        ;; is a frame store, rooted as a `store_ptr` through that address
+        ;; would be. Every other copy keeps the header-or-unknown reading.
+        [frame? : bool (opt-licm-frame-word-source? (& provenance.ptrs) dst)]
+        [root : OptLicmRoot (opt-licm-root-of-value (& provenance.roots) dst)]
+        (if frame?
+          (match root
+            [(Fresh _)
+              (opt-licm-store-state-add-rooted-store
+                state
+                root
+                (opt-licm-store-summary-frame-store))]
+            [_
+              (opt-licm-store-state-add-summary
+                state
+                (opt-licm-store-summary-header-or-unknown-store))])
+          (opt-licm-store-state-add-summary
+            state
+            (opt-licm-store-summary-header-or-unknown-store))))]
+    ;; A named store changes a cell and its own storage. A descriptor's
+    ;; header lives elsewhere, so keep header loads eligible.
+    [(Store name _ _)
+      (let
+        [cell-mask : i64
+          (opt-global-mod-ref-instr-store-mask global-cells.mod-ref name)]
+        ;; IAG-2: `(set! g v)` copies a whole struct over g's cell, so it
+        ;; writes g's own storage as well as changing what the cell holds.
+        [obj : (& cells OptGlobalModRef) (& global-cells.obj-mod-ref)]
+        [obj-mask : i64
+          (opt-global-mod-ref-id-bit obj.index (ir.compiler-ir-symbol-id name))]
+        (opt-licm-store-state-add-summary-keeping-globals
+          ;; P18: a named cell write names exactly ONE cell, which is the
+          ;; whole reason the per-global set is finer than `global-write?`
+          ;; here.
+          (opt-licm-store-state-add-obj-writes
+            (opt-licm-store-state-add-cell-writes
+              (opt-licm-store-state-mark-global-write state)
+              cell-mask)
+            obj-mask)
+          ;; A whole-cell copy writes every word of the cell, so it names no
+          ;; single class: it contributes "any class" and the ALIAS-3 rule
+          ;; proves nothing about it, exactly as before.
+          (opt-licm-store-summary-element-only-store
+            (opt-licm-element-class-any))))]
+    [_
+      (let
+        [effect (opt-instr-effect marks instr)]
+        [mask (opt-global-mod-ref-effect-mask effect)]
+        (opt-licm-store-state-add-summary
+          (opt-licm-store-state-add-obj-writes
+            (opt-licm-store-state-add-cell-writes state mask)
+            mask)
+          (opt-licm-store-summary-from-effect effect)))]))
 
 (define (opt-licm-store-state-blocks
-  [marks : (& marks (__tl_dyn-array bool))]
+  [marks : (& (__tl_dyn-array bool))]
   [type-segment-bases : i64]
-  [types : (& types OptSsaVarTypes)]
+  [provenance : (& OptLicmProvenance)]
   [blocks : (& blocks ir.CompilerIrBlockList)]
-  [direct-call-clean : (& direct-call-clean opt_i64_i64_map.Map)]
-  [global-cells : (& global-cells OptGlobalCellSummary)]
-  [track-provenance? : bool]
+  [direct-call-clean : (& opt_i64_i64_map.Map)]
+  [global-cells : (& OptGlobalCellSummary)]
   [state : OptLicmStoreState]) : OptLicmStoreState
-  (opt-blocks-fold
-    blocks
-    state
-    opt-licm-store-state-instrs
-    marks
-    type-segment-bases
-    types
-    direct-call-clean
-    global-cells
-    track-provenance?))
+  (let
+    [view : (& blocks (Slice ir.CompilerIrBlock))
+      (ir.compiler-ir-block-list-view blocks)]
+    (for [block-index (iterator.range 0 (array-length view))]
+      (match (& (array-ref view block-index))
+        [(Block _ instrs)
+          (for [i (iterator.range 0 instrs.len)]
+            (set!
+              state
+              (opt-licm-store-state-instr
+                marks
+                type-segment-bases
+                provenance
+                direct-call-clean
+                global-cells
+                state
+                (ir.compiler-ir-instr-seq-borrow instrs i))))])))
+  state)
 
-(define (opt-licm-provenance-state-instrs
+;; Standalone summary for clients that have no function-wide provenance yet.
+;; Record each definition before classifying that instruction's effects.
+(define (opt-licm-store-summary-blocks
   [type-segment-bases : i64]
-  [types : (& types OptSsaVarTypes)]
-  [state : OptLicmStoreState]
-  [instr : ir.CompilerIrInstr]) : OptLicmStoreState
-  (opt-licm-provenance-state-instr type-segment-bases types (& state) instr))
-
-(define (opt-licm-provenance-state-blocks
-  [type-segment-bases : i64]
-  [types : (& types OptSsaVarTypes)]
   [blocks : (& blocks ir.CompilerIrBlockList)]
-  [state : OptLicmStoreState]) : OptLicmStoreState
-  (opt-blocks-fold
-    blocks
-    state
-    opt-licm-provenance-state-instrs
-    type-segment-bases
-    types))
+  [summary : OptLicmStoreSummary]) : OptLicmStoreSummary
+  (let
+    [view : (& blocks (Slice ir.CompilerIrBlock))
+      (ir.compiler-ir-block-list-view blocks)]
+    [marks
+      (opt-addr-taken-marks-blocks
+        (+ 1 (opt-sccp-max-var-blocks blocks -1))
+        blocks)]
+    [types (opt-ssa-var-types-new)]
+    [calls (opt_i64_i64_map.with-capacity 1)]
+    [cells (opt-global-cell-summary-empty)]
+    [provenance
+      (OptLicmProvenance
+        (opt-licm-ptr-env-new)
+        (opt-licm-root-env-with-capacity 17 (opt_i64_i64_map.with-capacity 1)))]
+    [state
+      (opt-licm-store-state-new
+        (opt-global-mod-ref-any)
+        (opt-global-mod-ref-any))]
+    (set! state.summary summary)
+    (for [bi (iterator.range 0 (array-length view))]
+      (match (& (array-ref view bi))
+        [(Block _ instrs)
+          (for [i (iterator.range 0 instrs.len)]
+            (let
+              [instr (ir.compiler-ir-instr-seq-borrow instrs i)]
+              (opt-licm-provenance-note!
+                type-segment-bases
+                types
+                (&mut provenance)
+                instr)
+              (set!
+                state
+                (opt-licm-store-state-instr
+                  marks
+                  type-segment-bases
+                  (& provenance)
+                  calls
+                  cells
+                  state
+                  instr))))]))
+    (opt-licm-store-summary-merge state.summary state.rooted-summary)))
+
+(define (opt-licm-provenance-scan!
+  [type-segment-bases : i64]
+  [types : (& OptSsaVarTypes)]
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [state : (&mut OptLicmProvenance)]) : unit
+  (let
+    [view : (& blocks (Slice ir.CompilerIrBlock))
+      (ir.compiler-ir-block-list-view blocks)]
+    (for [block-index (iterator.range 0 (array-length view))]
+      (match (& (array-ref view block-index))
+        [(Block _ instrs)
+          (for [i (iterator.range 0 instrs.len)]
+            (opt-licm-provenance-note!
+              type-segment-bases
+              types
+              state
+              (ir.compiler-ir-instr-seq-borrow instrs i)))]))))
 
 ;; Collect canonical checked-reference/fresh-allocation roots for the whole
 ;; verified SSA function. A second pass resolves same-root Phi joins whose
@@ -24240,29 +23990,19 @@
   [params : (& ir.CompilerIrParamSeq)]
   [types : (& types OptSsaVarTypes)]
   [return-alias : (& opt_i64_i64_map.Map)]
-  [blocks : (& blocks ir.CompilerIrBlockList)]) : OptLicmStoreState
+  [blocks : (& blocks ir.CompilerIrBlockList)]) : OptLicmProvenance
   (let
-    ;; Rooted pointer values are sparse even in functions with large SSA
-    ;; frames. Starting this map at the full frame size retained hundreds of
-    ;; megabytes across compiler optimization; let the generated hashmap grow
-    ;; only when a function actually carries many checked/fresh roots.
+    ;; Keep the initial root map small even for a large SSA frame.
     [roots : OptLicmRootEnv
       (opt-licm-root-env-with-capacity
         17
         (owned_view.compiler-owned-reference-shared-view return-alias))]
     [_params : unit
       (opt-licm-root-env-seed-params! type-segment-bases (&mut roots) params)]
-    [initial
-      : OptLicmStoreState
-      ;; Provenance only; this state's write sets are never consulted.
-      (opt-licm-store-state-with-provenance
-        (opt-licm-ptr-env-new)
-        roots
-        (opt-global-mod-ref-any)
-        (opt-global-mod-ref-any))]
-    [first : OptLicmStoreState
-      (opt-licm-provenance-state-blocks type-segment-bases types blocks initial)]
-    (opt-licm-provenance-state-blocks type-segment-bases types blocks first)))
+    [state (OptLicmProvenance (opt-licm-ptr-env-new) roots)]
+    (opt-licm-provenance-scan! type-segment-bases types blocks (&mut state))
+    (opt-licm-provenance-scan! type-segment-bases types blocks (&mut state))
+    state))
 
 ;; The lowerer emits a checked move into an owned aggregate place as
 ;; `store_owned`. Everything below LICM, and the backend, reads it as the
@@ -24302,42 +24042,6 @@
         frame
         (opt-store-owned-erase-blocks (& blocks))
         function-abi)]))
-
-(define (opt-licm-store-summary-blocks
-  [type-segment-bases : i64]
-  [blocks : (& ir.CompilerIrBlockList)]
-  [summary : OptLicmStoreSummary]) : OptLicmStoreSummary
-  (let
-    [state : OptLicmStoreState
-      (let
-        [types (opt-ssa-var-types-new)]
-        [direct-call-clean (opt_i64_i64_map.with-capacity 1)]
-        [global-cells (opt-global-cell-summary-empty)]
-        (opt-licm-store-state-blocks
-          (&
-            (opt-addr-taken-marks-blocks
-              (+ 1 (opt-sccp-max-var-blocks blocks -1))
-              blocks))
-          type-segment-bases
-          types
-          blocks
-          direct-call-clean
-          global-cells
-          true
-          (OptLicmStoreState
-            summary
-            (opt-licm-store-summary-empty)
-            (opt-licm-ptr-env-new)
-            (opt-licm-root-env-with-capacity
-              17
-              (opt_i64_i64_map.with-capacity 1))
-            (opt-licm-store-roots-new)
-            false
-            false
-            false
-            (opt-global-mod-ref-any)
-            (opt-global-mod-ref-any))))]
-    (opt-licm-store-summary-merge state.summary state.rooted-summary)))
 
 (define (opt-licm-memory-safe?
   [root-summary : OptLicmStoreSummary]
@@ -24564,179 +24268,59 @@
         true
         (opt-licm-label-in-loops? rest label))]))
 
-;; A BRANCH CONDITION is not a consumer that can pay for a hoist, and it is the
-;; one use kind where moving the definition out is never a per-iteration win. A
-;; compare left where its branch is lowers to `cmp; jcc` -- the compare IS the
-;; branch's own flag computation. Hoisted, it has to become a VALUE: `cmp;
-;; setcc; movzx` at the preheader and `test r, r; jcc` at each use, so every
-;; iteration still pays one flag-setting instruction, the preheader pays two
-;; more, and a boolean register stays live across the whole loop.
-;;
-;; For example, a slice-equality guard with one conjunct hoisted this way
-;; (`%659 = sub len, start ; %661 = le count, %659` lifted out of the
-;; versioning guard into the enclosing loop's entry, then consumed by `test
-;; %r10, %r10`) pays six instructions on EVERY call, hit or miss, for a
-;; conjunct that costs two where its branch is.
-;;
-;; So a var whose every use is a branch condition is not collected here, and
-;; the BinOp/UnOp arms of `opt-licm-candidate?` -- which is where this set is
-;; read -- leave such a compare in place. A boolean with any OTHER use (an
-;; `And` chain, a phi, a store, a call argument) has to be materialized
-;; wherever it is defined, so hoisting it really does remove work per
-;; iteration; those uses are still collected and still pay for the hoist.
-;;
-;; TWO PLACES STILL COUNT A BRANCH CONDITION, and both are cases where the
-;; branch does NOT run once per iteration of the loop being hoisted out of:
-;;
-;;   * a use OUTSIDE the loop -- the value has to exist there whatever this
-;;     pass does, so nothing is materialized that was not materialized already;
-;;   * a use in a NESTED loop, which runs many times per outer iteration, so
-;;     lifting its compare out of the outer loop removes real per-iteration
-;;     work and the one-off `setcc`/`movzx` is repaid. Excluding the nested
-;;     case too leaves an inner unrolled loop's guard compare inside the
-;;     enclosing loop.
-;;
-;; THE TRADE. The rule is a per-iteration argument, not a whole-program one,
-;; and it can cost a SECONDARY price through the allocator rather than through
-;; the guard: keeping a compare's two invariant operands live where the compare
-;; is changes register pressure downstream (it can push a `/1e9` magic constant
-;; out of the stack slot an `imulq mem` reads into a per-iteration `movabs
-;; $imm64` plus `imul`) -- never a change in what the guard tests.
-(define (opt-licm-collect-nonbranch-uses-array
-  [items : (__tl_dyn-array i64)]
-  [instrs : (& ir.CompilerIrInstrSeq)]) : unit
-  (let
-    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    [ids : ir.CompilerIrIdList (ir.compiler-ir-id-list-new)]
-    (for [index (iterator.range 0 count)]
-      (match (ir.compiler-ir-instr-seq-borrow instrs index)
-        [(Branch _ _ _) unit]
-        [_
-          (opt-collect-instr-uses-array
-            (&mut ids)
-            (compiler-opt-global-shared-view items)
-            (ir.compiler-ir-instr-seq-borrow instrs index))]))))
-
-;; Collect consumers whose frequency can pay for an arithmetic value's longer
-;; live range. Uses outside the loop must remain available, blocks dominating
-;; the latch execute on every continuing iteration, and nested-loop uses can be
-;; repeated. When `gate?` is false every use is collected, preserving LICM's
-;; established behavior for non-entry preheaders.
+;; Loop-local branch conditions alone cannot pay for a hoist: the backend can
+;; fuse a local comparison with its branch. Count those uses only outside this
+;; loop or in a nested loop, where a compare would otherwise repeat.
 (define (opt-licm-hot-use-vars
-  [context : (& context OptCfgContext)]
+  [context : (& OptCfgContext)]
   [latch-id : i64]
-  [loops : (& loops opt_natural_loop_vec.Vec)]
+  [loops : (& opt_natural_loop_vec.Vec)]
   [header : i64]
   [body : OptLabelSet]
   [gate? : bool]
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [set : (__tl_dyn-array i64)]) : (__tl_dyn-array i64)
-  (opt-licm-hot-use-vars-from
-    context
-    latch-id
-    (& (opt-licm-nested-loops (opt_natural_loop_vec.view loops) header body))
-    body
-    gate?
-    (ir.compiler-ir-block-list-view blocks)
-    set))
-
-;; `nested` is `opt-licm-nested-loops` of the loop whose body is `body`.
-(define (opt-licm-hot-use-vars-from
-  [context : (& context OptCfgContext)]
-  [latch-id : i64]
-  [nested : (& opt_natural_loop_vec.Vec)]
-  [body : OptLabelSet]
-  [gate? : bool]
-  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
-  [set : (__tl_dyn-array i64)]) : (__tl_dyn-array i64)
-  (match blocks
-    [(slice) set]
-    [(slice block & rest)
-      (match (owned_view.compiler-owned-reference-shared-view block)
+  (let
+    [nested
+      (opt-licm-nested-loops (opt_natural_loop_vec.view loops) header body)]
+    [seq : (& blocks (Slice ir.CompilerIrBlock))
+      (ir.compiler-ir-block-list-view blocks)]
+    [ids (ir.compiler-ir-id-list-new)]
+    (for [bi (iterator.range 0 (array-length seq))]
+      (match (& (array-ref seq bi))
         [(Block label instrs)
           (if (or
             (not (opt-label-contains body label))
             (opt-licm-label-in-loops?
-              (opt_natural_loop_vec.view (deref nested))
+              (opt_natural_loop_vec.view (& nested))
               label))
-            (opt-collect-instr-seq-uses-array
-              (compiler-opt-global-shared-view set)
-              instrs)
-            (if (or
-              (not gate?)
-              (opt-licm-block-guaranteed? context latch-id label))
-              (opt-licm-collect-nonbranch-uses-array
-                (compiler-opt-global-shared-view set)
-                (& instrs))
-              unit))
-          (opt-licm-hot-use-vars-from
-            context
-            latch-id
-            nested
-            body
-            gate?
-            rest
-            set)])]))
+            (opt-count-instr-seq-uses! (&mut set) instrs)
+            (when
+              (or
+                (not gate?)
+                (opt-licm-block-guaranteed? context latch-id label))
+              (for [i (iterator.range 0 instrs.len)]
+                (let
+                  [instr (ir.compiler-ir-instr-seq-borrow instrs i)]
+                  (match instr
+                    [(Branch _ _ _) unit]
+                    [_ (opt-count-instr-uses! (&mut ids) (&mut set) instr)])))))]))
+    set))
 
 ;; --- element-load dereferenceability (#7992) ---------------------------------
 ;;
-;; The memory proof the Load arm of opt-licm-candidate? runs answers one
-;; question: can the loop write the word this load reads? Moving the load to the
-;; preheader asks a second one: is the ADDRESS readable there? For the classes
-;; the hoist was built on the answer is unconditional. A descriptor's own header
-;; words, a word of a frame object or of a global's storage are fixed words of
-;; a live object, readable whether or not the loop would have read them. An
-;; ELEMENT address is not: `gep data, i` is readable only while
-;; `i <u len`, and in the source that fact is the `bounds_check i, len` in front
-;; of the load, which stays in the body. A hoisted element load therefore read
-;; memory the program never touched whenever the check would have failed or the
-;; loop never reached it -- an untaken arm, a zero-trip nested loop, a trip that
-;; exits first -- and a wild index faulted where the source returned normally
-;; or stopped at its bounds diagnostic (#7992). GVN's bypass-edge PRE refuses
-;; element bases for the same reason (MF-3).
+;; Alias safety and readability are separate. Hoisting an element load needs
+;; a bound at the preheader on the index into the same descriptor. A passed
+;; dominating bounds check or a dominating single-predecessor edge of an
+;; unsigned comparison can supply it. Follow And on true and Or on false.
 ;;
-;; So an element load leaves a loop only when `i <u len` is PROVEN at the
-;; preheader, with `len` the length word of the descriptor whose data word the
-;; load indexes, read through the same descriptor value: the shared bound
-;; identity the versioner and bounds_dom already key on. The proof is one of
-;;
-;;   * a passed `bounds_check i, len` in a block that dominates the preheader
-;;     (the preheader itself included: the hoist lands before its terminator,
-;;     after every check the block holds), or
-;;   * an edge that dominates the preheader -- its target has no other
-;;     predecessor -- out of an unsigned test that implies `i <u len` on that
-;;     edge: `lt i, len` or `gt len, i` taken true, `ge i, len` or `le len, i`
-;;     taken false, through And trees on the true edge and Or trees on the
-;;     false one. The versioner's fast-path guard is this shape, which is what
-;;     keeps an invariant-index read of a versioned fast copy hoistable.
-;;
-;; Every other load needs POSITIVE evidence that its word is readable at the
-;; preheader (#8085). The strongest is that the source reads it there anyway:
-;; a load the loop runs on every entry -- in the header, or a block the header's
-;; chain of unconditional jumps enters, before anything that may abort or not
-;; return -- reads the same word the hoisted copy does (the address is
-;; invariant and the memory proof keeps the loop from writing it), whatever its
-;; address class (opt-licm-deref-guaranteed?). Otherwise the word must be a
-;; fixed word of a trusted ROOT, inside the root's extent
-;; (opt-licm-deref-fixed-read?). A raw pointer's validity is a use-site
-;; obligation (SPEC section 7.3), so an integer, a cast or pointer arithmetic
-;; proves nothing. Roots are values of checked pointer types, valid wherever
-;; they are available (opt-licm-deref-root-extent). A load of one is a root as
-;; well: safe code writes every word outside an enum's payload only with its
-;; declared type (the typed memory ALIAS-3 relies on), so a checked pointer
-;; loaded from such a word of a root is valid wherever the root is. A payload word holds a pointer
-;; only under the tag the source tested, which speculation discards, so a
-;; speculated checked-pointer load also needs every word it reads type-stable
-;; in the root's object (opt-licm-deref-root-mask, #8124). A block holding a
-;; literal bounds check that always fails reads nothing past it, so none of its
-;; loads hoist: a constant out-of-bounds fixed-array index there addresses a
-;; byte past the array that looks like a field offset.
-;;
-;; The facts are gathered once per function. LICM only inserts into existing
-;; preheaders and never moves a check or a branch, so the facts and the
-;; dominator tree stay valid while the loops are walked. Every var a walk reads
-;; must have exactly one definition (`sources`), or its definition says nothing
-;; about the value the load sees.
+;; For other loads, an invariant address read on every entry before any
+;; early exit is already safe to read there. Otherwise require a trusted
+;; root and a fixed byte span within its extent. Checked pointer loads also
+;; need type-stable words, since a variant payload may hold a pointer only
+;; under the tested tag. A raw pointer or cast is insufficient evidence.
+;; A block with a permanently failing bounds check supplies no hoistable
+;; loads. All SSA facts used here require single definitions.
 (defstruct OptLicmDerefFacts
   (sources OptValueSources)
   ;; Declared global types, for a header-typed global's element type.
@@ -24787,15 +24371,15 @@
 
 ;; The facts, and where one loop's hoist lands: the dominator tree, the
 ;; preheader's dense id (-1 proves nothing) and the loop header's. `guard?`
-;; admits guarded reads, which the walk records in `plans[0]`
+;; admits guarded reads, which the walk records in its plan vector
 ;; (opt-licm-guard-plan!).
 (defstruct OptLicmDerefSite
-  (facts OptLicmDerefFacts)
-  (doms OptDomInfo)
+  (:lifetimes deref context)
+  (facts (& deref OptLicmDerefFacts))
+  (doms (& context OptDomInfo))
   (at i64)
   (header i64)
-  (guard? bool)
-  (plans (__tl_dyn-array opt_licm_guard_plan_vec.Vec)))
+  (guard? bool))
 
 ;; The two passes of the fact scan share one walk. With `fill?` false a row is
 ;; COUNTED -- on `cursor[key + 1]`, or on `literal-cursor[0]` -- and with
@@ -24893,7 +24477,7 @@
                  (Phi dst _ _))
               dst]
             [_ (- 0 1)])]
-        (match (compiler-opt-global-shared-view instr)
+        (match (& instr)
           [(Alloc var _)
             (if (and (> run-count 0) (= var (+ run-last 1)))
               (begin
@@ -25618,7 +25202,7 @@
 (define (opt-licm-deref-proven?
   [type-segment-bases : i64]
   [types : (& types OptSsaVarTypes)]
-  [site : (& site OptLicmDerefSite)]
+  [site : (& site (OptLicmDerefSite deref context))]
   [index : (& ir.CompilerIrValue)]
   [key : i64]) : bool
   (match (opt-licm-deref-bound
@@ -26129,7 +25713,7 @@
 (define (opt-licm-deref-fixed-read?
   [type-segment-bases : i64]
   [types : (& types OptSsaVarTypes)]
-  [site : (& site OptLicmDerefSite)]
+  [site : (& site (OptLicmDerefSite deref context))]
   [facts : (& facts OptLicmDerefFacts)]
   [ptr : (& ir.CompilerIrValue)]
   [offset : i64]
@@ -26148,7 +25732,7 @@
       (match (& resolved)
         [(Var var) (opt-licm-deref-def facts.defs facts.sources var)]
         [_ (No)])]
-    (match (compiler-opt-global-shared-view step)
+    (match (& step)
       [(Some (Gep _ base index scale) _)
         (match index
           [(I64 k)
@@ -26324,7 +25908,7 @@
   [type-segment-bases : i64]
   [types : (& types OptSsaVarTypes)]
   [ptrs : (& ptrs OptLicmPtrEnv)]
-  [site : (& site OptLicmDerefSite)]
+  [site : (& site (OptLicmDerefSite deref context))]
   [dst : i64]
   [src : (& ir.CompilerIrValue)]
   [load-ty : (& ast.AstType)]
@@ -26424,40 +26008,15 @@
 
 ;; --- guarded element reads (#7997) -------------------------------------------
 ;;
-;; An invariant element read the loop may not move, because nothing proves
-;; `index <u len` at the preheader, need not still run on every trip. When a
-;; row proves `index <u len` at the read itself -- the loop's own
-;; `bounds_check index, len`, or the unsigned test whose edge leads there --
-;; and the address, index and length are all available at the preheader, the
-;; read moves to the preheader behind that same comparison:
+;; If a dominating row proves the bound at the read and the address, index,
+;; and length are invariant, copy the unsigned comparison to the preheader.
+;; Load only on its true arm and join with a zero on its false arm. The
+;; original check still dominates all uses, so no use observes that zero.
+;; Only non-pointer-root values at most a word wide can move this way.
 ;;
-;;   pre:   %ok = lt index, len : u64 ; branch %ok, pre__licm_guard, pre__licm_join
-;;   pre__licm_guard:  %t = load <address> ; jump pre__licm_join
-;;   pre__licm_join:   %v = phi [0, pre], [%t, pre__licm_guard] ; jump header
-;;
-;; The loop keeps its check. Every use of %v is dominated by the read's old
-;; place and so by the row, which tests the same two invariant values; so a use
-;; runs only where %ok held in the preheader, and there %v is the word the loop
-;; would have read: the address is invariant and the memory proof keeps the
-;; loop from writing it. The zero reaches no use. No address the source did not
-;; bound is read.
-;;
-;; Only reads of at most a word whose type no rule trusts as a pointer move
-;; this way: a checked pointer's value is a root for later hoists
-;; (opt-licm-deref-type-extent), and the zero arm is not one. The
-;; profitability rules hold the setup to reads that run on most trips of a
-;; loop that runs many: the loop counts and has no exit but the latch's
-;; (opt-licm-apply-loop), and the read is not reached only through the equal
-;; edge of an equality test (opt-licm-guard-sparse?).
-;;
-;; One LICM run below the level-2 fixpoint and every pass that clones a loop
-;; places the guards (opt-licm-guard-final). A preheader diamond inside the
-;; pipeline would enlarge an enclosing loop's body before the versioner and
-;; the unroller price it, and the run moves nothing ordinary LICM would: what
-;; that moves has moved, and later passes may have sunk it back on purpose.
-;; The walk records a plan per read and the diamonds are built once every loop
-;; has been walked (opt-licm-guard-apply), so no loop's body or dominator facts
-;; change under the walk.
+;; Prefer counted loops and reads that run on most trips. Record the plans
+;; during final LICM and build the diamonds after the loop walk, keeping
+;; loop and dominance facts stable while planning.
 (define opt-licm-guard-on : bool
   false)
 (define opt-licm-guard-outer-loop? : bool
@@ -26555,7 +26114,7 @@
 ;; test usually fails, so a read there runs on few trips and does not repay
 ;; its guard.
 (define (opt-licm-guard-sparse?
-  [site : (& site OptLicmDerefSite)]
+  [site : (& site (OptLicmDerefSite deref context))]
   [block : i64]) : bool
   (let
     [facts (& site.facts)]
@@ -26631,7 +26190,8 @@
   [types : (& types OptSsaVarTypes)]
   [loop-defs : (& loop-defs opt_i64_i64_map.Map)]
   [hoisted : (& hoisted opt_i64_i64_map.Map)]
-  [site : (& site OptLicmDerefSite)]
+  [site : (& site (OptLicmDerefSite deref context))]
+  [guard-plans : (&mut opt_licm_guard_plan_vec.Vec)]
   [instr : (& instr ir.CompilerIrInstr)]) : unit
   (let
     [facts (& site.facts)]
@@ -26652,7 +26212,7 @@
             (> width 8)
             (not (= (opt-licm-deref-type-extent type-segment-bases (& ty)) 0))
             (opt-licm-guard-planned?
-              (opt_licm_guard_plan_vec.view (& (array-ref site.plans 0)))
+              (opt_licm_guard_plan_vec.view guard-plans)
               dst)
             (and
               (not opt-licm-guard-outer-loop?)
@@ -26696,10 +26256,6 @@
                           index)
                         (opt-licm-value-invariant? false loop-defs hoisted len))
                         (let
-                          [plans : opt_licm_guard_plan_vec.Vec
-                            (compiler-opt-global-array-element-shared-view
-                              site.plans
-                              0)]
                           [len-owner : i64
                             (opt-licm-deref-word-owner
                               type-segment-bases
@@ -26718,7 +26274,7 @@
                                 len-global)
                               (- 0 1))]
                           (opt_licm_guard_plan_vec.push-ref!
-                            (&mut plans)
+                            guard-plans
                             (OptLicmGuardPlan
                               (opt-cfg-index-label site.doms.index site.at)
                               (opt-cfg-index-label site.doms.index site.header)
@@ -26727,11 +26283,7 @@
                               ty
                               index
                               len
-                              len-fam))
-                          (owned_view.compiler-owned-cell-set!
-                            site.plans
-                            0
-                            plans))
+                              len-fam)))
                         unit)]
                     [(No) unit]))]
               [_ unit])))]
@@ -26756,32 +26308,9 @@
     [(Bool) (Bool false)]
     [_ (I64 0)]))
 
-;; `instrs` without its instruction defining `dst` by a load, or nothing when
-;; it holds none.
 (defenum OptLicmGuardDropped
   (No)
   (Some ir.CompilerIrInstrSeq))
-
-(define (opt-licm-guard-drop-load
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [dst : i64]) : OptLicmGuardDropped
-  (let
-    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    [builder : ir.CompilerIrInstrBuilder
-      (ir.compiler-ir-instr-builder-with-capacity count)]
-    [found? : bool false]
-    (for [index (iterator.range 0 count)]
-      (let
-        [instr (ir.compiler-ir-instr-seq-ref instrs index)]
-        (match (compiler-opt-global-shared-view instr)
-          [(Load load-dst _ _)
-            (if (= load-dst dst)
-              (set! found? true)
-              (ir.compiler-ir-instr-builder-push! (&mut builder) instr))]
-          [_ (ir.compiler-ir-instr-builder-push! (&mut builder) instr)])))
-    (if found?
-      (Some (ir.compiler-ir-instr-builder-to-seq builder))
-      (No))))
 
 ;; Drop every load whose dst is in `batch-dsts` (0..batch-count).
 (define (opt-licm-guard-drop-batch-loads
@@ -27174,39 +26703,44 @@
       false
       frame-cell)))
 
+(defstruct OptLicmLoopFacts
+  (loop-defs opt_i64_i64_map.Map)
+  (store-roots OptLicmStoreRootList)
+  (globals OptLicmGlobalFacts)
+  (hot-uses (__tl_dyn-array i64)))
+
+(defstruct OptLicmFunctionAnalysis
+  (sources OptValueSources)
+  (types OptSsaVarTypes)
+  (provenance OptLicmProvenance)
+  (deref-facts OptLicmDerefFacts))
+
 (defstruct OptLicmFilterCfg
+  (:lifetimes facts analysis context)
   (type-segment-bases i64)
   (store-summary OptLicmStoreSummary)
   (legacy-store-summary OptLicmStoreSummary)
   (any-call? bool)
   (licm-mode i64)
-  (descriptor-header-hoist? bool))
+  (descriptor-header-hoist? bool)
+  (analysis (& analysis OptLicmFunctionAnalysis))
+  (loop (& facts OptLicmLoopFacts))
+  (deref-site (OptLicmDerefSite analysis context)))
 
 (define (opt-licm-candidate?
-  [cfg : OptLicmFilterCfg]
-  [loop-defs : (& loop-defs opt_i64_i64_map.Map)]
+  [cfg : (OptLicmFilterCfg facts analysis context)]
   [hoisted : (& hoisted opt_i64_i64_map.Map)]
-  [sources : (& sources OptValueSources)]
-  [types : (& types OptSsaVarTypes)]
-  [ptrs : (& ptrs OptLicmPtrEnv)]
-  [roots : (& roots OptLicmRootEnv)]
-  [store-roots : (& store-roots OptLicmStoreRootList)]
-  ;; What this loop knows about `Global` operands -- each a hidden rip-relative
-  ;; load of that global's cell. See OptLicmGlobalFacts,
-  ;; opt-licm-value-invariant? and opt-licm-globals-clean?.
-  [globals : (& globals OptLicmGlobalFacts)]
-  [hot-uses : (& hot-uses (__tl_dyn-array i64))]
-  ;; #7992: where this loop's hoist lands, and the facts that bound an
-  ;; element load there (opt-licm-deref-load-code).
-  [deref-site : (& deref-site OptLicmDerefSite)]
-  ;; False asks every question but that one (opt-licm-guard-plan!).
   [deref? : bool]
   [instr : (& instr ir.CompilerIrInstr)]) : bool
   (match instr
     [(Mov _ src _)
       (and
         (opt-licm-mode-late? cfg.licm-mode)
-        (opt-licm-global-value-invariant? globals loop-defs hoisted (& src))
+        (opt-licm-global-value-invariant?
+          (& cfg.loop.globals)
+          (& cfg.loop.loop-defs)
+          hoisted
+          (& src))
         ;; In scalar loops, do not lengthen an arbitrary outside value's live
         ;; range merely to move its copy. Literal seeds still unlock
         ;; folding/motion. Vector loops also keep copies: splitting their
@@ -27218,7 +26752,11 @@
     [(or (Cast _ src _ _) (Bitcast _ src _ _))
       (and
         (opt-licm-mode-late? cfg.licm-mode)
-        (opt-licm-global-value-invariant? globals loop-defs hoisted (& src))
+        (opt-licm-global-value-invariant?
+          (& cfg.loop.globals)
+          (& cfg.loop.loop-defs)
+          hoisted
+          (& src))
         (match (& src)
           [(Var var)
             (or
@@ -27231,14 +26769,18 @@
     ;; check on every logical lane. Hoist the projection whenever its packed
     ;; source is invariant; unlike a memory Load this needs no alias proof.
     [(Word _ src _ _)
-      (opt-licm-global-value-invariant? globals loop-defs hoisted (& src))]
+      (opt-licm-global-value-invariant?
+        (& cfg.loop.globals)
+        (& cfg.loop.loop-defs)
+        hoisted
+        (& src))]
     [(BinOp dst op lhs rhs _)
       (and
-        (opt-used-array-contains hot-uses dst)
+        (opt-used-array-contains (& cfg.loop.hot-uses) dst)
         (not (ir.compiler-ir-binop-may-fault? (& op)))
         (opt-licm-global-values-invariant?
-          globals
-          loop-defs
+          (& cfg.loop.globals)
+          (& cfg.loop.loop-defs)
           hoisted
           (& lhs)
           (& rhs)))]
@@ -27250,40 +26792,44 @@
     ;; turn admits dependent invariant SIMD chains in program order.
     [(or (UnOp dst _ src _) (Splat dst src _ _))
       (and
-        (opt-used-array-contains hot-uses dst)
-        (opt-licm-global-value-invariant? globals loop-defs hoisted (& src)))]
+        (opt-used-array-contains (& cfg.loop.hot-uses) dst)
+        (opt-licm-global-value-invariant?
+          (& cfg.loop.globals)
+          (& cfg.loop.loop-defs)
+          hoisted
+          (& src)))]
     [(VectorBinOp payload)
       (and
-        (opt-used-array-contains hot-uses payload.dst)
+        (opt-used-array-contains (& cfg.loop.hot-uses) payload.dst)
         ;; A checked vector div/mod/shift may still trap when executed.  Do
         ;; not speculate it into a preheader for a zero-trip loop.
         (not (ir.compiler-ir-binop-may-fault? (& payload.op)))
         (opt-licm-global-values-invariant?
-          globals
-          loop-defs
+          (& cfg.loop.globals)
+          (& cfg.loop.loop-defs)
           hoisted
           (& payload.lhs)
           (& payload.rhs)))]
     [(VectorCompare payload)
       (and
-        (opt-used-array-contains hot-uses payload.dst)
+        (opt-used-array-contains (& cfg.loop.hot-uses) payload.dst)
         (opt-licm-global-values-invariant?
-          globals
-          loop-defs
+          (& cfg.loop.globals)
+          (& cfg.loop.loop-defs)
           hoisted
           (& payload.lhs)
           (& payload.rhs)))]
     [(Gep dst base offset ty)
       (and
-        (opt-gvn-stable-var? sources dst)
+        (opt-gvn-stable-var? (& cfg.analysis.sources) dst)
         ;; Keep an address calculation out of a call-spanning live range,
         ;; except for the fixed-word class whose in-place read is not one
         ;; instruction. See opt-licm-gep-call-boundary-ok?.
         (opt-licm-gep-call-boundary-ok?
           cfg.type-segment-bases
-          types
-          globals
-          ptrs
+          (& cfg.analysis.types)
+          (& cfg.loop.globals)
+          (& cfg.analysis.provenance.ptrs)
           cfg.store-summary
           cfg.legacy-store-summary
           cfg.any-call?
@@ -27301,15 +26847,15 @@
         (or
           ;; IAG-2. `@g` here is the ADDRESS of g's own storage after IAG-1.
           (and
-            (opt-licm-global-header-value? globals (& base))
+            (opt-licm-global-header-value? (& cfg.loop.globals) (& base))
             (opt-licm-value-invariant?
-              globals.clean?
-              loop-defs
+              cfg.loop.globals.clean?
+              (& cfg.loop.loop-defs)
               hoisted
               (& offset)))
           (opt-licm-values-invariant?
-            globals.clean?
-            loop-defs
+            cfg.loop.globals.clean?
+            (& cfg.loop.loop-defs)
             hoisted
             (& base)
             (& offset)))
@@ -27318,14 +26864,18 @@
           (opt-licm-memory-safe?
             cfg.store-summary
             cfg.legacy-store-summary
-            store-roots
+            (& cfg.loop.store-roots)
             cfg.any-call?
-            (opt-licm-root-of-value roots (& base))
+            (opt-licm-root-of-value (& cfg.analysis.provenance.roots) (& base))
             ;; #8941: the address's first byte, from the root's var.
-            (match (opt-licm-root-env-offset roots (& (Var dst)))
+            (match (opt-licm-root-env-offset
+              (& cfg.analysis.provenance.roots)
+              (& (Var dst)))
               [(LookupFound address-offset) address-offset]
               [(LookupMissing) 0])
-            (match (opt-licm-root-env-offset roots (& (Var dst)))
+            (match (opt-licm-root-env-offset
+              (& cfg.analysis.provenance.roots)
+              (& (Var dst)))
               [(LookupFound _) 1]
               [(LookupMissing) 0])
             (and
@@ -27333,44 +26883,55 @@
                 cfg.legacy-store-summary)
               (opt-licm-header-slot-gep?
                 cfg.type-segment-bases
-                types
-                globals
-                ptrs
+                (& cfg.analysis.types)
+                (& cfg.loop.globals)
+                (& cfg.analysis.provenance.ptrs)
                 (& base)
                 (& offset)
                 (& ty)))
             false)))]
     [(Load dst src load-ty)
       (and
-        (opt-gvn-stable-var? sources dst)
-        (opt-gvn-value-stable? sources (& src))
-        (opt-licm-value-invariant? globals.clean? loop-defs hoisted (& src))
+        (opt-gvn-stable-var? (& cfg.analysis.sources) dst)
+        (opt-gvn-value-stable? (& cfg.analysis.sources) (& src))
+        (opt-licm-value-invariant?
+          cfg.loop.globals.clean?
+          (& cfg.loop.loop-defs)
+          hoisted
+          (& src))
         (or
           ;; IAG-2: descriptor handle out of a word of g's own storage.
-          (opt-licm-global-header-source? globals ptrs (& src))
+          (opt-licm-global-header-source?
+            (& cfg.loop.globals)
+            (& cfg.analysis.provenance.ptrs)
+            (& src))
           (opt-licm-memory-safe?
             cfg.store-summary
             cfg.legacy-store-summary
-            store-roots
+            (& cfg.loop.store-roots)
             cfg.any-call?
-            (opt-licm-root-of-value roots (& src))
-            (match (opt-licm-root-env-offset roots (& src))
+            (opt-licm-root-of-value (& cfg.analysis.provenance.roots) (& src))
+            (match (opt-licm-root-env-offset
+              (& cfg.analysis.provenance.roots)
+              (& src))
               [(LookupFound offset) offset]
               [(LookupMissing) 0])
-            (match (opt-licm-root-env-offset roots (& src))
+            (match (opt-licm-root-env-offset
+              (& cfg.analysis.provenance.roots)
+              (& src))
               [(LookupFound _)
                 (opt-load-loc-type-size cfg.type-segment-bases (& load-ty))]
               [(LookupMissing) 0])
             (and
               (opt-licm-store-summary-header-load-safe-for?
                 cfg.legacy-store-summary
-                ptrs
+                (& cfg.analysis.provenance.ptrs)
                 (& src))
               (opt-licm-header-slot-source?
                 cfg.type-segment-bases
-                types
-                globals
-                ptrs
+                (& cfg.analysis.types)
+                (& cfg.loop.globals)
+                (& cfg.analysis.provenance.ptrs)
                 (opt-licm-mode-late? cfg.licm-mode)
                 (& src)))
             (opt-licm-store-summary-element-class-safe?
@@ -27381,13 +26942,16 @@
           (and
             cfg.descriptor-header-hoist?
             (or
-              (not (opt-licm-frame-word-source? ptrs (& src)))
+              (not
+                (opt-licm-frame-word-source?
+                  (& cfg.analysis.provenance.ptrs)
+                  (& src)))
               (not cfg.legacy-store-summary.frame-store?))
             (opt-licm-header-slot-source?
               cfg.type-segment-bases
-              types
-              globals
-              ptrs
+              (& cfg.analysis.types)
+              (& cfg.loop.globals)
+              (& cfg.analysis.provenance.ptrs)
               true
               (& src))))
         ;; #7992: readability at the preheader.
@@ -27396,22 +26960,15 @@
           (=
             (opt-licm-deref-load-code
               cfg.type-segment-bases
-              types
-              ptrs
-              deref-site
+              (& cfg.analysis.types)
+              (& cfg.analysis.provenance.ptrs)
+              (& cfg.deref-site)
               dst
               (& src)
               (& load-ty)
               false)
             0)))]
     [_ false]))
-
-(define (opt-licm-add-hoisted-def
-  [hoisted : opt_i64_i64_map.Map]
-  [instr : (& ir.CompilerIrInstr)]) : opt_i64_i64_map.Map
-  (match (opt-instr-def-var instr)
-    [(Some var) (opt-used-add hoisted var)]
-    [(None) hoisted]))
 
 (define (opt-instr-seq-concat
   [prefix : ir.CompilerIrInstrSeq]
@@ -27447,27 +27004,16 @@
     [_ false]))
 
 (define (opt-licm-filter-instr-seq
-  [cfg : OptLicmFilterCfg]
-  [loop-defs : (& loop-defs opt_i64_i64_map.Map)]
+  [cfg : (OptLicmFilterCfg facts analysis context)]
   [instrs : (& ir.CompilerIrInstrSeq)]
-  [sources : (& sources OptValueSources)]
-  [types : (& types OptSsaVarTypes)]
-  [ptrs : (& ptrs OptLicmPtrEnv)]
-  [roots : (& roots OptLicmRootEnv)]
-  [store-roots : (& store-roots OptLicmStoreRootList)]
-  [globals : (& globals OptLicmGlobalFacts)]
-  [hot-uses : (& hot-uses (__tl_dyn-array i64))]
-  [deref-site : (& deref-site OptLicmDerefSite)]
+  [guard-plans : (&mut opt_licm_guard_plan_vec.Vec)]
   [is-header? : bool]
-  [hoisted : opt_i64_i64_map.Map]) : OptLicmInstrsResult
+  [hoisted : (&mut opt_i64_i64_map.Map)]
+  [moved : (&mut ir.CompilerIrInstrBuilder)]) : ir.CompilerIrInstrSeq
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [kept : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity count)]
-    [moved : ir.CompilerIrInstrBuilder
-      (ir.compiler-ir-instr-builder-with-capacity count)]
-    [next-hoisted : opt_i64_i64_map.Map hoisted]
-    [changed : bool false]
     [header-prefix-pure? : bool (and is-header? (not opt-licm-guard-on))]
     (for [cursor (iterator.range 0 count)]
       (let
@@ -27478,9 +27024,9 @@
             (match (& instr)
               [(BoundsCheck check-idx check-len _)
                 (opt-licm-global-values-invariant?
-                  globals
-                  loop-defs
-                  (& next-hoisted)
+                  (& cfg.loop.globals)
+                  (& cfg.loop.loop-defs)
+                  hoisted
                   (& check-idx)
                   (& check-len))]
               [_ false]))]
@@ -27506,9 +27052,13 @@
               [(BinOp dst op lhs rhs _)
                 (and
                   (ir.compiler-ir-binop-compare? (& op))
-                  (opt-gvn-stable-var? sources dst)
-                  (opt-licm-value-invariant? false loop-defs next-hoisted lhs)
-                  (opt-licm-value-invariant? false loop-defs next-hoisted rhs))]
+                  (opt-gvn-stable-var? (& cfg.analysis.sources) dst)
+                  (opt-licm-values-invariant?
+                    false
+                    (& cfg.loop.loop-defs)
+                    hoisted
+                    lhs
+                    rhs))]
               [_ false]))]
         [ordinary? : bool
           (or
@@ -27517,22 +27067,11 @@
             (and
               (or
                 (not opt-licm-guard-on)
-                (and deref-site.guard? (or load? opt-licm-guard-outer-loop?)))
+                (and
+                  cfg.deref-site.guard?
+                  (or load? opt-licm-guard-outer-loop?)))
               (not addr-taken-write?)
-              (opt-licm-candidate?
-                cfg
-                loop-defs
-                next-hoisted
-                sources
-                types
-                ptrs
-                roots
-                store-roots
-                globals
-                hot-uses
-                deref-site
-                true
-                (& instr))))]
+              (opt-licm-candidate? cfg hoisted true (& instr))))]
         (if (and
           ordinary?
           (or
@@ -27540,119 +27079,94 @@
             opt-licm-guard-outer-loop?
             opt-licm-guard-hoist-cmp?))
           (begin
-            (set!
-              next-hoisted
-              (opt-licm-add-hoisted-def next-hoisted (& instr)))
-            (ir.compiler-ir-instr-builder-push! (&mut moved) instr)
-            (set! changed true))
+            (match (opt-instr-def-var (& instr))
+              [(Some dst) (opt_i64_i64_map.insert-ref! hoisted dst 1)]
+              [(None) unit])
+            (ir.compiler-ir-instr-builder-push! moved instr))
           ;; #7997: a read refused only for want of a bound at the
           ;; preheader may still move behind its own comparison.
           (begin
             (when
               (and
-                deref-site.guard?
+                cfg.deref-site.guard?
                 load?
                 (not ordinary?)
                 (not addr-taken-write?)
-                (opt-licm-candidate?
-                  cfg
-                  loop-defs
-                  next-hoisted
-                  sources
-                  types
-                  ptrs
-                  roots
-                  store-roots
-                  globals
-                  hot-uses
-                  deref-site
-                  false
-                  (& instr)))
+                (opt-licm-candidate? cfg hoisted false (& instr)))
               (opt-licm-guard-plan!
                 cfg.type-segment-bases
-                types
-                loop-defs
-                (& next-hoisted)
-                deref-site
+                (& cfg.analysis.types)
+                (& cfg.loop.loop-defs)
+                hoisted
+                (& cfg.deref-site)
+                guard-plans
                 instr))
             (ir.compiler-ir-instr-builder-push! (&mut kept) instr)))))
-    (Result
-      (ir.compiler-ir-instr-builder-to-seq kept)
-      (ir.compiler-ir-instr-builder-to-seq moved)
-      next-hoisted
-      changed)))
+    (ir.compiler-ir-instr-builder-to-seq kept)))
 
 (define (opt-licm-filter-body-blocks!
   [out : (&mut out ir.CompilerIrBlockBuilder)]
-  [cfg : OptLicmFilterCfg]
-  [loop-defs : (& loop-defs opt_i64_i64_map.Map)]
+  [cfg : (OptLicmFilterCfg facts analysis context)]
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
-  [sources : (& sources OptValueSources)]
-  [types : (& types OptSsaVarTypes)]
-  [ptrs : (& ptrs OptLicmPtrEnv)]
-  [roots : (& roots OptLicmRootEnv)]
-  [store-roots : (& store-roots OptLicmStoreRootList)]
-  [globals : (& globals OptLicmGlobalFacts)]
-  [hot-uses : (& hot-uses (__tl_dyn-array i64))]
-  [deref-site : (& deref-site OptLicmDerefSite)]
+  [guard-plans : (&mut opt_licm_guard_plan_vec.Vec)]
   [header : i64]
-  [hoisted : opt_i64_i64_map.Map]) : OptLicmBlocksResult
+  [map-capacity : i64]) : ir.CompilerIrInstrSeq
   (let
-    [all-moved : ir.CompilerIrInstrSeq (ir.compiler-ir-instr-seq-empty)]
-    [cur-hoisted : opt_i64_i64_map.Map hoisted]
-    [changed : bool false]
+    [moved (ir.compiler-ir-instr-builder-with-capacity 0)]
+    [hoisted (opt_i64_i64_map.with-capacity map-capacity)]
     (for [bi (iterator.range 0 (array-length blocks))]
       (match (& (array-ref blocks bi))
         [(Block label instrs)
-          (match (opt-licm-filter-instr-seq
-            cfg
-            loop-defs
-            (& instrs)
-            sources
-            types
-            ptrs
-            roots
-            store-roots
-            globals
-            hot-uses
-            deref-site
-            (= label header)
-            cur-hoisted)
-            [(Result kept moved next-hoisted block-changed)
-              (ir.compiler-ir-block-builder-push!
-                out
-                (ir.CompilerIrBlock.Block label kept))
-              (set! all-moved (opt-instr-seq-concat all-moved moved))
-              (set! cur-hoisted next-hoisted)
-              (when block-changed (set! changed true))])]))
-    (Result all-moved cur-hoisted changed)))
+          (ir.compiler-ir-block-builder-push!
+            out
+            (ir.CompilerIrBlock.Block
+              label
+              (opt-licm-filter-instr-seq
+                cfg
+                instrs
+                guard-plans
+                (= label header)
+                (&mut hoisted)
+                (&mut moved))))]))
+    (ir.compiler-ir-instr-builder-to-seq moved)))
 
-(define (opt-licm-replace-body-blocks!
-  [out : (&mut out ir.CompilerIrBlockBuilder)]
+;; The replacement body is in original block order. Insert into the preheader
+;; in the same walk, leaving every other block in its original position.
+(define (opt-licm-rewrite-loop-blocks!
+  [out : (&mut ir.CompilerIrBlockBuilder)]
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
-  [body-blocks : (& body-blocks (Slice ir.CompilerIrBlock))]) : unit
-  (match body-blocks
-    [(slice) (ir.compiler-ir-block-builder-append-slice! out blocks)]
-    [(slice replacement & replacement-rest)
-      (match blocks
-        [(slice) unit]
-        [(slice block & rest)
-          (match block
-            [(Block label _)
-              (match replacement
-                [(Block replacement-label _)
-                  (if (= label replacement-label)
-                    (begin
-                      (ir.compiler-ir-block-builder-push!
-                        out
-                        (owned_view.compiler-owned-reference-shared-view
-                          replacement))
-                      (opt-licm-replace-body-blocks! out rest replacement-rest))
-                    (begin
-                      (ir.compiler-ir-block-builder-push!
-                        out
-                        (owned_view.compiler-owned-reference-shared-view block))
-                      (opt-licm-replace-body-blocks! out rest body-blocks)))])])])]))
+  [body : (& body (Slice ir.CompilerIrBlock))]
+  [preheader : i64]
+  [hoisted : (& ir.CompilerIrInstrSeq)]) : unit
+  (let
+    [next : i64 0]
+    (for [i (iterator.range 0 (array-length blocks))]
+      (let
+        [original (& (array-ref blocks i))]
+        [label : i64
+          (match original
+            [(Block label _) label])]
+        [block : ir.CompilerIrBlock
+          (if (and
+            (< next (array-length body))
+            (match (& (array-ref body next))
+              [(Block found _) (= found label)]))
+            (let
+              [replacement
+                (owned_view.compiler-owned-reference-shared-view
+                  (& (array-ref body next)))]
+              (+= next 1)
+              replacement)
+            (owned_view.compiler-owned-reference-shared-view original))]
+        (ir.compiler-ir-block-builder-push!
+          out
+          (if (= label preheader)
+            (match block
+              [(Block _ instrs)
+                (ir.CompilerIrBlock.Block
+                  label
+                  (opt-licm-insert-before-terminator hoisted instrs))])
+            block))))))
 
 (define (opt-licm-insert-before-terminator
   [hoisted : (& ir.CompilerIrInstrSeq)]
@@ -27695,32 +27209,6 @@
       (return index)))
   count)
 
-(define (opt-licm-insert-before-terminator-seq
-  [hoisted : (& ir.CompilerIrInstrSeq)]
-  [instrs : (& ir.CompilerIrInstrSeq)]) : ir.CompilerIrInstrSeq
-  (opt-licm-insert-before-terminator
-    hoisted
-    (owned_view.compiler-owned-reference-shared-view instrs)))
-
-(define (opt-licm-insert-preheader-blocks!
-  [out : (&mut out ir.CompilerIrBlockBuilder)]
-  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
-  [preheader : i64]
-  [hoisted : ir.CompilerIrInstrSeq]) : unit
-  (match blocks
-    [(slice) unit]
-    [(slice block & rest)
-      (match block
-        [(Block label instrs)
-          (ir.compiler-ir-block-builder-push!
-            out
-            (if (= label preheader)
-              (ir.CompilerIrBlock.Block
-                label
-                (opt-licm-insert-before-terminator-seq (& hoisted) (& instrs)))
-              (owned_view.compiler-owned-reference-shared-view block)))
-          (opt-licm-insert-preheader-blocks! out rest preheader hoisted)])]))
-
 ;; M-G (B1): duplicate-hoist dedup. The filter hoists EVERY invariant load/gep
 ;; individually, so a loop whose body loads the same descriptor slot at N sites
 ;; (one gep+load pair per inlined bounds check, kept distinct in-body because
@@ -27736,6 +27224,13 @@
 ;; defined var -- partial substitution is always sound. Dsts are single-def
 ;; (opt-gvn-stable-var? gates candidacy), so a body use can only see the
 ;; preheader def.
+(define (opt-licm-insert-before-terminator-seq
+  [hoisted : (& ir.CompilerIrInstrSeq)]
+  [instrs : (& ir.CompilerIrInstrSeq)]) : ir.CompilerIrInstrSeq
+  (opt-licm-insert-before-terminator
+    hoisted
+    (owned_view.compiler-owned-reference-shared-view instrs)))
+
 (defenum OptLicmDup
   (OptLicmDupNone)
   (OptLicmDupVar i64))
@@ -27849,7 +27344,7 @@
 (define (opt-licm-subst-body-blocks!
   [out : (&mut out ir.CompilerIrBlockBuilder)]
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
-  [env : OptCopyEnv]) : unit
+  [env : (& OptCopyEnv)]) : unit
   (match blocks
     [(slice) unit]
     [(slice block & rest)
@@ -27859,7 +27354,7 @@
             out
             (ir.CompilerIrBlock.Block
               label
-              (opt-licm-subst-instr-seq (& env) (& instrs))))
+              (opt-licm-subst-instr-seq env (& instrs))))
           (opt-licm-subst-body-blocks! out rest env)])]))
 
 (define (opt-licm-switch-case-outside?
@@ -28888,101 +28383,11 @@
 
 ;; --- ALIAS-2: LICM refusal tracing ---------------------------------------------
 ;;
-;; Every clause below is a verdict about ONE loop-invariant CANDIDATE, and
-;; without this tracer the only way to learn WHICH conjunct held a candidate
-;; inside its loop is to instrument the pass by hand. `--trace-passes` otherwise
-;; reports the pass's block and instruction counts, plus IAG-2's own budget
-;; arithmetic (opt-licm-global-header-trace!) for loops that reach it -- and a
-;; loop whose storage table was never built reaches it silently, reporting
-;; nothing at all, so a loop that reloads global descriptor chains on every
-;; trip has no line anywhere saying why.
-;;
-;; The tracer prints one line per candidate the loop KEPT that a call or a store
-;; is what kept:
-;;
-;;   licm-refuse|<function>|<loop header>|<candidate var>|<kind>|<reason>
-;;
-;; KINDS name the word the candidate reads or addresses, because that is what
-;; decides which proof applies:
-;;
-;;   global-cell        `gep @g, <literal>` and the load through it -- the
-;;                      descriptor HANDLE a memory-class global's own storage
-;;                      holds (IAG-1/IAG-2's head of chain), or a `Global`
-;;                      operand the loop-scope cell promotion left in place.
-;;   descriptor-length  the length word of a descriptor handle
-;;                      (opt-bounds-object-length-slot?/OptLicmPtrKind.HeaderSlot).
-;;   descriptor-data    its data-pointer word (opt-licm-data-slot?/DataSlot).
-;;   load               any other load left in the loop whose address is already
-;;                      available outside it.
-;;
-;; REASONS are the conjuncts themselves, never a paraphrase. The vocabulary:
-;;
-;;   globals-clean:mem-clean-call         the loop-wide `globals-clean?` answer is
-;;                                        false ONLY because a direct callee the
-;;                                        call-memory fixpoint proved writes no
-;;                                        memory at all set `mem-clean-call?`
-;;                                        (opt-licm-direct-call-keeps-globals-clean?,
-;;                                        `globals-clean-strict?` at the loop site).
-;;   globals-clean:cell-write:<blame>     `global-write?` is set; <blame> names the
-;;                                        call or store that set it.
-;;   iag2:no-table                        the program carries no storage table
-;;                                        at all, so every loop is seeded "may
-;;                                        write any storage" and
-;;                                        opt-licm-global-header-count answers 0
-;;                                        without scanning.
-;;   iag2:obj-any:<blame>                 the table exists but THIS loop's storage
-;;                                        set saturated at "any storage"; <blame>
-;;                                        names what saturated it.
-;;   iag2:p18-cell-write:<blame>          the per-global CELL row says this body may
-;;                                        write g's cell.
-;;   iag2:obj-write:<blame>               the per-global STORAGE row says this body
-;;                                        may write g's own storage.
-;;   iag2:side-exit-return                every side exit is return-shaped (kind 1),
-;;                                        which the header hoist declines.
-;;   iag2:no-refs                         the loop references no global whose storage
-;;                                        the two rows prove it does not write.
-;;   iag2:pool:<n>                        the loop references more eligible globals
-;;                                        than opt-licm-int-register-pool, and this
-;;                                        one is not among the most-referenced that
-;;                                        the hoist takes (opt-licm-global-header-admit).
-;;   header-load-safe:call:<blame>        opt-licm-store-summary-header-load-safe? is
-;;                                        false because of a call.
-;;   header-load-safe:store:<blame>       ... because of a header-or-unknown store.
-;;   call-boundary:<blame>                the P6/R7 hoist-vs-allocate interlock
-;;                                        (opt-licm-store-summary-call-boundary?) at
-;;                                        an address-formation site.
-;;   side-exit-return                     the return-shaped side-exit poison closed
-;;                                        the general memory path and the
-;;                                        descriptor-header exception did not apply.
-;;   memory-root                          opt-licm-memory-safe? refused on root
-;;                                        identity alone: the body writes memory,
-;;                                        but through neither a call nor a
-;;                                        header-or-unknown store.
-;;   not-call-or-store                    the body writes no memory at all, so the
-;;                                        clause that kept this candidate is one of
-;;                                        the profitability ones this report does
-;;                                        not speak for (opt-gvn-stable-var?, the
-;;                                        hot-consumer gate, the pass mode).
-;;   chain-head                           the candidate's own base is still defined
-;;                                        inside the loop, so it is blocked behind
-;;                                        another line of this same report.
-;;
-;; <blame> is `call=<callee>`, `call=indirect`, `store=<global>`, `store=ptr`,
-;; `store=copy`, `effect=unknown` or `none` -- the first instruction of the body
-;; that contributes the refused fact.
-;;
-;; A `global-cell` line carries TWO clauses separated by `;`, because both have
-;; to fail for the operand to be refused: the loop-wide `globals-clean` answer
-;; and IAG-2's head-of-chain fallback. Every other kind carries one.
-;;
-;; COST. Everything here lives behind the same
-;; `compiler-opt-debug-trace-passes`/`compiler-opt-debug-suppressed?` guard the
-;; pass tracer and the IAG-2 budget tracer use, and the guard is tested ONCE per
-;; loop before any of it runs. The traced function name is recorded through the
-;; same guard, so a compile without `--trace-passes` pays one boolean test per
-;; function and one per loop, and builds no string at all. The walk reads the
-;; body the filter LEFT and the promotion rewrote, so a candidate that moved or
-;; a cell that was promoted produces no line: a line is a refusal.
+;; Report a load/address the loop kept, with the condition that refused it
+;; and the first instruction responsible. Global-cell candidates report both
+;; the loop-wide cell check and the per-global storage check. The tracer
+;; reads the final loop body and builds blame strings only under the debug
+;; guard, so normal compilation does not pay for this walk.
 (define opt-licm-trace-function : i64
   0)
 
@@ -29014,33 +28419,30 @@
 ;; opt-licm-candidate? is called with, plus the two loop-site numbers the
 ;; reasons quote (side-exit kind, header-ref count).
 (defstruct OptLicmRefuseCtx
-  (type-segment-bases i64)
-  (types OptSsaVarTypes)
-  (ptrs OptLicmPtrEnv)
-  (globals OptLicmGlobalFacts)
-  (store-summary OptLicmStoreSummary)
-  (raw-legacy-summary OptLicmStoreSummary)
-  (direct-call-clean opt_i64_i64_map.Map)
-  (cells OptGlobalCellSummary)
-  (body ir.CompilerIrBlockList)
+  (:lifetimes facts analysis context calls cells body)
+  (filter (& facts (OptLicmFilterCfg facts analysis context)))
+  (direct-call-clean (& calls opt_i64_i64_map.Map))
+  (cells (& cells OptGlobalCellSummary))
+  (body (& body ir.CompilerIrBlockList))
   (stayed-defs opt_i64_i64_map.Map)
+  (raw-legacy-summary OptLicmStoreSummary)
   (global-write? bool)
   (mem-clean-call? bool)
-  (any-call? bool)
   (side-exit-kind i64)
   (header-count i64)
-  (header i64)
-  (deref-site OptLicmDerefSite))
+  (header i64))
 
 ;; Blame modes: 0 = cell write, 1 = header-load call, 2 = global obj write,
 ;; 3 = header-load store.
-(define (opt-licm-refuse-obj-bit [ctx : (& ctx OptLicmRefuseCtx)] [name : i64]) : i64
+(define (opt-licm-refuse-obj-bit
+  [ctx : (& ctx (OptLicmRefuseCtx facts analysis context calls cells body))]
+  [name : i64]) : i64
   (bit-or
     (opt-global-mod-ref-cell-bit (& ctx.cells.obj-mod-ref.index) name)
     (opt-global-mod-ref-any)))
 
 (define (opt-licm-refuse-blame-store
-  [ctx : (& ctx OptLicmRefuseCtx)]
+  [ctx : (& ctx (OptLicmRefuseCtx facts analysis context calls cells body))]
   [mode : i64]
   [name : i64]
   [ptr : (& ir.CompilerIrValue)]) : OptLicmRefuseBlame
@@ -29048,7 +28450,10 @@
     [(= mode 2)
       (if (=
         (bit-and
-          (opt-licm-store-obj-mask (& ctx.cells) (& ctx.ptrs) ptr)
+          (opt-licm-store-obj-mask
+            (& ctx.cells)
+            (& ctx.filter.analysis.provenance.ptrs)
+            ptr)
           (opt-licm-refuse-obj-bit ctx name))
         0)
         (OptLicmRefuseBlame 0 0)
@@ -29056,14 +28461,14 @@
     [(= mode 1) (OptLicmRefuseBlame 0 0)]
     [(opt-licm-store-summary-header-load-safe?
         (opt-licm-store-summary-for-storeptr
-          (& ctx.ptrs)
+          (& ctx.filter.analysis.provenance.ptrs)
           (opt-licm-element-class-any)
           ptr))
       (OptLicmRefuseBlame 0 0)]
     [else (OptLicmRefuseBlame 4 0)]))
 
 (define (opt-licm-refuse-blame-instr
-  [ctx : (& ctx OptLicmRefuseCtx)]
+  [ctx : (& ctx (OptLicmRefuseCtx facts analysis context calls cells body))]
   [mode : i64]
   [name : i64]
   [instr : (& ir.CompilerIrInstr)]) : OptLicmRefuseBlame
@@ -29108,18 +28513,20 @@
     [(CopyBytes dst _ _)
       (cond
         [(= mode 2) (opt-licm-refuse-blame-store ctx mode name (& dst))]
-        [(opt-licm-frame-word-source? (& ctx.ptrs) (& dst))
+        [(opt-licm-frame-word-source?
+            (& ctx.filter.analysis.provenance.ptrs)
+            (& dst))
           (OptLicmRefuseBlame 0 0)]
         [else (OptLicmRefuseBlame 5 0)])]
     [_ (OptLicmRefuseBlame 0 0)]))
 
 (define (opt-licm-refuse-blame-at
-  [ctx : (& ctx OptLicmRefuseCtx)]
+  [ctx : (& ctx (OptLicmRefuseCtx facts analysis context calls cells body))]
   [mode : i64]
   [name : i64]) : String
   (let
-    [seq : (& ctx (Slice ir.CompilerIrBlock))
-      (ir.compiler-ir-block-list-view (& ctx.body))]
+    [seq : (& body (Slice ir.CompilerIrBlock))
+      (ir.compiler-ir-block-list-view ctx.body)]
     (for [bi (iterator.range 0 (array-length seq))]
       (match (& (array-ref seq bi))
         [(Block _ instrs)
@@ -29140,7 +28547,7 @@
 ;; Why the loop-wide globals-clean and IAG-2 head-of-chain checks refused
 ;; `name`, reading the shared opt-licm-global-storage-code classifier.
 (define (opt-licm-refuse-global-reason
-  [ctx : (& ctx OptLicmRefuseCtx)]
+  [ctx : (& ctx (OptLicmRefuseCtx facts analysis context calls cells body))]
   [name : i64]) : String
   (let
     [clean : String
@@ -29155,7 +28562,8 @@
       (if (not ctx.cells.obj-mod-ref.built?)
         "iag2:no-table"
         (let
-          [code : i64 (opt-licm-global-storage-code (& ctx.globals) name)]
+          [code : i64
+            (opt-licm-global-storage-code (& ctx.filter.loop.globals) name)]
           (cond
             [(= code 1)
               (str_cat.str-cat
@@ -29188,12 +28596,13 @@
 
 ;; The reason a LOAD or address whose own operands are already available
 ;; outside the loop stayed in it.
-(define (opt-licm-refuse-memory-reason [ctx : (& ctx OptLicmRefuseCtx)]) : String
+(define (opt-licm-refuse-memory-reason
+  [ctx : (& ctx (OptLicmRefuseCtx facts analysis context calls cells body))]) : String
   (let
     [legacy : OptLicmStoreSummary
       (opt-licm-refuse-copy-summary (& ctx.raw-legacy-summary))]
     [store : OptLicmStoreSummary
-      (opt-licm-refuse-copy-summary (& ctx.store-summary))]
+      (opt-licm-refuse-copy-summary (& ctx.filter.store-summary))]
     (cond
       [legacy.call-or-unknown?
         (str_cat.str-cat
@@ -29204,27 +28613,29 @@
           "header-load-safe:store:"
           (opt-licm-refuse-blame-at ctx 3 0))]
       [(= ctx.side-exit-kind 1) "side-exit-return"]
-      [(and ctx.any-call? (opt-licm-store-summary-call-boundary? store))
+      [(and ctx.filter.any-call? (opt-licm-store-summary-call-boundary? store))
         (str_cat.str-cat "call-boundary:" (opt-licm-refuse-blame-at ctx 1 0))]
       [(opt-licm-store-summary-clean? legacy) "not-call-or-store"]
       [else "memory-root"])))
 
 (define (opt-licm-refuse-global-or-memory
-  [ctx : (& ctx OptLicmRefuseCtx)]
+  [ctx : (& ctx (OptLicmRefuseCtx facts analysis context calls cells body))]
   [name : i64]) : String
-  (if (or ctx.globals.clean? (opt-licm-global-header-ok? (& ctx.globals) name))
+  (if (or
+    ctx.filter.loop.globals.clean?
+    (opt-licm-global-header-ok? (& ctx.filter.loop.globals) name))
     (opt-licm-refuse-memory-reason ctx)
     (opt-licm-refuse-global-reason ctx name)))
 
 (define (opt-licm-refuse-outside?
-  [ctx : (& ctx OptLicmRefuseCtx)]
+  [ctx : (& ctx (OptLicmRefuseCtx facts analysis context calls cells body))]
   [value : (& ir.CompilerIrValue)]) : bool
   (match value
     [(Var var) (not (opt-used-contains (& ctx.stayed-defs) var))]
     [_ true]))
 
 (define (opt-licm-refuse-emit!
-  [ctx : (& OptLicmRefuseCtx)]
+  [ctx : (& (OptLicmRefuseCtx facts analysis context calls cells body))]
   [var : i64]
   [kind : String]
   [reason : String]) : unit
@@ -29243,7 +28654,7 @@
       "\n")))
 
 (define (opt-licm-refuse-load!
-  [ctx : (& ctx OptLicmRefuseCtx)]
+  [ctx : (& ctx (OptLicmRefuseCtx facts analysis context calls cells body))]
   [dst : i64]
   [ptr-var : i64]
   [load-ty : (& ast.AstType)]
@@ -29252,10 +28663,10 @@
     [address : ir.CompilerIrValue (Var ptr-var)]
     [code : i64
       (opt-licm-deref-load-code
-        ctx.type-segment-bases
-        (& ctx.types)
-        (& ctx.ptrs)
-        (& ctx.deref-site)
+        ctx.filter.type-segment-bases
+        (& ctx.filter.analysis.types)
+        (& ctx.filter.analysis.provenance.ptrs)
+        (& ctx.filter.deref-site)
         dst
         (& address)
         load-ty
@@ -29264,7 +28675,7 @@
       (if (= code 1)
         "element-bound"
         "deref")]
-    (match (opt-licm-ptr-lookup (& ctx.ptrs) ptr-var)
+    (match (opt-licm-ptr-lookup (& ctx.filter.analysis.provenance.ptrs) ptr-var)
       [(or (GlobalDataSlot name) (GlobalSlot name))
         (opt-licm-refuse-emit!
           ctx
@@ -29305,7 +28716,7 @@
 
 ;; One instruction of the kept body.
 (define (opt-licm-refuse-gep!
-  [ctx : (& ctx OptLicmRefuseCtx)]
+  [ctx : (& ctx (OptLicmRefuseCtx facts analysis context calls cells body))]
   [dst : i64]
   [base : (& ir.CompilerIrValue)]
   [offset : (& ir.CompilerIrValue)]
@@ -29323,13 +28734,16 @@
     [(Var base-var)
       (when
         (opt-licm-array-header-var?
-          ctx.type-segment-bases
-          (& ctx.types)
+          ctx.filter.type-segment-bases
+          (& ctx.filter.analysis.types)
           base-var)
         (let
           [kind : i64
             (cond
-              [(opt-bounds-object-length-slot? ctx.type-segment-bases offset ty)
+              [(opt-bounds-object-length-slot?
+                  ctx.filter.type-segment-bases
+                  offset
+                  ty)
                 1]
               [(opt-licm-data-slot? offset ty) 2]
               [else 0])]
@@ -29347,7 +28761,7 @@
     [_ unit]))
 
 (define (opt-licm-refuse-instr!
-  [ctx : (& OptLicmRefuseCtx)]
+  [ctx : (& (OptLicmRefuseCtx facts analysis context calls cells body))]
   [instr : (& ir.CompilerIrInstr)]) : unit
   (match instr
     [(Gep dst base offset ty)
@@ -29365,13 +28779,13 @@
     [_ unit]))
 
 (define (opt-licm-refuse-seq!
-  [ctx : (& OptLicmRefuseCtx)]
+  [ctx : (& (OptLicmRefuseCtx facts analysis context calls cells body))]
   [instrs : ir.CompilerIrInstrSeq]) : unit
   (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count (& instrs)))]
     (opt-licm-refuse-instr! ctx (ir.compiler-ir-instr-seq-borrow instrs index))))
 
 (define (opt-licm-refuse-blocks!
-  [ctx : (& OptLicmRefuseCtx)]
+  [ctx : (& (OptLicmRefuseCtx facts analysis context calls cells body))]
   [blocks : (& blocks ir.CompilerIrBlockList)]) : unit
   (opt-blocks-visit-seq blocks opt-licm-refuse-seq! ctx))
 
@@ -29382,81 +28796,63 @@
 ;; inside the guard, so an ordinary compile pays one boolean test per loop and
 ;; allocates nothing.
 (define (opt-licm-refuse-trace!
-  [type-segment-bases : i64]
-  [types : OptSsaVarTypes]
-  [ptrs : OptLicmPtrEnv]
-  [globals : OptLicmGlobalFacts]
-  [store-summary : OptLicmStoreSummary]
-  [raw-legacy-summary : OptLicmStoreSummary]
-  [direct-call-clean : opt_i64_i64_map.Map]
-  [cells : OptGlobalCellSummary]
+  [filter : (& facts (OptLicmFilterCfg facts analysis context))]
+  [facts : (& (OptLicmApplyFacts analysis calls cells context loops))]
   [global-write? : bool]
   [mem-clean-call? : bool]
-  [any-call? : bool]
+  [raw-legacy-summary : OptLicmStoreSummary]
   [side-exit-kind : i64]
   [header-count : i64]
   [header : i64]
   [map-capacity : i64]
-  [deref-site : OptLicmDerefSite]
-  [body : (& ir.CompilerIrBlockList)]) : unit
-  (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
-    (opt-licm-refuse-blocks!
-      (&
+  [body : (& body ir.CompilerIrBlockList)]) : unit
+  (when
+    (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
+    (let
+      [ctx
         (OptLicmRefuseCtx
-          type-segment-bases
-          types
-          ptrs
-          globals
-          store-summary
-          raw-legacy-summary
-          direct-call-clean
-          cells
-          (owned_view.compiler-owned-reference-shared-view body)
+          filter
+          facts.direct-call-clean
+          facts.global-cells
+          body
           (opt-licm-loop-defs body map-capacity)
+          raw-legacy-summary
           global-write?
           mem-clean-call?
-          any-call?
           side-exit-kind
           header-count
-          header
-          deref-site))
-      body)
-    unit))
+          header)]
+      (opt-licm-refuse-blocks! (& ctx) body))))
 
-;; Preheader instruction list: the hoisted instructions followed by the
-;; promotion's cell loads. No promotion means the hoisted list is handed back
-;; unchanged rather than copied, keeping the no-promotion path allocation-free.
-(define (opt-licm-preheader-instrs
-  [hoisted : (& ir.CompilerIrInstrSeq)]
-  [loads : (& ir.CompilerIrInstrSeq)]) : ir.CompilerIrInstrSeq
-  (opt-instr-seq-concat
-    (owned_view.compiler-owned-reference-shared-view hoisted)
-    (owned_view.compiler-owned-reference-shared-view loads)))
+(defstruct OptLicmApplyFacts
+  (:lifetimes analysis calls cells context loops)
+  (type-segment-bases i64)
+  (analysis (& analysis OptLicmFunctionAnalysis))
+  (direct-call-clean (& calls opt_i64_i64_map.Map))
+  (global-cells (& cells OptGlobalCellSummary))
+  (late? bool)
+  (context (& context OptCfgContext))
+  (all-loops (& loops opt_natural_loop_vec.Vec)))
 
 (define (opt-licm-apply-loop
-  [type-segment-bases : i64]
-  [sources : (& sources OptValueSources)]
-  [types : (& OptSsaVarTypes)]
-  [provenance : (& OptLicmStoreState)]
-  [direct-call-clean : (& opt_i64_i64_map.Map)]
-  [global-cells : (& OptGlobalCellSummary)]
+  [facts : (& (OptLicmApplyFacts analysis calls cells context loops))]
   [frame-cell : (&mut frame-cell (__tl_dyn-array i64))]
-  ;; The function's pressure scratch (OptLicmPressureScratch).
   [pressure : (&mut pressure (__tl_dyn-array OptLicmPressureScratch))]
-  [late? : bool]
-  ;; #7992: the function's element-bound facts (opt-licm-deref-facts).
-  [deref-facts : OptLicmDerefFacts]
-  ;; #7997: where the walk records guarded reads (opt-licm-guard-plan!).
-  [guard-plans : (& (__tl_dyn-array opt_licm_guard_plan_vec.Vec))]
-  ;; Valid for `blocks`: LICM only inserts into existing preheaders, so the
-  ;; original dominance relation remains valid throughout this loop walk.
-  [context : OptCfgContext]
-  [all-loops : (& all-loops opt_natural_loop_vec.Vec)]
+  [guard-plans : (&mut opt_licm_guard_plan_vec.Vec)]
   [blocks : ir.CompilerIrBlockList]
   [loop : (& loop OptNaturalLoop)]) : OptBlockListPassResult
   (match (opt-natural-loop-preheader loop)
     [(Some preheader)
       (let
+        [type-segment-bases facts.type-segment-bases]
+        [types (& facts.analysis.types)]
+        [provenance (& facts.analysis.provenance)]
+        [direct-call-clean facts.direct-call-clean]
+        [global-cells facts.global-cells]
+        [late? facts.late?]
+        [deref-facts (& facts.analysis.deref-facts)]
+        [context facts.context]
+        [all-loops facts.all-loops]
         [_addr-taken : unit
           (opt-addr-taken-refresh! (array-ref frame-cell 0) (& blocks))]
         [body-blocks : ir.CompilerIrBlockList
@@ -29468,18 +28864,11 @@
           (opt-licm-store-state-blocks
             (& opt-function-addr-taken.marks)
             type-segment-bases
-            types
+            provenance
             (& body-blocks)
             direct-call-clean
             global-cells
-            false
-            (opt-licm-store-state-with-provenance
-              (owned_view.compiler-owned-reference-shared-view
-                (& provenance.ptrs))
-              (owned_view.compiler-owned-reference-shared-view
-                (& provenance.roots))
-              ;; No mod-ref table: seed the loop at "may write any cell" so
-              ;; every per-global question falls back to the loop-wide answer.
+            (opt-licm-store-state-new
               (opt-licm-global-cell-writes-seed global-cells)
               (opt-licm-global-obj-writes-seed global-cells)))]
         [raw-summary : OptLicmStoreSummary store-state.summary]
@@ -29511,28 +28900,9 @@
               -1)
             (opt-natural-loop-body loop)
             (ir.compiler-ir-block-list-view body-blocks))]
-        ;; Hoisting invariant loads out of PROBE-SHAPED loops -- every side
-        ;; exit an early RETURN, trips averaging one or two iterations -- is
-        ;; pure register pressure: the extra live-across-loop values push
-        ;; other values into spill staging on the return paths. Suppressing
-        ;; ALL side-exit loops overshoots the other way: break-into-work side
-        ;; exits mark long-trip kernels. So the load/gep hoist is suppressed
-        ;; exactly when every side exit is return-shaped (reaches Return through
-        ;; staging-only blocks; an aborting runtime call also qualifies), by
-        ;; folding a header-store poison into the summary. Pure BinOp/UnOp
-        ;; hoisting is unaffected.
-        ;; The poison is a profitability gate, not a soundness one, so one
-        ;; load class is excepted from it: descriptor header loads (the
-        ;; data-pointer or length slot of a loop-invariant array/string
-        ;; handle) still move out of a suppressed loop when the RAW body
-        ;; summary is header-load-safe -- no call that may write and no
-        ;; header-or-unknown store, element stores excepted because they
-        ;; cannot touch header words (see opt-licm-candidate?). Their
-        ;; descriptor-address Geps already ride the late-mode exemption, so
-        ;; the loaded value replaces the address's loop-spanning live range
-        ;; instead of adding a new one. The flag stays false pre-BCE (late?
-        ;; is false there): moving a descriptor length that early can hide
-        ;; the shared bound identity bounds-check elimination needs.
+        ;; Suppress load/GEP hoisting for return-shaped probes. Late-mode
+        ;; descriptor headers can still use the raw alias proof. Before BCE,
+        ;; keep their loads with the checks that need the bound identity.
         [descriptor-header-hoist? : bool
           (and
             late?
@@ -29549,33 +28919,17 @@
               raw-legacy-summary
               (opt-licm-store-summary-header-or-unknown-store))
             raw-legacy-summary)]
-        [ptrs : OptLicmPtrEnv store-state.ptrs]
-        [roots : OptLicmRootEnv store-state.roots]
         [store-roots : OptLicmStoreRootList store-state.store-roots]
         [any-call? : bool store-state.any-call?]
-        ;; Global-cell invariance is a memory fact about the RAW body summary,
-        ;; so it reads through the return-shaped side-exit poison above the
-        ;; same way `descriptor-header-hoist?` does: the poison suppresses a
-        ;; profitability class, and the global-rooted chain it would otherwise
-        ;; close is the one whose per-iteration cost (a rip-relative cell load
-        ;; plus the descriptor words re-derived from it) the preheader copy
-        ;; removes outright rather than merely relocating.
-        ;; The memory-clean direct-call tier reaches the PROMOTION only, and
-        ;; only under a live-in budget; the INVARIANCE question keeps the
-        ;; refusal. See opt-licm-direct-call-keeps-globals-clean? for the split
-        ;; and opt-licm-global-promote-live-in-budget for the budget. A loop
-        ;; that is globals-clean without that tier takes the strict flag on
-        ;; both sides.
+        ;; Cell invariance uses the raw memory facts. Promotion alone can
+        ;; admit memory-clean direct calls under the loop live-in budget.
         [globals-clean-relaxed? : bool
           (opt-licm-globals-clean? store-state.global-write?)]
         [globals-clean-strict? : bool
           (and globals-clean-relaxed? (not store-state.mem-clean-call?))]
         [globals-clean? : bool globals-clean-strict?]
-        ;; P18: the per-global refinement of `global-write?`, and the facts
-        ;; bundle the hoist filter reads it through.
+        ;; Keep cell contents and the global object's own storage separate.
         [cell-writes : i64 store-state.global-cell-writes]
-        ;; IAG-2: the per-global answer for a global's OWN STORAGE, and how
-        ;; many chains this loop could take a handle out for.
         [obj-writes : i64 store-state.global-obj-writes]
         [loop-live-in : i64 (opt-unroll-mb-live-in-count body-blocks)]
         [header-count : i64
@@ -29630,17 +28984,8 @@
             (or
               globals-clean-strict?
               (<= loop-live-in (opt-licm-global-promote-live-in-budget))))]
-        ;; The per-global promotion path, for a body the loop-wide gate above
-        ;; refuses. It promotes exactly the referenced cells that are outside
-        ;; `cell-writes`, and pays the same live-in budget the memory-clean
-        ;; tier pays, for the same reason: every cell it promotes is one more
-        ;; value that has to stay live across the whole loop, and a loop this
-        ;; path admits contains a call (that is why the loop-wide gate refused
-        ;; it), so the only registers such a value can occupy are the
-        ;; callee-saved file. The `any?` test is what makes a program without a
-        ;; mod-ref table -- every level below 2, and every program outside the
-        ;; table's preconditions -- take neither this path nor its live-in
-        ;; count, so nothing there moves and nothing there is recomputed.
+        ;; Even when the body can write some cells, unaffected cells can
+        ;; move within the same live-in budget when a mod-ref row is available.
         [globals-promote-filtered? : bool
           (and
             (not globals-promote-clean?)
@@ -29668,10 +29013,10 @@
                         (opt-label-contains loop-body other-header))
                       (set! has-nested? true))))
                 has-nested?)))]
-        [deref-site : OptLicmDerefSite
+        [deref-site
           (OptLicmDerefSite
             deref-facts
-            context.doms
+            (& context.doms)
             (match (opt-cfg-index-id context.index preheader)
               [(Some id) id]
               [(None) (- 0 1)])
@@ -29682,11 +29027,10 @@
               [(None) (- 0 1)])
             ;; opt-licm-apply-loops passes the final run only the loops
             ;; that may take guards (opt-licm-guard-loop?).
-            (and opt-licm-guard-on late?)
-            (owned_view.compiler-owned-reference-shared-view guard-plans))]
+            (and opt-licm-guard-on late?))]
         [plans-before : i64
           (if opt-licm-guard-on
-            (opt_licm_guard_plan_vec.len (& (array-ref guard-plans 0)))
+            (opt_licm_guard_plan_vec.len guard-plans)
             0)]
         [_hoist-cmp : unit
           (set!
@@ -29699,8 +29043,8 @@
         [filtered-out : ir.CompilerIrBlockBuilder
           (ir.compiler-ir-block-builder-with-capacity
             (ir.compiler-ir-block-list-count body-blocks))]
-        (match (opt-licm-filter-body-blocks!
-          (&mut filtered-out)
+        [loop-facts (OptLicmLoopFacts loop-defs store-roots globals hot-uses)]
+        [filter-cfg : (OptLicmFilterCfg loop-facts analysis context)
           (OptLicmFilterCfg
             type-segment-bases
             store-summary
@@ -29711,152 +29055,113 @@
                 2
                 1)
               0)
-            descriptor-header-hoist?)
-          loop-defs
-          (ir.compiler-ir-block-list-view body-blocks)
-          sources
-          types
-          ptrs
-          roots
-          store-roots
-          globals
-          hot-uses
-          deref-site
-          (opt-natural-loop-header loop)
-          (opt_i64_i64_map.with-capacity map-capacity))
-          [(Result hoisted _ changed)
-            ;; Loop-scope global operand promotion runs on what the hoist
-            ;; filter LEFT in the loop, so it never rewrites an operand of an
-            ;; instruction that is leaving anyway, and the filter's own
-            ;; decisions still read the untouched body (nothing promotes when
-            ;; the gate is closed, which keeps this byte-identical there).
-            (let
-              [filtered-body : ir.CompilerIrBlockList
-                (ir.compiler-ir-block-builder-to-list filtered-out)]
-              [promotion : OptLicmGlobalPromotion
-                (if (and
-                  (not opt-licm-guard-on)
-                  (or globals-promote-clean? globals-promote-filtered?))
-                  (opt-licm-global-promote
-                    global-cells
-                    frame-cell
-                    (if globals-promote-clean?
-                      0
-                      cell-writes)
-                    filtered-body)
-                  (OptLicmGlobalPromotion
-                    filtered-body
-                    (ir.compiler-ir-instr-seq-empty)
-                    false))]
-              [promoted-body : ir.CompilerIrBlockList promotion.blocks]
-              [preheader-loads : ir.CompilerIrInstrSeq promotion.loads]
-              ;; ALIAS-2: report the candidates this loop KEPT, and the clause
-              ;; that kept each one. Reads the body after the filter and the
-              ;; promotion, so a line is a refusal and never a moved value.
-              [_refuse-trace : unit
-                (opt-licm-refuse-trace!
-                  type-segment-bases
-                  (owned_view.compiler-owned-reference-shared-view types)
-                  ptrs
-                  globals
-                  store-summary
-                  raw-legacy-summary
-                  (owned_view.compiler-owned-reference-shared-view
-                    direct-call-clean)
-                  (owned_view.compiler-owned-reference-shared-view global-cells)
-                  store-state.global-write?
-                  store-state.mem-clean-call?
-                  any-call?
-                  side-exit-kind
-                  header-count
-                  (opt-natural-loop-header loop)
-                  map-capacity
-                  deref-site
-                  (& promoted-body))]
-              [guard-plans-added? : bool
-                (and
-                  opt-licm-guard-on
-                  (>
-                    (opt_licm_guard_plan_vec.len (& (array-ref guard-plans 0)))
-                    plans-before))]
-              [_mark-hoisted-loop : unit
-                (when
-                  guard-plans-added?
-                  (set!
-                    opt-licm-guard-hoisted-loops
-                    (opt-label-add
-                      opt-licm-guard-hoisted-loops
-                      (opt-natural-loop-header loop))))]
-              (if (and
-                (or changed promotion.changed?)
-                (or
-                  (not opt-licm-guard-on)
-                  guard-plans-added?
-                  opt-licm-guard-hoist-cmp?))
-                ;; M-G (B1): fold duplicate hoisted loads/geps onto their first
-                ;; occurrence (see opt-licm-dedup-env). An empty env means no
-                ;; duplicates -- skip the rewrite.
-                (let
-                  [dedup-env : OptCopyEnv
-                    (opt-licm-dedup-env
-                      type-segment-bases
-                      hoisted
-                      (opt-copy-env-empty))]
-                  [_subst-plans : unit
-                    (when
-                      (and
-                        opt-licm-guard-on
-                        (not (opt-copy-env-empty? (& dedup-env)))
-                        (>
-                          (opt_licm_guard_plan_vec.len
-                            (& (array-ref guard-plans 0)))
-                          0))
-                      (owned_view.compiler-owned-cell-set!
-                        guard-plans
-                        0
-                        (opt-licm-guard-subst-plans
-                          (& dedup-env)
-                          (& (array-ref guard-plans 0)))))]
-                  (if (opt-copy-env-empty? dedup-env)
-                    (Result
-                      (opt-blocks-build
-                        (opt-blocks-build
-                          blocks
-                          opt-licm-replace-body-blocks!
-                          (ir.compiler-ir-block-list-view promoted-body))
-                        opt-licm-insert-preheader-blocks!
-                        preheader
-                        (opt-licm-preheader-instrs
-                          (& hoisted)
-                          (& preheader-loads)))
-                      true)
-                    (Result
-                      (opt-blocks-build
-                        (let
-                          [substituted : ir.CompilerIrBlockList
-                            (opt-blocks-build
-                              promoted-body
-                              opt-licm-subst-body-blocks!
-                              (compiler-opt-global-shared-view dedup-env))]
-                          (opt-blocks-build
-                            blocks
-                            opt-licm-replace-body-blocks!
-                            (ir.compiler-ir-block-list-view substituted)))
-                        opt-licm-insert-preheader-blocks!
-                        preheader
-                        (opt-licm-preheader-instrs
-                          (&
-                            (opt-licm-subst-instr-seq (& dedup-env) (& hoisted)))
-                          (& preheader-loads)))
-                      true)))
-                (Result blocks false)))]))]
+            descriptor-header-hoist?
+            facts.analysis
+            (& loop-facts)
+            deref-site)]
+        [hoisted
+          (opt-licm-filter-body-blocks!
+            (&mut filtered-out)
+            filter-cfg
+            (ir.compiler-ir-block-list-view body-blocks)
+            guard-plans
+            (opt-natural-loop-header loop)
+            map-capacity)]
+        ;; Promotion works on the instructions left by the ordered hoist.
+        [filtered-body : ir.CompilerIrBlockList
+          (ir.compiler-ir-block-builder-to-list filtered-out)]
+        [promotion : OptLicmGlobalPromotion
+          (if (and
+            (not opt-licm-guard-on)
+            (or globals-promote-clean? globals-promote-filtered?))
+            (opt-licm-global-promote
+              global-cells
+              frame-cell
+              (if globals-promote-clean?
+                0
+                cell-writes)
+              filtered-body)
+            (OptLicmGlobalPromotion
+              filtered-body
+              (ir.compiler-ir-instr-seq-empty)
+              false))]
+        [promoted-body : ir.CompilerIrBlockList promotion.blocks]
+        [preheader-loads : ir.CompilerIrInstrSeq promotion.loads]
+        ;; ALIAS-2: report the candidates this loop KEPT, and the clause
+        ;; that kept each one. Reads the body after the filter and the
+        ;; promotion, so a line is a refusal and never a moved value.
+        [_refuse-trace : unit
+          (opt-licm-refuse-trace!
+            (& filter-cfg)
+            facts
+            store-state.global-write?
+            store-state.mem-clean-call?
+            raw-legacy-summary
+            side-exit-kind
+            header-count
+            (opt-natural-loop-header loop)
+            map-capacity
+            (& promoted-body))]
+        [guard-plans-added? : bool
+          (and
+            opt-licm-guard-on
+            (> (opt_licm_guard_plan_vec.len guard-plans) plans-before))]
+        [_mark-hoisted-loop : unit
+          (when
+            guard-plans-added?
+            (set!
+              opt-licm-guard-hoisted-loops
+              (opt-label-add
+                opt-licm-guard-hoisted-loops
+                (opt-natural-loop-header loop))))]
+        (unless
+          (and
+            (or
+              (not (ir.compiler-ir-instr-seq-empty? hoisted))
+              promotion.changed?)
+            (or
+              (not opt-licm-guard-on)
+              guard-plans-added?
+              opt-licm-guard-hoist-cmp?))
+          (return (Result blocks false)))
+        (let
+          [dedup-env
+            (opt-licm-dedup-env type-segment-bases hoisted (opt-copy-env-empty))]
+          [dedup? : bool (not (opt-copy-env-empty? (& dedup-env)))]
+          (when
+            (and
+              dedup?
+              opt-licm-guard-on
+              (> (opt_licm_guard_plan_vec.len guard-plans) 0))
+            (set!
+              (deref guard-plans)
+              (opt-licm-guard-subst-plans (& dedup-env) guard-plans)))
+          (let
+            [body : ir.CompilerIrBlockList
+              (if dedup?
+                (opt-blocks-build
+                  promoted-body
+                  opt-licm-subst-body-blocks!
+                  (& dedup-env))
+                promoted-body)]
+            [preheader-instrs : ir.CompilerIrInstrSeq
+              (opt-instr-seq-concat
+                (if dedup?
+                  (opt-licm-subst-instr-seq (& dedup-env) (& hoisted))
+                  hoisted)
+                preheader-loads)]
+            (Result
+              (opt-blocks-build
+                blocks
+                opt-licm-rewrite-loop-blocks!
+                (ir.compiler-ir-block-list-view body)
+                preheader
+                (& preheader-instrs))
+              true))))]
     [(No) (Result blocks false)]))
 
-;; #7997: may the final run guard a read in `loop`? Only counting loops whose
-;; one exit is the latch's: a loop with another exit may be a short probe, a
-;; loop that chases a value (`a = idom[a]`) takes a trip or two, and a read
-;; such loops bypass or reach once does not repay the guard. And only a body
-;; holding the shape a guard reads (opt-licm-guard-shape?).
+;; A guard must pay for itself. Require a counted loop with only the latch
+;; exit and a load/check shape the guard planner can handle.
 (define (opt-licm-guard-loop?
   [type-segment-bases : i64]
   [blocks : (& blocks ir.CompilerIrBlockList)]
@@ -29896,16 +29201,8 @@
             [(Some _) true]
             [(No) false])))]))
 
-;; Does some block hold a `bounds_check` followed by a load of an address the
-;; block does not compute in between, with every operand of both outside
-;; `loop-defs`? That is the shape a guard reads -- the check an arm keeps, and
-;; the read of an address LICM already moved out -- and a scan finds it ahead
-;; of LICM's analyses. An ordinary checked read computes its address after its
-;; check. With `loop-defs` empty the scan asks only whether the shape occurs.
-;; Is `src` defined in `instrs[0..before)` by a `Gep` whose base and index are
-;; both outside `loop-defs`? `gep_split` re-localizes invariant Geps inside
-;; loops right before `opt-licm-guard-final`, so the pre-scan must recognize
-;; both already-hoisted addresses and locally-recomputed invariant Geps.
+;; gep_split can re-localize an invariant address before the final LICM run.
+;; Check the local definition when the address has not already been hoisted.
 (define (opt-licm-guard-invariant-gep?
   [loop-defs : (& loop-defs opt_i64_i64_map.Map)]
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
@@ -29993,19 +29290,10 @@
         (opt-licm-guard-loops? type-segment-bases blocks rest))]))
 
 (define (opt-licm-apply-loops
-  [type-segment-bases : i64]
-  [sources : (& sources OptValueSources)]
-  [types : (& OptSsaVarTypes)]
-  [provenance : (& OptLicmStoreState)]
-  [direct-call-clean : (& opt_i64_i64_map.Map)]
-  [global-cells : (& OptGlobalCellSummary)]
+  [facts : (& (OptLicmApplyFacts analysis calls cells context loops))]
   [frame-cell : (&mut frame-cell (__tl_dyn-array i64))]
   [pressure : (&mut pressure (__tl_dyn-array OptLicmPressureScratch))]
-  [late? : bool]
-  [deref-facts : (& OptLicmDerefFacts)]
-  [guard-plans : (& (__tl_dyn-array opt_licm_guard_plan_vec.Vec))]
-  [context : (& OptCfgContext)]
-  [all-loops : (& all-loops opt_natural_loop_vec.Vec)]
+  [guard-plans : (&mut opt_licm_guard_plan_vec.Vec)]
   [loops : (& loops (Slice OptNaturalLoop))]
   [blocks : ir.CompilerIrBlockList]) : OptBlockListPassResult
   (match loops
@@ -30013,39 +29301,15 @@
     [(slice loop & rest)
       (match (if (and
         opt-licm-guard-on
-        (not (opt-licm-guard-loop? type-segment-bases (& blocks) loop)))
+        (not (opt-licm-guard-loop? facts.type-segment-bases (& blocks) loop)))
         (OptBlockListPassResult.Result blocks false)
-        (opt-licm-apply-loop
-          type-segment-bases
-          sources
-          types
-          provenance
-          direct-call-clean
-          global-cells
-          frame-cell
-          pressure
-          late?
-          (owned_view.compiler-owned-reference-shared-view deref-facts)
-          guard-plans
-          (owned_view.compiler-owned-reference-shared-view context)
-          all-loops
-          blocks
-          loop))
+        (opt-licm-apply-loop facts frame-cell pressure guard-plans blocks loop))
         [(Result loop-blocks loop-changed)
           (match (opt-licm-apply-loops
-            type-segment-bases
-            sources
-            types
-            provenance
-            direct-call-clean
-            global-cells
+            facts
             frame-cell
             pressure
-            late?
-            deref-facts
             guard-plans
-            context
-            all-loops
             rest
             loop-blocks)
             [(Result rest-blocks rest-changed)
@@ -30168,11 +29432,11 @@
 
 (define (opt-licm-function-with-context-result-and-direct-call-clean
   [type-segment-bases : i64]
-  [context : (& OptCfgContext)]
+  [context : (& context OptCfgContext)]
   [verified? : bool]
-  [direct-call-clean : (& opt_i64_i64_map.Map)]
+  [direct-call-clean : (& calls opt_i64_i64_map.Map)]
   [return-alias : (& opt_i64_i64_map.Map)]
-  [global-cells : (& OptGlobalCellSummary)]
+  [global-cells : (& cells OptGlobalCellSummary)]
   [late? : bool]
   [func : (& ir.CompilerIrFunction)]) : OptFunctionCtxResult
   ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
@@ -30224,7 +29488,7 @@
                     (opt-gvn-sources-params (& params) (opt-value-sources-new))))]
               [types : OptSsaVarTypes
                 (opt-licm-type-env-from-function (& params) blocks)]
-              [provenance : OptLicmStoreState
+              [provenance : OptLicmProvenance
                 (opt-licm-provenance-state-from-function
                   type-segment-bases
                   (& params)
@@ -30247,33 +29511,38 @@
               ;; value back into the rewritten function.
               [frame-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
               [_seed-frame : unit (set! (array-ref frame-cell 0) frame)]
-              [guard-plans : (__tl_dyn-array opt_licm_guard_plan_vec.Vec)
-                (__tl_make-array (opt_licm_guard_plan_vec.with-capacity 0))]
+              [guard-plans : opt_licm_guard_plan_vec.Vec
+                (opt_licm_guard_plan_vec.with-capacity 0)]
               [pressure : (__tl_dyn-array OptLicmPressureScratch)
                 (__tl_make-array (opt-licm-pressure-scratch-empty))]
+              [analysis
+                (OptLicmFunctionAnalysis sources types provenance deref-facts)]
+              [licm-facts : (OptLicmApplyFacts
+                analysis
+                calls
+                cells
+                context
+                loops)
+                (OptLicmApplyFacts
+                  type-segment-bases
+                  (& analysis)
+                  direct-call-clean
+                  global-cells
+                  late?
+                  context
+                  (& loops))]
               (match (opt-licm-apply-loops
-                type-segment-bases
-                sources
-                (& types)
-                (& provenance)
-                direct-call-clean
-                global-cells
+                (& licm-facts)
                 (&mut frame-cell)
                 (&mut pressure)
-                late?
-                (& deref-facts)
-                (& guard-plans)
-                context
-                loops
+                (&mut guard-plans)
                 (opt_natural_loop_vec.view loops)
                 blocks)
                 [(Result hoisted-blocks licm-changed?)
                   ;; #7997: the guards, once every loop has been walked.
                   (match (opt-licm-guard-apply
                     (& hoisted-blocks)
-                    (compiler-opt-global-array-element-shared-view
-                      guard-plans
-                      0)
+                    guard-plans
                     (&mut frame-cell))
                     [(Result guarded-blocks guarded?)
                       (OptBlockRewriteResult.Result
@@ -33654,176 +32923,43 @@
 
 ;; --- monotone-flag loop-exit conversion (flag_exit) ---------------------------
 ;;
-;; `(while (and (< i n) ok) ... (set! ok false) ...)` carries `ok` around the
-;; back edge and re-tests it at the top of every iteration, so the loop pays a
-;; `test`/`jcc` per iteration for a flag that is only ever CLEARED. C compiles
-;; the same source to a direct branch out of the loop at the mismatch site --
-;; `it-slice-eq?`'s byte compare re-tests its flag on every byte and its C twin
-;; does not.
+;; A monotone flag enters at invariant K and has a single gate G that exits
+;; when the flag differs from K. Redirect the clearing edges to the exit X.
+;; A decidable edge goes straight to X. A computed value or seed goes through
+;; a fresh gate that still reaches the old target when the value equals K.
+;; Every remaining flag definition can then carry K and G can jump into the
+;; body. Keep closure phis as phis so their inputs stay in the phi prefix.
 ;;
-;; The flag starts at a loop-invariant value K in the preheader, the gate tests
-;; it against K, and the body's only other business with it is to ASSIGN it.
-;; Give the gate's verdict at each assignment site instead of at the top of the
-;; next iteration and the header's test is vacuous: nothing reaches the header
-;; carrying anything but K, so the gate always continues and becomes an
-;; unconditional jump. The flag phis then have no readers left and the
-;; pipeline's SCCP/DCE retire them.
+;; C1. The header phi takes K on its sole outside edge and a var on its sole
+;;     inside edge. K's incoming edge makes it available at each copied gate.
+;; C2. Follow the carried var through the in-loop phi/copy web. A leaf is
+;;     either the header flag or a clear assignment. Require a clear and
+;;     reject leaves equal to K. A phi unrelated to the flag is one whole
+;;     assigned value, so it needs a gate only on the edge that assigns it.
+;; C3. G tests a closure var against K (possibly through a one-use helper).
+;;     Literal copies and equivalent invariant global reads can establish K.
+;; C4. Closure reads belong to the web, G, exit-keyed phis, X's own phis, or
+;;     X's dominated region. The last region is served by C8.
+;; C5. G dominates the latch. For a bottom-tested shape where G does not
+;;     dominate a clear predecessor, resolve the tested var on the skipped
+;;     path to check that the gate reads the new value.
+;; C6. The paths the redirect skips must be pure, including G except for
+;;     its branch. The clear edge must be a Jump or Branch arm and leave its
+;;     old target with a surviving predecessor.
+;; C7. Try G's exit arm first. If it refuses, follow single-predecessor
+;;     jump spacers whose other instructions are pure and unused. Rebuild
+;;     the exit phis from the values the skipped runs would have delivered.
+;;     An outside phi that folds a closure input must read the closure on
+;;     every applicable exit. A fold on X's edge needs a single cleared
+;;     value and no surviving arrivals that could still carry K. A cleared
+;;     alternate exit must agree at a common merge or at X itself.
+;; C8. Mint phis in X for loop values read in its dominated region. Each
+;;     value must be nameable both on surviving edges and on the redirected
+;;     runs. Reject other escaping uses.
 ;;
-;; Two shapes of assignment site, and the difference is only how much of the
-;; gate has to move with the edge:
-;;   * both K and the assigned value are decidable here -- the bool
-;;     `(set! ok false)` against a `true` seed, or one sentinel literal against
-;;     another -- and the verdict is known now: the edge is redirected outright
-;;     to the gate's exit arm.
-;;   * the assigned value is computed, or K is a name rather than a literal --
-;;     peephole_lines' `found = pl-none` cleared to a register index,
-;;     `pl-find-comma-space`'s `-1` cleared to `i` -- and the verdict needs the
-;;     compare. The edge is routed through a fresh block holding a COPY of the
-;;     gate, `c = ne w, K; branch c, X, <the edge's own target>`, which is what
-;;     LLVM's JumpThreading does with the same shape: the compare the header ran
-;;     once per iteration now runs once per assignment, and the path that keeps
-;;     going arrives at the header with the flag proved equal to K.
-;; Either way the invariant the rest of this pass rests on is the same -- every
-;; surviving path into a flag definition carries K -- and step 5 pins them all
-;; to it.
-;;
-;; Exit phis and the phi-web budget. Duplicated phi copies are a known way for a
-;; CFG rewrite to regress, so any rewrite near a loop exit has to pay for its
-;; edges. This one is nearly free. The clear edges adopt the gate's own exit arm
-;; rather than the shared exit block, and the gate's own edge into it goes away
-;; at the same time, so with the usual single clear edge the exit block's
-;; predecessor count is IDENTICAL before and after and only the values on those
-;; edges change; a second clear edge costs one. And every changed value becomes
-;; a literal where it can -- an exit phi input reached through the gate arm
-;; becomes C, one reached through any other edge out of the loop becomes K.
-;; Since `compiler-reg-phi-touched-add-inputs!` (src/compiler_regalloc.tl) marks
-;; only `Value.Var` inputs, replacing Var inputs with literals strictly shrinks
-;; the phi-touched set and the live-out-input exclusion riding on it, so phi-web
-;; coalescing can only improve. The exit phis C8 mints are the one addition, and
-;; they are minted only for a loop value the region under X actually reads --
-;; which is the value the loop was computing, so the phi replaces a stack slot
-;; the flag was keeping alive rather than adding to one.
-;;
-;; Round 1, not round 2. Everything that could use a converted loop -- `dead_phi`
-;; and `licm` collapsing the phis the redirect trivialises, `bce_version`
-;; deriving a probe loop's invariant mask off the hoisted `cap - 1` -- sits ABOVE
-;; this pass in the round, so a conversion that waits for round 2 is a conversion
-;; nobody sees: the pipeline runs at most two rounds. That is why C7's spacer
-;; walk looks through the dead `mov` a lowered `and` leaves on the gate's exit
-;; arm rather than waiting for the round's tail DCE to retire it.
-;;
-;; Placed between `induction` and `bce_version`. Conversion only shrinks what
-;; the versioner has to fit: the clearing arm leaves the loop, so a converted
-;; body loses a block and everything in it (the dropped instructions come
-;; straight off the versioner's `opt-bce-mb-instr-max` growth budget), and the
-;; top-tested shape the versioner matches survives untouched -- the header still
-;; ends `Branch c, body, exit` with the body target inside the loop. Converting
-;; first is also what lets the versioner see a probe loop's real index
-;; expression: the redirect trivialises the loop's carried phis, and only once
-;; the next round's `gvn`/`dead_phi` have folded them does a capacity read like
-;; `cap - 1` become loop-invariant enough for the masked-index derivation to
-;; name it.
-;;
-;; Conditions, all required:
-;;   C1 invariant seed: a header phi `f = phi [K, preheader], [v, latch]` with
-;;      exactly one input from outside the loop carrying a LOOP-INVARIANT K --
-;;      a literal, or a name the loop cannot redefine -- and exactly one from
-;;      inside it carrying `v`. That K arrives on the phi's own incoming edge
-;;      is what makes its definition dominate the whole loop, so every site the
-;;      gate is copied to may name it.
-;;   C2 closure: descending from `v` through the phis and Movs in the loop that
-;;      can carry the FLAG's own value, every leaf is `f` itself -- an
-;;      iteration that left the flag alone -- or a value the edge carrying it
-;;      assigns to it, and there is at least one of the latter. A leaf of K
-;;      itself is rejected: it re-establishes the continuing value on an edge
-;;      with nothing to test. The descent stops at any phi that cannot reach
-;;      the flag, because that phi is one whole new value and the edge that
-;;      assigns it is the one edge the gate has to be copied to; descending
-;;      into it would splinter one copy into one per arm of a join that has
-;;      nothing to do with the flag.
-;;   C3 gate: some block G in the loop ends `Branch g, T, X` with T inside the
-;;      loop, X outside it, and the flag's NOT being K selecting X. `g` is
-;;      `eq f', K` or `ne f', K` over a closure var, or -- for a bool flag,
-;;      which has exactly one other value to have -- the closure var itself or
-;;      one single-use helper over it: `not f'` (which swaps the arms) or
-;;      `eq f', <bool literal>` (which selects by the literal). K is matched
-;;      through the copies lowering leaves, so a sentinel seeded from one
-;;      `mov @pl-none` and tested against another read of the same global in
-;;      the same straight line is one K. The helper shapes are how
-;;      `(while (and (< i n) (not done)) ...)` and `(while (= found pl-none)
-;;      ...)` lower, and refusing them leaves probe loops testing a stack slot
-;;      every trip.
-;;   C4 uses: the flag and every closure var are read only by the closure, by
-;;      the gate branch and its helper, by phis outside the loop keyed on one of
-;;      the loop's exit blocks, by X's own phis, and from the region X dominates
-;;      (where the minted exit phis of C8 serve them). A phi keyed on a NON-exit
-;;      block has no reachable exit to fold to.
-;;   C5 dominance: G dominates the latch, so every path from a clear edge to the
-;;      back edge passes the gate and none can slip round again. G must also
-;;      dominate every clear predecessor, so everything the gate's exit arm can
-;;      read is equally available on the redirected edge.
-;;   C6 transparency: every block on a path from a clear-edge target to G
-;;      carries only pure instructions, and G itself holds nothing but phis, the
-;;      gate's helper and its branch. Those are what the redirect skips.
-;;   C7 exit shape: X is the gate's arm, or -- when adopting the arm itself was
-;;      refused -- the block that arm reaches through spacers it is the sole
-;;      predecessor of. A spacer ends in a Jump and holds nothing else but pure
-;;      instructions whose destinations the function never reads, so deleting it
-;;      with the collapse changes no value and no effect. That collapse is what a
-;;      lowered `while` needs: its gate arm holds the `and`'s dead answer and
-;;      then jumps, the join carrying the loop's exit phis and the reads after
-;;      the loop is a hop further on, and the CFG and DCE passes that would tidy
-;;      the pair up run a full pipeline round below this one, not above. The
-;;      spacers go with the branch that reached them. X may have phis and
-;;      predecessors besides G. Adopting X costs
-;;      each of its phis one input per redirected predecessor, and the value on
-;;      that input is what the skipped run would have delivered -- see the
-;;      "what the redirected edge has to deliver" section below. X keeps other
-;;      predecessors only when no phi outside the loop folds a closure var on
-;;      X's edge, since that fold reads "this arrival is a cleared one" and a
-;;      surviving counter exit into X would make it false. Every phi outside the
-;;      loop that reads a closure var on one edge out of the loop must read one
-;;      on all of them; where a cleared path could ALSO have left the loop by a
-;;      different exit -- the last iteration reaching the counter test with the
-;;      flag already down -- that alternate exit and X must both be jump-only
-;;      into one common merge block whose phis agree across them, unless the
-;;      alternate exit lands on X itself, where X's own phis have to agree
-;;      instead. The separation walk only looks for exits the rewrite actually
-;;      folds a closure input on: an exit no phi reads the flag across is folded
-;;      nowhere and cannot be the exit that gets it wrong.
-;;   C8 escapes: a value defined in the loop and read from the region X
-;;      dominates gets an exit phi minted at X, carrying the value itself on X's
-;;      surviving edges and the skipped run's answer on each redirected one, and
-;;      the reads under X are rewritten to it. That is what lets `it-intern-slice`
-;;      convert while still returning its loop-carried `out`, and what lets
-;;      gvn_table's probe read `done`, `found` and `first` after the loop. A read
-;;      X does not dominate, or a run whose answer cannot be named on the
-;;      redirected edge (a counter incremented after the clear), still refuses.
-;; Each clear predecessor must also reach its clear target on a Jump or on one
-;; arm of a Branch, must not already reach X, and must leave its clear target
-;; with at least one surviving predecessor; every clear edge is redirected or
-;; the whole loop is left alone.
-;;
-;; The rewrite is: retarget each clear edge (the whole Jump, or just the Branch
-;; arm that carries it) to X, or to the copied gate that decides for it; drop
-;; the decided predecessors from the phis they fed and re-key the gated ones
-;; onto the copy, which still reaches those phis whenever the flag is still K;
-;; replace the gate branch with `Jump T`, drop its helper and delete the spacers
-;; the arm collapsed through; give X's phis an input per redirected predecessor
-;; and take away the one the gate's path arrived on; prepend the minted exit
-;; phis and rewrite the reads under X to them; fold the closure
-;; inputs of phis outside the loop to the cleared value on X's edge and to K on
-;; every other exit edge; and pin the closure's own definitions to K, which is
-;; what every remaining path into them now carries. The fold on X's edge needs
-;; ONE cleared value for the whole loop, so a loop whose redirected edges
-;; disagree -- which any computed assignment does -- converts only when no phi
-;; past X reads the flag across it; the same loop with the reads under X
-;; instead is served by the minted exit phis of C8, which answer per edge.
-;;
-;; C4 and C8 count EFFECTIVE uses (`opt-gep-offset-effective-uses`). At this
-;; slot the dead Casts that removed BoundsChecks strand are still in the IR --
-;; the pipeline DCE is far below -- and counting them would reject loops whose
-;; only outside reader is already retired.
+;; C4 and C8 count effective uses because removed bounds checks can strand
+;; dead casts until DCE. Conversion runs after induction and before BCE
+;; versioning so the optimizer can use the simplified loop in the next round.
 (defenum OptFlagExitEdge
   ;; The clearing predecessor, the phi block its edge flows into, the value the
   ;; edge gives the flag, and -- when that value is not one the pass can decide
@@ -33843,7 +32979,7 @@
           (opt-flag-exit-list-cons
             (EdgeItem (Edge index (+ index 100) (I64 index) (- 0 1) (- 0 1)))
             edges)))
-      (match (compiler-opt-global-shared-view edges)
+      (match (& edges)
         [(Nil) (test.assert-true false "flag-exit edge storage is non-empty")]
         [(Dense items len)
           (test.assert-i64-eq len 9 "flag-exit edge storage grows past four")
@@ -33877,10 +33013,10 @@
   (No)
   (Some i64))
 
-;; the continuing value K, then the latch value the closure walk starts from.
+;; The outside input position and the var the latch carries.
 (defenum OptFlagExitSeed
   (No)
-  (Some ir.CompilerIrValue i64))
+  (Some i64 i64))
 
 ;; One redirected predecessor and the value it must deliver at X.
 (defstruct OptFlagExitEdgeValue
@@ -34040,11 +33176,7 @@
   [value : (& value ir.CompilerIrValue)]
   [closure : (& closure (__tl_dyn-array i64))]) : bool
   (match value
-    [(Var var)
-      (and
-        (>= var 0)
-        (< var (array-length closure))
-        (= (array-ref closure var) 1))]
+    [(Var var) (opt-flag-exit-closure-dst? closure var)]
     [_ false]))
 
 ;; --- prescan -----------------------------------------------------------------
@@ -34444,7 +33576,7 @@
     (match (opt-flag-exit-edge-ref edges at)
       [(Edge _ _ value _ _)
         (unless (opt-flag-exit-edge-decided? seed (& value)) (return (No)))
-        (match (compiler-opt-global-shared-view acc)
+        (match (& acc)
           [(No) (set! acc (Some value))]
           [(Some found)
             (unless (opt-value-eq (& found) (& value)) (return (No)))])]))
@@ -34455,20 +33587,6 @@
   (match cleared
     [(No) false]
     [(Some _) true]))
-
-;; The predecessors an outright redirect takes away from their phi block; a
-;; gated one leaves its own behind under the fresh block's name.
-(define (opt-flag-exit-dropped-preds
-  [seed : (& seed ir.CompilerIrValue)]
-  [edges : (& edges OptFlagExitList)]
-  [acc : OptLabelSet]) : OptLabelSet
-  (for [at (iterator.range 0 (opt-flag-exit-list-count edges))]
-    (match (opt-flag-exit-edge-ref edges at)
-      [(Edge pred _ value _ _)
-        (when
-          (opt-flag-exit-edge-decided? seed (& value))
-          (set! acc (opt-label-add acc pred)))]))
-  acc)
 
 ;; Names for the copied gates, and the vars they define. The label is built
 ;; from both ends of the edge it sits on, so two edges never want the same one
@@ -34554,22 +33672,6 @@
     [(Nil) true]
     [(Dense _ _) false]))
 
-(define (opt-flag-exit-edge-preds
-  [edges : (& edges OptFlagExitList)]
-  [acc : OptLabelSet]) : OptLabelSet
-  (for [at (iterator.range 0 (opt-flag-exit-list-count edges))]
-    (match (opt-flag-exit-edge-ref edges at)
-      [(Edge pred _ _ _ _) (set! acc (opt-label-add acc pred))]))
-  acc)
-
-(define (opt-flag-exit-edge-targets
-  [edges : (& edges OptFlagExitList)]
-  [acc : OptLabelSet]) : OptLabelSet
-  (for [at (iterator.range 0 (opt-flag-exit-list-count edges))]
-    (match (opt-flag-exit-edge-ref edges at)
-      [(Edge _ target _ _ _) (set! acc (opt-label-add acc target))]))
-  acc)
-
 ;; --- C3: the gate -------------------------------------------------------------
 ;;
 ;; The branch tests the flag against K -- `eq f', K` continues on true, `ne f',
@@ -34608,29 +33710,26 @@
 ;; memory read IS that value, so a seed written as a literal and a gate testing
 ;; the copy of one are the same K.
 (define (opt-flag-exit-copy-source
-  [blocks : (& blocks ir.CompilerIrBlockList)]
-  [def-label : (& def-label (__tl_dyn-array i64))]
-  [body : (& body OptLoopBody)]
-  [index : (& index OptCfgIndex)]
-  [value : (& value ir.CompilerIrValue)]) : ir.CompilerIrValue
+  [blocks : (& ir.CompilerIrBlockList)]
+  [def-label : (& (__tl_dyn-array i64))]
+  [body : (& OptLoopBody)]
+  [index : (& OptCfgIndex)]
+  [value : (& ir.CompilerIrValue)]) : ir.CompilerIrMaybeValue
   (match value
     [(Var var)
-      (if (or (< var 0) (>= var (array-length def-label)))
-        (owned_view.compiler-owned-reference-shared-view value)
-        (let
-          [label : i64 (array-ref def-label var)]
-          (if (or (< label 0) (opt-loop-body-label-member? body index label))
-            (owned_view.compiler-owned-reference-shared-view value)
-            (match (opt-flag-exit-instr-at blocks label var)
-              [(No) (owned_view.compiler-owned-reference-shared-view value)]
-              [(Some instr)
-                (match instr
-                  [(Mov _ src _)
-                    (if (opt-flag-exit-decidable-value? src)
-                      src
-                      (owned_view.compiler-owned-reference-shared-view value))]
-                  [_ (owned_view.compiler-owned-reference-shared-view value)])]))))]
-    [_ (owned_view.compiler-owned-reference-shared-view value)]))
+      (when (or (< var 0) (>= var (array-length def-label))) (return (No)))
+      (let
+        [label : i64 (array-ref def-label var)]
+        (when
+          (or (< label 0) (opt-loop-body-label-member? body index label))
+          (return (No)))
+        (match (opt-flag-exit-instr-at blocks label var)
+          [(Some (Mov _ src _))
+            (if (opt-flag-exit-decidable-value? src)
+              (Some src)
+              (No))]
+          [_ (No)]))]
+    [_ (No)]))
 
 (define (opt-flag-exit-global-read-of [instr : ir.CompilerIrInstr]) : ir.CompilerIrMaybeValue
   (match instr
@@ -34728,9 +33827,15 @@
   [value : (& ir.CompilerIrValue)]) : bool
   (or
     (opt-value-eq seed value)
-    (opt-value-eq
-      (& (opt-flag-exit-copy-source blocks def-label body index seed))
-      (& (opt-flag-exit-copy-source blocks def-label body index value)))
+    (match (opt-flag-exit-copy-source blocks def-label body index seed)
+      [(Some left)
+        (match (opt-flag-exit-copy-source blocks def-label body index value)
+          [(Some right) (opt-value-eq (& left) (& right))]
+          [(No) (opt-value-eq (& left) value)])]
+      [(No)
+        (match (opt-flag-exit-copy-source blocks def-label body index value)
+          [(Some right) (opt-value-eq seed (& right))]
+          [(No) false])])
     (opt-flag-exit-same-global-read? blocks def-label body index seed value)))
 
 ;; What the gate's condition is worth once the flag is not K.
@@ -35542,123 +34647,16 @@
               merge
               closure))])]))
 
-;; --- C4/C7b: where the closure may be read ------------------------------------
-(define (opt-flag-exit-note-keyed-uses!
-  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
-  [keys : OptLabelSet]
-  [allowed : (__tl_dyn-array i64)]) : unit
-  (for [index (iterator.range 0 inputs.len)]
-    (let
-      [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
-      (when
-        (opt-label-contains keys input.label)
-        (match (& input.value)
-          [(Var id) (opt-used-array-add (&mut allowed) id)]
-          [_ unit])))))
-
-(define (opt-flag-exit-defines-closure?
-  [instr : (& instr ir.CompilerIrInstr)]
-  [closure : (& closure (__tl_dyn-array i64))]) : bool
-  (match (opt-instr-def-var instr)
-    [(Some dst)
-      (and
-        (>= dst 0)
-        (< dst (array-length closure))
-        (= (array-ref closure dst) 1))]
-    [(None) false]))
-
-(define (opt-flag-exit-allowed-instrs!
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [in-body? : bool]
-  [gate? : bool]
-  [extra : i64]
-  [exits : OptLabelSet]
-  [closure : (& closure (__tl_dyn-array i64))]
-  [allowed : (__tl_dyn-array i64)]) : unit
-  (for [pos (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
-    (let
-      [instr (ir.compiler-ir-instr-seq-borrow instrs pos)]
-      (cond
-        ;; the closure's own phis and copies
-        [(opt-flag-exit-defines-closure? instr closure)
-          (opt-collect-instr-uses-array
-            (&mut (ir.compiler-ir-id-list-new))
-            (compiler-opt-global-shared-view allowed)
-            instr)]
-        ;; the gate branch, and the single-use helper feeding it
-        [(and
-            gate?
-            (or
-              (match (& instr)
-                [(Branch _ _ _) true]
-                [_ false])
-              (and
-                (>= extra 0)
-                (match (opt-instr-def-var instr)
-                  [(Some found) (= found extra)]
-                  [(None) false]))))
-          (opt-collect-instr-uses-array
-            (&mut (ir.compiler-ir-id-list-new))
-            (compiler-opt-global-shared-view allowed)
-            instr)]
-        [in-body? unit]
-        ;; a phi outside the loop, on an edge out of the loop
-        [else
-          (match instr
-            [(Phi _ inputs _)
-              (opt-flag-exit-note-keyed-uses!
-                inputs
-                exits
-                (compiler-opt-global-shared-view allowed))]
-            [_ unit])])
-      unit)))
-
-(define (opt-flag-exit-allowed-blocks!
-  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
-  [body : (& body OptLoopBody)]
-  [index : (& index OptCfgIndex)]
-  [gate : i64]
-  [extra : i64]
-  [exits : OptLabelSet]
-  [closure : (& closure (__tl_dyn-array i64))]
-  [allowed : (__tl_dyn-array i64)]) : unit
-  (match blocks
-    [(slice) unit]
-    [(slice block & rest)
-      (match block
-        [(Block label instrs)
-          (opt-flag-exit-allowed-instrs!
-            (& instrs)
-            (opt-loop-body-label-member? body index label)
-            (= label gate)
-            extra
-            exits
-            closure
-            (compiler-opt-global-shared-view allowed))])
-      (opt-flag-exit-allowed-blocks!
-        rest
-        body
-        index
-        gate
-        extra
-        exits
-        closure
-        allowed)]))
-
-;; --- C8: nothing else escapes the loop ----------------------------------------
 (define (opt-flag-exit-body-uses-instrs!
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [defined : (&mut defined (__tl_dyn-array i64))]
-  [inside : (__tl_dyn-array i64)]) : unit
+  [inside : (&mut (__tl_dyn-array i64))]) : unit
   (let
     [ids : ir.CompilerIrIdList (ir.compiler-ir-id-list-new)]
     (for [pos (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
       (let
         [instr (ir.compiler-ir-instr-seq-borrow instrs pos)]
-        (opt-collect-instr-uses-array
-          (&mut ids)
-          (compiler-opt-global-shared-view inside)
-          instr)
+        (opt-count-instr-uses! (&mut ids) inside instr)
         (match (opt-instr-def-var instr)
           [(Some dst)
             (when
@@ -35671,42 +34669,14 @@
 (define (opt-flag-exit-body-uses!
   [body-blocks : (& body-blocks (Slice ir.CompilerIrBlock))]
   [defined : (&mut defined (__tl_dyn-array i64))]
-  [inside : (__tl_dyn-array i64)]) : unit
+  [inside : (&mut (__tl_dyn-array i64))]) : unit
   (match body-blocks
     [(slice) unit]
     [(slice block & rest)
       (match block
         [(Block _ instrs)
-          (opt-flag-exit-body-uses-instrs!
-            (& instrs)
-            defined
-            (compiler-opt-global-shared-view inside))])
+          (opt-flag-exit-body-uses-instrs! (& instrs) defined inside)])
       (opt-flag-exit-body-uses! rest defined inside)]))
-
-;; C8 exempts the closure itself: C4 above already accounts for every read of it.
-(define (opt-flag-exit-clear-closure!
-  [defined : (&mut defined (__tl_dyn-array i64))]
-  [closure : (& closure (__tl_dyn-array i64))]) : unit
-  (let
-    [var : i64 0]
-    (while (< var (array-length defined))
-      (when (= (array-ref closure var) 1) (set! (array-ref defined var) 0) unit)
-      (+= var 1))
-    unit))
-
-;; `uses` already has the DCE-retired chains subtracted, so a stale reader cannot
-;; make a settled value look like an escape.
-(define (opt-flag-exit-covered?
-  [uses : (& uses (__tl_dyn-array i64))]
-  [allowed : (& (__tl_dyn-array i64))]
-  [select : (& select (__tl_dyn-array i64))]) : bool
-  (for [var (iterator.range 0 (array-length select))]
-    (when
-      (and
-        (= (array-ref select var) 1)
-        (> (array-ref uses var) (array-ref allowed var)))
-      (return false)))
-  true)
 
 ;; --- clear-edge shape ---------------------------------------------------------
 ;; A clear predecessor may end in a Jump or a Branch: only the arm that carries
@@ -36009,11 +34979,24 @@
                 [(Some next) (set! label next)]))))]))
   (- 0 1))
 
+(defstruct OptFlagExitFixCtx
+  (:lifetimes blocks context defs seen reach)
+  (blocks (& blocks ir.CompilerIrBlockList))
+  (context (& context OptCfgContext))
+  (def-label (& defs (__tl_dyn-array i64)))
+  (gate i64)
+  (gate-var i64)
+  (arm-pred i64)
+  (exit-label i64)
+  (exit-preds OptLabelSet)
+  (seen (& seen (__tl_dyn-array i64)))
+  (funnels OptLabelSet)
+  (reach (& reach (__tl_dyn-array i64)))
+  (count i64)
+  (fuel i64))
+
 (define (opt-flag-exit-resolve
-  [blocks : (& blocks ir.CompilerIrBlockList)]
-  [index : (& index OptCfgIndex)]
-  [doms : (& doms OptDomInfo)]
-  [def-label : (& def-label (__tl_dyn-array i64))]
+  [ctx : (& (OptFlagExitFixCtx blocks context defs seen reach))]
   [pos : (& pos (__tl_dyn-array i64))]
   [labels : (& labels (__tl_dyn-array i64))]
   [pred : i64]
@@ -36024,14 +35007,14 @@
     (No)
     (match (& value)
       [(Var var)
-        (if (or (< var 0) (>= var (array-length def-label)))
+        (if (or (< var 0) (>= var (array-length ctx.def-label)))
           (No)
           (let
-            [def : i64 (array-ref def-label var)]
+            [def : i64 (array-ref ctx.def-label var)]
             [step : i64
               (if (< def 0)
                 (- 0 1)
-                (match (opt-cfg-index-id index def)
+                (match (opt-cfg-index-id (& ctx.context.index) def)
                   [(None) (- 0 1)]
                   [(Some id)
                     (if (or (< id 0) (>= id (array-length pos)))
@@ -36039,10 +35022,12 @@
                       (array-ref pos id))]))]
             (if (or (< step 0) (> step at))
               ;; not (re-)entered on the run, so the value it had at P stands
-              (if (or (< def 0) (opt-dom-dominates? doms def pred))
+              (if (or
+                (< def 0)
+                (opt-dom-dominates? (& ctx.context.doms) def pred))
                 (Some value)
                 (No))
-              (match (opt-flag-exit-instr-at blocks def var)
+              (match (opt-flag-exit-instr-at ctx.blocks def var)
                 [(No) (No)]
                 [(Some instr)
                   (match instr
@@ -36055,10 +35040,7 @@
                         [(No) (No)]
                         [(Some input)
                           (opt-flag-exit-resolve
-                            blocks
-                            index
-                            doms
-                            def-label
+                            ctx
                             pos
                             labels
                             pred
@@ -36067,10 +35049,7 @@
                             (- fuel 1))])]
                     [(Mov _ src _)
                       (opt-flag-exit-resolve
-                        blocks
-                        index
-                        doms
-                        def-label
+                        ctx
                         pos
                         labels
                         pred
@@ -36081,23 +35060,6 @@
       [_ (Some value)])))
 
 ;; --- the redirected edge's phi inputs ----------------------------------------
-(defstruct OptFlagExitFixCtx
-  (blocks ir.CompilerIrBlockList)
-  (index OptCfgIndex)
-  (pred-map OptPredMap)
-  (doms OptDomInfo)
-  (def-label (__tl_dyn-array i64))
-  (gate i64)
-  (gate-var i64)
-  (arm-pred i64)
-  (exit-label i64)
-  (exit-preds OptLabelSet)
-  (seen (__tl_dyn-array i64))
-  (funnels OptLabelSet)
-  (reach (__tl_dyn-array i64))
-  (count i64)
-  (fuel i64))
-
 (defenum OptFlagExitMaybePhiFixes
   (No)
   (Some OptFlagExitList))
@@ -36184,9 +35146,6 @@
                   (MintItem (OptFlagExitMint var next-var ty (Nil)))
                   acc))])]))))
 
-(define (opt-flag-exit-mint-count [mints : (& OptFlagExitList)] [acc : i64]) : i64
-  (+ acc (opt-flag-exit-list-count mints)))
-
 ;; Every phi fix and every mint extended by the input of one more redirected
 ;; edge, or No when one of them has no value nameable on that run. `pred` is
 ;; where the run starts, and so what a value has to dominate to be nameable on
@@ -36194,7 +35153,7 @@
 ;; when the redirect goes through one. Both lists are rebuilt oldest-first, so
 ;; they keep their newest-first order.
 (define (opt-flag-exit-extend-fixes
-  [ctx : (& ctx OptFlagExitFixCtx)]
+  [ctx : (& (OptFlagExitFixCtx blocks context defs seen reach))]
   [pos : (& pos (__tl_dyn-array i64))]
   [labels : (& labels (__tl_dyn-array i64))]
   [pred : i64]
@@ -36212,10 +35171,7 @@
         [fix : OptFlagExitPhiFix
           (opt-flag-exit-phi-fixes-ref fixes (- (- fix-count 1) step))]
         (match (opt-flag-exit-resolve
-          ctx.blocks
-          ctx.index
-          ctx.doms
-          ctx.def-label
+          ctx
           pos
           labels
           pred
@@ -36240,10 +35196,7 @@
         [mint : OptFlagExitMint
           (opt-flag-exit-mints-ref mints (- (- mint-count 1) step))]
         (match (opt-flag-exit-resolve
-          ctx.blocks
-          ctx.index
-          ctx.doms
-          ctx.def-label
+          ctx
           pos
           labels
           pred
@@ -36285,19 +35238,16 @@
 ;; this clear edge's value along the skipped run (ruling out a latch that tests
 ;; the previous iteration's header phi instead of the updated latch phi).
 (define (opt-flag-exit-gate-carries-edge?
-  [ctx : (& ctx OptFlagExitFixCtx)]
+  [ctx : (& (OptFlagExitFixCtx blocks context defs seen reach))]
   [pos : (& pos (__tl_dyn-array i64))]
   [labels : (& labels (__tl_dyn-array i64))]
   [pred : i64]
   [len : i64]
   [edge-value : (& ir.CompilerIrValue)]) : bool
-  (if (opt-dom-dominates? (& ctx.doms) ctx.gate pred)
+  (if (opt-dom-dominates? (& ctx.context.doms) ctx.gate pred)
     true
     (match (opt-flag-exit-resolve
-      (& ctx.blocks)
-      (& ctx.index)
-      (& ctx.doms)
-      (& ctx.def-label)
+      ctx
       pos
       labels
       pred
@@ -36308,7 +35258,7 @@
       [(Some resolved) (opt-value-eq (& resolved) edge-value)])))
 
 (define (opt-flag-exit-fix-edges
-  [ctx : (& OptFlagExitFixCtx)]
+  [ctx : (& (OptFlagExitFixCtx blocks context defs seen reach))]
   [edges : (& edges OptFlagExitList)]
   [pos : (&mut pos (__tl_dyn-array i64))]
   [labels : (&mut labels (__tl_dyn-array i64))]
@@ -36327,8 +35277,8 @@
             [_reset : unit (opt-cfg-fill-i64! pos ctx.count (- 0 1))]
             [len : i64
               (opt-flag-exit-path-fill!
-                ctx.index
-                ctx.pred-map
+                (& ctx.context.index)
+                (& ctx.context.pred-map)
                 ctx.gate
                 ctx.reach
                 target
@@ -36345,14 +35295,7 @@
                   len
                   (& value)))
               (not (opt-flag-exit-agree-exit-phis? ctx pos labels pred len))
-              (not
-                (opt-flag-exit-agree-mints?
-                  (owned_view.compiler-owned-reference-shared-view ctx)
-                  pos
-                  labels
-                  pred
-                  len
-                  mints)))
+              (not (opt-flag-exit-agree-mints? ctx pos labels pred len mints)))
               (No)
               (match (opt-flag-exit-extend-fixes
                 ctx
@@ -36386,32 +35329,24 @@
   [dropped : OptLabelSet]
   [source : i64]
   [values : OptFlagExitList]) : OptFlagExitMaybeEdgeValues
-  (match preds
-    [(Nil) (Some values)]
-    [(Dense _ _)
-      (let
-        [label : i64 (opt-label-ref preds 0)]
-        (if (or (= label gate) (opt-label-contains dropped label))
-          (opt-flag-exit-mint-survivors
-            doms
-            def-label
-            (opt-label-tail preds)
-            gate
-            dropped
-            source
-            values)
-          (if (not (opt-dom-dominates? doms (array-ref def-label source) label))
-            (No)
-            (opt-flag-exit-mint-survivors
-              doms
-              def-label
-              (opt-label-tail preds)
-              gate
-              dropped
-              source
-              (opt-flag-exit-list-cons
-                (ValueItem (OptFlagExitEdgeValue label (Var source)))
-                values)))))]))
+  (while (not
+    (match preds
+      [(Nil) true]
+      [_ false]))
+    (let
+      [label : i64 (opt-label-ref preds 0)]
+      (unless
+        (or (= label gate) (opt-label-contains dropped label))
+        (unless
+          (opt-dom-dominates? doms (array-ref def-label source) label)
+          (return (No)))
+        (set!
+          values
+          (opt-flag-exit-list-cons
+            (ValueItem (OptFlagExitEdgeValue label (Var source)))
+            values)))
+      (set! preds (opt-label-tail preds))))
+  (Some values))
 
 (define (opt-flag-exit-mints-survivors
   [doms : (& doms OptDomInfo)]
@@ -36474,24 +35409,26 @@
 ;; the flag test both leave through the same block: the counter exit is an
 ;; arrival on X, and the flag it carries on a cleared last iteration is exactly
 ;; the C the redirected edge now carries.
-(define (opt-flag-exit-cleared-arrival? [ctx : OptFlagExitFixCtx] [label : i64]) : bool
+(define (opt-flag-exit-cleared-arrival?
+  [ctx : (& (OptFlagExitFixCtx blocks context defs seen reach))]
+  [label : i64]) : bool
   (and
     (not (= label ctx.arm-pred))
     (or
-      (opt-flag-exit-marked? ctx.index ctx.seen label)
-      (opt-label-contains ctx.funnels label))))
+      (opt-flag-exit-marked? (& ctx.context.index) ctx.seen label)
+      (opt-label-contains (opt-bce-label-set-copy (& ctx.funnels)) label))))
 
 ;; Where on the run control stood when it took the edge into X: A's own index
 ;; when the run visits A, else the last run block A hangs off. -1 when the run
 ;; never reaches A, which refuses.
 (define (opt-flag-exit-alt-at
-  [ctx : (& ctx OptFlagExitFixCtx)]
+  [ctx : (& (OptFlagExitFixCtx blocks context defs seen reach))]
   [pos : (& pos (__tl_dyn-array i64))]
   [labels : (& labels (__tl_dyn-array i64))]
   [len : i64]
   [label : i64]
   [at : i64]) : i64
-  (match (opt-cfg-index-id ctx.index label)
+  (match (opt-cfg-index-id (& ctx.context.index) label)
     [(None) (- 0 1)]
     [(Some id)
       (let
@@ -36503,13 +35440,15 @@
           [(>= own 0) own]
           [(< at 0) (- 0 1)]
           [(opt-label-contains
-              (opt-pred-map-successors ctx.pred-map (array-ref labels at))
+              (opt-pred-map-successors
+                (& ctx.context.pred-map)
+                (array-ref labels at))
               label)
             at]
           [else (opt-flag-exit-alt-at ctx pos labels len label (- at 1))]))]))
 
 (define (opt-flag-exit-agree-at?
-  [ctx : (& ctx OptFlagExitFixCtx)]
+  [ctx : (& (OptFlagExitFixCtx blocks context defs seen reach))]
   [pos : (& pos (__tl_dyn-array i64))]
   [labels : (& labels (__tl_dyn-array i64))]
   [pred : i64]
@@ -36522,10 +35461,7 @@
     (if (< at 0)
       false
       (match (opt-flag-exit-resolve
-        ctx.blocks
-        ctx.index
-        ctx.doms
-        ctx.def-label
+        ctx
         pos
         labels
         pred
@@ -36536,7 +35472,7 @@
         [(Some resolved) (opt-value-eq (& resolved) want)]))))
 
 (define (opt-flag-exit-agree-inputs?
-  [ctx : (& OptFlagExitFixCtx)]
+  [ctx : (& (OptFlagExitFixCtx blocks context defs seen reach))]
   [pos : (& pos (__tl_dyn-array i64))]
   [labels : (& labels (__tl_dyn-array i64))]
   [pred : i64]
@@ -36548,10 +35484,7 @@
       [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
       (unless
         (or
-          (not
-            (opt-flag-exit-cleared-arrival?
-              (owned_view.compiler-owned-reference-shared-view ctx)
-              input.label))
+          (not (opt-flag-exit-cleared-arrival? ctx input.label))
           (opt-flag-exit-agree-at?
             ctx
             pos
@@ -36565,7 +35498,7 @@
   true)
 
 (define (opt-flag-exit-agree-phis?
-  [ctx : (& OptFlagExitFixCtx)]
+  [ctx : (& (OptFlagExitFixCtx blocks context defs seen reach))]
   [pos : (& pos (__tl_dyn-array i64))]
   [labels : (& labels (__tl_dyn-array i64))]
   [pred : i64]
@@ -36579,10 +35512,7 @@
             [(No) false]
             [(Some value)
               (match (opt-flag-exit-resolve
-                ctx.blocks
-                ctx.index
-                ctx.doms
-                ctx.def-label
+                ctx
                 pos
                 labels
                 pred
@@ -36605,7 +35535,7 @@
   true)
 
 (define (opt-flag-exit-agree-exit-phis?
-  [ctx : (& OptFlagExitFixCtx)]
+  [ctx : (& (OptFlagExitFixCtx blocks context defs seen reach))]
   [pos : (& pos (__tl_dyn-array i64))]
   [labels : (& labels (__tl_dyn-array i64))]
   [pred : i64]
@@ -36621,7 +35551,7 @@
 ;; the loop value itself, so an edge a cleared path could still arrive on has to
 ;; deliver what the redirected edge delivers.
 (define (opt-flag-exit-agree-mint-preds?
-  [ctx : (& OptFlagExitFixCtx)]
+  [ctx : (& (OptFlagExitFixCtx blocks context defs seen reach))]
   [pos : (& pos (__tl_dyn-array i64))]
   [labels : (& labels (__tl_dyn-array i64))]
   [pred : i64]
@@ -36636,10 +35566,7 @@
         [label : i64 (opt-label-ref preds 0)]
         (and
           (or
-            (not
-              (opt-flag-exit-cleared-arrival?
-                (owned_view.compiler-owned-reference-shared-view ctx)
-                label))
+            (not (opt-flag-exit-cleared-arrival? ctx label))
             (opt-flag-exit-agree-at? ctx pos labels pred len label value want))
           (opt-flag-exit-agree-mint-preds?
             ctx
@@ -36652,7 +35579,7 @@
             want)))]))
 
 (define (opt-flag-exit-agree-mints?
-  [ctx : OptFlagExitFixCtx]
+  [ctx : (& (OptFlagExitFixCtx blocks context defs seen reach))]
   [pos : (& pos (__tl_dyn-array i64))]
   [labels : (& labels (__tl_dyn-array i64))]
   [pred : i64]
@@ -36664,10 +35591,7 @@
       [value : ir.CompilerIrValue (Var mint.source)]
       (unless
         (match (opt-flag-exit-resolve
-          ctx.blocks
-          ctx.index
-          ctx.doms
-          ctx.def-label
+          ctx
           pos
           labels
           pred
@@ -36677,12 +35601,12 @@
           [(No) false]
           [(Some want)
             (opt-flag-exit-agree-mint-preds?
-              (& ctx)
+              ctx
               pos
               labels
               pred
               len
-              ctx.exit-preds
+              (opt-bce-label-set-copy (& ctx.exit-preds))
               (& value)
               (& want))])
         (return false))))
@@ -36700,135 +35624,6 @@
   (or
     (opt-dom-dominates? doms exit-label label)
     (not (opt-dom-dominates? doms label label))))
-
-(define (opt-flag-exit-collect-inputs!
-  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
-  [into : (__tl_dyn-array i64)]) : unit
-  (for [index (iterator.range 0 inputs.len)]
-    (let
-      [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
-      (match (& input.value)
-        [(Var id) (opt-used-array-add (&mut into) id)]
-        [_ unit]))))
-
-;; A closure var on an edge out of the loop is already served by the literal
-;; fold, which is cheaper than an exit phi, so it is not a read that needs one.
-(define (opt-flag-exit-xdom-inputs!
-  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
-  [doms : (& doms OptDomInfo)]
-  [exit-label : i64]
-  [exits : OptLabelSet]
-  [closure : (& closure (__tl_dyn-array i64))]
-  [into : (__tl_dyn-array i64)]) : unit
-  (for [index (iterator.range 0 inputs.len)]
-    (let
-      [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
-      (when
-        (and
-          (opt-flag-exit-xdom? doms exit-label input.label)
-          (not
-            (and
-              (opt-label-contains exits input.label)
-              (opt-flag-exit-closure-var? (& input.value) closure))))
-        (match (& input.value)
-          [(Var id) (opt-used-array-add (&mut into) id)]
-          [_ unit])))))
-
-(define (opt-flag-exit-outside-uses-instrs!
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [exit? : bool]
-  [class1? : bool]
-  [doms : (& doms OptDomInfo)]
-  [exit-label : i64]
-  [exits : OptLabelSet]
-  [closure : (& closure (__tl_dyn-array i64))]
-  [xdom : (__tl_dyn-array i64)]
-  [xphi : (__tl_dyn-array i64)]) : unit
-  (for [pos (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
-    (let
-      [instr (ir.compiler-ir-instr-seq-borrow instrs pos)]
-      (match instr
-        [(Phi _ inputs _)
-          (if exit?
-            (opt-flag-exit-collect-inputs!
-              inputs
-              (compiler-opt-global-shared-view xphi))
-            (opt-flag-exit-xdom-inputs!
-              inputs
-              doms
-              exit-label
-              exits
-              closure
-              (compiler-opt-global-shared-view xdom)))]
-        [_
-          (if class1?
-            (opt-collect-instr-uses-array
-              (&mut (ir.compiler-ir-id-list-new))
-              (compiler-opt-global-shared-view xdom)
-              instr)
-            unit)])
-      unit)))
-
-(define (opt-flag-exit-outside-uses!
-  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
-  [body : (& body OptLoopBody)]
-  [index : (& index OptCfgIndex)]
-  [doms : (& doms OptDomInfo)]
-  [exit-label : i64]
-  [exits : OptLabelSet]
-  [closure : (& closure (__tl_dyn-array i64))]
-  [xdom : (__tl_dyn-array i64)]
-  [xphi : (__tl_dyn-array i64)]) : unit
-  (match blocks
-    [(slice) unit]
-    [(slice block & rest)
-      (match block
-        [(Block label instrs)
-          (if (opt-loop-body-label-member? body index label)
-            unit
-            (opt-flag-exit-outside-uses-instrs!
-              (& instrs)
-              (= label exit-label)
-              (opt-flag-exit-xdom? doms exit-label label)
-              doms
-              exit-label
-              exits
-              closure
-              (compiler-opt-global-shared-view xdom)
-              (compiler-opt-global-shared-view xphi)))])
-      (opt-flag-exit-outside-uses!
-        rest
-        body
-        index
-        doms
-        exit-label
-        exits
-        closure
-        xdom
-        xphi)]))
-
-(define (opt-flag-exit-add-counts!
-  [into : (&mut into (__tl_dyn-array i64))]
-  [from : (& from (__tl_dyn-array i64))]
-  [count : i64]) : unit
-  (for [var (iterator.range 0 count)]
-    (set! (array-ref into var) (+ (array-ref into var) (array-ref from var))))
-  unit)
-
-;; A loop value read from X's dominated region needs the minted phi; anything
-;; read only from inside the loop, from an exit-keyed phi input, or from X's own
-;; phis does not.
-(define (opt-flag-exit-mark-mints!
-  [defined : (& defined (__tl_dyn-array i64))]
-  [xdom : (& xdom (__tl_dyn-array i64))]
-  [mint : (&mut mint (__tl_dyn-array i64))]
-  [count : i64]) : unit
-  (for [var (iterator.range 0 count)]
-    (when
-      (and (= (array-ref defined var) 1) (> (array-ref xdom var) 0))
-      (set! (array-ref mint var) 1)
-      unit))
-  unit)
 
 ;; --- which exits the rewrite actually folds ----------------------------------
 ;;
@@ -36927,104 +35722,10 @@
               (Gated fresh))))]))
   (None))
 
-;; The clear target's phis. An outright redirect takes its predecessor's input
-;; away with the edge; a gated one keeps the input under the copied gate's
-;; name, because the run still arrives there on every iteration the compare
-;; finds the flag still at K.
-(define (opt-flag-exit-clear-inputs
-  [inputs : ir.CompilerIrPhiInputSeq]
-  [target : i64]
-  [clears : (& clears OptFlagExitList)]) : ir.CompilerIrPhiInputSeq
-  (let
-    [phi-inputs-at-34811-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-34811-3.len 0)
-      (ir.compiler-ir-phi-input-seq-empty)
-      (let
-        [phi-input-at-34811-3
-          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-34811-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-34811-3.value]
-        [label : i64 phi-input-at-34811-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-34811-3.slots
-            (+ phi-inputs-at-34811-3.start 1)
-            (- phi-inputs-at-34811-3.len 1))]
-        [tail : ir.CompilerIrPhiInputSeq
-          (opt-flag-exit-clear-inputs rest target clears)]
-        (match (opt-flag-exit-edge-kind clears label target)
-          [(None) (ir.compiler-ir-phi-input-seq-prepend value label (& tail))]
-          [(Drop) tail]
-          [(Gated fresh)
-            (ir.compiler-ir-phi-input-seq-prepend value fresh (& tail))])))))
-
-(define (opt-flag-exit-literalize-inputs
-  [inputs : ir.CompilerIrPhiInputSeq]
-  [plan : OptFlagExitPlan]) : ir.CompilerIrPhiInputSeq
-  (let
-    [phi-inputs-at-34830-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-34830-3.len 0)
-      (ir.compiler-ir-phi-input-seq-empty)
-      (let
-        [phi-input-at-34830-3
-          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-34830-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-34830-3.value]
-        [label : i64 phi-input-at-34830-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-34830-3.slots
-            (+ phi-inputs-at-34830-3.start 1)
-            (- phi-inputs-at-34830-3.len 1))]
-        (ir.compiler-ir-phi-input-seq-prepend
-          (if (and
-            (opt-label-contains plan.exits label)
-            (opt-flag-exit-closure-var? value plan.closure))
-            (if (= label plan.exit-label)
-              ;; C7 refused the loop unless every redirected edge agrees on one
-              ;; value here, so the fallback is unreachable.
-              (match (owned_view.compiler-owned-shared-view plan.cleared)
-                [(Some cleared) cleared]
-                [(No) value])
-              (owned_view.compiler-owned-shared-view plan.seed))
-            value)
-          label
-          (& (opt-flag-exit-literalize-inputs rest plan)))))))
-
-;; Step 5. Once the clear edges are gone, every remaining path into a closure
-;; definition carries K, so pin each one to that literal. The phis are left in
-;; place (a Mov among them would break the block's phi prefix) with all their
-;; inputs constant, which breaks the flag's phi <-> phi CYCLE: the pipeline DCE
-;; retires dead chains, not cycles, so without this the retired flag would still
-;; cost its `mov $K` and a loop-live register.
-(define (opt-flag-exit-const-inputs
-  [inputs : ir.CompilerIrPhiInputSeq]
-  [seed : (& ir.CompilerIrValue)]) : ir.CompilerIrPhiInputSeq
-  (let
-    [phi-inputs-at-34861-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-34861-3.len 0)
-      (ir.compiler-ir-phi-input-seq-empty)
-      (let
-        [phi-input-at-34861-3
-          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-34861-3 0)]
-        [label : i64 phi-input-at-34861-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-34861-3.slots
-            (+ phi-inputs-at-34861-3.start 1)
-            (- phi-inputs-at-34861-3.len 1))]
-        (ir.compiler-ir-phi-input-seq-prepend
-          (owned_view.compiler-owned-reference-shared-view seed)
-          label
-          (& (opt-flag-exit-const-inputs rest seed)))))))
-
 (define (opt-flag-exit-closure-dst?
-  [dst : i64]
-  [plan : (& plan OptFlagExitPlan)]) : bool
-  (let
-    [closure (& plan.closure)]
-    (and
-      (>= dst 0)
-      (< dst (array-length closure))
-      (= (array-ref closure dst) 1))))
+  [closure : (& (__tl_dyn-array i64))]
+  [dst : i64]) : bool
+  (and (>= dst 0) (< dst (array-length closure)) (= (array-ref closure dst) 1)))
 
 ;; Where `pred -> target` goes now: unchanged when it is not a clear edge, X
 ;; itself when the redirect was decided here, and the copied gate when it was
@@ -37043,7 +35744,7 @@
   [instr : ir.CompilerIrInstr]
   [label : i64]
   [plan : (& OptFlagExitPlan)]) : ir.CompilerIrInstr
-  (match (compiler-opt-global-shared-view instr)
+  (match instr
     [(Jump target) (Jump (opt-flag-exit-retarget-to plan label target))]
     [(Branch condition true-label false-label)
       (Branch
@@ -37143,19 +35844,19 @@
         (opt-flag-exit-list-count mints)
         9
         "flag-exit mints grow past four")
-      (match (compiler-opt-global-shared-view values)
+      (match (& values)
         [(Nil) (test.assert-true false "edge values are non-empty")]
         [(Dense items _)
           (test.assert-true
             (>= (array-length items) 9)
             "edge value capacity expands")])
-      (match (compiler-opt-global-shared-view fixes)
+      (match (& fixes)
         [(Nil) (test.assert-true false "phi fixes are non-empty")]
         [(Dense items _)
           (test.assert-true
             (>= (array-length items) 9)
             "phi-fix capacity expands")])
-      (match (compiler-opt-global-shared-view mints)
+      (match (& mints)
         [(Nil) (test.assert-true false "mints are non-empty")]
         [(Dense items _)
           (test.assert-true (>= (array-length items) 9) "mint capacity expands")])
@@ -37212,165 +35913,175 @@
     false
     true))
 
-;; A phi input evaluated on an edge X dominates reads the minted exit phi, the
-;; same rule the non-phi reads under X follow.
-(define (opt-flag-exit-subst-inputs-from
-  [inputs : ir.CompilerIrPhiInputSeq]
-  [plan : (& OptFlagExitPlan)]) : ir.CompilerIrPhiInputSeq
-  (let
-    [phi-inputs-at-35102-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-35102-3.len 0)
-      (ir.compiler-ir-phi-input-seq-empty)
-      (let
-        [phi-input-at-35102-3
-          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-35102-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-35102-3.value]
-        [label : i64 phi-input-at-35102-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-35102-3.slots
-            (+ phi-inputs-at-35102-3.start 1)
-            (- phi-inputs-at-35102-3.len 1))]
-        (ir.compiler-ir-phi-input-seq-prepend
-          (if (opt-flag-exit-xdom? plan.doms plan.exit-label label)
-            (opt-copy-resolve
-              (owned_view.compiler-owned-reference-shared-view
-                (& plan.mint-env))
-              value)
-            value)
-          label
-          (& (opt-flag-exit-subst-inputs-from rest plan)))))))
+(defstruct OptFlagExitRewriteSite
+  (label i64)
+  (in-body? bool)
+  (clear-target? bool)
+  (clear-pred? bool)
+  (gate? bool)
+  (exit? bool)
+  (class1? bool))
 
-(define (opt-flag-exit-subst-inputs
-  [inputs : ir.CompilerIrPhiInputSeq]
-  [plan : (& OptFlagExitPlan)]) : ir.CompilerIrPhiInputSeq
-  (if (opt-flag-exit-minted? plan)
-    (opt-flag-exit-subst-inputs-from inputs plan)
-    inputs))
+;; Keep surviving phi keys in order. Clear-edge redirects remove a key or
+;; re-key it to the copied gate. Closure phis remain phis and carry K on every
+;; surviving edge; other outside reads fold the flag and use the minted vars.
+(define (opt-flag-exit-rewrite-phi-inputs
+  [inputs : (& ir.CompilerIrPhiInputSeq)]
+  [site : OptFlagExitRewriteSite]
+  [plan : (& OptFlagExitPlan)]
+  [pin? : bool]) : ir.CompilerIrPhiInputSeq
+  (let
+    [substitute? : bool
+      (and
+        (not pin?)
+        (not site.clear-target?)
+        (not site.exit?)
+        (opt-flag-exit-minted? plan))]
+    [slots : (__tl_dyn-array ir.CompilerIrPhiInput)
+      (__tl_make-array ir.CompilerIrPhiInput inputs.len)]
+    [count : i64 0]
+    (for [i (iterator.range 0 inputs.len)]
+      (let
+        [input (ir.compiler-ir-phi-input-seq-ref inputs i)]
+        [label : i64 input.label]
+        (when
+          site.clear-target?
+          (match (opt-flag-exit-edge-kind plan.clears label site.label)
+            [(Drop) (continue)]
+            [(Gated fresh) (set! label fresh)]
+            [(None) unit]))
+        (let
+          [value : ir.CompilerIrValue
+            (cond
+              [pin?
+                (owned_view.compiler-owned-reference-shared-view (& plan.seed))]
+              [(and
+                  (not site.clear-target?)
+                  (opt-label-contains
+                    (opt-bce-label-set-copy (& plan.exits))
+                    label)
+                  (opt-flag-exit-closure-var? (& input.value) plan.closure))
+                (if (= label plan.exit-label)
+                  (match (owned_view.compiler-owned-reference-shared-view
+                    (& plan.cleared))
+                    [(Some cleared) cleared]
+                    [(No) input.value])
+                  (owned_view.compiler-owned-reference-shared-view
+                    (& plan.seed)))]
+              [else input.value])]
+          [rewritten : ir.CompilerIrValue
+            (if (and
+              substitute?
+              (opt-flag-exit-xdom? plan.doms plan.exit-label label))
+              (opt-flag-exit-resolve-mint plan value)
+              value)]
+          (set! (array-ref slots count) (ir.CompilerIrPhiInput rewritten label))
+          (+= count 1))))
+    (ir.CompilerIrPhiInputSeq slots 0 count)))
+
+(define (opt-flag-exit-resolve-mint
+  [plan : (& OptFlagExitPlan)]
+  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (match (& value)
+    [(Var id)
+      (match (opt-copy-lookup (& plan.mint-env) id)
+        [(Some other) other]
+        [(No) value])]
+    [_ value]))
 
 (define (opt-flag-exit-rewrite-instr
   [rw : (&mut rw ir.CompilerIrInstrRewrite)]
   [instr : ir.CompilerIrInstr]
-  [label : i64]
-  [in-body? : bool]
-  [clear-target? : bool]
-  [clear-pred? : bool]
-  [gate? : bool]
-  [exit? : bool]
-  [class1? : bool]
+  [site : OptFlagExitRewriteSite]
   [last? : bool]
-  [plan : OptFlagExitPlan]) : ir.CompilerIrInstr
-  (match (compiler-opt-global-shared-view instr)
+  [plan : (& OptFlagExitPlan)]) : ir.CompilerIrInstr
+  (match instr
     [(Phi dst inputs ty)
-      (cond
-        ;; a flag definition: pinned to the continuing value
-        [(opt-flag-exit-closure-dst? dst plan)
-          (Phi
-            dst
-            (opt-flag-exit-const-inputs
-              (if clear-target?
-                (opt-flag-exit-clear-inputs inputs label plan.clears)
-                inputs)
-              (& plan.seed))
-            ty)]
-        ;; a phi the redirected edge reaches differently, or no longer at all
-        [clear-target?
-          (Phi dst (opt-flag-exit-clear-inputs inputs label plan.clears) ty)]
-        [in-body? instr]
-        ;; a phi in X: the edge the gate's path arrived on is replaced by the
-        ;; redirected ones
-        [exit?
-          (Phi
-            dst
-            (opt-flag-exit-literalize-inputs
-              (opt-flag-exit-add-inputs
-                (opt-thread-phi-inputs-drop inputs plan.arm-pred)
-                (& (opt-flag-exit-phi-fix-lookup plan.phi-fixes dst)))
-              plan)
-            ty)]
-        ;; a phi outside the loop: closure inputs become the exit's literal,
-        ;; and inputs on edges X dominates read the minted exit phis
-        [else
-          (Phi
-            dst
-            (opt-flag-exit-subst-inputs
-              (opt-flag-exit-literalize-inputs
-                inputs
-                (compiler-opt-global-shared-view plan))
-              (& plan))
-            ty)])]
-    [(Mov dst _ ty)
-      (if (opt-flag-exit-closure-dst? dst plan)
-        (Mov dst plan.seed ty)
-        (if class1?
-          (opt-copy-subst-instr rw (& plan.mint-env) instr)
-          instr))]
-    [_
       (let
-        [read : ir.CompilerIrInstr
-          (if class1?
-            (opt-copy-subst-instr
-              rw
-              (& plan.mint-env)
-              (compiler-opt-global-shared-view instr))
-            (owned_view.compiler-owned-shared-view instr))]
+        [pin? : bool (opt-flag-exit-closure-dst? (& plan.closure) dst)]
         (cond
-          [(not last?) read]
-          [clear-pred? (opt-flag-exit-retarget instr label (& plan))]
-          [gate? (Jump plan.continue-label)]
-          [else read]))]))
+          [(or pin? site.clear-target?)
+            (Phi
+              dst
+              (opt-flag-exit-rewrite-phi-inputs (& inputs) site plan pin?)
+              ty)]
+          [site.in-body? (Phi dst inputs ty)]
+          [site.exit?
+            (let
+              [redirected
+                (opt-flag-exit-add-inputs
+                  (opt-thread-phi-inputs-drop inputs plan.arm-pred)
+                  (& (opt-flag-exit-phi-fix-lookup plan.phi-fixes dst)))]
+              (Phi
+                dst
+                (opt-flag-exit-rewrite-phi-inputs
+                  (& redirected)
+                  site
+                  plan
+                  false)
+                ty))]
+          [else
+            (Phi
+              dst
+              (opt-flag-exit-rewrite-phi-inputs (& inputs) site plan false)
+              ty)]))]
+    [(Mov dst src ty)
+      (if (opt-flag-exit-closure-dst? (& plan.closure) dst)
+        (Mov
+          dst
+          (owned_view.compiler-owned-reference-shared-view (& plan.seed))
+          ty)
+        (let
+          [original (ir.CompilerIrInstr.Mov dst src ty)]
+          (if site.class1?
+            (opt-copy-subst-instr rw (& plan.mint-env) original)
+            original)))]
+    [_
+      (cond
+        [(and last? site.clear-pred?)
+          (opt-flag-exit-retarget instr site.label plan)]
+        [(and last? site.gate?) (Jump plan.continue-label)]
+        [site.class1? (opt-copy-subst-instr rw (& plan.mint-env) instr)]
+        [else instr])]))
 
 ;; The gate's single-use helper goes with the branch it fed.
 (define (opt-flag-exit-drop-instr?
   [instr : (& instr ir.CompilerIrInstr)]
   [gate? : bool]
-  [plan : (& plan OptFlagExitPlan)]) : bool
+  [extra : i64]) : bool
   (and
     gate?
-    (>= plan.gate-extra 0)
+    (>= extra 0)
     (match (opt-instr-def-var instr)
-      [(Some found) (= found plan.gate-extra)]
+      [(Some found) (= found extra)]
       [(None) false])))
 
-(define (opt-flag-exit-rewrite-instrs-from
+(define (opt-flag-exit-rewrite-instrs
   [instrs : (& ir.CompilerIrInstrSeq)]
-  [pos : i64]
-  [label : i64]
-  [in-body? : bool]
-  [clear-target? : bool]
-  [clear-pred? : bool]
-  [gate? : bool]
-  [exit? : bool]
-  [class1? : bool]
+  [site : OptFlagExitRewriteSite]
   [plan : (& OptFlagExitPlan)]) : ir.CompilerIrInstrSeq
   (let
     [rw : ir.CompilerIrInstrRewrite (ir.compiler-ir-instr-rewrite-new)]
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [builder : ir.CompilerIrInstrBuilder
-      (ir.compiler-ir-instr-builder-with-capacity (- count pos))]
+      (ir.compiler-ir-instr-builder-with-capacity count)]
     ;; the exit block opens with the minted exit phis
-    (if exit?
+    (if site.exit?
       (opt-flag-exit-push-mints! (&mut builder) plan.mints)
       unit)
-    (for [index (iterator.range pos count)]
+    (for [index (iterator.range 0 count)]
       (let
         [instr (ir.compiler-ir-instr-seq-ref instrs index)]
-        (if (opt-flag-exit-drop-instr? instr gate? plan)
+        (if (opt-flag-exit-drop-instr? instr site.gate? plan.gate-extra)
           unit
           (ir.compiler-ir-instr-builder-push!
             (&mut builder)
             (opt-flag-exit-rewrite-instr
               (&mut rw)
               instr
-              label
-              in-body?
-              clear-target?
-              clear-pred?
-              gate?
-              exit?
-              class1?
+              site
               (= index (- count 1))
-              (owned_view.compiler-owned-reference-shared-view plan))))))
+              plan)))))
     (ir.compiler-ir-instr-builder-to-seq builder)))
 
 ;; The gate, copied to an assignment site the redirect could not decide here:
@@ -37414,397 +36125,470 @@
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [body : (& body OptLoopBody)]
   [index : (& index OptCfgIndex)]
-  [plan : OptFlagExitPlan]) : unit
+  [plan : (& OptFlagExitPlan)]) : unit
   (match blocks
     [(slice) unit]
     [(slice block & rest)
       (match block
         [(Block label instrs)
           (unless
-            (opt-label-contains plan.dropped label)
+            (opt-label-contains (opt-bce-label-set-copy (& plan.dropped)) label)
             (let
               [in-body? : bool (opt-loop-body-label-member? body index label)]
               (ir.compiler-ir-block-builder-push!
                 out
                 (ir.CompilerIrBlock.Block
                   label
-                  (opt-flag-exit-rewrite-instrs-from
+                  (opt-flag-exit-rewrite-instrs
                     (& instrs)
-                    0
-                    label
-                    in-body?
-                    (opt-label-contains plan.clear-targets label)
-                    (opt-label-contains plan.clear-preds label)
-                    (= label plan.gate)
-                    (= label plan.exit-label)
-                    (and
-                      (not in-body?)
-                      (opt-flag-exit-minted? plan)
-                      (opt-flag-exit-xdom? plan.doms plan.exit-label label))
-                    (& plan))))
-              (opt-flag-exit-gate-blocks! out (& plan) (& plan.clears) label)))])
+                    (OptFlagExitRewriteSite
+                      label
+                      in-body?
+                      (opt-label-contains
+                        (opt-bce-label-set-copy (& plan.clear-targets))
+                        label)
+                      (opt-label-contains
+                        (opt-bce-label-set-copy (& plan.clear-preds))
+                        label)
+                      (= label plan.gate)
+                      (= label plan.exit-label)
+                      (and
+                        (not in-body?)
+                        (opt-flag-exit-minted? plan)
+                        (opt-flag-exit-xdom? plan.doms plan.exit-label label)))
+                    plan)))
+              (opt-flag-exit-gate-blocks! out plan (& plan.clears) label)))])
       (opt-flag-exit-rewrite-blocks! out rest body index plan)]))
 
 ;; --- per-candidate plan -------------------------------------------------------
 ;; C5, C6 and C7 in one place: everything that only needs the CFG and the block
 ;; shapes, checked before the two use-accounting sweeps below pay for themselves.
-(define (opt-flag-exit-structure-ok?
-  [blocks : (& blocks ir.CompilerIrBlockList)]
-  [context : (& context OptCfgContext)]
-  [body : (& body OptLoopBody)]
-  [latch : i64]
-  [gate : i64]
-  [gate-extra : i64]
-  [raw-uses : (& raw-uses (__tl_dyn-array i64))]
-  [exit-label : i64]
-  [clears : (& clears OptFlagExitList)]
-  [drop-preds : OptLabelSet]
-  [cleared : (& cleared ir.CompilerIrMaybeValue)]
-  [clear-targets : OptLabelSet]
-  [alt-labels : OptLabelSet]
-  [exits : OptLabelSet]
-  [folded : OptLabelSet]
-  [seen : (& seen (__tl_dyn-array i64))]
-  [closure : (& closure (__tl_dyn-array i64))]) : bool
+(defstruct OptFlagExitGateSite
+  (latch i64)
+  (gate i64)
+  (extra i64)
+  (var i64)
+  (continue-label i64))
+
+(defstruct OptFlagExitExitSite
+  (label i64)
+  (arm-pred i64)
+  (dropped OptLabelSet))
+
+(defstruct OptFlagExitUseFacts
+  (uses (__tl_dyn-array i64))
+  (raw-uses (__tl_dyn-array i64))
+  (def-label (__tl_dyn-array i64)))
+
+(defstruct OptFlagExitPlanInputs
+  (:lifetimes blocks context use-facts body seed flag-ty closure)
+  (blocks (& blocks ir.CompilerIrBlockList))
+  (context (& context OptCfgContext))
+  (frame i64)
+  (use-facts (& use-facts OptFlagExitUseFacts))
+  (body (& body OptLoopBody))
+  (seed (& seed ir.CompilerIrValue))
+  (flag-ty (& flag-ty ast.AstType))
+  (closure (& closure (__tl_dyn-array i64))))
+
+(defstruct OptFlagExitClearShape
+  (preds OptLabelSet)
+  (targets OptLabelSet)
+  (drop-preds OptLabelSet))
+
+(define (opt-flag-exit-clear-shape [clears : (& OptFlagExitList)]) : OptFlagExitClearShape
   (let
-    [index : OptCfgIndex context.index]
-    [pred-map : OptPredMap context.pred-map]
-    [doms : OptDomInfo context.doms]
+    [shape (OptFlagExitClearShape (Nil) (Nil) (Nil))]
+    (for [at (iterator.range 0 (opt-flag-exit-list-count clears))]
+      (match (opt-flag-exit-edge-ref clears at)
+        [(Edge pred target _ fresh _)
+          (set! shape.preds (opt-label-add shape.preds pred))
+          (set! shape.targets (opt-label-add shape.targets target))
+          (when
+            (< fresh 0)
+            (set! shape.drop-preds (opt-label-add shape.drop-preds pred)))]))
+    shape))
+
+(defstruct OptFlagExitEdges
+  (clear-shape OptFlagExitClearShape)
+  (alt-labels OptLabelSet)
+  (exits OptLabelSet)
+  (folded OptLabelSet)
+  (funnels OptLabelSet))
+
+(define (opt-flag-exit-structure-ok?
+  [inputs
+    : (&
+      (OptFlagExitPlanInputs blocks context use-facts body seed flag-ty closure))]
+  [gate-site : OptFlagExitGateSite]
+  [exit-site : OptFlagExitExitSite]
+  [edges : OptFlagExitEdges]
+  [clears : (& OptFlagExitList)]
+  [cleared : (& ir.CompilerIrMaybeValue)]
+  [seen : (& (__tl_dyn-array i64))]) : bool
+  (let
+    [index (& inputs.context.index)]
+    [pred-map (& inputs.context.pred-map)]
+    [doms (& inputs.context.doms)]
     (and
-      (opt-dom-dominates? doms gate latch)
+      (opt-dom-dominates? doms gate-site.gate gate-site.latch)
       (opt-flag-exit-clear-edges-ok?
-        blocks
-        body
+        inputs.blocks
+        inputs.body
         index
         doms
-        latch
-        gate
-        exit-label
+        gate-site.latch
+        gate-site.gate
+        exit-site.label
         clears)
       ;; A phi past X that reads the flag on X's edge folds to the value the
       ;; redirected run left it at, so the redirected runs have to agree on
       ;; one -- which a computed clear value never does.
       (or
         (opt-flag-exit-cleared-known? cleared)
-        (not (opt-label-contains folded exit-label)))
-      (opt-flag-exit-preds-survive? pred-map drop-preds clear-targets)
+        (not (opt-label-contains edges.folded exit-site.label)))
+      (opt-flag-exit-preds-survive?
+        pred-map
+        edges.clear-shape.drop-preds
+        edges.clear-shape.targets)
       (opt-flag-exit-marked-pure?
-        (ir.compiler-ir-block-list-view blocks)
+        (ir.compiler-ir-block-list-view inputs.blocks)
         index
         seen)
-      (opt-flag-exit-gate-clean-at? blocks gate gate-extra raw-uses)
-      (opt-flag-exit-exit-preds-ok? pred-map exit-label folded)
-      (opt-flag-exit-exits-separate? blocks context body exits folded)
+      (opt-flag-exit-gate-clean-at?
+        inputs.blocks
+        gate-site.gate
+        gate-site.extra
+        (& inputs.use-facts.raw-uses))
+      (opt-flag-exit-exit-preds-ok? pred-map exit-site.label edges.folded)
+      (opt-flag-exit-exits-separate?
+        inputs.blocks
+        inputs.context
+        inputs.body
+        edges.exits
+        edges.folded)
       (opt-flag-exit-outside-phis-uniform?
-        (ir.compiler-ir-block-list-view blocks)
-        body
+        (ir.compiler-ir-block-list-view inputs.blocks)
+        inputs.body
         index
-        exits
-        closure)
-      (opt-flag-exit-alt-exits-ok? blocks alt-labels exit-label closure))))
+        edges.exits
+        inputs.closure)
+      (opt-flag-exit-alt-exits-ok?
+        inputs.blocks
+        edges.alt-labels
+        exit-site.label
+        inputs.closure))))
 
 ;; C4 and C8: the effective-use sweeps, plus the two new places a loop value may
 ;; legally be read -- X's own phis, and everything X dominates (which the minted
 ;; exit phis serve). `mint` comes back marking the values that need one.
 (define (opt-flag-exit-uses-ok?
-  [blocks : (& blocks ir.CompilerIrBlockList)]
-  [body : (& OptLoopBody)]
-  [index : (& index OptCfgIndex)]
-  [doms : (& doms OptDomInfo)]
-  [frame : i64]
-  [uses : (& uses (__tl_dyn-array i64))]
-  [gate : i64]
-  [gate-extra : i64]
-  [exit-label : i64]
-  [exits : OptLabelSet]
-  [closure : (& closure (__tl_dyn-array i64))]
-  [mint : (&mut mint (__tl_dyn-array i64))]) : bool
+  [inputs
+    : (&
+      (OptFlagExitPlanInputs blocks context use-facts body seed flag-ty closure))]
+  [gate-site : OptFlagExitGateSite]
+  [exit-site : OptFlagExitExitSite]
+  [edges : OptFlagExitEdges]
+  [mint : (&mut (__tl_dyn-array i64))]) : bool
   (let
-    [allowed : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
-    [defined : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
-    [inside : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
-    [xdom : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
-    [xphi : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
-    [_allow : unit
-      (opt-flag-exit-allowed-blocks!
-        (ir.compiler-ir-block-list-view blocks)
-        body
-        index
-        gate
-        gate-extra
-        exits
-        closure
-        (compiler-opt-global-shared-view allowed))]
-    [_inside : unit
+    [index : (& context OptCfgIndex) (& inputs.context.index)]
+    [doms : (& context OptDomInfo) (& inputs.context.doms)]
+    [body : (& body OptLoopBody) inputs.body]
+    [blocks : (& blocks (Slice ir.CompilerIrBlock))
+      (ir.compiler-ir-block-list-view inputs.blocks)]
+    [allowed : (__tl_dyn-array i64) (__tl_make-array i64 inputs.frame)]
+    [defined : (__tl_dyn-array i64) (__tl_make-array i64 inputs.frame)]
+    [inside : (__tl_dyn-array i64) (__tl_make-array i64 inputs.frame)]
+    [xdom : (__tl_dyn-array i64) (__tl_make-array i64 inputs.frame)]
+    [xphi : (__tl_dyn-array i64) (__tl_make-array i64 inputs.frame)]
+    [ids (ir.compiler-ir-id-list-new)]
+    ;; Use the saved loop body for C8, including during a seeded trial.
+    (opt-flag-exit-body-uses!
+      (ir.compiler-ir-block-list-view (& body.blocks))
+      (&mut defined)
+      (&mut inside))
+    (for [bi (iterator.range 0 (array-length blocks))]
+      (match (& (array-ref blocks bi))
+        [(Block label instrs)
+          (let
+            [in-body? : bool (opt-loop-body-label-member? body index label)]
+            [under-x? : bool
+              (and
+                (not in-body?)
+                (opt-flag-exit-xdom? doms exit-site.label label))]
+            (for [ii (iterator.range 0 instrs.len)]
+              (let
+                [instr (ir.compiler-ir-instr-seq-borrow instrs ii)]
+                [gate-use? : bool
+                  (and
+                    (= label gate-site.gate)
+                    (or
+                      (match instr
+                        [(Branch _ _ _) true]
+                        [_ false])
+                      (opt-flag-exit-drop-instr? instr true gate-site.extra)))]
+                [closure-def? : bool
+                  (match (opt-instr-def-var instr)
+                    [(Some dst) (opt-flag-exit-closure-dst? inputs.closure dst)]
+                    [(None) false])]
+                [allow-all? : bool (or gate-use? closure-def?)]
+                (when
+                  allow-all?
+                  (opt-count-instr-uses! (&mut ids) (&mut allowed) instr))
+                (unless
+                  in-body?
+                  (match instr
+                    [(Phi _ phi-inputs _)
+                      (for [pi (iterator.range 0 phi-inputs.len)]
+                        (let
+                          [edge
+                            (ir.compiler-ir-phi-input-seq-borrow phi-inputs pi)]
+                          (match (& edge.value)
+                            [(Var var)
+                              (let
+                                [from-exit? : bool
+                                  (opt-label-contains edges.exits edge.label)]
+                                (when
+                                  (and (not allow-all?) from-exit?)
+                                  (opt-used-array-add (&mut allowed) var))
+                                (cond
+                                  [(= label exit-site.label)
+                                    (opt-used-array-add (&mut xphi) var)]
+                                  [(and
+                                      (opt-flag-exit-xdom?
+                                        doms
+                                        exit-site.label
+                                        edge.label)
+                                      (not
+                                        (and
+                                          from-exit?
+                                          (opt-used-array-contains
+                                            inputs.closure
+                                            var))))
+                                    (opt-used-array-add (&mut xdom) var)]
+                                  [else unit]))]
+                            [_ unit])))]
+                    [_
+                      (when
+                        under-x?
+                        (opt-count-instr-uses! (&mut ids) (&mut xdom) instr))])))))]))
+    (for [var (iterator.range 0 inputs.frame)]
       (let
-        [walked-blocks : ir.CompilerIrBlockList
-          (opt-loop-body-blocks
-            (owned_view.compiler-owned-reference-shared-view body))]
-        (opt-flag-exit-body-uses!
-          (ir.compiler-ir-block-list-view walked-blocks)
-          (&mut defined)
-          (compiler-opt-global-shared-view inside)))]
-    [_outside : unit
-      (opt-flag-exit-outside-uses!
-        (ir.compiler-ir-block-list-view blocks)
-        body
-        index
-        doms
-        exit-label
-        exits
-        closure
-        (compiler-opt-global-shared-view xdom)
-        (compiler-opt-global-shared-view xphi))]
-    [_mint : unit (opt-flag-exit-mark-mints! defined xdom mint frame)]
-    [_a1 : unit (opt-flag-exit-add-counts! (&mut allowed) xdom frame)]
-    [_a2 : unit (opt-flag-exit-add-counts! (&mut allowed) xphi frame)]
-    [_i1 : unit (opt-flag-exit-add-counts! (&mut inside) xdom frame)]
-    [_i2 : unit (opt-flag-exit-add-counts! (&mut inside) xphi frame)]
-    [_exempt : unit (opt-flag-exit-clear-closure! (&mut defined) closure)]
-    (and
-      (opt-flag-exit-covered? uses (& allowed) closure)
-      (opt-flag-exit-covered? uses (& inside) defined))))
+        [outside : i64 (+ (array-ref xdom var) (array-ref xphi var))]
+        [used : i64 (array-ref (& inputs.use-facts.uses) var)]
+        [defined? : bool (= (array-ref defined var) 1)]
+        (when
+          (and defined? (> (array-ref xdom var) 0))
+          (set! (array-ref mint var) 1))
+        (when
+          (if (= (array-ref inputs.closure var) 1)
+            (> used (+ (array-ref allowed var) outside))
+            (and defined? (> used (+ (array-ref inside var) outside))))
+          (return false))))
+    true))
 
 ;; Everything the redirected edges have to carry, worked out once the structure
 ;; and the use accounting have already said yes.
 (define (opt-flag-exit-plan-values
-  [blocks : (& ir.CompilerIrBlockList)]
-  [context : OptCfgContext]
-  [frame : i64]
-  [def-label : (& (__tl_dyn-array i64))]
-  [body : (& OptLoopBody)]
-  [seed : ir.CompilerIrValue]
-  [cleared : ir.CompilerIrMaybeValue]
-  [flag-ty : ast.AstType]
-  [closure : (__tl_dyn-array i64)]
-  [clears : OptFlagExitList]
-  [gate : i64]
-  [gate-extra : i64]
-  [gate-var : i64]
-  [arm-pred : i64]
-  [dropped : OptLabelSet]
-  [continue-label : i64]
-  [exit-label : i64]
-  [clear-preds : OptLabelSet]
-  [clear-targets : OptLabelSet]
-  [exits : OptLabelSet]
-  [funnels : OptLabelSet]
-  [seen : (__tl_dyn-array i64)]
+  [inputs
+    : (&
+      (OptFlagExitPlanInputs blocks context use-facts body seed flag-ty closure))]
+  [gate-site : OptFlagExitGateSite]
+  [exit-site : OptFlagExitExitSite]
+  [edges : OptFlagExitEdges]
+  [clears : (& OptFlagExitList)]
+  [cleared : (& ir.CompilerIrMaybeValue)]
+  [seen : (& seen (__tl_dyn-array i64))]
   [mint : (& (__tl_dyn-array i64))]) : OptFlagExitMaybePlan
   (let
-    [index : OptCfgIndex context.index]
-    [pred-map : OptPredMap context.pred-map]
-    [doms : OptDomInfo context.doms]
+    [index : (& context OptCfgIndex) (& inputs.context.index)]
+    [pred-map : (& context OptPredMap) (& inputs.context.pred-map)]
+    [doms : (& context OptDomInfo) (& inputs.context.doms)]
     [count : i64 (opt-cfg-index-block-count index)]
     [reach : (__tl_dyn-array i64)
-      (opt-flag-exit-reach-gate body index pred-map gate count)]
-    (if (not (opt-flag-exit-seen-reaches-gate? (& seen) (& reach)))
-      (No)
-      (let
-        [ctx : OptFlagExitFixCtx
-          (OptFlagExitFixCtx
-            (owned_view.compiler-owned-reference-shared-view blocks)
-            (compiler-opt-global-shared-view index)
-            (compiler-opt-global-shared-view pred-map)
-            (compiler-opt-global-shared-view doms)
-            (owned_view.compiler-owned-reference-shared-view def-label)
-            gate
-            gate-var
-            arm-pred
-            exit-label
-            (opt-pred-map-lookup pred-map exit-label)
-            seen
-            funnels
-            reach
-            count
-            (+ (* 4 count) 16))]
-        [pos : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-        [labels : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-        (match (opt-flag-exit-phi-seeds blocks exit-label arm-pred)
-          [(No) (No)]
-          [(Some phi-seeds)
-            (match (opt-flag-exit-mint-seeds
-              blocks
-              def-label
-              mint
-              0
-              (+ frame (opt-flag-exit-gate-count clears 0))
-              (Nil))
-              [(No) (No)]
-              [(Some mint-seeds)
-                (match (opt-flag-exit-fix-edges
-                  (& ctx)
-                  clears
-                  (&mut pos)
-                  (&mut labels)
-                  phi-seeds
-                  mint-seeds)
-                  [(No) (No)]
-                  [(Some fixes edge-mints)
-                    (match (opt-flag-exit-mints-survivors
-                      doms
-                      def-label
-                      (opt-pred-map-lookup pred-map exit-label)
-                      gate
-                      dropped
-                      (& edge-mints))
-                      [(No) (No)]
-                      [(Some mints)
-                        (Some
-                          (OptFlagExitPlan
-                            gate
-                            continue-label
-                            exit-label
-                            seed
-                            cleared
-                            flag-ty
-                            closure
-                            clear-preds
-                            clear-targets
-                            exits
-                            gate-extra
-                            arm-pred
-                            dropped
-                            clears
-                            fixes
-                            (compiler-opt-global-shared-view mints)
-                            (opt-flag-exit-mint-env
-                              (& mints)
-                              (opt-copy-env-empty))
-                            doms))])])])])))))
+      (opt-flag-exit-reach-gate inputs.body index pred-map gate-site.gate count)]
+    (unless (opt-flag-exit-seen-reaches-gate? seen (& reach)) (return (No)))
+    (let
+      [exit-preds : OptLabelSet (opt-pred-map-lookup pred-map exit-site.label)]
+      [ctx : (OptFlagExitFixCtx blocks context use-facts seen reach)
+        (OptFlagExitFixCtx
+          inputs.blocks
+          inputs.context
+          (& inputs.use-facts.def-label)
+          gate-site.gate
+          gate-site.var
+          exit-site.arm-pred
+          exit-site.label
+          exit-preds
+          seen
+          edges.funnels
+          (& reach)
+          count
+          (+ (* 4 count) 16))]
+      [phi-seeds : OptFlagExitList
+        (match (opt-flag-exit-phi-seeds
+          inputs.blocks
+          exit-site.label
+          exit-site.arm-pred)
+          [(No) (return (No))]
+          [(Some list) list])]
+      [mint-seeds : OptFlagExitList
+        (match (opt-flag-exit-mint-seeds
+          inputs.blocks
+          (& inputs.use-facts.def-label)
+          mint
+          0
+          (+ inputs.frame (opt-flag-exit-gate-count clears 0))
+          (Nil))
+          [(No) (return (No))]
+          [(Some list) list])]
+      [pos : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+      [labels : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+      (match (opt-flag-exit-fix-edges
+        (& ctx)
+        clears
+        (&mut pos)
+        (&mut labels)
+        phi-seeds
+        mint-seeds)
+        [(No) (No)]
+        [(Some fixes edge-mints)
+          (match (opt-flag-exit-mints-survivors
+            doms
+            (& inputs.use-facts.def-label)
+            exit-preds
+            gate-site.gate
+            exit-site.dropped
+            (& edge-mints))
+            [(No) (No)]
+            [(Some mints)
+              (let
+                [mint-env
+                  (opt-flag-exit-mint-env (& mints) (opt-copy-env-empty))]
+                (Some
+                  (OptFlagExitPlan
+                    gate-site.gate
+                    gate-site.continue-label
+                    exit-site.label
+                    (owned_view.compiler-owned-reference-shared-view
+                      inputs.seed)
+                    (owned_view.compiler-owned-reference-shared-view cleared)
+                    (owned_view.compiler-owned-reference-shared-view
+                      inputs.flag-ty)
+                    (owned_view.compiler-owned-reference-shared-view
+                      inputs.closure)
+                    edges.clear-shape.preds
+                    edges.clear-shape.targets
+                    edges.exits
+                    gate-site.extra
+                    exit-site.arm-pred
+                    exit-site.dropped
+                    (owned_view.compiler-owned-reference-shared-view clears)
+                    fixes
+                    mints
+                    mint-env
+                    (owned_view.compiler-owned-reference-shared-view doms))))])]))))
 
 (define (opt-flag-exit-plan-gated
-  [blocks : (& ir.CompilerIrBlockList)]
-  [context : (& OptCfgContext)]
-  [frame : i64]
-  [uses : (& uses (__tl_dyn-array i64))]
-  [raw-uses : (& raw-uses (__tl_dyn-array i64))]
-  [def-label : (& (__tl_dyn-array i64))]
-  [body : (& OptLoopBody)]
-  [latch : i64]
-  [seed : (& ir.CompilerIrValue)]
-  [flag-ty : (& ast.AstType)]
-  [closure : (& (__tl_dyn-array i64))]
-  [raw-clears : (& OptFlagExitList)]
-  [gate : i64]
-  [gate-extra : i64]
-  [gate-var : i64]
-  [arm-pred : i64]
-  [dropped : OptLabelSet]
-  [continue-label : i64]
-  [exit-label : i64]) : OptFlagExitMaybePlan
+  [inputs
+    : (&
+      (OptFlagExitPlanInputs blocks context use-facts body seed flag-ty closure))]
+  [gate-site : OptFlagExitGateSite]
+  [exit-site : OptFlagExitExitSite]
+  [raw-clears : (& OptFlagExitList)]) : OptFlagExitMaybePlan
   (let
-    [index : OptCfgIndex
-      (owned_view.compiler-owned-reference-shared-view (& context.index))]
-    [pred-map : OptPredMap
-      (owned_view.compiler-owned-reference-shared-view (& context.pred-map))]
+    [index (& inputs.context.index)]
+    [pred-map (& inputs.context.pred-map)]
     [count : i64 (opt-cfg-index-block-count index)]
     ;; Give the edges the redirect cannot decide here their copied gates first:
     ;; the block one of them lands on is the label X knows that edge by.
     [clears : OptFlagExitList
-      (opt-flag-exit-assign-gates blocks seed frame raw-clears (Nil))]
+      (opt-flag-exit-assign-gates
+        inputs.blocks
+        inputs.seed
+        inputs.frame
+        raw-clears
+        (Nil))]
     [cleared : ir.CompilerIrMaybeValue
-      (opt-flag-exit-cleared-value seed clears (No))]
-    [drop-preds : OptLabelSet (opt-flag-exit-dropped-preds seed clears (Nil))]
+      (opt-flag-exit-cleared-value inputs.seed clears (No))]
     [seen : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [alt : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [mint : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+    [mint : (__tl_dyn-array i64) (__tl_make-array i64 inputs.frame)]
     [_mark : unit
       (opt-flag-exit-mark-clears!
-        body
+        inputs.body
         index
         pred-map
-        gate
+        gate-site.gate
         clears
         (&mut seen)
         (&mut alt))]
     [alt-labels : OptLabelSet
-      (opt-flag-exit-alt-labels blocks index alt 0 exit-label false (Nil))]
+      (opt-flag-exit-alt-labels
+        inputs.blocks
+        index
+        alt
+        0
+        exit-site.label
+        false
+        (Nil))]
     [funnels : OptLabelSet
-      (opt-flag-exit-alt-labels blocks index alt 0 exit-label true (Nil))]
-    [clear-preds : OptLabelSet (opt-flag-exit-edge-preds clears (Nil))]
-    [clear-targets : OptLabelSet (opt-flag-exit-edge-targets clears (Nil))]
+      (opt-flag-exit-alt-labels
+        inputs.blocks
+        index
+        alt
+        0
+        exit-site.label
+        true
+        (Nil))]
     [exits : OptLabelSet
       (opt-flag-exit-exit-labels-from
-        body
+        inputs.body
         index
         pred-map
-        (opt-loop-body-labels
-          (owned_view.compiler-owned-reference-shared-view body))
+        (opt-bce-label-set-copy (& inputs.body.labels))
         (Nil))]
     [folded : OptLabelSet
       (opt-flag-exit-folded-exits
-        (ir.compiler-ir-block-list-view blocks)
-        body
+        (ir.compiler-ir-block-list-view inputs.blocks)
+        inputs.body
         index
         exits
-        closure
+        inputs.closure
         (Nil))]
-    (if (and
-      (opt-flag-exit-structure-ok?
-        blocks
-        context
-        body
-        latch
-        gate
-        gate-extra
-        raw-uses
-        exit-label
-        clears
-        drop-preds
-        cleared
-        clear-targets
+    [edges
+      (OptFlagExitEdges
+        (opt-flag-exit-clear-shape (& clears))
         alt-labels
         exits
         folded
-        seen
-        closure)
-      (opt-flag-exit-uses-ok?
-        blocks
-        body
-        index
-        context.doms
-        frame
-        uses
-        gate
-        gate-extra
-        exit-label
-        exits
-        closure
-        (&mut mint)))
+        funnels)]
+    (if (and
+      (opt-flag-exit-structure-ok?
+        inputs
+        gate-site
+        exit-site
+        edges
+        (& clears)
+        (& cleared)
+        (& seen))
+      (opt-flag-exit-uses-ok? inputs gate-site exit-site edges (&mut mint)))
       (opt-flag-exit-plan-values
-        blocks
-        (owned_view.compiler-owned-reference-shared-view context)
-        frame
-        def-label
-        body
-        (owned_view.compiler-owned-reference-shared-view seed)
-        cleared
-        (owned_view.compiler-owned-reference-shared-view flag-ty)
-        (owned_view.compiler-owned-reference-shared-view closure)
-        clears
-        gate
-        gate-extra
-        gate-var
-        arm-pred
-        dropped
-        continue-label
-        exit-label
-        clear-preds
-        clear-targets
-        exits
-        funnels
-        seen
+        inputs
+        gate-site
+        exit-site
+        edges
+        (& clears)
+        (& cleared)
+        (& seen)
         (& mint))
       (No))))
 
 (define (opt-flag-exit-plan-candidate
   [blocks : (& ir.CompilerIrBlockList)]
-  [context : OptCfgContext]
+  [context : (& context OptCfgContext)]
   [frame : i64]
-  [uses : (& uses (__tl_dyn-array i64))]
-  [raw-uses : (& raw-uses (__tl_dyn-array i64))]
-  [def-label : (& (__tl_dyn-array i64))]
+  [use-facts : (& use-facts OptFlagExitUseFacts)]
   [loop : (& loop OptNaturalLoop)]
   [flag : i64]
   [seed : (& ir.CompilerIrValue)]
@@ -37813,8 +36597,7 @@
   (if (not (= (opt-natural-loop-latch-count loop) 1))
     (No)
     (let
-      [index : OptCfgIndex
-        (compiler-opt-global-shared-view (__tl-project-field context index))]
+      [index (& context.index)]
       [body : OptLoopBody (opt-natural-loop-body-info loop)]
       [closure : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
       [web : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
@@ -37824,7 +36607,7 @@
           blocks
           body
           index
-          def-label
+          (& use-facts.def-label)
           flag
           seed
           latch-var
@@ -37844,115 +36627,74 @@
         (begin
           (set! (array-ref closure flag) 1)
           (match (let
-            [walked-blocks : ir.CompilerIrBlockList
-              (opt-loop-body-blocks (compiler-opt-global-shared-view body))]
+            [walked-blocks (& body.blocks)]
             (opt-flag-exit-find-gate
               blocks
-              def-label
+              (& use-facts.def-label)
               (ir.compiler-ir-block-list-view walked-blocks)
               body
               index
               closure
               seed
-              raw-uses))
+              (& use-facts.raw-uses)))
             [(No) (No)]
             [(Some gate continue-label exit-label gate-extra gate-var)
               (opt-flag-exit-plan-arm
-                blocks
-                (& context)
-                frame
-                uses
-                raw-uses
-                def-label
-                (& body)
-                (opt-natural-loop-latch loop)
-                seed
-                flag-ty
-                (& closure)
-                (& clears)
-                gate
-                gate-extra
-                gate-var
-                continue-label
-                exit-label)]))))))
+                (&
+                  (OptFlagExitPlanInputs
+                    blocks
+                    context
+                    frame
+                    use-facts
+                    (& body)
+                    seed
+                    flag-ty
+                    (& closure)))
+                (OptFlagExitGateSite
+                  (opt-natural-loop-latch loop)
+                  gate
+                  gate-extra
+                  gate-var
+                  continue-label)
+                exit-label
+                (& clears))]))))))
 
 ;; Adopting the gate's own arm is what keeps the exit block's predecessor count
 ;; unchanged, so that is tried first; only when it is refused does the arm get
 ;; collapsed through its jump-only spacers onto the block that actually carries
 ;; the loop's exit phis and the reads after the loop.
 (define (opt-flag-exit-plan-arm
-  [blocks : (& ir.CompilerIrBlockList)]
-  [context : (& OptCfgContext)]
-  [frame : i64]
-  [uses : (& uses (__tl_dyn-array i64))]
-  [raw-uses : (& raw-uses (__tl_dyn-array i64))]
-  [def-label : (& (__tl_dyn-array i64))]
-  [body : (& OptLoopBody)]
-  [latch : i64]
-  [seed : (& ir.CompilerIrValue)]
-  [flag-ty : (& ast.AstType)]
-  [closure : (& (__tl_dyn-array i64))]
-  [clears : (& OptFlagExitList)]
-  [gate : i64]
-  [gate-extra : i64]
-  [gate-var : i64]
-  [continue-label : i64]
-  [arm : i64]) : OptFlagExitMaybePlan
+  [inputs
+    : (&
+      (OptFlagExitPlanInputs blocks context use-facts body seed flag-ty closure))]
+  [gate-site : OptFlagExitGateSite]
+  [arm : i64]
+  [clears : (& OptFlagExitList)]) : OptFlagExitMaybePlan
   (match (opt-flag-exit-plan-gated
-    blocks
-    context
-    frame
-    uses
-    raw-uses
-    def-label
-    body
-    latch
-    seed
-    flag-ty
-    closure
-    clears
-    gate
-    gate-extra
-    gate-var
-    gate
-    (Nil)
-    continue-label
-    arm)
+    inputs
+    gate-site
+    (OptFlagExitExitSite arm gate-site.gate (Nil))
+    clears)
     [(Some plan) (Some plan)]
     [(No)
       (match (opt-flag-exit-collapse-arm
-        blocks
-        body
-        context.index
-        context.pred-map
-        raw-uses
-        gate
+        inputs.blocks
+        inputs.body
+        (& inputs.context.index)
+        (& inputs.context.pred-map)
+        (& inputs.use-facts.raw-uses)
+        gate-site.gate
         arm
         (Nil)
-        (opt-cfg-index-block-count context.index))
+        (opt-cfg-index-block-count (& inputs.context.index)))
         [(Arm exit-label arm-pred dropped)
           (if (= exit-label arm)
             (No)
             (opt-flag-exit-plan-gated
-              blocks
-              context
-              frame
-              uses
-              raw-uses
-              def-label
-              body
-              latch
-              seed
-              flag-ty
-              closure
-              clears
-              gate
-              gate-extra
-              gate-var
-              arm-pred
-              dropped
-              continue-label
-              exit-label))])]))
+              inputs
+              gate-site
+              (OptFlagExitExitSite exit-label arm-pred dropped)
+              clears))])]))
 
 ;; --- per-loop scan ------------------------------------------------------------
 ;; C1: exactly one input from outside the loop carrying a LOOP-INVARIANT value
@@ -37979,105 +36721,80 @@
     [_ true]))
 
 (define (opt-flag-exit-seed-scan
+  [blocks : (& ir.CompilerIrBlockList)]
   [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
-  [body : (& body OptLoopBody)]
-  [index : (& index OptCfgIndex)]
-  [def-label : (& def-label (__tl_dyn-array i64))]
-  [outside : i64]
-  [inside : i64]
-  [keep : ir.CompilerIrValue]
-  [seed : i64]) : OptFlagExitSeed
+  [body : (& OptLoopBody)]
+  [index : (& OptCfgIndex)]
+  [def-label : (& (__tl_dyn-array i64))]) : OptFlagExitSeed
+  (unless (= inputs.len 2) (return (No)))
   (let
-    [outside-count : i64 outside]
-    [inside-count : i64 inside]
-    [kept : ir.CompilerIrValue keep]
-    [seed-var : i64 seed]
-    (for [at (iterator.range 0 inputs.len)]
+    [outside : i64 -1]
+    [inside : i64 -1]
+    (for [at (iterator.range 0 2)]
       (let
         [input (ir.compiler-ir-phi-input-seq-borrow inputs at)]
         (if (opt-loop-body-label-member? body index input.label)
           (match (& input.value)
-            [(Var var)
-              (set! inside-count (+ inside-count 1))
-              (set! seed-var var)]
+            [(Var var) (set! inside var)]
             [_ (return (No))])
           (if (opt-flag-exit-invariant-seed?
             (& input.value)
             body
             index
             def-label)
-            (begin
-              (set! outside-count (+ outside-count 1))
-              (set! kept (ir.compiler-ir-clone-value (& input.value))))
-            (return (No))))))
-    (if (and (= outside-count 1) (= inside-count 1))
-      (Some kept seed-var)
+            (set! outside at)
+            (return (No))))
+        unit))
+    (if (and
+      (>= outside 0)
+      (opt-flag-exit-latch-web-shape? blocks body index def-label inside))
+      (Some outside inside)
       (No))))
 
 (define (opt-flag-exit-scan-header
   [blocks : (& ir.CompilerIrBlockList)]
   [context : (& OptCfgContext)]
   [frame : i64]
-  [uses : (& uses (__tl_dyn-array i64))]
-  [raw-uses : (& raw-uses (__tl_dyn-array i64))]
-  [def-label : (& (__tl_dyn-array i64))]
+  [use-facts : (& use-facts OptFlagExitUseFacts)]
   [loop : (& loop OptNaturalLoop)]
-  [instrs : (& ir.CompilerIrInstrSeq)]) : OptFlagExitMaybePlan
-  (for [pos (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
-    (let
-      [here : OptFlagExitMaybePlan
-        (match (ir.compiler-ir-instr-seq-borrow instrs pos)
-          [(Phi dst inputs ty)
-            (match (let
-              [body (opt-natural-loop-body-info loop)]
-              (opt-flag-exit-seed-scan
-                inputs
-                body
-                context.index
-                def-label
-                0
-                0
-                (Unit)
-                (- 0 1)))
-              [(No) (No)]
-              [(Some keep seed)
-                ;; the same one-lookup filter the prescan uses, so the counter
-                ;; phi beside the flag does not pay for the walk's arrays
-                (if (not
-                  (let
-                    [body (opt-natural-loop-body-info loop)]
-                    (opt-flag-exit-latch-web-shape?
-                      blocks
-                      body
-                      context.index
-                      def-label
-                      seed)))
-                  (No)
-                  (opt-flag-exit-plan-candidate
-                    blocks
-                    (owned_view.compiler-owned-reference-shared-view context)
-                    frame
-                    uses
-                    raw-uses
-                    def-label
-                    loop
-                    dst
-                    (& keep)
-                    (& ty)
-                    seed))])]
-          [_ (No)])]
-      (match here
-        [(Some plan) (return (Some plan))]
-        [(No) unit])))
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]) : OptFlagExitMaybePlan
+  (let
+    [body (opt-natural-loop-body-info loop)]
+    (for [pos (iterator.range 0 instrs.len)]
+      (match (ir.compiler-ir-instr-seq-borrow instrs pos)
+        [(Phi dst inputs ty)
+          (match (opt-flag-exit-seed-scan
+            blocks
+            inputs
+            (& body)
+            context.index
+            (& use-facts.def-label))
+            [(No) unit]
+            [(Some outside seed)
+              (let
+                [outside-input : ir.CompilerIrPhiInput
+                  (ir.compiler-ir-phi-input-seq-ref inputs outside)]
+                (match (opt-flag-exit-plan-candidate
+                  blocks
+                  context
+                  frame
+                  use-facts
+                  loop
+                  dst
+                  (& outside-input.value)
+                  ty
+                  seed)
+                  [(No) unit]
+                  [(Some plan) (return (Some plan))])
+                unit)])]
+        [_ unit])))
   (No))
 
 (define (opt-flag-exit-plan-loop
   [blocks : (& ir.CompilerIrBlockList)]
   [context : (& OptCfgContext)]
   [frame : i64]
-  [uses : (& uses (__tl_dyn-array i64))]
-  [raw-uses : (& raw-uses (__tl_dyn-array i64))]
-  [def-label : (& (__tl_dyn-array i64))]
+  [use-facts : (& use-facts OptFlagExitUseFacts)]
   [loop : (& loop OptNaturalLoop)]) : OptFlagExitMaybePlan
   (match (opt-cfg-find-block blocks (opt-natural-loop-header loop))
     [(No) (No)]
@@ -38088,9 +36805,7 @@
             blocks
             context
             frame
-            uses
-            raw-uses
-            def-label
+            use-facts
             loop
             (& instrs))])]))
 
@@ -38102,6 +36817,26 @@
 ;; (see opt-flag-facts-rewrite-seeds). Spell that seed as the literal and plan
 ;; again, and keep the rewrite only if the loop then converts: a literal seed on
 ;; a loop that still refuses costs a `mov $1` on entry the var did not.
+(define (opt-flag-exit-apply-plan
+  [blocks : ir.CompilerIrBlockList]
+  [index : (& OptCfgIndex)]
+  [loop : (& OptNaturalLoop)]
+  [frame : i64]
+  [plan : (& OptFlagExitPlan)]) : OptFlagExitPassResult
+  (Result
+    (opt-blocks-build
+      blocks
+      opt-flag-exit-rewrite-blocks!
+      (& (opt-natural-loop-body-info loop))
+      index
+      plan)
+    (+
+      frame
+      (+
+        (opt-flag-exit-list-count (& plan.mints))
+        (opt-flag-exit-gate-count plan.clears 0)))
+    true))
+
 (define (opt-flag-exit-seed-trial
   [blocks : ir.CompilerIrBlockList]
   [context : OptCfgContext]
@@ -38125,30 +36860,20 @@
           (opt-gep-offset-effective-uses seeded frame)]
         [raw-uses : (__tl_dyn-array i64)
           (opt-collect-blocks-uses-array frame seeded)]
+        [use-facts (OptFlagExitUseFacts uses raw-uses def-label)]
         (match (opt-flag-exit-plan-loop
           (& seeded)
           (& context)
           frame
-          uses
-          raw-uses
-          (& def-label)
+          (& use-facts)
           loop)
           [(Some plan)
-            (Result
-              (let
-                [body (opt-natural-loop-body-info loop)]
-                (opt-blocks-build
-                  seeded
-                  opt-flag-exit-rewrite-blocks!
-                  body
-                  context.index
-                  (compiler-opt-global-shared-view plan)))
-              (+
-                frame
-                (opt-flag-exit-mint-count
-                  (& plan.mints)
-                  (opt-flag-exit-gate-count plan.clears 0)))
-              true)]
+            (opt-flag-exit-apply-plan
+              seeded
+              (& context.index)
+              loop
+              frame
+              (& plan))]
           [(No)
             (opt-cfg-index-refresh-blocks! (& context.index) blocks)
             (Result blocks frame false)]))]))
@@ -38157,37 +36882,19 @@
   [blocks : ir.CompilerIrBlockList]
   [context : (& OptCfgContext)]
   [frame : i64]
-  [uses : (& uses (__tl_dyn-array i64))]
-  [raw-uses : (& raw-uses (__tl_dyn-array i64))]
-  [def-label : (& (__tl_dyn-array i64))]
+  [use-facts : (& use-facts OptFlagExitUseFacts)]
   [loops : (& loops (Slice OptNaturalLoop))]) : OptFlagExitPassResult
   (match loops
     [(slice) (Result blocks frame false)]
     [(slice loop & rest)
-      (match (opt-flag-exit-plan-loop
-        (& blocks)
-        context
-        frame
-        uses
-        raw-uses
-        def-label
-        loop)
+      (match (opt-flag-exit-plan-loop (& blocks) context frame use-facts loop)
         [(Some plan)
-          (Result
-            (let
-              [body (opt-natural-loop-body-info loop)]
-              (opt-blocks-build
-                blocks
-                opt-flag-exit-rewrite-blocks!
-                body
-                context.index
-                (compiler-opt-global-shared-view plan)))
-            (+
-              frame
-              (opt-flag-exit-mint-count
-                (& plan.mints)
-                (opt-flag-exit-gate-count plan.clears 0)))
-            true)]
+          (opt-flag-exit-apply-plan
+            blocks
+            (& context.index)
+            loop
+            frame
+            (& plan))]
         [(No)
           (match (opt-flag-exit-seed-trial
             (compiler-opt-global-shared-view blocks)
@@ -38201,9 +36908,7 @@
                   blocks
                   context
                   frame
-                  uses
-                  raw-uses
-                  def-label
+                  use-facts
                   rest))])])]))
 
 ;; --- driver -------------------------------------------------------------------
@@ -38253,22 +36958,13 @@
       (match (ir.compiler-ir-instr-seq-borrow instrs pos)
         [(Phi _ inputs _)
           (match (opt-flag-exit-seed-scan
+            blocks
             inputs
             body
             context.index
-            def-label
-            0
-            0
-            (Unit)
-            (- 0 1))
+            def-label)
             [(No) false]
-            [(Some _ seed)
-              (opt-flag-exit-latch-web-shape?
-                blocks
-                body
-                context.index
-                def-label
-                seed)])]
+            [(Some _ _) true])]
         [_ false])
       (return true))
     unit)
@@ -38326,13 +37022,12 @@
                   (opt-gep-offset-effective-uses blocks frame)]
                 [raw-uses : (__tl_dyn-array i64)
                   (opt-collect-blocks-uses-array frame blocks)]
+                [use-facts (OptFlagExitUseFacts uses raw-uses def-label)]
                 (opt-flag-exit-convert-loops
                   blocks
                   context
                   frame
-                  uses
-                  raw-uses
-                  (& def-label)
+                  (& use-facts)
                   (opt_natural_loop_vec.view loops)))))]))))
 
 ;; One conversion per round, then a fresh context: the rewrite changes the CFG,
@@ -38371,7 +37066,7 @@
   [context : (& OptCfgContext)]
   [verified? : bool]
   [func : (& ir.CompilerIrFunction)]) : OptFunctionCtxResult
-  (match (owned_view.compiler-owned-reference-shared-view func)
+  (match func
     [(Function _ _ _ frame blocks _)
       (opt-loop-function-rewrite
         "flag_exit"
@@ -38379,7 +37074,7 @@
         (owned_view.compiler-owned-reference-shared-view context)
         verified?
         (match (opt-flag-exit-blocks-fixed-result
-          (compiler-opt-global-shared-view blocks)
+          (owned_view.compiler-owned-reference-shared-view blocks)
           context
           frame
           (+ 1 (ir.compiler-ir-block-list-count blocks))
@@ -102672,7 +101367,7 @@
       [placed : ir.CompilerIrFunction
         (in-arena
           (unsafe
-            (arena.Arena (array-ref input.chunks chunk)))
+            (arena.from-raw-handle (array-ref input.chunks chunk)))
           (ir.compiler-ir-clone-function pools func))]
       (match (& placed)
         [(Function name _ _ _ _ _)
@@ -102769,7 +101464,7 @@
         (Carried
           (in-arena
             (unsafe
-              (arena.Arena input.arena))
+              (arena.from-raw-handle input.arena))
             (let
               [out : ir.CompilerIrFunctionSeq
                 (ir.compiler-ir-clone-function-seq-shell funcs)]
@@ -103498,7 +102193,7 @@
         (set! size (* size 2)))
       (in-arena
         (unsafe
-          (arena.Arena (ir.compiler-ir-label-arena)))
+          (arena.from-raw-handle (ir.compiler-ir-label-arena)))
         (set! opt-inline-census-depth-slots (__tl_make-array i64 size))))))
 
 (define (opt-inline-census-depth-clear! [count : i64]) : unit
@@ -103609,7 +102304,7 @@
         (set! size (* size 2)))
       (in-arena
         (unsafe
-          (arena.Arena (ir.compiler-ir-label-arena)))
+          (arena.from-raw-handle (ir.compiler-ir-label-arena)))
         (set! opt-inline-census-slow-slots (__tl_make-array bool size))
         (set! opt-inline-census-guard-slots (__tl_make-array bool size))))))
 
@@ -104183,7 +102878,7 @@
         (set! size (* size 2)))
       (in-arena
         (unsafe
-          (arena.Arena (ir.compiler-ir-label-arena)))
+          (arena.from-raw-handle (ir.compiler-ir-label-arena)))
         (set! opt-inline-synth-slots (__tl_make-array i64 size))))))
 
 (define (opt-inline-synth-at [slot : i64]) : i64
@@ -105992,7 +104687,7 @@
       inline-state
       (OptInlineOwnedState
         (unsafe
-          (arena.Arena 0))
+          (arena.from-raw-handle 0))
         (__tl_make-array i64 0)
         (__tl_make-array i64 0)
         (opt-global-mod-ref-none)))
@@ -109054,7 +107749,7 @@
         (set! size (* size 2)))
       (in-arena
         (unsafe
-          (arena.Arena (ir.compiler-ir-label-arena)))
+          (arena.from-raw-handle (ir.compiler-ir-label-arena)))
         (set! opt-inline-checked-reach-stamp (__tl_make-array i64 size)))
       ;; A fresh stamp array reads as generation 0, so restart the counter
       ;; above it rather than leaving stale entries live.
@@ -111075,7 +109770,7 @@
       (array-length opt-inline-callee-cost-funcs))
     (in-arena
       (unsafe
-        (arena.Arena (ir.compiler-ir-label-arena)))
+        (arena.from-raw-handle (ir.compiler-ir-label-arena)))
       (let
         [size : i64 (* 2 (array-length opt-inline-callee-cost-funcs))]
         [funcs : (__tl_dyn-array ir.CompilerIrFunction)
@@ -116649,7 +115344,7 @@
 (define (opt-call-memory-candidate-instr
   [type-segment-bases : i64]
   [summaries : (& summaries opt_i64_i64_map.Map)]
-  [params : ir.CompilerIrParamSeq]
+  [params : (& ir.CompilerIrParamSeq)]
   [roots : (& roots OptLicmRootEnv)]
   [elements : (& elements opt_i64_i64_map.Map)]
   [summary : i64]
@@ -116699,12 +115394,12 @@
   [elements : opt_i64_i64_map.Map]
   [blocks : (& ir.CompilerIrBlockList)]) : i64
   (opt-blocks-fold
-    (owned_view.compiler-owned-reference-shared-view blocks)
+    blocks
     summary
     opt-call-memory-candidate-instr
     type-segment-bases
     summaries
-    (owned_view.compiler-owned-reference-shared-view params)
+    params
     roots
     elements))
 
@@ -116842,35 +115537,20 @@
 ;; skipped rather than seeded (mirroring `compiler-ir-runtime-memory-write-id?`).
 ;; So is a builtin whose spelling the program declares as an extern linked
 ;; elsewhere: calls with that identity reach the link (opt-effect-callee).
-(define (opt-call-memory-seed-builtin
-  [out : opt_i64_i64_map.Map]
+(define (opt-call-memory-seed-builtin!
+  [out : (&mut opt_i64_i64_map.Map)]
   [name-id : i64]
-  [summary : i64]) : opt_i64_i64_map.Map
-  (if (or (< name-id 0) (not (= (opt-effect-callee name-id) name-id)))
-    out
-    (let
-      [next : opt_i64_i64_map.Map out]
-      (opt_i64_i64_map.insert-ref!
-        (&mut next)
-        (ir.compiler-ir-symbol-id name-id)
-        summary)
-      next)))
+  [summary : i64]) : unit
+  (when
+    (and (>= name-id 0) (= (opt-effect-callee name-id) name-id))
+    (opt_i64_i64_map.insert-ref! out (ir.compiler-ir-symbol-id name-id) summary)))
 
-(define (opt-call-memory-seed-builtins [out : (& opt_i64_i64_map.Map)]) : opt_i64_i64_map.Map
+(define (opt-call-memory-seed-builtins! [out : (&mut opt_i64_i64_map.Map)]) : unit
   (cbi.compiler-builtin-refresh!)
-  (opt-call-memory-seed-builtin
-    (opt-call-memory-seed-builtin
-      (opt-call-memory-seed-builtin
-        (opt-call-memory-seed-builtin
-          (owned_view.compiler-owned-reference-shared-view out)
-          cbi.compiler-builtin-id-tl-alloc
-          0)
-        cbi.compiler-builtin-id-tl-array-zero
-        (shl 1 0))
-      cbi.compiler-builtin-id-tl-array-fill8
-      (shl 1 0))
-    cbi.compiler-builtin-id-tl-mem-fill8
-    (shl 1 0)))
+  (opt-call-memory-seed-builtin! out cbi.compiler-builtin-id-tl-alloc 0)
+  (opt-call-memory-seed-builtin! out cbi.compiler-builtin-id-tl-array-zero 1)
+  (opt-call-memory-seed-builtin! out cbi.compiler-builtin-id-tl-array-fill8 1)
+  (opt-call-memory-seed-builtin! out cbi.compiler-builtin-id-tl-mem-fill8 1))
 
 ;; --- the fixed point: one call-graph component at a time ---------------------
 ;;
@@ -116985,9 +115665,8 @@
   (let
     [rows : opt_i64_i64_map.Map
       (let
-        [seeded : opt_i64_i64_map.Map
-          (opt-call-memory-seed-builtins
-            (& (opt_i64_i64_map.with-capacity capacity)))]
+        [seeded : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
+        (opt-call-memory-seed-builtins! (&mut seeded))
         (opt-external-seed-call-memory! (&mut seeded))
         seeded)]
     [count : i64 (opt-program-index-count index)]
@@ -117112,62 +115791,46 @@
         (opt_i64_i64_map.insert-ref! (&mut scan.addr-taken) id 1))]
     [_ unit]))
 
-(define (opt-const-globals-disq-instr
-  [scan : OptGlobalDisqualifications]
-  [instr : ir.CompilerIrInstr]) : OptGlobalDisqualifications
-  (let
-    [out : OptGlobalDisqualifications scan]
-    (match (opt-instr-target (compiler-opt-global-shared-view instr))
-      [(Store name)
-        (opt_i64_i64_map.insert-ref!
-          (&mut out.disq)
-          (ir.compiler-ir-symbol-id name)
-          1)]
-      [_ unit])
-    (let
-      [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
-      (ir.compiler-ir-instr-symbol-uses-into! (& instr) (&mut uses))
-      (for [use (& uses)]
-        (opt-const-globals-disq-use! (&mut out) use)))
-    out))
+(define (opt-const-globals-disq-instr!
+  [scan : (&mut OptGlobalDisqualifications)]
+  [uses : (&mut ir.CompilerIrUseList)]
+  [instr : (& ir.CompilerIrInstr)]) : unit
+  (match instr
+    [(Store name _ _)
+      (opt_i64_i64_map.insert-ref!
+        (&mut scan.disq)
+        (ir.compiler-ir-symbol-id name)
+        1)]
+    [_ unit])
+  (set! uses.len 0)
+  (ir.compiler-ir-instr-symbol-uses-into! instr uses)
+  (for [at (iterator.range 0 uses.len)]
+    (opt-const-globals-disq-use! scan (& (array-ref uses.slots at)))))
 
 (define (opt-const-globals-disqualified
   [capacity : i64]
-  [functions : (& functions ir.CompilerIrFunctionSeq)]) : OptGlobalDisqualifications
-  (opt-functions-fold
-    functions
-    (OptGlobalDisqualifications
-      (opt_i64_i64_map.with-capacity capacity)
-      (opt_i64_i64_map.with-capacity capacity))
-    opt-const-globals-disq-instr))
+  [functions : (& ir.CompilerIrFunctionSeq)]) : OptGlobalDisqualifications
+  (let
+    [scan : OptGlobalDisqualifications
+      (OptGlobalDisqualifications
+        (opt_i64_i64_map.with-capacity capacity)
+        (opt_i64_i64_map.with-capacity capacity))]
+    [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
+    (for [index (iterator.range 0 functions.len)]
+      (match (ir.compiler-ir-function-seq-borrow functions index)
+        [(Function _ _ _ _ blocks _)
+          (match blocks
+            [(Array seq)
+              (for [block (iterator.range 0 seq.len)]
+                (match (ir.compiler-ir-block-seq-borrow seq block)
+                  [(Block _ instrs)
+                    (for [at (iterator.range 0 instrs.len)]
+                      (opt-const-globals-disq-instr!
+                        (&mut scan)
+                        (&mut uses)
+                        (ir.compiler-ir-instr-seq-borrow instrs at)))]))])]))
+    scan))
 
-;; An ordinary operand only earns substitution when it fits a signed 32-bit
-;; immediate, so
-;; the backend can fold it directly into the instruction (`and reg, $imm32`)
-;; instead of loading it. A wider constant has to be materialized into a
-;; register with `movabs` at every use, and -- decisively -- the global form it
-;; would replace is NOT a per-use load: `global_cell` already loads such a
-;; global ONCE in the entry block and keeps the value in a register across the
-;; loop, which is the optimum. Substituting the literal takes that away, because
-;; this rewrite runs BEFORE `global_cell` in the iteration and leaves it no
-;; global to hoist: a wide hash constant moves out of its hoisted register and
-;; back into the hash-loop body. The imm32 rule is therefore a PROFITABILITY
-;; rule, not a soundness one, and it stays.
-;;
-;; Admitting any-width literals and keeping this rule "only for operand
-;; folding" rests on the premise that the allocator would rematerialize a wide
-;; immediate at its uses instead of homing it in a frame slot. It does not:
-;; this backend's allocator has no rematerialization of constant definitions.
-;; The narrower variants lose too: wide literals admitted at every `Mov`
-;; SOURCE (imm32 kept at the operand positions), or only at `Mov` sources whose
-;; destination feeds a COMPARISON (the one operand position that needs a
-;; register whatever the width), trade a win in one loop for a larger loss
-;; where the same kind of constant's compare sits in a hot loop. So the rule
-;; stays until the allocator can rematerialize a `movabs`.
-;;
-;; A narrow exception is a positive wide power of two used by a 64-bit multiply:
-;; consume it as a shift count in [31, 62], so no wide literal is materialized.
-;; The table retains those powers, but ordinary substitutions still check imm32.
 (define (opt-const-globals-imm32-fits? [n : i64]) : bool
   (and (>= n (- 0 2147483648)) (<= n 2147483647)))
 
@@ -117178,7 +115841,7 @@
 ;; ZERO is a member like any other value. A substituted divisor must never
 ;; become a literal `0`, but that is a property of the DIVISOR POSITION and not
 ;; of the global, so the refusal lives at the substitution site
-;; (`opt-const-global-subst-divisor-value`): a `% G` keeps its original trapping
+;; (`opt-const-global-subst-scalar`): a `% G` keeps its original trapping
 ;; global-load form while every OTHER use of the same G folds. Admitting zero is
 ;; what lets a zero-valued index constant discharge the bounds check it stands
 ;; in -- `bounds_check @G, %len` becomes `bounds_check 0, %len`, which `sccp`
@@ -117668,7 +116331,7 @@
   (for [index (iterator.range 0 functions.len)]
     (let
       [func : ir.CompilerIrFunction
-        (compiler-opt-global-array-element-shared-view functions.slots index)]
+        (ir.compiler-ir-function-seq-ref functions index)]
       (match (& func)
         [(Function name _ _ _ _ _)
           (when (= (ir.compiler-ir-symbol-id name) id) (return (Some func)))])))
@@ -117688,9 +116351,7 @@
     [inits : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
     [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
     (for [index (iterator.range 0 functions.len)]
-      (match (compiler-opt-global-array-element-shared-view
-        functions.slots
-        index)
+      (match (ir.compiler-ir-function-seq-borrow functions index)
         [(Function _ _ _ _ blocks _)
           (let
             [gep-vars : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 8)]
@@ -118079,11 +116740,7 @@
 (define (opt-cl-rewrite-blocks
   [facts : (& facts OptConstLoadFacts)]
   [blocks : (& ir.CompilerIrBlockList)]) : ir.CompilerIrBlockList
-  (opt-blocks-map-seq
-    (owned_view.compiler-owned-reference-shared-view blocks)
-    opt-cl-rewrite-seq
-    facts
-    blocks))
+  (opt-blocks-map-seq blocks opt-cl-rewrite-seq facts blocks))
 
 (define (opt-const-length-rewrite-summary-blocks
   [type-segment-bases : i64]
@@ -118437,9 +117094,7 @@
   (let
     [out : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
     (for [index (iterator.range 0 functions.len)]
-      (match (compiler-opt-global-array-element-shared-view
-        functions.slots
-        index)
+      (match (ir.compiler-ir-function-seq-borrow functions index)
         [(Function name _ _ _ _ _)
           (let
             [name-id : i64 (ir.compiler-ir-symbol-id name)]
@@ -118553,7 +117208,7 @@
     [built : OptConstLengths
       (in-arena
         (unsafe
-          (arena.Arena scratch))
+          (arena.from-raw-handle scratch))
         (let
           [summaries (opt-program-summaries-empty)]
           ;; Proven rematerialization and dead captures must not look like an
@@ -118726,20 +117381,28 @@
 ;; `compiler-backend-binop-literal-divmod-asm` strength-reduces with the
 ;; existing magic-multiply path (matching clang). (The map is named
 ;; `const-divisors` but holds every proven-constant global, not only divisors.)
-(define (opt-const-global-subst-value
-  [const-divisors : (& const-divisors opt_i64_i64_map.Map)]
-  [v : (& v ir.CompilerIrValue)]) : ir.CompilerIrValue
+(define (opt-const-global-subst-scalar
+  [const-divisors : (& opt_i64_i64_map.Map)]
+  [v : (& ir.CompilerIrValue)]
+  [divisor? : bool]) : ir.CompilerIrValue
   (match v
     [(Global name)
       (match (opt_i64_i64_map.get
-        (& const-divisors)
+        const-divisors
         (ir.compiler-ir-symbol-id name))
         [(LookupFound n)
-          (if (opt-const-globals-imm32-fits? n)
+          (if (and
+            (opt-const-globals-imm32-fits? n)
+            (or (not divisor?) (not (= n 0))))
             (I64 n)
-            (owned_view.compiler-owned-reference-shared-view v))]
-        [(LookupMissing) (owned_view.compiler-owned-reference-shared-view v)])]
+            (Global name))]
+        [(LookupMissing) (Global name)])]
     [_ (owned_view.compiler-owned-reference-shared-view v)]))
+
+(define (opt-const-global-subst-value
+  [const-divisors : (& opt_i64_i64_map.Map)]
+  [v : (& ir.CompilerIrValue)]) : ir.CompilerIrValue
+  (opt-const-global-subst-scalar const-divisors v false))
 
 ;; The div/mod DIVISOR is the one operand position the table's members are not
 ;; unconditionally substitutable into. A zero divisor is declined by the
@@ -118753,31 +117416,6 @@
   (match op
     [(or (Div) (Mod) (SafeDiv) (SafeMod)) true]
     [_ false]))
-
-(define (opt-const-global-subst-divisor-value
-  [const-divisors : (& const-divisors opt_i64_i64_map.Map)]
-  [v : ir.CompilerIrValue]) : ir.CompilerIrValue
-  (let
-    [substituted : ir.CompilerIrValue
-      (opt-const-global-subst-value const-divisors v)]
-    (match (& substituted)
-      [(I64 n)
-        (if (= n 0)
-          v
-          substituted)]
-      [_ substituted])))
-
-;; Pick the operand rule for a BinOp's RHS: the divisor rule for div/mod, the
-;; ordinary rule everywhere else.
-(define (opt-const-global-subst-rhs-value
-  [const-divisors : (& const-divisors opt_i64_i64_map.Map)]
-  [op : (& ir.CompilerIrBinOp)]
-  [v : (& ir.CompilerIrValue)]) : ir.CompilerIrValue
-  (if (opt-const-global-divisor-op? op)
-    (opt-const-global-subst-divisor-value
-      const-divisors
-      (owned_view.compiler-owned-reference-shared-view v))
-    (opt-const-global-subst-value const-divisors v)))
 
 (define (opt-const-global-wide-power-shift [value : (& ir.CompilerIrValue)]) : i64
   (match value
@@ -118917,7 +117555,7 @@
   [counts : (& counts opt_i64_i64_map.Map)]
   [blocks : (& ir.CompilerIrBlockList)]) : ir.CompilerIrBlockList
   (opt-blocks-map-seq
-    (owned_view.compiler-owned-reference-shared-view blocks)
+    blocks
     opt-const-global-mul-shift-seq
     constants
     copies
@@ -119019,14 +117657,16 @@
 (define (opt-const-divisor-rewrite-instr
   [const-divisors : (& const-divisors opt_i64_i64_map.Map)]
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
-  (match (compiler-opt-global-shared-view instr)
+  (match instr
     [(BinOp dst op lhs rhs ty)
-      (BinOp
-        dst
-        (compiler-opt-global-shared-view op)
-        (opt-const-global-subst-value const-divisors lhs)
-        (opt-const-global-subst-rhs-value const-divisors (& op) (& rhs))
-        ty)]
+      (let
+        [divisor? : bool (opt-const-global-divisor-op? (& op))]
+        (BinOp
+          dst
+          op
+          (opt-const-global-subst-value const-divisors (& lhs))
+          (opt-const-global-subst-scalar const-divisors (& rhs) divisor?)
+          ty))]
     [(Mov dst src ty)
       (Mov dst (opt-const-global-subst-value const-divisors src) ty)]
     [(UnOp dst op src ty)
@@ -119088,10 +117728,7 @@
 (define (opt-const-divisor-rewrite-blocks
   [const-divisors : (& const-divisors opt_i64_i64_map.Map)]
   [blocks : (& ir.CompilerIrBlockList)]) : ir.CompilerIrBlockList
-  (opt-blocks-map
-    (owned_view.compiler-owned-reference-shared-view blocks)
-    opt-const-divisor-rewrite-block
-    const-divisors))
+  (opt-blocks-map blocks opt-const-divisor-rewrite-block const-divisors))
 
 ;; Skip the whole pass (returning the blocks untouched) when no constant-global
 ;; divisor exists -- the common case, so the level-2 fixpoint pays only a length
@@ -119209,66 +117846,21 @@
     (opt_i64_i64_map.with-capacity 1)
     Nil))
 
-(define (opt-global-cell-scan-ref [scan : OptGlobalCellScan] [name : i64]) : OptGlobalCellScan
-  (match scan
-    [(OptGlobalCellScan refs ref-list stores call-any callees callee-list)
-      (match (opt_i64_i64_map.get (& refs) name)
-        [(LookupFound seen)
-          (opt_i64_i64_map.insert-ref!
-            (&mut refs)
-            name
-            (if (< seen (opt-global-cell-ref-count-cap))
-              (+ seen 1)
-              seen))
-          (OptGlobalCellScan refs ref-list stores call-any callees callee-list)]
-        [(LookupMissing)
-          (opt_i64_i64_map.insert-ref! (&mut refs) name 1)
-          (OptGlobalCellScan
-            refs
-            (opt-label-cons name ref-list)
-            stores
-            call-any
-            callees
-            callee-list)])]))
-
-(define (opt-global-cell-scan-store [scan : OptGlobalCellScan] [name : i64]) : OptGlobalCellScan
-  (match scan
-    [(OptGlobalCellScan refs ref-list stores call-any callees callee-list)
-      (opt_i64_i64_map.insert-ref! (&mut stores) name 1)
-      (OptGlobalCellScan refs ref-list stores call-any callees callee-list)]))
-
-;; A returning call whose target this walk cannot name. It may land on any
-;; function of the program, so it may write any cell and condition (c) then
-;; refuses every global in the function -- the v1 verdict, unchanged.
-(define (opt-global-cell-scan-call [scan : OptGlobalCellScan]) : OptGlobalCellScan
-  (if scan.call-any
-    scan
-    (OptGlobalCellScan
-      scan.refs
-      scan.ref-list
-      scan.stores
-      true
-      scan.callees
-      scan.callee-list)))
-
-;; A returning call to a NAMED callee. Recorded here and resolved later: the
-;; per-program mod-ref table is not an input to this walk -- the whole-program
-;; pass of it (opt-global-cell-summary-build) is what the table is built FROM --
-;; so opt-global-cell-call-writes reads the rows once per function instead.
-(define (opt-global-cell-scan-callee [scan : OptGlobalCellScan] [name : i64]) : OptGlobalCellScan
-  (match scan
-    [(OptGlobalCellScan refs ref-list stores call-any callees callee-list)
-      (if (opt_i64_i64_map.contains? (& callees) name)
-        (OptGlobalCellScan refs ref-list stores call-any callees callee-list)
-        (begin
-          (opt_i64_i64_map.insert-ref! (&mut callees) name 1)
-          (OptGlobalCellScan
-            refs
-            ref-list
-            stores
-            call-any
-            callees
-            (opt-label-cons name callee-list))))]))
+(define (opt-global-cell-scan-ref!
+  [scan : (&mut OptGlobalCellScan)]
+  [name : i64]) : unit
+  (match (opt_i64_i64_map.get (& scan.refs) name)
+    [(LookupFound seen)
+      (when
+        (< seen (opt-global-cell-ref-count-cap))
+        (opt_i64_i64_map.insert-ref! (&mut scan.refs) name (+ seen 1)))]
+    [(LookupMissing)
+      (opt_i64_i64_map.insert-ref! (&mut scan.refs) name 1)
+      (set!
+        scan.ref-list
+        (opt-label-cons
+          name
+          (owned_view.compiler-owned-reference-shared-view (& scan.ref-list))))]))
 
 ;; Condition (c) refuses a cell that a callee could `set!` between the entry
 ;; load and a use of `%g`. A non-returning trap helper could not: control never
@@ -119280,12 +117872,22 @@
 ;; after the backend has expanded a check, or after a stdlib range guard has
 ;; been inlined here. Recording it would charge every otherwise call-free
 ;; function that inlines one with its callee's row.
-(define (opt-global-cell-scan-direct-call
-  [scan : OptGlobalCellScan]
-  [name : i64]) : OptGlobalCellScan
-  (if (opt-direct-call-noreturn? name)
-    scan
-    (opt-global-cell-scan-callee scan (ir.compiler-ir-symbol-id name))))
+(define (opt-global-cell-scan-direct-call!
+  [scan : (&mut OptGlobalCellScan)]
+  [name : i64]) : unit
+  (unless
+    (opt-direct-call-noreturn? name)
+    (let
+      [id : i64 (ir.compiler-ir-symbol-id name)]
+      (unless
+        (opt_i64_i64_map.contains? (& scan.callees) id)
+        (opt_i64_i64_map.insert-ref! (&mut scan.callees) id 1)
+        (set!
+          scan.callee-list
+          (opt-label-cons
+            id
+            (owned_view.compiler-owned-reference-shared-view
+              (& scan.callee-list))))))))
 
 ;; Condition (c) as a MASK over global cells: what the RETURNING calls this
 ;; scan saw may write, in the packed OptGlobalModRef encoding. An unresolved
@@ -119312,107 +117914,122 @@
 
 (define (opt-global-cell-call-writes
   [cell : (& cell OptGlobalCellSummary)]
-  [scan : OptGlobalCellScan]) : i64
+  [scan : (& OptGlobalCellScan)]) : i64
   (if scan.call-any
     (opt-global-mod-ref-any)
-    (opt-global-cell-call-writes-list cell.mod-ref scan.callee-list 0)))
+    (opt-global-cell-call-writes-list
+      cell.mod-ref
+      (owned_view.compiler-owned-reference-shared-view (& scan.callee-list))
+      0)))
 
 (define (opt-global-cell-scan-value
   [scan : OptGlobalCellScan]
-  [value : (& value ir.CompilerIrValue)]) : OptGlobalCellScan
+  [value : (& ir.CompilerIrValue)]) : OptGlobalCellScan
   (match value
     [(Global name)
-      (opt-global-cell-scan-ref scan (ir.compiler-ir-symbol-id name))]
-    [_ scan]))
+      (opt-global-cell-scan-ref! (&mut scan) (ir.compiler-ir-symbol-id name))]
+    [_ unit])
+  scan)
 
-;; Every operand counts, register-group `Pack` words included: copy
-;; propagation can forward a global read straight into a packed word.
-(define (opt-global-cell-scan-uses
-  [scan : OptGlobalCellScan]
-  [instr : (& ir.CompilerIrInstr)]) : OptGlobalCellScan
-  (let
-    [out : OptGlobalCellScan scan]
-    [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
-    (ir.compiler-ir-instr-symbol-uses-into! instr (&mut uses))
-    (for [use (& uses)]
-      (match use.kind
-        [(GlobalUse)
-          (set!
-            out
-            (opt-global-cell-scan-ref out (ir.compiler-ir-symbol-id use.id)))]
-        [_ unit]))
-    out))
+;; The total target classifier accounts for all calls and direct stores.
+;; Skip entry Mov sources because they are this pass's own output shape.
+(define (opt-global-cell-scan-use!
+  [scan : (&mut OptGlobalCellScan)]
+  [use : (& ir.CompilerIrUse)]) : unit
+  (match use.kind
+    [(GlobalUse)
+      (opt-global-cell-scan-ref! scan (ir.compiler-ir-symbol-id use.id))]
+    [_ unit]))
 
-;; Per-function fact scan: global-ref operand uses (refs), direct set! targets
-;; (stores), and the RETURNING call-family instructions that remain -- named
-;; callees in `callees`/`callee-list`, unresolvable ones in `call-any` (a
-;; direct call to a non-returning trap helper is neither -- see
-;; opt-global-cell-scan-direct-call). Calls and stores come from the total
-;; opt-instr-target, so a new call-like or store-like instruction can never
-;; silently escape the (a)/(c) checks; a missed ref is always sound (the pass
-;; rewrites a subset of uses to a value-identical var), only a missed store or
-;; call is not. `entry?` marks the function's first block: Mov sources there
-;; are exempt from refs because they are this pass's own output shape (see the
-;; header).
+(define (opt-global-cell-scan-instr!
+  [scan : (&mut OptGlobalCellScan)]
+  [uses : (&mut ir.CompilerIrUseList)]
+  [entry? : bool]
+  [instr : (& ir.CompilerIrInstr)]) : unit
+  (match (opt-instr-target
+    (owned_view.compiler-owned-reference-shared-view instr))
+    [(Direct name _) (opt-global-cell-scan-direct-call! scan name)]
+    [(or (NamedCall _) (IndirectCall)) (set! scan.call-any true)]
+    [(Store name)
+      (opt_i64_i64_map.insert-ref!
+        (&mut scan.stores)
+        (ir.compiler-ir-symbol-id name)
+        1)]
+    [(Plain)
+      (when
+        (and
+          entry?
+          (match instr
+            [(Mov _ _ _) true]
+            [_ false]))
+        (return unit))])
+  (set! uses.len 0)
+  (ir.compiler-ir-instr-symbol-uses-into! instr uses)
+  (for [at (iterator.range 0 uses.len)]
+    (opt-global-cell-scan-use! scan (& (array-ref uses.slots at)))))
+
 (define (opt-global-cell-scan-instr
   [entry? : bool]
   [scan : OptGlobalCellScan]
   [instr : ir.CompilerIrInstr]) : OptGlobalCellScan
-  (match (opt-instr-target (compiler-opt-global-shared-view instr))
-    [(Direct name _)
-      (opt-global-cell-scan-uses
-        (opt-global-cell-scan-direct-call scan name)
-        (& instr))]
-    [(or (NamedCall _) (IndirectCall))
-      (opt-global-cell-scan-uses (opt-global-cell-scan-call scan) (& instr))]
-    [(Store name)
-      (opt-global-cell-scan-uses
-        (opt-global-cell-scan-store scan (ir.compiler-ir-symbol-id name))
-        (& instr))]
-    [(Plain)
-      (match (& instr)
-        [(Mov _ _ _)
-          (if entry?
-            scan
-            (opt-global-cell-scan-uses scan (& instr)))]
-        [_ (opt-global-cell-scan-uses scan (& instr))])]))
+  (opt-global-cell-scan-instr!
+    (&mut scan)
+    (&mut (ir.compiler-ir-use-list-new))
+    entry?
+    (& instr))
+  scan)
 
-;; `entry?` holds for the first block only, and only when the caller asks.
+(define (opt-global-cell-scan-seq!
+  [scan : (&mut OptGlobalCellScan)]
+  [uses : (&mut ir.CompilerIrUseList)]
+  [entry? : bool]
+  [instrs : (& ir.CompilerIrInstrSeq)]) : unit
+  (for [index (iterator.range 0 instrs.len)]
+    (opt-global-cell-scan-instr!
+      scan
+      uses
+      entry?
+      (ir.compiler-ir-instr-seq-borrow instrs index))))
+
+(define (opt-global-cell-scan-blocks!
+  [scan : (&mut OptGlobalCellScan)]
+  [uses : (&mut ir.CompilerIrUseList)]
+  [entry? : bool]
+  [blocks : (& ir.CompilerIrBlockList)]) : unit
+  (match blocks
+    [(Array seq)
+      (for [index (iterator.range 0 seq.len)]
+        (match (ir.compiler-ir-block-seq-borrow seq index)
+          [(Block _ instrs)
+            (opt-global-cell-scan-seq!
+              scan
+              uses
+              (and entry? (= index 0))
+              instrs)]))]))
+
 (define (opt-global-cell-scan-blocks
   [scan : OptGlobalCellScan]
-  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [blocks : (& ir.CompilerIrBlockList)]
   [entry? : bool]) : OptGlobalCellScan
-  (if (not entry?)
-    (opt-blocks-fold
-      (owned_view.compiler-owned-reference-shared-view blocks)
-      scan
-      opt-global-cell-scan-instr
-      false)
-    (match blocks
-      [(Array seq)
-        (let
-          [count : i64 (ir.compiler-ir-block-seq-count seq)]
-          [acc : OptGlobalCellScan scan]
-          (for [i (iterator.range 0 count)]
-            (match (ir.compiler-ir-block-seq-borrow seq i)
-              [(Block _ instrs)
-                (set!
-                  acc
-                  (opt-instrs-fold
-                    instrs
-                    acc
-                    opt-global-cell-scan-instr
-                    (= i 0)))]))
-          acc)])))
+  (opt-global-cell-scan-blocks!
+    (&mut scan)
+    (&mut (ir.compiler-ir-use-list-new))
+    entry?
+    blocks)
+  scan)
 
 (define (opt-global-cell-scan-functions
   [scan : (& OptGlobalCellScan)]
-  [functions : (& functions ir.CompilerIrFunctionSeq)]) : OptGlobalCellScan
-  (opt-functions-fold
-    functions
-    (owned_view.compiler-owned-reference-shared-view scan)
-    opt-global-cell-scan-instr
-    false))
+  [functions : (& ir.CompilerIrFunctionSeq)]) : OptGlobalCellScan
+  (let
+    [out : OptGlobalCellScan
+      (owned_view.compiler-owned-reference-shared-view scan)]
+    [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
+    (for [index (iterator.range 0 functions.len)]
+      (match (& (array-ref functions.slots index))
+        [(Function _ _ _ _ blocks _)
+          (opt-global-cell-scan-blocks! (&mut out) (&mut uses) false blocks)]))
+    out))
 
 ;; A global's cell qualifies for entry-load hoisting only when it is exactly
 ;; one machine word: the entry load is a single `mov %g, @G` whose Mov type is
@@ -119786,56 +118403,28 @@
 ;; `last-distinct`; past that every global of the pool shares `overflow-bit`.
 (define (opt-global-bit-index-fill
   [globals : (& ir.CompilerIrGlobalSeq)]
-  [stores : (& stores opt_i64_i64_map.Map)]
+  [stores : (& opt_i64_i64_map.Map)]
   [pool : OptGlobalBitPool]
   [last-distinct : i64]
   [overflow-bit : i64]
   [out : opt_i64_i64_map.Map]
-  [at : i64]
   [next : i64]) : OptGlobalModRefIndex
-  (if (>= at globals.len)
-    (Some out next)
+  (for [at (iterator.range 0 globals.len)]
     (match (ir.compiler-ir-global-seq-borrow globals at)
       [(Global name ty _ _)
-        (if (not
-          (opt-global-bit-pool-takes?
-            pool
-            stores
-            (ir.compiler-ir-symbol-id name)
-            (& ty)))
-          (opt-global-bit-index-fill
-            globals
-            stores
-            pool
-            last-distinct
-            overflow-bit
-            out
-            (+ at 1)
-            next)
-          (let
-            [bit : i64
-              (if (<= next last-distinct)
-                next
-                overflow-bit)]
-            (if (< bit 0)
-              (No)
-              (let
-                [assigned : opt_i64_i64_map.Map out]
-                (opt_i64_i64_map.insert-ref!
-                  (&mut assigned)
-                  (ir.compiler-ir-symbol-id name)
-                  bit)
-                (opt-global-bit-index-fill
-                  globals
-                  stores
-                  pool
-                  last-distinct
-                  overflow-bit
-                  assigned
-                  (+ at 1)
-                  (if (<= next last-distinct)
-                    (+ next 1)
-                    next))))))])))
+        (let
+          [id : i64 (ir.compiler-ir-symbol-id name)]
+          (when
+            (opt-global-bit-pool-takes? pool stores id (& ty))
+            (let
+              [bit : i64
+                (if (<= next last-distinct)
+                  next
+                  overflow-bit)]
+              (when (< bit 0) (return (No)))
+              (opt_i64_i64_map.insert-ref! (&mut out) id bit)
+              (when (<= next last-distinct) (+= next 1)))))]))
+  (Some out next))
 
 ;; P18-2: the packed row, assigned in two pools. A hot loop's cell writes are
 ;; its counters -- `ssa-mt-fill`, `rg-heap-len`, `sccp-changed` -- and what it
@@ -119882,7 +118471,6 @@
       last-distinct
       array-overflow
       (opt_i64_i64_map.with-capacity capacity)
-      0
       0)
       [(No) (No)]
       [(Some out next)
@@ -119893,7 +118481,6 @@
           last-distinct
           scalar-overflow
           out
-          0
           (if (<= arrays (- limit 1))
             next
             (- limit 1)))])))
@@ -120572,7 +119159,7 @@
         (ir.compiler-ir-symbol-id name)
         args
         0
-        (opt-arg-global-args-count args))]
+        (ir.compiler-ir-call-args-count args))]
     [(TailCall name args _)
       (opt-global-obj-scan-args!
         owners
@@ -120583,7 +119170,7 @@
         (ir.compiler-ir-symbol-id name)
         args
         0
-        (opt-arg-global-args-count args))]
+        (ir.compiler-ir-call-args-count args))]
     [_ unit]))
 
 (define (opt-global-obj-param-owners!
@@ -120596,9 +119183,7 @@
   [fnset : (& fnset opt_i64_i64_map.Map)]
   [capacity : i64]) : unit
   (for [position (iterator.range 0 functions.len)]
-    (match (compiler-opt-global-array-element-shared-view
-      functions.slots
-      position)
+    (match (ir.compiler-ir-function-seq-borrow functions position)
       [(Function name params _ _ blocks _)
         (let
           [owners : OptGlobalObjOwners
@@ -120757,7 +119342,6 @@
       (- (opt-global-mod-ref-limit) 1)
       (opt-global-obj-overflow-bit globals)
       (opt_i64_i64_map.with-capacity capacity)
-      0
       0)
       [(No) (opt-global-mod-ref-none)]
       [(Some index _)
@@ -121109,7 +119693,7 @@
 (define (opt-len-eq-defs-record-args!
   [arg-marks : (&mut arg-marks (__tl_dyn-array i64))]
   [args : (& args ir.CompilerIrCallArgs)]) : unit
-  (for [index (iterator.range 0 (opt-len-eq-args-count args))]
+  (for [index (iterator.range 0 (ir.compiler-ir-call-args-count args))]
     (match (opt-call-memory-arg-at args index)
       [(Some (Var var))
         (when
@@ -121732,18 +120316,23 @@
     true))
 
 ;; --- call-graph closures -----------------------------------------------------
-(define (opt-len-eq-args-count [args : (& args ir.CompilerIrCallArgs)]) : i64
-  (match args
-    [(Nil) 0]
-    [(One _) 1]
-    [(Two _ _) 2]
-    [(or (Array values) (Sret values _)) (array-length values)]))
+(define (opt-len-eq-global-use?
+  [set : (& opt_i64_i64_map.Map)]
+  [use : (& ir.CompilerIrUse)]) : bool
+  (and
+    (= use.kind (GlobalUse))
+    (opt_i64_i64_map.contains? set (ir.compiler-ir-symbol-id use.id))))
 
 (define (opt-len-eq-mentions?
-  [set : (& set opt_i64_i64_map.Map)]
-  [names : OptLabelSet]) : bool
-  (for [i (iterator.range 0 (opt-label-count names))]
-    (when (opt_i64_i64_map.contains? set (opt-label-ref names i)) (return true)))
+  [set : (& opt_i64_i64_map.Map)]
+  [uses : (&mut ir.CompilerIrUseList)]
+  [instr : (& ir.CompilerIrInstr)]) : bool
+  (set! uses.len 0)
+  (ir.compiler-ir-instr-symbol-uses-into! instr uses)
+  (for [at (iterator.range 0 uses.len)]
+    (when
+      (opt-len-eq-global-use? set (& (array-ref uses.slots at)))
+      (return true)))
   false)
 
 (define (opt-len-eq-callee-clean?
@@ -121764,25 +120353,20 @@
   [reads? : bool]
   [clean : (& clean opt_i64_i64_map.Map)]
   [known : (& known opt_i64_i64_map.Map)]
-  [instr : ir.CompilerIrInstr]) : bool
-  (let
-    [scan : OptGlobalCellScan
-      (opt-global-cell-scan-instr
-        false
-        (opt-global-cell-scan-new)
-        (compiler-opt-global-shared-view instr))]
-    (and
-      (match (& instr)
-        [(Store name _ _)
-          (not (opt_i64_i64_map.contains? set (ir.compiler-ir-symbol-id name)))]
-        [(CopyBytes (Global name) _ _)
-          (not (opt_i64_i64_map.contains? set (ir.compiler-ir-symbol-id name)))]
-        [_ true])
-      (or (not reads?) (not (opt-len-eq-mentions? set scan.ref-list)))
-      (match (opt-len-eq-call (& instr))
-        [(None) true]
-        [(Opaque) false]
-        [(Direct callee) (opt-len-eq-callee-clean? known clean callee)]))))
+  [uses : (&mut ir.CompilerIrUseList)]
+  [instr : (& ir.CompilerIrInstr)]) : bool
+  (and
+    (match instr
+      [(Store name _ _)
+        (not (opt_i64_i64_map.contains? set (ir.compiler-ir-symbol-id name)))]
+      [(CopyBytes (Global name) _ _)
+        (not (opt_i64_i64_map.contains? set (ir.compiler-ir-symbol-id name)))]
+      [_ true])
+    (or (not reads?) (not (opt-len-eq-mentions? set uses instr)))
+    (match (opt-len-eq-call (& instr))
+      [(None) true]
+      [(Opaque) false]
+      [(Direct callee) (opt-len-eq-callee-clean? known clean callee)])))
 
 (define (opt-len-eq-blocks-clean?
   [set : (& set opt_i64_i64_map.Map)]
@@ -121790,7 +120374,16 @@
   [clean : (& clean opt_i64_i64_map.Map)]
   [known : (& known opt_i64_i64_map.Map)]
   [blocks : (& blocks ir.CompilerIrBlockList)]) : bool
-  (opt-blocks-every? blocks opt-len-eq-instr-clean? set reads? clean known))
+  (let
+    [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
+    (opt-blocks-every?
+      blocks
+      opt-len-eq-instr-clean?
+      set
+      reads?
+      clean
+      known
+      (&mut uses))))
 
 (define (opt-len-eq-clean-map
   [program : (& program OptProgramIndex)]
@@ -121872,28 +120465,23 @@
   [global : i64]) : unit
   (when (>= global 0) (opt_i64_i64_map.insert-ref! bad global 1)))
 
-(define (opt-len-eq-refuse-refs!
-  [ctx : (& ctx OptLenEqCtx)]
-  [bad : (&mut bad opt_i64_i64_map.Map)]
-  [names : OptLabelSet]) : unit
-  (for [i (iterator.range 0 (opt-label-count names))]
-    (let
-      [name : i64 (opt-label-ref names i)]
-      (when
-        (opt_i64_i64_map.contains? (& ctx.cand) name)
-        (opt_i64_i64_map.insert-ref! bad name 1)))))
+(define (opt-len-eq-refuse-use!
+  [ctx : (& OptLenEqCtx)]
+  [bad : (&mut opt_i64_i64_map.Map)]
+  [use : (& ir.CompilerIrUse)]) : unit
+  (when
+    (opt-len-eq-global-use? ctx.cand use)
+    (opt_i64_i64_map.insert-ref! bad (ir.compiler-ir-symbol-id use.id) 1)))
 
 (define (opt-len-eq-refuse-instr!
-  [ctx : (& ctx OptLenEqCtx)]
-  [bad : (&mut bad opt_i64_i64_map.Map)]
-  [instr : (& instr ir.CompilerIrInstr)]) : unit
-  (let
-    [scan : OptGlobalCellScan
-      (opt-global-cell-scan-instr
-        false
-        (opt-global-cell-scan-new)
-        (owned_view.compiler-owned-reference-shared-view instr))]
-    (opt-len-eq-refuse-refs! ctx bad scan.ref-list)))
+  [ctx : (& OptLenEqCtx)]
+  [bad : (&mut opt_i64_i64_map.Map)]
+  [uses : (&mut ir.CompilerIrUseList)]
+  [instr : (& ir.CompilerIrInstr)]) : unit
+  (set! uses.len 0)
+  (ir.compiler-ir-instr-symbol-uses-into! instr uses)
+  (for [at (iterator.range 0 uses.len)]
+    (opt-len-eq-refuse-use! ctx bad (& (array-ref uses.slots at)))))
 
 (define (opt-len-eq-refuse-value!
   [ctx : (& ctx OptLenEqCtx)]
@@ -121913,7 +120501,7 @@
   [direct? : bool]
   [returns-unit? : bool]
   [args : (& args ir.CompilerIrCallArgs)]) : unit
-  (for [index (iterator.range 0 (opt-len-eq-args-count args))]
+  (for [index (iterator.range 0 (ir.compiler-ir-call-args-count args))]
     (match (opt-call-memory-arg-at args index)
       [(Some value)
         (let
@@ -122059,6 +120647,7 @@
   [tables : (&mut tables OptLenEqDefs)]
   [unmodelled : (&mut unmodelled (__tl_dyn-array i64))]
   [bad : (&mut bad opt_i64_i64_map.Map)]
+  [uses : (&mut ir.CompilerIrUseList)]
   [instr : (& instr ir.CompilerIrInstr)]) : unit
   (match (opt-len-eq-call instr)
     [(None) unit]
@@ -122141,7 +120730,7 @@
           bad
           (ir.compiler-ir-value-seq-borrow values index)))]
     [_
-      (opt-len-eq-refuse-instr! ctx bad instr)
+      (opt-len-eq-refuse-instr! ctx bad uses instr)
       (set! (array-ref unmodelled 0) 1)]))
 
 (define (opt-len-eq-trap-block? [block : (& block ir.CompilerIrBlock)]) : bool
@@ -122191,6 +120780,7 @@
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [join? : bool]) : unit
   (let
+    [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
     [cfg-index : OptCfgIndex
       (if join?
         (opt-cfg-index-build blocks)
@@ -122236,6 +120826,7 @@
                     tables
                     unmodelled
                     bad
+                    (&mut uses)
                     (ir.compiler-ir-instr-seq-borrow instrs pos)))])))])))
 
 (define (opt-len-eq-scan-function!
@@ -122619,206 +121210,96 @@
   ;; is not a global) or 1 + the global symbol id every site so far passed.
   (sites opt_i64_i64_map.Map))
 
-(define (opt-arg-global-scan-opaque [scan : OptArgGlobalScan] [name : i64]) : OptArgGlobalScan
-  (match scan
-    [(OptArgGlobalScan opaque arity sites)
-      (opt_i64_i64_map.insert-ref! (&mut opaque) name 1)
-      (OptArgGlobalScan opaque arity sites)]))
-
-;; The only value form that names a function's ADDRESS. Every operand position
-;; of every instruction goes through here, so a function whose address escapes
-;; anywhere in the program is refused everywhere.
-(define (opt-arg-global-scan-value
-  [scan : OptArgGlobalScan]
-  [value : (& ir.CompilerIrValue)]) : OptArgGlobalScan
-  (match value
-    [(Function name)
-      (opt-arg-global-scan-opaque scan (ir.compiler-ir-symbol-id name))]
-    [_ scan]))
-
-(define (opt-arg-global-scan-use
-  [_role : ir.CompilerIrOperandRole]
-  [scan : OptArgGlobalScan]
-  [value : ir.CompilerIrValue]) : OptArgGlobalScan
-  (opt-arg-global-scan-value scan (& value)))
-
-(define (opt-arg-global-scan-args
-  [scan : (& OptArgGlobalScan)]
-  [args : (& ir.CompilerIrCallArgs)]) : OptArgGlobalScan
-  (ir.compiler-ir-call-args-fold
-    (owned_view.compiler-owned-reference-shared-view args)
-    (owned_view.compiler-owned-reference-shared-view scan)
-    opt-arg-global-scan-use
-    (ir.compiler-ir-role-call-arg)))
-
-;; One argument of one direct call site, read positionally: the recorded fact
-;; is the intersection over every site, and 0 means "no fact" for good.
-(define (opt-arg-global-scan-site
-  [scan : (& OptArgGlobalScan)]
+;; Intersect the fact with one argument. Zero is sticky after a disagreement.
+(define (opt-arg-global-scan-site!
+  [sites : (&mut opt_i64_i64_map.Map)]
   [name : i64]
   [position : i64]
-  [value : (& ir.CompilerIrValue)]) : OptArgGlobalScan
+  [value : (& ir.CompilerIrValue)]) : unit
   (let
+    [key : i64 (opt-arg-global-key name position)]
     [want : i64
       (match value
         [(Global cell) (+ 1 (ir.compiler-ir-symbol-id cell))]
         [_ 0])]
-    (match (opt-arg-global-scan-value
-      (owned_view.compiler-owned-reference-shared-view scan)
-      value)
-      [(OptArgGlobalScan opaque arity sites)
-        (let
-          [key : i64 (opt-arg-global-key name position)]
-          (match (opt_i64_i64_map.get (& sites) key)
-            [(LookupFound seen)
-              (if (= seen want)
-                unit
-                (opt_i64_i64_map.insert-ref! (&mut sites) key 0))]
-            [(LookupMissing)
-              (opt_i64_i64_map.insert-ref! (&mut sites) key want)])
-          (OptArgGlobalScan opaque arity sites))])))
+    (match (opt_i64_i64_map.get sites key)
+      [(LookupFound seen)
+        (unless (= seen want) (opt_i64_i64_map.insert-ref! sites key 0))]
+      [(LookupMissing) (opt_i64_i64_map.insert-ref! sites key want)])))
 
-(define (opt-arg-global-scan-site-array
-  [scan : OptArgGlobalScan]
-  [name : i64]
-  [values : (& (__tl_dyn-array ir.CompilerIrValue))]
-  [index : i64]) : OptArgGlobalScan
-  (if (>= index (array-length values))
-    scan
-    (opt-arg-global-scan-site-array
-      (opt-arg-global-scan-site
-        (& scan)
-        name
-        index
-        (& (array-ref values index)))
-      name
-      values
-      (+ index 1))))
+(define (opt-arg-global-args-count [args : (& ir.CompilerIrCallArgs)]) : i64
+  (ir.compiler-ir-call-args-count args))
 
-(define (opt-arg-global-scan-site-args
-  [scan : OptArgGlobalScan]
-  [name : i64]
-  [args : (& ir.CompilerIrCallArgs)]) : OptArgGlobalScan
-  (match args
-    [(Nil) scan]
-    [(One value) (opt-arg-global-scan-site (& scan) name 0 (& value))]
-    [(Two a b)
-      (opt-arg-global-scan-site
-        (& (opt-arg-global-scan-site (& scan) name 0 (& a)))
-        name
-        1
-        (& b))]
-    [(or (Array values) (Sret values _))
-      (opt-arg-global-scan-site-array scan name (& values) 0)]))
-
-(define (opt-arg-global-args-count [args : (& args ir.CompilerIrCallArgs)]) : i64
-  (match args
-    [(Nil) 0]
-    [(One _) 1]
-    [(Two _ _) 2]
-    [(or (Array values) (Sret values _)) (array-length values)]))
-
-;; A site whose argument count does not match the callee's parameter list
-;; cannot be read positionally, so it refuses every position of that callee.
-(define (opt-arg-global-scan-refuse
-  [scan : OptArgGlobalScan]
-  [name : i64]
-  [position : i64]
-  [count : i64]) : OptArgGlobalScan
-  (if (>= position count)
-    scan
-    (opt-arg-global-scan-refuse
-      (match scan
-        [(OptArgGlobalScan opaque arity sites)
-          (opt_i64_i64_map.insert-ref!
-            (&mut sites)
-            (opt-arg-global-key name position)
-            0)
-          (OptArgGlobalScan opaque arity sites)])
-      name
-      (+ position 1)
-      count)))
-
-(define (opt-arg-global-arity-of
-  [scan : (& scan OptArgGlobalScan)]
-  [name : i64]) : i64
+(define (opt-arg-global-arity-of [scan : (& OptArgGlobalScan)] [name : i64]) : i64
   (match (opt_i64_i64_map.get (& scan.arity) name)
     [(LookupFound encoded) (- encoded 1)]
-    [(LookupMissing) (- 0 1)]))
+    [(LookupMissing) -1]))
 
-(define (opt-arg-global-scan-direct
-  [scan : (& OptArgGlobalScan)]
+;; Only read a site positionally when its arity matches and it has no hidden
+;; output parameter. The opaque-symbol walk also covers refused sites.
+(define (opt-arg-global-scan-direct!
+  [scan : (&mut OptArgGlobalScan)]
   [callee : i64]
-  [args : (& ir.CompilerIrCallArgs)]) : OptArgGlobalScan
+  [args : (& ir.CompilerIrCallArgs)]) : unit
   (let
     [name : i64 (ir.compiler-ir-symbol-id callee)]
     [count : i64 (opt-arg-global-arity-of scan name)]
-    (match args
-      [(Sret _ _)
-        ;; Never drop or reindex a hidden output parameter at any call site.
-        (opt-arg-global-scan-refuse
-          (opt-arg-global-scan-args scan args)
-          name
-          0
-          count)]
-      [_
-        (if (< count 0)
-          (opt-arg-global-scan-args scan args)
-          (if (= count (opt-arg-global-args-count args))
-            (opt-arg-global-scan-site-args
-              (owned_view.compiler-owned-reference-shared-view scan)
-              name
-              args)
-            (opt-arg-global-scan-refuse
-              (opt-arg-global-scan-args scan args)
-              name
-              0
-              count)))])))
+    (when
+      (>= count 0)
+      (if (or
+        (not (= count (ir.compiler-ir-call-args-count args)))
+        (match args
+          [(Sret _ _) true]
+          [_ false]))
+        (for [position (iterator.range 0 count)]
+          (opt_i64_i64_map.insert-ref!
+            (&mut scan.sites)
+            (opt-arg-global-key name position)
+            0))
+        (match args
+          [(Nil) unit]
+          [(One value)
+            (opt-arg-global-scan-site! (&mut scan.sites) name 0 value)]
+          [(Two a b)
+            (opt-arg-global-scan-site! (&mut scan.sites) name 0 a)
+            (opt-arg-global-scan-site! (&mut scan.sites) name 1 b)]
+          [(Array values)
+            (for [position (iterator.range 0 count)]
+              (opt-arg-global-scan-site!
+                (&mut scan.sites)
+                name
+                position
+                (& (array-ref values position))))]
+          [(Sret _ _) unit])))))
 
-;; Calls come from the total opt-instr-target and operands from the total IR
-;; operand API, so a new IR instruction cannot let a function address or a
-;; direct activation silently escape the scan.
-(define (opt-arg-global-scan-uses
-  [scan : (& OptArgGlobalScan)]
-  [instr : (& ir.CompilerIrInstr)]) : OptArgGlobalScan
-  (let
-    [out : OptArgGlobalScan
-      (owned_view.compiler-owned-reference-shared-view scan)]
-    [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
-    (ir.compiler-ir-instr-symbol-uses-into! instr (&mut uses))
-    (for [use (& uses)]
-      (match use.kind
-        [(FunctionUse)
-          (set!
-            out
-            (opt-arg-global-scan-opaque out (ir.compiler-ir-symbol-id use.id)))]
-        [_ unit]))
-    out))
+(define (opt-arg-global-scan-use!
+  [scan : (&mut OptArgGlobalScan)]
+  [use : (& ir.CompilerIrUse)]) : unit
+  (match use.kind
+    [(FunctionUse)
+      (opt_i64_i64_map.insert-ref!
+        (&mut scan.opaque)
+        (ir.compiler-ir-symbol-id use.id)
+        1)]
+    [_ unit]))
 
-(define (opt-arg-global-scan-instr
-  [scan : OptArgGlobalScan]
-  [instr : ir.CompilerIrInstr]) : OptArgGlobalScan
+(define (opt-arg-global-scan-instr!
+  [scan : (&mut OptArgGlobalScan)]
+  [uses : (&mut ir.CompilerIrUseList)]
+  [instr : ir.CompilerIrInstr]) : unit
   (match (opt-instr-target (compiler-opt-global-shared-view instr))
-    [(Direct name args) (opt-arg-global-scan-direct (& scan) name (& args))]
-    ;; The other two forms that name a callee DIRECTLY. Their argument lists do
-    ;; not line up with the callee's parameter list position for position -- the
-    ;; C-ABI form carries an extra aggregate-return buffer, the SPMD form
-    ;; carries lane-classified arguments -- so rather than read them
-    ;; positionally this refuses the callee outright. Missing an activation is
-    ;; the one thing the proof cannot survive.
+    [(Direct name args) (opt-arg-global-scan-direct! scan name (& args))]
+    ;; C-ABI and SPMD argument lists do not match parameter positions.
     [(NamedCall name)
-      (opt-arg-global-scan-uses
-        (& (opt-arg-global-scan-opaque scan (ir.compiler-ir-symbol-id name)))
-        (& instr))]
-    [_ (opt-arg-global-scan-uses (& scan) (& instr))]))
-
-(define (opt-arg-global-scan-functions
-  [scan : (& OptArgGlobalScan)]
-  [functions : (& functions ir.CompilerIrFunctionSeq)]) : OptArgGlobalScan
-  (opt-functions-fold
-    functions
-    (owned_view.compiler-owned-reference-shared-view scan)
-    opt-arg-global-scan-instr))
+      (opt_i64_i64_map.insert-ref!
+        (&mut scan.opaque)
+        (ir.compiler-ir-symbol-id name)
+        1)]
+    [_ unit])
+  (set! uses.len 0)
+  (ir.compiler-ir-instr-symbol-uses-into! (& instr) uses)
+  (for [at (iterator.range 0 uses.len)]
+    (opt-arg-global-scan-use! scan (& (array-ref uses.slots at)))))
 
 ;; The roots the reachability walk seeds that are NOT direct call sites, so an
 ;; activation of one of them is an activation this walk cannot account for:
@@ -122839,70 +121320,45 @@
       [(opt-symbol-leaf-matches-from? name start "string-concat5") true]
       [else false])))
 
-;; Every function's parameter count, plus the roots no IR call site names.
-(define (opt-arg-global-seed-functions
-  [scan : OptArgGlobalScan]
-  [functions : (& functions ir.CompilerIrFunctionSeq)]
-  [index : i64]) : OptArgGlobalScan
-  (if (>= index functions.len)
-    scan
-    (opt-arg-global-seed-functions
-      (match (compiler-opt-global-array-element-shared-view
-        functions.slots
-        index)
-        [(Function name params _ _ _ _)
-          (let
-            [id : i64 (ir.compiler-ir-symbol-id name)]
-            [rooted? : bool
-              (opt-arg-global-root-leaf? (& (ir.compiler-ir-symbol-text name)))]
-            (match (if rooted?
-              (opt-arg-global-scan-opaque scan id)
-              scan)
-              [(OptArgGlobalScan opaque arity sites)
-                (if (and
-                  (>= id 0)
-                  (> params.len 0)
-                  (<= params.len (opt-arg-global-param-cap)))
-                  (opt_i64_i64_map.insert-ref! (&mut arity) id (+ params.len 1))
-                  unit)
-                (OptArgGlobalScan opaque arity sites)]))])
-      functions
-      (+ index 1))))
-
-;; An extern this program PROVIDES is called from outside the IR.
-(define (opt-arg-global-seed-externs
-  [scan : OptArgGlobalScan]
-  [externs : (& ir.CompilerIrExternSeq)]
-  [index : i64]) : OptArgGlobalScan
-  (if (>= index (ir.compiler-ir-extern-seq-count externs))
-    scan
-    (opt-arg-global-seed-externs
-      (match (ir.compiler-ir-extern-seq-borrow externs index)
-        [(Extern name-id _ _ _ _ _ _ provided _ _ _)
-          (if provided
-            (opt-arg-global-scan-opaque scan (ir.compiler-ir-symbol-id name-id))
-            scan)])
-      externs
-      (+ index 1))))
-
-;; A global's initializer names its hidden `__global_init_*` setup function,
-;; which the startup sequence calls: the same value form opt-reach-global
-;; treats as a root, refused here for the same reason.
-(define (opt-arg-global-seed-globals
-  [scan : OptArgGlobalScan]
+;; Seed arities and activations the IR has no direct call site for.
+(define (opt-arg-global-seed!
+  [scan : (&mut OptArgGlobalScan)]
   [globals : (& ir.CompilerIrGlobalSeq)]
-  [index : i64]) : OptArgGlobalScan
-  (if (>= index (ir.compiler-ir-global-seq-count globals))
-    scan
-    (opt-arg-global-seed-globals
-      (match (ir.compiler-ir-global-seq-borrow globals index)
-        [(Global _ _ value _)
-          (match value
-            [(or (RuntimeGlobal init) (Function init))
-              (opt-arg-global-scan-opaque scan (ir.compiler-ir-symbol-id init))]
-            [_ scan])])
-      globals
-      (+ index 1))))
+  [externs : (& ir.CompilerIrExternSeq)]
+  [functions : (& ir.CompilerIrFunctionSeq)]) : unit
+  (for [index (iterator.range 0 functions.len)]
+    (match (ir.compiler-ir-function-seq-borrow functions index)
+      [(Function name params _ _ _ _)
+        (let
+          [id : i64 (ir.compiler-ir-symbol-id name)]
+          (when
+            (opt-arg-global-root-leaf? (& (ir.compiler-ir-symbol-text name)))
+            (opt_i64_i64_map.insert-ref! (&mut scan.opaque) id 1))
+          (when
+            (and
+              (>= id 0)
+              (> params.len 0)
+              (<= params.len (opt-arg-global-param-cap)))
+            (opt_i64_i64_map.insert-ref! (&mut scan.arity) id (+ params.len 1))))]))
+  (for [index (iterator.range 0 externs.len)]
+    (match (ir.compiler-ir-extern-seq-borrow externs index)
+      [(Extern name _ _ _ _ _ _ provided _ _ _)
+        (when
+          provided
+          (opt_i64_i64_map.insert-ref!
+            (&mut scan.opaque)
+            (ir.compiler-ir-symbol-id name)
+            1))]))
+  (for [index (iterator.range 0 globals.len)]
+    (match (ir.compiler-ir-global-seq-borrow globals index)
+      [(Global _ _ value _)
+        (match value
+          [(or (RuntimeGlobal init) (Function init))
+            (opt_i64_i64_map.insert-ref!
+              (&mut scan.opaque)
+              (ir.compiler-ir-symbol-id init)
+              1)]
+          [_ unit])])))
 
 ;; Is this parameter a reference to a memory aggregate -- the `(& x Vec)` /
 ;; `(&mut x Vec)` shape whose descriptor chain the LE lookups walk? A `Region`
@@ -122918,69 +121374,35 @@
         (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
     [_ false]))
 
-(define (opt-arg-global-emit-params
-  [type-segment-bases : i64]
-  [scan : (& scan OptArgGlobalScan)]
-  [out : opt_i64_i64_map.Map]
-  [name : i64]
-  [params : (& ir.CompilerIrParamSeq)]
-  [position : i64]) : opt_i64_i64_map.Map
-  (if (>= position params.len)
-    out
-    (let
-      [emitted : opt_i64_i64_map.Map
-        (match (ir.compiler-ir-param-seq-borrow params position)
-          [(Param _ ty _)
-            (let
-              [seen : i64 (opt-arg-global-fact scan.sites name position)]
-              (if (and
-                (> seen 0)
-                (opt-arg-global-ref-param? type-segment-bases (& ty)))
-                (opt_i64_i64_map.insert-ref!
-                  (&mut out)
-                  (opt-arg-global-key name position)
-                  seen)
-                unit)
-              out)])]
-      (opt-arg-global-emit-params
-        type-segment-bases
-        scan
-        emitted
-        name
-        params
-        (+ position 1)))))
-
 (define (opt-arg-global-emit
   [type-segment-bases : i64]
-  [scan : (& scan OptArgGlobalScan)]
-  [functions : (& functions ir.CompilerIrFunctionSeq)]
-  [out : opt_i64_i64_map.Map]
-  [index : i64]) : opt_i64_i64_map.Map
-  (if (>= index functions.len)
-    out
-    (opt-arg-global-emit
-      type-segment-bases
-      scan
-      functions
-      (match (compiler-opt-global-array-element-shared-view
-        functions.slots
-        index)
-        [(Function name params _ _ _ _)
-          (let
-            [id : i64 (ir.compiler-ir-symbol-id name)]
-            (if (or
+  [scan : (& OptArgGlobalScan)]
+  [functions : (& ir.CompilerIrFunctionSeq)]
+  [out : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  (for [index (iterator.range 0 functions.len)]
+    (match (ir.compiler-ir-function-seq-borrow functions index)
+      [(Function name params _ _ _ _)
+        (let
+          [id : i64 (ir.compiler-ir-symbol-id name)]
+          (unless
+            (or
               (< id 0)
               (opt_i64_i64_map.contains? (& scan.opaque) id)
               (< (opt-arg-global-arity-of scan id) 0))
-              out
-              (opt-arg-global-emit-params
-                type-segment-bases
-                scan
-                out
-                id
-                (& params)
-                0)))])
-      (+ index 1))))
+            (for [position (iterator.range 0 params.len)]
+              (match (ir.compiler-ir-param-seq-borrow (& params) position)
+                [(Param _ ty _)
+                  (let
+                    [seen : i64 (opt-arg-global-fact scan.sites id position)]
+                    (when
+                      (and
+                        (> seen 0)
+                        (opt-arg-global-ref-param? type-segment-bases (& ty)))
+                      (opt_i64_i64_map.insert-ref!
+                        (&mut out)
+                        (opt-arg-global-key id position)
+                        seen)))]))))]))
+  out)
 
 ;; The whole-program walk both GAP-1's facts and IAG-2's storage table read:
 ;; the functions no IR call site accounts for, every function's arity, and what
@@ -122989,24 +121411,25 @@
 (define (opt-arg-global-roots
   [globals : (& ir.CompilerIrGlobalSeq)]
   [externs : (& ir.CompilerIrExternSeq)]
-  [functions : (& functions ir.CompilerIrFunctionSeq)]
+  [functions : (& ir.CompilerIrFunctionSeq)]
   [capacity : i64]) : OptArgGlobalScan
-  (opt-arg-global-scan-functions
-    (&
-      (opt-arg-global-seed-globals
-        (opt-arg-global-seed-externs
-          (opt-arg-global-seed-functions
-            (OptArgGlobalScan
-              (opt_i64_i64_map.with-capacity capacity)
-              (opt_i64_i64_map.with-capacity capacity)
-              (opt_i64_i64_map.with-capacity capacity))
-            functions
-            0)
-          externs
-          0)
-        globals
-        0))
-    functions))
+  (let
+    [scan : OptArgGlobalScan
+      (OptArgGlobalScan
+        (opt_i64_i64_map.with-capacity capacity)
+        (opt_i64_i64_map.with-capacity capacity)
+        (opt_i64_i64_map.with-capacity capacity))]
+    [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
+    (opt-arg-global-seed! (&mut scan) globals externs functions)
+    (for [index (iterator.range 0 functions.len)]
+      (match (ir.compiler-ir-function-seq-borrow functions index)
+        [(Function _ _ _ _ blocks _)
+          (opt-blocks-visit
+            blocks
+            opt-arg-global-scan-instr!
+            (&mut scan)
+            (&mut uses))]))
+    scan))
 
 ;; Build the call-site global-argument identity table, or decline. The
 ;; function-count gate is the one every other whole-program summary applies,
@@ -123026,8 +121449,7 @@
       type-segment-bases
       roots
       functions
-      (opt_i64_i64_map.with-capacity capacity)
-      0)))
+      (opt_i64_i64_map.with-capacity capacity))))
 
 ;; --- LGA-1: literal-global argument specialization ---------------------------
 ;;
@@ -123173,25 +121595,40 @@
 ;; Mark every parameter var this instruction uses outside its allowed position.
 ;; `uses` is scratch of exactly `np` counters, so a var above the parameter
 ;; range is dropped by opt-used-array-add's own bounds guard.
+(define (opt-lga-mark-escape!
+  [escaped : (&mut (__tl_dyn-array bool))]
+  [allowed : i64]
+  [var : i64]) : unit
+  (when
+    (and (>= var 0) (< var (array-length escaped)) (not (= var allowed)))
+    (set! (array-ref escaped var) true)))
+
 (define (opt-lga-mark-escapes-instr!
-  [np : i64]
-  [uses : (__tl_dyn-array i64)]
-  [escaped : (&mut escaped (__tl_dyn-array bool))]
-  [instr : ir.CompilerIrInstr]) : unit
+  [uses : (&mut ir.CompilerIrIdList)]
+  [escaped : (&mut (__tl_dyn-array bool))]
+  [instr : (& ir.CompilerIrInstr)]) : unit
   (let
     [allowed : i64 (opt-lga-allowed-use instr)]
     (unless
       (= allowed -2)
-      (for [index (iterator.range 0 np)]
-        (set! (array-ref uses index) 0))
-      (opt-collect-instr-uses-array
-        (&mut (ir.compiler-ir-id-list-new))
-        (compiler-opt-global-shared-view uses)
-        (& instr))
-      (for [index (iterator.range 0 np)]
-        (if (and (> (array-ref uses index) 0) (not (= index allowed)))
-          (set! (array-ref escaped index) true)
-          unit)))))
+      (match instr
+        [(AddrOf _ src _) (opt-lga-mark-escape! escaped allowed src)]
+        [_
+          (let
+            [short : ir.CompilerIrShortVarUses
+              (ir.compiler-ir-instr-short-var-uses instr)]
+            (if short.fits?
+              (begin
+                (opt-lga-mark-escape! escaped allowed short.first)
+                (opt-lga-mark-escape! escaped allowed short.second))
+              (begin
+                (set! uses.len 0)
+                (ir.compiler-ir-instr-use-var-ids-into! instr uses)
+                (for [at (iterator.range 0 uses.len)]
+                  (opt-lga-mark-escape!
+                    escaped
+                    allowed
+                    (array-ref uses.slots at))))))]))))
 
 ;; Which parameters this body may write THROUGH, and which escape. The write
 ;; question is IAG-2's owner propagation restricted to the parameter roots: a
@@ -123306,12 +121743,7 @@
     remaining
     (let
       [changed : (__tl_dyn-array bool) (__tl_make-array bool 1)]
-      (opt-blocks-visit
-        (owned_view.compiler-owned-reference-shared-view blocks)
-        opt-lga-roots-step!
-        roots
-        (&mut changed)
-        writes)
+      (opt-blocks-visit blocks opt-lga-roots-step! roots (&mut changed) writes)
       (array-ref changed 0))))
 
 (define (opt-lga-function-facts
@@ -123333,15 +121765,14 @@
     [roots : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
     [writes : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [escaped : (__tl_dyn-array bool) (__tl_make-array bool np)]
-    [uses : (__tl_dyn-array i64) (__tl_make-array i64 np)]
+    [uses : ir.CompilerIrIdList (ir.compiler-ir-id-list-new)]
     [settled? : bool false]
     (for [position (iterator.range 0 np)]
       (set! (array-ref roots position) (shl 1 position)))
     (opt-blocks-visit
-      (owned_view.compiler-owned-reference-shared-view blocks)
+      blocks
       opt-lga-mark-escapes-instr!
-      np
-      (compiler-opt-global-shared-view uses)
+      (&mut uses)
       (&mut escaped))
     (set!
       settled?
@@ -123412,24 +121843,38 @@
 ;; The clause that refuses one parameter, or the empty string when every clause
 ;; passes. The order is the header's: the census fact first, then the shape,
 ;; then the three cell-identity proofs, then IAG-2's storage consistency row.
+(defstruct OptLgaCollectCtx
+  (:lifetimes scan mod-ref obj addr-taken)
+  (type-segment-bases i64)
+  (scan (& scan OptArgGlobalScan))
+  (mod-ref (& mod-ref OptGlobalModRef))
+  (obj (& obj OptGlobalModRef))
+  (addr-taken (& addr-taken opt_i64_i64_map.Map)))
+
+(defstruct OptLgaBodyCtx
+  (:lifetimes facts)
+  (facts (& facts OptLgaParamFacts))
+  (cell-row i64)
+  (obj-row i64)
+  (name i64))
+
 (define (opt-lga-refusal
-  [mod-ref : (& mod-ref OptGlobalModRef)]
-  [obj : (& obj OptGlobalModRef)]
-  [addr-taken : (& addr-taken opt_i64_i64_map.Map)]
-  [facts : (& facts OptLgaParamFacts)]
-  [cell-row : i64]
-  [obj-row : i64]
+  [ctx : (OptLgaCollectCtx scan mod-ref obj addr-taken)]
+  [body : (OptLgaBodyCtx facts)]
   [position : i64]
   [seen : i64]) : String
   (let
     [global-id : i64 (- seen 1)]
     (cond
       [(<= seen 0) "refused-mixed-or-unread-sites"]
-      [(not facts.settled?) "refused-root-analysis-budget"]
-      [(array-ref facts.escaped position) "refused-parameter-escapes"]
-      [(opt_i64_i64_map.contains? (& addr-taken) global-id)
+      [(not body.facts.settled?) "refused-root-analysis-budget"]
+      [(array-ref body.facts.escaped position) "refused-parameter-escapes"]
+      [(opt_i64_i64_map.contains? (& ctx.addr-taken) global-id)
         "refused-global-address-taken"]
-      [(opt-global-mod-ref-mask-may-write? mod-ref.index cell-row global-id)
+      [(opt-global-mod-ref-mask-may-write?
+          ctx.mod-ref.index
+          body.cell-row
+          global-id)
         "refused-reachable-rebind"]
       ;; The write-through consistency clause. A body that writes THROUGH the
       ;; parameter writes the global's own storage, and IAG-2's row for this
@@ -123441,84 +121886,50 @@
       ;; pointer it LOADS out of the descriptor) writes no storage word, so the
       ;; clause does not apply to it.
       [(and
-          (not (= (bit-and facts.writes (shl 1 position)) 0))
+          (not (= (bit-and body.facts.writes (shl 1 position)) 0))
           (not
             (and
-              obj.built?
-              (opt-global-mod-ref-mask-may-write? obj.index obj-row global-id))))
+              ctx.obj.built?
+              (opt-global-mod-ref-mask-may-write?
+                ctx.obj.index
+                body.obj-row
+                global-id))))
         "refused-unmodelled-storage-write"]
       [else ""])))
 
-(define (opt-lga-collect-params
-  [type-segment-bases : i64]
-  [scan : (& scan OptArgGlobalScan)]
-  [mod-ref : (& mod-ref OptGlobalModRef)]
-  [obj : (& obj OptGlobalModRef)]
-  [addr-taken : (& addr-taken opt_i64_i64_map.Map)]
-  [facts : (& facts OptLgaParamFacts)]
-  [cell-row : i64]
-  [obj-row : i64]
-  [name : i64]
+(define (opt-lga-collect-params!
+  [ctx : (OptLgaCollectCtx scan mod-ref obj addr-taken)]
+  [body : (OptLgaBodyCtx facts)]
   [params : (& ir.CompilerIrParamSeq)]
-  [position : i64]
-  [plan : OptLgaPlan]) : OptLgaPlan
-  (if (>= position params.len)
-    plan
-    (opt-lga-collect-params
-      type-segment-bases
-      scan
-      mod-ref
-      obj
-      addr-taken
-      facts
-      cell-row
-      obj-row
-      name
-      params
-      (+ position 1)
-      (match (ir.compiler-ir-param-seq-borrow params position)
-        [(Param _ ty _)
-          (if (not (opt-arg-global-ref-param? type-segment-bases (& ty)))
-            plan
-            (let
-              [seen : i64 (opt-arg-global-fact scan.sites name position)]
-              [refusal : String
-                (opt-lga-refusal
-                  mod-ref
-                  obj
-                  addr-taken
-                  facts
-                  cell-row
-                  obj-row
-                  position
-                  seen)]
-              [admitted? : bool (= (string.string-length (& refusal)) 0)]
-              (opt-lga-trace-param!
-                name
-                position
-                (- seen 1)
-                (if admitted?
-                  "specialized"
-                  refusal))
+  [plan : (&mut OptLgaPlan)]) : unit
+  (for [position (iterator.range 0 params.len)]
+    (match (ir.compiler-ir-param-seq-borrow params position)
+      [(Param _ ty _)
+        (when
+          (opt-arg-global-ref-param? ctx.type-segment-bases (& ty))
+          (let
+            [seen : i64 (opt-arg-global-fact ctx.scan.sites body.name position)]
+            [refusal : String (opt-lga-refusal ctx body position seen)]
+            [admitted? : bool (= (string.string-length (& refusal)) 0)]
+            (opt-lga-trace-param!
+              body.name
+              position
+              (- seen 1)
               (if admitted?
-                (match plan
-                  [(OptLgaPlan removals specialized)
-                    (opt_i64_i64_map.insert-ref!
-                      (&mut removals)
-                      (opt-arg-global-key name position)
-                      seen)
-                    (opt_i64_i64_map.insert-ref! (&mut specialized) name 1)
-                    (OptLgaPlan removals specialized)])
-                plan)))]))))
+                "specialized"
+                refusal))
+            (when
+              admitted?
+              (opt_i64_i64_map.insert-ref!
+                (&mut plan.removals)
+                (opt-arg-global-key body.name position)
+                seen)
+              (opt_i64_i64_map.insert-ref! (&mut plan.specialized) body.name 1))))])))
 
-(define (opt-lga-collect-function
-  [type-segment-bases : i64]
-  [scan : (& scan OptArgGlobalScan)]
-  [mod-ref : (& mod-ref OptGlobalModRef)]
-  [obj : (& obj OptGlobalModRef)]
-  [addr-taken : (& addr-taken opt_i64_i64_map.Map)]
+(define (opt-lga-collect-function!
+  [ctx : (OptLgaCollectCtx scan mod-ref obj addr-taken)]
   [func : (& ir.CompilerIrFunction)]
-  [plan : OptLgaPlan]) : OptLgaPlan
+  [plan : (&mut OptLgaPlan)]) : unit
   (match func
     [(Function name params _ frame blocks function-abi)
       (let
@@ -123533,66 +121944,45 @@
               [_ false])
             (>= id 0)
             (> np 0)
-            (opt-arg-global-any-fact? scan.sites id params))]
+            (opt-arg-global-any-fact? ctx.scan.sites id params))]
         [refusal : String
           (cond
             [(not candidate?) "-"]
-            [(opt_i64_i64_map.contains? (& scan.opaque) id)
+            [(opt_i64_i64_map.contains? (& ctx.scan.opaque) id)
               "refused-callee-not-enumerable"]
-            [(not (= (opt-arg-global-arity-of scan id) np))
+            [(not (= (opt-arg-global-arity-of ctx.scan id) np))
               "refused-arity-unreadable"]
             [(not (opt-lga-params-positional? (& params)))
               "refused-parameter-vars-not-positional"]
             [else ""])]
-        (if (or (not candidate?) (not (= (string.string-length (& refusal)) 0)))
-          (begin
-            (if candidate?
-              (opt-lga-trace-param! id (- 0 1) (- 0 1) refusal)
-              unit)
-            plan)
-          (let
-            [facts (opt-lga-function-facts (& params) (& blocks) np frame)]
-            (opt-lga-collect-params
-              type-segment-bases
-              scan
-              mod-ref
-              obj
-              addr-taken
-              facts
-              (opt-lga-row mod-ref.writes id (opt-global-mod-ref-any))
-              (opt-lga-row obj.writes id 0)
-              id
-              (& params)
-              0
-              plan))))]))
+        (when
+          candidate?
+          (if (= (string.string-length (& refusal)) 0)
+            (let
+              [facts (opt-lga-function-facts (& params) (& blocks) np frame)]
+              (opt-lga-collect-params!
+                ctx
+                (OptLgaBodyCtx
+                  (& facts)
+                  (opt-lga-row ctx.mod-ref.writes id (opt-global-mod-ref-any))
+                  (opt-lga-row ctx.obj.writes id 0)
+                  id)
+                (& params)
+                plan))
+            (opt-lga-trace-param! id -1 -1 refusal))))]))
 
 (define (opt-lga-collect
-  [type-segment-bases : i64]
-  [scan : (& scan OptArgGlobalScan)]
-  [mod-ref : (& mod-ref OptGlobalModRef)]
-  [obj : (& obj OptGlobalModRef)]
-  [addr-taken : (& addr-taken opt_i64_i64_map.Map)]
-  [functions : (& functions ir.CompilerIrFunctionSeq)]
-  [index : i64]
-  [plan : OptLgaPlan]) : OptLgaPlan
-  (if (>= index functions.len)
-    plan
-    (opt-lga-collect
-      type-segment-bases
-      scan
-      mod-ref
-      obj
-      addr-taken
-      functions
-      (+ index 1)
-      (opt-lga-collect-function
-        type-segment-bases
-        scan
-        mod-ref
-        obj
-        addr-taken
-        (& (array-ref functions.slots index))
-        plan))))
+  [ctx : (OptLgaCollectCtx scan mod-ref obj addr-taken)]
+  [functions : (& ir.CompilerIrFunctionSeq)]
+  [capacity : i64]) : OptLgaPlan
+  (let
+    [plan : OptLgaPlan (opt-lga-plan-empty capacity)]
+    (for [index (iterator.range 0 functions.len)]
+      (opt-lga-collect-function!
+        ctx
+        (ir.compiler-ir-function-seq-borrow functions index)
+        (&mut plan)))
+    plan))
 
 ;; --- the rewrite -------------------------------------------------------------
 ;; `1 + the global symbol id` at every removed parameter's var (which is its
@@ -123609,217 +121999,117 @@
         (opt-arg-global-fact removals name position)))
     slots))
 
-(define (opt-lga-subst-value
-  [removed : (__tl_dyn-array i64)]
-  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
-  (match (& value)
-    [(Var id)
-      (if (and (>= id 0) (< id (array-length removed)))
-        (let
-          [seen : i64 (array-ref removed id)]
-          (if (> seen 0)
-            (Global (ir.compiler-ir-symbol-clone (- seen 1)))
-            value))
-        value)]
-    [_ value]))
+(define (opt-lga-replacement [removed : (& (__tl_dyn-array i64))] [var : i64]) : i64
+  (if (and (>= var 0) (< var (array-length removed)))
+    (array-ref removed var)
+    0))
 
-(define (opt-lga-rewrite-phi-inputs
-  [removed : (& (__tl_dyn-array i64))]
-  [inputs : (& ir.CompilerIrPhiInputSeq)]) : ir.CompilerIrPhiInputSeq
-  (let
-    [slots : (__tl_dyn-array ir.CompilerIrPhiInput)
-      (__tl_make-array ir.CompilerIrPhiInput inputs.len)]
-    (for [index (iterator.range 0 inputs.len)]
-      (let
-        [input (ir.compiler-ir-phi-input-seq-ref inputs index)]
-        (set!
-          (array-ref slots index)
-          (ir.CompilerIrPhiInput
-            (opt-lga-subst-value
-              (owned_view.compiler-owned-reference-shared-view removed)
-              input.value)
-            input.label))))
-    (ir.CompilerIrPhiInputSeq slots 0 inputs.len)))
-
-;; Substitute the parameter in every argument, keeping the list's SHAPE: a call
-;; whose callee lost no parameter must come out of this pass in exactly the
-;; representation it went in, or an unrelated site's codegen moves.
-(define (opt-lga-subst-args
-  [removed : (& (__tl_dyn-array i64))]
-  [args : (& ir.CompilerIrCallArgs)]) : ir.CompilerIrCallArgs
-  (ir.compiler-ir-call-args-map
-    (owned_view.compiler-owned-reference-shared-view args)
-    opt-lga-subst-value
-    (owned_view.compiler-owned-reference-shared-view removed)))
-
-;; How many of this callee's arguments this pass drops at a site.
-(define (opt-lga-drop-count
-  [removals : (& removals opt_i64_i64_map.Map)]
-  [callee : i64]
-  [count : i64]
-  [dropped : i64]) : i64
-  (for [position (iterator.range 0 count)]
-    (set!
-      dropped
-      (if (> (opt-arg-global-fact removals callee position) 0)
-        (+ dropped 1)
-        dropped)))
-  dropped)
-
-;; Substitute every argument, then drop the positions the callee no longer
-;; takes. The surviving list takes the same canonical representation the inline
-;; stage's own argument staging builds (opt-inline-staged-args).
-(define (opt-lga-rewrite-args
-  [removed : (& (__tl_dyn-array i64))]
-  [removals : (& removals opt_i64_i64_map.Map)]
+;; Drop positions explicitly. Emit the same argument shapes as inline staging.
+(define (opt-lga-drop-args
+  [rw : (&mut ir.CompilerIrInstrRewrite)]
+  [removals : (& opt_i64_i64_map.Map)]
   [callee : i64]
   [args : (& ir.CompilerIrCallArgs)]) : ir.CompilerIrCallArgs
   (let
-    [count : i64 (opt-arg-global-args-count args)]
-    [dropped : i64 (opt-lga-drop-count removals callee count 0)]
-    (if (= dropped 0)
-      (opt-lga-subst-args removed args)
-      (let
-        [kept : i64 (- count dropped)]
-        [slots : (__tl_dyn-array ir.CompilerIrValue)
-          (__tl_make-array ir.CompilerIrValue kept)]
-        [filled : i64 0]
-        (for [position (iterator.range 0 count)]
-          (unless
-            (> (opt-arg-global-fact removals callee position) 0)
-            (set!
-              (array-ref slots filled)
-              (opt-lga-subst-value
-                (owned_view.compiler-owned-reference-shared-view removed)
-                (opt-inline-clone-arg-at args position)))
-            (+= filled 1)))
-        (cond
-          [(= kept 0) (Nil)]
-          [(= kept 1)
-            (One (compiler-opt-global-array-element-shared-view slots 0))]
-          [(= kept 2)
-            (Two
-              (compiler-opt-global-array-element-shared-view slots 0)
-              (compiler-opt-global-array-element-shared-view slots 1))]
-          [else (Array slots)])))))
+    [count : i64 (ir.compiler-ir-call-args-count args)]
+    [kept : i64 count]
+    [filled : i64 0]
+    (for [position (iterator.range 0 count)]
+      (when (> (opt-arg-global-fact removals callee position) 0) (-= kept 1)))
+    (let
+      [slots : (__tl_dyn-array ir.CompilerIrValue)
+        (__tl_make-array ir.CompilerIrValue kept)]
+      (for [position (iterator.range 0 count)]
+        (match (opt-call-memory-arg-at args position)
+          [(Some value)
+            (let
+              [next : ir.CompilerIrValue
+                (if rw.changed?
+                  (ir.compiler-ir-rewrite-next-use
+                    rw
+                    (ir.compiler-ir-role-call-arg)
+                    value)
+                  value)]
+              (unless
+                (> (opt-arg-global-fact removals callee position) 0)
+                (set! (array-ref slots filled) next)
+                (+= filled 1)))]
+          [(No) unit]))
+      (cond
+        [(= kept 0) (Nil)]
+        [(= kept 1) (One (owned_view.compiler-owned-element-view slots 0))]
+        [(= kept 2)
+          (Two
+            (owned_view.compiler-owned-element-view slots 0)
+            (owned_view.compiler-owned-element-view slots 1))]
+        [else (Array slots)]))))
 
-;; The ten forms opt-lga-allowed-use licenses a parameter to appear in, plus the
-;; two direct-call forms whose argument list may lose a position. Every other
-;; instruction is returned untouched: a candidate parameter that appeared in one
-;; was refused by the escape check, and no other instruction names a callee this
-;; pass specialized.
 (define (opt-lga-rewrite-instr
+  [rw : (&mut ir.CompilerIrInstrRewrite)]
   [removed : (& (__tl_dyn-array i64))]
-  [removals : (& removals opt_i64_i64_map.Map)]
+  [plan : (& OptLgaPlan)]
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
-  (match (compiler-opt-global-shared-view instr)
-    [(Load dst src ty)
-      (Load
-        dst
-        (opt-lga-subst-value
-          (owned_view.compiler-owned-reference-shared-view removed)
-          src)
-        ty)]
-    [(Mov dst src ty)
-      (Mov
-        dst
-        (opt-lga-subst-value
-          (owned_view.compiler-owned-reference-shared-view removed)
-          src)
-        ty)]
-    [(Cast dst src from-ty to-ty)
-      (Cast
-        dst
-        (opt-lga-subst-value
-          (owned_view.compiler-owned-reference-shared-view removed)
-          src)
-        from-ty
-        to-ty)]
-    [(Bitcast dst src from-ty to-ty)
-      (Bitcast
-        dst
-        (opt-lga-subst-value
-          (owned_view.compiler-owned-reference-shared-view removed)
-          src)
-        from-ty
-        to-ty)]
-    [(Gep dst base offset ty)
-      (Gep
-        dst
-        (opt-lga-subst-value
-          (owned_view.compiler-owned-reference-shared-view removed)
-          base)
-        (opt-lga-subst-value
-          (owned_view.compiler-owned-reference-shared-view removed)
-          offset)
-        ty)]
-    [(StorePtr ptr value ty)
-      (StorePtr
-        (opt-lga-subst-value
-          (owned_view.compiler-owned-reference-shared-view removed)
-          ptr)
-        (opt-lga-subst-value
-          (owned_view.compiler-owned-reference-shared-view removed)
-          value)
-        ty)]
-    [(CopyBytes dst src ty)
-      (CopyBytes
-        (opt-lga-subst-value
-          (owned_view.compiler-owned-reference-shared-view removed)
-          dst)
-        (opt-lga-subst-value
-          (owned_view.compiler-owned-reference-shared-view removed)
-          src)
-        ty)]
-    [(Phi dst inputs ty)
-      (Phi dst (opt-lga-rewrite-phi-inputs removed (& inputs)) ty)]
-    [(Call dst name args ty)
-      (Call
-        dst
-        name
-        (opt-lga-rewrite-args
-          removed
-          removals
-          (ir.compiler-ir-symbol-id name)
-          (& args))
-        ty)]
-    [(TailCall name args ty)
-      (TailCall
-        name
-        (opt-lga-rewrite-args
-          removed
-          removals
-          (ir.compiler-ir-symbol-id name)
-          (& args))
-        ty)]
-    [_ instr]))
+  (set! rw.changed? false)
+  (when
+    (and
+      (> (array-length removed) 0)
+      (not (= (opt-lga-allowed-use (& instr)) -1)))
+    (ir.compiler-ir-instr-rewrite-begin! rw (& instr))
+    (for [index (iterator.range 0 rw.uses.len)]
+      (let
+        [use : ir.CompilerIrUse (ir.compiler-ir-instr-rewrite-use-at rw index)]
+        (match use.kind
+          [(VarUse)
+            (let
+              [seen : i64 (opt-lga-replacement removed use.id)]
+              (when
+                (> seen 0)
+                (ir.compiler-ir-instr-rewrite-use!
+                  rw
+                  index
+                  (Global (ir.compiler-ir-symbol-clone (- seen 1))))))]
+          [_ unit]))))
+  (match (& instr)
+    [(or (Call _ name _ _) (TailCall name _ _))
+      (let
+        [callee : i64 (ir.compiler-ir-symbol-id name)]
+        (when
+          (opt_i64_i64_map.contains? plan.specialized callee)
+          (match instr
+            [(Call dst name args ty)
+              (return
+                (Call
+                  dst
+                  name
+                  (opt-lga-drop-args rw plan.removals callee (& args))
+                  ty))]
+            [(TailCall name args ty)
+              (return
+                (TailCall
+                  name
+                  (opt-lga-drop-args rw plan.removals callee (& args))
+                  ty))]
+            [_ unit])))]
+    [_ unit])
+  (ir.compiler-ir-instr-rewrite-finish rw instr))
 
 (define (opt-lga-rewrite-seq
-  [removed : (__tl_dyn-array i64)]
-  [removals : (& removals opt_i64_i64_map.Map)]
-  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  [rw : (&mut ir.CompilerIrInstrRewrite)]
+  [removed : (& (__tl_dyn-array i64))]
+  [plan : (& OptLgaPlan)]
+  [instrs : (& ir.CompilerIrInstrSeq)]) : ir.CompilerIrInstrSeq
   (let
-    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (__tl_make-array ir.CompilerIrInstr count)]
-    (for [index (iterator.range 0 count)]
+      (__tl_make-array ir.CompilerIrInstr instrs.len)]
+    (for [index (iterator.range 0 instrs.len)]
       (set!
         (array-ref slots index)
         (opt-lga-rewrite-instr
-          (& removed)
-          removals
+          rw
+          removed
+          plan
           (ir.compiler-ir-instr-seq-ref instrs index))))
-    (ir.CompilerIrInstrSeq slots count)))
-
-(define (opt-lga-rewrite-blocks
-  [removed : (& (__tl_dyn-array i64))]
-  [removals : (& removals opt_i64_i64_map.Map)]
-  [blocks : (& ir.CompilerIrBlockList)]) : ir.CompilerIrBlockList
-  (opt-blocks-map-seq
-    (owned_view.compiler-owned-reference-shared-view blocks)
-    opt-lga-rewrite-seq
-    (owned_view.compiler-owned-reference-shared-view removed)
-    removals))
+    (ir.CompilerIrInstrSeq slots instrs.len)))
 
 ;; The parameters that survive, in position order, each keeping its var id.
 (define (opt-lga-filter-params
@@ -123852,9 +122142,10 @@
     [_ false]))
 
 (define (opt-lga-rewrite-function
+  [rw : (&mut ir.CompilerIrInstrRewrite)]
   [plan : (& plan OptLgaPlan)]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
-  (match (compiler-opt-global-shared-view func)
+  (match func
     [(Function name params ret-ty frame blocks function-abi)
       (let
         [id : i64 (ir.compiler-ir-symbol-id name)]
@@ -123866,7 +122157,7 @@
               blocks
               opt-lga-instr-calls-specialized?
               plan.specialized)))
-          func
+          (Function name params ret-ty frame blocks function-abi)
           (let
             [removed : (__tl_dyn-array i64)
               (if own?
@@ -123879,7 +122170,12 @@
                 params)
               ret-ty
               frame
-              (opt-lga-rewrite-blocks (& removed) plan.removals (& blocks))
+              (opt-blocks-map-seq
+                blocks
+                opt-lga-rewrite-seq
+                (&mut rw)
+                (& removed)
+                plan)
               function-abi))))]))
 
 (define (opt-lga-rewrite-functions
@@ -123888,12 +122184,14 @@
   (let
     [builder : ir.CompilerIrFunctionBuilder
       (ir.compiler-ir-function-builder-with-capacity functions.len)]
+    [rw : ir.CompilerIrInstrRewrite (ir.compiler-ir-instr-rewrite-new)]
     (for [index (iterator.range 0 functions.len)]
       (ir.compiler-ir-function-builder-push!
         (&mut builder)
         (opt-lga-rewrite-function
+          (&mut rw)
           plan
-          (compiler-opt-global-array-element-shared-view functions.slots index))))
+          (ir.compiler-ir-function-seq-ref functions index))))
     (ir.compiler-ir-function-builder-to-seq builder)))
 
 ;; The pass. Declines to the identity everywhere its two tables decline, so a
@@ -123948,14 +122246,14 @@
                 capacity)]
             [plan : OptLgaPlan
               (opt-lga-collect
-                type-segment-bases
-                scan
-                mod-ref
-                obj
-                addr-taken
+                (OptLgaCollectCtx
+                  type-segment-bases
+                  (& scan)
+                  (& mod-ref)
+                  (& obj)
+                  (& addr-taken))
                 functions
-                0
-                (opt-lga-plan-empty capacity))]
+                capacity)]
             (opt-lga-trace-gate!
               (if obj.built?
                 "storage-table-built"
@@ -124285,8 +122583,8 @@
   [functions : (& functions ir.CompilerIrFunctionSeq)]) : unit
   (for [index (iterator.range 0 functions.len)]
     (let
-      [func : ir.CompilerIrFunction
-        (compiler-opt-global-array-element-shared-view functions.slots index)]
+      [func : (& functions ir.CompilerIrFunction)
+        (ir.compiler-ir-function-seq-borrow functions index)]
       (match func
         [(Function _ params _ frame blocks _)
           (let
@@ -124466,7 +122764,7 @@
     [built : opt_i64_i64_map.Map
       (in-arena
         (unsafe
-          (arena.Arena scratch))
+          (arena.from-raw-handle scratch))
         (opt-nonneg-globals-build type-segment-bases globals functions cell))]
     [out : opt_i64_i64_map.Map (opt_i64_i64_map.clone-map (& built))]
     (unsafe
@@ -124609,14 +122907,6 @@
 ;; `Return` it has no successors, so (ii) is vacuous and only the backward walk
 ;; runs. That is the `gvn-facts-reset` shape -- a `set!` group in the returning
 ;; loop-exit block, after the loop whose bound reads the same cell.
-(defstruct OptGlobalCellStoreScan
-  (seen OptGlobalCellScan)
-  (out opt_i64_i64_map.Map))
-
-(defstruct OptGlobalCellStorePass
-  (out opt_i64_i64_map.Map)
-  (needs-reach bool))
-
 ;; Successor-walk step budget: blocks popped, summed over every store-bearing
 ;; block in the function. Exhausting it falls back to the whole-function rule
 ;; for the block being walked, so the cap trades sites for bounded compile time.
@@ -124642,342 +122932,170 @@
       [_ unit]))
   false)
 
-;; Insert every `Store` target in [index, count) whose symbol id `filter`
-;; contains, or every target at all when `all?` (the untrusted-CFG fallback).
-(define (opt-global-cell-mark-stores-in
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [index : i64]
-  [count : i64]
-  [filter : (& filter opt_i64_i64_map.Map)]
+(define (opt-global-cell-mark-stores!
+  [instrs : (& ir.CompilerIrInstrSeq)]
+  [filter : (& opt_i64_i64_map.Map)]
   [all? : bool]
-  [out-input : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
-  (let
-    [out : opt_i64_i64_map.Map out-input]
-    (if (>= index count)
-      out
-      (match (ir.compiler-ir-instr-seq-borrow instrs index)
-        [(Store name _ _)
-          (let
-            [id : i64 (ir.compiler-ir-symbol-id name)]
-            [next : opt_i64_i64_map.Map out]
-            (if (or all? (opt_i64_i64_map.contains? (& filter) id))
-              (opt_i64_i64_map.insert-ref! (&mut next) id 1)
-              unit)
-            (opt-global-cell-mark-stores-in
-              instrs
-              (+ index 1)
-              count
-              filter
-              all?
-              next))]
-        [_
-          (opt-global-cell-mark-stores-in
-            instrs
-            (+ index 1)
-            count
-            filter
-            all?
-            out)]))))
-
-;; Backward walk of one block. `seen` accumulates the globals read at indices
-;; strictly greater than the current one, so testing it at a `Store G` answers
-;; clause (i) exactly.
-(define (opt-global-cell-store-scan-back
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [index : i64]
-  [acc : OptGlobalCellStoreScan]) : OptGlobalCellStoreScan
-  (if (< index 0)
-    acc
-    (match acc
-      [(OptGlobalCellStoreScan seen out)
+  [out : (&mut opt_i64_i64_map.Map)]) : unit
+  (for [index (iterator.range 0 instrs.len)]
+    (match (ir.compiler-ir-instr-seq-borrow instrs index)
+      [(Store name _ _)
         (let
-          [instr (ir.compiler-ir-instr-seq-ref instrs index)]
-          [next-out : opt_i64_i64_map.Map out]
-          (match (& instr)
-            [(Store name _ _)
-              (if (opt_i64_i64_map.contains?
-                (& seen.refs)
-                (ir.compiler-ir-symbol-id name))
-                (opt_i64_i64_map.insert-ref!
-                  (&mut next-out)
-                  (ir.compiler-ir-symbol-id name)
-                  1)
-                unit)]
-            [_ unit])
-          (opt-global-cell-store-scan-back
-            instrs
-            (- index 1)
-            (OptGlobalCellStoreScan
-              (opt-global-cell-scan-instr false seen instr)
-              next-out)))])))
+          [id : i64 (ir.compiler-ir-symbol-id name)]
+          (when
+            (or all? (opt_i64_i64_map.contains? filter id))
+            (opt_i64_i64_map.insert-ref! out id 1)))]
+      [_ unit])))
 
-(define (opt-global-cell-refs-add
+;; At each store, the scan contains reads at strictly greater indices.
+(define (opt-global-cell-store-scan-back!
+  [instrs : (& ir.CompilerIrInstrSeq)]
+  [uses : (&mut ir.CompilerIrUseList)]
+  [out : (&mut opt_i64_i64_map.Map)]) : unit
+  (let
+    [seen : OptGlobalCellScan (opt-global-cell-scan-new)]
+    [index : i64 instrs.len]
+    (while (> index 0)
+      (-= index 1)
+      (let
+        [instr (ir.compiler-ir-instr-seq-ref instrs index)]
+        (match (& instr)
+          [(Store name _ _)
+            (let
+              [id : i64 (ir.compiler-ir-symbol-id name)]
+              (when
+                (opt_i64_i64_map.contains? (& seen.refs) id)
+                (opt_i64_i64_map.insert-ref! out id 1)))]
+          [_ unit])
+        (opt-global-cell-scan-instr! (&mut seen) uses false (& instr))))))
+
+(define (opt-global-cell-refs-add!
   [refs : OptLabelSet]
-  [out-input : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
-  (let
-    [out : opt_i64_i64_map.Map out-input]
-    (match refs
-      [(Nil) out]
-      [(Dense integer-items integer-count)
-        (let
-          [name : i64 (opt-label-buf-get integer-items (+ integer-count 1))]
-          [rest : OptLabelSet
-            (opt-label-tail (Dense integer-items integer-count))]
-          [next : opt_i64_i64_map.Map out]
-          (opt_i64_i64_map.insert-ref! (&mut next) name 1)
-          (opt-global-cell-refs-add rest next))])))
+  [out : (&mut opt_i64_i64_map.Map)]) : unit
+  (for [index (iterator.range 0 (opt-label-count refs))]
+    (opt_i64_i64_map.insert-ref! out (opt-label-ref refs index) 1)))
 
 (define (opt-global-cell-scan-block-by-id
-  [index : (& index OptCfgIndex)]
+  [index : (& OptCfgIndex)]
+  [uses : (&mut ir.CompilerIrUseList)]
   [id : i64]) : OptGlobalCellScan
-  (match (opt-cfg-index-block index id)
-    [(No) (opt-global-cell-scan-new)]
-    [(Some block)
-      (match block
-        [(Block _ instrs)
-          (opt-instrs-fold
-            instrs
-            (opt-global-cell-scan-new)
-            opt-global-cell-scan-instr
-            false)])]))
-
-;; Push every not-yet-visited successor of `id`, marking at push time so each
-;; block enters the stack at most once (stack capacity = block count).
-(define (opt-global-cell-reach-push-succs!
-  [index : (& index OptCfgIndex)]
-  [visited-input : (__tl_dyn-array bool)]
-  [stack-input : (__tl_dyn-array i64)]
-  [sp-cell-input : (__tl_dyn-array i64)]
-  [id : i64]) : unit
   (let
-    [visited : (__tl_dyn-array bool) visited-input]
-    [stack : (__tl_dyn-array i64) stack-input]
-    [sp-cell : (__tl_dyn-array i64) sp-cell-input]
-    [csr : OptCfgCsr index.succs]
-    [edges : (__tl_dyn-array i64) csr.edges]
-    [end : i64 (array-ref csr.offsets (+ id 1))]
-    (for [edge (iterator.range (array-ref csr.offsets id) end)]
+    [scan : OptGlobalCellScan (opt-global-cell-scan-new)]
+    (match (opt-cfg-index-block index id)
+      [(Some (Block _ instrs))
+        (opt-global-cell-scan-seq! (&mut scan) uses false (& instrs))]
+      [(No) unit])
+    scan))
+
+(defstruct OptGlobalCellReach
+  (visited (__tl_dyn-array bool))
+  (stack (__tl_dyn-array i64))
+  (depth i64)
+  (budget i64))
+
+;; Mark at push time, so the stack needs at most one slot per block.
+(define (opt-global-cell-reach-push-succs!
+  [index : (& OptCfgIndex)]
+  [work : (&mut OptGlobalCellReach)]
+  [id : i64]) : unit
+  (for [edge
+    (iterator.range
+      (array-ref index.succs.offsets id)
+      (array-ref index.succs.offsets (+ id 1)))]
+    (let
+      [succ : i64 (array-ref index.succs.edges edge)]
       (when
         (and
-          (>= (array-ref edges edge) 0)
-          (< (array-ref edges edge) (array-length visited))
-          (not (array-ref visited (array-ref edges edge))))
-        (set! (array-ref visited (array-ref edges edge)) true)
-        (set! (array-ref stack (array-ref sp-cell 0)) (array-ref edges edge))
-        (set! (array-ref sp-cell 0) (+ (array-ref sp-cell 0) 1))))
-    unit))
+          (>= succ 0)
+          (< succ (array-length work.visited))
+          (not (array-ref work.visited succ)))
+        (set! (array-ref work.visited succ) true)
+        (set! (array-ref work.stack work.depth) succ)
+        (+= work.depth 1)))))
 
-;; `budget` slot 0 = remaining pops, slot 1 = truncated flag.
-(define (opt-global-cell-reach-drain
-  [index : (& index OptCfgIndex)]
-  [visited : (__tl_dyn-array bool)]
-  [stack : (__tl_dyn-array i64)]
-  [sp-cell-input : (__tl_dyn-array i64)]
-  [budget-input : (__tl_dyn-array i64)]
-  [out : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
-  (let
-    [sp-cell : (__tl_dyn-array i64) sp-cell-input]
-    [budget : (__tl_dyn-array i64) budget-input]
-    (if (<= (array-ref sp-cell 0) 0)
-      out
-      (if (<= (array-ref budget 0) 0)
-        (begin
-          (set! (array-ref budget 1) 1)
-          out)
-        (let
-          [id : i64 (array-ref stack (- (array-ref sp-cell 0) 1))]
-          (set! (array-ref sp-cell 0) (- (array-ref sp-cell 0) 1))
-          (set! (array-ref budget 0) (- (array-ref budget 0) 1))
-          (opt-global-cell-reach-push-succs!
-            index
-            (compiler-opt-global-shared-view visited)
-            (compiler-opt-global-shared-view stack)
-            (compiler-opt-global-shared-view sp-cell)
-            id)
-          (match (opt-global-cell-scan-block-by-id index id)
-            [(OptGlobalCellScan _ ref-list _ _ _ _)
-              (opt-global-cell-reach-drain
-                index
-                visited
-                stack
-                sp-cell
-                budget
-                (opt-global-cell-refs-add ref-list out))]))))))
-
-(define (opt-global-cell-observable-stores-reach-block
-  [index : (& index OptCfgIndex)]
-  [visited : (__tl_dyn-array bool)]
-  [stack : (__tl_dyn-array i64)]
-  [sp-cell-input : (__tl_dyn-array i64)]
-  [budget-input : (__tl_dyn-array i64)]
-  [id : i64]
-  [instrs : (& ir.CompilerIrInstrSeq)]
-  [out : (& opt_i64_i64_map.Map)]) : opt_i64_i64_map.Map
-  (let
-    [sp-cell : (__tl_dyn-array i64) sp-cell-input]
-    [budget : (__tl_dyn-array i64) budget-input]
-    (opt-cfg-fill-bool! (&mut visited) (array-length visited) false)
-    (set! (array-ref sp-cell 0) 0)
-    (set! (array-ref budget 1) 0)
-    (opt-global-cell-reach-push-succs!
-      index
-      (compiler-opt-global-shared-view visited)
-      (compiler-opt-global-shared-view stack)
-      (compiler-opt-global-shared-view sp-cell)
-      id)
-    (let
-      [reach : opt_i64_i64_map.Map
-        (opt-global-cell-reach-drain
-          index
-          visited
-          stack
-          sp-cell
-          (compiler-opt-global-shared-view budget)
-          (opt_i64_i64_map.with-capacity 8))]
-      (opt-global-cell-mark-stores-in
-        instrs
-        0
-        (ir.compiler-ir-instr-seq-count instrs)
-        reach
-        (= (array-ref budget 1) 1)
-        (owned_view.compiler-owned-reference-shared-view out)))))
-
-(define (opt-global-cell-observable-stores-reach
-  [index : (& index OptCfgIndex)]
-  [visited : (__tl_dyn-array bool)]
-  [stack : (__tl_dyn-array i64)]
-  [sp-cell : (__tl_dyn-array i64)]
-  [budget : (__tl_dyn-array i64)]
-  [id : i64]
-  [count : i64]
-  [out : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
-  (if (>= id count)
-    out
+(define (opt-global-cell-observable-stores-reach!
+  [index : (& OptCfgIndex)]
+  [work : (&mut OptGlobalCellReach)]
+  [uses : (&mut ir.CompilerIrUseList)]
+  [out : (&mut opt_i64_i64_map.Map)]) : unit
+  (for [id (iterator.range 0 (opt-cfg-index-block-count index))]
     (match (opt-cfg-index-block index id)
-      [(No)
-        (opt-global-cell-observable-stores-reach
-          index
-          visited
-          stack
-          sp-cell
-          budget
-          (+ id 1)
-          count
-          out)]
-      [(Some block)
-        (match block
-          [(Block _ instrs)
-            (opt-global-cell-observable-stores-reach
-              index
-              (compiler-opt-global-shared-view visited)
-              (compiler-opt-global-shared-view stack)
-              (compiler-opt-global-shared-view sp-cell)
-              (compiler-opt-global-shared-view budget)
-              (+ id 1)
-              count
-              (if (and
-                (opt-global-cell-block-has-store?
-                  instrs
-                  (ir.compiler-ir-instr-seq-count instrs))
-                (not (opt-global-cell-block-return-terminated? instrs)))
-                (opt-global-cell-observable-stores-reach-block
-                  index
-                  visited
-                  stack
-                  sp-cell
-                  budget
-                  id
-                  (& instrs)
-                  (& out))
-                out))])])))
-
-;; Clause (i) for every block, plus "does any store-bearing block have
-;; successors at all" so the CFG index is built only when clause (ii) can fire.
-(define (opt-global-cell-observable-stores-local-block
-  [acc : OptGlobalCellStorePass]
-  [instrs : ir.CompilerIrInstrSeq]) : OptGlobalCellStorePass
-  (let
-    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    (if (not (opt-global-cell-block-has-store? instrs count))
-      acc
-      (match acc
-        [(OptGlobalCellStorePass out needs-reach)
-          (match (opt-global-cell-store-scan-back
-            instrs
-            (- count 1)
-            (OptGlobalCellStoreScan (opt-global-cell-scan-new) out))
-            [(OptGlobalCellStoreScan _ scanned-out)
-              (OptGlobalCellStorePass
-                scanned-out
-                (or
-                  needs-reach
-                  (not (opt-global-cell-block-return-terminated? instrs))))])]))))
-
-(define (opt-global-cell-observable-stores-local
-  [blocks : (& blocks ir.CompilerIrBlockList)]
-  [acc : (& OptGlobalCellStorePass)]) : OptGlobalCellStorePass
-  (opt-blocks-fold-seq
-    blocks
-    (owned_view.compiler-owned-reference-shared-view acc)
-    opt-global-cell-observable-stores-local-block))
-
-(define (opt-global-cell-mark-block-stores
-  [filter : (& filter opt_i64_i64_map.Map)]
-  [out : opt_i64_i64_map.Map]
-  [instrs : ir.CompilerIrInstrSeq]) : opt_i64_i64_map.Map
-  (opt-global-cell-mark-stores-in
-    instrs
-    0
-    (ir.compiler-ir-instr-seq-count instrs)
-    filter
-    true
-    out))
-
-(define (opt-global-cell-all-stores
-  [blocks : (& ir.CompilerIrBlockList)]
-  [filter : (& filter opt_i64_i64_map.Map)]
-  [out : (& opt_i64_i64_map.Map)]) : opt_i64_i64_map.Map
-  (opt-blocks-fold-seq
-    (owned_view.compiler-owned-reference-shared-view blocks)
-    (owned_view.compiler-owned-reference-shared-view out)
-    opt-global-cell-mark-block-stores
-    filter))
-
-(define (opt-global-cell-observable-stores-indexed
-  [blocks : (& ir.CompilerIrBlockList)]
-  [out : (& opt_i64_i64_map.Map)]) : opt_i64_i64_map.Map
-  (let
-    [index : OptCfgIndex (opt-cfg-index-build blocks)]
-    [count : i64 (opt-cfg-index-block-count index)]
-    [budget : (__tl_dyn-array i64) (__tl_make-array i64 2)]
-    (set! (array-ref budget 0) (opt-global-cell-reach-step-cap))
-    (set! (array-ref budget 1) 0)
-    (if (or
-      (<= count 0)
-      (not (opt-cfg-index-labels-unique? index))
-      (not index.targets-known))
-      (let
-        [filter (opt_i64_i64_map.with-capacity 1)]
-        (opt-global-cell-all-stores blocks filter out))
-      (opt-global-cell-observable-stores-reach
-        index
-        (__tl_make-array bool count)
-        (__tl_make-array i64 count)
-        (__tl_make-array i64 1)
-        budget
-        0
-        count
-        (owned_view.compiler-owned-reference-shared-view out)))))
+      [(Some (Block _ instrs))
+        (when
+          (and
+            (opt-global-cell-block-has-store? (& instrs) instrs.len)
+            (not (opt-global-cell-block-return-terminated? (& instrs))))
+          (let
+            [reach : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 8)]
+            (opt-cfg-fill-bool!
+              (&mut work.visited)
+              (array-length work.visited)
+              false)
+            (set! work.depth 0)
+            (opt-global-cell-reach-push-succs! index work id)
+            (while (and (> work.depth 0) (> work.budget 0))
+              (-= work.depth 1)
+              (-= work.budget 1)
+              (let
+                [next : i64 (array-ref work.stack work.depth)]
+                (opt-global-cell-reach-push-succs! index work next)
+                (opt-global-cell-refs-add!
+                  (opt-global-cell-scan-block-by-id index uses next).ref-list
+                  (&mut reach))))
+            (opt-global-cell-mark-stores!
+              (& instrs)
+              (& reach)
+              (> work.depth 0)
+              out)))]
+      [(No) unit])))
 
 (define (opt-global-cell-observable-stores
   [blocks : (& ir.CompilerIrBlockList)]) : opt_i64_i64_map.Map
-  (match (opt-global-cell-observable-stores-local
-    blocks
-    (& (OptGlobalCellStorePass (opt_i64_i64_map.with-capacity 8) false)))
-    [(OptGlobalCellStorePass out needs-reach)
-      (if needs-reach
-        (opt-global-cell-observable-stores-indexed blocks (& out))
-        out)]))
+  (let
+    [out : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 8)]
+    [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
+    [needs-reach : bool false]
+    (match blocks
+      [(Array seq)
+        (for [id (iterator.range 0 seq.len)]
+          (match (ir.compiler-ir-block-seq-borrow seq id)
+            [(Block _ instrs)
+              (when
+                (opt-global-cell-block-has-store? instrs instrs.len)
+                (opt-global-cell-store-scan-back! instrs (&mut uses) (&mut out))
+                (when
+                  (not (opt-global-cell-block-return-terminated? instrs))
+                  (set! needs-reach true)))]))
+        (when
+          needs-reach
+          (let
+            [index : OptCfgIndex (opt-cfg-index-build blocks)]
+            [count : i64 (opt-cfg-index-block-count index)]
+            (if (or
+              (<= count 0)
+              (not (opt-cfg-index-labels-unique? index))
+              (not index.targets-known))
+              (let
+                [filter : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
+                (for [id (iterator.range 0 seq.len)]
+                  (match (ir.compiler-ir-block-seq-borrow seq id)
+                    [(Block _ instrs)
+                      (opt-global-cell-mark-stores!
+                        instrs
+                        (& filter)
+                        true
+                        (&mut out))])))
+              (opt-global-cell-observable-stores-reach!
+                (& index)
+                (&mut
+                  (OptGlobalCellReach
+                    (__tl_make-array bool count)
+                    (__tl_make-array i64 count)
+                    0
+                    (opt-global-cell-reach-step-cap)))
+                (&mut uses)
+                (&mut out)))))])
+    out))
 
 ;; Hoist plan for one function: candidate global symbol id -> fresh SSA var.
 ;; A referenced global is a candidate unless this function has a store of it
@@ -125048,23 +123166,20 @@
       (set! (array-ref marks i) (> acc 0)))))
 
 (define (opt-global-cell-loop-refs-collect
-  [index : (& index OptCfgIndex)]
-  [marks : (& marks (__tl_dyn-array bool))]
-  [i : i64]
+  [index : (& OptCfgIndex)]
+  [marks : (& (__tl_dyn-array bool))]
   [count : i64]
   [out : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
-  (if (>= i count)
-    out
-    (opt-global-cell-loop-refs-collect
-      index
-      marks
-      (+ i 1)
-      count
-      (if (array-ref marks i)
+  (let
+    [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
+    (for [i (iterator.range 0 count)]
+      (when
+        (array-ref marks i)
         (let
-          [scan : OptGlobalCellScan (opt-global-cell-scan-block-by-id index i)]
-          (opt-global-cell-refs-add scan.ref-list out))
-        out))))
+          [scan : OptGlobalCellScan
+            (opt-global-cell-scan-block-by-id index (&mut uses) i)]
+          (opt-global-cell-refs-add! scan.ref-list (&mut out)))))
+    out))
 
 (define (opt-global-cell-loop-refs
   [blocks : (& ir.CompilerIrBlockList)]
@@ -125080,7 +123195,7 @@
       (let
         [marks : (__tl_dyn-array bool) (__tl_make-array bool count)]
         (opt-global-cell-loop-marks! index count (&mut marks))
-        (opt-global-cell-loop-refs-collect index marks 0 count out)))))
+        (opt-global-cell-loop-refs-collect (& index) (& marks) count out)))))
 
 (define (opt-global-cell-single-ref?
   [counts : (& counts opt_i64_i64_map.Map)]
@@ -125149,116 +123264,57 @@
 ;; `calls?` is the same calls' PRICE rather than their legality -- see
 ;; opt-global-cell-promotion-pays?.
 (define (opt-global-cell-plan-build
-  [cell : (& cell OptGlobalCellSummary)]
+  [cell : (& OptGlobalCellSummary)]
   [stores : (& opt_i64_i64_map.Map)]
   [call-writes : i64]
   [calls? : bool]
-  [counts : (& counts opt_i64_i64_map.Map)]
+  [counts : (& opt_i64_i64_map.Map)]
+  [refs : OptLabelSet]
   [loop-refs : (& opt_i64_i64_map.Map)]
-  [refs : OptLabelSet]
-  [frame-cell : (__tl_dyn-array i64)]
-  [plan : opt_i64_i64_map.Map]
-  [count : i64]) : OptGlobalCellPlan
-  (match refs
-    [(Nil) (OptGlobalCellPlan plan count)]
-    [(Dense integer-items integer-count)
+  [frame : (&mut i64)]) : OptGlobalCellPlan
+  (let
+    [plan : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 8)]
+    [count : i64 0]
+    (for [index (iterator.range 0 (opt-label-count refs))]
       (let
-        [name : i64 (opt-label-buf-get integer-items (+ integer-count 1))]
-        [rest : OptLabelSet
-          (opt-label-tail (Dense integer-items integer-count))]
-        (if (or
-          (opt_i64_i64_map.contains? stores name)
-          (opt_i64_i64_map.contains? (& cell.addr-taken) name)
-          (opt-global-cell-writes-refused? cell call-writes name)
-          (not (opt-global-cell-promotion-pays? counts loop-refs calls? name)))
-          (opt-global-cell-plan-build
-            cell
-            stores
-            call-writes
-            calls?
-            counts
-            loop-refs
-            rest
-            frame-cell
-            plan
-            count)
+        [name : i64 (opt-label-ref refs index)]
+        (unless
+          (or
+            (opt_i64_i64_map.contains? stores name)
+            (opt_i64_i64_map.contains? (& cell.addr-taken) name)
+            (opt-global-cell-writes-refused? cell call-writes name)
+            (not (opt-global-cell-promotion-pays? counts loop-refs calls? name)))
           (match (opt-global-cell-type-lookup cell name)
-            [(No)
-              (opt-global-cell-plan-build
-                cell
-                stores
-                call-writes
-                calls?
-                counts
-                loop-refs
-                rest
-                frame-cell
-                plan
-                count)]
             [(Some ty)
-              (if (opt-global-cell-word-type? (& ty))
-                (let
-                  [frame-cell-local : (__tl_dyn-array i64) frame-cell]
-                  [fresh : i64 (array-ref frame-cell-local 0)]
-                  [next : opt_i64_i64_map.Map plan]
-                  (set! (array-ref frame-cell-local 0) (+ fresh 1))
-                  (opt_i64_i64_map.insert-ref! (&mut next) name fresh)
-                  (opt-global-cell-plan-build
-                    cell
-                    stores
-                    call-writes
-                    calls?
-                    counts
-                    loop-refs
-                    rest
-                    frame-cell-local
-                    next
-                    (+ count 1)))
-                (opt-global-cell-plan-build
-                  cell
-                  stores
-                  call-writes
-                  calls?
-                  counts
-                  loop-refs
-                  rest
-                  frame-cell
-                  plan
-                  count))])))]))
+              (when
+                (opt-global-cell-word-type? (& ty))
+                (opt_i64_i64_map.insert-ref! (&mut plan) name (deref frame))
+                (set! (deref frame) (+ (deref frame) 1))
+                (+= count 1))]
+            [(No) unit]))))
+    (OptGlobalCellPlan plan count)))
 
-;; Emit the entry-block cell loads in the same ref-list order the plan
-;; allocated their fresh vars.
+;; Emit the entry loads in the same ref-list order as their fresh vars.
 (define (opt-global-cell-hoists-fill!
-  [plan : (& plan opt_i64_i64_map.Map)]
-  [cell : (& cell OptGlobalCellSummary)]
+  [plan : (& opt_i64_i64_map.Map)]
+  [cell : (& OptGlobalCellSummary)]
   [refs : OptLabelSet]
-  [hoists : (__tl_dyn-array ir.CompilerIrInstr)]
-  [index : i64]) : i64
-  (match refs
-    [(Nil) index]
-    [(Dense integer-items integer-count)
+  [hoists : (&mut (__tl_dyn-array ir.CompilerIrInstr))]) : unit
+  (let
+    [out : i64 0]
+    (for [index (iterator.range 0 (opt-label-count refs))]
       (let
-        [name : i64 (opt-label-buf-get integer-items (+ integer-count 1))]
-        [rest : OptLabelSet
-          (opt-label-tail (Dense integer-items integer-count))]
-        (match (opt_i64_i64_map.get (& plan) name)
-          [(LookupMissing)
-            (opt-global-cell-hoists-fill! plan cell rest hoists index)]
+        [name : i64 (opt-label-ref refs index)]
+        (match (opt_i64_i64_map.get plan name)
           [(LookupFound fresh)
             (match (opt-global-cell-type-lookup cell name)
-              [(No) (opt-global-cell-hoists-fill! plan cell rest hoists index)]
               [(Some ty)
-                (let
-                  [hoists-local : (__tl_dyn-array ir.CompilerIrInstr) hoists]
-                  (set!
-                    (array-ref hoists-local index)
-                    (ir.CompilerIrInstr.Mov fresh (Global name) ty))
-                  (opt-global-cell-hoists-fill!
-                    plan
-                    cell
-                    rest
-                    hoists-local
-                    (+ index 1)))])]))]))
+                (set!
+                  (array-ref hoists out)
+                  (ir.CompilerIrInstr.Mov fresh (Global name) ty))
+                (+= out 1)]
+              [(No) unit])]
+          [(LookupMissing) unit])))))
 
 (define (opt-global-cell-subst-value
   [plan : (& opt_i64_i64_map.Map)]
@@ -125349,7 +123405,7 @@
   [hoist-count : i64]
   [blocks : (& ir.CompilerIrBlockList)]) : ir.CompilerIrBlockList
   (opt-blocks-map-at
-    (owned_view.compiler-owned-reference-shared-view blocks)
+    blocks
     opt-global-cell-rewrite-block-at
     (owned_view.compiler-owned-reference-shared-view plan)
     (owned_view.compiler-owned-reference-shared-view hoists)
@@ -125370,7 +123426,7 @@
   [plan : (& opt_i64_i64_map.Map)]
   [blocks : (& ir.CompilerIrBlockList)]) : ir.CompilerIrBlockList
   (opt-blocks-map
-    (owned_view.compiler-owned-reference-shared-view blocks)
+    blocks
     opt-global-cell-rewrite-block
     (owned_view.compiler-owned-reference-shared-view plan)))
 
@@ -125663,7 +123719,7 @@
                 [_ false]))]
           [canonical : ir.CompilerIrInstr
             (if commute?
-              (match (compiler-opt-global-shared-view rewritten)
+              (match rewritten
                 [(BinOp dst op lhs rhs ty) (BinOp dst op rhs lhs ty)]
                 [_ rewritten])
               rewritten)]
@@ -125768,13 +123824,13 @@
           (& summaries.global-cell.call-memory)
           (OptGlobalSnapshotPolicy false true)
           input))]
-    (match (compiler-opt-global-shared-view func)
+    (match func
       [(Function name params ret-ty frame blocks function-abi)
         (let
           [cell : OptGlobalCellSummary
             (__tl-project-field summaries global-cell)]
           (if (= cell.word-cell 0)
-            func
+            (Function name params ret-ty frame blocks function-abi)
             (let
               [scan : OptGlobalCellScan
                 (opt-global-cell-scan-blocks
@@ -125785,22 +123841,18 @@
                 [(match scan.ref-list
                     [(Nil) true]
                     [(Dense _ _) false])
-                  func]
+                  (Function name params ret-ty frame blocks function-abi)]
                 [else
                   (let
                     [call-writes : i64
-                      (opt-global-cell-call-writes
-                        cell
-                        (compiler-opt-global-shared-view scan))]
+                      (opt-global-cell-call-writes cell (& scan))]
                     [calls? : bool (opt-global-cell-any-call? scan)]
                     (if (or
                       (opt-global-mod-ref-any? call-writes)
                       (and calls? (not (opt-global-cell-entry-fits? blocks))))
-                      func
+                      (Function name params ret-ty frame blocks function-abi)
                       (let
-                        [frame-cell : (__tl_dyn-array i64)
-                          (__tl_make-array i64 1)]
-                        [_seed : unit (set! (array-ref frame-cell 0) frame)]
+                        [next-frame : i64 frame]
                         [planned : OptGlobalCellPlan
                           (opt-global-cell-plan-build
                             cell
@@ -125808,6 +123860,7 @@
                             call-writes
                             calls?
                             scan.refs
+                            scan.ref-list
                             (&
                               (if (or
                                 calls?
@@ -125818,27 +123871,29 @@
                                   (& blocks)
                                   (opt_i64_i64_map.with-capacity 8))
                                 (opt_i64_i64_map.with-capacity 1)))
-                            scan.ref-list
-                            (compiler-opt-global-shared-view frame-cell)
-                            (opt_i64_i64_map.with-capacity 8)
-                            0)]
+                            (&mut next-frame))]
                         (if (= planned.count 0)
-                          func
+                          (Function
+                            name
+                            params
+                            ret-ty
+                            frame
+                            blocks
+                            function-abi)
                           (let
                             [hoists : (__tl_dyn-array ir.CompilerIrInstr)
                               (__tl_make-array ir.CompilerIrInstr planned.count)]
-                            [_filled : i64
+                            [_filled : unit
                               (opt-global-cell-hoists-fill!
                                 planned.map
                                 cell
                                 scan.ref-list
-                                (compiler-opt-global-shared-view hoists)
-                                0)]
+                                (&mut hoists))]
                             (Function
                               name
                               params
                               ret-ty
-                              (array-ref frame-cell 0)
+                              next-frame
                               (opt-global-cell-rewrite-blocks
                                 (& planned.map)
                                 (& hoists)
@@ -127200,7 +125255,7 @@
     [(Dense items) (opt_i64_i64_map.contains? (& items) root)]))
 
 (define (opt-scratch-root-list-add [roots : OptScratchRootList] [root : i64]) : OptScratchRootList
-  (match (compiler-opt-global-shared-view roots)
+  (match roots
     [(Empty)
       (let
         [items : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 4)]
@@ -127208,7 +125263,7 @@
         (Dense items))]
     [(Dense found)
       (if (opt_i64_i64_map.contains? (& found) root)
-        roots
+        (Dense found)
         (let
           [items : opt_i64_i64_map.Map found]
           (opt_i64_i64_map.insert-ref! (&mut items) root 1)
@@ -127313,7 +125368,7 @@
   (match (opt-scratch-direct-alloc type-segment-bases instr)
     [(Alloc _ _) (NoBlocker)]
     [(NoAlloc)
-      (match (owned_view.compiler-owned-reference-shared-view instr)
+      (match instr
         [(Call _ name _ _)
           (if (opt-scratch-arena-helper-call? name)
             (Blocked "arena_helper")
@@ -127337,16 +125392,12 @@
           (if (opt-scratch-value-derived? roots facts src)
             (Blocked "raw_pointer")
             (NoBlocker))]
-        [(StorePtr ptr value _)
+        [(or (StorePtr ptr value _) (StoreOwned ptr value _))
           (if (and
             (opt-scratch-value-derived? roots facts value)
             (not (opt-scratch-value-derived? roots facts ptr)))
             (Blocked "store_outer")
             (NoBlocker))]
-        [(StoreOwned ptr value ty)
-          (let
-            [instr (ir.CompilerIrInstr.StorePtr ptr value ty)]
-            (opt-scratch-blocker-reason type-segment-bases roots facts instr))]
         [(Store _ value _)
           (if (opt-scratch-value-derived? roots facts value)
             (Blocked "store_outer")
@@ -127411,8 +125462,7 @@
             (NoBlocker))]
         [(VectorShuffle payload-box)
           (let
-            [selector-high
-              (compiler-opt-box-field-shared-view payload-box selector-high)]
+            [selector-high (& payload-box.selector-high)]
             (if (or
               (opt-scratch-value-derived?
                 roots
@@ -127442,13 +125492,13 @@
 (define (opt-scratch-state-with-blocker
   [state : OptScratchScopeState]
   [candidate : OptScratchBlockerReason]) : OptScratchScopeState
-  (match (compiler-opt-global-shared-view state)
+  (match state
     [(State allocs bytes roots facts blocker)
       (if (opt-scratch-blocker-none? blocker)
         (match (& candidate)
-          [(NoBlocker) state]
+          [(NoBlocker) (State allocs bytes roots facts blocker)]
           [(Blocked _) (State allocs bytes roots facts candidate)])
-        state)]))
+        (State allocs bytes roots facts blocker))]))
 
 (define (opt-scratch-state-record-alloc
   [state : OptScratchScopeState]
@@ -127522,9 +125572,9 @@
 ;; later `store_outer` escape through unnoticed. A value that may point into a
 ;; candidate joins `roots` for good (not counted as an allocation).
 (define (opt-scratch-update-nonalloc-facts
-  [state : (& OptScratchScopeState)]
+  [state : OptScratchScopeState]
   [instr : (& ir.CompilerIrInstr)]) : OptScratchScopeState
-  (match (owned_view.compiler-owned-reference-shared-view state)
+  (match state
     [(State allocs bytes roots facts blocker)
       (let
         [next : OptAliasFacts (opt-alias-update-value-facts (& facts) instr 0)]
@@ -127542,22 +125592,18 @@
 
 (define (opt-scratch-state-step
   [type-segment-bases : i64]
-  [state : (& OptScratchScopeState)]
+  [state : OptScratchScopeState]
   [instr : (& ir.CompilerIrInstr)]) : OptScratchScopeState
-  (match state
+  (match (& state)
     [(State _ _ roots facts _)
       (let
+        [reason : OptScratchBlockerReason
+          (opt-scratch-blocker-reason type-segment-bases roots facts instr)]
         [blocked : OptScratchScopeState
-          (opt-scratch-state-with-blocker
-            (owned_view.compiler-owned-reference-shared-view state)
-            (opt-scratch-blocker-reason
-              type-segment-bases
-              (& roots)
-              (& facts)
-              instr))]
+          (opt-scratch-state-with-blocker state reason)]
         (match (opt-scratch-direct-alloc type-segment-bases instr)
           [(Alloc dst bytes) (opt-scratch-state-record-alloc blocked dst bytes)]
-          [(NoAlloc) (opt-scratch-update-nonalloc-facts (& blocked) instr)]))]))
+          [(NoAlloc) (opt-scratch-update-nonalloc-facts blocked instr)]))]))
 
 (define (opt-scratch-state-initial) : OptScratchScopeState
   (State 0 0 (opt-scratch-root-list-new) (opt-alias-empty) (NoBlocker)))
@@ -127577,7 +125623,7 @@
       type-segment-bases
       (opt-scratch-state-step
         type-segment-bases
-        (& state)
+        state
         (ir.compiler-ir-instr-seq-borrow instrs index))
       instrs
       (+ index 1))))
@@ -127667,50 +125713,26 @@
       (opt-scratch-report-alloc-count
         (& (opt-scratch-scope-report-block type-segment-bases (& block))))]))
 
-(define (opt-scratch-reset-mark-candidate-add
-  [candidate : OptScratchResetMarkCandidate]
-  [pred : i64]) : OptScratchResetMarkCandidate
-  (match candidate
-    [(None) (One pred)]
-    [(or (One _) (Many)) (Many)]))
-
 (define (opt-scratch-reset-mark-candidate-scan
   [reachable : OptLabelSet]
   [body : OptLabelSet]
-  [preds : OptLabelSet]
-  [candidate : OptScratchResetMarkCandidate]) : OptScratchResetMarkCandidate
-  (match preds
-    [(Nil) candidate]
-    [(Dense _ _)
+  [skip : OptScratchResetMarkBlock]
+  [preds : OptLabelSet]) : OptScratchResetMarkCandidate
+  (let
+    [candidate : OptScratchResetMarkCandidate (None)]
+    (for [index (iterator.range 0 (opt-label-count preds))]
       (let
-        [pred : i64 (opt-label-ref preds 0)]
-        (opt-scratch-reset-mark-candidate-scan
-          reachable
-          body
-          (opt-label-tail preds)
-          (if (and
+        [pred : i64 (opt-label-ref preds index)]
+        (when
+          (and
             (opt-label-contains reachable pred)
-            (not (opt-label-contains body pred)))
-            (opt-scratch-reset-mark-candidate-add candidate pred)
-            candidate)))]))
-
-(define (opt-scratch-reset-mark-candidate-scan-not-label
-  [reachable : OptLabelSet]
-  [skip : i64]
-  [preds : OptLabelSet]
-  [candidate : OptScratchResetMarkCandidate]) : OptScratchResetMarkCandidate
-  (match preds
-    [(Nil) candidate]
-    [(Dense _ _)
-      (let
-        [pred : i64 (opt-label-ref preds 0)]
-        (opt-scratch-reset-mark-candidate-scan-not-label
-          reachable
-          skip
-          (opt-label-tail preds)
-          (if (and (opt-label-contains reachable pred) (not (= pred skip)))
-            (opt-scratch-reset-mark-candidate-add candidate pred)
-            candidate)))]))
+            (match skip
+              [(Some label) (not (= pred label))]
+              [(No) (not (opt-label-contains body pred))]))
+          (match candidate
+            [(None) (set! candidate (One pred))]
+            [_ (return (Many))]))))
+    candidate))
 
 (define (opt-scratch-reset-mark-block-from-candidate
   [candidate : OptScratchResetMarkCandidate]) : OptScratchResetMarkBlock
@@ -127719,8 +125741,8 @@
     [_ (No)]))
 
 (define (opt-scratch-reset-loop-mark-block
-  [context : OptCfgContext]
-  [loop : OptNaturalLoop]) : OptScratchResetMarkBlock
+  [context : (& OptCfgContext)]
+  [loop : (& OptNaturalLoop)]) : OptScratchResetMarkBlock
   (if (not (= (opt-natural-loop-latch-count loop) 1))
     (No)
     (match (opt-natural-loop-preheader loop)
@@ -127729,19 +125751,17 @@
         (let
           [header : i64 (opt-natural-loop-header loop)]
           [preds : OptLabelSet (opt-pred-map-lookup context.pred-map header)]
-          [reachable : OptLabelSet context.reachable]
+          [reachable : OptLabelSet
+            (owned_view.compiler-owned-reference-shared-view
+              (& context.reachable))]
           (opt-scratch-reset-mark-block-from-candidate
-            (if (= header (opt-natural-loop-latch loop))
-              (opt-scratch-reset-mark-candidate-scan-not-label
-                reachable
-                header
-                preds
-                (None))
-              (opt-scratch-reset-mark-candidate-scan
-                reachable
-                (opt-natural-loop-body loop)
-                preds
-                (None)))))])))
+            (opt-scratch-reset-mark-candidate-scan
+              reachable
+              (opt-natural-loop-body loop)
+              (if (= header (opt-natural-loop-latch loop))
+                (Some header)
+                (No))
+              preds)))])))
 
 (define (opt-scratch-phi-input-derived?
   [roots : (& roots OptScratchRootList)]
@@ -127759,7 +125779,7 @@
   [roots : (& roots OptScratchRootList)]
   [facts : (& facts OptAliasFacts)]
   [instr : (& ir.CompilerIrInstr)]) : bool
-  (match (owned_view.compiler-owned-reference-shared-view instr)
+  (match instr
     [(Phi _ inputs _) (opt-scratch-phi-input-derived? roots facts inputs)]
     [_ false]))
 
@@ -127894,22 +125914,19 @@
 
 (define (opt-scratch-block-outside-reads-derived?
   [roots : (& roots OptScratchRootList)]
-  [body : (& body OptLabelSet)]
+  [body : OptLabelSet]
   [block : ir.CompilerIrBlock]) : bool
   (match block
     [(Block label instrs)
       (and
-        (not
-          (opt-label-contains
-            (owned_view.compiler-owned-reference-shared-view body)
-            label))
+        (not (opt-label-contains body label))
         (opt-instrs-any? instrs opt-scratch-instr-reads-derived? roots))]))
 
 ;; Whether a block outside the loop reads a value that may point into one of
 ;; its candidates: the reset at the latch frees what that read would see.
 (define (opt-scratch-loop-live-out?
   [state : (& state OptScratchScopeState)]
-  [body : (& body OptLabelSet)]
+  [body : OptLabelSet]
   [blocks : (& blocks ir.CompilerIrBlockList)]) : bool
   (match state
     [(State _ _ roots _ _)
@@ -127924,9 +125941,7 @@
   [context : (& OptCfgContext)]
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [loop : (& OptNaturalLoop)]) : bool
-  (match (opt-scratch-reset-loop-mark-block
-    (owned_view.compiler-owned-reference-shared-view context)
-    (owned_view.compiler-owned-reference-shared-view loop))
+  (match (opt-scratch-reset-loop-mark-block context loop)
     [(No) false]
     [(Some mark-block)
       (let
@@ -127946,7 +125961,7 @@
             (=
               (opt-scratch-block-alloc-count type-segment-bases blocks header)
               0))
-          (not (opt-scratch-loop-live-out? (& state) (& body) blocks))
+          (not (opt-scratch-loop-live-out? (& state) body blocks))
           (not
             (opt-scratch-state-loop-carried-candidate? (& state) body-blocks))
           (opt-scratch-loop-blocks-exits-safe?
@@ -127981,7 +125996,7 @@
   [mark-var : i64]
   [reset-var : i64]
   [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
-  (match (compiler-opt-global-shared-view block)
+  (match block
     [(Block label instrs)
       (if (= label preheader)
         (Block
@@ -127995,7 +126010,7 @@
             (opt-instr-seq-insert-before-terminator
               (& (opt-scratch-reset-reset-instrs reset-var mark-var))
               instrs))
-          block))]))
+          (Block label instrs)))]))
 
 (define (opt-scratch-reset-rewrite-blocks
   [blocks : (& ir.CompilerIrBlockList)]
@@ -128004,7 +126019,7 @@
   [mark-var : i64]
   [reset-var : i64]) : ir.CompilerIrBlockList
   (opt-blocks-map
-    (owned_view.compiler-owned-reference-shared-view blocks)
+    blocks
     opt-scratch-reset-rewrite-block
     preheader
     latch
@@ -128016,9 +126031,7 @@
   [blocks : ir.CompilerIrBlockList]
   [frame : i64]
   [loop : (& OptNaturalLoop)]) : OptScratchResetApplyResult
-  (match (opt-scratch-reset-loop-mark-block
-    (owned_view.compiler-owned-reference-shared-view context)
-    (owned_view.compiler-owned-reference-shared-view loop))
+  (match (opt-scratch-reset-loop-mark-block context loop)
     [(No) (Result blocks frame false)]
     [(Some mark-block)
       (Result
@@ -128149,53 +126162,39 @@
     [_ unit]))
 
 (define (opt-merge-observed
-  [globals : (& globals ir.CompilerIrGlobalSeq)]
-  [functions : (& functions ir.CompilerIrFunctionSeq)]
-  [externs : (& externs ir.CompilerIrExternSeq)]) : opt_i64_i64_map.Map
+  [globals : (& ir.CompilerIrGlobalSeq)]
+  [functions : (& ir.CompilerIrFunctionSeq)]
+  [externs : (& ir.CompilerIrExternSeq)]) : opt_i64_i64_map.Map
   (let
     [observed : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 64)]
     [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
-    [at : i64 0]
-    (while (< at functions.len)
-      (match (compiler-opt-global-array-element-shared-view functions.slots at)
+    (for [at (iterator.range 0 functions.len)]
+      (match (ir.compiler-ir-function-seq-borrow functions at)
         [(Function _ _ _ _ blocks _)
-          (let
-            [seq : ir.CompilerIrBlockSeq (ir.compiler-ir-block-list-seq blocks)]
-            [b : i64 0]
-            (while (< b (ir.compiler-ir-block-seq-count seq))
-              (match (ir.compiler-ir-block-seq-ref seq b)
-                [(Block _ instrs)
-                  (let
-                    [i : i64 0]
-                    (while (< i (ir.compiler-ir-instr-seq-count instrs))
-                      (let
-                        [instr : ir.CompilerIrInstr
-                          (ir.compiler-ir-instr-seq-ref instrs i)]
-                        (opt-merge-observe-instr!
-                          (&mut uses)
-                          (&mut observed)
-                          (& instr)))
-                      (set! i (+ i 1))))])
-              (set! b (+ b 1))))])
-      (set! at (+ at 1)))
-    (set! at 0)
-    (while (< at globals.len)
-      (match (compiler-opt-global-array-element-shared-view globals.slots at)
+          (match blocks
+            [(Array seq)
+              (for [b (iterator.range 0 seq.len)]
+                (match (ir.compiler-ir-block-seq-borrow seq b)
+                  [(Block _ instrs)
+                    (for [i (iterator.range 0 instrs.len)]
+                      (opt-merge-observe-instr!
+                        (&mut uses)
+                        (&mut observed)
+                        (ir.compiler-ir-instr-seq-borrow instrs i)))]))])]))
+    (for [at (iterator.range 0 globals.len)]
+      (match (ir.compiler-ir-global-seq-borrow globals at)
         [(Global
             _
             _
             (or (ir.CompilerIrValue.Function name) (GlobalAddr name))
             _)
           (opt-merge-note-symbol! (&mut observed) name)]
-        [_ unit])
-      (set! at (+ at 1)))
-    (set! at 0)
-    (while (< at externs.len)
-      (match (compiler-opt-global-array-element-shared-view externs.slots at)
+        [_ unit]))
+    (for [at (iterator.range 0 externs.len)]
+      (match (ir.compiler-ir-extern-seq-borrow externs at)
         [(Extern name-id _ _ _ _ symbol-id _ _ _ _ _)
           (opt-merge-note-symbol! (&mut observed) name-id)
-          (opt-merge-note-symbol! (&mut observed) symbol-id)])
-      (set! at (+ at 1)))
+          (opt-merge-note-symbol! (&mut observed) symbol-id)]))
     observed))
 
 (define (opt-merge-abort-instr? [instr : ir.CompilerIrInstr]) : bool
@@ -128284,7 +126283,7 @@
       (set! (array-ref older at) -1)
       (let
         [func : ir.CompilerIrFunction
-          (compiler-opt-global-array-element-shared-view functions.slots at)]
+          (ir.compiler-ir-function-seq-ref functions at)]
         (when
           (opt-merge-eligible? observed (& func))
           (let
@@ -128307,9 +126306,7 @@
             (if (>= twin 0)
               (let
                 [kept : ir.CompilerIrFunction
-                  (compiler-opt-global-array-element-shared-view
-                    functions.slots
-                    twin)]
+                  (ir.compiler-ir-function-seq-ref functions twin)]
                 (set! (array-ref keep at) false)
                 (opt_i64_i64_map.insert-ref!
                   renames
@@ -128329,7 +126326,7 @@
 (define (opt-merge-rename-instr
   [renames : (& renames opt_i64_i64_map.Map)]
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
-  (match (compiler-opt-global-shared-view instr)
+  (match instr
     [(ir.CompilerIrInstr.Call dst name args ty)
       (ir.CompilerIrInstr.Call dst (opt-merge-renamed renames name) args ty)]
     [(ir.CompilerIrInstr.TailCall name args ty)
@@ -128370,9 +126367,7 @@
       (while (< at functions.len)
         (when
           (array-ref keep at)
-          (match (compiler-opt-global-array-element-shared-view
-            functions.slots
-            at)
+          (match (ir.compiler-ir-function-seq-ref functions at)
             [(Function name params ret frame blocks abi)
               (set!
                 (array-ref out next)
@@ -128398,7 +126393,7 @@
     (while (< at globals.len)
       (set!
         (array-ref out at)
-        (match (compiler-opt-global-array-element-shared-view globals.slots at)
+        (match (ir.compiler-ir-global-seq-ref globals at)
           [(Global name ty (ir.CompilerIrValue.RuntimeGlobal init) storage)
             (ir.CompilerIrGlobal.Global
               name
@@ -128406,7 +126401,7 @@
               (ir.CompilerIrValue.RuntimeGlobal
                 (opt-merge-renamed renames init))
               storage)]
-          [_ (compiler-opt-global-array-element-shared-view globals.slots at)]))
+          [_ (ir.compiler-ir-global-seq-ref globals at)]))
       (set! at (+ at 1)))
     (ir.CompilerIrGlobalSeq out globals.len)))
 

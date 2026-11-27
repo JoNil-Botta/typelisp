@@ -1,4 +1,5 @@
 ;; compiler_backend.tl - Selfhost CompilerIrProgram -> x86_64 .s emitter.
+(import compiler_object_layout as layout)
 (import compiler_backend_calls as be_calls)
 (import compiler_backend_scalar as be_scalar)
 (import compiler_backend_peephole as be_peephole)
@@ -28478,27 +28479,24 @@ tl_shared_object_init:
 
 (define (compiler-backend-pic-section-label-offset
   [image : cobj.CompilerObjectImage]
-  [kind : cobj.CompilerObjectSectionKind]
+  [kind : cobj.CompilerObjectSectionId]
   [label : String]) : i64
   (match (cobj.compiler-object-section-list-find image.sections kind)
     [(Section _ data _)
-      (match kind
-        [(Text) -1]
+      (match kind.value
+        [0 -1]
         [_ (compiler-backend-pic-data-label-offset-from data label 0)])]))
 
-(define (compiler-backend-pic-section-name
-  [kind : cobj.CompilerObjectSectionKind]) : String
-  (match kind
-    [(Text) "text"]
-    [(Data) "data"]
-    [(Rodata) "rodata"]
-    [(Bss) "bss"]
-    [(Pdata) "pdata"]
-    [(Xdata) "xdata"]
-    [(Rsrc) "rsrc"]))
+(define (compiler-backend-pic-section-name [name : (& str)]) : String
+  ;; The v1 fixup table uses rodata for COFF's .rdata section as well.
+  (cond
+    [(string.eq name ".rdata") "rodata"]
+    [(and (> (string.string-length name) 0) (= (string.string-ref name 0) '.'))
+      (string.substring name 1 (- (string.string-length name) 1))]
+    [else (string.copy name)]))
 
 (define (compiler-backend-pic-fixup-line
-  [section : cobj.CompilerObjectSectionKind]
+  [section : (& str)]
   [offset : i64]
   [site : String]
   [target : String]) : String
@@ -28537,7 +28535,7 @@ tl_shared_object_init:
                     (text_buf.append
                       out
                       (compiler-backend-pic-fixup-line
-                        section
+                        (layout.compiler-object-layout-spec image section).name
                         offset
                         site
                         target)))
@@ -28600,8 +28598,8 @@ tl_shared_object_init:
         [(Abs64)
           (and
             (compiler-backend-pic-target-symbol-internal? image.symbols target)
-            (match section
-              [(or (Data) (Rodata))
+            (match section.value
+              [(or 1 2)
                 (let
                   [offset : i64
                     (compiler-backend-pic-section-label-offset

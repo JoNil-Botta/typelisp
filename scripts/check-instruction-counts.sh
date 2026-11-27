@@ -871,9 +871,83 @@ insn_run_fallback() {
         lib-linux-entry.sh lib-self-compile.sh lib-stage0.sh fetch-stage0.sh; do
         cp "$INSN_TOOL_DIR/$_irf_f" "$_irf_tool/"
     done
+    _irf_rc=0
     TYPELISP_INSN_EXEC_ROOT=$ROOT sh "$_irf_tool/check-instruction-counts.sh" fallback \
-        "$_irf_base" "$_irf_head" "$_irf_cases" "$_irf_rec_path" "$_irf_role"
+        "$_irf_base" "$_irf_head" "$_irf_cases" "$_irf_rec_path" "$_irf_role" || _irf_rc=$?
     rm -rf -- "$_irf_tool"
+    return "$_irf_rc"
+}
+
+insn_first_parent() {
+    _ifp_c=$1
+    git cat-file -e "$_ifp_c^{commit}" 2>/dev/null ||
+        git fetch --no-tags --depth=1 origin "$_ifp_c" >/dev/null 2>&1 ||
+        return 1
+    _ifp_p=$(git cat-file -p "$_ifp_c" 2>/dev/null | sed -n 's/^parent //p' | sed -n 1p)
+    sc_is_sha "$_ifp_p" || return 1
+    git cat-file -e "$_ifp_p^{commit}" 2>/dev/null ||
+        git fetch --no-tags --depth=1 origin "$_ifp_p" >/dev/null 2>&1 ||
+        return 1
+    printf '%s\n' "$_ifp_p"
+}
+
+# insn_walk_unbuildable_base ORIG_BASE HEAD_COMMIT CASES HEAD_META OUT_TL WORK_DIR ROLE
+#   Called ONLY when ORIG_BASE has no usable reference (absent/rejected) AND
+#   in-place fallback on ORIG_BASE failed. Walks first-parent ancestors up to
+#   SC_UNBUILDABLE_BASE_WALK_LIMIT commits. Fails closed on api-error or if no
+#   valid ancestor is found within the bound.
+#   Sets INSN_EFF_BASE, INSN_EFF_SRC, INSN_EFF_FROM_FALLBACK.
+insn_walk_unbuildable_base() {
+    _iwub_orig=$1
+    _iwub_head=$2
+    _iwub_cases=$3
+    _iwub_meta=$4
+    _iwub_out=$5
+    _iwub_work=$6
+    _iwub_role=$7
+    _iwub_limit=${SC_UNBUILDABLE_BASE_WALK_LIMIT:-5}
+    _iwub_cur=$_iwub_orig
+    _iwub_step=0
+    INSN_EFF_BASE=
+    INSN_EFF_SRC=
+    INSN_EFF_FROM_FALLBACK=0
+    insn_log "fallback measurement of $_iwub_orig failed; walking first-parent ancestors (max $_iwub_limit)"
+    while [ "$_iwub_step" -lt "$_iwub_limit" ]; do
+        _iwub_step=$((_iwub_step + 1))
+        _iwub_cur=$(insn_first_parent "$_iwub_cur") || break
+        _iwub_rdir="$_iwub_work/ancestor-$_iwub_step"
+        insn_resolve_reference "$_iwub_cur" "$_iwub_meta" "$_iwub_rdir"
+        if [ "$INSN_REF_STATUS" = api-error ]; then
+            sed 's/^/  /' "$_iwub_rdir/reasons" >&2
+            insn_fail "resolving insn-exec reference for ancestor $_iwub_cur failed (api-error)"
+        fi
+        if [ "$INSN_REF_STATUS" = ok ]; then
+            cp "$_iwub_rdir/record.tsv" "$_iwub_out"
+            INSN_EFF_BASE=$_iwub_cur
+            INSN_EFF_SRC="unbuildable-base ancestor $_iwub_cur ($_iwub_orig +$_iwub_step) reference run $INSN_REF_RUN attempt $INSN_REF_ATTEMPT"
+            INSN_EFF_FROM_FALLBACK=0
+            insn_log "using ancestor $_iwub_cur ($_iwub_orig +$_iwub_step): $INSN_EFF_SRC"
+            return 0
+        elif extract_legacy_tl_baseline "$_iwub_cur" "$_iwub_out"; then
+            INSN_EFF_BASE=$_iwub_cur
+            INSN_EFF_SRC="unbuildable-base ancestor $_iwub_cur ($_iwub_orig +$_iwub_step) pre-cutover legacy baseline"
+            INSN_EFF_FROM_FALLBACK=0
+            insn_log "using ancestor $_iwub_cur ($_iwub_orig +$_iwub_step): $INSN_EFF_SRC"
+            return 0
+        elif [ "$INSN_REF_STATUS" = absent ] || [ "$INSN_REF_STATUS" = rejected ]; then
+            insn_log "ancestor $_iwub_cur ($_iwub_orig +$_iwub_step) has no usable reference ($INSN_REF_STATUS); trying in-place fallback"
+            if insn_run_fallback "$_iwub_cur" "$_iwub_head" "$_iwub_cases" "$_iwub_out" "$_iwub_role"; then
+                INSN_EFF_BASE=$_iwub_cur
+                INSN_EFF_SRC="unbuildable-base ancestor $_iwub_cur ($_iwub_orig +$_iwub_step) in-place fallback (reference $INSN_REF_STATUS)"
+                INSN_EFF_FROM_FALLBACK=1
+                return 0
+            fi
+        else
+            sed 's/^/  /' "$_iwub_rdir/reasons" >&2
+            insn_fail "ancestor $_iwub_cur insn-exec reference is $INSN_REF_STATUS; refusing to skip"
+        fi
+    done
+    insn_fail "fallback measurement of $_iwub_orig failed and no buildable/referenceable first-parent ancestor was found within $_iwub_limit commits"
 }
 
 insn_cmd_fallback() {
@@ -1276,18 +1350,31 @@ insn_cmd_finalize_ci() {
     done
 
     _icfc_base_tl="$_icfc_work/base-tl.tsv"
+    _icfc_eff_b=$_icfc_b
     if [ "$INSN_REF_STATUS" = ok ]; then
         cp "$_icfc_refdir/record.tsv" "$_icfc_base_tl"
         _icfc_base_src="reference run $INSN_REF_RUN attempt $INSN_REF_ATTEMPT"
     elif extract_legacy_tl_baseline "$_icfc_b" "$_icfc_base_tl"; then
         _icfc_base_src="pre-cutover legacy baseline at $_icfc_b"
         insn_log "using pre-cutover legacy TypeLisp baseline at $_icfc_b"
+    elif [ "$INSN_REF_STATUS" = api-error ]; then
+        insn_log "no usable insn-exec reference for $_icfc_b ($INSN_REF_STATUS):"
+        sed 's/^/  /' "$_icfc_refdir/reasons" >&2
+        insn_fail "resolving insn-exec reference for $_icfc_b failed (api-error)"
     else
         insn_log "no usable insn-exec reference for $_icfc_b ($INSN_REF_STATUS):"
         sed 's/^/  /' "$_icfc_refdir/reasons" >&2
         _icfc_dedup_cases=$(printf '%s\n' "$_icfc_all_cases" | tr ',' '\n' | LC_ALL=C sort -u | paste -sd, -)
-        insn_run_fallback "$_icfc_b" "$_icfc_t" "$_icfc_dedup_cases" "$_icfc_base_tl" base-fallback
-        _icfc_base_src="in-place fallback on this runner (reference $INSN_REF_STATUS)"
+        if insn_run_fallback "$_icfc_b" "$_icfc_t" "$_icfc_dedup_cases" "$_icfc_base_tl" base-fallback; then
+            _icfc_base_src="in-place fallback on this runner (reference $INSN_REF_STATUS)"
+        elif [ "$INSN_REF_STATUS" = absent ] || [ "$INSN_REF_STATUS" = rejected ]; then
+            insn_walk_unbuildable_base "$_icfc_b" "$_icfc_t" "$_icfc_dedup_cases" "$_icfc_head_meta" \
+                "$_icfc_base_tl" "$_icfc_work/unbuildable-walk" base-fallback
+            _icfc_eff_b=$INSN_EFF_BASE
+            _icfc_base_src=$INSN_EFF_SRC
+        else
+            insn_fail "fallback measurement of $_icfc_b failed (reference $INSN_REF_STATUS)"
+        fi
     fi
 
     _icfc_rc=0
@@ -1296,7 +1383,7 @@ insn_cmd_finalize_ci() {
         _icfc_cases=$(sc_record_get "$_icfc_dir/deferred.tsv" benchmarks)
         rm -f "$_icfc_dir/deferred.tsv"
         if ! insn_evaluate_pr_suite "$_icfc_dir" "$_icfc_suite" "$_icfc_cases" \
-            "$_icfc_b" "$_icfc_t" "$_icfc_pr" "$_icfc_base_tl" "$_icfc_base_src" \
+            "$_icfc_eff_b" "$_icfc_t" "$_icfc_pr" "$_icfc_base_tl" "$_icfc_base_src" \
             "$INSN_DECL_PROBLEMS" "$INSN_DECL_PARSED"; then
             _icfc_rc=1
         fi
@@ -1402,6 +1489,7 @@ insn_cmd_main_check() {
 
     _icmc_valid_cases=$(all_instruction_cases_csv) || exit 1
     _icmc_base_tl="$_icmc_out/parent-tl.tsv"
+    _icmc_eff_p=$_icmc_p
     if [ "$INSN_REF_STATUS" = ok ]; then
         cp "$_icmc_pdir/record.tsv" "$_icmc_base_tl"
         _icmc_base_src="reference run $INSN_REF_RUN attempt $INSN_REF_ATTEMPT"
@@ -1413,14 +1501,23 @@ insn_cmd_main_check() {
         sed 's/^/  /' "$_icmc_pdir/reasons" >&2
         [ "${TYPELISP_SELF_COMPILE_TOOLS_READY:-}" = true ] ||
             insn_fail "main-check: fallback measurement requires Linux instruction-count tools (TYPELISP_SELF_COMPILE_TOOLS_READY=true)"
-        insn_run_fallback "$_icmc_p" "$_icmc_c" "$_icmc_valid_cases" "$_icmc_base_tl" parent-fallback
-        if ! insn_records_comparable "$_icmc_head_rec" "$_icmc_base_tl" >/dev/null 2>&1; then
+        _icmc_used_fallback=0
+        if insn_run_fallback "$_icmc_p" "$_icmc_c" "$_icmc_valid_cases" "$_icmc_base_tl" parent-fallback; then
+            _icmc_used_fallback=1
+            _icmc_base_src="in-place fallback on ledger runner (parent reference $INSN_REF_STATUS)"
+        else
+            insn_walk_unbuildable_base "$_icmc_p" "$_icmc_c" "$_icmc_valid_cases" "$_icmc_head_rec" \
+                "$_icmc_base_tl" "$_icmc_out/unbuildable-walk" parent-fallback
+            _icmc_eff_p=$INSN_EFF_BASE
+            _icmc_base_src=$INSN_EFF_SRC
+            _icmc_used_fallback=$INSN_EFF_FROM_FALLBACK
+        fi
+        if [ "$_icmc_used_fallback" -eq 1 ] && ! insn_records_comparable "$_icmc_head_rec" "$_icmc_base_tl" >/dev/null 2>&1; then
             insn_log "main-check: ledger runner identity differs from measure job; measuring $_icmc_c in place for comparability"
             _icmc_head_rec="$_icmc_out/head-fallback.tsv"
-            insn_run_fallback "$_icmc_c" "$_icmc_c" "$_icmc_valid_cases" "$_icmc_head_rec" head-fallback
-            _icmc_base_src="in-place fallback pair on ledger runner (parent reference $INSN_REF_STATUS)"
-        else
-            _icmc_base_src="in-place fallback on ledger runner (parent reference $INSN_REF_STATUS)"
+            insn_run_fallback "$_icmc_c" "$_icmc_c" "$_icmc_valid_cases" "$_icmc_head_rec" head-fallback ||
+                insn_fail "main-check: fallback measurement of $_icmc_c failed"
+            _icmc_base_src="$_icmc_base_src (head re-measured on ledger runner)"
         fi
     else
         sed 's/^/  /' "$_icmc_pdir/reasons" >&2
@@ -1465,13 +1562,13 @@ insn_cmd_main_check() {
         fi
     fi
 
-    _icmc_new=$(new_cases_between "$_icmc_p" "$_icmc_valid_cases")
+    _icmc_new=$(new_cases_between "$_icmc_eff_p" "$_icmc_valid_cases")
     _icmc_res="$_icmc_out/result.tsv"
     printf 'metric\tbase_ir\thead_ir\tdelta\tpct\tstatus\tdeclared_max_ir\tsuite\tbase_commit\thead_commit\tbase_source\n' > "$_icmc_res"
 
     _icmc_rc=0
     if ! compare_tl_counts "$_icmc_base_tl" "$_icmc_head_rec" "$_icmc_decl_parsed" \
-        "$_icmc_valid_cases" "$_icmc_new" "$_icmc_res" all "$_icmc_p" "$_icmc_c" "$_icmc_base_src" \
+        "$_icmc_valid_cases" "$_icmc_new" "$_icmc_res" all "$_icmc_eff_p" "$_icmc_c" "$_icmc_base_src" \
         > "$_icmc_out/diff.txt"; then
         _icmc_rc=1
     fi
@@ -1483,11 +1580,11 @@ insn_cmd_main_check() {
     cat "$_icmc_out/diff.txt"
     insn_summary "### insn-exec main vs main^1"
     insn_summary ""
-    insn_summary "Comparing \`$_icmc_c\` against \`$_icmc_p\` ($_icmc_base_src)"
+    insn_summary "Comparing \`$_icmc_c\` against \`$_icmc_eff_p\` ($_icmc_base_src)"
     if [ "$_icmc_rc" -eq 0 ]; then
-        insn_log "main-check passed: $_icmc_c vs $_icmc_p"
+        insn_log "main-check passed: $_icmc_c vs $_icmc_eff_p"
     else
-        insn_log "main-check FAILED: $_icmc_c regressed vs $_icmc_p"
+        insn_log "main-check FAILED: $_icmc_c regressed vs $_icmc_eff_p"
     fi
     return "$_icmc_rc"
 }
@@ -2015,6 +2112,215 @@ self_test() {
         insn_cmd_main_check_prepare >/dev/null 2>&1 || exit 1
         grep -qxF 'needs-tools=no' "$GITHUB_OUTPUT" || { echo "prepare pre-cutover wanted needs-tools=no" >&2; exit 1; }
     ) || { echo "self-test main-check prepare/fallback failed" >&2; _st_status=1; }
+
+    # 11. Unbuildable-base first-parent ancestor fallback (finalize-ci and main-check).
+    _st_ubrepo="$SELF_TEST_DIR/unbuildable-base-repo"
+    mkdir -p "$_st_ubrepo/perf/benchmarks"
+    (
+        cd "$_st_ubrepo"
+        git init -q
+        git config user.email test@example.com
+        git config user.name test
+        printf 'suites\tinstruction-main\nbenchmark/c-scalar/a\t200\n' > perf/benchmarks/a.tsv
+        printf 'suites\tinstruction-heavy\nbenchmark/c-scalar/h\t300\n' > perf/benchmarks/h.tsv
+        printf 'a0\n' > note.txt
+        git add perf/ note.txt
+        git commit -q -m "green ancestor a0"
+        _ub_a0=$(git rev-parse HEAD)
+        printf 'bad1\n' > note.txt
+        git commit -q -am "unbuildable bad1"
+        _ub_bad1=$(git rev-parse HEAD)
+        printf 'bad2\n' > note.txt
+        git commit -q -am "unbuildable bad2"
+        _ub_bad2=$(git rev-parse HEAD)
+        printf 'bad3\n' > note.txt
+        git commit -q -am "unbuildable bad3"
+        _ub_bad3=$(git rev-parse HEAD)
+
+        # Create a PR branch off bad1 and a two-parent merge T = bad1 + H.
+        git checkout -q -b pr-branch "$_ub_bad1"
+        printf 'pr-fix\n' > note.txt
+        git commit -q -am "pr fix"
+        _ub_pr_h=$(git rev-parse HEAD)
+        git checkout -q --detach "$_ub_bad1"
+        git merge -q --no-ff --no-edit "$_ub_pr_h"
+        _ub_pr_t=$(git rev-parse HEAD)
+
+        # Also create a merge off bad3 for walk-bound exhaustion testing.
+        git checkout -q --detach "$_ub_bad3"
+        git merge -q --no-ff -s ours --no-edit "$_ub_pr_h"
+        _ub_pr_t3=$(git rev-parse HEAD)
+
+        # Also create a main commit C directly on bad1 (for main-check).
+        git checkout -q --detach "$_ub_bad1"
+        printf 'main-fix\n' > note.txt
+        git commit -q -am "main fix c"
+        _ub_mc_c=$(git rev-parse HEAD)
+
+        _ub_a0_tree=$(git rev-parse "$_ub_a0^{tree}")
+        _ub_t_tree=$(git rev-parse "$_ub_pr_t^{tree}")
+        _ub_c_tree=$(git rev-parse "$_ub_mc_c^{tree}")
+
+        _ub_write_rec() {
+            _uwr_out=$1; _uwr_sha=$2; _uwr_tree=$3; _uwr_run=$4; _uwr_a=$5; _uwr_role=${6:-reference}
+            {
+                printf 'schema\t%s\n' "$INSN_REF_SCHEMA"
+                printf 'commit\t%s\n' "$_uwr_sha"
+                printf 'tree\t%s\n' "$_uwr_tree"
+                printf 'role\t%s\n' "$_uwr_role"
+                printf 'authority\thosted\n'
+                printf 'procedure\t%s\n' "$_st_hash"
+                printf 'compiler_sha256\t%s\n' "$_st_hash"
+                printf 'compiler_commit\t%s\n' "$_uwr_sha"
+                printf 'key.image_os\tubuntu24\n'
+                printf 'key.valgrind\tvalgrind-3.23.0\n'
+                printf 'key.as\tGNU assembler\n'
+                printf 'key.ld\tGNU ld\n'
+                printf 'key.arch\tx86_64\n'
+                printf 'info.image_version\t1.0\n'
+                printf 'info.cpu\tx86\n'
+                printf 'run.repository\ttest/repo\n'
+                printf 'run.id\t%s\n' "$_uwr_run"
+                printf 'run.attempt\t1\n'
+                printf 'run.workflow_ref\ttest/repo/%s@refs/heads/main\n' "$SC_REFERENCE_WORKFLOW"
+                printf 'run.event\tpush\n'
+                printf 'benchmark/typelisp/a\t%s\n' "$_uwr_a"
+                printf 'benchmark/typelisp/h\t500\n'
+            } > "$_uwr_out"
+        }
+
+        _ub_stage_pr_deferred() {
+            _uspd_t=$1; _uspd_b=$2; _uspd_ir=$3
+            git -c advice.detachedHead=false checkout -q --detach "$_uspd_t"
+            GITHUB_SHA=$_uspd_t
+            rm -rf target/instruction-count-check target/instruction-count-heavy target/insn-exec
+            mkdir -p target/instruction-count-check
+            printf 'name\tir_count\nbenchmark/c-scalar/a\t200\n' > target/instruction-count-check/c-baseline.tsv
+            printf 'benchmark/c-scalar/a\t200\n' > target/instruction-count-check/current-c.tsv
+            printf 'benchmark/typelisp/a\t%s\n' "$_uspd_ir" > target/instruction-count-check/current-tl.tsv
+            _ub_write_rec target/instruction-count-check/head-meta.tsv "$_uspd_t" "$(git rev-parse "$_uspd_t^{tree}")" 300 "$_uspd_ir" gate
+            {
+                sc_record_line suite instruction-main
+                sc_record_line base "$_uspd_b"
+                sc_record_line reference_status rejected
+                sc_record_line benchmarks a
+            } > target/instruction-count-check/deferred.tsv
+        }
+
+        ROOT=$_st_ubrepo
+        GITHUB_ACTIONS=true
+        GITHUB_REPOSITORY=test/repo
+        GITHUB_RUN_ID=300
+        GITHUB_RUN_ATTEMPT=1
+        GH_TOKEN=tok
+        TYPELISP_SELF_COMPILE_PR_NUMBER=99
+        TYPELISP_SELF_COMPILE_PR_HEAD=$_ub_pr_h
+        INSN_WAIT_SECONDS=0
+        INSN_POLL_SECONDS=0
+        _ub_api_mode=normal
+        _ub_mc_head_ir=100
+        _ub_fb_log="$SELF_TEST_DIR/ub-fb.log"
+
+        insn_api() {
+            case "$1" in
+                "repos/test/repo/actions/runs/300/artifacts"*)
+                    printf '{"artifacts":[{"id":301,"name":"%s","expired":false,"workflow_run":{"id":300}}]}\n' "$INSN_REF_ARTIFACT" > "$2"
+                    return 0
+                    ;;
+                "repos/test/repo/actions/workflows/"*"head_sha=$_ub_bad1"*)
+                    [ "$_ub_api_mode" != base-api-error ] || return 1
+                    printf '{"workflow_runs":[{"id":110,"run_number":2,"run_attempt":1,"status":"completed","conclusion":"failure","event":"push","head_branch":"main","head_sha":"%s","path":"%s","repository":{"full_name":"test/repo"},"head_repository":{"full_name":"test/repo"}}]}\n' "$_ub_bad1" "$SC_REFERENCE_WORKFLOW" > "$2"
+                    return 0
+                    ;;
+                "repos/test/repo/actions/runs/110/jobs"*)
+                    printf '{"jobs":[{"run_attempt":1,"name":"%s","status":"completed","conclusion":"failure"}]}\n' "$SC_REFERENCE_JOB_NAME" > "$2"
+                    return 0
+                    ;;
+                "repos/test/repo/actions/workflows/"*"head_sha=$_ub_bad2"* | \
+                "repos/test/repo/actions/workflows/"*"head_sha=$_ub_bad3"*)
+                    printf '{"workflow_runs":[]}\n' > "$2"
+                    return 0
+                    ;;
+                "repos/test/repo/actions/workflows/"*"head_sha=$_ub_a0"*)
+                    [ "$_ub_api_mode" != ancestor-api-error ] || return 1
+                    printf '{"workflow_runs":[{"id":100,"run_number":1,"run_attempt":1,"status":"completed","conclusion":"success","event":"push","head_branch":"main","head_sha":"%s","path":"%s","repository":{"full_name":"test/repo"},"head_repository":{"full_name":"test/repo"}}]}\n' "$_ub_a0" "$SC_REFERENCE_WORKFLOW" > "$2"
+                    return 0
+                    ;;
+                "repos/test/repo/actions/runs/100/jobs"*)
+                    printf '{"jobs":[{"run_attempt":1,"name":"%s","status":"completed","conclusion":"success"}]}\n' "$SC_REFERENCE_JOB_NAME" > "$2"
+                    return 0
+                    ;;
+                "repos/test/repo/actions/runs/100/artifacts"*)
+                    printf '{"artifacts":[{"id":101,"name":"%s","expired":false,"workflow_run":{"id":100}}]}\n' "$INSN_REF_ARTIFACT" > "$2"
+                    return 0
+                    ;;
+            esac
+            return 1
+        }
+        insn_download_artifact() {
+            mkdir -p "$2"
+            if [ "$1" = 301 ]; then
+                _ub_write_rec "$2/record.tsv" "$_ub_mc_c" "$_ub_c_tree" 300 "$_ub_mc_head_ir"
+            elif [ "$1" = 101 ]; then
+                _ub_write_rec "$2/record.tsv" "$_ub_a0" "$_ub_a0_tree" 100 100
+            else
+                return 1
+            fi
+        }
+        insn_run_fallback() {
+            printf '%s\n' "$1" >> "$_ub_fb_log"
+            return 1
+        }
+
+        # 11a. finalize-ci: unbuildable bad1 -> valid hosted reference at a0 passes.
+        : > "$_ub_fb_log"
+        _ub_api_mode=normal
+        _ub_stage_pr_deferred "$_ub_pr_t" "$_ub_bad1" 100
+        (insn_cmd_finalize_ci) > "$SELF_TEST_DIR/ub-11a.log" 2>&1 || { cat "$SELF_TEST_DIR/ub-11a.log" >&2; echo "finalize-ci unbuildable bad1 -> a0 failed" >&2; exit 1; }
+        [ "$(cat "$_ub_fb_log")" = "$_ub_bad1" ] || { echo "finalize-ci did not try bad1 fallback first" >&2; exit 1; }
+        grep -qF "$_ub_a0" target/instruction-count-check/result.tsv || { echo "finalize-ci result.tsv missing effective base a0" >&2; exit 1; }
+
+        # 11b. finalize-ci: unbuildable bad1 -> a0 catches +1 Ir regression.
+        _ub_stage_pr_deferred "$_ub_pr_t" "$_ub_bad1" 101
+        if (insn_cmd_finalize_ci) >/dev/null 2>&1; then
+            echo "finalize-ci unbuildable bad1 -> a0 missed +1 Ir regression" >&2; exit 1
+        fi
+
+        # 11c. finalize-ci: api-error on base fails closed without fallback or walk.
+        : > "$_ub_fb_log"
+        _ub_api_mode=base-api-error
+        _ub_stage_pr_deferred "$_ub_pr_t" "$_ub_bad1" 100
+        if (insn_cmd_finalize_ci) >/dev/null 2>&1; then
+            echo "finalize-ci passed on base api-error" >&2; exit 1
+        fi
+        [ ! -s "$_ub_fb_log" ] || { echo "finalize-ci ran fallback on base api-error" >&2; exit 1; }
+
+        # 11d. finalize-ci: api-error on ancestor fails closed immediately.
+        _ub_api_mode=ancestor-api-error
+        _ub_stage_pr_deferred "$_ub_pr_t" "$_ub_bad1" 100
+        if (insn_cmd_finalize_ci) >/dev/null 2>&1; then
+            echo "finalize-ci passed on ancestor api-error" >&2; exit 1
+        fi
+
+        # 11e. finalize-ci: exhausted walk bound fails closed (bad3->bad2->bad1, limit=2 cannot reach a0).
+        _ub_api_mode=normal
+        _ub_stage_pr_deferred "$_ub_pr_t3" "$_ub_bad3" 100
+        if (SC_UNBUILDABLE_BASE_WALK_LIMIT=2 insn_cmd_finalize_ci) >/dev/null 2>&1; then
+            echo "finalize-ci passed when walk bound exhausted" >&2; exit 1
+        fi
+
+        # 11f. main-check: unbuildable parent bad1 -> valid reference at a0 passes and catches regression.
+        git -c advice.detachedHead=false checkout -q --detach "$_ub_mc_c"
+        GITHUB_SHA=$_ub_mc_c
+        TYPELISP_SELF_COMPILE_TOOLS_READY=true
+        _ub_mc_head_ir=100
+        (insn_cmd_main_check) >/dev/null 2>&1 || { echo "main-check unbuildable bad1 -> a0 failed" >&2; exit 1; }
+        grep -qF "$_ub_a0" target/insn-exec/main-check/result.tsv || { echo "main-check result.tsv missing effective parent a0" >&2; exit 1; }
+        _ub_mc_head_ir=101
+        if (insn_cmd_main_check) >/dev/null 2>&1; then
+            echo "main-check unbuildable bad1 -> a0 missed +1 Ir regression" >&2; exit 1
+        fi
+    ) || { echo "self-test unbuildable-base ancestor fallback failed" >&2; _st_status=1; }
 
     c_provenance_self_test "$SELF_TEST_DIR" || _st_status=1
     rm -rf -- "$SELF_TEST_DIR"

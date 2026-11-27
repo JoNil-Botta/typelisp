@@ -32,6 +32,9 @@ SC_CHECKPOINT_FILE=perf/self-compile-ledger-checkpoint.tsv
 # main, newest-updated first, at most this many pages of this size.
 SC_PR_SCAN_PAGES=10
 SC_PR_SCAN_PER_PAGE=100
+# Maximum first-parent ancestor steps when immediate base/parent B is unbuildable
+# (both hosted reference unavailable and in-place fallback failed).
+SC_UNBUILDABLE_BASE_WALK_LIMIT=${TYPELISP_SELF_COMPILE_UNBUILDABLE_WALK_LIMIT:-5}
 
 # The measured invocation. The output directory keeps the historical `-o`
 # argument byte-for-byte (target/instruction-count-check/measure/...), so a
@@ -654,6 +657,10 @@ sc_ledger_entry() {
     sc_record_line schema "$SC_ENTRY_SCHEMA"
     sc_record_line commit "$_sle_c"
     sc_record_line parent "$_sle_p"
+    if [ -f "$_sle_dir/git-parent" ]; then
+        sc_record_line git_parent "$(cat "$_sle_dir/git-parent")"
+        sc_record_line effective_parent "$_sle_p"
+    fi
 
     # The step must subtract a comparable pair of p and c.
     _sle_pair_ok=yes

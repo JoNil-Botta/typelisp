@@ -37,6 +37,16 @@ publishes the `insn-exec-reference` artifact on every push to `main` and checks
   which is append-only per PR (a PR may only add its own `pr-<N>.tsv`).
 - C rows (`benchmark/c-scalar/<case>`, optional `benchmark/c/<case>`) remain
   exact in both directions against `perf/benchmarks/<case>.tsv`.
+- **Unbuildable-base ancestor fallback:** Both PR CI (`finalize-ci`) and
+  post-merge `main-check` always try the immediate base/parent `B` first
+  (hosted reference, then in-place fallback; API errors always fail closed
+  immediately). Only when `B` has no usable reference (`absent` or `rejected`)
+  AND in-place fallback on `B` fails to build does the check walk first-parent
+  history up to 5 commits (`TYPELISP_SELF_COMPILE_UNBUILDABLE_WALK_LIMIT`,
+  default `5`) to the nearest buildable or referenceable ancestor `A`, applying
+  the same `+0 Ir` / declaration gate to `M(head) - M(A)` (while keeping the
+  declaration diff scoped to `B..head`). If no valid ancestor is found within
+  the bound, or any API error occurs, the check fails closed.
 
 ### Local comparison & refreshing C baselines
 
@@ -143,10 +153,21 @@ per 1% of movement).
   also when the job is terminated. The rejected reference, if any, is kept
   alongside for comparison; built with the same `as` and `ld`, it must have
   measured the same compiler bytes.
-- Nothing passes without a valid, comparable M(B) of B's commit and tree. An API
-  error, a missing or rejected reference, or a pending one that does not finish
-  within the wait leads to the in-place measurement; if that also fails, the
-  job fails.
+- Nothing passes without a valid, comparable hosted base measurement. An API
+  error fails closed immediately without walking. A missing or rejected
+  reference, or a pending one that does not finish within the wait, leads to
+  in-place measurement of `B`. Only when `B` has an `absent`/`rejected`
+  reference AND in-place fallback on `B` fails (an unbuildable `main` base),
+  `check` and `ledger` walk first-parent history up to 5 commits
+  (`TYPELISP_SELF_COMPILE_UNBUILDABLE_WALK_LIMIT`, default `5`) to the nearest
+  buildable or referenceable ancestor `A`, validate `M(A)` against `A`'s commit,
+  tree, hosted authority and comparability with `M(T)`/`M(c)`, and apply the
+  same gate window to `M(T) - M(A)` / `M(c) - M(A)` (declarations stay diffed on
+  `B..T`). In `ledger`, the entry records `git_parent` (`p`) and
+  `effective_parent` (`A`), and the cumulative account walk telescopes directly
+  from `c` to `A`'s verified account so `Σstep` remains exact and the next
+  merge (`c+1`) resumes normal 1-step accounting. If no valid ancestor is found
+  within the bound, or any API error occurs, the job fails closed.
 - The job summary and the `self-compile-measurement` artifact record T, B, H,
   both values, the source of M(B), the own cost in Ir and ppm, and the status.
 

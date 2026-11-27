@@ -1,0 +1,4 @@
+path	required	advisory	reason
+tests/spmd/stdlib_math_abs.tl	stage2-spmd-simd-comparison,stage2-sde-fallback-spmd-simd	@corpus	Bitcast, abs and copy-sign scalar-reference differential runs in every backend.
+tests/spmd/stdlib_math_sqrt.tl	stage2-spmd-simd-comparison,stage2-sde-fallback-spmd-simd	@corpus	Sqrt definition-site resolution and scalar-reference execution.
+tests/spmd/stdlib_math_exp_masked_gather.tl	stage2-spmd-simd-comparison,stage2-sde-fallback-spmd-simd	@corpus	Focused typecheck rejection for the computed table index in exp.

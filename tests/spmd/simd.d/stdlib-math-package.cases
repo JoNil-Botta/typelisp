@@ -1,0 +1,53 @@
+# Keep the producer's AVX-512 lane contract when the consumer needs float fallback.
+target -
+opt -
+mode avx512
+do none
+
+file float-provider/typelisp.pkg
+(package
+  (name "float_provider")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+end-file
+
+file float-provider/src/lib.tl
+(define (helper [x : i64] [scale : i64])
+  (:spmd-callable
+    (specialization
+      (lanes 8)
+      (args varying uniform)
+      (result varying)
+      (index-param 0)))
+  : i64
+  (+ x scale))
+end-file
+
+file float-consumer/typelisp.pkg
+(package
+  (name "float_consumer")
+  (version "0.1.0")
+  (kind "bin")
+  (dependencies
+    (fixture "../float-provider")))
+end-file
+
+file float-consumer/src/main.tl
+(import fixture.src.lib as fixture)
+(import stdlib.math)
+
+(define (main) : i64
+  (let
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 8)]
+    (foreach
+      ([i : i64 0 8])
+      (set! (array-ref out i) (+ (fixture.helper i 3) (cast (math.f64-sqrt 0.0) : i64))))
+    (array-ref out 7)))
+end-file
+
+case stdlib-math-imported-specialization
+run build --manifest-path "{{work}}/float-consumer/typelisp.pkg" --profile release --backend-mode avx512
+exit 1
+stderr contains SPMD float intrinsic requires scalar-reference foreach lowering
+stderr contains cannot preserve the imported SPMD specialization

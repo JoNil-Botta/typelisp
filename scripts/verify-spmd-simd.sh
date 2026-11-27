@@ -233,14 +233,16 @@ spmd_assemble_link_linux() {
         return 1
     fi
     _entry=$(linux_entry_symbol_for_asm "$_asm") || exit $?
-    _stdlib_archive=$(linux_stdlib_archive_for_asm "$_asm" "$COMPILER")
+    _stdlib_archive=$(linux_stdlib_archive_for_asm "$_asm" "${COMPILER:-}")
     if [ -n "$_stdlib_archive" ]; then
         set -- -z noexecstack --gc-sections -z start-stop-gc --start-group "$_stdlib_archive" --end-group
     else
         set --
     fi
-    spmd_invoke "$SPMD_STEP_SECONDS" "$_link_base.link" ld "$_obj" -o "$_bin" -static "$@" -e "$_entry" &&
-        [ "$spmd_status" -eq 0 ] && [ ! -s "$_link_base.link.err" ]
+    if ! spmd_invoke "$SPMD_STEP_SECONDS" "$_link_base.link" ld "$_obj" -o "$_bin" -static "$@" -e "$_entry" ||
+        [ "$spmd_status" -ne 0 ] || [ -s "$_link_base.link.err" ]; then
+        return 1
+    fi
 }
 
 # Reuse the integration process runner for each Windows phase. The matrix

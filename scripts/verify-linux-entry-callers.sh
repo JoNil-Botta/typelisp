@@ -78,7 +78,7 @@ entry_caller() {
     build_out="$build_stdout" build_err="$build_stderr" mode_out="$build_stdout" mode_err="$build_stderr"
     RUN_OUT="$build_stdout" RUN_ERR="$build_stderr"
     name=arena_poison_stale_array_trap deps=- failed=0 ran=0 mode_code=0
-    SPMD_STEP_SECONDS=30 spmd_status=0
+    SPMD_STEP_SECONDS=30 spmd_status=0 _link_base="$entry_case/link"
     HOST_OS=linux want=139 stdout_spec=- expected_stderr_spec=- runtime_args=- case_timed_out=0
     stdout="$entry_case/run.out" stderr="$entry_case/run.err" run_shell_stderr="$entry_case/run.shell.err"
     : > "$stdout"; : > "$stderr"; : > "$run_shell_stderr"

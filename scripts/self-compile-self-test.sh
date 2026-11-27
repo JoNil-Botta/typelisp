@@ -1489,6 +1489,9 @@ st_e2e_ledger() {
             [ "$TYPELISP_SELF_COMPILE_TOOLS_READY" = true ] || return 1
             echo "$4" >> "$_sel_dir/events"
             printf '%s %s %s %s\n' "$1" "$2" "$4" "${5:-}" >> "$_sel_dir/fallback-args"
+            if [ -n "${ST_FAIL_FALLBACK_COMMIT:-}" ] && [ "$1" = "$ST_FAIL_FALLBACK_COMMIT" ]; then
+                return 1
+            fi
             if [ "$4" = head-reproduction ] && [ "${ST_FAIL_HEAD_REPRO:-no}" = yes ]; then
                 return 1
             fi
@@ -1497,8 +1500,12 @@ st_e2e_ledger() {
                 _self_sha=$ST_FALLBACK_BASE_SHA
             fi
             _self_ir=116000000000
-            if [ "$4" = head-reproduction ] && [ -n "${ST_FALLBACK_HEAD_IR:-}" ]; then
+            if [ "$4" = parent-fallback ] && [ -n "${ST_FALLBACK_PARENT_IR:-}" ]; then
+                _self_ir=$ST_FALLBACK_PARENT_IR
+            elif [ "$4" = head-reproduction ] && [ -n "${ST_FALLBACK_HEAD_IR:-}" ]; then
                 _self_ir=$ST_FALLBACK_HEAD_IR
+            elif [ "$4" = base-fallback ] && [ -n "${ST_FALLBACK_BASE_IR:-}" ]; then
+                _self_ir=$ST_FALLBACK_BASE_IR
             fi
             st_runner_record "$3" commit="$1" tree="$(st_tree "$1")" ir_count="$_self_ir" role="$4" \
                 run.id="$GITHUB_RUN_ID" run.attempt=1 compiler_sha256="$_self_sha"
@@ -1510,8 +1517,13 @@ st_e2e_ledger() {
             if [ -f "$3/parent.tsv" ]; then
                 cp "$3/parent.tsv" "$3/parent-reference.tsv"
             fi
-            st_runner_record "$3/landed.tsv" commit="$1" tree="$(st_tree "$1")" ir_count=116000050000
-            sc_run_fallback "$2" "$1" "$3/parent.tsv" parent-fallback
+            if [ "${ST_FAIL_PAIR_LANDED:-no}" = yes ]; then
+                echo "measuring $1 on the ledger runner failed" > "$3/measurement-problem"
+                return 3
+            fi
+            st_runner_record "$3/landed.tsv" commit="$1" tree="$(st_tree "$1")" ir_count="${ST_PAIR_LANDED_IR:-116000050000}"
+            sc_run_fallback "$2" "$1" "$3/parent.tsv" parent-fallback ||
+                { echo "measuring $2 on the ledger runner failed" > "$3/measurement-problem"; return 3; }
         }
         _sel_rc=0
         (sc_cmd_ledger_prepare) > "$_sel_dir/prepare.log" 2>&1 || _sel_rc=$?
@@ -1531,6 +1543,7 @@ st_e2e_ledger() {
             "$(sc_record_get "$_sel_o" account 2>/dev/null || echo none)" \
             "$(sc_record_get target/self-compile/ledger/summary.tsv merges 2>/dev/null || echo none)"
         # Publish this run's ledger as its artifact for the next merge.
+        rm -rf -- "$ST_ART/id-${3}2"
         cp -R target/self-compile/ledger "$ST_ART/id-${3}2"
     )
 }
@@ -1928,6 +1941,293 @@ st_e2e_repro_repair() {
         "M numerical-failure 700000000 700000100 700000000"
 }
 
+# Unbuildable-base first-parent ancestor fallback: PR check (pass, regression,
+# api-error fail-closed, walk-bound exhaustion) and ledger + cumulative account
+# telescoping across an unbuildable parent P to P^1 = A, followed by c2
+# resuming normal 1-step accounting.
+st_e2e_unbuildable_base() {
+    _seub_dir=$ST_E2E/unbuildable
+    mkdir -p "$_seub_dir/repo" "$_seub_dir/api" "$_seub_dir/art"
+    (
+        cd "$_seub_dir/repo"
+        git init -q
+        mkdir -p scripts .github/workflows
+        printf 'harness\n' > scripts/measure-instruction-counts.sh
+        printf 'lib\n' > scripts/lib-benchmark.sh
+        printf 'p0\n' > README
+        st_git add -A
+        st_git commit -qm p0
+        printf 'name: Self-Compile Reference\n' > .github/workflows/self-compile-reference.yml
+        st_git add -A
+        st_git commit -qm c0
+        printf 'bad1\n' > README
+        st_git commit -qam bad1
+        printf 'bad2\n' > README
+        st_git commit -qam bad2
+        printf 'bad3\n' > README
+        st_git commit -qam bad3
+    )
+    _seub_p0=$(git -C "$_seub_dir/repo" rev-parse HEAD~4)
+    _seub_c0=$(git -C "$_seub_dir/repo" rev-parse HEAD~3)
+    _seub_bad1=$(git -C "$_seub_dir/repo" rev-parse HEAD~2)
+    _seub_bad2=$(git -C "$_seub_dir/repo" rev-parse HEAD~1)
+    _seub_bad3=$(git -C "$_seub_dir/repo" rev-parse HEAD)
+
+    # Helper to run sc_cmd_check against an unbuildable base in an isolated clone.
+    _seub_run_check() {
+        _surc_name=$1; _surc_base=$2; _surc_ir=$3; _surc_mode=$4; _surc_limit=${5:-5}
+        _surc_d=$_seub_dir/check-$_surc_name
+        git clone -q "$_seub_dir/repo" "$_surc_d/repo"
+        (
+            cd "$_surc_d/repo"
+            git checkout -q --detach "$_surc_base"
+            git checkout -q -b pr
+            printf 'fix %s\n' "$_surc_name" > README
+            st_git commit -qam pr
+            _surc_h=$(git rev-parse HEAD)
+            git checkout -q --detach "$_surc_base"
+            st_git merge -q --no-ff --no-edit "$_surc_h"
+            _surc_t=$(git rev-parse HEAD)
+            st_e2e_env
+            ST_API=$_surc_d/api
+            ST_ART=$_surc_d/art
+            mkdir -p "$ST_API" "$ST_ART" target/self-compile/measurement
+            st_e2e_mocks "$ST_API" "$ST_ART"
+            GITHUB_SHA=$_surc_t
+            TYPELISP_SELF_COMPILE_PR_NUMBER=88
+            TYPELISP_SELF_COMPILE_PR_HEAD=$_surc_h
+            SC_UNBUILDABLE_BASE_WALK_LIMIT=$_surc_limit
+            export GITHUB_SHA TYPELISP_SELF_COMPILE_PR_NUMBER TYPELISP_SELF_COMPILE_PR_HEAD SC_UNBUILDABLE_BASE_WALK_LIMIT
+            st_record target/self-compile/measurement/record.tsv commit="$_surc_t" tree="$(st_tree "$_surc_t")" \
+                ir_count="$_surc_ir" run.id=788 run.event=pull_request
+            # c0 has a verified hosted reference; bad1 has a failed reference job (or identity-incompatible valid reference); bad2/bad3 have absent references.
+            st_record "$_surc_d/c0.tsv" commit="$_seub_c0" tree="$(st_tree "$_seub_c0")" ir_count=116000050000 run.id=900
+            st_reference_api "$_seub_c0" 900 "$_surc_d/c0.tsv"
+            if [ "$_surc_mode" = bad1-identity-mismatch ] || [ "$_surc_mode" = bad1-identity-mismatch-fb-ok ]; then
+                st_record "$_surc_d/bad1.tsv" commit="$_seub_bad1" tree="$(st_tree "$_seub_bad1")" ir_count=116000050000 run.id=910 key.valgrind=valgrind-old
+                st_reference_api "$_seub_bad1" 910 "$_surc_d/bad1.tsv"
+                printf '{"workflow_runs": []}\n' | st_api_put "repos/$ST_REPO/actions/workflows/self-compile-reference.yml/runs?event=push&branch=main&head_sha=$_seub_bad2&per_page=50"
+                printf '{"workflow_runs": []}\n' | st_api_put "repos/$ST_REPO/actions/workflows/self-compile-reference.yml/runs?event=push&branch=main&head_sha=$_seub_bad3&per_page=50"
+            elif [ "$_surc_mode" != base-api-error ]; then
+                st_runs_json 910 "$_seub_bad1" | st_api_put "repos/$ST_REPO/actions/workflows/self-compile-reference.yml/runs?event=push&branch=main&head_sha=$_seub_bad1&per_page=50"
+                st_jobs_json "$SC_REFERENCE_JOB_NAME" 1 completed failure | st_api_put "repos/$ST_REPO/actions/runs/910/jobs?filter=all&per_page=100"
+                printf '{"workflow_runs": []}\n' | st_api_put "repos/$ST_REPO/actions/workflows/self-compile-reference.yml/runs?event=push&branch=main&head_sha=$_seub_bad2&per_page=50"
+                printf '{"workflow_runs": []}\n' | st_api_put "repos/$ST_REPO/actions/workflows/self-compile-reference.yml/runs?event=push&branch=main&head_sha=$_seub_bad3&per_page=50"
+            fi
+            : > "$_surc_d/fallbacks"
+            sc_run_fallback() {
+                printf '%s\n' "$1" >> "$_surc_d/fallbacks"
+                if [ "$_surc_mode" = bad1-identity-mismatch-fb-ok ] && [ "$1" = "$_seub_bad1" ]; then
+                    st_record "$3" commit="$1" tree="$(st_tree "$1")" ir_count=116000050000 role="$4" run.id=788 run.event=pull_request
+                    return 0
+                fi
+                return 1
+            }
+            _surc_rc=0
+            (sc_cmd_check) > "$_surc_d/check.log" 2>&1 || _surc_rc=$?
+            printf '%s %s %s %s %s' "$_surc_rc" \
+                "$(sc_record_get target/self-compile/pr/result.tsv status 2>/dev/null || echo none)" \
+                "$(sc_record_get target/self-compile/pr/result.tsv base 2>/dev/null || echo none)" \
+                "$(sc_record_get target/self-compile/pr/result.tsv merge_base 2>/dev/null || echo none)" \
+                "$(wc -l < "$_surc_d/fallbacks" | tr -d ' ')"
+        )
+    }
+
+    st_eq "pr check walks past unbuildable base bad1 to valid ancestor c0" \
+        "$(_seub_run_check ok "$_seub_bad1" 116000051000 normal)" "0 ok $_seub_c0 $_seub_bad1 1"
+    st_eq "pr check catches regression against effective ancestor c0" \
+        "$(_seub_run_check reg "$_seub_bad1" 116600000000 normal)" "1 REGRESSION $_seub_c0 $_seub_bad1 1"
+    st_eq "pr check fails closed on base api-error without fallback or walk" \
+        "$(_seub_run_check apierr "$_seub_bad1" 116000051000 base-api-error)" "1 none none none 0"
+    st_eq "pr check fails closed when ancestor walk bound is exhausted" \
+        "$(_seub_run_check bound "$_seub_bad3" 116000051000 normal 2)" "1 none none none 3"
+    st_eq "pr check refuses to walk past identity-incompatible valid reference on bad1" \
+        "$(_seub_run_check id-mismatch "$_seub_bad1" 116000051000 bad1-identity-mismatch)" "1 none none none 1"
+    st_eq "pr check refuses to skip intermediate buildable ancestor bad1 with identity-incompatible reference" \
+        "$(_seub_run_check id-mismatch-mid "$_seub_bad2" 116000051000 bad1-identity-mismatch)" "1 none none none 2"
+    st_eq "pr check uses intermediate buildable ancestor bad1 when fallback succeeds" \
+        "$(_seub_run_check id-mismatch-mid-ok "$_seub_bad2" 116000051000 bad1-identity-mismatch-fb-ok)" "0 ok $_seub_bad1 $_seub_bad2 2"
+
+    # Full ledger + cumulative account telescoping across unbuildable bad1:
+    # p0 -> c0 (normal) -> bad1 (unbuildable, no reference, no ledger) -> c1 (repair) -> c2 (normal).
+    _seub_lset=unbuildable-ledger
+    git clone -q "$_seub_dir/repo" "$ST_E2E/$_seub_lset-repo"
+    (
+        cd "$ST_E2E/$_seub_lset-repo"
+        git checkout -q --detach "$_seub_bad1"
+        printf 'c1 repair\n' > README
+        st_git commit -qam c1
+        printf 'c2 normal\n' > README
+        st_git commit -qam c2
+    )
+    _seub_c1=$(git -C "$ST_E2E/$_seub_lset-repo" rev-parse HEAD~1)
+    _seub_c2=$(git -C "$ST_E2E/$_seub_lset-repo" rev-parse HEAD)
+    ST_API=$ST_E2E/$_seub_lset-api
+    ST_ART=$ST_E2E/$_seub_lset-art
+    mkdir -p "$ST_API" "$ST_ART"
+    (
+        cd "$ST_E2E/$_seub_lset-repo"
+        st_record "$ST_E2E/$_seub_lset-c0.tsv" commit="$_seub_c0" tree="$(st_tree "$_seub_c0")" ir_count=116000050000 run.id=900
+        st_record "$ST_E2E/$_seub_lset-c1.tsv" commit="$_seub_c1" tree="$(st_tree "$_seub_c1")" ir_count=116000060000 run.id=901
+        st_record "$ST_E2E/$_seub_lset-c2.tsv" commit="$_seub_c2" tree="$(st_tree "$_seub_c2")" ir_count=116000065000 run.id=902
+        st_reference_api "$_seub_c0" 900 "$ST_E2E/$_seub_lset-c0.tsv"
+        st_reference_api "$_seub_c1" 901 "$ST_E2E/$_seub_lset-c1.tsv"
+        st_reference_api "$_seub_c2" 902 "$ST_E2E/$_seub_lset-c2.tsv"
+        # p0 has no reference (anchor parent); bad1's reference job failed and has no ledger.
+        printf '{"workflow_runs": []}\n' | st_api_put "repos/$ST_REPO/actions/workflows/self-compile-reference.yml/runs?event=push&branch=main&head_sha=$_seub_p0&per_page=50"
+        st_runs_json 910 "$_seub_bad1" | st_api_put "repos/$ST_REPO/actions/workflows/self-compile-reference.yml/runs?event=push&branch=main&head_sha=$_seub_bad1&per_page=50"
+        st_jobs_json "$SC_REFERENCE_JOB_NAME" 1 completed failure | st_api_put "repos/$ST_REPO/actions/runs/910/jobs?filter=all&per_page=100"
+        printf '{"artifacts": []}\n' | st_api_put "repos/$ST_REPO/actions/runs/910/artifacts?name=$SC_LEDGER_ARTIFACT&per_page=100"
+        # PR records: c0 tested on p0, c1 tested on effective base c0 (with merge_base bad1), c2 tested on c1.
+        st_e2e_pr_api "$_seub_c0" 50 "$ST_SHA_E" 7050 116000050100 116000000000 "$_seub_p0"
+        st_e2e_pr_api "$_seub_c1" 51 "$ST_SHA_F" 7051 116000060200 116000050000 "$_seub_c0"
+        sc_record_line merge_base "$_seub_bad1" >> "$ST_ART/id-70513/result.tsv"
+        st_e2e_pr_api "$_seub_c2" 52 "$ST_SHA_A" 7052 116000065100 116000060000 "$_seub_c1"
+    )
+    for _seub_run in 900 901 902; do
+        printf '{"artifacts": [{"id": %s2, "name": "%s", "expired": false, "workflow_run": {"id": %s}}]}\n' "$_seub_run" "$SC_LEDGER_ARTIFACT" "$_seub_run" |
+            st_api_put "repos/$ST_REPO/actions/runs/$_seub_run/artifacts?name=$SC_LEDGER_ARTIFACT&per_page=100"
+    done
+
+    st_eq "unbuildable ledger seeds c0 cleanly" "$(st_e2e_ledger c0 "$_seub_c0" 900 "$_seub_lset")" "0 ok yes clean 1"
+    # Run c1 with sc_run_fallback failing on bad1.
+    _seub_c1_res=$(
+        ST_FAIL_FALLBACK_COMMIT=$_seub_bad1 st_e2e_ledger c1 "$_seub_c1" 901 "$_seub_lset"
+    )
+    st_eq "ledger telescopes c1 across unbuildable bad1 to c0" "$_seub_c1_res" "0 ok yes clean 2"
+    st_eq "c1 entry records git_parent bad1 and effective_parent c0" \
+        "$(sc_record_get "$ST_E2E/$_seub_lset-c1/repo/target/self-compile/ledger/entry.tsv" git_parent)|$(sc_record_get "$ST_E2E/$_seub_lset-c1/repo/target/self-compile/ledger/entry.tsv" effective_parent)|$(sc_record_get "$ST_E2E/$_seub_lset-c1/repo/target/self-compile/ledger/entry.tsv" class)" \
+        "$_seub_bad1|$_seub_c0|S"
+    st_eq "c1 cumulative sum.step telescopes exactly to M(c1) - M(p0)" \
+        "$(sc_record_get "$ST_E2E/$_seub_lset-c1/repo/target/self-compile/ledger/summary.tsv" sum.step)" 60000
+    st_eq "c2 after c1 resumes normal 1-step accounting" \
+        "$(st_e2e_ledger c2 "$_seub_c2" 902 "$_seub_lset")" "0 ok yes clean 3"
+    st_eq "c2 needs no tools and sums M(c2) - M(p0)" \
+        "$(cat "$ST_E2E/$_seub_lset-c2/outputs")|$(sc_record_get "$ST_E2E/$_seub_lset-c2/repo/target/self-compile/ledger/summary.tsv" sum.step)" \
+        "needs-tools=no|65000"
+
+    # Finding 3 (ledger): an identity-incompatible valid hosted reference on bad1
+    # proves bad1 is buildable; when fallback fails on bad1, ledger MUST fail closed
+    # with measurement-failure and MUST NOT walk past bad1 to c0.
+    _seub_idset=unbuildable-ledger-idmismatch
+    cp -R "$ST_E2E/$_seub_lset-repo" "$ST_E2E/$_seub_idset-repo"
+    cp -R "$ST_E2E/$_seub_lset-api" "$ST_E2E/$_seub_idset-api"
+    cp -R "$ST_E2E/$_seub_lset-art" "$ST_E2E/$_seub_idset-art"
+    rm -rf -- "$ST_E2E/$_seub_idset-art/id-9012" "$ST_E2E/$_seub_idset-art/id-9022"
+    ST_API=$ST_E2E/$_seub_idset-api
+    ST_ART=$ST_E2E/$_seub_idset-art
+    (
+        cd "$ST_E2E/$_seub_idset-repo"
+        st_record "$ST_E2E/$_seub_idset-bad1.tsv" commit="$_seub_bad1" tree="$(st_tree "$_seub_bad1")" ir_count=116000055000 run.id=910 key.valgrind=valgrind-old
+        st_reference_api "$_seub_bad1" 910 "$ST_E2E/$_seub_idset-bad1.tsv"
+    )
+    st_eq "ledger refuses to walk past buildable parent with identity-incompatible reference" \
+        "$(ST_FAIL_FALLBACK_COMMIT=$_seub_bad1 st_e2e_ledger c1 "$_seub_c1" 901 "$_seub_idset" | cut -d' ' -f1-2)" \
+        "1 measurement-failure"
+    st_eq "refused walk records no effective_parent on c1" \
+        "$(sc_record_get "$ST_E2E/$_seub_idset-c1/repo/target/self-compile/ledger/entry.tsv" effective_parent 2>/dev/null || echo none)" \
+        none
+
+    # Finding 1 (ledger else branch): when runner identity differs from landed.tsv
+    # and re-measuring C fails, sc_ledger_pair_measure MUST NOT walk past P.
+    _seub_pfail=unbuildable-ledger-pairfail
+    cp -R "$ST_E2E/$_seub_lset-repo" "$ST_E2E/$_seub_pfail-repo"
+    cp -R "$ST_E2E/$_seub_lset-api" "$ST_E2E/$_seub_pfail-api"
+    cp -R "$ST_E2E/$_seub_lset-art" "$ST_E2E/$_seub_pfail-art"
+    rm -rf -- "$ST_E2E/$_seub_pfail-art/id-9012" "$ST_E2E/$_seub_pfail-art/id-9022"
+    st_eq "ledger else branch fails closed without walking when C re-measurement fails" \
+        "$(ST_RUNNER_VALGRIND=other-valgrind ST_FAIL_PAIR_LANDED=yes st_e2e_ledger c1 "$_seub_c1" 901 "$_seub_pfail" | cut -d' ' -f1-2)" \
+        "1 measurement-failure"
+    st_eq "failed C re-measurement attempts no parent fallback or ancestor walk" \
+        "$(tr '\n' ' ' < "$ST_E2E/$_seub_pfail-c1/events")" "install identity pair "
+    # Contrast: when C re-measurement SUCCEEDS on other-valgrind and P (bad1) fails fallback,
+    # sc_ledger_pair_measure DOES walk to c0 and completes on other-valgrind.
+    _seub_pok=unbuildable-ledger-pairok
+    cp -R "$ST_E2E/$_seub_lset-repo" "$ST_E2E/$_seub_pok-repo"
+    cp -R "$ST_E2E/$_seub_lset-api" "$ST_E2E/$_seub_pok-api"
+    cp -R "$ST_E2E/$_seub_lset-art" "$ST_E2E/$_seub_pok-art"
+    rm -rf -- "$ST_E2E/$_seub_pok-art/id-9012" "$ST_E2E/$_seub_pok-art/id-9022"
+    st_eq "ledger else branch walks to c0 once C re-measures on this runner and P fails" \
+        "$(ST_RUNNER_VALGRIND=other-valgrind ST_PAIR_LANDED_IR=116000060000 ST_FALLBACK_PARENT_IR=116000050000 ST_FALLBACK_BASE_IR=116000050000 ST_FAIL_FALLBACK_COMMIT=$_seub_bad1 st_e2e_ledger c1 "$_seub_c1" 901 "$_seub_pok")" \
+        "0 ok yes clean 2"
+    st_eq "ledger else branch walk records effective_parent c0 and git_parent bad1" \
+        "$(sc_record_get "$ST_E2E/$_seub_pok-c1/repo/target/self-compile/ledger/entry.tsv" git_parent)|$(sc_record_get "$ST_E2E/$_seub_pok-c1/repo/target/self-compile/ledger/entry.tsv" effective_parent)" \
+        "$_seub_bad1|$_seub_c0"
+
+    # Finding 2a (sc_ledger_reattribute): telescoped c1 (effective_parent=c0, git_parent=bad1)
+    # initially lands with attribution missing; on c2, sc_ledger_reattribute honors verified
+    # effective_parent and preserves git_parent/effective_parent.
+    _seub_reat=unbuildable-reattrib
+    cp -R "$ST_E2E/$_seub_lset-repo" "$ST_E2E/$_seub_reat-repo"
+    cp -R "$ST_E2E/$_seub_lset-api" "$ST_E2E/$_seub_reat-api"
+    cp -R "$ST_E2E/$_seub_lset-art" "$ST_E2E/$_seub_reat-art"
+    rm -rf -- "$ST_E2E/$_seub_reat-art/id-9012" "$ST_E2E/$_seub_reat-art/id-9022"
+    ST_API=$ST_E2E/$_seub_reat-api
+    ST_ART=$ST_E2E/$_seub_reat-art
+    printf '[]\n' | st_api_put "repos/$ST_REPO/commits/$_seub_c1/pulls"
+    printf '[]\n' | st_api_put "repos/$ST_REPO/pulls?state=closed&base=main&sort=updated&direction=desc&per_page=$SC_PR_SCAN_PER_PAGE&page=1"
+    st_eq "telescoped c1 with missing PR records attribution-failure" \
+        "$(ST_FAIL_FALLBACK_COMMIT=$_seub_bad1 st_e2e_ledger c1 "$_seub_c1" 901 "$_seub_reat")" \
+        "1 attribution-failure no unresolved 2"
+    (
+        cd "$ST_E2E/$_seub_reat-repo"
+        st_e2e_pr_api "$_seub_c1" 51 "$ST_SHA_F" 7051 116000060200 116000050000 "$_seub_c0"
+        sc_record_line merge_base "$_seub_bad1" >> "$ST_ART/id-70513/result.tsv"
+    )
+    st_eq "c2 reattributes telescoped c1 cleanly via verified effective_parent" \
+        "$(st_e2e_ledger c2 "$_seub_c2" 902 "$_seub_reat")" \
+        "0 ok yes clean 3"
+    _seub_reat_e="$ST_E2E/$_seub_reat-c2/repo/target/self-compile/ledger-work/repair/repair-$_seub_c1/reattributed/entry.tsv"
+    st_eq "reattributed telescoped c1 preserves parent, git_parent, effective_parent, step, and own" \
+        "$(sc_record_get "$_seub_reat_e" parent)|$(sc_record_get "$_seub_reat_e" git_parent)|$(sc_record_get "$_seub_reat_e" effective_parent)|$(sc_record_get "$_seub_reat_e" step)|$(sc_record_get "$_seub_reat_e" own)" \
+        "$_seub_c0|$_seub_bad1|$_seub_c0|10000|10200"
+
+    # Finding 2b (sc_ledger_reproduce_repair): telescoped class-M c1 (effective_parent=c0,
+    # git_parent=bad1, PR base=c0, PR merge_base=bad1, tree(T) != tree(c1) AND
+    # merge-tree(bad1, H) != merge-tree(c0, H)) initially fails head-reproduction; on c2,
+    # sc_ledger_reproduce_repair honors verified effective_parent and passes merge_base
+    # (bad1) to sc_ledger_reproduce_head.
+    _seub_repro=unbuildable-repro
+    cp -R "$ST_E2E/$_seub_lset-repo" "$ST_E2E/$_seub_repro-repo"
+    cp -R "$ST_E2E/$_seub_lset-api" "$ST_E2E/$_seub_repro-api"
+    cp -R "$ST_E2E/$_seub_lset-art" "$ST_E2E/$_seub_repro-art"
+    rm -rf -- "$ST_E2E/$_seub_repro-art/id-9012" "$ST_E2E/$_seub_repro-art/id-9022"
+    ST_API=$ST_E2E/$_seub_repro-api
+    ST_ART=$ST_E2E/$_seub_repro-art
+    (
+        cd "$ST_E2E/$_seub_repro-repo"
+        git config uploadpack.allowAnySHA1InWant false
+        git config uploadpack.allowReachableSHA1InWant false
+        # Branch PR head H off c0 adding pr51.txt so merge-tree(bad1, H) carries
+        # bad1's README + pr51.txt (distinct from both tree(c1) and merge-tree(c0, H)).
+        git -c advice.detachedHead=false checkout -q --detach "$_seub_c0"
+        printf 'pr51\n' > pr51.txt
+        st_git add pr51.txt
+        st_git commit -qm pr51-head
+        _srp_h=$(git rev-parse HEAD)
+        git update-ref refs/pull/51/head "$_srp_h"
+        _srp_tt=$(git merge-tree --write-tree "$_seub_bad1" "$_srp_h" | sed -n 1p)
+        git -c advice.detachedHead=false checkout -q --detach "$_seub_c2"
+        st_e2e_pr_api "$_seub_c1" 51 "$_srp_h" 7051 116000060200 116000050000 "$_seub_c0" key.valgrind=valgrind-old
+        sc_record_line merge_base "$_seub_bad1" >> "$ST_ART/id-70513/result.tsv"
+        st_record "$ST_ART/id-70513/head.tsv" commit="$ST_SHA_D" tree="$_srp_tt" ir_count=116000060200 \
+            run.id=7051 run.event=pull_request key.valgrind=valgrind-old
+    )
+    st_eq "telescoped class-M c1 records comparability-failure when head-reproduction fails" \
+        "$(ST_FAIL_FALLBACK_COMMIT=$_seub_bad1 ST_FAIL_HEAD_REPRO=yes ST_FALLBACK_BASE_IR=116000050000 st_e2e_ledger c1 "$_seub_c1" 901 "$_seub_repro")" \
+        "1 comparability-failure no unresolved 2"
+    st_eq "c2 repairs telescoped class-M c1 using effective_parent and merge_base" \
+        "$(ST_FALLBACK_HEAD_IR=116000060000 st_e2e_ledger c2 "$_seub_c2" 902 "$_seub_repro")" \
+        "0 ok yes clean 3"
+    st_eq "telescoped reproduce-repair passes merge_base (bad1) as SEED_COMMIT to head-reproduction" \
+        "$(awk '$3 == "head-reproduction" { print $2, $4 }' "$ST_E2E/$_seub_repro-c2/fallback-args")" \
+        "$_seub_c2 $_seub_bad1"
+    _seub_repro_e="$ST_E2E/$_seub_repro-c2/repo/target/self-compile/ledger-work/repair/repair-$_seub_c1/reproduced/entry.tsv"
+    st_eq "reproduced telescoped c1 preserves parent, git_parent, effective_parent, class, step, own, and own_reproduced" \
+        "$(sc_record_get "$_seub_repro_e" parent)|$(sc_record_get "$_seub_repro_e" git_parent)|$(sc_record_get "$_seub_repro_e" effective_parent)|$(sc_record_get "$_seub_repro_e" class)|$(sc_record_get "$_seub_repro_e" step)|$(sc_record_get "$_seub_repro_e" own)|$(sc_record_get "$_seub_repro_e" own_reproduced)" \
+        "$_seub_c0|$_seub_bad1|$_seub_c0|M|10000|10200|10000"
+}
+
 st_e2e() {
     case "$(uname -s)" in
         Linux*) ;;
@@ -2111,6 +2411,7 @@ st_e2e() {
     st_e2e_lost_association
     st_e2e_settle
     st_e2e_repro_repair
+    st_e2e_unbuildable_base
     st_e2e_ledger_set e6 - 116000050100 "key.valgrind=valgrind-old key.as=GNU-assembler-2.41"
     st_eq "e2e ledger accepts agreeing same-commit measurements" "$(st_e2e_ledger c0 "$ST_SET_C0" 900 e6)" "0 ok yes clean 1"
 

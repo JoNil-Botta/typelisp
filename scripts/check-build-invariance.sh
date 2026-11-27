@@ -350,7 +350,7 @@ write_corpus() {
 }
 
 write_batch_chunks() {
-    build_invariance_write_chunks "$1" "$2" "$BATCH_CHUNK_SIZE"
+    build_invariance_write_chunks "$1" "$2" "$BATCH_CHUNK_SIZE" "$SRC_WEIGHTS" "$ROOT"
 }
 
 prepare_compile_batches() {
@@ -756,13 +756,14 @@ run_batched_comparison() {
     POOL_QUEUE="$WORKDIR/pool-queue.txt"
     POOL_JOBS="$WORKDIR/pool-jobs.txt"
     POOL_PAIRS="$WORKDIR/pool-pairs.txt"
-    # Rows of `rank|producer|order|job|cap` and `rank|order|left|right|cases`,
-    # sorted into the queue and the comparison order below. The longest
-    # build, backend-tests, comes first; within a class the opt1-built
-    # producer's slower compiles start before the opt2-built ones.
+    # Rows of `rank|producer|weight|order|job|cap` and
+    # `rank|weight|order|left|right|cases`, sorted into the queue and the
+    # comparison order below. The longest build, backend-tests, comes first;
+    # within each rank the opt1-built producer's slower compiles start before
+    # opt2-built, ordered LPT (heaviest transitive-LOC weight first).
     pool_order="$WORKDIR/pool-order.txt"
     pair_order="$WORKDIR/pair-order.txt"
-    printf '0|0|0|backend-tests|%s\n' "$POOL_FULL_CAP_MIB" > "$pool_order"
+    printf '0|0|0|0|backend-tests|%s\n' "$POOL_FULL_CAP_MIB" > "$pool_order"
     : > "$pair_order"
     : > "$POOL_JOBS"
 
@@ -794,17 +795,18 @@ run_batched_comparison() {
             batch_index=$((batch_index + 1))
             left_job="opt1-built.opt$opt_level.$chunk_id"
             right_job="opt2-built.opt$opt_level.$chunk_id"
-            left_class=$(build_invariance_chunk_class "$left_cases" opt1-built)
-            right_class=$(build_invariance_chunk_class "$right_cases" opt2-built)
-            printf '%s|1|%s|%s|%s\n' "${left_class#* }" "$batch_index" "$left_job" "${left_class% *}" >> "$pool_order"
-            printf '%s|2|%s|%s|%s\n' "${right_class#* }" "$batch_index" "$right_job" "${right_class% *}" >> "$pool_order"
+            left_class=$(build_invariance_chunk_class "$left_cases" opt1-built "$SRC_WEIGHTS" "$ROOT")
+            right_class=$(build_invariance_chunk_class "$right_cases" opt2-built "$SRC_WEIGHTS" "$ROOT")
+            chunk_weight=$(build_invariance_chunk_weight "$left_cases" "$SRC_WEIGHTS" "$ROOT")
+            printf '%s|1|%s|%s|%s|%s\n' "${left_class#* }" "$chunk_weight" "$batch_index" "$left_job" "${left_class% *}" >> "$pool_order"
+            printf '%s|2|%s|%s|%s|%s\n' "${right_class#* }" "$chunk_weight" "$batch_index" "$right_job" "${right_class% *}" >> "$pool_order"
             printf '%s|opt1-built|%s|%s|%s|%s\n' "$left_job" "$opt_level" "$chunk_id" "$batch_index/$left_chunk_count" "$left_entries" >> "$POOL_JOBS"
             printf '%s|opt2-built|%s|%s|%s|%s\n' "$right_job" "$opt_level" "$chunk_id" "$batch_index/$left_chunk_count" "$right_entries" >> "$POOL_JOBS"
-            printf '%s|%s|%s|%s|%s\n' "${left_class#* }" "$batch_index" "$left_job" "$right_job" "$left_cases" >> "$pair_order"
+            printf '%s|%s|%s|%s|%s|%s\n' "${left_class#* }" "$chunk_weight" "$batch_index" "$left_job" "$right_job" "$left_cases" >> "$pair_order"
         done
     done
-    LC_ALL=C sort -t '|' -k1,1n -k2,2n -k3,3n "$pool_order" | cut -d '|' -f 4- > "$POOL_QUEUE"
-    LC_ALL=C sort -t '|' -k1,1n -k2,2n "$pair_order" | cut -d '|' -f 3- > "$POOL_PAIRS"
+    LC_ALL=C sort -t '|' -k1,1n -k2,2n -k3,3nr -k4,4n "$pool_order" | cut -d '|' -f 5- > "$POOL_QUEUE"
+    LC_ALL=C sort -t '|' -k1,1n -k2,2nr -k3,3n "$pair_order" | cut -d '|' -f 4- > "$POOL_PAIRS"
     POOL_DIR="$WORKDIR/pool"
     bounded_pool_init "$POOL_DIR" "$POOL_BUDGET_MIB" "$POOL_QUEUE"
     mkdir -p "$POOL_DIR/metrics" "$POOL_DIR/timing" "$WORKDIR/backend-memory"
@@ -909,9 +911,11 @@ echo "[build-invariance] compiler construction: ${construction_seconds}s"
 # corpus is needed.
 
 CORPUS="$WORKDIR/corpus.txt"
+SRC_WEIGHTS="$WORKDIR/src-weights.txt"
 LEFT_DIR="$WORKDIR/compare/opt1-built"
 RIGHT_DIR="$WORKDIR/compare/opt2-built"
 write_corpus "$CORPUS"
+build_invariance_write_src_weights "$CORPUS" "$SRC_WEIGHTS" "$ROOT"
 mkdir -p "$LEFT_DIR" "$RIGHT_DIR"
 
 corpus_start=$(date +%s)

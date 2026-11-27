@@ -414,6 +414,134 @@ run_bounded_pair() {
     PAIR2_BACKEND=$BOUND_BACKEND
 }
 
+# Run three independent bounded workloads concurrently, each under its own
+# CAP_MIB process-tree cap and report. Commands are logged and results are
+# validated in deterministic order (1, 2, 3), publishing TRIPLE{1,2,3}_*.
+# Usage: run_bounded_triple NAME1 CMD1... -- NAME2 CMD2... -- NAME3 CMD3...
+run_bounded_triple() {
+    _t1_name=$1
+    shift
+    _t1_cmd=()
+    while [ "$#" -gt 0 ] && [ "$1" != -- ]; do
+        _t1_cmd+=("$1")
+        shift
+    done
+    [ "${1:-}" = -- ] || fail "internal error: run_bounded_triple missing first separator"
+    shift
+    _t2_name=$1
+    shift
+    _t2_cmd=()
+    while [ "$#" -gt 0 ] && [ "$1" != -- ]; do
+        _t2_cmd+=("$1")
+        shift
+    done
+    [ "${1:-}" = -- ] || fail "internal error: run_bounded_triple missing second separator"
+    shift
+    _t3_name=$1
+    shift
+    _t3_cmd=("$@")
+
+    _t1_report="$WORKDIR/reports/$_t1_name.kv"
+    _t2_report="$WORKDIR/reports/$_t2_name.kv"
+    _t3_report="$WORKDIR/reports/$_t3_name.kv"
+    command_add "$_t1_name" "$BOUNDED" --limit-mib "$CAP_MIB" \
+        --timeout-seconds "$TIMEOUT_SECONDS" --report "$_t1_report" -- "${_t1_cmd[@]}"
+    command_add "$_t2_name" "$BOUNDED" --limit-mib "$CAP_MIB" \
+        --timeout-seconds "$TIMEOUT_SECONDS" --report "$_t2_report" -- "${_t2_cmd[@]}"
+    command_add "$_t3_name" "$BOUNDED" --limit-mib "$CAP_MIB" \
+        --timeout-seconds "$TIMEOUT_SECONDS" --report "$_t3_report" -- "${_t3_cmd[@]}"
+
+    "$BOUNDED" --limit-mib "$CAP_MIB" \
+        --timeout-seconds "$TIMEOUT_SECONDS" \
+        --report "$_t1_report" \
+        --working-directory "$ROOT" -- "${_t1_cmd[@]}" \
+        > "$WORKDIR/logs/$_t1_name.stdout" \
+        2> "$WORKDIR/logs/$_t1_name.stderr" &
+    _t1_pid=$!
+
+    "$BOUNDED" --limit-mib "$CAP_MIB" \
+        --timeout-seconds "$TIMEOUT_SECONDS" \
+        --report "$_t2_report" \
+        --working-directory "$ROOT" -- "${_t2_cmd[@]}" \
+        > "$WORKDIR/logs/$_t2_name.stdout" \
+        2> "$WORKDIR/logs/$_t2_name.stderr" &
+    _t2_pid=$!
+
+    "$BOUNDED" --limit-mib "$CAP_MIB" \
+        --timeout-seconds "$TIMEOUT_SECONDS" \
+        --report "$_t3_report" \
+        --working-directory "$ROOT" -- "${_t3_cmd[@]}" \
+        > "$WORKDIR/logs/$_t3_name.stdout" \
+        2> "$WORKDIR/logs/$_t3_name.stderr" &
+    _t3_pid=$!
+    ACTIVE_BG_PIDS="$_t1_pid $_t2_pid $_t3_pid"
+
+    _t1_status=0
+    _t2_status=0
+    _t3_status=0
+    wait "$_t1_pid" || _t1_status=$?
+    wait "$_t2_pid" || _t2_status=$?
+    wait "$_t3_pid" || _t3_status=$?
+    ACTIVE_BG_PIDS=
+
+    validate_bounded_result required "$_t1_name" "$_t1_status"
+    TRIPLE1_PEAK=$BOUND_PEAK
+    TRIPLE1_WALL=$BOUND_WALL
+    TRIPLE1_BACKEND=$BOUND_BACKEND
+
+    validate_bounded_result required "$_t2_name" "$_t2_status"
+    TRIPLE2_PEAK=$BOUND_PEAK
+    TRIPLE2_WALL=$BOUND_WALL
+    TRIPLE2_BACKEND=$BOUND_BACKEND
+
+    validate_bounded_result required "$_t3_name" "$_t3_status"
+    TRIPLE3_PEAK=$BOUND_PEAK
+    TRIPLE3_WALL=$BOUND_WALL
+    TRIPLE3_BACKEND=$BOUND_BACKEND
+}
+
+expected_embedded_source_hash() {
+    awk '
+    function emit_input() {
+        path = declaration
+        sub(/^[^"]*"\.\.\/stdlib\//, "", path)
+        sub(/".*$/, "", path)
+        print path
+        declaration = ""
+        collecting = 0
+    }
+    /^\(include-str-lzss([ \t]|$)/ {
+        declaration = $0
+        collecting = 1
+        if ($0 ~ /\)[ \t]*$/) emit_input()
+        next
+    }
+    collecting {
+        declaration = declaration " " $0
+        if ($0 ~ /\)[ \t]*$/) emit_input()
+    }
+    ' "$ROOT/src/compiler_embedded_stdlib_payload.tl" |
+    while IFS= read -r _mod_path; do
+        _src_path="$ROOT/stdlib/$_mod_path"
+        [ -f "$_src_path" ] || return 1
+        _src_size=$(wc -c < "$_src_path" | tr -d ' ')
+        printf '%s\000%s\000' "$_mod_path" "$_src_size"
+        cat "$_src_path"
+    done | git hash-object --stdin
+}
+
+production_embedded_image_ready() {
+    [ -s "$PROD_RAW_IMAGE" ] && [ -s "$PROD_COMPRESSED_IMAGE" ] && [ -s "$PROD_SOURCE_HASH_FILE" ] || return 1
+    _expected_hash=$(expected_embedded_source_hash 2>/dev/null) || return 1
+    _existing_hash=$(tr -d '\r\n' < "$PROD_SOURCE_HASH_FILE")
+    [ -n "$_expected_hash" ] && [ "$_existing_hash" = "$_expected_hash" ] || return 1
+    _inspect_out=$("$COMPILER" inspect "$PROD_RAW_IMAGE" 2>/dev/null) || return 1
+    printf '%s\n' "$_inspect_out" | grep -qF "producer-compiler-identity: $COMPILER_IDENTITY" || return 1
+    printf '%s\n' "$_inspect_out" | grep -qF "surface-trust-producer-identity: $COMPILER_IDENTITY" || return 1
+    printf '%s\n' "$_inspect_out" | grep -qF "host-platform: x86_64-$NL_HOST_OS" || return 1
+    return 0
+}
+
 append_measurement() {
     printf '1\t%s\t%s\t%s\t%s\tpass\tsuccess\t0\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "$NL_HOST_OS" "$1" "$2" "$3" "$CAP_BYTES" \
@@ -457,45 +585,89 @@ fi
 assertion_add memory-cap required pass "all production workloads use $CAP_BYTES bytes"
 assertion_add producer-source-identity required pass "$SOURCE_IDENTITY"
 
-RAW_IMAGE="$ROOT/target/embedded-stdlib-tlci/stdlib.tlci"
-COMPRESSED_IMAGE="$RAW_IMAGE.tlch"
-# Keep the exact production layout: compiler_embedded_stdlib_tlci_payload.tl
-# includes the image, source hash, and surface files from this directory.
-IMAGE_WORKDIR="$ROOT/target/embedded-stdlib-tlci"
-run_bounded required embedded-image-build \
-    "$BASH_EXE" "$SCRIPT" --internal-build-image \
-    "$COMPILER" "$NL_HOST_OS" "$RAW_IMAGE" "$IMAGE_WORKDIR"
-IMAGE_PEAK=$BOUND_PEAK
-IMAGE_WALL=$BOUND_WALL
-IMAGE_BACKEND=$BOUND_BACKEND
-require_output embedded-image-build "$RAW_IMAGE" || exit 1
-require_output embedded-image-build "$COMPRESSED_IMAGE" || exit 1
+PROD_IMAGE_DIR="$ROOT/target/embedded-stdlib-tlci"
+PROD_RAW_IMAGE="$PROD_IMAGE_DIR/stdlib.tlci"
+PROD_COMPRESSED_IMAGE="$PROD_RAW_IMAGE.tlch"
+PROD_SOURCE_HASH_FILE="$PROD_IMAGE_DIR/source-hash.txt"
+OPT1_DIR="$WORKDIR/opt1"
+OPT2_DIR="$WORKDIR/opt2"
+OPT1_BIN="$OPT1_DIR/typelisp$NL_BIN_EXT"
+OPT2_BIN="$OPT2_DIR/typelisp$NL_BIN_EXT"
+
+if production_embedded_image_ready; then
+    # The production embedded image from bootstrap-compiler already matches
+    # this compiler and stdlib tree. Run embedded-image-build into an isolated
+    # workdir concurrently alongside opt1 and opt2 (3-way bounded concurrency,
+    # ~7.15 GiB combined peak, each under its own 8 GiB cap), then assert
+    # byte-for-byte parity with the production image embedded by opt1/opt2.
+    IMAGE_WORKDIR="$WORKDIR/image"
+    RAW_IMAGE="$IMAGE_WORKDIR/stdlib.tlci"
+    COMPRESSED_IMAGE="$RAW_IMAGE.tlch"
+    run_bounded_triple \
+        embedded-image-build \
+        "$BASH_EXE" "$SCRIPT" --internal-build-image \
+        "$COMPILER" "$NL_HOST_OS" "$RAW_IMAGE" "$IMAGE_WORKDIR" \
+        -- \
+        compiler-build-opt1 \
+        "$BASH_EXE" "$SCRIPT" --internal-build-compiler "$COMPILER" 1 "$OPT1_DIR" \
+        -- \
+        compiler-build-opt2 \
+        "$BASH_EXE" "$SCRIPT" --internal-build-compiler "$COMPILER" 2 "$OPT2_DIR"
+    IMAGE_PEAK=$TRIPLE1_PEAK
+    IMAGE_WALL=$TRIPLE1_WALL
+    IMAGE_BACKEND=$TRIPLE1_BACKEND
+    OPT1_PEAK=$TRIPLE2_PEAK
+    OPT1_WALL=$TRIPLE2_WALL
+    OPT1_BACKEND=$TRIPLE2_BACKEND
+    OPT2_PEAK=$TRIPLE3_PEAK
+    OPT2_WALL=$TRIPLE3_WALL
+    OPT2_BACKEND=$TRIPLE3_BACKEND
+    require_output embedded-image-build "$RAW_IMAGE" || exit 1
+    require_output embedded-image-build "$COMPRESSED_IMAGE" || exit 1
+    require_output embedded-image-build "$IMAGE_WORKDIR/source-hash.txt" || exit 1
+    cmp -s "$RAW_IMAGE" "$PROD_RAW_IMAGE" ||
+        fail "concurrent embedded-image-build raw image differs from production image"
+    cmp -s "$COMPRESSED_IMAGE" "$PROD_COMPRESSED_IMAGE" ||
+        fail "concurrent embedded-image-build compressed image differs from production image"
+    cmp -s "$IMAGE_WORKDIR/source-hash.txt" "$PROD_SOURCE_HASH_FILE" ||
+        fail "concurrent embedded-image-build source hash differs from production image"
+else
+    # Keep the exact production layout: compiler_embedded_stdlib_tlci_payload.tl
+    # includes the image, source hash, and surface files from this directory.
+    IMAGE_WORKDIR="$PROD_IMAGE_DIR"
+    RAW_IMAGE="$PROD_RAW_IMAGE"
+    COMPRESSED_IMAGE="$PROD_COMPRESSED_IMAGE"
+    run_bounded required embedded-image-build \
+        "$BASH_EXE" "$SCRIPT" --internal-build-image \
+        "$COMPILER" "$NL_HOST_OS" "$RAW_IMAGE" "$IMAGE_WORKDIR"
+    IMAGE_PEAK=$BOUND_PEAK
+    IMAGE_WALL=$BOUND_WALL
+    IMAGE_BACKEND=$BOUND_BACKEND
+    require_output embedded-image-build "$RAW_IMAGE" || exit 1
+    require_output embedded-image-build "$COMPRESSED_IMAGE" || exit 1
+
+    # Run opt1 and opt2 compiler builds concurrently, each under its own 8 GiB cap
+    # (combined peak ~5.5 GiB, safely inside 16 GiB runners and the gate budget).
+    run_bounded_pair \
+        compiler-build-opt1 \
+        "$BASH_EXE" "$SCRIPT" --internal-build-compiler "$COMPILER" 1 "$OPT1_DIR" \
+        -- \
+        compiler-build-opt2 \
+        "$BASH_EXE" "$SCRIPT" --internal-build-compiler "$COMPILER" 2 "$OPT2_DIR"
+    OPT1_PEAK=$PAIR1_PEAK
+    OPT1_WALL=$PAIR1_WALL
+    OPT1_BACKEND=$PAIR1_BACKEND
+    OPT2_PEAK=$PAIR2_PEAK
+    OPT2_WALL=$PAIR2_WALL
+    OPT2_BACKEND=$PAIR2_BACKEND
+fi
+
 RAW_BYTES=$(file_bytes "$RAW_IMAGE")
 COMPRESSED_BYTES=$(file_bytes "$COMPRESSED_IMAGE")
 append_measurement embedded-image-build shared - \
     "$IMAGE_PEAK" "$IMAGE_WALL" - not-applicable 0 \
     "$RAW_BYTES" "$COMPRESSED_BYTES" 0 0 "$IMAGE_BACKEND"
 assertion_add embedded-image-output required pass "raw=$RAW_BYTES compressed=$COMPRESSED_BYTES"
-
-OPT1_DIR="$WORKDIR/opt1"
-OPT2_DIR="$WORKDIR/opt2"
-OPT1_BIN="$OPT1_DIR/typelisp$NL_BIN_EXT"
-OPT2_BIN="$OPT2_DIR/typelisp$NL_BIN_EXT"
-
-# Run opt1 and opt2 compiler builds concurrently, each under its own 8 GiB cap
-# (combined peak ~5.5 GiB, safely inside 16 GiB runners and the gate budget).
-run_bounded_pair \
-    compiler-build-opt1 \
-    "$BASH_EXE" "$SCRIPT" --internal-build-compiler "$COMPILER" 1 "$OPT1_DIR" \
-    -- \
-    compiler-build-opt2 \
-    "$BASH_EXE" "$SCRIPT" --internal-build-compiler "$COMPILER" 2 "$OPT2_DIR"
-OPT1_PEAK=$PAIR1_PEAK
-OPT1_WALL=$PAIR1_WALL
-OPT1_BACKEND=$PAIR1_BACKEND
-OPT2_PEAK=$PAIR2_PEAK
-OPT2_WALL=$PAIR2_WALL
-OPT2_BACKEND=$PAIR2_BACKEND
 require_output compiler-build-opt1 "$OPT1_BIN" || exit 1
 OPT1_BYTES=$(file_bytes "$OPT1_BIN")
 OPT1_IDENTITY=$(producer_identity "$OPT1_BIN")

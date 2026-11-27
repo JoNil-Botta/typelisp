@@ -1531,7 +1531,7 @@
               (or (> row.layout-size 0) (> row.layout-align 0))
               (in-arena
                 (unsafe
-                  (arena.Arena facts.owner-arena))
+                  (arena.from-raw-handle facts.owner-arena))
                 (let
                   [fnames-copy : (__tl_dyn-array i64)
                     (__tl_make-array i64 fcount)]
@@ -1779,7 +1779,7 @@
         [new-slot : i64
           (in-arena
             (unsafe
-              (arena.Arena facts.owner-arena))
+              (arena.from-raw-handle facts.owner-arena))
             (let
               [multi : TliMultiCatalog
                 (unsafe
@@ -1970,7 +1970,7 @@
     (tli-hydrate-push-decl! decls paths modules decl source-path mod-id prov-id)
     (in-arena
       (unsafe
-        (arena.Arena facts.owner-arena))
+        (arena.from-raw-handle facts.owner-arena))
       (let
         [canonical-id : i64
           (csym.compiler-symbol-module-key-id-by-id mod-id fn-info.name)]
@@ -2111,7 +2111,7 @@
     (tli-hydrate-push-decl! decls paths modules decl source-path mod-id prov-id)
     (in-arena
       (unsafe
-        (arena.Arena facts.owner-arena))
+        (arena.from-raw-handle facts.owner-arena))
       (let
         [canonical-id : i64
           (csym.compiler-symbol-module-key-id-by-id mod-id name-id)]
@@ -2296,7 +2296,7 @@
         prov-id)
       (in-arena
         (unsafe
-          (arena.Arena facts.owner-arena))
+          (arena.from-raw-handle facts.owner-arena))
         (macro_vec.push-ref!
           (&mut facts.macros)
           (TliHydratedMacroEntry
@@ -2457,7 +2457,7 @@
     [prov-id : i64 (tli-hydrate-name (& prov-path))]
     (in-arena
       (unsafe
-        (arena.Arena facts.owner-arena))
+        (arena.from-raw-handle facts.owner-arena))
       (tli_i64_map.insert-ref! (&mut facts.hydrated-modules) mod-id slot-index))
     (tli-hydrate-push-decl!
       decls
@@ -2588,7 +2588,7 @@
     [hydrated : TliHydrateResult
       (in-arena
         (unsafe
-          (arena.Arena tli-arena))
+          (arena.from-raw-handle tli-arena))
         (tli-catalog-hydrate! catalog module-name))]
     (match hydrated
       [(Err failure) (Err failure)]
@@ -2690,7 +2690,7 @@
 (define (tli-multi-catalog-new [root-arena : i64]) : TliMultiCatalog
   (in-arena
     (unsafe
-      (arena.Arena root-arena))
+      (arena.from-raw-handle root-arena))
     (TliMultiCatalog
       root-arena
       (tli_bundle_vec.new)
@@ -2773,7 +2773,7 @@
       [bundle-index : i64 (tli_bundle_vec.len (& multi.bundles))]
       (in-arena
         (unsafe
-          (arena.Arena multi.root-arena))
+          (arena.from-raw-handle multi.root-arena))
         (for [local (iterator.range 0 count)]
           (let
             [mod-name : String
@@ -2837,17 +2837,17 @@
       [records : (__tl_dyn-array tli.TliModuleRecord)
         (in-arena
           (unsafe
-            (arena.Arena bundle-arena))
+            (arena.from-raw-handle bundle-arena))
           (__tl_make-array tli.TliModuleRecord count))]
       [record-decoded : (__tl_dyn-array bool)
         (in-arena
           (unsafe
-            (arena.Arena bundle-arena))
+            (arena.from-raw-handle bundle-arena))
           (__tl_make-array bool count))]
       [owned-bytes-cell : (__tl_dyn-array i64)
         (in-arena
           (unsafe
-            (arena.Arena bundle-arena))
+            (arena.from-raw-handle bundle-arena))
           (__tl_make-array owned))]
       (tli-multi-catalog-attach-bundle-with-storage!
         multi
@@ -2989,7 +2989,7 @@
                 [body-id : i64
                   (in-arena
                     (unsafe
-                      (arena.Arena expr-arena))
+                      (arena.from-raw-handle expr-arena))
                     (tli-hydrate-spmd-expr pools (& body.spmd-expr)))]
                 [inserted : i64
                   (spmd_inline_vec.len (& facts.spmd-inline-entries))]
@@ -3132,7 +3132,7 @@
         (return unit)))
     (in-arena
       (unsafe
-        (arena.Arena multi.root-arena))
+        (arena.from-raw-handle multi.root-arena))
       (tli_svec.push-ref!
         (&mut multi.pending-source-stdlib)
         (string.copy module-name)))))
@@ -3190,7 +3190,7 @@
               [decoded : codec.TliBudgetedModuleResult
                 (in-arena
                   (unsafe
-                    (arena.Arena b-arena))
+                    (arena.from-raw-handle b-arena))
                   (codec.tli-decode-record-at
                     (& (array-ref multi.bundles.slots b-idx).directory)
                     local
@@ -3238,7 +3238,7 @@
               (set! (array-ref multi.bundles.slots b-idx).hydrated-any true)
               (in-arena
                 (unsafe
-                  (arena.Arena multi.root-arena))
+                  (arena.from-raw-handle multi.root-arena))
                 (tli_i64_vec.push-ref! (&mut multi.startup-order) gid))
               (-= depth 1))
             (let

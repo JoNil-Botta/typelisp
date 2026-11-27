@@ -20,7 +20,7 @@
     (=
       (qualified-length
         (unsafe
-          (arena.Arena 0))
+          (arena.from-raw-handle 0))
         "abc")
       3)
     (= (size "ok") 2)

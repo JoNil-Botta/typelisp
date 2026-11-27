@@ -9459,7 +9459,8 @@
                               replacement
                               (unsafe
                                 (in-arena
-                                  (arena.Arena (arena.raw-handle home))
+                                  (arena.from-raw-handle
+                                    (arena.raw-handle home))
                                   (let
                                     [target : i64
                                       (- (array-ref redirects (- index lo)) 1)]
@@ -9599,7 +9600,7 @@
   [home : arena.Arena]) : unit
   (unsafe
     (in-arena
-      (arena.Arena (arena.raw-handle home))
+      (arena.from-raw-handle (arena.raw-handle home))
       (let
         [name : String (compiler-backend-tail-suffix-name v anchor canonical)]
         (compiler-backend-tail-replace!
@@ -9616,7 +9617,7 @@
   [home : arena.Arena]) : unit
   (unsafe
     (in-arena
-      (arena.Arena (arena.raw-handle home))
+      (arena.from-raw-handle (arena.raw-handle home))
       (let
         [text : String
           (let
@@ -10261,7 +10262,7 @@
       [plan : CompilerBackendColdPlan
         (unsafe
           (in-arena
-            (arena.Arena (arena.raw-handle scratch))
+            (arena.from-raw-handle (arena.raw-handle scratch))
             (compiler-backend-cold-plan v)))]
       [_merge : unit
         (when
@@ -10713,7 +10714,7 @@
               (deref data).win64-xdata-count)]
           (unsafe
             (in-arena
-              (arena.Arena (arena.raw-handle home))
+              (arena.from-raw-handle (arena.raw-handle home))
               (backend_string_i64_map.insert-ref!
                 (&mut ids)
                 (string.copy (& info))
@@ -10885,7 +10886,7 @@
         (set! i next)))
     (unsafe
       (in-arena
-        (arena.Arena (arena.raw-handle home))
+        (arena.from-raw-handle (arena.raw-handle home))
         (let
           [total : i64 (+ n delta)]
           [out : (__tl_dyn-array u8)
@@ -11245,7 +11246,7 @@
                   (+= site-count 1)))))))
       (unsafe
         (in-arena
-          (arena.Arena (arena.raw-handle home))
+          (arena.from-raw-handle (arena.raw-handle home))
           (let
             [directive : String "    .p2align 4,,10\n"]
             [width : i64 (string.string-length (& directive))]
@@ -12309,7 +12310,7 @@
     [owned : String
       (unsafe
         (in-arena
-          (arena.Arena (arena.raw-handle home))
+          (arena.from-raw-handle (arena.raw-handle home))
           (string.substring text 0 len)))]
     [old-meta : i64 (array-ref v.lines index).meta]
     [meta : i64
@@ -19230,7 +19231,7 @@
       (set! (array-ref event-ends i) events.len))
     (unsafe
       (in-arena
-        (arena.Arena (arena.raw-handle home))
+        (arena.from-raw-handle (arena.raw-handle home))
         (let
           [out : text_buf.TextBuf (text_buf.empty)]
           [view : (& events (Slice CompilerBackendArgEntryEvent))
@@ -21782,7 +21783,7 @@
     [plan : CompilerBackendOutline
       (unsafe
         (in-arena
-          (arena.Arena (arena.raw-handle scratch))
+          (arena.from-raw-handle (arena.raw-handle scratch))
           (compiler-backend-outline-plan data length coff?)))]
     [result : String
       (if (and (= plan.tails 0) (= plan.helper-pos.len 0))

@@ -1445,12 +1445,12 @@
     "target/lint_unsafe_surface/arena_effect.tl"
     "(import stdlib.arena as pool)
 (define (main) : i64
-  (let [value (unsafe (pool.Arena 0))] value.handle))")
+  (let [value (unsafe (pool.from-raw-handle 0))] (pool.raw-handle value)))")
   (lint-driver-smoke-write-text
     "target/lint_unsafe_surface/arena_effect_again.tl"
     "(import stdlib.arena as other)
 (define (main) : i64
-  (let [value (unsafe (other.Arena 0))] value.handle))")
+  (let [value (unsafe (other.from-raw-handle 0))] (other.raw-handle value)))")
   (lint-driver-smoke-write-text
     "target/lint_unsafe_surface/nominal_dep.tl"
     "(module nominal_dep)

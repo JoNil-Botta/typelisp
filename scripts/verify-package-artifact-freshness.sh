@@ -237,7 +237,7 @@ check_driver_checked_handoff() {
             if ($0 ~ /compiler-driver-state-finish-checked-lower!/) finish_calls += 1
             if ($0 ~ /compiler-lower-checked-dest-pools-(use|clear|abort-uncommitted)!|compiler-driver-state-adopt-pools!/) forbidden += 1
         }
-        owner && $0 ~ /\(arena[.]Arena \(compiler-driver-state-surface-arena state\)\)/ { retained += 1 }
+        owner && $0 ~ /\(arena[.]from-raw-handle \(compiler-driver-state-surface-arena state\)\)/ { retained += 1 }
         END { exit !(routes == 3 && owners == 2 && begin_calls == 3 && finish_calls == 3 && retained == 2 && forbidden == 0) }
     ' "$1"
 }
@@ -247,7 +247,7 @@ sed 's/(compiler-driver-state-finish-checked-lower!$/(unowned-checked-finish/' \
 if check_driver_checked_handoff "$WORK/bypassed-checked-handoff.tl"; then
     fail "checked handoff guard accepted a bypassed finish owner"
 fi
-sed 's/(arena.Arena (compiler-driver-state-surface-arena state))/(arena.current)/' \
+sed 's/(arena.from-raw-handle (compiler-driver-state-surface-arena state))/(arena.current)/' \
     src/compiler_driver_core.tl > "$WORK/temporary-checked-handoff.tl"
 if check_driver_checked_handoff "$WORK/temporary-checked-handoff.tl"; then
     fail "checked handoff guard accepted bookkeeping in a retiring arena"

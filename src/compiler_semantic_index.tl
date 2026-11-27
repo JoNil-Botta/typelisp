@@ -516,7 +516,7 @@
     (+= compiler-semantic-source-index-live-owners 1)
     (in-arena
       (unsafe
-        (arena.Arena owner))
+        (arena.from-raw-handle owner))
       (CompilerSemanticSourceIndex
         owner
         (__tl_make-array CompilerSemanticRecord 0)
@@ -6427,7 +6427,7 @@
     (+= compiler-semantic-source-index-live-owners 1)
     (in-arena
       (unsafe
-        (arena.Arena owner))
+        (arena.from-raw-handle owner))
       (let
         [decls : ast.AstDeclList
           (match (tc.tc-context-program ctx)

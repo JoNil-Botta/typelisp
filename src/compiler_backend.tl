@@ -103,7 +103,7 @@
         (let
           [owner : arena.Arena
             (unsafe
-              (arena.Arena (arena.tl_arena_make_small)))]
+              (arena.from-raw-handle (arena.tl_arena_make_small)))]
           [_set-owner : unit (arena.set! owner)]
           [mark : arena.ArenaMark (arena.mark)]
           (arena.set! home)
@@ -114,9 +114,9 @@
         (let
           [owner : arena.Arena
             (unsafe
-              (arena.Arena (deref data).representation-arena))]
+              (arena.from-raw-handle (deref data).representation-arena))]
           [mark : arena.ArenaMark
-            (arena.ArenaMark (deref data).representation-mark)]
+            (arena.mark-from-raw-handle (deref data).representation-mark)]
           ;; Clear the validity bit before invalidating the old maps. The stale
           ;; carrier is overwritten immediately after the replacement build and
           ;; is never observed while `has-representations` is false.
@@ -151,7 +151,7 @@
     [owner : arena.Arena
       (if reuse?
         (unsafe
-          (arena.Arena data.representation-arena))
+          (arena.from-raw-handle data.representation-arena))
         (compiler-backend-state-prepare-representation-arena! state))]
     [representation : compiler_ir_types.CompilerIrRepresentationIndex
       (in-arena
@@ -686,7 +686,7 @@
           [home : arena.Arena (arena.current)]
           [owner : arena.Arena
             (unsafe
-              (arena.Arena (arena.tl_arena_make_small)))]
+              (arena.from-raw-handle (arena.tl_arena_make_small)))]
           [_set-owner : unit (arena.set! owner)]
           [mark : arena.ArenaMark (arena.mark)]
           (arena.set! home)
@@ -694,7 +694,7 @@
           (set! (deref data).copy-thunk-mark (arena.mark-raw-handle mark))
           owner)
         (unsafe
-          (arena.Arena (deref data).copy-thunk-arena))))))
+          (arena.from-raw-handle (deref data).copy-thunk-arena))))))
 
 ;; A fresh emission starts with no thunks: reclaim the previous emission's
 ;; map, keys and bodies with the program's emission, then drop every handle
@@ -711,10 +711,11 @@
           [home : arena.Arena (arena.current)]
           [owner : arena.Arena
             (unsafe
-              (arena.Arena (deref data).copy-thunk-arena))]
+              (arena.from-raw-handle (deref data).copy-thunk-arena))]
           (unsafe
             (arena.set! owner)
-            (arena.rewind (arena.ArenaMark (deref data).copy-thunk-mark))
+            (arena.rewind
+              (arena.mark-from-raw-handle (deref data).copy-thunk-mark))
             (arena.set! home)))
         unit)
       (in-arena
@@ -17562,10 +17563,11 @@
             [home : arena.Arena (arena.current)]
             [owner : arena.Arena
               (unsafe
-                (arena.Arena (deref data).sweep-addr-arena))]
+                (arena.from-raw-handle (deref data).sweep-addr-arena))]
             (unsafe
               (arena.set! owner)
-              (arena.rewind (arena.ArenaMark (deref data).sweep-addr-mark))
+              (arena.rewind
+                (arena.mark-from-raw-handle (deref data).sweep-addr-mark))
               (arena.set! home)))
           unit)
         (set! (deref data).sweep-addr-rbp (deref data).sweep-scratch-empty)
@@ -18129,7 +18131,7 @@
           [home : arena.Arena (arena.current)]
           [owner : arena.Arena
             (unsafe
-              (arena.Arena (arena.tl_arena_make_small)))]
+              (arena.from-raw-handle (arena.tl_arena_make_small)))]
           [_set-owner : unit (arena.set! owner)]
           [mark : arena.ArenaMark (arena.mark)]
           (arena.set! home)
@@ -18137,7 +18139,7 @@
           (set! (deref data).sweep-addr-mark (arena.mark-raw-handle mark))
           owner)
         (unsafe
-          (arena.Arena (deref data).sweep-addr-arena))))))
+          (arena.from-raw-handle (deref data).sweep-addr-arena))))))
 
 (define (compiler-backend-sweep-coverage-ensure!
   [backend-state : be_state.CompilerBackendState]
@@ -25735,7 +25737,7 @@
     [result : be_state.ResultCompilerBackend
       (with-escape
         (unsafe
-          (arena.Arena scratch))
+          (arena.from-raw-handle scratch))
         (let
           [function-state : be_state.CompilerBackendFunctionState
             (be_state.compiler-backend-function-state-new)]
@@ -27352,7 +27354,7 @@ tl_shared_object_init:
           ;; result from naming a caller region; the state it returns lives in
           ;; that arena, whose owner outlives every use of it
           (in-arena
-            (arena.Arena (arena.raw-handle home-arena))
+            (arena.from-raw-handle (arena.raw-handle home-arena))
             (let
               [_probes : unit
                 (be_peephole.compiler-backend-expand-stack-probes!
@@ -27369,7 +27371,7 @@ tl_shared_object_init:
                   [(be_state.compiler-backend-state-emission-target-policy
                       backend-state).seh-unwind
                     (in-arena
-                      (arena.Arena (arena.raw-handle scratch-arena))
+                      (arena.from-raw-handle (arena.raw-handle scratch-arena))
                       (be_peephole.compiler-backend-win64-lower-unwind
                         stream
                         (if align?
@@ -27378,21 +27380,22 @@ tl_shared_object_init:
                               records
                               merge?
                               merge?)
-                            (arena.Arena (arena.raw-handle scratch-arena)))
+                            (arena.from-raw-handle
+                              (arena.raw-handle scratch-arena)))
                           (be_peephole.compiler-backend-peephole-records-render
                             records
                             merge?
                             merge?))
-                        (arena.Arena (arena.raw-handle home-arena))))]
+                        (arena.from-raw-handle (arena.raw-handle home-arena))))]
                   [align?
                     (in-arena
-                      (arena.Arena (arena.raw-handle scratch-arena))
+                      (arena.from-raw-handle (arena.raw-handle scratch-arena))
                       (be_peephole.compiler-backend-loop-align-text
                         (be_peephole.compiler-backend-peephole-records-render
                           records
                           merge?
                           merge?)
-                        (arena.Arena (arena.raw-handle home-arena))))]
+                        (arena.from-raw-handle (arena.raw-handle home-arena))))]
                   [else
                     (be_peephole.compiler-backend-peephole-records-render
                       records
@@ -27421,7 +27424,9 @@ tl_shared_object_init:
     ;; home-arena live; a bare arena parameter's allocation cannot leave the call.
     [batch : text_buf.TextBuf
       (unsafe
-        (in-arena (arena.Arena (arena.raw-handle raw-arena)) (text_buf.empty)))]
+        (in-arena
+          (arena.from-raw-handle (arena.raw-handle raw-arena))
+          (text_buf.empty)))]
     [data : (MutPtr be_state.CompilerBackendStreamStateData)
       (be_state.compiler-backend-stream-state-ptr stream)]
     (unsafe
@@ -27431,11 +27436,13 @@ tl_shared_object_init:
       (set! (deref data).assembly-peephole-mark peephole-mark)
       (set!
         (deref data).assembly-out
-        (in-arena (arena.Arena (arena.raw-handle home-arena)) (text_buf.empty)))
+        (in-arena
+          (arena.from-raw-handle (arena.raw-handle home-arena))
+          (text_buf.empty)))
       (set!
         (deref data).win64-xdata-ids
         (in-arena
-          (arena.Arena (arena.raw-handle home-arena))
+          (arena.from-raw-handle (arena.raw-handle home-arena))
           (backend_string_i64_map.with-capacity 16)))
       (set! (deref data).win64-xdata-count 0)
       (set! (deref data).win64-unwind-end-count 0)
@@ -27591,13 +27598,13 @@ tl_shared_object_init:
       (set!
         (deref data).assembly-raw-arena
         (unsafe
-          (arena.Arena 0)))
-      (set! (deref data).assembly-raw-mark (arena.ArenaMark 0))
+          (arena.from-raw-handle 0)))
+      (set! (deref data).assembly-raw-mark (arena.mark-from-raw-handle 0))
       (set!
         (deref data).assembly-peephole-arena
         (unsafe
-          (arena.Arena 0)))
-      (set! (deref data).assembly-peephole-mark (arena.ArenaMark 0))
+          (arena.from-raw-handle 0)))
+      (set! (deref data).assembly-peephole-mark (arena.mark-from-raw-handle 0))
       (set! (deref data).assembly-batch (text_buf.empty))
       (set! (deref data).assembly-batch-count 0)
       (set! (deref data).assembly-raw-ready false))
@@ -27613,17 +27620,17 @@ tl_shared_object_init:
       (set!
         (deref data).assembly-raw-arena
         (unsafe
-          (arena.Arena 0)))
-      (set! (deref data).assembly-raw-mark (arena.ArenaMark 0))
+          (arena.from-raw-handle 0)))
+      (set! (deref data).assembly-raw-mark (arena.mark-from-raw-handle 0))
       (set!
         (deref data).assembly-peephole-arena
         (unsafe
-          (arena.Arena 0)))
-      (set! (deref data).assembly-peephole-mark (arena.ArenaMark 0))
+          (arena.from-raw-handle 0)))
+      (set! (deref data).assembly-peephole-mark (arena.mark-from-raw-handle 0))
       (set!
         (deref data).assembly-home-arena
         (unsafe
-          (arena.Arena 0)))
+          (arena.from-raw-handle 0)))
       (set! (deref data).assembly-out (text_buf.empty))
       (set! (deref data).assembly-sweep-cursor 0)
       (set! (deref data).assembly-batch (text_buf.empty))

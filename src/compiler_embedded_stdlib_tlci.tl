@@ -163,7 +163,7 @@
 (define (compiler-embedded-stdlib-tlci-session-own-text [text : String]) : String
   (in-arena
     (unsafe
-      (arena.Arena (compiler-embedded-stdlib-tlci-session-arena)))
+      (arena.from-raw-handle (compiler-embedded-stdlib-tlci-session-arena)))
     (string.substring (& text) 0 (string.string-length text))))
 
 ;; TLCH v2 frames share one authenticated index and canonical Huffman model.
@@ -268,7 +268,7 @@
         [owner : i64 (arena.tl_arena_make_small)]
         (in-arena
           (unsafe
-            (arena.Arena owner))
+            (arena.from-raw-handle owner))
           (match (codec.compiler-embedded-stdlib-tlci-codec-model
             (& payload.embedded-stdlib-tlci-bytes))
             [(Ok model)
@@ -307,7 +307,7 @@
       compiler-embedded-stdlib-tlci-group-cache-owner)
     (in-arena
       (unsafe
-        (arena.Arena compiler-embedded-stdlib-tlci-group-cache-owner))
+        (arena.from-raw-handle compiler-embedded-stdlib-tlci-group-cache-owner))
       (set!
         compiler-embedded-stdlib-tlci-group-cache
         (__tl_make-array CompilerEmbeddedStdlibTlciCachedGroup catalog.groups))))
@@ -331,7 +331,8 @@
       covered?
       (in-arena
         (unsafe
-          (arena.Arena compiler-embedded-stdlib-tlci-group-cache-owner))
+          (arena.from-raw-handle
+            compiler-embedded-stdlib-tlci-group-cache-owner))
         (let
           [bytes : (__tl_dyn-array u8)
             (match (frames.compiler-embedded-stdlib-tlci-frames-decode-group-prefix
@@ -505,7 +506,7 @@
       (compiler-embedded-stdlib-tlci-decode-frame 0 false)
       (in-arena
         (unsafe
-          (arena.Arena owner))
+          (arena.from-raw-handle owner))
         (let
           ;; Only decoded bytes belong to the retained surface owner;
           ;; shared decode tables stay in their process arena.
@@ -5959,7 +5960,8 @@
         (set! capacity (* capacity 2)))
       (in-arena
         (unsafe
-          (arena.Arena (compiler-comptime-host-batch-cache-arena-ensure!)))
+          (arena.from-raw-handle
+            (compiler-comptime-host-batch-cache-arena-ensure!)))
         (let
           [next : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
           (for [index (iterator.range 0 used)]
@@ -6064,7 +6066,7 @@
 (define (compiler-comptime-host-batch-cache-rehash! [capacity : i64]) : unit
   (in-arena
     (unsafe
-      (arena.Arena (compiler-comptime-host-batch-cache-arena-ensure!)))
+      (arena.from-raw-handle (compiler-comptime-host-batch-cache-arena-ensure!)))
     (set!
       compiler-comptime-host-batch-cache-slots
       (__tl_make-array i64 capacity)))

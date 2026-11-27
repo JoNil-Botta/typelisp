@@ -1684,13 +1684,15 @@
       (CompilerBackendStreamStateData
         false
         (unsafe
-          (arena.Arena 0))
-        (arena.ArenaMark 0)
+          (arena.from-raw-handle 0))
         (unsafe
-          (arena.Arena 0))
-        (arena.ArenaMark 0)
+          (arena.mark-from-raw-handle 0))
         (unsafe
-          (arena.Arena 0))
+          (arena.from-raw-handle 0))
+        (unsafe
+          (arena.mark-from-raw-handle 0))
+        (unsafe
+          (arena.from-raw-handle 0))
         (text_buf.empty)
         0
         (text_buf.empty)
@@ -1755,7 +1757,8 @@
         (let
           [owner : arena.Arena
             (unsafe
-              (arena.Arena (compiler-backend-state-owner-arena backend-state)))]
+              (arena.from-raw-handle
+                (compiler-backend-state-owner-arena backend-state)))]
           [stream-state : CompilerBackendStreamState
             (in-arena owner (compiler-backend-stream-state-new))]
           (set! (deref data).stream-state-address stream-state.address)
@@ -1803,7 +1806,7 @@
           [current : arena.Arena (arena.current)]
           (set! (deref data).emission-arena (arena.raw-handle current))
           current)
-        (arena.Arena stored)))))
+        (arena.from-raw-handle stored)))))
 
 (define (compiler-backend-state-clear-emission-arena!
   [state : CompilerBackendState]) : unit
@@ -1820,7 +1823,7 @@
     (if (= stored 0)
       (arena.current)
       (unsafe
-        (arena.Arena stored)))))
+        (arena.from-raw-handle stored)))))
 
 ;; Whether scalar functions get full register allocation. Register allocation
 ;; makes the EMITTED binary faster but its planning + register-aware emission
@@ -2333,7 +2336,7 @@
         (compiler-backend-state-ptr state)]
       [owner : arena.Arena
         (unsafe
-          (arena.Arena (deref data).owner-arena))]
+          (arena.from-raw-handle (deref data).owner-arena))]
       [keys : (__tl_dyn-array i64)
         (in-arena owner (__tl_make-array i64 capacity))]
       [values : (__tl_dyn-array String)
@@ -2358,7 +2361,7 @@
     [old-capacity : i64 (array-length old-keys)]
     [owner : arena.Arena
       (unsafe
-        (arena.Arena data.owner-arena))]
+        (arena.from-raw-handle data.owner-arena))]
     [keys : (__tl_dyn-array i64)
       (in-arena owner (__tl_make-array i64 new-capacity))]
     [values : (__tl_dyn-array String)
@@ -3586,7 +3589,8 @@
       (let
         [owner : arena.Arena
           (unsafe
-            (arena.Arena (compiler-backend-state-owner-arena backend-state)))]
+            (arena.from-raw-handle
+              (compiler-backend-state-owner-arena backend-state)))]
         [function-state : CompilerBackendFunctionState
           (in-arena owner (compiler-backend-function-state-new))]
         (compiler-backend-state-set-function-state-address!
@@ -5126,11 +5130,11 @@
         (let
           [owner : arena.Arena
             (unsafe
-              (arena.Arena (arena.tl_arena_make_small)))]
+              (arena.from-raw-handle (arena.tl_arena_make_small)))]
           (set! (deref data).lazy-table-arena (arena.raw-handle owner))
           owner)
         (unsafe
-          (arena.Arena (deref data).lazy-table-arena))))))
+          (arena.from-raw-handle (deref data).lazy-table-arena))))))
 
 (define (compiler-backend-symbol-char
   [text : (& text str)]

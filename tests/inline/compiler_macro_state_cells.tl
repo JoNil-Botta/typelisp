@@ -7,7 +7,7 @@
 (define (new-state [owner : i64]) : tc.TcMacroState
   (in-arena
     (unsafe
-      (arena.Arena owner))
+      (arena.from-raw-handle owner))
     (tc.tc-job-state-macro-state (tc.tc-job-state-new))))
 
 (define (initializers) : (Array (-> tc.TcMacroState i64) 11)
@@ -98,11 +98,11 @@
     [b : tc.TcMacroState (new-state owner-b)]
     (in-arena
       (unsafe
-        (arena.Arena scratch))
+        (arena.from-raw-handle scratch))
       (initialize-and-probe a b))
     (unsafe
       ;; lint-allow: raw-arena-op -- exercise retirement of a different owner.
-      (arena.destroy (arena.Arena scratch)))
+      (arena.destroy (arena.from-raw-handle scratch)))
     ;; Typed writes after scratch retirement still reach the owner cells.
     (unsafe
       (ptr-write!
@@ -114,7 +114,7 @@
     (tc.macro-alias-derived-cache-reset-for-state! a)
     (unsafe
       ;; lint-allow: raw-arena-op -- no A handles are used after this point.
-      (arena.destroy (arena.Arena owner-a)))
+      (arena.destroy (arena.from-raw-handle owner-a)))
     (let
       [data : tc.TcMacroResultIdentityStateData
         (tc.tc-macro-result-identity-state-data b)]
@@ -131,4 +131,4 @@
       "B remains live")
     (unsafe
       ;; lint-allow: raw-arena-op -- final retirement after all B assertions.
-      (arena.destroy (arena.Arena owner-b)))))
+      (arena.destroy (arena.from-raw-handle owner-b)))))

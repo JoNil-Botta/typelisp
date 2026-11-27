@@ -1,0 +1,2 @@
+# Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+arena_raw_interop_requires_unsafe|check-fail|tests/safety/arena_raw_interop_requires_unsafe.tl|-|from-raw-handle requires unsafe context

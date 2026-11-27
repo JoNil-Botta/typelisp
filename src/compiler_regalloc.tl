@@ -28421,15 +28421,19 @@
                   count))]))
         count)]))
 
+(define (compiler-reg-color-var-root
+  [roots : (& (__tl_dyn-array i64))]
+  [var : i64]) : i64
+  (if (and (>= var 0) (< var (array-length roots)))
+    (array-ref roots var)
+    -1))
+
 (define (compiler-reg-color-value-root
-  [roots : (& roots (__tl_dyn-array i64))]
+  [roots : (& (__tl_dyn-array i64))]
   [value : (& ir.CompilerIrValue)]) : i64
   (match value
-    [(Var var)
-      (if (and (>= var 0) (< var (array-length roots)))
-        (array-ref roots var)
-        (- 0 1))]
-    [_ (- 0 1)]))
+    [(Var var) (compiler-reg-color-var-root roots var)]
+    [_ -1]))
 
 (define (compiler-reg-color-merge-root [acc : i64] [root : i64]) : i64
   (cond
@@ -28962,17 +28966,26 @@
          (TotalEnumSwitch _ _ _ _ _))
       unit]
     [_
-      (set! uses.len 0)
-      (ir.compiler-ir-instr-uses-into! instr uses)
-      (for [use (& uses)]
-        (when
-          (and
-            (= use.kind (ir.CompilerIrUseKind.VarUse))
-            (>= use.id 0)
-            (< use.id (array-length roots)))
-          (compiler-reg-color-invalidate-root!
-            (&mut invalid)
-            (array-ref roots use.id))))]))
+      (let
+        [short : ir.CompilerIrShortVarUses
+          (ir.compiler-ir-instr-short-var-uses instr)]
+        (if short.fits?
+          (begin
+            (compiler-reg-color-invalidate-root!
+              (&mut invalid)
+              (compiler-reg-color-var-root roots short.first))
+            (compiler-reg-color-invalidate-root!
+              (&mut invalid)
+              (compiler-reg-color-var-root roots short.second)))
+          (begin
+            (set! uses.len 0)
+            (ir.compiler-ir-instr-uses-into! instr uses)
+            (for [use (& uses)]
+              (when
+                (= use.kind (ir.CompilerIrUseKind.VarUse))
+                (compiler-reg-color-invalidate-root!
+                  (&mut invalid)
+                  (compiler-reg-color-var-root roots use.id)))))))]))
 
 (define (compiler-reg-color-invalidate-seq!
   [instrs : (& ir.CompilerIrInstrSeq)]
@@ -31452,7 +31465,7 @@
 (define (compiler-reg-remap-value
   [remap : (& (__tl_dyn-array i64))]
   [value : ir.CompilerIrValue]) : ir.CompilerIrValue
-  (match (compiler-reg-global-shared-view value)
+  (match (& value)
     [(Var id) (Var (compiler-reg-remap-id remap id))]
     [_ value]))
 
@@ -31475,13 +31488,40 @@
   [instr : ir.CompilerIrInstr]
   [rw : (&mut ir.CompilerIrInstrRewrite)]) : ir.CompilerIrInstr
   (match instr
-    ;; The ownership edge has served its purpose once optimization is
-    ;; complete. Erase it at the SSA-to-home boundary.
-    [(StoreOwned ptr value ty)
+    ;; Common scalar shapes can rewrite their inline operands directly.
+    [(Mov dst src ty)
+      (Mov
+        (compiler-reg-remap-id remap dst)
+        (compiler-reg-remap-value remap src)
+        ty)]
+    [(Gep dst base offset ty)
+      (Gep
+        (compiler-reg-remap-id remap dst)
+        (compiler-reg-remap-value remap base)
+        (compiler-reg-remap-value remap offset)
+        ty)]
+    [(Load dst src ty)
+      (Load
+        (compiler-reg-remap-id remap dst)
+        (compiler-reg-remap-value remap src)
+        ty)]
+    [(or (StorePtr ptr value ty)
+         ;; The ownership edge has served its purpose at the SSA-to-home boundary.
+         (StoreOwned ptr value ty))
       (StorePtr
         (compiler-reg-remap-value remap ptr)
         (compiler-reg-remap-value remap value)
         ty)]
+    [(BinOp dst op lhs rhs ty)
+      (BinOp
+        (compiler-reg-remap-id remap dst)
+        op
+        (compiler-reg-remap-value remap lhs)
+        (compiler-reg-remap-value remap rhs)
+        ty)]
+    [(Alloc dst ty) (Alloc (compiler-reg-remap-id remap dst) ty)]
+    [(Branch condition true-label false-label)
+      (Branch (compiler-reg-remap-value remap condition) true-label false-label)]
     ;; AddrOf's storage var is remapped with its dst.
     [(AddrOf dst src storage-words)
       (AddrOf
@@ -31511,10 +31551,11 @@
             (ir.compiler-ir-instr-rewrite-use-at rw index)]
           (when
             (= use.kind (ir.CompilerIrUseKind.VarUse))
-            (ir.compiler-ir-instr-rewrite-use!
-              rw
-              index
-              (Var (compiler-reg-remap-id remap use.id))))))
+            (let
+              [mapped : i64 (compiler-reg-remap-id remap use.id)]
+              (when
+                (!= mapped use.id)
+                (ir.compiler-ir-instr-rewrite-use! rw index (Var mapped)))))))
       (ir.compiler-ir-instr-rewrite-finish rw instr)]))
 
 ;; A 1:1 var remap writes a fresh dense instruction sequence. An unchanged

@@ -811,7 +811,6 @@ WINDOWS_MANIFEST_LINK_HELPER_MS=0
 WINDOWS_MANIFEST_LINK_PREP_MS=0
 WINDOWS_MANIFEST_LINK_RESULT_PROCESS_MS=0
 WINDOWS_MANIFEST_LINK_ATTRIBUTION_MS=0
-WINDOWS_MANIFEST_QUEUE_PREP_MS=0
 WINDOWS_MANIFEST_RUN_MS=0
 WINDOWS_MANIFEST_RESULT_PROCESS_MS=0
 WINDOWS_MANIFEST_ASSERT_MS=0
@@ -919,8 +918,9 @@ if [ "$HOST_OS" = windows ] && [ "$SELF_TEST_WITHOUT_COMPILER" -eq 0 ]; then
 fi
 
 # Validate and register Windows COFF plan files for one or more passing batch
-# chunks in a single awk invocation (avoiding per-chunk awk forks and per-case
-# NTFS marker files). Each input line in PLAN_LIST is:
+# chunks in a single awk invocation via scripts/validate-windows-coff-plan.awk
+# (avoiding per-chunk awk forks and per-case NTFS marker files). Each input line
+# in PLAN_LIST is:
 #   batch_list_path|plan_path|chunk_label
 integration_windows_register_plans_batch() {
     _win_plans_list=$1
@@ -931,159 +931,15 @@ integration_windows_register_plans_batch() {
     _win_artifacts_file=${WINDOWS_COFF_ARTIFACTS:-$WORKDIR/windows-coff.artifacts}
     _win_reasons_file=${WINDOWS_COFF_FALLBACK_REASONS:-$WORKDIR/windows-coff-fallback-reasons.txt}
     _win_counts_file="$WORKDIR/windows-coff-register.counts"
-    if ! awk -F '|' \
+    if ! awk -f "$ROOT/scripts/validate-windows-coff-plan.awk" \
+        -v multi=1 \
         -v root="$ROOT" \
         -v expected_prefix="target/integration-verify/$HOST_OS$INTEGRATION_SHARD_SUFFIX/" \
         -v forced_list="$_win_forced_list" \
         -v artifacts_out="$_win_artifacts_file" \
         -v reasons_out="$_win_reasons_file" \
-        -v counts_out="$_win_counts_file" '
-        function fail(msg) {
-            print msg > "/dev/stderr"
-            failed = 1
-            exit 1
-        }
-        function file_nonempty(p,    rc, tmp) {
-            rc = (getline tmp < p)
-            close(p)
-            return rc > 0
-        }
-        function file_exists(p,    rc, tmp) {
-            rc = (getline tmp < p)
-            close(p)
-            return rc >= 0
-        }
-        BEGIN {
-            nf = split(forced_list, farr, /[[:space:]]+/)
-            for (i = 1; i <= nf; i++) {
-                if (farr[i] != "") forced_allowed[farr[i]] = 1
-            }
-            if (file_exists(artifacts_out)) {
-                while ((getline aline < artifacts_out) > 0) {
-                    if (aline == "") continue
-                    split(aline, af, "|")
-                    if (af[1] != "") seen_case[af[1]] = 1
-                }
-                close(artifacts_out)
-            }
-            plan_rows = 0
-            direct_objects = 0
-            fallback_assemblies = 0
-            forced_assemblies = 0
-        }
-        {
-            batch_file = $1
-            plan_file = $2
-            label = $3
-            if (batch_file == "" || plan_file == "") next
-
-            delete src_in; delete obj_in; delete asm_in; delete frc_in
-            in_cnt = 0
-            bline_no = 0
-            while ((brc = (getline bline < batch_file)) > 0) {
-                bline_no++
-                sub(/\r$/, "", bline)
-                bn = split(bline, bf, "|")
-                if (bn != 3 && bn != 4)
-                    fail("FAIL: invalid Windows COFF result plan for batch " label ": batch input line " bline_no " must have 3 or 4 fields")
-                if (bf[1] == "" || bf[2] == "" || bf[3] == "" || bf[2] == bf[3])
-                    fail("FAIL: invalid Windows COFF result plan for batch " label ": invalid batch input line " bline_no)
-                if (bn == 4 && bf[4] != "force-assembly")
-                    fail("FAIL: invalid Windows COFF result plan for batch " label ": invalid 4th field on line " bline_no)
-                in_cnt++
-                src_in[in_cnt] = bf[1]
-                obj_in[in_cnt] = bf[2]
-                asm_in[in_cnt] = bf[3]
-                frc_in[in_cnt] = (bn == 4 ? 1 : 0)
-            }
-            close(batch_file)
-            if (brc < 0 || in_cnt == 0)
-                fail("FAIL: invalid Windows COFF result plan for batch " label ": empty or unreadable batch input")
-
-            pl_cnt = 0
-            pline_no = 0
-            while ((prc = (getline pline < plan_file)) > 0) {
-                pline_no++
-                sub(/\r$/, "", pline)
-                pl_cnt++
-                if (pl_cnt > in_cnt)
-                    fail("FAIL: invalid Windows COFF result plan for batch " label ": plan has more rows than batch input")
-                pn = split(pline, pf, "|")
-                if (pn != 5)
-                    fail("FAIL: invalid Windows COFF result plan for batch " label ": plan line " pline_no " must have 5 fields")
-                if (pf[5] != "stdlib-archive" && pf[5] != "none")
-                    fail("FAIL: invalid Windows COFF result plan for batch " label ": invalid archive requirement on line " pline_no)
-                if (pf[1] != src_in[pl_cnt])
-                    fail("FAIL: invalid Windows COFF result plan for batch " label ": source mismatch on line " pline_no)
-
-                psrc = pf[1]
-                pkind = pf[2]
-                psel = pf[3]
-                preason = pf[4]
-                parchive = pf[5]
-                pforced = frc_in[pl_cnt]
-
-                if (pkind == "coff-object") {
-                    if (pforced || psel != obj_in[pl_cnt] || preason != "none")
-                        fail("FAIL: invalid Windows COFF result plan for batch " label ": invalid coff-object row " pline_no)
-                } else if (pkind == "assembly") {
-                    if (psel != asm_in[pl_cnt] || preason == "" || preason == "none")
-                        fail("FAIL: invalid Windows COFF result plan for batch " label ": invalid assembly row " pline_no)
-                    if ((pforced && preason != "forced-assembly") || (!pforced && preason == "forced-assembly"))
-                        fail("FAIL: invalid Windows COFF result plan for batch " label ": forced-assembly mismatch on row " pline_no)
-                } else {
-                    fail("FAIL: invalid Windows COFF result plan for batch " label ": invalid artifact kind on line " pline_no)
-                }
-
-                # Extract validated case name from expected_prefix<case>/<case>.tl
-                if (substr(psrc, 1, length(expected_prefix)) != expected_prefix)
-                    fail("FAIL: Windows COFF plan source is outside its validated case path: " psrc)
-                tail = substr(psrc, length(expected_prefix) + 1)
-                slash = index(tail, "/")
-                if (slash <= 1)
-                    fail("FAIL: Windows COFF plan source is outside its validated case path: " psrc)
-                cname = substr(tail, 1, slash - 1)
-                if (psrc != expected_prefix cname "/" cname ".tl")
-                    fail("FAIL: Windows COFF plan source is outside its validated case path: " psrc)
-                if (seen_case[cname]++)
-                    fail("FAIL: Windows COFF plan selected " cname " more than once")
-
-                sel_abs = root "/" psel
-                obj_abs = root "/" obj_in[pl_cnt]
-                asm_abs = root "/" asm_in[pl_cnt]
-                if (pkind == "coff-object") {
-                    if (!file_nonempty(sel_abs))
-                        fail("FAIL: Windows COFF plan omitted object for " cname ": " psel)
-                    if (file_exists(asm_abs))
-                        fail("FAIL: Windows COFF object row also wrote assembly for " cname)
-                    direct_objects++
-                } else {
-                    if (!file_nonempty(sel_abs))
-                        fail("FAIL: Windows COFF plan omitted assembly for " cname ": " psel)
-                    if (file_exists(obj_abs))
-                        fail("FAIL: Windows COFF assembly row also wrote an object for " cname)
-                    if (pforced) {
-                        if (!(cname in forced_allowed))
-                            fail("FAIL: Windows COFF plan forced unclassified assembly for " cname)
-                        forced_assemblies++
-                    } else {
-                        fallback_assemblies++
-                        print preason >> reasons_out
-                    }
-                }
-                print cname "|" pkind "|" sel_abs "|" preason "|" parchive >> artifacts_out
-                plan_rows++
-            }
-            close(plan_file)
-            if (prc < 0 || pl_cnt != in_cnt)
-                fail("FAIL: invalid Windows COFF result plan for batch " label ": row count mismatch")
-        }
-        END {
-            if (failed) exit 1
-            print plan_rows "|" direct_objects "|" fallback_assemblies "|" forced_assemblies > counts_out
-            close(counts_out)
-        }
-    ' "$_win_plans_list"; then
+        -v counts_out="$_win_counts_file" \
+        "$_win_plans_list"; then
         return 1
     fi
 
@@ -2345,15 +2201,16 @@ integration_build_dedup_plan() {
         < "$_dedup_counts" || return 1
 }
 
-# Emit one chunk list per group from the staged cases in a single awk pass
-# (deduplicating identical (group, source, deps, forced) builds and hoisting
-# heavy chunks first via weight-bounded LPT scheduling).
+# Emit one chunk list per group from the unique build manifest in a single awk
+# pass, hoisting heavy chunks first via weight-bounded LPT scheduling.
 integration_batch_queue() {
     for _group in $INTEGRATION_BATCH_GROUPS; do
         : > "$WORKDIR/batch-$_group.list" || return 1
     done
     _pool_queue="$WORKDIR/batch-pool.queue"
     : > "$_pool_queue" || return 1
+    _queue_manifest=${MANIFEST_UNIQUE:-$NORMALIZED_MANIFEST}
+    [ -f "$_queue_manifest" ] || _queue_manifest=$NORMALIZED_MANIFEST
     _queue_forced=
     if [ "$HOST_OS" = windows ]; then
         _queue_forced=$(windows_manifest_assembly_assertion_cases | tr '\n' ' ')
@@ -2465,12 +2322,11 @@ integration_batch_queue() {
         }
         BEGIN {
             ng = split(groups_str, group_order, /[[:space:]]+/)
-            for (i = 1; i <= ng; i++) {
-                if (group_order[i] != "") group_allowed[group_order[i]] = 1
-            }
-            nf = split(forced_list, farr, /[[:space:]]+/)
-            for (i = 1; i <= nf; i++) {
-                if (farr[i] != "") forced_set[farr[i]] = 1
+            if (host == "windows") {
+                nf = split(forced_list, farr, /[[:space:]]+/)
+                for (i = 1; i <= nf; i++) {
+                    if (farr[i] != "") forced_set[farr[i]] = 1
+                }
             }
         }
         {
@@ -2478,7 +2334,6 @@ integration_batch_queue() {
             if ($0 == "" || $0 ~ /^#/) next
             name = $1
             source = $2
-            deps = $6
             extra = (NF >= 7 ? $7 : "")
             rest = extra
             opt = ""
@@ -2494,15 +2349,10 @@ integration_batch_queue() {
             }
             grp = (rest == "stage-stdlib" || rest ~ /^stage-stdlib\+expected-stderr:/) ? "stage-stdlib" : "embedded"
             if (opt != "") grp = grp "-opt" opt
-            deps_norm = (deps == "" || deps == "-") ? "" : deps
-            forced = (host == "windows" && (name in forced_set)) ? 1 : 0
-            bkey = grp SUBSEP source SUBSEP deps_norm SUBSEP forced
-            if (bkey in seen_build) next
-            seen_build[bkey] = name
 
             rel = work_root "/" name "/" name
             if (host == "windows") {
-                entry = rel ".tl|" rel ".obj|" rel ".s" (forced ? "|force-assembly" : "")
+                entry = rel ".tl|" rel ".obj|" rel ".s" ((name in forced_set) ? "|force-assembly" : "")
             } else {
                 entry = rel ".tl|" rel ".s"
             }
@@ -2565,7 +2415,7 @@ integration_batch_queue() {
                 if (close(queue) != 0) exit 1
             }
         }
-    ' "$NORMALIZED_MANIFEST" || return 1
+    ' "$_queue_manifest" || return 1
 }
 
 
@@ -4567,7 +4417,6 @@ windows_run_manifest_queue() {
         return 1
     fi
     WINDOWS_MANIFEST_RESULT_PROCESS_MS=$WINDOWS_SUMMARY_RESULT_PROCESS_MS
-    ci_timing_record_elapsed windows-manifest queue-prepare "$WINDOWS_MANIFEST_QUEUE_PREP_MS" 0
     ci_timing_record_elapsed windows-manifest runner "$WINDOWS_MANIFEST_RUN_MS" 0
     ci_timing_record_elapsed windows-manifest result-process "$WINDOWS_MANIFEST_RESULT_PROCESS_MS" 0
     if ! windows_result_for_label "$WINDOWS_RUNNER_MISSING_LABEL"; then
@@ -4884,7 +4733,7 @@ windows_print_manifest_summary() {
             done
     fi
     echo "  forced assembly reasons: stdlib-helper-symbol-elision=2 u64-float-cast-instruction-shape=1"
-    echo "  phase_ms: batch_compile=$WINDOWS_MANIFEST_BATCH_COMPILE_MS standalone_compile=$WINDOWS_MANIFEST_COMPILE_MS plan_process=$WINDOWS_MANIFEST_PLAN_PROCESS_MS assemble=$WINDOWS_MANIFEST_ASSEMBLE_MS assemble_scheduler=$WINDOWS_MANIFEST_ASSEMBLE_WALL_MS assemble_helper=$WINDOWS_MANIFEST_ASSEMBLE_HELPER_MS link_child_sum=$WINDOWS_MANIFEST_LINK_MS link_scheduler=$WINDOWS_MANIFEST_LINK_WALL_MS link_helper=$WINDOWS_MANIFEST_LINK_HELPER_MS link_plan=$WINDOWS_MANIFEST_LINK_PREP_MS link_result_process=$WINDOWS_MANIFEST_LINK_RESULT_PROCESS_MS link_attribution=$WINDOWS_MANIFEST_LINK_ATTRIBUTION_MS queue_prepare=$WINDOWS_MANIFEST_QUEUE_PREP_MS runner=$WINDOWS_MANIFEST_RUN_MS result_process=$WINDOWS_MANIFEST_RESULT_PROCESS_MS assertions=$WINDOWS_MANIFEST_ASSERT_MS assertion_report=$WINDOWS_MANIFEST_ASSERT_REPORT_MS"
+    echo "  phase_ms: batch_compile=$WINDOWS_MANIFEST_BATCH_COMPILE_MS standalone_compile=$WINDOWS_MANIFEST_COMPILE_MS plan_process=$WINDOWS_MANIFEST_PLAN_PROCESS_MS assemble=$WINDOWS_MANIFEST_ASSEMBLE_MS assemble_scheduler=$WINDOWS_MANIFEST_ASSEMBLE_WALL_MS assemble_helper=$WINDOWS_MANIFEST_ASSEMBLE_HELPER_MS link_child_sum=$WINDOWS_MANIFEST_LINK_MS link_scheduler=$WINDOWS_MANIFEST_LINK_WALL_MS link_helper=$WINDOWS_MANIFEST_LINK_HELPER_MS link_plan=$WINDOWS_MANIFEST_LINK_PREP_MS link_result_process=$WINDOWS_MANIFEST_LINK_RESULT_PROCESS_MS link_attribution=$WINDOWS_MANIFEST_LINK_ATTRIBUTION_MS runner=$WINDOWS_MANIFEST_RUN_MS result_process=$WINDOWS_MANIFEST_RESULT_PROCESS_MS assertions=$WINDOWS_MANIFEST_ASSERT_MS assertion_report=$WINDOWS_MANIFEST_ASSERT_REPORT_MS"
     echo "  phase_counts: batch_compile=$WINDOWS_MANIFEST_BATCH_COMPILES standalone_compile=$WINDOWS_MANIFEST_COMPILES assemble=$WINDOWS_MANIFEST_ASSEMBLES link=$WINDOWS_MANIFEST_LINKS assert=$WINDOWS_MANIFEST_ASSERTS"
     echo "  differential oracle: legacy powershell=$WINDOWS_DIFFERENTIAL_POWERSHELL_STARTS cygpath=$WINDOWS_DIFFERENTIAL_CYGPATH_CONVERSIONS"
 }

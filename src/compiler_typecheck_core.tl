@@ -102128,20 +102128,17 @@
   [macro-name : String]
   [decls-splice? : bool]
   [diag : cdiag.CompilerDiagnostic]) : cdiag.CompilerDiagnostic
-  (match (macro-expansion-site-span ctx call-expr)
-    [(Some span)
-      (let
-        [site : cdiag.CompilerDiagnosticSpan
-          (macro-diagnostic-site-span path span)]
-        (if (and decls-splice? (macro-diagnostic-author-error? (& diag)))
-          (cdiag.compiler-diagnostic-with-primary-span (& diag) site)
-          (cdiag.compiler-diagnostic-with-secondary-if-new
-            diag
-            (& site)
-            (&
-              (CompilerDiagnosticSomeString
-                (tc-macro-expansion-frame-label (ci.intern macro-name)))))))]
-    [(No) diag]))
+  (if (and decls-splice? (macro-diagnostic-author-error? (& diag)))
+    diag
+    (match (macro-expansion-site-span ctx call-expr)
+      [(Some span)
+        (cdiag.compiler-diagnostic-with-secondary-if-new
+          diag
+          (& (macro-diagnostic-site-span path span))
+          (&
+            (CompilerDiagnosticSomeString
+              (tc-macro-expansion-frame-label (ci.intern macro-name)))))]
+      [(No) diag])))
 
 (define (macro-active-decl-path-id [ctx : TcContext]) : i64
   (__tl-project-field
@@ -102211,8 +102208,26 @@
   [decl : ast.AstDecl]
   [path : String]) : unit
   (match decl
-    [(DefMacro _ name _ _ _)
-      (macro-definition-path-record! ctx module-id name path)]
+    [(DefMacro _ name _ ret body-id)
+      (let
+        [source-path : String
+          (if (or
+            (tc-macro-result-decls? (& ret))
+            (tc-macro-result-module? (& ret)))
+            (match (tc-context-expr-get ctx body-id)
+              [(Spanned inner-id _)
+                (match (tc-context-expr-get ctx inner-id)
+                  [(MacroExpansion _ provenance-id _)
+                    (let
+                      [origin-id : i64
+                        (macro-expansion-origin-path-id provenance-id)]
+                      (if (< origin-id 0)
+                        path
+                        (ci.intern-str origin-id)))]
+                  [_ path])]
+              [_ path])
+            path)]
+        (macro-definition-path-record! ctx module-id name source-path))]
     [(Unsafe inner)
       (macro-definition-path-note-decl!
         ctx
@@ -104371,6 +104386,20 @@
   [macro-name-id : i64]
   [span : ast.AstSourceSpan]) : ast.AstDecl
   (match (tc-global-shared-view decl)
+    [(Import meta (Spec (MacroDecls call-id context) path expected alias _))
+      (Import
+        meta
+        (Spec
+          (MacroDecls
+            (ast.ast-expr-macro-expansion
+              call-id
+              (macro-expansion-provenance-id path-id origin-path-id)
+              macro-name-id)
+            context)
+          path
+          expected
+          alias
+          (box span)))]
     [(Import meta (Spec kind path expected alias _))
       ;; Generated declaration paths belong to the requesting expansion. Keep
       ;; the import span in that same source file, even for an imported macro.
@@ -124934,7 +124963,7 @@
                   (& call-expr)
                   "typecheck: Module macro output must include a module declaration")))])))))
 
-(define (macro-expand-decls-splice
+(define (macro-expand-decls-splice-at-call
   [ctx : TcContext]
   [top-env : TcTypeEnv]
   [orig-decls : ast.AstDeclList]
@@ -124987,28 +125016,12 @@
                         (let
                           [expanded-args
                             (try
-                              (match (macro-expand-exprs
+                              (macro-expand-exprs
                                 call-ctx
                                 global-env
                                 orig-decls
                                 0
-                                args)
-                                [(Ok expanded)
-                                  (ResultMacroExprList.Ok expanded)]
-                                [(Err boxed)
-                                  ;; A generated declaration can validate
-                                  ;; operands through expression macros before
-                                  ;; its transformer is reached.
-                                  (if (macro-diagnostic-author-error?
-                                    (& (deref boxed)))
-                                    (ResultMacroExprList.Err
-                                      (box
-                                        (cdiag.compiler-diagnostic-with-primary-span
-                                          (& (deref boxed))
-                                          (macro-diagnostic-site-span
-                                            (string.copy (& decl-path))
-                                            span))))
-                                    (ResultMacroExprList.Err boxed))]))]
+                                args))]
                           (match (macro-module-identity
                             call-ctx
                             (tc-global-shared-view orig-decls)
@@ -125155,6 +125168,56 @@
               (MacroUse)
               (& call-expr)
               "typecheck: module-scope macro placeholder must be a call")))])))
+
+(define (macro-expand-decls-splice
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [orig-decls : ast.AstDeclList]
+  [module : String]
+  [module-id : i64]
+  [call-id : i64]
+  [context : ast.AstMaybeModuleName]
+  [span : ast.AstSourceSpan]
+  [cfgs : sym_i64_env.SymI64Env]
+  [decl-path : String]) : ResultMacroDeclExpansion
+  (let
+    [site : (Tuple i64 i64)
+      (match (tc-context-expr-get ctx call-id)
+        [(MacroExpansion inner-id provenance-id _)
+          (tuple inner-id (macro-expansion-origin-path-id provenance-id))]
+        [_ (tuple call-id -1)])]
+    (match (macro-expand-decls-splice-at-call
+      ctx
+      top-env
+      orig-decls
+      module
+      module-id
+      (tuple-ref site 0)
+      context
+      span
+      cfgs
+      (string.copy (& decl-path)))
+      [(Ok decls paths) (Ok decls paths)]
+      [(Err boxed)
+        (let
+          [diag (& (deref boxed))]
+          [origin-id : i64 (tuple-ref site 1)]
+          (cond
+            [(macro-diagnostic-author-error? diag)
+              (Err
+                (box
+                  (cdiag.compiler-diagnostic-with-primary-span
+                    diag
+                    (macro-diagnostic-site-span decl-path span))))]
+            [(and
+                (>= origin-id 0)
+                (string.eq (cdiag.compiler-diagnostic-path diag) ""))
+              (Err
+                (box
+                  (cdiag.compiler-diagnostic-with-path
+                    diag
+                    (& (ci.intern-str origin-id)))))]
+            [else (Err boxed)]))])))
 
 (define (macro-expand-module-import
   [ctx : TcContext]

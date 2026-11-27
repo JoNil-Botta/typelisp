@@ -202,12 +202,12 @@
 (define compiler-embedded-stdlib-tlci-last-image : i64
   -1)
 
-;; A cached group holds an expanded prefix of its group: the first request
-;; expands only up to the frame it needs, and a later request past that prefix
-;; expands the whole group, so a group is expanded at most twice.
+;; Retain the expanded prefix and resume at the next token when a later
+;; lookup reaches farther into the group.
 (defstruct CompilerEmbeddedStdlibTlciCachedGroup
   (ready bool)
-  (complete bool)
+  (failed bool)
+  (reader lzss.CompilerLzssReader)
   (bytes (__tl_dyn-array u8)))
 
 (define compiler-embedded-stdlib-tlci-group-cache-owner : i64
@@ -292,6 +292,48 @@
         (set! compiler-embedded-stdlib-tlci-table-owner owner)
         true))))
 
+(define (compiler-embedded-stdlib-tlci-cached-group-extend!
+  [cached : (&mut cached CompilerEmbeddedStdlibTlciCachedGroup)]
+  [catalog : (& catalog frames.CompilerEmbeddedStdlibTlciFrames)]
+  [group : i64]
+  [needed : i64]) : unit
+  (unless
+    cached.ready
+    ;; The catalog parser has already checked the group ranges.
+    (let
+      [record : i64
+        (frames.compiler-embedded-stdlib-tlci-frames-group-record group)]
+      [start : i64
+        (+
+          catalog.index-end
+          (tlci.tlci-read-u64 (& payload.embedded-stdlib-tlci-bytes) record))]
+      [size : i64
+        (tlci.tlci-read-u64 (& payload.embedded-stdlib-tlci-bytes) (+ record 8))]
+      [raw : i64
+        (tlci.tlci-read-u64
+          (& payload.embedded-stdlib-tlci-bytes)
+          (+ record 24))]
+      (in-arena
+        (unsafe
+          (arena.from-raw-handle
+            compiler-embedded-stdlib-tlci-group-cache-owner))
+        (let
+          [bytes : (__tl_dyn-array u8) (__tl_make-array u8 raw)]
+          (set! cached.bytes (owned_view.compiler-owned-shared-view bytes))))
+      (set! cached.reader (lzss.compiler-lzss-reader start size))
+      (set! cached.ready true)))
+  (when
+    (and (not cached.failed) (> needed cached.reader.produced))
+    (let
+      [error : String
+        (lzss.compiler-lzss-decode-through!
+          (& payload.embedded-stdlib-tlci-bytes)
+          (&mut cached.reader)
+          (&mut cached.bytes)
+          needed
+          (& (array-ref compiler-embedded-stdlib-tlci-model 0)))]
+      (set! cached.failed (> (string.string-length (& error)) 0)))))
+
 ;; Expand a group on its first native lookup. Publish the array while its
 ;; ultimate owner is active, before a caller's scratch arena can claim it.
 (define (compiler-embedded-stdlib-tlci-group-cache-ensure!
@@ -311,44 +353,11 @@
       (set!
         compiler-embedded-stdlib-tlci-group-cache
         (__tl_make-array CompilerEmbeddedStdlibTlciCachedGroup catalog.groups))))
-  (let
-    [ready? : bool
-      (array-ref compiler-embedded-stdlib-tlci-group-cache group).ready]
-    [covered? : bool
-      (and
-        ready?
-        (or
-          (array-ref compiler-embedded-stdlib-tlci-group-cache group).complete
-          (<=
-            needed
-            (array-length
-              (array-ref compiler-embedded-stdlib-tlci-group-cache group).bytes))))]
-    [raw-limit : i64
-      (if (or ready? (<= needed 0))
-        0
-        needed)]
-    (unless
-      covered?
-      (in-arena
-        (unsafe
-          (arena.from-raw-handle
-            compiler-embedded-stdlib-tlci-group-cache-owner))
-        (let
-          [bytes : (__tl_dyn-array u8)
-            (match (frames.compiler-embedded-stdlib-tlci-frames-decode-group-prefix
-              (& payload.embedded-stdlib-tlci-bytes)
-              catalog
-              group
-              raw-limit
-              (& (array-ref compiler-embedded-stdlib-tlci-model 0)))
-              [(Ok bytes) bytes]
-              [(Err _) (__tl_make-array u8 0)])]
-          (set!
-            (array-ref compiler-embedded-stdlib-tlci-group-cache group)
-            (CompilerEmbeddedStdlibTlciCachedGroup
-              true
-              (= raw-limit 0)
-              (owned_view.compiler-owned-shared-view bytes))))))))
+  (compiler-embedded-stdlib-tlci-cached-group-extend!
+    (&mut (array-ref compiler-embedded-stdlib-tlci-group-cache group))
+    catalog
+    group
+    needed))
 
 (define (compiler-embedded-stdlib-tlci-slice-frame
   [catalog : (& catalog frames.CompilerEmbeddedStdlibTlciFrames)]
@@ -362,10 +371,11 @@
         catalog
         group
         (+ offset raw))
-      (if (>
-        (+ offset raw)
-        (array-length
-          (array-ref compiler-embedded-stdlib-tlci-group-cache group).bytes))
+      (if (or
+        (array-ref compiler-embedded-stdlib-tlci-group-cache group).failed
+        (>
+          (+ offset raw)
+          (array-ref compiler-embedded-stdlib-tlci-group-cache group).reader.produced))
         (__tl_make-array u8 0)
         (tlci.tlci-slice-bytes
           (& (array-ref compiler-embedded-stdlib-tlci-group-cache group).bytes)

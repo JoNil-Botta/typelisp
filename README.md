@@ -187,6 +187,9 @@ The following parts are implemented and actively tested:
   scalar reference lowering and native AVX2/AVX-512 lowering for eligible
   shapes. `foreach-active` serializes a gang's active lanes; it has scalar
   reference lowering only so far.
+  `foreach` can use ordinary `stdlib.math` calls such as `f64-abs`,
+  `f32-sqrt`, and the float bit conversions. Loops that reach these float
+  intrinsics use the scalar-reference path in every backend mode.
 
 Some capabilities remain restricted or experimental:
 

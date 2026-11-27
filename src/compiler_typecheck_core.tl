@@ -6714,7 +6714,8 @@
             (set! field (+ field 1))))
         (set!
           result
-          (tc-macro-framed-error
+          (tc-framed-error
+            (tc-macro-framed-error-prefix)
             (array-ref fields 0)
             (ast.ast-source-span
               (array-ref fields 1)
@@ -26704,7 +26705,7 @@
 ;; inner message, so the dispatch does not recurse.
 (define (tc-diag-at-start [message : String]) : cdiag.CompilerDiagnostic
   (cond
-    [(tc-macro-framed-error? message) (tc-macro-framed-error-diag message)]
+    [(tc-framed-error? message) (tc-framed-error-diag message "")]
     [(tc-rich-error? message) (tc-rich-error-diag message)]
     [(tc-located-error? message) (tc-located-error-diag message)]
     [else
@@ -26732,11 +26733,13 @@
 (define (tc-rich-error-prefix) : String
   "__tl_tc_diag|")
 
-;; A macro frame wraps any established typecheck error transport instead of
-;; flattening and rebuilding it. The fixed fields precede the untouched inner
-;; payload, which may itself be a located/rich error or another macro frame.
+;; Macro and SPMD frames wrap the existing error transport. The inner payload
+;; retains the primary location and any nested invocation frames.
 (define (tc-macro-framed-error-prefix) : String
   "__tl_tc_macro|")
+
+(define (tc-spmd-framed-error-prefix) : String
+  "__tl_tc_spmd|")
 
 (define (tc-diag-string-prefix? [text : (& text str)] [prefix : String]) : bool
   (let
@@ -26752,12 +26755,14 @@
 (define (tc-rich-error? [message : (& message str)]) : bool
   (tc-diag-string-prefix? message (tc-rich-error-prefix)))
 
-(define (tc-macro-framed-error? [message : (& message str)]) : bool
-  (tc-diag-string-prefix? message (tc-macro-framed-error-prefix)))
+(define (tc-framed-error? [message : (& message str)]) : bool
+  (or
+    (tc-diag-string-prefix? message (tc-macro-framed-error-prefix))
+    (tc-diag-string-prefix? message (tc-spmd-framed-error-prefix))))
 
 (define (tc-encoded-error? [message : (& message str)]) : bool
   (or
-    (tc-macro-framed-error? message)
+    (tc-framed-error? message)
     (tc-rich-error? message)
     (tc-located-error? message)))
 
@@ -27042,14 +27047,15 @@
 (define (macro-expansion-origin-path-id [provenance-id : i64]) : i64
   (ci.intern-composite-right-id-unchecked provenance-id))
 
-(define (tc-macro-framed-error
+(define (tc-framed-error
+  [prefix : String]
   [path-id : i64]
   [span : ast.AstSourceSpan]
   [origin-path-id : i64]
   [macro-name-id : i64]
   [message : String]) : String
   (str_cat.str-cat
-    (tc-macro-framed-error-prefix)
+    prefix
     (string.int->string path-id)
     "|"
     (tc-rich-error-span-fields span)
@@ -27088,7 +27094,8 @@
                     [(Some primary) (tc-located-error primary message)]
                     [(No) (tc-located-error span message)])])]
             (Some
-              (tc-macro-framed-error
+              (tc-framed-error
+                (tc-macro-framed-error-prefix)
                 path-id
                 span
                 origin-path-id
@@ -27097,13 +27104,19 @@
         [_ (No)])]
     [_ (No)]))
 
-(defstruct TcMacroDecodedDiagnostic
+(defstruct TcDecodedDiagnostic
   (diagnostic cdiag.CompilerDiagnostic)
   (primary-origin-claimed bool))
 
-(define (tc-macro-framed-error-decode [message : String]) : TcMacroDecodedDiagnostic
+(define (tc-framed-error-decode [message : String] [fallback-path : (& str)]) : TcDecodedDiagnostic
   (let
-    [prefix-len : i64 (string.string-length (tc-macro-framed-error-prefix))]
+    [spmd? : bool
+      (tc-diag-string-prefix? message (tc-spmd-framed-error-prefix))]
+    [prefix-len : i64
+      (string.string-length
+        (if spmd?
+          (tc-spmd-framed-error-prefix)
+          (tc-macro-framed-error-prefix)))]
     [path-end : i64 (tc-located-error-field-end message prefix-len)]
     [line-start : i64 (+ path-end 1)]
     [line-end : i64 (tc-located-error-field-end message line-start)]
@@ -27123,10 +27136,10 @@
         message
         inner-start
         (- (string.string-length message) inner-start))]
-    [inner-decoded : TcMacroDecodedDiagnostic
-      (if (tc-macro-framed-error? inner)
-        (tc-macro-framed-error-decode inner)
-        (TcMacroDecodedDiagnostic (tc-diag-at-start inner) false))]
+    [inner-decoded : TcDecodedDiagnostic
+      (if (tc-framed-error? inner)
+        (tc-framed-error-decode inner fallback-path)
+        (TcDecodedDiagnostic (tc-diag-at-start inner) false))]
     [inner-diag : cdiag.CompilerDiagnostic inner-decoded.diagnostic]
     [path-id : i64
       (string.>int (tc-located-error-field message prefix-len path-end))]
@@ -27138,6 +27151,7 @@
       (and (>= origin-path-id 0) (not inner-decoded.primary-origin-claimed))]
     [authored : bool
       (and
+        (not spmd?)
         (>= macro-name-id 0)
         (not inner-decoded.primary-origin-claimed)
         (string.eq
@@ -27152,14 +27166,16 @@
     ;; Decode recursively, then prepend this boundary. The resulting stable
     ;; order is explicitly outer-to-inner. Caller-origin markers only repath
     ;; the primary and deliberately add no user-visible frame.
-    (TcMacroDecodedDiagnostic
+    (TcDecodedDiagnostic
       (if (< macro-name-id 0)
         origin-diag
         (let
           [site : cdiag.CompilerDiagnosticSpan
             (cdiag.CompilerDiagnosticSpan
               (if (< path-id 0)
-                ""
+                (if spmd?
+                  (string.copy fallback-path)
+                  "")
                 (ci.intern-str path-id))
               (string.>int (tc-located-error-field message line-start line-end))
               (string.>int (tc-located-error-field message col-start col-end))
@@ -27178,11 +27194,16 @@
             (& site)
             (&
               (CompilerDiagnosticSomeString
-                (tc-macro-expansion-frame-label macro-name-id))))))
+                (if spmd?
+                  (str_cat.str-cat
+                    "in SPMD helper `"
+                    (tc-env-key-name-text macro-name-id)
+                    "` called here")
+                  (tc-macro-expansion-frame-label macro-name-id)))))))
       (or inner-decoded.primary-origin-claimed claim-origin authored))))
 
-(define (tc-macro-framed-error-diag [message : String]) : cdiag.CompilerDiagnostic
-  (__tl-project-field (tc-macro-framed-error-decode message) diagnostic))
+(define (tc-framed-error-diag [message : String] [fallback-path : (& str)]) : cdiag.CompilerDiagnostic
+  (__tl-project-field (tc-framed-error-decode message fallback-path) diagnostic))
 
 (define (tc-ty-node-pool-exhausted-diagnostic) : cdiag.CompilerDiagnostic
   (tc-diag-at-start (ast.ty-node-pool-exhausted-message)))
@@ -28949,7 +28970,7 @@
   [expr : ast.AstExpr]
   [message : String]) : cdiag.CompilerDiagnostic
   (cond
-    [(tc-macro-framed-error? message) (tc-macro-framed-error-diag message)]
+    [(tc-framed-error? message) (tc-framed-error-diag message "")]
     [(tc-rich-error? message) (tc-rich-error-diag message)]
     [(tc-located-error? message) (tc-located-error-diag message)]
     [else
@@ -28957,7 +28978,7 @@
         expr-bases
         (tc-global-shared-view expr)
         (tc-global-shared-view message))
-        [(Some framed) (tc-macro-framed-error-diag framed)]
+        [(Some framed) (tc-framed-error-diag framed "")]
         [(No)
           (match (tc-expr-maybe-span expr-bases expr)
             [(Some span)
@@ -29015,7 +29036,7 @@
   [decl : ast.AstDecl]
   [message : String]) : cdiag.CompilerDiagnostic
   (cond
-    [(tc-macro-framed-error? message) (tc-macro-framed-error-diag message)]
+    [(tc-framed-error? message) (tc-framed-error-diag message "")]
     [(tc-rich-error? message) (tc-rich-error-diag message)]
     [(tc-located-error? message) (tc-located-error-diag message)]
     [else
@@ -59296,7 +59317,8 @@
                     [(No) span]))]
               (tc-located-error primary message)))]
         (Err
-          (tc-macro-framed-error
+          (tc-framed-error
+            (tc-macro-framed-error-prefix)
             path-id
             span
             origin-path-id
@@ -60788,7 +60810,8 @@
       (match (ast.ast-expr-segment-bases-get expr-bases inner-id)
         [(MacroExpansion _ provenance-id macro-name-id)
           (if (< macro-name-id 0)
-            (tc-macro-framed-error
+            (tc-framed-error
+              (tc-macro-framed-error-prefix)
               (macro-expansion-invocation-path-id provenance-id)
               span
               (macro-expansion-origin-path-id provenance-id)
@@ -71018,6 +71041,32 @@
     (Spmd)
     "typecheck: recursive SPMD helper call is not supported"))
 
+;; SPMD uses ordinary call classification for the pure numeric intrinsics.
+;; The spelling filter keeps the ordinary classifier off unrelated call heads.
+(define (tc-spmd-float-intrinsic-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [raw-name : i64]
+  [arg-count : i64]) : i64
+  (let
+    [session : cis.InternStructuralSessionHandle
+      (tc-context-structural-session ctx)]
+    [name : i64
+      (tc-builtin-call-spelling-id
+        session
+        raw-name
+        (tc-hygiene-global-name-id? session raw-name))]
+    (if (or
+      (cbi.compiler-builtin-typecheck-float-sqrt-id? name)
+      (cbi.compiler-builtin-typecheck-float-bitcast-id? name))
+      (let
+        [builtin : TcCallBuiltinName
+          (tc-call-builtin-name ctx env raw-name arg-count)]
+        (if (or (= builtin.arm 20) (= builtin.arm 21))
+          builtin.name-id
+          -1))
+      -1)))
+
 (define (tc-spmd-inline-helper-resolve-name
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -71301,12 +71350,49 @@
                       (+ index 1)
                       (tc-spmd-merge-class seen-class arg-class))))])]))]))
 
+(define (tc-spmd-helper-source-path-id [ctx : TcContext] [name-id : i64]) : i64
+  (when (< name-id 0) (return -1))
+  (let
+    [symbols (tc-context-symbols ctx)]
+    [handle : i64
+      (csym.compiler-symbols-lookup-value-id-or
+        symbols
+        name-id
+        (csym.compiler-symbols-missing-handle))]
+    (if (csym.compiler-symbols-handle-found? handle)
+      (csym.compiler-symbols-provenance-id-at-index-or
+        symbols
+        (csym.compiler-symbol-handle-index handle)
+        -1)
+      -1)))
+
+(define (tc-spmd-helper-error
+  [ctx : TcContext]
+  [caller-name-id : i64]
+  [callee-name-id : i64]
+  [func-id : i64]
+  [message : String]) : String
+  (let
+    [caller-path-id : i64 (tc-spmd-helper-source-path-id ctx caller-name-id)]
+    (tc-framed-error
+      (tc-spmd-framed-error-prefix)
+      (if (< caller-path-id 0)
+        (tc-context-provider-provenance-id ctx)
+        caller-path-id)
+      (match (tc-expr-id-maybe-span (tc-context-expr-bases ctx) func-id)
+        [(Some span) span]
+        [(No) (ast.ast-source-span 1 1 1 1)])
+      (tc-spmd-helper-source-path-id ctx callee-name-id)
+      callee-name-id
+      message)))
+
 (define (tc-spmd-inline-helper-body
   [ctx : TcContext]
   [expr-bases : i64]
   [helper-env : TcTypeEnv]
   [helper-spmd-env : TcSpmdEnv]
   [name-id : i64]
+  [func-id : i64]
   [body : ast.AstExpr]) : ResultTcSpmdExprInfo
   (let
     [traversal : TcSpmdTraversalState
@@ -71317,7 +71403,16 @@
       (Err (tc-spmd-inline-helper-recursive-message))]
     (set! result (tc-spmd-expr ctx expr-bases helper-env helper-spmd-env body))
     (tc-spmd-inline-helper-stack-restore-for-state! traversal previous)
-    result))
+    (match result
+      [(Err message)
+        (Err
+          (tc-spmd-helper-error
+            ctx
+            (tc-name-id-list-head previous)
+            name-id
+            func-id
+            message))]
+      [_ result])))
 
 (define (tc-spmd-call-target-expr
   [ctx : TcContext]
@@ -71769,6 +71864,7 @@
                         helper-env
                         body-spmd-env
                         name-id
+                        func-box
                         body))]
                   (match body-info
                     [(TcSpmdExprInfo _ body-class _)
@@ -71839,6 +71935,7 @@
   [helper-env : TcTypeEnv]
   [helper-spmd-env : TcSpmdEnv]
   [name-id : i64]
+  [func-id : i64]
   [body : ast.AstExpr]) : ResultTcUnit
   (let
     [traversal : TcSpmdTraversalState
@@ -71850,13 +71947,23 @@
       result
       (tc-spmd-masked-if-expr ctx expr-bases helper-env helper-spmd-env body))
     (tc-spmd-inline-helper-stack-restore-for-state! traversal previous)
-    result))
+    (match result
+      [(Err message)
+        (Err
+          (tc-spmd-helper-error
+            ctx
+            (tc-name-id-list-head previous)
+            name-id
+            func-id
+            message))]
+      [_ result])))
 
 (define (tc-spmd-masked-if-inline-call-inner
   [ctx : TcContext]
   [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
+  [func-box : i64]
   [func : ast.AstExpr]
   [args : ast.AstExprList]) : ResultTcUnit
   (let
@@ -71894,6 +72001,7 @@
                 helper-env
                 helper-spmd-env
                 name-id
+                func-box
                 body)]))]
       [(Imported _ _)
         (tc-spmd-masked-if-expr-list ctx expr-bases env spmd-env args)]
@@ -71905,6 +72013,7 @@
   [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
+  [func-box : i64]
   [func : ast.AstExpr]
   [args : ast.AstExprList]) : ResultTcUnit
   (if (tc-type-env-scoped-runtime-active? env)
@@ -71917,11 +72026,19 @@
           expr-bases
           env
           spmd-env
+          func-box
           func
           args)]
       (tc-type-env-scoped-runtime-restore! saved)
       result)
-    (tc-spmd-masked-if-inline-call-inner ctx expr-bases env spmd-env func args)))
+    (tc-spmd-masked-if-inline-call-inner
+      ctx
+      expr-bases
+      env
+      spmd-env
+      func-box
+      func
+      args)))
 
 (define (tc-spmd-masked-if-call
   [ctx : TcContext]
@@ -71932,10 +72049,28 @@
   [func : ast.AstExpr]
   [args : ast.AstExprList]
   [expr : ast.AstExpr]) : ResultTcUnit
+  (when
+    (>=
+      (tc-spmd-float-intrinsic-id
+        ctx
+        env
+        (tc-expr-var-name-id
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases func-box))
+        args.len)
+      0)
+    (return (tc-spmd-masked-if-expr-list ctx expr-bases env spmd-env args)))
   (let
     [symbol (try (tc-spmd-atomic-call-symbol ctx env spmd-env func))]
     (if (string.eq symbol "")
-      (tc-spmd-masked-if-inline-call ctx expr-bases env spmd-env func args)
+      (tc-spmd-masked-if-inline-call
+        ctx
+        expr-bases
+        env
+        spmd-env
+        func-box
+        func
+        args)
       (let
         [_
           (try
@@ -72894,12 +73029,15 @@
   (tc-semantic-spmd
     ctx
     env
-    (tc-spmd-masked-if-expr-unspanned
+    (match (tc-spmd-masked-if-expr-unspanned
       ctx
       expr-bases
       env
       spmd-env
-      (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr)))))
+      (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr)))
+      [(ResultTcUnit.Err message)
+        (ResultTcUnit.Err (tc-locate-error-at-expr expr-bases expr message))]
+      [(ResultTcUnit.Ok) (ResultTcUnit.Ok)])))
 
 (define (tc-spmd-masked-if-expr-unspanned
   [ctx : TcContext]
@@ -74192,7 +74330,7 @@
         (cbi.compiler-builtin-typecheck-array-length-id? name-id))]
     [_ false]))
 
-(define (tc-spmd-array-length-call
+(define (tc-spmd-operand-call
   [ctx : TcContext]
   [expr-bases : i64]
   [env : TcTypeEnv]
@@ -74637,11 +74775,17 @@
   [expr : ast.AstExpr]
   [expr-ty : ast.AstType]) : ResultTcSpmdExprInfo
   (match (tc-global-shared-view expr)
-    [(Spanned inner-box _)
+    [(Spanned inner-box span)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-spmd-expr-typed ctx expr-bases env spmd-env inner expr-ty))]
+        (match (tc-spmd-expr-typed ctx expr-bases env spmd-env inner expr-ty)
+          [(ResultTcSpmdExprInfo.Err message)
+            (ResultTcSpmdExprInfo.Err
+              (if (tc-encoded-error? message)
+                message
+                (tc-located-error span message)))]
+          [(ResultTcSpmdExprInfo.Ok info) (ResultTcSpmdExprInfo.Ok info)]))]
     [(MacroExpansion inner-box _ macro-name-id)
       (match (tc-macro-unsafe-enter-expansion! ctx env macro-name-id)
         [(TcMacroUnsafeEnterResult inner-env unsafe-save)
@@ -74742,11 +74886,13 @@
             (ast.ast-expr-segment-bases-get expr-bases func-box))]
         [ps-kind : i64 (tc-process-syscall-head-kind ctx env raw-name)]
         (cond
-          [(tc-spmd-array-length-call?
-              expr-bases
-              (tc-context-structural-session ctx)
-              (tc-global-shared-view func))
-            (tc-spmd-array-length-call ctx expr-bases env spmd-env expr-ty args)]
+          [(or
+              (>= (tc-spmd-float-intrinsic-id ctx env raw-name args.len) 0)
+              (tc-spmd-array-length-call?
+                expr-bases
+                (tc-context-structural-session ctx)
+                (tc-global-shared-view func)))
+            (tc-spmd-operand-call ctx expr-bases env spmd-env expr-ty args)]
           [(>= (tc-cpu-query-head-kind ctx env raw-name) 0)
             (match (try (tc-spmd-expr-list ctx expr-bases env spmd-env args))
               [(TcSpmdExprListInfo class next-env)
@@ -136220,7 +136366,14 @@
   [message : String]) : cdiag.CompilerDiagnostic
   (let
     [diag : cdiag.CompilerDiagnostic
-      (tc-decl-diag-with-origin expr-bases origin-key origin-slot decl message)]
+      (if (tc-framed-error? message)
+        (tc-framed-error-diag message path)
+        (tc-decl-diag-with-origin
+          expr-bases
+          origin-key
+          origin-slot
+          decl
+          message))]
     (cdiag.compiler-diagnostic-with-fallback-path diag path)))
 
 (define (tc-typecheck-diag-with-path

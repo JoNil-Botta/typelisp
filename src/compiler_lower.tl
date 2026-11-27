@@ -9195,6 +9195,30 @@
         (lower-spmd-inline-helper-from-decl ctx handle inner))]
     [_ (Ok (No))]))
 
+(define (lower-spmd-helper-context [ctx : tc_core.TcContext] [handle : i64]) : tc_core.TcContext
+  (let
+    [module-id : i64
+      (csym.compiler-symbols-owner-module-id-at-index-or
+        (tc_core.tc-context-symbols ctx)
+        (csym.compiler-symbol-handle-index handle)
+        (tc_core.tc-context-module-id ctx))]
+    (tc_core.tc-context-with-module-id
+      ctx
+      (tc_core.tc-spmd-inline-helper-module module-id)
+      module-id)))
+
+(define (lower-spmd-float-intrinsic?
+  [ctx : tc_core.TcContext]
+  [type-env : tc_core.TcTypeEnv]
+  [func : (& ast.AstExpr)]
+  [arg-count : i64]) : bool
+  (match (ast.ast-expr-unspan-with-segment-bases
+    (tc_core.tc-context-expr-bases ctx)
+    func)
+    [(Var name)
+      (>= (tc_core.tc-spmd-float-intrinsic-id ctx type-env name arg-count) 0)]
+    [_ false]))
+
 (define (lower-spmd-inline-helper-lookup
   [ctx : tc_core.TcContext]
   [function-state : CompilerLowerFunctionState]
@@ -38688,7 +38712,7 @@
         (lower-global-shared-view func))
         [(ResultLowerSpmdInlineHelper.Ok helper)
           (match helper
-            [(LowerSpmdInlineHelper.Some _ params ret body)
+            [(LowerSpmdInlineHelper.Some handle params ret body)
               (if (and
                 (lower-spmd-helper-out-of-line?
                   ctx
@@ -38745,24 +38769,31 @@
                                 func
                                 args)
                               0)]
-                          (match (lower-spmd-specialized-helper-function
-                            ctx
-                            type-env
-                            (lower-state-type-cache named-state)
-                            helper-function-state
-                            hidden-name
-                            params
-                            ret
-                            result-varying
-                            body
-                            (ir.CompilerIrSpmdBackend.Scalar)
-                            call-args
-                            1
-                            ""
-                            -1
-                            (lower-state-spans named-state)
-                            (lower-state-names named-state)
-                            (lower-state-mode named-state))
+                          (match (let
+                            [helper-ctx : tc_core.TcContext
+                              (lower-spmd-helper-context ctx handle)]
+                            (lower-spmd-specialized-helper-function
+                              helper-ctx
+                              (tc_core.tc-spmd-inline-helper-env
+                                helper-ctx
+                                type-env
+                                (tc_core.tc-context-module helper-ctx)
+                                (tc_core.tc-context-module-id helper-ctx))
+                              (lower-state-type-cache named-state)
+                              helper-function-state
+                              hidden-name
+                              params
+                              ret
+                              result-varying
+                              body
+                              (ir.CompilerIrSpmdBackend.Scalar)
+                              call-args
+                              1
+                              ""
+                              -1
+                              (lower-state-spans named-state)
+                              (lower-state-names named-state)
+                              (lower-state-mode named-state)))
                             [(ResultLowerFunction.Ok functions helper-spans)
                               (match (lower-spmd-generated-helper-abi
                                 (lower-global-shared-view functions)
@@ -52471,17 +52502,16 @@
           unit)]))
   false)
 
-;; The calls an SPMD body's strategy depends on: a call to an SPMD helper that
-;; stays out of line (an imported callable, or a helper whose body needs its
-;; own frame), or a call that reaches an atomic.
+;; Calls that affect SPMD strategy. A helper can require its own frame, an
+;; atomic can require ordered scalar execution, and a float intrinsic can
+;; require the scalar-reference loop.
 (defenum LowerSpmdCallProbe
   (OutOfLine)
-  (Atomic))
+  (Atomic)
+  (ScalarFloatIntrinsic))
 
-;; Whether `expr` holds a call `probe` looks for. Both probes descend the same
-;; scalar, let, begin and array forms; an atomic call is also looked for in
-;; struct stores and inside the callee expression and the helper bodies it
-;; inlines.
+;; Whether `expr` holds a call `probe` looks for. Atomic and float intrinsic
+;; probes follow helper bodies, including calls used in struct stores.
 (define (lower-spmd-expr-has-call?
   [ctx : tc_core.TcContext]
   [function-state : CompilerLowerFunctionState]
@@ -52535,6 +52565,15 @@
                     [(Imported _ _ _ _ _) true]
                     [(No) false])]
                 [(Err _) false])]
+            [(ScalarFloatIntrinsic)
+              (or
+                (lower-spmd-float-intrinsic? ctx type-env (& func) args.len)
+                (lower-spmd-call-reaches-float-intrinsic?
+                  ctx
+                  function-state
+                  env
+                  type-env
+                  (& func)))]
             [(Atomic)
               (or
                 (>
@@ -52581,7 +52620,9 @@
               ctx
               function-state
               env
-              type-env
+              (if (= probe LowerSpmdCallProbe.ScalarFloatIntrinsic)
+                (lower-spmd-numeric-let-type-env ctx type-env bindings)
+                type-env)
               probe
               (lower-context-expr-get ctx body-box)))])]
     [(or (If cond-box then-box else-box) (ArraySet cond-box then-box else-box))
@@ -52633,8 +52674,84 @@
               type-env
               probe
               (lower-context-expr-get ctx value-box)))]
-        [(OutOfLine) false])]
-    [_ false]))
+        [(OutOfLine) false]
+        [(ScalarFloatIntrinsic)
+          (lower-spmd-expr-list-has-call-at?
+            ctx
+            function-state
+            env
+            type-env
+            probe
+            (& (ast.ast-expr-child-ids expr)))])]
+    [_
+      (and
+        (= probe LowerSpmdCallProbe.ScalarFloatIntrinsic)
+        (lower-spmd-expr-list-has-call-at?
+          ctx
+          function-state
+          env
+          type-env
+          probe
+          (& (ast.ast-expr-child-ids expr))))]))
+
+(define (lower-spmd-call-reaches-float-intrinsic?
+  [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [func : (& ast.AstExpr)]) : bool
+  (match (ast.ast-expr-unspan-with-segment-bases
+    (tc_core.tc-context-expr-bases ctx)
+    func)
+    [(Var name)
+      (when (tc_core.tc-name-lexically-bound-id? type-env name) (return false))]
+    [_ (return false)])
+  (let
+    [prior-recursion? : bool
+      (compiler-lower-function-state-recursion-detected? function-state)]
+    [helper : ResultLowerSpmdInlineHelper
+      (lower-spmd-inline-helper-lookup
+        ctx
+        function-state
+        env
+        type-env
+        (lower-id-set-empty)
+        (lower-clone-ast-expr func))]
+    (compiler-lower-function-state-recursion-detected-set!
+      function-state
+      prior-recursion?)
+    (match helper
+      [(Ok (Some handle params _ body))
+        (let
+          [previous : LowerIdSet
+            (compiler-lower-function-state-inline-helper-stack function-state)]
+          [helper-ctx : tc_core.TcContext
+            (lower-spmd-helper-context ctx handle)]
+          [helper-env : tc_core.TcTypeEnv
+            (tc_core.tc-spmd-inline-helper-env
+              helper-ctx
+              type-env
+              (tc_core.tc-context-module helper-ctx)
+              (tc_core.tc-context-module-id helper-ctx))]
+          (compiler-lower-function-state-inline-helper-stack-set!
+            function-state
+            (lower-id-set-insert
+              (compiler-lower-function-state-inline-helper-stack function-state)
+              handle))
+          (let
+            [found : bool
+              (lower-spmd-expr-has-call?
+                helper-ctx
+                function-state
+                env
+                (tc_core.tc-bind-params helper-ctx helper-env params)
+                (ScalarFloatIntrinsic)
+                body)]
+            (compiler-lower-function-state-inline-helper-stack-set!
+              function-state
+              previous)
+            found))]
+      [_ false])))
 
 (define (lower-spmd-expr-list-has-call-at?
   [ctx : tc_core.TcContext]
@@ -52663,24 +52780,29 @@
   [type-env : tc_core.TcTypeEnv]
   [probe : LowerSpmdCallProbe]
   [bindings : (& bindings ast.AstLetBindingList)]) : bool
-  (for [binding-index
-    (iterator.range 0 (ast.ast-let-binding-list-len bindings))]
-    (match (ast.ast-let-binding-list-get
-      bindings
-      binding-index
-      (ast.ast-let-binding-fallback))
-      [(Binding _ _ init-box)
-        (when
-          (lower-spmd-expr-has-call?
-            ctx
-            function-state
-            env
-            type-env
-            probe
-            (lower-context-expr-get ctx init-box))
-          (return true))
-        unit]))
-  false)
+  (let
+    [probe-env : tc_core.TcTypeEnv type-env]
+    (for [binding-index
+      (iterator.range 0 (ast.ast-let-binding-list-len bindings))]
+      (match (ast.ast-let-binding-list-get
+        bindings
+        binding-index
+        (ast.ast-let-binding-fallback))
+        [(Binding name _ init-box)
+          (when
+            (lower-spmd-expr-has-call?
+              ctx
+              function-state
+              env
+              probe-env
+              probe
+              (lower-context-expr-get ctx init-box))
+            (return true))
+          (when
+            (= probe LowerSpmdCallProbe.ScalarFloatIntrinsic)
+            (set! probe-env (tc_core.tc-bind-id probe-env name (Unit))))
+          unit]))
+    false))
 
 ;; What a foreach body holds that only the masked SPMD strategy lowers, computed
 ;; once per body: the masked strategy is chosen on these facts, and when it
@@ -68284,6 +68406,28 @@
   [end-value : ir.CompilerIrValue]
   [body : ast.AstExpr]
   [row? : bool]) : ResultLowerExpr
+  ;; Scalar float operations use their ordinary calls in the original loop
+  ;; body. Rewriting a helper body into its caller could rebind its intrinsic.
+  (when
+    (lower-spmd-expr-has-call?
+      ctx
+      (lower-state-function-state state)
+      env
+      (tc_core.tc-bind-id type-env index-id (ast.clone-ast-type (& index-ty)))
+      (ScalarFloatIntrinsic)
+      (lower-clone-ast-expr (& body)))
+    (return
+      (lower-scalar-foreach-lowered
+        ctx
+        state
+        env
+        type-env
+        index-id
+        index
+        index-ty
+        start-value
+        end-value
+        body)))
   (if (and
     (lower-mode-simd? (lower-state-mode state))
     (lower-type-i64? (lower-global-shared-view index-ty))

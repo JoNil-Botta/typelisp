@@ -1,0 +1,27 @@
+# Compare ordinary stdlib calls with a while-loop reference in every backend.
+target -
+opt 0 1 2
+mode scalar sse2 avx2 avx512
+
+case stdlib-math-float-bitcasts
+source tests/spmd/stdlib_math_abs.tl
+do link-run
+exit 42
+
+case stdlib-math-float-sqrt
+source tests/spmd/stdlib_math_sqrt.tl
+do link-run
+exit 42
+
+# f64-exp reaches a computed table index in masked control. Keep the exact
+# rejection and its definition and call-site locations until #8405/#8406.
+# The prebuilt interface does not carry a body for this helper.
+case stdlib-math-exp-masked-gather
+source tests/spmd/stdlib_math_exp_masked_gather.tl
+args --no-prebuilt-stdlib
+exit 1
+in stderr
+contains SPMD masked if does not support gather/scatter-like array indexes
+contains math.tl:591:16
+contains stdlib_math_exp_masked_gather.tl:9:32
+contains in SPMD helper

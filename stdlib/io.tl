@@ -134,13 +134,11 @@
 (cfg
   windows
   (define (io-windows-fd-handle [fd : i32]) : i64
-    (if (= fd (cast 0 : i32))
-      (io-win-get-std-handle (cast -10 : i32))
-      (if (= fd (cast 1 : i32))
-        (io-win-get-std-handle (cast -11 : i32))
-        (if (= fd (cast 2 : i32))
-          (io-win-get-std-handle (cast -12 : i32))
-          (cast fd : i64))))))
+    (cond
+      [(= fd (cast 0 : i32)) (io-win-get-std-handle (cast -10 : i32))]
+      [(= fd (cast 1 : i32)) (io-win-get-std-handle (cast -11 : i32))]
+      [(= fd (cast 2 : i32)) (io-win-get-std-handle (cast -12 : i32))]
+      [else (cast fd : i64)])))
 
 ;: Windows `_write` replacement via WriteFile; returns bytes written or -1.
 (cfg
@@ -226,9 +224,8 @@
 (cfg
   windows
   (unsafe
-    (define (io-windows-open [path : (Ptr u8)] [flags : i32] [mode : i32]) : i32
+    (define (io-windows-open [path : (Ptr u8)] [flags : i32] [_mode : i32]) : i32
       (let
-        [ignore-mode : i32 mode]
         [f : i64 (cast flags : i64)]
         [access : i64
           (if (= (bit-and f 0x8) 0)
@@ -239,15 +236,14 @@
               0xc0000000)
             0x4)]
         [disp : i64
-          (if (not (= (bit-and f 0x400) 0))
-            1
-            (if (= (bit-and f 0x100) 0)
+          (cond
+            [(not (= (bit-and f 0x400) 0)) 1]
+            [(= (bit-and f 0x100) 0)
               (if (= (bit-and f 0x200) 0)
                 3
-                5)
-              (if (= (bit-and f 0x200) 0)
-                4
-                2)))]
+                5)]
+            [(= (bit-and f 0x200) 0) 4]
+            [else 2])]
         [handle : i64
           (unsafe
             (io-win-create-file path access 0x7 0 disp 0x80 0))]
@@ -256,13 +252,11 @@
             (let
               [code : i64 (cast (io-win-get-last-error) : i64)]
               (set-error-code
-                (if (or (= code 80) (= code 183))
-                  17
-                  (if (= code 5)
-                    13
-                    (if (or (= code 2) (= code 3))
-                      2
-                      code)))))
+                (cond
+                  [(or (= code 80) (= code 183)) 17]
+                  [(= code 5) 13]
+                  [(or (= code 2) (= code 3)) 2]
+                  [else code])))
             (cast -1 : i32))
           (cast handle : i32))))))
 
@@ -284,17 +278,15 @@
 (cfg
   windows
   (unsafe
-    (define (io-windows-access [path : (Ptr u8)] [mode : i32]) : i32
-      (let
-        [ignore-mode : i32 mode]
-        (if (=
-          (unsafe
-            (io-win-get-file-attributes path))
+    (define (io-windows-access [path : (Ptr u8)] [_mode : i32]) : i32
+      (if (=
+        (unsafe
+          (io-win-get-file-attributes path))
+        (cast -1 : i32))
+        (begin
+          (set-error-code 2)
           (cast -1 : i32))
-          (begin
-            (set-error-code 2)
-            (cast -1 : i32))
-          (cast 0 : i32))))))
+        (cast 0 : i32)))))
 
 ;: Windows process exit via kernel32 ExitProcess; never returns. Replaces the
 ;: former backend `exit` CRT-ABI shim.
@@ -410,6 +402,7 @@
 
 ;: Linux `open` via the `openat`-style `open` syscall (number 2).
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-syscall-open [path : (Ptr u8)] [flags : i64] [mode : i64]) : i64
     (cfg
       windows
@@ -420,6 +413,7 @@
 
 ;: Linux `read` via the `read` syscall (number 0).
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-syscall-read [fd : i64] [buf : (MutPtr u8)] [count : i64]) : i64
     (cfg
       windows
@@ -436,6 +430,7 @@
 
 ;: Linux `write` via the `write` syscall (number 1).
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-syscall-write [fd : i64] [buf : (Ptr u8)] [count : i64]) : i64
     (cfg
       windows
@@ -446,6 +441,7 @@
 
 ;: Linux `close` via the `close` syscall (number 3).
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-syscall-close [fd : i64]) : i64
     (cfg
       windows
@@ -456,6 +452,7 @@
 
 ;: Linux `lseek` via the `lseek` syscall (number 8).
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-syscall-lseek [fd : i64] [offset : i64] [whence : i64]) : i64
     (cfg
       windows
@@ -466,6 +463,7 @@
 
 ;: Linux `fsync` via syscall number 74.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-syscall-fsync [fd : i64]) : i64
     (cfg
       windows
@@ -476,6 +474,7 @@
 
 ;: Linux `access` via the `access` syscall (number 21).
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-syscall-access [path : (Ptr u8)] [mode : i64]) : i64
     (cfg
       windows

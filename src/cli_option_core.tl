@@ -201,6 +201,7 @@
 
 (defenum CliBackendMode
   (Scalar)
+  (Sse2)
   (Avx2)
   (Avx512))
 
@@ -270,6 +271,7 @@
 (define (cli-option-backend-mode [value : String]) : ResultCliBackendMode
   (cond
     [(string.eq value "scalar") (Ok Scalar)]
+    [(string.eq value "sse2") (Ok Sse2)]
     [(string.eq value "avx2") (Ok Avx2)]
     [(string.eq value "avx512") (Ok Avx512)]
     [else
@@ -277,11 +279,12 @@
         (string.concat3-borrowed
           "invalid --backend-mode '"
           (& value)
-          "'; expected scalar, avx2, or avx512"))]))
+          "'; expected scalar, sse2, avx2, or avx512"))]))
 
 (define (cli-option-backend-mode-name [mode : CliBackendMode]) : String
   (match mode
     [(Scalar) "scalar"]
+    [(Sse2) "sse2"]
     [(Avx2) "avx2"]
     [(Avx512) "avx512"]))
 

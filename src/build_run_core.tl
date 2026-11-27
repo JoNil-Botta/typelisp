@@ -100,6 +100,7 @@
 (define (source-tool-backend-mode [mode : cli_option.CliBackendMode]) : be_state.CompilerBackendMode
   (match mode
     [(Scalar) (Scalar)]
+    [(Sse2) (Sse2)]
     [(Avx2) (Avx2)]
     [(Avx512) (Avx512)]))
 

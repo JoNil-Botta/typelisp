@@ -1313,6 +1313,9 @@
   (Scalar)
   (LinuxScalar)
   (WindowsScalar)
+  (Sse2)
+  (LinuxSse2)
+  (WindowsSse2)
   (Avx2)
   (LinuxAvx2)
   (WindowsAvx2)
@@ -1330,6 +1333,7 @@
 
 (defenum LowerModeSimd
   (Scalar)
+  (Sse2)
   (Avx2)
   (Avx512))
 
@@ -1366,14 +1370,14 @@
 
 (define (lower-mode-abi [mode : CompilerLowerMode]) : LowerModeAbi
   (match mode
-    [(or (CompilerLowerMode.Scalar) (CompilerLowerMode.Avx2)
-         (CompilerLowerMode.Avx512))
+    [(or (CompilerLowerMode.Scalar) (CompilerLowerMode.Sse2)
+         (CompilerLowerMode.Avx2) (CompilerLowerMode.Avx512))
       (None)]
-    [(or (CompilerLowerMode.LinuxScalar) (CompilerLowerMode.LinuxAvx2)
-         (CompilerLowerMode.LinuxAvx512))
+    [(or (CompilerLowerMode.LinuxScalar) (CompilerLowerMode.LinuxSse2)
+         (CompilerLowerMode.LinuxAvx2) (CompilerLowerMode.LinuxAvx512))
       (Linux)]
-    [(or (CompilerLowerMode.WindowsScalar) (CompilerLowerMode.WindowsAvx2)
-         (CompilerLowerMode.WindowsAvx512))
+    [(or (CompilerLowerMode.WindowsScalar) (CompilerLowerMode.WindowsSse2)
+         (CompilerLowerMode.WindowsAvx2) (CompilerLowerMode.WindowsAvx512))
       (Windows)]))
 
 (define (lower-mode-simd [mode : CompilerLowerMode]) : LowerModeSimd
@@ -1381,6 +1385,9 @@
     [(or (CompilerLowerMode.Scalar) (CompilerLowerMode.LinuxScalar)
          (CompilerLowerMode.WindowsScalar))
       (Scalar)]
+    [(or (CompilerLowerMode.Sse2) (CompilerLowerMode.LinuxSse2)
+         (CompilerLowerMode.WindowsSse2))
+      (Sse2)]
     [(or (CompilerLowerMode.Avx2) (CompilerLowerMode.LinuxAvx2)
          (CompilerLowerMode.WindowsAvx2))
       (Avx2)]
@@ -1393,16 +1400,19 @@
     [(None)
       (match simd
         [(Scalar) (CompilerLowerMode.Scalar)]
+        [(Sse2) (CompilerLowerMode.Sse2)]
         [(Avx2) (CompilerLowerMode.Avx2)]
         [(Avx512) (CompilerLowerMode.Avx512)])]
     [(Linux)
       (match simd
         [(Scalar) (CompilerLowerMode.LinuxScalar)]
+        [(Sse2) (CompilerLowerMode.LinuxSse2)]
         [(Avx2) (CompilerLowerMode.LinuxAvx2)]
         [(Avx512) (CompilerLowerMode.LinuxAvx512)])]
     [(Windows)
       (match simd
         [(Scalar) (CompilerLowerMode.WindowsScalar)]
+        [(Sse2) (CompilerLowerMode.WindowsSse2)]
         [(Avx2) (CompilerLowerMode.WindowsAvx2)]
         [(Avx512) (CompilerLowerMode.WindowsAvx512)])]))
 
@@ -1410,6 +1420,7 @@
 (define (lower-simd-vector-bytes [mode : CompilerLowerMode]) : i64
   (match (lower-mode-simd mode)
     [(Scalar) 0]
+    [(Sse2) 16]
     [(Avx2) 32]
     [(Avx512) 64]))
 
@@ -1654,6 +1665,7 @@
 (define (lower-spmd-backend [mode : CompilerLowerMode]) : ir.CompilerSpmdBackend
   (match (lower-mode-simd mode)
     [(Scalar) (Scalar)]
+    [(Sse2) (Sse2)]
     [(Avx2) (Avx2)]
     [(Avx512) (Avx512)]))
 
@@ -2784,6 +2796,7 @@
 (define (lower-request-mode-simd [request : (& request CompilerLowerRequest)]) : LowerModeSimd
   (match (& request.mode-simd)
     [(Scalar) (Scalar)]
+    [(Sse2) (Sse2)]
     [(Avx2) (Avx2)]
     [(Avx512) (Avx512)]))
 
@@ -31534,7 +31547,9 @@
         (lower-xgetbv ctx state env type-env index))]
     [(Syscall args) (lower-syscall ctx state env type-env args)]
     [(ForeachActive lane body-box)
-      (if (lower-mode-simd? (lower-state-mode state))
+      (if (and
+        (lower-mode-simd? (lower-state-mode state))
+        (not (lower-mode-sse2? (lower-state-mode state))))
         (Err
           (box
             (lower-diagnostic-at-expr
@@ -47994,26 +48009,8 @@
                   op
                   plan)]
               [(No reason)
-                (match (lower-spmd-numeric-failure
-                  ctx
-                  (lower-state-function-state state)
-                  (lower-state-mode state)
-                  env
-                  (tc_core.tc-bind-id
-                    type-env
-                    index-id
-                    (lower-global-shared-view index-ty))
-                  (FusedReduction)
-                  value)
-                  [(Some origin decision)
-                    (lower-spmd-select! state (Rejected) (NumericPolicy) 1)
-                    (Err
-                      (box
-                        (lower-diagnostic-at-expr
-                          ctx
-                          origin
-                          (lower-spmd-numeric-failure-message decision))))]
-                  [(No)
+                (if (lower-mode-sse2? (lower-state-mode state))
+                  (begin
                     (lower-spmd-select! state (CompilerFallback) reason 1)
                     (lower-spmd-reduce-scaffold
                       ctx
@@ -48029,7 +48026,43 @@
                       init
                       acc-ty
                       acc-update
-                      split)])]))
+                      split))
+                  (match (lower-spmd-numeric-failure
+                    ctx
+                    (lower-state-function-state state)
+                    (lower-state-mode state)
+                    env
+                    (tc_core.tc-bind-id
+                      type-env
+                      index-id
+                      (lower-global-shared-view index-ty))
+                    (FusedReduction)
+                    value)
+                    [(Some origin decision)
+                      (lower-spmd-select! state (Rejected) (NumericPolicy) 1)
+                      (Err
+                        (box
+                          (lower-diagnostic-at-expr
+                            ctx
+                            origin
+                            (lower-spmd-numeric-failure-message decision))))]
+                    [(No)
+                      (lower-spmd-select! state (CompilerFallback) reason 1)
+                      (lower-spmd-reduce-scaffold
+                        ctx
+                        state
+                        env
+                        type-env
+                        result-ty
+                        index-id
+                        index
+                        index-ty
+                        start
+                        end
+                        init
+                        acc-ty
+                        acc-update
+                        split)]))]))
           (lower-spmd-reduce-scaffold
             ctx
             state
@@ -49468,41 +49501,58 @@
   [type-env : tc_core.TcTypeEnv]
   [value : ast.AstExpr]
   [lane : ast.AstExpr]) : ResultLowerExpr
-  (lower-spmd-select!
-    state
-    (if (lower-mode-simd? (lower-state-mode state))
-      (Rejected)
-      (ScalarBackend))
-    (if (lower-mode-simd? (lower-state-mode state))
-      (ShuffleShape)
-      (ScalarBackendSelected))
-    1)
-  (if (lower-mode-simd? (lower-state-mode state))
-    (Err (box (lower-diagnostic (lower-spmd-shuffle-diagnostic))))
-    (let
-      [lane-lowered
-        (try
-          (lower-expr-expected
-            ctx
-            state
-            env
-            type-env
-            (lower-global-shared-view lane)
-            (I64)
-            lane))]
-      (match lane-lowered
-        [(Expr lane-state lane-value _)
-          (lower-expr
-            ctx
-            (lower-emit-spmd-broadcast-lane-check lane-state lane-value (I64 1))
-            env
-            type-env
-            value)]))))
+  (let
+    [reject? : bool
+      (and
+        (lower-mode-simd? (lower-state-mode state))
+        (not (lower-mode-sse2? (lower-state-mode state))))]
+    (lower-spmd-select!
+      state
+      (if reject?
+        (Rejected)
+        (if (lower-mode-sse2? (lower-state-mode state))
+          (CompilerFallback)
+          (ScalarBackend)))
+      (if reject?
+        (ShuffleShape)
+        (if (lower-mode-sse2? (lower-state-mode state))
+          (ShuffleShape)
+          (ScalarBackendSelected)))
+      1)
+    (if reject?
+      (Err (box (lower-diagnostic (lower-spmd-shuffle-diagnostic))))
+      (let
+        [lane-lowered
+          (try
+            (lower-expr-expected
+              ctx
+              state
+              env
+              type-env
+              (lower-global-shared-view lane)
+              (I64)
+              lane))]
+        (match lane-lowered
+          [(Expr lane-state lane-value _)
+            (lower-expr
+              ctx
+              (lower-emit-spmd-broadcast-lane-check
+                lane-state
+                lane-value
+                (I64 1))
+              env
+              type-env
+              value)])))))
 
 (define (lower-mode-simd? [mode : CompilerLowerMode]) : bool
   (match (lower-mode-simd mode)
     [(Scalar) false]
     [_ true]))
+
+(define (lower-mode-sse2? [mode : CompilerLowerMode]) : bool
+  (match (lower-mode-simd mode)
+    [(Sse2) true]
+    [_ false]))
 
 (define (lower-mode-avx2? [mode : CompilerLowerMode]) : bool
   (match (lower-mode-simd mode)
@@ -49515,11 +49565,11 @@
     [_ false]))
 
 (define (lower-spmd-numeric-backend [mode : CompilerLowerMode]) : spmd_numeric.CompilerSpmdNumericBackend
-  (if (lower-mode-avx2? mode)
-    (Avx2)
-    (if (lower-mode-avx512? mode)
-      (Avx512)
-      (Scalar))))
+  (match (lower-mode-simd mode)
+    [(Sse2) (Sse2)]
+    [(Avx2) (Avx2)]
+    [(Avx512) (Avx512)]
+    [(Scalar) (Scalar)]))
 
 (define (lower-avx2-masked-if-diagnostic) : String
   "lower: SPMD masked if is not supported in AVX2 backend mode; use scalar or avx512")
@@ -50549,6 +50599,7 @@
           (cond
             [(lower-mode-avx512? mode) (Avx512)]
             [(lower-mode-avx2? mode) (Avx2)]
+            [(lower-mode-sse2? mode) (Sse2)]
             [else (Scalar)])]
         [lanes : i64
           (match backend
@@ -53860,13 +53911,15 @@
             (Some (Array array-var))
             (No))]
         [(No)
-          (match (lower-simple-vector-map-gather-value
-            ctx
-            env
-            type-env
-            index
-            (lower-global-shared-view dst-elem)
-            value)
+          (match (if (lower-mode-sse2? mode)
+            (LowerMaybeVectorMapValue.No)
+            (lower-simple-vector-map-gather-value
+              ctx
+              env
+              type-env
+              index
+              (lower-global-shared-view dst-elem)
+              value))
             [(Some plan) (Some plan)]
             [(No)
               (lower-simple-vector-map-lane-array-value
@@ -53878,42 +53931,53 @@
     [(SpmdShuffle value-box lane-box)
       (let
         [source : ast.AstExpr (lower-context-expr-get ctx value-box)]
-        [selector : ast.AstExpr (lower-context-expr-get ctx lane-box)]
-        (if (and
-          (lower-vector-shuffle-value-type? (lower-global-shared-view dst-elem))
-          (>
-            (lower-simd-lanes-for-elem mode (lower-global-shared-view dst-elem))
-            0))
-          (match (lower-simple-vector-map-value
+        [identity-selector? : bool
+          (lower-expr-is-program-index?
             ctx
-            mode
-            numeric-context
-            env
-            type-env
-            index
-            dst-elem
-            source
-            (lower-global-shared-view locals))
-            [(Some source-plan)
-              (match (lower-simple-vector-map-value
-                ctx
+            (lower-context-expr-get ctx lane-box))]
+        [selector : ast.AstExpr (lower-context-expr-get ctx lane-box)]
+        (if (and (lower-mode-sse2? mode) (not identity-selector?))
+          (No)
+          (if (and
+            (lower-vector-shuffle-value-type?
+              (lower-global-shared-view dst-elem))
+            (>
+              (lower-simd-lanes-for-elem
                 mode
-                numeric-context
-                env
-                type-env
-                index
-                (I64)
-                selector
-                (lower-global-shared-view locals))
-                [(Some selector-plan)
-                  (if (and
-                    (lower-vector-shuffle-operand-plan? source-plan)
-                    (lower-vector-shuffle-operand-plan? selector-plan))
-                    (Some (Shuffle (box source-plan) (box selector-plan)))
-                    (No))]
-                [(No) (No)])]
-            [(No) (No)])
-          (No)))]
+                (lower-global-shared-view dst-elem))
+              0))
+            (match (lower-simple-vector-map-value
+              ctx
+              mode
+              numeric-context
+              env
+              type-env
+              index
+              dst-elem
+              source
+              (lower-global-shared-view locals))
+              [(Some source-plan)
+                (if (and (lower-mode-sse2? mode) identity-selector?)
+                  (Some source-plan)
+                  (match (lower-simple-vector-map-value
+                    ctx
+                    mode
+                    numeric-context
+                    env
+                    type-env
+                    index
+                    (I64)
+                    selector
+                    (lower-global-shared-view locals))
+                    [(Some selector-plan)
+                      (if (and
+                        (lower-vector-shuffle-operand-plan? source-plan)
+                        (lower-vector-shuffle-operand-plan? selector-plan))
+                        (Some (Shuffle (box source-plan) (box selector-plan)))
+                        (No))]
+                    [(No) (No)]))]
+              [(No) (No)])
+            (No))))]
     [(SpmdBroadcast value-box lane-box)
       (let
         [source : ast.AstExpr (lower-context-expr-get ctx value-box)]
@@ -54414,7 +54478,7 @@
   [prefix-ty : ast.AstType]
   [value : ast.AstExpr]
   [body : ast.AstExpr]) : LowerMaybeVectorScan
-  (if (not (lower-mode-simd? mode))
+  (if (or (not (lower-mode-simd? mode)) (lower-mode-sse2? mode))
     (No (ScalarBackendSelected))
     (match (lower-array-ref-var-for-index ctx env type-env value index)
       [(Some input-var input-ty)
@@ -56334,7 +56398,9 @@
   [lanes : i64]) : LowerState
   (unless
     (and
-      (lower-mode-avx2? (lower-state-mode state))
+      (or
+        (lower-mode-avx2? (lower-state-mode state))
+        (lower-mode-sse2? (lower-state-mode state)))
       (lower-spmd-reduce-vector-accumulator? (& elem-ty)))
     (return state))
   (let
@@ -59472,6 +59538,7 @@
           [init : ast.AstExpr (lower-context-expr-get ctx init-box)]
           [enum-source : ResultLowerMaskedEnumSource
             (if (or
+              (lower-mode-sse2? (lower-state-mode state))
               (lower-mode-avx2? (lower-state-mode state))
               (lower-mode-avx512? (lower-state-mode state)))
               (lower-avx2-masked-enum-source
@@ -60431,6 +60498,7 @@
             (lower-global-shared-view left))]
         (if (and
           (or
+            (lower-mode-sse2? (lower-state-mode state))
             (lower-mode-avx2? (lower-state-mode state))
             (and (lower-mode-avx512? (lower-state-mode state)) (< divisor 0)))
           (> positive-divisor 0)
@@ -60631,17 +60699,25 @@
                   left-ty))]))])))
 
 (define (lower-enum-mask-lane-type [mode : CompilerLowerMode] [lanes : i64]) : ast.AstType
-  (if (lower-mode-avx512? mode)
-    (cond
-      [(= lanes 8) (I64)]
-      [(= lanes 16) (I32)]
-      [(= lanes 32) (I16)]
-      [else (I8)])
-    (cond
-      [(= lanes 4) (I64)]
-      [(= lanes 8) (I32)]
-      [(= lanes 16) (I16)]
-      [else (I8)])))
+  (cond
+    [(lower-mode-avx512? mode)
+      (cond
+        [(= lanes 8) (I64)]
+        [(= lanes 16) (I32)]
+        [(= lanes 32) (I16)]
+        [else (I8)])]
+    [(lower-mode-sse2? mode)
+      (cond
+        [(= lanes 2) (I64)]
+        [(= lanes 4) (I32)]
+        [(= lanes 8) (I16)]
+        [else (I8)])]
+    [else
+      (cond
+        [(= lanes 4) (I64)]
+        [(= lanes 8) (I32)]
+        [(= lanes 16) (I16)]
+        [else (I8)])]))
 
 (define (lower-avx2-enum-zero-value [ty : ast.AstType]) : ir.CompilerIrValue
   (match (tc_core.tc-type-without-regions ty)
@@ -62190,6 +62266,7 @@
 (define (lower-imported-spmd-backend-name [backend : ir.CompilerIrSpmdBackend]) : String
   (match backend
     [(Scalar) "scalar"]
+    [(Sse2) "sse2"]
     [(Avx2) "avx2"]
     [(Avx512) "avx512"]))
 
@@ -62524,6 +62601,7 @@
 (define (lower-spmd-package-backend-name [backend : ir.CompilerIrSpmdBackend]) : String
   (match backend
     [(Scalar) "scalar"]
+    [(Sse2) "sse2"]
     [(Avx2) "avx2"]
     [(Avx512) "avx512"]))
 
@@ -62586,7 +62664,7 @@
     ;; backend.  Keep the stable package hash intact after that prefix so the
     ;; archive and TLCI still share one deterministic logical identity.
     (match backend
-      [(Avx512)
+      [(or (Avx512) (Sse2))
         (if (string.eq result "v")
           (if (lower-type-bool? result-ty)
             (str_cat.str-cat "__tl_spmd_ret_mask_" stable-name)
@@ -62604,7 +62682,8 @@
   (match backend
     [(Scalar) 1]
     [(Avx2) 2]
-    [(Avx512) 3]))
+    [(Avx512) 3]
+    [(Sse2) 4]))
 
 (define (lower-spmd-package-result-role-tag [result : ast.AstSpmdResultClass]) : i64
   (match result
@@ -62625,7 +62704,11 @@
     [(Mask) 3]))
 
 (define (lower-spmd-private-param-mode-role-tag [mode : CompilerLowerMode]) : i64
-  (cond [(lower-mode-avx2? mode) 2] [(lower-mode-avx512? mode) 3] [else 1]))
+  (cond
+    [(lower-mode-avx2? mode) 2]
+    [(lower-mode-avx512? mode) 3]
+    [(lower-mode-sse2? mode) 4]
+    [else 1]))
 
 ;; SPMD package ABI v1 admits only these resolved scalar source types. Keeping
 ;; the return type as its own typed lane makes identities structurally distinct
@@ -63116,7 +63199,7 @@
           (match class
             [(Uniform) (tc_core.tc-env-key-name-text name)]
             [(Varying)
-              (if (lower-mode-avx2? mode)
+              (if (or (lower-mode-avx2? mode) (lower-mode-sse2? mode))
                 (str_cat.str-cat
                   "__tl_spmd_varying_arg_avx2_"
                   (tc_core.tc-env-key-name-text name))
@@ -63124,7 +63207,7 @@
                   "__tl_spmd_varying_arg_"
                   (tc_core.tc-env-key-name-text name)))]
             [(Mask)
-              (if (lower-mode-avx2? mode)
+              (if (or (lower-mode-avx2? mode) (lower-mode-sse2? mode))
                 (str_cat.str-cat
                   "__tl_spmd_mask_arg_avx2_"
                   (tc_core.tc-env-key-name-text name))
@@ -63468,7 +63551,7 @@
           [physical-params : ir.CompilerIrParamSeq
             (ir.compiler-ir-param-seq-prepend
               (Param
-                (if (lower-mode-avx2? mode)
+                (if (or (lower-mode-avx2? mode) (lower-mode-sse2? mode))
                   "__tl_spmd_active_mask_avx2"
                   "__tl_spmd_active_mask")
                 (Bool)
@@ -63670,6 +63753,25 @@
         result-varying
         body
         (Avx2)
+        call-args
+        lanes
+        helper-index
+        helper-index-source-param
+        spans
+        names
+        mode)]
+    [(Sse2)
+      (lower-spmd-simd-helper-function
+        ctx
+        top-env
+        type-cache
+        function-state
+        hidden-name
+        params
+        ret
+        result-varying
+        body
+        (Sse2)
         call-args
         lanes
         helper-index
@@ -63915,9 +64017,10 @@
                   "lower: :spmd-callable is not supported in AVX2 backend mode; use scalar or avx512")))
             (let
               [backend : ir.CompilerIrSpmdBackend
-                (if (lower-mode-avx512? mode)
-                  Avx512
-                  Scalar)]
+                (cond
+                  [(lower-mode-avx512? mode) Avx512]
+                  [(lower-mode-sse2? mode) Sse2]
+                  [else Scalar])]
               [count : i64
                 (ast.ast-spmd-specialization-list-len (& specializations))]
               (match (lower-spmd-package-specializations-from
@@ -64282,10 +64385,14 @@
                                   args)
                                 0)]
                             [backend : ir.CompilerIrSpmdBackend
-                              (if (lower-mode-avx2?
-                                (lower-state-mode named-state))
-                                Avx2
-                                Avx512)]
+                              (cond
+                                [(lower-mode-avx2?
+                                    (lower-state-mode named-state))
+                                  Avx2]
+                                [(lower-mode-sse2?
+                                    (lower-state-mode named-state))
+                                  Sse2]
+                                [else Avx512])]
                             [private-name : i64
                               (lower-spmd-private-helper-name
                                 (lower-state-names named-state)
@@ -65905,6 +66012,217 @@
 
 ;; Admission and failure precedence are decided once. Emitters consume this
 ;; plan and never scan source again to reconstruct why a route was selected.
+(define (lower-sse2-enum-scrutinee-supported?
+  [ctx : tc_core.TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [index : (& index str)]
+  [expr : ast.AstExpr]) : bool
+  (match expr
+    [(or (Spanned inner-box _) (Ann inner-box _))
+      (lower-sse2-enum-scrutinee-supported?
+        ctx
+        env
+        type-env
+        index
+        (lower-context-expr-get ctx inner-box))]
+    [(Var _) true]
+    [(ArrayRef arr-box idx-box)
+      (lower-masked-vector-array-ref-varying-enum?
+        ctx
+        env
+        type-env
+        index
+        (lower-context-expr-get ctx arr-box)
+        (lower-context-expr-get ctx idx-box))]
+    [_ false]))
+
+(define (lower-sse2-expr-list-has-unsupported-enum-match?
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [index : (& index str)]
+  [exprs : (& exprs ast.AstExprList)]) : bool
+  (for [i (iterator.range 0 exprs.len)]
+    (when
+      (lower-sse2-body-has-unsupported-enum-match?
+        ctx
+        state
+        env
+        type-env
+        index
+        (lower-context-expr-get ctx (ast.ast-expr-list-get exprs i 0)))
+      (return true))
+    unit)
+  false)
+
+(define (lower-sse2-body-has-unsupported-enum-match?
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [index : (& index str)]
+  [expr : ast.AstExpr]) : bool
+  (match expr
+    [(or (Spanned inner-box _) (Ann inner-box _) (Cast inner-box _)
+         (Unary _ inner-box))
+      (lower-sse2-body-has-unsupported-enum-match?
+        ctx
+        state
+        env
+        type-env
+        index
+        (lower-context-expr-get ctx inner-box))]
+    [(or (Binary _ left-box right-box) (ArrayRef left-box right-box)
+         (StructSet left-box _ right-box))
+      (or
+        (lower-sse2-body-has-unsupported-enum-match?
+          ctx
+          state
+          env
+          type-env
+          index
+          (lower-context-expr-get ctx left-box))
+        (lower-sse2-body-has-unsupported-enum-match?
+          ctx
+          state
+          env
+          type-env
+          index
+          (lower-context-expr-get ctx right-box)))]
+    [(or (If a-box b-box c-box) (ArraySet a-box b-box c-box))
+      (or
+        (lower-sse2-body-has-unsupported-enum-match?
+          ctx
+          state
+          env
+          type-env
+          index
+          (lower-context-expr-get ctx a-box))
+        (lower-sse2-body-has-unsupported-enum-match?
+          ctx
+          state
+          env
+          type-env
+          index
+          (lower-context-expr-get ctx b-box))
+        (lower-sse2-body-has-unsupported-enum-match?
+          ctx
+          state
+          env
+          type-env
+          index
+          (lower-context-expr-get ctx c-box)))]
+    [(Let let-box)
+      (match (__tl-box-place let-box)
+        [(Let bindings body-box)
+          (let
+            [bad : bool false]
+            [n : i64 (ast.ast-let-binding-list-len (& bindings))]
+            [i : i64 0]
+            (while (and (< i n) (not bad))
+              (match (ast.ast-let-binding-list-get
+                (& bindings)
+                i
+                (ast.ast-let-binding-fallback))
+                [(Binding _ _ init-box)
+                  (when
+                    (lower-sse2-body-has-unsupported-enum-match?
+                      ctx
+                      state
+                      env
+                      type-env
+                      index
+                      (lower-context-expr-get ctx init-box))
+                    (set! bad true))])
+              (set! i (+ i 1)))
+            (or
+              bad
+              (lower-sse2-body-has-unsupported-enum-match?
+                ctx
+                state
+                env
+                (lower-spmd-numeric-let-type-env ctx type-env bindings)
+                index
+                (lower-context-expr-get ctx body-box))))])]
+    [(Begin exprs)
+      (lower-sse2-expr-list-has-unsupported-enum-match?
+        ctx
+        state
+        env
+        type-env
+        index
+        (& exprs))]
+    [(While cond-box body-box)
+      (or
+        (lower-sse2-body-has-unsupported-enum-match?
+          ctx
+          state
+          env
+          type-env
+          index
+          (lower-context-expr-get ctx cond-box))
+        (lower-sse2-expr-list-has-unsupported-enum-match?
+          ctx
+          state
+          env
+          type-env
+          index
+          (& body-box)))]
+    [(Match match-box)
+      (match (__tl-box-place match-box)
+        [(Match scrutinee-box arms)
+          (let
+            [scrutinee : ast.AstExpr (lower-context-expr-get ctx scrutinee-box)]
+            [enum-unsupported? : bool
+              (and
+                (match (lower-expr-result-type-or-check
+                  ctx
+                  env
+                  type-env
+                  (lower-state-type-cache state)
+                  (lower-state-function-state state)
+                  (& scrutinee))
+                  [(Ok scrut-ty) (lower-spmd-enum-type? scrut-ty)]
+                  [(Err _) false])
+                (not
+                  (lower-sse2-enum-scrutinee-supported?
+                    ctx
+                    env
+                    type-env
+                    index
+                    (lower-clone-ast-expr (& scrutinee)))))]
+            [arm-bad : bool false]
+            (when
+              (not enum-unsupported?)
+              (for [i (iterator.range 0 arms.len)]
+                (match (ast.ast-match-arm-list-get
+                  (& arms)
+                  i
+                  (ast.ast-match-arm-fallback))
+                  [(Arm _ arm-body-box)
+                    (when
+                      (lower-sse2-body-has-unsupported-enum-match?
+                        ctx
+                        state
+                        env
+                        type-env
+                        index
+                        (lower-context-expr-get ctx arm-body-box))
+                      (set! arm-bad true))])))
+            (or
+              enum-unsupported?
+              arm-bad
+              (lower-sse2-body-has-unsupported-enum-match?
+                ctx
+                state
+                env
+                type-env
+                index
+                scrutinee)))])]
+    [_ false]))
+
 (define (lower-plan-foreach
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -65955,9 +66273,37 @@
               (string.copy index)
               (lower-clone-ast-expr (& body))
               facts)
-              [(Some lanes) (NativeMasked lanes)]
+              [(Some lanes)
+                (if (and
+                  (lower-mode-sse2? (lower-state-mode state))
+                  (or
+                    (lower-sse2-body-has-unsupported-enum-match?
+                      ctx
+                      state
+                      env
+                      (tc_core.tc-bind-id
+                        type-env
+                        index-id
+                        (ast.clone-ast-type (& index-ty)))
+                      (& index)
+                      (lower-clone-ast-expr (& body)))
+                    (match (lower-spmd-numeric-failure
+                      ctx
+                      (lower-state-function-state state)
+                      (lower-state-mode state)
+                      env
+                      (tc_core.tc-bind-id
+                        type-env
+                        index-id
+                        (ast.clone-ast-type (& index-ty)))
+                      (MaskedControl)
+                      (lower-clone-ast-expr (& diagnostic-body)))
+                      [(Some _ _) true]
+                      [(No) false])))
+                  (Scalar (NumericPolicy))
+                  (NativeMasked lanes))]
               [(No _)
-                (if row?
+                (if (or row? (lower-mode-sse2? (lower-state-mode state)))
                   (Scalar first-reason)
                   (match (lower-spmd-numeric-failure
                     ctx
@@ -67469,31 +67815,34 @@
       [(Some origin decision)
         (match decision.context
           [(PrivateHelper)
-            (lower-spmd-select!
-              state
-              (if row?
-                (CompilerFallback)
-                (Rejected))
-              (PrivateHelper)
-              1)
-            (if row?
-              (lower-scalar-foreach-lowered
-                ctx
+            (let
+              [fallback? : bool
+                (or row? (lower-mode-sse2? (lower-state-mode state)))]
+              (lower-spmd-select!
                 state
-                env
-                type-env
-                index-id
-                index
-                index-ty
-                start-value
-                end-value
-                body)
-              (Err
-                (box
-                  (lower-diagnostic-at-expr
-                    ctx
-                    origin
-                    (lower-spmd-numeric-failure-message decision)))))]
+                (if fallback?
+                  (CompilerFallback)
+                  (Rejected))
+                (PrivateHelper)
+                1)
+              (if fallback?
+                (lower-scalar-foreach-lowered
+                  ctx
+                  state
+                  env
+                  type-env
+                  index-id
+                  index
+                  index-ty
+                  start-value
+                  end-value
+                  body)
+                (Err
+                  (box
+                    (lower-diagnostic-at-expr
+                      ctx
+                      origin
+                      (lower-spmd-numeric-failure-message decision))))))]
           [_
             (lower-foreach-lowered-after-numeric-admission
               ctx
@@ -67618,13 +67967,57 @@
       (lower-global-shared-view body))
     LowerMaybeAstExpr.No)
     [(Some origin)
-      (lower-spmd-select! state (Rejected) (ForeachActive) 1)
-      (Err
-        (box
-          (lower-diagnostic-at-expr
-            ctx
-            origin
-            (lower-foreach-active-simd-message (lower-state-mode state)))))]
+      (if (lower-mode-sse2? (lower-state-mode state))
+        (let
+          [start-lowered
+            (try
+              (lower-expr-expected
+                ctx
+                state
+                env
+                type-env
+                (lower-clone-ast-expr (& start))
+                (ast.clone-ast-type (& index-ty))
+                start))]
+          (match start-lowered
+            [(Expr start-state start-value _)
+              (let
+                [end-lowered
+                  (try
+                    (lower-expr-expected
+                      ctx
+                      start-state
+                      env
+                      type-env
+                      (lower-clone-ast-expr (& end))
+                      (ast.clone-ast-type (& index-ty))
+                      end))]
+                (match end-lowered
+                  [(Expr end-state end-value _)
+                    (lower-spmd-select!
+                      end-state
+                      (CompilerFallback)
+                      (ForeachActive)
+                      1)
+                    (lower-scalar-foreach-lowered
+                      ctx
+                      end-state
+                      env
+                      type-env
+                      index-id
+                      index
+                      index-ty
+                      start-value
+                      end-value
+                      body)]))]))
+        (begin
+          (lower-spmd-select! state (Rejected) (ForeachActive) 1)
+          (Err
+            (box
+              (lower-diagnostic-at-expr
+                ctx
+                origin
+                (lower-foreach-active-simd-message (lower-state-mode state)))))))]
     [(No)
       (let
         [start-lowered

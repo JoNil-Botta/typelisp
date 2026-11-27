@@ -444,6 +444,7 @@
 (define (build-backend-mode-name [mode : be_state.CompilerBackendMode]) : String
   (match mode
     [(Scalar) "scalar"]
+    [(Sse2) "sse2"]
     [(Avx2) "avx2"]
     [(Avx512) "avx512"]))
 
@@ -3106,6 +3107,7 @@
 (define (build-package-tlci-backend [mode : be_state.CompilerBackendMode]) : ir.CompilerIrSpmdBackend
   (match mode
     [(Scalar) Scalar]
+    [(Sse2) Sse2]
     [(Avx2) Avx2]
     [(Avx512) Avx512]))
 

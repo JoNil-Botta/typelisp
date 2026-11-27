@@ -52,7 +52,7 @@ simd_mode_selected() {
 
 simd_execution_mode() {
     SIMDEX_MODE=native
-    case "$1" in - | scalar) return 0 ;; esac
+    case "$1" in - | scalar | sse2) return 0 ;; esac
     if [ "$1:$SIMDEX_POLICY" != avx512:sde ] &&
         printf '%s\n' "$SIMDEX_NATIVE_ISAS" | grep -Fx "$1" >/dev/null; then
         return 0

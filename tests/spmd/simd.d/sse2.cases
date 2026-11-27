@@ -1,0 +1,213 @@
+# Baseline x86-64 SSE2 SPMD codegen shapes, strict ISA guard (forbidding VEX
+# v*, vzeroupper, SSE3/SSSE3/SSE4.1), clean scalar fallback execution, and Win64
+# cross-compilation.
+
+target -
+opt -
+
+case sse2-spmd-map-shape
+source benchmarks/spmd_map/bench.tl
+mode sse2
+opt 2
+in asm
+contains movdqu
+contains paddq
+not-match ^[[:space:]]+(v[a-z0-9]+|pmulld|pblend[a-z0-9]*|pcmpeqq|pcmpgtq|pshufb|hadd[a-z0-9]*|pmovsx[a-z0-9]*|pmovzx[a-z0-9]*)([[:space:]]|$)
+
+case sse2-spmd-zip-isa-strict
+source benchmarks/spmd_zip/bench.tl
+mode sse2
+opt 2
+in asm
+not-match ^[[:space:]]+(v[a-z0-9]+|pmulld|pblend[a-z0-9]*|pcmpeqq|pcmpgtq|pshufb|hadd[a-z0-9]*|pmovsx[a-z0-9]*|pmovzx[a-z0-9]*)([[:space:]]|$)
+
+case sse2-spmd-reduce-shape
+source benchmarks/spmd_reduce/bench.tl
+mode sse2
+opt 2
+in asm
+contains movdqu
+contains paddq
+contains psrldq $8,
+not-match ^[[:space:]]+(v[a-z0-9]+|pmulld|pblend[a-z0-9]*|pcmpeqq|pcmpgtq|pshufb|hadd[a-z0-9]*|pmovsx[a-z0-9]*|pmovzx[a-z0-9]*)([[:space:]]|$)
+
+case sse2-spmd-mask-shape
+source benchmarks/spmd_mask/bench.tl
+mode sse2
+opt 2
+in asm
+contains pshufd $160,
+contains pslld $31,
+contains psrad $31,
+contains pandn
+contains paddq
+not-match ^[[:space:]]+(v[a-z0-9]+|pmulld|pblend[a-z0-9]*|pcmpeqq|pcmpgtq|pshufb|hadd[a-z0-9]*|pmovsx[a-z0-9]*|pmovzx[a-z0-9]*)([[:space:]]|$)
+
+case sse2-spmd-foreach-2d-shape
+source benchmarks/spmd_foreach_2d/bench.tl
+mode sse2
+opt 2
+in asm
+contains movdqu
+contains paddq
+not-match ^[[:space:]]+(v[a-z0-9]+|pmulld|pblend[a-z0-9]*|pcmpeqq|pcmpgtq|pshufb|hadd[a-z0-9]*|pmovsx[a-z0-9]*|pmovzx[a-z0-9]*)([[:space:]]|$)
+
+case sse2-spmd-shuffle-identity-shape
+source benchmarks/spmd_shuffle/bench.tl
+mode sse2
+opt 2
+in asm
+contains movdqu
+contains paddq
+not-match ^[[:space:]]+(v[a-z0-9]+|pmulld|pblend[a-z0-9]*|pcmpeqq|pcmpgtq|pshufb|hadd[a-z0-9]*|pmovsx[a-z0-9]*|pmovzx[a-z0-9]*)([[:space:]]|$)
+
+case sse2-spmd-scan-fallback-isa
+source benchmarks/spmd_scan/bench.tl
+mode sse2
+opt 2
+in asm
+not-match ^[[:space:]]+(v[a-z0-9]+|pmulld|pblend[a-z0-9]*|pcmpeqq|pcmpgtq|pshufb|hadd[a-z0-9]*|pmovsx[a-z0-9]*|pmovzx[a-z0-9]*)([[:space:]]|$)
+
+case sse2-compare-surface-isa-strict
+source tests/spmd/map_compare_surface.tl
+mode sse2
+opt 2
+in asm
+contains pcmpeqd
+contains pcmpgtd
+contains cmppd
+contains cmpps
+not-match ^[[:space:]]+(v[a-z0-9]+|pmulld|pblend[a-z0-9]*|pcmpeqq|pcmpgtq|pshufb|hadd[a-z0-9]*|pmovsx[a-z0-9]*|pmovzx[a-z0-9]*)([[:space:]]|$)
+
+case sse2-mul-surface-isa-strict
+source tests/spmd/byte_mul_value_types.tl
+mode sse2
+opt 2
+in asm
+contains pmullw
+not-match ^[[:space:]]+(v[a-z0-9]+|pmulld|pblend[a-z0-9]*|pcmpeqq|pcmpgtq|pshufb|hadd[a-z0-9]*|pmovsx[a-z0-9]*|pmovzx[a-z0-9]*)([[:space:]]|$)
+
+case sse2-sign-bit-select-run
+source tests/spmd/avx2_sign_bit_select.tl
+do link-run
+mode sse2
+opt 0 1 2
+exit 42
+in stderr
+empty
+
+case sse2-sign-bit-select-shape
+source tests/spmd/avx2_sign_bit_select.tl
+mode sse2
+opt 2
+in asm
+not-match ^[[:space:]]+(v[a-z0-9]+|pmulld|pblend[a-z0-9]*|pcmpeqq|pcmpgtq|pshufb|hadd[a-z0-9]*|pmovsx[a-z0-9]*|pmovzx[a-z0-9]*)([[:space:]]|$)
+in fn _tl_avx2_sign_bit_select_test_bit0_factor
+narrow labeled-block:__unroll_body:
+contains pshufd $160,
+contains pslld $31,
+contains psrad $31,
+contains pandn
+contains por
+in fn _tl_avx2_sign_bit_select_test_bit1_eq0
+narrow labeled-block:__unroll_body:
+contains pshufd $160,
+contains pslld $30,
+contains psrad $31,
+in fn _tl_avx2_sign_bit_select_test_bit63_direct
+narrow labeled-block:__unroll_body:
+contains pshufd $245,
+contains psrad $31,
+
+case sse2-sign-bit-dual-load-run
+source tests/spmd/avx2_sign_bit_dual_load.tl
+do link-run
+mode sse2
+opt 0 1 2
+exit 42
+in stderr
+empty
+
+case sse2-foreach-2d-rect-guard-run
+source tests/spmd/foreach_2d_rect_guard.tl
+do link-run
+mode sse2
+opt 0 1 2
+exit 42
+in stderr
+empty
+
+case sse2-win64-map-cross
+source benchmarks/spmd_map/bench.tl
+target windows-x86_64
+mode sse2
+opt 2
+in asm
+contains movdqu
+contains paddq
+not-match ^[[:space:]]+(v[a-z0-9]+|pmulld|pblend[a-z0-9]*|pcmpeqq|pcmpgtq|pshufb|hadd[a-z0-9]*|pmovsx[a-z0-9]*|pmovzx[a-z0-9]*)([[:space:]]|$)
+
+case sse2-win64-mask-cross
+source benchmarks/spmd_mask/bench.tl
+target windows-x86_64
+mode sse2
+opt 2
+in asm
+contains pshufd $160,
+contains pslld $31,
+contains psrad $31,
+not-match ^[[:space:]]+(v[a-z0-9]+|pmulld|pblend[a-z0-9]*|pcmpeqq|pcmpgtq|pshufb|hadd[a-z0-9]*|pmovsx[a-z0-9]*|pmovzx[a-z0-9]*)([[:space:]]|$)
+
+case sse2-fallback-foreach-active
+source tests/spmd/foreach_active_simd_reject.tl
+do link-run
+mode sse2
+opt 2
+exit 42
+in stderr
+empty
+
+case sse2-fallback-masked-cast
+source tests/spmd/masked_cast_i32_f32_reject.tl
+do link-run
+mode sse2
+opt 2
+exit 42
+in stderr
+empty
+
+case sse2-fallback-varying-enum-helper
+source tests/spmd/varying_match_enum_helper_reject.tl
+do link-run
+mode sse2
+opt 2
+exit 42
+in stderr
+empty
+
+case sse2-fallback-inline-helper-shadow
+source tests/spmd/inline_helper_shadow_i64.tl
+do link-run
+mode sse2
+opt 2
+exit 42
+in stderr
+empty
+
+case sse2-fallback-fixed-array-whole-use
+source tests/spmd/fixed_array_whole_use_keeps_array.tl
+do link-run
+mode sse2
+opt 2
+exit 42
+in stderr
+empty
+
+case sse2-fallback-scan
+source tests/integration/spmd_scan_scalar.tl
+do link-run
+mode sse2
+opt 2
+exit 42
+in stderr
+empty

@@ -5846,6 +5846,7 @@
   [runs-avx512 : bool]) : TestMaybeString
   (match backend-mode
     [(Scalar) (No)]
+    [(Sse2) (No)]
     [(Avx2)
       (if runs-avx2
         (No)

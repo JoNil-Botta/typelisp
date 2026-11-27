@@ -2225,6 +2225,7 @@
 
 (defenum CompilerBackendMode
   (Scalar)
+  (Sse2)
   (Avx2)
   (Avx512))
 
@@ -2233,6 +2234,11 @@
 (define (compiler-backend-mode-scalar? [mode : CompilerBackendMode]) : bool
   (match mode
     [(Scalar) true]
+    [_ false]))
+
+(define (compiler-backend-mode-sse2? [mode : CompilerBackendMode]) : bool
+  (match mode
+    [(Sse2) true]
     [_ false]))
 
 (define (compiler-backend-mode-avx2? [mode : CompilerBackendMode]) : bool
@@ -2244,6 +2250,11 @@
   [function-state : CompilerBackendFunctionState]
   [mode : CompilerBackendMode]) : unit
   (compiler-backend-function-state-set-current-mode! function-state mode))
+
+(define (compiler-backend-current-mode-sse2?
+  [function-state : CompilerBackendFunctionState]) : bool
+  (compiler-backend-mode-sse2?
+    (compiler-backend-function-state-current-mode function-state)))
 
 (define (compiler-backend-current-mode-avx2?
   [function-state : CompilerBackendFunctionState]) : bool

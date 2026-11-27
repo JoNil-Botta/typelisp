@@ -930,7 +930,7 @@ end-file
 run test --backend-mode neon "{{dir}}/lib.tl" --target {{host-target}} --stdlib-root "{{root}}/stdlib"
 exit 1
 stdout empty
-stderr contains invalid --backend-mode 'neon'; expected scalar, avx2, or avx512
+stderr contains invalid --backend-mode 'neon'; expected scalar, sse2, avx2, or avx512
 stderr not-contains cannot run on this host
 
 case math-inline-opt-matrix

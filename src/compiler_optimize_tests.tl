@@ -90698,6 +90698,118 @@ inl.entry.0.cont:
         "opt-slice-word-cse-instr does not reuse Word across StorePtr on earlier-block AddrOf String"))))
 
 (test
+  load-header-set-addr-of-dyn-array-keeps-header-both-orders
+  (let
+    [type-segment-bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [params : ir.CompilerIrParamSeq (ir.compiler-ir-param-seq-empty)]
+    [dyn-ty : ast.AstType (ast.ast-ty-dyn-array (& (ast.AstType.I64)))]
+    ;; %0: AddrOf BEFORE DynArray def -> 0 -> 5 -> 1 (header, not slice)
+    ;; %1: DynArray def BEFORE AddrOf -> 0 -> 1 -> 1 (header, not slice)
+    ;; %2: String def BEFORE AddrOf   -> 0 -> 3 -> 2 (poisoned: neither header nor slice)
+    [b0-builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity 4)]
+    [b1-builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity 4)]
+    [_init-b0 : unit
+      (begin
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b0-builder)
+          (ir.CompilerIrInstr.AddrOf 3 0 0))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b0-builder)
+          (ir.CompilerIrInstr.Load
+            1
+            (ir.CompilerIrValue.I64 0)
+            (ast.clone-ast-type (& dyn-ty))))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b0-builder)
+          (ir.CompilerIrInstr.Mov
+            2
+            (ir.CompilerIrValue.String "hi")
+            (ast.AstType.String)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b0-builder)
+          (ir.CompilerIrInstr.Jump 1)))]
+    [_init-b1 : unit
+      (begin
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b1-builder)
+          (ir.CompilerIrInstr.Load 0 (ir.CompilerIrValue.I64 0) dyn-ty))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b1-builder)
+          (ir.CompilerIrInstr.AddrOf 4 1 0))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b1-builder)
+          (ir.CompilerIrInstr.AddrOf 5 2 0))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b1-builder)
+          (ir.CompilerIrInstr.Return
+            (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 0)))))]
+    [bb-builder : ir.CompilerIrBlockBuilder
+      (ir.compiler-ir-block-builder-with-capacity 2)]
+    [_init-bb : unit
+      (begin
+        (ir.compiler-ir-block-builder-push!
+          (&mut bb-builder)
+          (ir.CompilerIrBlock.Block
+            0
+            (ir.compiler-ir-instr-builder-to-seq b0-builder)))
+        (ir.compiler-ir-block-builder-push!
+          (&mut bb-builder)
+          (ir.CompilerIrBlock.Block
+            1
+            (ir.compiler-ir-instr-builder-to-seq b1-builder))))]
+    [blocks : ir.CompilerIrBlockList
+      (ir.compiler-ir-block-builder-to-list bb-builder)]
+    [hs-sparse : opt.OptLoadHeaderSet
+      (opt.opt-load-header-set-from-function
+        type-segment-bases
+        (& params)
+        (& blocks))]
+    [hs-dense : opt.OptLoadHeaderSet
+      (opt.opt-load-header-set-from-function-with-size
+        type-segment-bases
+        (& params)
+        (& blocks)
+        8)]
+    (test.assert-true
+      (opt.opt-load-header-var? (& hs-sparse) 0)
+      "sparse: AddrOf before DynArray def keeps code 1 header")
+    (test.assert-true
+      (not (opt.opt-load-slice-var? (& hs-sparse) 0))
+      "sparse: AddrOf before DynArray def is not slice")
+    (test.assert-true
+      (opt.opt-load-header-var? (& hs-dense) 0)
+      "dense: AddrOf before DynArray def keeps code 1 header")
+    (test.assert-true
+      (not (opt.opt-load-slice-var? (& hs-dense) 0))
+      "dense: AddrOf before DynArray def is not slice")
+    (test.assert-true
+      (opt.opt-load-header-var? (& hs-sparse) 1)
+      "sparse: AddrOf after DynArray def keeps code 1 header")
+    (test.assert-true
+      (not (opt.opt-load-slice-var? (& hs-sparse) 1))
+      "sparse: AddrOf after DynArray def is not slice")
+    (test.assert-true
+      (opt.opt-load-header-var? (& hs-dense) 1)
+      "dense: AddrOf after DynArray def keeps code 1 header")
+    (test.assert-true
+      (not (opt.opt-load-slice-var? (& hs-dense) 1))
+      "dense: AddrOf after DynArray def is not slice")
+    (test.assert-true
+      (not (opt.opt-load-header-var? (& hs-sparse) 2))
+      "sparse: AddrOf after String def poisons out of header class")
+    (test.assert-true
+      (not (opt.opt-load-slice-var? (& hs-sparse) 2))
+      "sparse: AddrOf after String def poisons out of slice class")
+    (test.assert-true
+      (not (opt.opt-load-header-var? (& hs-dense) 2))
+      "dense: AddrOf after String def poisons out of header class")
+    (test.assert-true
+      (not (opt.opt-load-slice-var? (& hs-dense) 2))
+      "dense: AddrOf after String def poisons out of slice class")))
+
+(test
   inline-checked-literal-movs-borrowed-str-uses-strdesc
   (let
     [type-segment-bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]

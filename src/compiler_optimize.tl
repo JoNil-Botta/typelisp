@@ -23176,12 +23176,17 @@
           (match kind
             [(or (GlobalSlot g) (GlobalDataSlot g))
               (and
-                (not (opt-global-mod-ref-any? globals.obj-mask))
-                (not
-                  (opt-global-mod-ref-mask-may-write?
-                    globals.obj-index
-                    globals.obj-mask
-                    g))
+                ;; Callers already require `opt-licm-store-summary-header-load-safe?`,
+                ;; so an `any` obj-mask (e.g. when `obj-mod-ref` was not built)
+                ;; cannot represent an unguarded global-storage store here; when
+                ;; a precise per-global obj-mask is present, still check `g`.
+                (or
+                  (opt-global-mod-ref-any? globals.obj-mask)
+                  (not
+                    (opt-global-mod-ref-mask-may-write?
+                      globals.obj-index
+                      globals.obj-mask
+                      g)))
                 (or
                   globals.clean?
                   globals.relaxed-clean?
@@ -130159,6 +130164,17 @@
     (opt-load-header-set-fill-zero! (&mut items) 0)
     (Dense items)))
 
+(define (opt-load-header-set-merge-code [current : i64] [code : i64]) : i64
+  (cond
+    [(= code 5) (cond [(= current 0) 5] [(= current 3) 2] [else current])]
+    [(= current 0) code]
+    [(= current 5)
+      (if (= code 1)
+        1
+        2)]
+    [(= current code) current]
+    [else 2]))
+
 (define (opt-load-header-set-mark-code
   [set : OptLoadHeaderSet]
   [var : i64]
@@ -130169,10 +130185,8 @@
         [next-code : i64
           (match (opt_i64_i64_map.get (& map) var)
             [(LookupFound current)
-              (if (= current code)
-                current
-                2)]
-            [(LookupMissing) code])]
+              (opt-load-header-set-merge-code current code)]
+            [(LookupMissing) (opt-load-header-set-merge-code 0 code)])]
         (if (match (opt_i64_i64_map.get (& map) var)
           [(LookupFound current) (= current next-code)]
           [(LookupMissing) false])
@@ -130186,11 +130200,8 @@
         set
         (let
           [current : i64 (array-ref items var)]
-          (if (= current 0)
-            (set! (array-ref items var) code)
-            (if (= current code)
-              unit
-              (set! (array-ref items var) 2)))
+          [next-code : i64 (opt-load-header-set-merge-code current code)]
+          (when (!= current next-code) (set! (array-ref items var) next-code))
           set))]))
 
 (define (opt-load-header-set-mark
@@ -130204,12 +130215,14 @@
       1
       2)))
 
-;; Taking a variable's storage address makes its by-value words mutable through
-;; that escaped address. Unconditionally poison the var to code 2 so neither an
-;; earlier nor a later definition can classify it as an immutable header (1) or
-;; stable Slice/String register group (3).
+;; Taking a variable's storage address makes by-value register-group words
+;; (code 3: String / Slice) mutable through that escaped address, so poison
+;; code 3 to 2 and record code 5 (unstable-seen) before any def so a later
+;; code-3 def also poisons to 2. Pointer-handle headers (code 1: DynArray /
+;; (& str)) stay code 1 because Load-CSE already invalidates across aliasing
+;; stores and calls.
 (define (opt-load-header-set-mark-unstable [set : OptLoadHeaderSet] [var : i64]) : OptLoadHeaderSet
-  (opt-load-header-set-mark-code set var 2))
+  (opt-load-header-set-mark-code set var 5))
 
 (define (opt-load-header-var? [set : (& OptLoadHeaderSet)] [var : i64]) : bool
   (match set

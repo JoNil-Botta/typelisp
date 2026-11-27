@@ -411,24 +411,26 @@ awk -v host="$HOST_OS" -v work_root="target/integration-verify/$HOST_OS$INTEGRAT
     > "$HOST_MANIFEST"
 
 # Batch chunks compile in a bounded pool (scripts/lib-bounded-pool.sh):
-# TYPELISP_INTEGRATION_WORKERS compiler processes at once (1-3; default 3 on
-# Linux, 2 on Windows until shards move to separate lanes), each under an
-# enforced memory cap and timeout (a user cgroup on Linux, a Job Object on
-# Windows), so at most workers x cap MiB of caps run concurrently.
+# TYPELISP_INTEGRATION_WORKERS compiler processes at once (1-4; default 3 on
+# Linux, 4 on Windows), each under an enforced memory cap and timeout (a user
+# cgroup on Linux, a Job Object on Windows), so at most workers x cap MiB of
+# caps run concurrently. On Windows the measured chunk peak is ~1,238 MiB, so
+# 4 x 2,560 MiB = 10,240 MiB stays well within 14,336 MiB with >2x headroom.
 if [ "$HOST_OS" = windows ]; then
-    INTEGRATION_DEFAULT_WORKERS=2
+    INTEGRATION_DEFAULT_WORKERS=4
+    INTEGRATION_POOL_CHUNK_CAP_MIB=2560
 else
     INTEGRATION_DEFAULT_WORKERS=3
+    INTEGRATION_POOL_CHUNK_CAP_MIB=4096
 fi
 INTEGRATION_POOL_WORKERS=${TYPELISP_INTEGRATION_WORKERS:-$INTEGRATION_DEFAULT_WORKERS}
 case "$INTEGRATION_POOL_WORKERS" in
-    1 | 2 | 3) ;;
+    1 | 2 | 3 | 4) ;;
     *)
-        echo "invalid TYPELISP_INTEGRATION_WORKERS: $INTEGRATION_POOL_WORKERS (expected 1-3)" >&2
+        echo "invalid TYPELISP_INTEGRATION_WORKERS: $INTEGRATION_POOL_WORKERS (expected 1-4)" >&2
         exit 2
         ;;
 esac
-INTEGRATION_POOL_CHUNK_CAP_MIB=4096
 INTEGRATION_POOL_BUDGET_MIB=$((INTEGRATION_POOL_WORKERS * INTEGRATION_POOL_CHUNK_CAP_MIB))
 INTEGRATION_BATCH_CHUNK_MAX_WEIGHT=550000
 INTEGRATION_LOCAL_FILTER_ACTIVE=0
@@ -436,6 +438,7 @@ INTEGRATION_POOL_JOB_TIMEOUT_SECONDS=900
 # Internal: only the batch observability self-test turns enforcement off, on
 # Windows, where the Job Object wrapper cannot launch its shell-script compiler.
 INTEGRATION_POOL_ENFORCE_CAPS=1
+INTEGRATION_BATCH_DEFER_WINDOWS_PLAN=0
 INTEGRATION_POOL_DIR=
 INTEGRATION_POOL_WALL_MS=0
 INTEGRATION_POOL_PEAK_BYTES=0
@@ -534,7 +537,7 @@ integration_batch_settle_chunk() {
         echo "FAIL: batch chunk $_chunk_label left no compile status" >&2
         exit 1
     fi
-    _chunk_rc=$(cat "$_chunk_status") || return 1
+    IFS= read -r _chunk_rc < "$_chunk_status" || return 1
     if [ -n "$_chunk_cap" ]; then
         if ! bounded_pool_read_report "$_chunk_report" "$_chunk_rc" "$_chunk_cap" "$HOST_OS"; then
             echo "FAIL: batch chunk $_chunk_label $BOUNDED_POOL_REPORT_FAILURE" \
@@ -550,15 +553,21 @@ integration_batch_settle_chunk() {
         fi
     fi
     if [ "$HOST_OS" = windows ]; then
+        IFS= read -r _chunk_elapsed_ms < "$_chunk_elapsed" || return 1
         WINDOWS_MANIFEST_BATCH_COMPILE_MS=$((
-            WINDOWS_MANIFEST_BATCH_COMPILE_MS + $(cat "$_chunk_elapsed")
+            WINDOWS_MANIFEST_BATCH_COMPILE_MS + _chunk_elapsed_ms
         ))
         WINDOWS_MANIFEST_BATCH_COMPILES=$((WINDOWS_MANIFEST_BATCH_COMPILES + 1))
     fi
     if [ "$_chunk_rc" -eq 0 ]; then
         if [ "$HOST_OS" = windows ]; then
-            integration_windows_register_plan \
-                "$_chunk_list" "$_chunk_plan" "$_chunk_label" || return 1
+            if [ "${INTEGRATION_BATCH_DEFER_WINDOWS_PLAN:-0}" -eq 1 ]; then
+                printf '%s|%s|%s\n' "$_chunk_list" "$_chunk_plan" "$_chunk_label" \
+                    >> "$WORKDIR/batch-pool.windows-plans" || return 1
+            else
+                integration_windows_register_plan \
+                    "$_chunk_list" "$_chunk_plan" "$_chunk_label" || return 1
+            fi
         fi
         return 0
     fi
@@ -670,15 +679,20 @@ bounded_pool_run_job() {
 # a row from every job; a failing one still publishes what ran.
 integration_batch_merge_pool_timing() {
     ci_timing_enabled || return 0
+    _merge_mode=$1
+    set --
     while IFS='|' read -r _merge_job _merge_cap; do
         _merge_rows="$INTEGRATION_POOL_DIR/timing/$_merge_job.tsv"
         if [ -s "$_merge_rows" ]; then
-            cat "$_merge_rows" >> "$TYPELISP_CI_TIMING_FILE" || return 1
-        elif [ "$1" = required ]; then
+            set -- "$@" "$_merge_rows"
+        elif [ "$_merge_mode" = required ]; then
             echo "FAIL: batch pool job published no timing row: $_merge_job" >&2
             exit 1
         fi
     done < "$INTEGRATION_POOL_DIR/queue" || return 1
+    if [ "$#" -gt 0 ]; then
+        cat "$@" >> "$TYPELISP_CI_TIMING_FILE" || return 1
+    fi
 }
 
 # Compile every chunk queued in QUEUE (`batch-<group>-<index>|<cap MiB>` rows)
@@ -711,11 +725,24 @@ integration_batch_run_pool() {
         ci_timing_record_elapsed manifest batch-pool \
             "$((_pool_settle_started - _pool_started))" 0 || return 1
     fi
+    _pool_win_plans="$WORKDIR/batch-pool.windows-plans"
+    : > "$_pool_win_plans" || return 1
+    INTEGRATION_BATCH_DEFER_WINDOWS_PLAN=1
     while IFS='|' read -r _pool_job _pool_cap; do
         [ "$INTEGRATION_POOL_ENFORCE_CAPS" -eq 1 ] || _pool_cap=
         integration_batch_settle_chunk "$WORKDIR/$_pool_job.list" \
-            "${_pool_job#batch-}" "$_pool_cap" || return 1
-    done < "$_pool_queue" || return 1
+            "${_pool_job#batch-}" "$_pool_cap" || {
+            INTEGRATION_BATCH_DEFER_WINDOWS_PLAN=0
+            return 1
+        }
+    done < "$_pool_queue" || {
+        INTEGRATION_BATCH_DEFER_WINDOWS_PLAN=0
+        return 1
+    }
+    INTEGRATION_BATCH_DEFER_WINDOWS_PLAN=0
+    if [ "$HOST_OS" = windows ] && [ -s "$_pool_win_plans" ]; then
+        integration_windows_register_plans_batch "$_pool_win_plans" || return 1
+    fi
     if ci_timing_enabled; then
         ci_timing_set_now_ms || return 1
         ci_timing_record_elapsed manifest batch-settle \
@@ -731,8 +758,18 @@ WINDOWS_RUNNER_WIN=
 WINDOWS_LEGACY_RUNNER_WIN=
 WINDOWS_LINKER_WIN=
 WINDOWS_LLD_LINK_WIN=
+WINDOWS_CLANG_WIN=
 WINDOWS_WORKDIR_WIN=
 WINDOWS_CHECKOUT_ROOT_NATIVE=
+WINDOWS_ASSEMBLE_REQUEST=
+WINDOWS_ASSEMBLE_REQUEST_WIN=
+WINDOWS_ASSEMBLE_RESULTS=
+WINDOWS_ASSEMBLE_RESULTS_WIN=
+WINDOWS_ASSEMBLE_SUMMARY=
+WINDOWS_ASSEMBLE_SUMMARY_WIN=
+WINDOWS_ASSEMBLE_RUNNER_STDOUT=
+WINDOWS_ASSEMBLE_RUNNER_STDERR=
+WINDOWS_ASSEMBLE_CASES=
 WINDOWS_LINK_REQUEST=
 WINDOWS_LINK_REQUEST_WIN=
 WINDOWS_LINK_RESULTS=
@@ -753,7 +790,9 @@ WINDOWS_SUMMARY_WIN=
 WINDOWS_RUNNER_STDOUT=
 WINDOWS_RUNNER_STDERR=
 WINDOWS_QUEUED_CASES=
+WINDOWS_COFF_ARTIFACTS=
 WINDOWS_COFF_FALLBACK_REASONS=
+WINDOWS_ASSEMBLE_REQUESTS=0
 WINDOWS_LINK_REQUESTS=0
 WINDOWS_MANIFEST_QUEUED=0
 WINDOWS_QUEUE_REQUESTS=0
@@ -761,6 +800,8 @@ WINDOWS_MANIFEST_COMPILE_MS=0
 WINDOWS_MANIFEST_BATCH_COMPILE_MS=0
 WINDOWS_MANIFEST_PLAN_PROCESS_MS=0
 WINDOWS_MANIFEST_ASSEMBLE_MS=0
+WINDOWS_MANIFEST_ASSEMBLE_WALL_MS=0
+WINDOWS_MANIFEST_ASSEMBLE_HELPER_MS=0
 WINDOWS_MANIFEST_FALLBACK_ASSEMBLE_MS=0
 WINDOWS_MANIFEST_FORCED_ASSEMBLE_MS=0
 WINDOWS_MANIFEST_STANDALONE_ASSEMBLE_MS=0
@@ -782,9 +823,10 @@ WINDOWS_MANIFEST_DIRECT_OBJECTS=0
 WINDOWS_MANIFEST_FALLBACK_ASSEMBLIES=0
 WINDOWS_MANIFEST_FORCED_ASSEMBLIES=0
 WINDOWS_MANIFEST_ASSEMBLES=0
+WINDOWS_MANIFEST_CDEP_ASSEMBLES=0
 WINDOWS_MANIFEST_LINKS=0
 WINDOWS_MANIFEST_ASSERTS=0
-WINDOWS_CURRENT_ASSEMBLY_CLASS=standalone
+WINDOWS_ASSEMBLE_POWERSHELL_STARTS=0
 WINDOWS_LINK_POWERSHELL_STARTS=0
 WINDOWS_MANIFEST_POWERSHELL_STARTS=0
 WINDOWS_MANIFEST_CYGPATH_CONVERSIONS=0
@@ -792,28 +834,47 @@ WINDOWS_DIRECT_POWERSHELL_STARTS=0
 WINDOWS_DIRECT_CYGPATH_CONVERSIONS=0
 WINDOWS_DIFFERENTIAL_POWERSHELL_STARTS=0
 WINDOWS_DIFFERENTIAL_CYGPATH_CONVERSIONS=0
-# Eight link jobs matches the faster median for the Windows COFF linker queue.
-# Set TYPELISP_WINDOWS_LINK_JOBS=1 for serial debugging or override it up to 64
-# for host-specific measurements.
+# Eight link/assemble jobs matches the faster median for the Windows COFF
+# toolchain queue. Four runner jobs parallelizes independent `.exe` execution
+# (LPT order, with serial/lock-group isolation for self-tests and shared paths).
 WINDOWS_LINK_JOBS=${TYPELISP_WINDOWS_LINK_JOBS:-8}
+WINDOWS_ASSEMBLE_JOBS=${TYPELISP_WINDOWS_ASSEMBLE_JOBS:-$WINDOWS_LINK_JOBS}
+WINDOWS_RUNNER_JOBS=${TYPELISP_WINDOWS_RUNNER_JOBS:-4}
 
 if [ "$HOST_OS" = windows ] && [ "$SELF_TEST_WITHOUT_COMPILER" -eq 0 ]; then
-    case "$WINDOWS_LINK_JOBS" in
-        "" | *[!0-9]* | 0)
-            echo "TYPELISP_WINDOWS_LINK_JOBS must be an integer from 1 to 64" >&2
+    for _win_jobs_pair in \
+        "TYPELISP_WINDOWS_LINK_JOBS:$WINDOWS_LINK_JOBS" \
+        "TYPELISP_WINDOWS_ASSEMBLE_JOBS:$WINDOWS_ASSEMBLE_JOBS" \
+        "TYPELISP_WINDOWS_RUNNER_JOBS:$WINDOWS_RUNNER_JOBS"; do
+        _win_jobs_var=${_win_jobs_pair%%:*}
+        _win_jobs_val=${_win_jobs_pair#*:}
+        case "$_win_jobs_val" in
+            "" | *[!0-9]* | 0)
+                echo "$_win_jobs_var must be an integer from 1 to 64" >&2
+                exit 2
+                ;;
+        esac
+        if [ "$_win_jobs_val" -gt 64 ]; then
+            echo "$_win_jobs_var must be an integer from 1 to 64" >&2
             exit 2
-            ;;
-    esac
-    if [ "$WINDOWS_LINK_JOBS" -gt 64 ]; then
-        echo "TYPELISP_WINDOWS_LINK_JOBS must be an integer from 1 to 64" >&2
-        exit 2
-    fi
+        fi
+    done
     WINDOWS_RUNNER_WIN=$(cygpath -aw "$ROOT/scripts/windows-integration-runner.ps1")
     WINDOWS_LEGACY_RUNNER_WIN=$(cygpath -aw "$ROOT/scripts/windows-integration-legacy-runner.ps1")
     WINDOWS_LINKER_WIN=$(cygpath -aw "$ROOT/scripts/windows-integration-linker.ps1")
     WINDOWS_LLD_LINK_WIN=$(cygpath -aw "$(command -v lld-link)")
+    WINDOWS_CLANG_WIN=$(cygpath -aw "$(command -v clang)")
     WINDOWS_WORKDIR_WIN=$(cygpath -aw "$WORKDIR")
     WINDOWS_CHECKOUT_ROOT_NATIVE=$(cygpath -am "$ROOT")
+    WINDOWS_ASSEMBLE_REQUEST="$WORKDIR/windows-integration-assemble.requests"
+    WINDOWS_ASSEMBLE_REQUEST_WIN="$WINDOWS_WORKDIR_WIN\\windows-integration-assemble.requests"
+    WINDOWS_ASSEMBLE_RESULTS="$WORKDIR/windows-integration-assemble.results"
+    WINDOWS_ASSEMBLE_RESULTS_WIN="$WINDOWS_WORKDIR_WIN\\windows-integration-assemble.results"
+    WINDOWS_ASSEMBLE_SUMMARY="$WORKDIR/windows-integration-assemble.summary"
+    WINDOWS_ASSEMBLE_SUMMARY_WIN="$WINDOWS_WORKDIR_WIN\\windows-integration-assemble.summary"
+    WINDOWS_ASSEMBLE_RUNNER_STDOUT="$WORKDIR/windows-integration-assembler.stdout"
+    WINDOWS_ASSEMBLE_RUNNER_STDERR="$WORKDIR/windows-integration-assembler.stderr"
+    WINDOWS_ASSEMBLE_CASES="$WORKDIR/windows-integration-assemble.cases"
     WINDOWS_LINK_REQUEST="$WORKDIR/windows-integration-links.requests"
     WINDOWS_LINK_REQUEST_WIN="$WINDOWS_WORKDIR_WIN\\windows-integration-links.requests"
     WINDOWS_LINK_RESULTS="$WORKDIR/windows-integration-links.results"
@@ -834,106 +895,203 @@ if [ "$HOST_OS" = windows ] && [ "$SELF_TEST_WITHOUT_COMPILER" -eq 0 ]; then
     WINDOWS_RUNNER_STDOUT="$WORKDIR/windows-integration-runner.stdout"
     WINDOWS_RUNNER_STDERR="$WORKDIR/windows-integration-runner.stderr"
     WINDOWS_QUEUED_CASES="$WORKDIR/windows-integration.queued"
+    WINDOWS_COFF_ARTIFACTS="$WORKDIR/windows-coff.artifacts"
     WINDOWS_COFF_FALLBACK_REASONS="$WORKDIR/windows-coff-fallback-reasons.txt"
+    printf 'tlwinlink1\000' > "$WINDOWS_ASSEMBLE_REQUEST"
+    : > "$WINDOWS_ASSEMBLE_CASES"
     printf 'tlwinlink1\000' > "$WINDOWS_LINK_REQUEST"
     : > "$WINDOWS_LINK_CASES"
-    printf 'tlwinq3\000' > "$WINDOWS_QUEUE"
+    printf 'tlwinq4\000' > "$WINDOWS_QUEUE"
     : > "$WINDOWS_QUEUED_CASES"
+    : > "$WINDOWS_COFF_ARTIFACTS"
     : > "$WINDOWS_COFF_FALLBACK_REASONS"
-    # The two queue helpers, lld-link, their common work root, and the sysroot
-    # stdlib archive are the only manifest path conversions. Per-case
+    # The two queue helpers, lld-link, clang, their common work root, and the
+    # sysroot stdlib archive are the only manifest path conversions. Per-case
     # inputs/outputs are constructed from validated case names below.
-    WINDOWS_MANIFEST_CYGPATH_CONVERSIONS=4
+    WINDOWS_MANIFEST_CYGPATH_CONVERSIONS=5
     stdlib_archive_resolve_triple x86_64-pc-windows-msvc "${COMPILER:-}"
     WINDOWS_STDLIB_ARCHIVE_WIN=""
     if [ -n "$STDLIB_ARCHIVE_PATH" ]; then
         WINDOWS_STDLIB_ARCHIVE_WIN=$(cygpath -aw "$STDLIB_ARCHIVE_PATH")
-        WINDOWS_MANIFEST_CYGPATH_CONVERSIONS=5
+        WINDOWS_MANIFEST_CYGPATH_CONVERSIONS=6
     fi
     WINDOWS_DIFFERENTIAL_CYGPATH_CONVERSIONS=1
 fi
 
-integration_windows_register_plan() {
-    _windows_plan_batch=$1
-    _windows_plan_result=$2
-    _windows_plan_label=$3
-    _windows_plan_normalized="$WORKDIR/batch-$_windows_plan_label.validated"
+# Validate and register Windows COFF plan files for one or more passing batch
+# chunks in a single awk invocation (avoiding per-chunk awk forks and per-case
+# NTFS marker files). Each input line in PLAN_LIST is:
+#   batch_list_path|plan_path|chunk_label
+integration_windows_register_plans_batch() {
+    _win_plans_list=$1
+    [ -s "$_win_plans_list" ] || return 0
     ci_timing_set_now_ms || return 1
     _windows_plan_started=$CI_TIMING_NOW_MS
+    _win_forced_list=$(windows_manifest_assembly_assertion_cases | tr '\n' ' ')
+    _win_artifacts_file=${WINDOWS_COFF_ARTIFACTS:-$WORKDIR/windows-coff.artifacts}
+    _win_reasons_file=${WINDOWS_COFF_FALLBACK_REASONS:-$WORKDIR/windows-coff-fallback-reasons.txt}
+    _win_counts_file="$WORKDIR/windows-coff-register.counts"
+    if ! awk -F '|' \
+        -v root="$ROOT" \
+        -v expected_prefix="target/integration-verify/$HOST_OS$INTEGRATION_SHARD_SUFFIX/" \
+        -v forced_list="$_win_forced_list" \
+        -v artifacts_out="$_win_artifacts_file" \
+        -v reasons_out="$_win_reasons_file" \
+        -v counts_out="$_win_counts_file" '
+        function fail(msg) {
+            print msg > "/dev/stderr"
+            failed = 1
+            exit 1
+        }
+        function file_nonempty(p,    rc, tmp) {
+            rc = (getline tmp < p)
+            close(p)
+            return rc > 0
+        }
+        function file_exists(p,    rc, tmp) {
+            rc = (getline tmp < p)
+            close(p)
+            return rc >= 0
+        }
+        BEGIN {
+            nf = split(forced_list, farr, /[[:space:]]+/)
+            for (i = 1; i <= nf; i++) {
+                if (farr[i] != "") forced_allowed[farr[i]] = 1
+            }
+            if (file_exists(artifacts_out)) {
+                while ((getline aline < artifacts_out) > 0) {
+                    if (aline == "") continue
+                    split(aline, af, "|")
+                    if (af[1] != "") seen_case[af[1]] = 1
+                }
+                close(artifacts_out)
+            }
+            plan_rows = 0
+            direct_objects = 0
+            fallback_assemblies = 0
+            forced_assemblies = 0
+        }
+        {
+            batch_file = $1
+            plan_file = $2
+            label = $3
+            if (batch_file == "" || plan_file == "") next
 
-    if ! awk -f "$ROOT/scripts/validate-windows-coff-plan.awk" \
-        "$_windows_plan_batch" "$_windows_plan_result" \
-        > "$_windows_plan_normalized"; then
-        echo "FAIL: invalid Windows COFF result plan for batch $_windows_plan_label" >&2
+            delete src_in; delete obj_in; delete asm_in; delete frc_in
+            in_cnt = 0
+            bline_no = 0
+            while ((brc = (getline bline < batch_file)) > 0) {
+                bline_no++
+                sub(/\r$/, "", bline)
+                bn = split(bline, bf, "|")
+                if (bn != 3 && bn != 4)
+                    fail("FAIL: invalid Windows COFF result plan for batch " label ": batch input line " bline_no " must have 3 or 4 fields")
+                if (bf[1] == "" || bf[2] == "" || bf[3] == "" || bf[2] == bf[3])
+                    fail("FAIL: invalid Windows COFF result plan for batch " label ": invalid batch input line " bline_no)
+                if (bn == 4 && bf[4] != "force-assembly")
+                    fail("FAIL: invalid Windows COFF result plan for batch " label ": invalid 4th field on line " bline_no)
+                in_cnt++
+                src_in[in_cnt] = bf[1]
+                obj_in[in_cnt] = bf[2]
+                asm_in[in_cnt] = bf[3]
+                frc_in[in_cnt] = (bn == 4 ? 1 : 0)
+            }
+            close(batch_file)
+            if (brc < 0 || in_cnt == 0)
+                fail("FAIL: invalid Windows COFF result plan for batch " label ": empty or unreadable batch input")
+
+            pl_cnt = 0
+            pline_no = 0
+            while ((prc = (getline pline < plan_file)) > 0) {
+                pline_no++
+                sub(/\r$/, "", pline)
+                pl_cnt++
+                if (pl_cnt > in_cnt)
+                    fail("FAIL: invalid Windows COFF result plan for batch " label ": plan has more rows than batch input")
+                pn = split(pline, pf, "|")
+                if (pn != 5)
+                    fail("FAIL: invalid Windows COFF result plan for batch " label ": plan line " pline_no " must have 5 fields")
+                if (pf[5] != "stdlib-archive" && pf[5] != "none")
+                    fail("FAIL: invalid Windows COFF result plan for batch " label ": invalid archive requirement on line " pline_no)
+                if (pf[1] != src_in[pl_cnt])
+                    fail("FAIL: invalid Windows COFF result plan for batch " label ": source mismatch on line " pline_no)
+
+                psrc = pf[1]
+                pkind = pf[2]
+                psel = pf[3]
+                preason = pf[4]
+                parchive = pf[5]
+                pforced = frc_in[pl_cnt]
+
+                if (pkind == "coff-object") {
+                    if (pforced || psel != obj_in[pl_cnt] || preason != "none")
+                        fail("FAIL: invalid Windows COFF result plan for batch " label ": invalid coff-object row " pline_no)
+                } else if (pkind == "assembly") {
+                    if (psel != asm_in[pl_cnt] || preason == "" || preason == "none")
+                        fail("FAIL: invalid Windows COFF result plan for batch " label ": invalid assembly row " pline_no)
+                    if ((pforced && preason != "forced-assembly") || (!pforced && preason == "forced-assembly"))
+                        fail("FAIL: invalid Windows COFF result plan for batch " label ": forced-assembly mismatch on row " pline_no)
+                } else {
+                    fail("FAIL: invalid Windows COFF result plan for batch " label ": invalid artifact kind on line " pline_no)
+                }
+
+                # Extract validated case name from expected_prefix<case>/<case>.tl
+                if (substr(psrc, 1, length(expected_prefix)) != expected_prefix)
+                    fail("FAIL: Windows COFF plan source is outside its validated case path: " psrc)
+                tail = substr(psrc, length(expected_prefix) + 1)
+                slash = index(tail, "/")
+                if (slash <= 1)
+                    fail("FAIL: Windows COFF plan source is outside its validated case path: " psrc)
+                cname = substr(tail, 1, slash - 1)
+                if (psrc != expected_prefix cname "/" cname ".tl")
+                    fail("FAIL: Windows COFF plan source is outside its validated case path: " psrc)
+                if (seen_case[cname]++)
+                    fail("FAIL: Windows COFF plan selected " cname " more than once")
+
+                sel_abs = root "/" psel
+                obj_abs = root "/" obj_in[pl_cnt]
+                asm_abs = root "/" asm_in[pl_cnt]
+                if (pkind == "coff-object") {
+                    if (!file_nonempty(sel_abs))
+                        fail("FAIL: Windows COFF plan omitted object for " cname ": " psel)
+                    if (file_exists(asm_abs))
+                        fail("FAIL: Windows COFF object row also wrote assembly for " cname)
+                    direct_objects++
+                } else {
+                    if (!file_nonempty(sel_abs))
+                        fail("FAIL: Windows COFF plan omitted assembly for " cname ": " psel)
+                    if (file_exists(obj_abs))
+                        fail("FAIL: Windows COFF assembly row also wrote an object for " cname)
+                    if (pforced) {
+                        if (!(cname in forced_allowed))
+                            fail("FAIL: Windows COFF plan forced unclassified assembly for " cname)
+                        forced_assemblies++
+                    } else {
+                        fallback_assemblies++
+                        print preason >> reasons_out
+                    }
+                }
+                print cname "|" pkind "|" sel_abs "|" preason "|" parchive >> artifacts_out
+                plan_rows++
+            }
+            close(plan_file)
+            if (prc < 0 || pl_cnt != in_cnt)
+                fail("FAIL: invalid Windows COFF result plan for batch " label ": row count mismatch")
+        }
+        END {
+            if (failed) exit 1
+            print plan_rows "|" direct_objects "|" fallback_assemblies "|" forced_assemblies > counts_out
+            close(counts_out)
+        }
+    ' "$_win_plans_list"; then
         return 1
     fi
 
-    while IFS='|' read -r \
-        _plan_source \
-        _plan_kind \
-        _plan_selected \
-        _plan_reason \
-        _plan_object \
-        _plan_assembly \
-        _plan_forced \
-        _plan_archive || [ -n "$_plan_source" ]; do
-        [ -n "$_plan_source" ] || continue
-        _plan_case_path=${_plan_source%/*}
-        _plan_case=${_plan_case_path##*/}
-        _plan_expected_source="target/integration-verify/$HOST_OS$INTEGRATION_SHARD_SUFFIX/$_plan_case/$_plan_case.tl"
-        if [ "$_plan_source" != "$_plan_expected_source" ]; then
-            echo "FAIL: Windows COFF plan source is outside its validated case path: $_plan_source" >&2
-            return 1
-        fi
-        _plan_case_dir="$WORKDIR/$_plan_case"
-        _plan_marker="$_plan_case_dir/windows-coff.artifact"
-        if [ -e "$_plan_marker" ]; then
-            echo "FAIL: Windows COFF plan selected $_plan_case more than once" >&2
-            return 1
-        fi
-
-        _plan_selected_abs="$ROOT/$_plan_selected"
-        _plan_object_abs="$ROOT/$_plan_object"
-        _plan_assembly_abs="$ROOT/$_plan_assembly"
-        case "$_plan_kind" in
-            coff-object)
-                if [ ! -s "$_plan_selected_abs" ]; then
-                    echo "FAIL: Windows COFF plan omitted object for $_plan_case: $_plan_selected" >&2
-                    return 1
-                fi
-                if [ -e "$_plan_assembly_abs" ]; then
-                    echo "FAIL: Windows COFF object row also wrote assembly for $_plan_case" >&2
-                    return 1
-                fi
-                WINDOWS_MANIFEST_DIRECT_OBJECTS=$((WINDOWS_MANIFEST_DIRECT_OBJECTS + 1))
-                ;;
-            assembly)
-                if [ ! -s "$_plan_selected_abs" ]; then
-                    echo "FAIL: Windows COFF plan omitted assembly for $_plan_case: $_plan_selected" >&2
-                    return 1
-                fi
-                if [ -e "$_plan_object_abs" ]; then
-                    echo "FAIL: Windows COFF assembly row also wrote an object for $_plan_case" >&2
-                    return 1
-                fi
-                if [ "$_plan_forced" -eq 1 ]; then
-                    if ! _plan_requirement_reason=$(windows_manifest_assembly_reason "$_plan_case"); then
-                        echo "FAIL: Windows COFF plan forced unclassified assembly for $_plan_case" >&2
-                        return 1
-                    fi
-                    WINDOWS_MANIFEST_FORCED_ASSEMBLIES=$((WINDOWS_MANIFEST_FORCED_ASSEMBLIES + 1))
-                else
-                    WINDOWS_MANIFEST_FALLBACK_ASSEMBLIES=$((WINDOWS_MANIFEST_FALLBACK_ASSEMBLIES + 1))
-                    printf '%s\n' "$_plan_reason" >> "$WINDOWS_COFF_FALLBACK_REASONS" || return 1
-                fi
-                ;;
-        esac
-
-        printf '%s|%s|%s|%s\n' \
-            "$_plan_kind" "$_plan_selected_abs" "$_plan_reason" "$_plan_archive" \
-            > "$_plan_marker" || return 1
-        WINDOWS_MANIFEST_PLAN_ROWS=$((WINDOWS_MANIFEST_PLAN_ROWS + 1))
-    done < "$_windows_plan_normalized" || return 1
+    IFS='|' read -r _reg_rows _reg_direct _reg_fallback _reg_forced < "$_win_counts_file" || return 1
+    WINDOWS_MANIFEST_PLAN_ROWS=$((WINDOWS_MANIFEST_PLAN_ROWS + _reg_rows))
+    WINDOWS_MANIFEST_DIRECT_OBJECTS=$((WINDOWS_MANIFEST_DIRECT_OBJECTS + _reg_direct))
+    WINDOWS_MANIFEST_FALLBACK_ASSEMBLIES=$((WINDOWS_MANIFEST_FALLBACK_ASSEMBLIES + _reg_fallback))
+    WINDOWS_MANIFEST_FORCED_ASSEMBLIES=$((WINDOWS_MANIFEST_FORCED_ASSEMBLIES + _reg_forced))
 
     ci_timing_set_now_ms || return 1
     _windows_plan_finished=$CI_TIMING_NOW_MS
@@ -942,6 +1100,16 @@ integration_windows_register_plan() {
         _windows_plan_finished -
         _windows_plan_started
     ))
+}
+
+integration_windows_register_plan() {
+    _windows_plan_batch=$1
+    _windows_plan_result=$2
+    _windows_plan_label=$3
+    _windows_plan_single="$WORKDIR/batch-$_windows_plan_label.single-plan"
+    printf '%s|%s|%s\n' "$_windows_plan_batch" "$_windows_plan_result" "$_windows_plan_label" \
+        > "$_windows_plan_single" || return 1
+    integration_windows_register_plans_batch "$_windows_plan_single"
 }
 
 deps_or_empty() {
@@ -1011,35 +1179,6 @@ compile_linux_c_deps() {
     done
 
     printf '%s\n' "$_objs"
-}
-
-compile_windows_c_deps() {
-    _deps=$1
-    _case_dir=$2
-    _build_stdout=$3
-    _build_stderr=$4
-    _case_dir_win=$5
-
-    for _dep in $(deps_or_empty "$_deps"); do
-        case "$_dep" in
-            *.c)
-                if ! command -v clang >/dev/null 2>&1; then
-                    echo "missing C compiler: clang" >> "$_build_stderr"
-                    return 1
-                fi
-                _base=$(basename -- "$_dep" .c)
-                _src="$_case_dir/$_dep"
-                _obj="$_case_dir/$_base.native.obj"
-                if ! clang --target=x86_64-pc-windows-msvc -std=c99 -Wall -Wextra -c "$_src" -o "$_obj" \
-                    >> "$_build_stdout" 2>> "$_build_stderr"; then
-                    return 1
-                fi
-                # One path per line lets the link-plan builder preserve a
-                # checkout root containing spaces without re-parsing argv.
-                printf '%s\n' "$_case_dir_win\\$_base.native.obj"
-                ;;
-        esac
-    done
 }
 
 # Linux rooted-filesystem fixtures are owned by verify-fs-rooted-linux.sh.
@@ -1336,9 +1475,9 @@ windows_queue_decode() {
     esac
 }
 
-# Append one native-path request to the NUL-delimited UTF-8 queue. NUL cannot
-# occur in a Windows path or process argument, so this preserves the already
-# split argument vector without launching per-field base64/tr helpers.
+# Append one native-path request to the NUL-delimited UTF-8 queue (`tlwinq4`).
+# NUL cannot occur in a Windows path or process argument, so this preserves the
+# already split argument vector without launching per-field base64/tr helpers.
 windows_queue_append_request() {
     _queue=$1
     _label=$2
@@ -1350,8 +1489,10 @@ windows_queue_append_request() {
     _expected_stdout=$8
     _expected_stderr=$9
     shift 9
+    _lock_group=$1
+    shift 1
     if [ ! -s "$_queue" ]; then
-        printf 'tlwinq3\000' > "$_queue"
+        printf 'tlwinq4\000' > "$_queue"
     fi
     printf '%s\000' \
         "$_label" \
@@ -1363,6 +1504,7 @@ windows_queue_append_request() {
         "$_expected_exit" \
         "$_expected_stdout" \
         "$_expected_stderr" \
+        "$_lock_group" \
         "$#" \
         "$@" >> "$_queue"
 }
@@ -1392,6 +1534,7 @@ windows_run_request_file() {
     _summary_win=$4
     _runner_stdout=$5
     _runner_stderr=$6
+    _runner_jobs=${7:-1}
     ci_timing_set_now_ms
     _started=$CI_TIMING_NOW_MS
     set +e
@@ -1400,6 +1543,7 @@ windows_run_request_file() {
         -ResultPath "$_result_win" \
         -AssertionPath "$_assertion_win" \
         -SummaryPath "$_summary_win" \
+        -Jobs "$_runner_jobs" \
         > "$_runner_stdout" 2> "$_runner_stderr"
     WINDOWS_RUNNER_STATUS=$?
     set -e
@@ -1407,131 +1551,6 @@ windows_run_request_file() {
     _finished=$CI_TIMING_NOW_MS
     WINDOWS_LAST_RUN_MS=$((_finished - _started))
     return "$WINDOWS_RUNNER_STATUS"
-}
-
-windows_queue_manifest_case() {
-    _name=$1
-    _want=$2
-    _stdout_spec=$3
-    _stderr_spec=$4
-    _runtime_args=$5
-    ci_timing_set_now_ms
-    _queue_started=$CI_TIMING_NOW_MS
-    _case_dir="$WORKDIR/$_name"
-    _expected_stdout="$_case_dir/$_name.expected.stdout"
-    _expected_stderr="$_case_dir/$_name.expected.stderr"
-    write_expected_stream "$_stdout_spec" "$_expected_stdout"
-    write_expected_stream "$_stderr_spec" "$_expected_stderr"
-    _exe_win="$WINDOWS_WORKDIR_WIN\\$_name\\$_name.exe"
-    _stdout_win="$WINDOWS_WORKDIR_WIN\\$_name\\$_name.stdout"
-    _stderr_win="$WINDOWS_WORKDIR_WIN\\$_name\\$_name.stderr"
-    _code_win="$WINDOWS_WORKDIR_WIN\\$_name\\$_name.exit"
-    _expected_stdout_win="$WINDOWS_WORKDIR_WIN\\$_name\\$_name.expected.stdout"
-    _expected_stderr_win="$WINDOWS_WORKDIR_WIN\\$_name\\$_name.expected.stderr"
-    case "$_runtime_args" in
-        "" | -)
-            windows_queue_append_request "$WINDOWS_QUEUE" "$_name" \
-                "$_exe_win" "$_stdout_win" "$_stderr_win" "$_code_win" \
-                "$_want" "$_expected_stdout_win" "$_expected_stderr_win"
-            ;;
-        *)
-            # The manifest argument field is an already whitespace-separated
-            # vector; preserve the same splitting contract as a `deps_or_empty`
-            # command substitution without its subshell.
-            # shellcheck disable=SC2086
-            windows_queue_append_request "$WINDOWS_QUEUE" "$_name" \
-                "$_exe_win" "$_stdout_win" "$_stderr_win" "$_code_win" \
-                "$_want" "$_expected_stdout_win" "$_expected_stderr_win" \
-                $_runtime_args
-            ;;
-    esac
-    ci_timing_set_now_ms
-    _queue_finished=$CI_TIMING_NOW_MS
-    WINDOWS_MANIFEST_QUEUE_PREP_MS=$((WINDOWS_MANIFEST_QUEUE_PREP_MS + _queue_finished - _queue_started))
-    printf '%s\n' "$_name" >> "$WINDOWS_QUEUED_CASES"
-    WINDOWS_MANIFEST_QUEUED=$((WINDOWS_MANIFEST_QUEUED + 1))
-    WINDOWS_QUEUE_REQUESTS=$((WINDOWS_QUEUE_REQUESTS + 1))
-}
-
-windows_link_queue_append_request() {
-    _link_queue=$1
-    _link_label=$2
-    _link_exe=$3
-    _link_output=$4
-    _link_stdout=$5
-    _link_stderr=$6
-    shift 6
-    if [ ! -s "$_link_queue" ]; then
-        printf 'tlwinlink1\000' > "$_link_queue"
-    fi
-    printf '%s\000' \
-        "$_link_label" \
-        "$_link_exe" \
-        "$_link_output" \
-        "$_link_stdout" \
-        "$_link_stderr" \
-        "$#" \
-        "$@" >> "$_link_queue"
-}
-
-windows_queue_manifest_link() {
-    _link_name=$1
-    _link_obj_win=$2
-    _link_native_objs=$3
-    _link_bin_win=$4
-    _link_build_stdout_win=$5
-    _link_build_stderr_win=$6
-    _link_want=$7
-    _link_stdout_spec=$8
-    _link_stderr_spec=$9
-    shift 9
-    _link_runtime_args=$1
-    _link_archive=$2
-
-    ci_timing_set_now_ms
-    _link_prepare_started=$CI_TIMING_NOW_MS
-    set -- -NOLOGO "$_link_obj_win"
-    _link_saved_ifs=$IFS
-    IFS='
-'
-    for _link_native_obj in $_link_native_objs; do
-        set -- "$@" "$_link_native_obj"
-    done
-    IFS=$_link_saved_ifs
-    if [ "$_link_archive" = stdlib-archive ]; then
-        if [ -z "$WINDOWS_STDLIB_ARCHIVE_WIN" ]; then
-            echo "FAIL: $_link_name needs the prebuilt stdlib archive, but no lib/x86_64-pc-windows-msvc/libstdlib.a was found for $COMPILER" >&2
-            exit 1
-        fi
-        set -- "$@" -OPT:REF "$WINDOWS_STDLIB_ARCHIVE_WIN"
-    fi
-    set -- "$@" \
-        "-OUT:$_link_bin_win" \
-        -SUBSYSTEM:CONSOLE \
-        -STACK:268435456 \
-        -ENTRY:_tl_start \
-        -NODEFAULTLIB \
-        kernel32.lib \
-        ntdll.lib
-    windows_link_queue_append_request \
-        "$WINDOWS_LINK_REQUEST" \
-        "$_link_name" \
-        "$WINDOWS_LLD_LINK_WIN" \
-        "$_link_bin_win" \
-        "$_link_build_stdout_win" \
-        "$_link_build_stderr_win" \
-        "$@"
-    printf '%s|%s|%s|%s|%s\n' \
-        "$_link_name" \
-        "$_link_want" \
-        "$_link_stdout_spec" \
-        "$_link_stderr_spec" \
-        "$_link_runtime_args" >> "$WINDOWS_LINK_CASES"
-    ci_timing_set_now_ms
-    _link_prepare_finished=$CI_TIMING_NOW_MS
-    WINDOWS_MANIFEST_LINK_PREP_MS=$((WINDOWS_MANIFEST_LINK_PREP_MS + _link_prepare_finished - _link_prepare_started))
-    WINDOWS_LINK_REQUESTS=$((WINDOWS_LINK_REQUESTS + 1))
-    WINDOWS_MANIFEST_LINKS=$((WINDOWS_MANIFEST_LINKS + 1))
 }
 
 windows_timed_compile() {
@@ -1544,37 +1563,6 @@ windows_timed_compile() {
     WINDOWS_MANIFEST_COMPILE_MS=$((WINDOWS_MANIFEST_COMPILE_MS + _elapsed))
     WINDOWS_MANIFEST_COMPILES=$((WINDOWS_MANIFEST_COMPILES + 1))
     ci_timing_record_elapsed "$name" compile "$_elapsed" "$build_rc"
-}
-
-windows_timed_assemble() {
-    ci_timing_set_now_ms
-    _started=$CI_TIMING_NOW_MS
-    set +e
-    clang "$@"
-    _status=$?
-    set -e
-    ci_timing_set_now_ms
-    _finished=$CI_TIMING_NOW_MS
-    _elapsed=$((_finished - _started))
-    WINDOWS_MANIFEST_ASSEMBLE_MS=$((WINDOWS_MANIFEST_ASSEMBLE_MS + _elapsed))
-    case "$WINDOWS_CURRENT_ASSEMBLY_CLASS" in
-        fallback)
-            WINDOWS_MANIFEST_FALLBACK_ASSEMBLE_MS=$((WINDOWS_MANIFEST_FALLBACK_ASSEMBLE_MS + _elapsed))
-            ;;
-        forced)
-            WINDOWS_MANIFEST_FORCED_ASSEMBLE_MS=$((WINDOWS_MANIFEST_FORCED_ASSEMBLE_MS + _elapsed))
-            ;;
-        standalone)
-            WINDOWS_MANIFEST_STANDALONE_ASSEMBLE_MS=$((WINDOWS_MANIFEST_STANDALONE_ASSEMBLE_MS + _elapsed))
-            ;;
-        *)
-            echo "FAIL: unknown Windows assembly timing class: $WINDOWS_CURRENT_ASSEMBLY_CLASS" >&2
-            return 1
-            ;;
-    esac
-    WINDOWS_MANIFEST_ASSEMBLES=$((WINDOWS_MANIFEST_ASSEMBLES + 1))
-    ci_timing_record_elapsed "$name" assemble "$_elapsed" "$_status"
-    return "$_status"
 }
 
 # Generated backend fixtures stay outside the manifest queue because they need
@@ -1606,7 +1594,7 @@ run_windows_program() {
     _code_win=$(cygpath -aw "$_code_posix")
     WINDOWS_DIRECT_CYGPATH_CONVERSIONS=$((WINDOWS_DIRECT_CYGPATH_CONVERSIONS + 8))
     windows_queue_append_request "$_direct_queue" "windows_direct_$_direct_id" \
-        "$_exe_win" "$_stdout_win" "$_stderr_win" "$_code_win" - - - "$@"
+        "$_exe_win" "$_stdout_win" "$_stderr_win" "$_code_win" - - - serial "$@"
     WINDOWS_RESULTS=$_direct_results
     if ! windows_run_request_file \
         "$_direct_queue_win" \
@@ -1614,7 +1602,8 @@ run_windows_program() {
         "$_direct_assertions_win" \
         "$_direct_summary_win" \
         "$_direct_stdout" \
-        "$_direct_stderr"; then
+        "$_direct_stderr" \
+        1; then
         echo "Windows direct runner failed:" >&2
         show_stream_if_nonempty stdout "$_direct_stdout"
         show_stream_if_nonempty stderr "$_direct_stderr"
@@ -2224,51 +2213,166 @@ integration_select_shard() {
 }
 
 
-# Emit one chunk list per group from the staged cases.
+# Deduplicate identical builds across manifest rows that share the exact same
+# (batch-group, source, deps, forced-assembly) tuple. Only the canonical owner
+# row is staged, compiled, assembled, and linked; alias rows rewrite any staged
+# $SRC / $CASEDIR path in their expected-stderr to the canonical owner's staged
+# path so exact line:column abort-site assertions stay 100% preserved, and then
+# execute with their own CLI args and expectations against the shared binary.
+MANIFEST_UNIQUE=
+MANIFEST_PLAN=
+INTEGRATION_TOTAL_CASES=0
+INTEGRATION_UNIQUE_BUILDS=0
+INTEGRATION_DEDUP_ALIAS_CASES=0
+
+integration_build_dedup_plan() {
+    MANIFEST_UNIQUE="$WORKDIR/manifest.unique"
+    MANIFEST_PLAN="$WORKDIR/manifest.plan"
+    _dedup_manifest="$WORKDIR/manifest.dedup"
+    _dedup_counts="$WORKDIR/manifest.dedup-counts"
+    _dedup_forced=
+    if [ "$HOST_OS" = windows ]; then
+        _dedup_forced=$(windows_manifest_assembly_assertion_cases | tr '\n' ' ')
+    fi
+    _dedup_work_root="target/integration-verify/$HOST_OS$INTEGRATION_SHARD_SUFFIX"
+    awk -F '|' \
+        -v work_root="$_dedup_work_root" \
+        -v forced_list="$_dedup_forced" \
+        -v dedup_out="$_dedup_manifest" \
+        -v unique_out="$MANIFEST_UNIQUE" \
+        -v plan_out="$MANIFEST_PLAN" \
+        -v counts_out="$_dedup_counts" '
+        function fail(msg) {
+            print msg > "/dev/stderr"
+            failed = 1
+            exit 1
+        }
+        function replace_literal(str, old, rep,    idx, out, olen) {
+            if (old == "" || index(str, old) == 0) return str
+            out = ""
+            olen = length(old)
+            while ((idx = index(str, old)) > 0) {
+                out = out substr(str, 1, idx - 1) rep
+                str = substr(str, idx + olen)
+            }
+            return out str
+        }
+        function rewrite_casedir(str, old_dir, new_dir,    idx, out, olen, next_ch) {
+            if (old_dir == "" || index(str, old_dir) == 0) return str
+            out = ""
+            olen = length(old_dir)
+            while ((idx = index(str, old_dir)) > 0) {
+                next_ch = substr(str, idx + olen, 1)
+                if (next_ch == "" || next_ch !~ /[A-Za-z0-9_]/) {
+                    out = out substr(str, 1, idx - 1) new_dir
+                } else {
+                    out = out substr(str, 1, idx + olen - 1)
+                }
+                str = substr(str, idx + olen)
+            }
+            return out str
+        }
+        BEGIN {
+            nf = split(forced_list, farr, /[[:space:]]+/)
+            for (i = 1; i <= nf; i++) {
+                if (farr[i] != "") forced_set[farr[i]] = 1
+            }
+            total = 0
+            unique = 0
+            aliases = 0
+            printf "" > dedup_out
+            printf "" > unique_out
+            printf "" > plan_out
+        }
+        {
+            sub(/\r$/, "")
+            if ($0 == "" || $0 ~ /^#/) next
+            name = $1
+            source = $2
+            deps = $6
+            extra = (NF >= 7 ? $7 : "")
+            rest = extra
+            opt = ""
+            if (rest ~ /^opt-level:/) {
+                sub(/^opt-level:/, "", rest)
+                plus = index(rest, "+")
+                if (plus <= 1) fail("invalid manifest optimization level for " name)
+                opt = substr(rest, 1, plus - 1)
+                rest = substr(rest, plus + 1)
+                if (opt != "0" && opt != "1" && opt != "2") {
+                    fail("invalid manifest optimization level: " opt)
+                }
+            }
+            group = (rest == "stage-stdlib" || rest ~ /^stage-stdlib\+expected-stderr:/) ? "stage-stdlib" : "embedded"
+            if (opt != "") group = group "-opt" opt
+            deps_norm = (deps == "" || deps == "-") ? "" : deps
+            forced = (name in forced_set) ? 1 : 0
+            key = group SUBSEP source SUBSEP deps_norm SUBSEP forced
+            total++
+            if (!(key in key_owner)) {
+                key_owner[key] = name
+                owner = name
+                unique++
+                row_line = $0
+                print row_line > unique_out
+            } else {
+                owner = key_owner[key]
+                aliases++
+                if (extra != "") {
+                    old_src = work_root "/" name "/" name ".tl"
+                    new_src = work_root "/" owner "/" owner ".tl"
+                    old_dir = work_root "/" name
+                    new_dir = work_root "/" owner
+                    extra = replace_literal(extra, old_src, new_src)
+                    extra = rewrite_casedir(extra, old_dir, new_dir)
+                }
+                row_line = $1 "|" $2 "|" $3 "|" $4 "|" $5 "|" $6
+                if (NF >= 8) row_line = row_line "|" extra "|" $8
+                else if (NF == 7 || extra != "") row_line = row_line "|" extra
+            }
+            print row_line > dedup_out
+            print owner "|" row_line > plan_out
+        }
+        END {
+            if (failed) exit 1
+            if (close(dedup_out) != 0 || close(unique_out) != 0 || close(plan_out) != 0) exit 1
+            print total "|" unique "|" aliases > counts_out
+            if (close(counts_out) != 0) exit 1
+        }
+    ' "$NORMALIZED_MANIFEST" || return 1
+    mv "$_dedup_manifest" "$NORMALIZED_MANIFEST" || return 1
+    IFS='|' read -r INTEGRATION_TOTAL_CASES INTEGRATION_UNIQUE_BUILDS INTEGRATION_DEDUP_ALIAS_CASES \
+        < "$_dedup_counts" || return 1
+}
+
+# Emit one chunk list per group from the staged cases in a single awk pass
+# (deduplicating identical (group, source, deps, forced) builds and hoisting
+# heavy chunks first via weight-bounded LPT scheduling).
 integration_batch_queue() {
     for _group in $INTEGRATION_BATCH_GROUPS; do
         : > "$WORKDIR/batch-$_group.list" || return 1
     done
-    while IFS='|' read -r _b_name _b_source _b_want _b_stdout _b_args _b_deps _b_extra _b_suite || [ -n "$_b_name" ]; do
-        case "$_b_name" in
-            "" | \#*) continue ;;
-        esac
-        manifest_row_split_opt_level "${_b_extra:-}" || return 1
-        manifest_row_batch_group
-        _b_group=$MANIFEST_ROW_GROUP
-        _b_list="$WORKDIR/batch-$_b_group.list"
-        # Relative to ROOT, which is the working directory: the compiler reads
-        # these out of a file, so no shell path translation happens on Windows.
-        _b_rel="target/integration-verify/$HOST_OS$INTEGRATION_SHARD_SUFFIX/$_b_name/$_b_name"
-        if [ "$HOST_OS" = windows ]; then
-            _b_force=
-            if windows_manifest_assembly_reason "$_b_name" > /dev/null; then
-                _b_force='|force-assembly'
-            fi
-            printf '%s.tl|%s.obj|%s.s%s\n' \
-                "$_b_rel" "$_b_rel" "$_b_rel" "$_b_force" >> "$_b_list" || return 1
-        else
-            printf '%s.tl|%s.s\n' "$_b_rel" "$_b_rel" >> "$_b_list" || return 1
-        fi
-    done < "$NORMALIZED_MANIFEST" || return 1
-
-    # Every chunk is an independent compiler process writing only its own
-    # cases' outputs. Split heavy compiler-importing rows by transitive closure
-    # weight so one group cannot pile all heavy smokes into a single straggler
-    # chunk, then emit chunks in descending weight order (LPT) in the pool queue
-    # (preserving original group/chunk order on equal weights).
     _pool_queue="$WORKDIR/batch-pool.queue"
     : > "$_pool_queue" || return 1
-    set --
-    for _group in $INTEGRATION_BATCH_GROUPS; do
-        _group_list="$WORKDIR/batch-$_group.list"
-        [ ! -s "$_group_list" ] || set -- "$@" "$_group_list"
-    done
-    [ "$#" -gt 0 ] || return 0
-    awk -v dir="$WORKDIR" -v size="$INTEGRATION_BATCH_SIZE" \
-        -v cap="$INTEGRATION_POOL_CHUNK_CAP_MIB" -v queue="$_pool_queue" \
-        -v manifest="$NORMALIZED_MANIFEST" \
+    _queue_forced=
+    if [ "$HOST_OS" = windows ]; then
+        _queue_forced=$(windows_manifest_assembly_assertion_cases | tr '\n' ' ')
+    fi
+    awk -F '|' \
+        -v dir="$WORKDIR" \
+        -v host="$HOST_OS" \
+        -v work_root="target/integration-verify/$HOST_OS$INTEGRATION_SHARD_SUFFIX" \
+        -v groups_str="$INTEGRATION_BATCH_GROUPS" \
+        -v forced_list="$_queue_forced" \
+        -v size="$INTEGRATION_BATCH_SIZE" \
+        -v cap="$INTEGRATION_POOL_CHUNK_CAP_MIB" \
+        -v queue="$_pool_queue" \
         -v max_w="$INTEGRATION_BATCH_CHUNK_MAX_WEIGHT" '
+        function fail(msg) {
+            print msg > "/dev/stderr"
+            failed = 1
+            exit 1
+        }
         function resolve_mod(mod,    p, _line) {
             if (mod ~ /^stdlib\./ || mod == "stdlib") return ""
             p = "src/" mod ".tl"
@@ -2359,54 +2463,89 @@ integration_batch_queue() {
             rw_cache[src] = tot + lines[src] * 4
             return rw_cache[src]
         }
-        function flush_chunk() {
-            if (output == "") return
-            if (close(output) != 0) exit 1
-            chunks++
-            chunk_id[chunks] = cur_job
-            chunk_w[chunks] = cw
-            output = ""
-        }
         BEGIN {
-            if (manifest != "") {
-                while ((getline mline < manifest) > 0) {
-                    sub(/\r$/, "", mline)
-                    if (mline == "" || mline ~ /^#/) continue
-                    nm = split(mline, mfields, "|")
-                    if (nm >= 2) row_src[mfields[1]] = mfields[2]
-                }
-                close(manifest)
+            ng = split(groups_str, group_order, /[[:space:]]+/)
+            for (i = 1; i <= ng; i++) {
+                if (group_order[i] != "") group_allowed[group_order[i]] = 1
+            }
+            nf = split(forced_list, farr, /[[:space:]]+/)
+            for (i = 1; i <= nf; i++) {
+                if (farr[i] != "") forced_set[farr[i]] = 1
             }
         }
         {
-            if (FNR == 1) {
-                flush_chunk()
-                group = FILENAME
-                sub(/^.*\/batch-/, "", group)
-                sub(/[.]list$/, "", group)
-                index_in_group = 0
-                cf = 0
-                cw = 0
+            sub(/\r$/, "")
+            if ($0 == "" || $0 ~ /^#/) next
+            name = $1
+            source = $2
+            deps = $6
+            extra = (NF >= 7 ? $7 : "")
+            rest = extra
+            opt = ""
+            if (rest ~ /^opt-level:/) {
+                sub(/^opt-level:/, "", rest)
+                plus = index(rest, "+")
+                if (plus <= 1) fail("invalid manifest optimization level for " name)
+                opt = substr(rest, 1, plus - 1)
+                rest = substr(rest, plus + 1)
+                if (opt != "0" && opt != "1" && opt != "2") {
+                    fail("invalid manifest optimization level: " opt)
+                }
             }
-            case_name = $0
-            sub(/\|.*/, "", case_name)
-            sub(/^.*\//, "", case_name)
-            sub(/\.tl$/, "", case_name)
-            rw = row_weight(row_src[case_name])
-            if (cf == 0 || cf >= size || (max_w > 0 && cw > 0 && cw + rw > max_w)) {
-                flush_chunk()
-                index_in_group++
-                cur_job = "batch-" group "-" index_in_group
-                output = dir "/" cur_job ".list"
-                cf = 0
-                cw = 0
+            grp = (rest == "stage-stdlib" || rest ~ /^stage-stdlib\+expected-stderr:/) ? "stage-stdlib" : "embedded"
+            if (opt != "") grp = grp "-opt" opt
+            deps_norm = (deps == "" || deps == "-") ? "" : deps
+            forced = (host == "windows" && (name in forced_set)) ? 1 : 0
+            bkey = grp SUBSEP source SUBSEP deps_norm SUBSEP forced
+            if (bkey in seen_build) next
+            seen_build[bkey] = name
+
+            rel = work_root "/" name "/" name
+            if (host == "windows") {
+                entry = rel ".tl|" rel ".obj|" rel ".s" (forced ? "|force-assembly" : "")
+            } else {
+                entry = rel ".tl|" rel ".s"
             }
-            print > output
-            cf++
-            cw += rw
+            gcnt[grp]++
+            gentry[grp, gcnt[grp]] = entry
+            gsrc[grp, gcnt[grp]] = source
         }
         END {
-            flush_chunk()
+            if (failed) exit 1
+            chunks = 0
+            for (gi = 1; gi <= ng; gi++) {
+                grp = group_order[gi]
+                if (grp == "" || gcnt[grp] == 0) continue
+                idx_in_grp = 0
+                cf = 0
+                cw = 0
+                output = ""
+                for (k = 1; k <= gcnt[grp]; k++) {
+                    rw = row_weight(gsrc[grp, k])
+                    if (cf == 0 || cf >= size || (max_w > 0 && cw > 0 && cw + rw > max_w)) {
+                        if (output != "") {
+                            if (close(output) != 0) exit 1
+                            chunks++
+                            chunk_id[chunks] = cur_job
+                            chunk_w[chunks] = cw
+                        }
+                        idx_in_grp++
+                        cur_job = "batch-" grp "-" idx_in_grp
+                        output = dir "/" cur_job ".list"
+                        cf = 0
+                        cw = 0
+                    }
+                    print gentry[grp, k] > output
+                    cf++
+                    cw += rw
+                }
+                if (output != "") {
+                    if (close(output) != 0) exit 1
+                    chunks++
+                    chunk_id[chunks] = cur_job
+                    chunk_w[chunks] = cw
+                }
+            }
             if (chunks > 0) {
                 for (i = 1; i <= chunks; i++) ord[i] = i
                 for (i = 2; i <= chunks; i++) {
@@ -2426,7 +2565,7 @@ integration_batch_queue() {
                 if (close(queue) != 0) exit 1
             }
         }
-    ' "$@" || return 1
+    ' "$NORMALIZED_MANIFEST" || return 1
 }
 
 
@@ -2498,6 +2637,7 @@ EOF
                     printf 'compiler diagnostic\n' > "$WORKDIR/$_completion_job.stderr"
                 }
                 integration_windows_register_plan() { : > "$WORKDIR/registered"; }
+                integration_windows_register_plans_batch() { : > "$WORKDIR/registered"; }
                 integration_batch_run_pool "$WORKDIR/queue"
                 printf '%s\n' "$INTEGRATION_BATCH_FAILED_CHUNKS" > "$WORKDIR/settled"
                 if [ "$INTEGRATION_BATCH_FAILED_CHUNKS" -gt 0 ]; then
@@ -2681,10 +2821,14 @@ EOF
     INTEGRATION_BATCH_SIZE=2
     integration_batch_queue
     printf '%s\n' \
-        'batch-stage-stdlib-1|4096' 'batch-embedded-1|4096' \
-        'batch-embedded-2|4096' 'batch-stage-stdlib-opt0-1|4096' \
-        'batch-stage-stdlib-opt2-1|4096' 'batch-embedded-opt0-1|4096' \
-        'batch-embedded-opt1-1|4096' 'batch-embedded-opt2-1|4096' \
+        "batch-stage-stdlib-1|$INTEGRATION_POOL_CHUNK_CAP_MIB" \
+        "batch-embedded-1|$INTEGRATION_POOL_CHUNK_CAP_MIB" \
+        "batch-embedded-2|$INTEGRATION_POOL_CHUNK_CAP_MIB" \
+        "batch-stage-stdlib-opt0-1|$INTEGRATION_POOL_CHUNK_CAP_MIB" \
+        "batch-stage-stdlib-opt2-1|$INTEGRATION_POOL_CHUNK_CAP_MIB" \
+        "batch-embedded-opt0-1|$INTEGRATION_POOL_CHUNK_CAP_MIB" \
+        "batch-embedded-opt1-1|$INTEGRATION_POOL_CHUNK_CAP_MIB" \
+        "batch-embedded-opt2-1|$INTEGRATION_POOL_CHUNK_CAP_MIB" \
         > "$_dir/levels.expected.queue"
     if ! cmp -s "$_dir/levels.expected.queue" "$_dir/batch-pool.queue" ||
         [ -s "$_dir/batch-stage-stdlib-opt1.list" ] ||
@@ -2693,6 +2837,46 @@ EOF
         echo "FAIL: optimization-level batch partition lost its rows, order or chunk boundary" >&2
         exit 1
     fi
+    # Build deduplication merges identical (group, source, deps, forced) rows,
+    # rewrites $SRC and $CASEDIR in alias expected-stderr to the canonical
+    # owner, and never merges rows differing in opt-level, stdlib layout, deps,
+    # or forced-assembly status.
+    _dedup_dir="$_dir/dedup-self-test"
+    mkdir -p "$_dedup_dir"
+    (
+        WORKDIR=$_dedup_dir
+        HOST_OS=linux
+        INTEGRATION_SHARD_SUFFIX=-opt-levels
+        INTEGRATION_BATCH_GROUPS='stage-stdlib-opt0 stage-stdlib-opt1 embedded-opt0'
+        INTEGRATION_BATCH_SIZE=20
+        NORMALIZED_MANIFEST="$_dedup_dir/dedup.manifest"
+        cat > "$NORMALIZED_MANIFEST" <<'EOF'
+canon_a|tests/integration/shared.tl|134|-|arg1|helper.tl|opt-level:0+expected-stderr:tl: target/integration-verify/linux-opt-levels/canon_a/canon_a.tl:10:5: err
+alias_a|tests/integration/shared.tl|134|-|arg2|helper.tl|opt-level:0+expected-stderr:tl: target/integration-verify/linux-opt-levels/alias_a/alias_a.tl:20:3: err2
+alias_dir|tests/integration/shared.tl|134|-|arg3|helper.tl|opt-level:0+expected-stderr:tl: target/integration-verify/linux-opt-levels/alias_dir/helper.tl:7:2: err3
+diff_dep|tests/integration/shared.tl|0|-|arg1|-|opt-level:0+
+diff_group|tests/integration/shared.tl|0|-|arg1|helper.tl|opt-level:0+stage-stdlib
+diff_opt|tests/integration/shared.tl|0|-|arg1|helper.tl|opt-level:1+stage-stdlib
+EOF
+        integration_build_dedup_plan || exit 1
+        if [ "$INTEGRATION_TOTAL_CASES" -ne 6 ] ||
+            [ "$INTEGRATION_UNIQUE_BUILDS" -ne 4 ] ||
+            [ "$INTEGRATION_DEDUP_ALIAS_CASES" -ne 2 ]; then
+            echo "FAIL: build dedup counts wrong: total=$INTEGRATION_TOTAL_CASES unique=$INTEGRATION_UNIQUE_BUILDS aliases=$INTEGRATION_DEDUP_ALIAS_CASES" >&2
+            exit 1
+        fi
+        if ! grep -F 'alias_a|tests/integration/shared.tl|134|-|arg2|helper.tl|opt-level:0+expected-stderr:tl: target/integration-verify/linux-opt-levels/canon_a/canon_a.tl:20:3: err2' "$NORMALIZED_MANIFEST" >/dev/null ||
+            ! grep -F 'alias_dir|tests/integration/shared.tl|134|-|arg3|helper.tl|opt-level:0+expected-stderr:tl: target/integration-verify/linux-opt-levels/canon_a/helper.tl:7:2: err3' "$NORMALIZED_MANIFEST" >/dev/null; then
+            echo "FAIL: build dedup did not rewrite alias \$SRC/\$CASEDIR paths to canonical owner" >&2
+            cat "$NORMALIZED_MANIFEST" >&2
+            exit 1
+        fi
+        integration_batch_queue || exit 1
+        if [ "$(cat "$_dedup_dir"/batch-*-[0-9]*.list | wc -l | tr -d ' ')" -ne 4 ]; then
+            echo "FAIL: batch queue did not deduplicate identical builds to 4 entries" >&2
+            exit 1
+        fi
+    ) || exit 1
     # Inspect the actual common argv constructor, including target/cfg and
     # both source layouts. Default and explicitly pinned level 1 stay distinct.
     INTEGRATION_BATCH_TARGET_ARGS='--target windows-x86_64 --cfg windows'
@@ -3436,6 +3620,536 @@ run_linux_fixture_cases() {
     TYPELISP_BIN=$COMPILER scripts/verify-codegen-cases.sh "$@" tests/codegen/integration-fixtures.cases
 }
 
+windows_build_and_assemble_manifest() {
+    _win_ready="$WORKDIR/windows-build.ready"
+    _win_standalone="$WORKDIR/windows-build.standalone"
+    _win_failed_owners="$WORKDIR/windows-build.failed-owners"
+    _win_diag_owners="$WORKDIR/windows-build.diag-owners"
+    _win_prep_counts="$WORKDIR/windows-build.prep-counts"
+    _win_cdep_objs="$WORKDIR/windows-cdep-objs.tsv"
+    : > "$_win_ready" || return 1
+    : > "$_win_standalone" || return 1
+    : > "$_win_failed_owners" || return 1
+    : > "$_win_diag_owners" || return 1
+    : > "$_win_cdep_objs" || return 1
+
+    # Single-pass awk classifies every unique build against the consolidated
+    # batch COFF artifact index (zero per-case shell loops).
+    if ! awk -F '|' \
+        -v artifacts_file="$WINDOWS_COFF_ARTIFACTS" \
+        -v workdir="$WORKDIR" \
+        -v ready_out="$_win_ready" \
+        -v standalone_out="$_win_standalone" \
+        -v counts_out="$_win_prep_counts" '
+        function fail(msg) {
+            print msg > "/dev/stderr"
+            failed = 1
+            exit 1
+        }
+        function file_nonempty(p,    rc, tmp) {
+            rc = (getline tmp < p)
+            close(p)
+            return rc > 0
+        }
+        BEGIN {
+            batched = 0
+            standalone_cnt = 0
+            printf "" > ready_out
+            printf "" > standalone_out
+        }
+        FILENAME == artifacts_file {
+            if ($0 == "") next
+            art_kind[$1] = $2
+            art_path[$1] = $3
+            art_reason[$1] = $4
+            art_archive[$1] = $5
+            next
+        }
+        {
+            sub(/\r$/, "")
+            if ($0 == "" || $0 ~ /^#/) next
+            name = $1
+            source = $2
+            deps = $6
+            extra = (NF >= 7 ? $7 : "")
+            rest = extra
+            opt = ""
+            if (rest ~ /^opt-level:/) {
+                sub(/^opt-level:/, "", rest)
+                plus = index(rest, "+")
+                opt = substr(rest, 1, plus - 1)
+                rest = substr(rest, plus + 1)
+            }
+            stage_stdlib = (rest == "stage-stdlib" || rest ~ /^stage-stdlib\+expected-stderr:/) ? 1 : 0
+            case_dir = workdir "/" name
+            obj = case_dir "/" name ".obj"
+            asm = case_dir "/" name ".s"
+            if (name in art_kind) {
+                kind = art_kind[name]
+                sel = art_path[name]
+                reason = art_reason[name]
+                arch = art_archive[name]
+                if (kind == "coff-object") {
+                    if (sel != obj || !file_nonempty(obj))
+                        fail("FAIL: " name " Windows COFF object marker does not name its object")
+                    cls = "none"
+                } else if (kind == "assembly") {
+                    if (sel != asm || !file_nonempty(asm))
+                        fail("FAIL: " name " Windows COFF assembly marker does not name its assembly")
+                    cls = (reason == "forced-assembly") ? "forced" : "fallback"
+                } else {
+                    fail("FAIL: " name " has unknown Windows COFF artifact kind: " kind)
+                }
+                batched++
+                print name "|" source "|" kind "|" cls "|" arch "|" deps > ready_out
+            } else {
+                standalone_cnt++
+                print name "|" source "|" stage_stdlib "|" opt "|" deps > standalone_out
+            }
+        }
+        END {
+            if (failed) exit 1
+            if (close(ready_out) != 0 || close(standalone_out) != 0) exit 1
+            print batched > counts_out
+            if (close(counts_out) != 0) exit 1
+        }
+    ' "$WINDOWS_COFF_ARTIFACTS" "$MANIFEST_UNIQUE"; then
+        return 1
+    fi
+    IFS= read -r _win_batched_count < "$_win_prep_counts" || return 1
+    INTEGRATION_BATCHED_CASES=$((INTEGRATION_BATCHED_CASES + _win_batched_count))
+
+    # Rare path: standalone diagnostic/fallback compiles when a batch chunk failed.
+    if [ -s "$_win_standalone" ]; then
+        while IFS='|' read -r name _st_source stage_stdlib opt_level deps || [ -n "$name" ]; do
+            [ -n "$name" ] || continue
+            work_src_rel="target/integration-verify/$HOST_OS$INTEGRATION_SHARD_SUFFIX/$name/$name.tl"
+            case_dir="$WORKDIR/$name"
+            work_src="$case_dir/$name.tl"
+            asm="$case_dir/$name.s"
+            build_stdout="$case_dir/$name.build.stdout"
+            build_stderr="$case_dir/$name.build.stderr"
+            if [ -n "$opt_level" ]; then
+                opt_level_args="--opt-level $opt_level"
+            else
+                opt_level_args=
+            fi
+            INTEGRATION_STANDALONE_COMPILES=$((INTEGRATION_STANDALONE_COMPILES + 1))
+            if [ "$stage_stdlib" -eq 1 ]; then
+                # shellcheck disable=SC2086
+                windows_timed_compile integration_standalone_compile "$case_dir/standalone.memory" \
+                    "$COMPILER" compile "$work_src_rel" --verify-ir --target windows-x86_64 --cfg windows \
+                    --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" -o "$asm" \
+                    $opt_level_args \
+                    > "$build_stdout" 2> "$build_stderr"
+            else
+                # shellcheck disable=SC2086
+                windows_timed_compile integration_standalone_compile "$case_dir/standalone.memory" \
+                    "$COMPILER" compile "$work_src_rel" --verify-ir --target windows-x86_64 --cfg windows \
+                    --stdlib-root "$ROOT/src" -o "$asm" \
+                    $opt_level_args \
+                    > "$build_stdout" 2> "$build_stderr"
+            fi
+            if [ "$build_rc" -ne 0 ]; then
+                echo "FAIL: $name compile failed" >&2
+                show_compile_failure_diagnostics \
+                    "$name" \
+                    "$build_rc" \
+                    "$COMPILER" \
+                    "$work_src" \
+                    windows-x86_64 \
+                    "$build_stdout" \
+                    "$build_stderr" \
+                    "$asm" \
+                    "compile $work_src_rel --verify-ir --target windows-x86_64 --cfg windows --stdlib-root $ROOT/src -o $asm $opt_level_args (stage-stdlib=$stage_stdlib)"
+                printf '%s\n' "$name" >> "$_win_failed_owners"
+                continue
+            fi
+            if integration_diagnostic_only "$case_dir" "$name"; then
+                printf '%s\n' "$name" >> "$_win_diag_owners"
+                continue
+            fi
+            windows_link_archive=none
+            if [ -n "$WINDOWS_STDLIB_ARCHIVE_WIN" ] &&
+                [ -n "$(windows_stdlib_archive_for_asm "$asm" "${COMPILER:-}")" ]; then
+                windows_link_archive=stdlib-archive
+            fi
+            printf '%s|%s|assembly|standalone|%s|%s\n' \
+                "$name" "$_st_source" "$windows_link_archive" "$deps" >> "$_win_ready"
+        done < "$_win_standalone"
+    fi
+
+    # Build the NUL-delimited clang.exe -c queue for all assembly + C dep
+    # compiles in one awk pass (heavy src/tests/* assemblies first for LPT).
+    _win_asm_counts="$WORKDIR/windows-assemble.prep-counts"
+    printf 'tlwinlink1\000' > "$WINDOWS_ASSEMBLE_REQUEST"
+    : > "$WINDOWS_ASSEMBLE_CASES"
+    if ! awk -F '|' \
+        -v workdir_win="$WINDOWS_WORKDIR_WIN" \
+        -v clang_win="$WINDOWS_CLANG_WIN" \
+        -v req_out="$WINDOWS_ASSEMBLE_REQUEST" \
+        -v cases_out="$WINDOWS_ASSEMBLE_CASES" \
+        -v cdep_out="$_win_cdep_objs" \
+        -v counts_out="$_win_asm_counts" '
+        function emit_req(label, outp, stout, sterr, argc, a1, a2, a3, a4, a5, a6, a7, a8) {
+            printf "%s%c%s%c%s%c%s%c%s%c%d%c", label, 0, clang_win, 0, outp, 0, stout, 0, sterr, 0, argc, 0 >> req_out
+            if (argc >= 1) printf "%s%c", a1, 0 >> req_out
+            if (argc >= 2) printf "%s%c", a2, 0 >> req_out
+            if (argc >= 3) printf "%s%c", a3, 0 >> req_out
+            if (argc >= 4) printf "%s%c", a4, 0 >> req_out
+            if (argc >= 5) printf "%s%c", a5, 0 >> req_out
+            if (argc >= 6) printf "%s%c", a6, 0 >> req_out
+            if (argc >= 7) printf "%s%c", a7, 0 >> req_out
+            if (argc >= 8) printf "%s%c", a8, 0 >> req_out
+        }
+        {
+            if ($0 == "") next
+            owner = $1
+            src = $2
+            kind = $3
+            cls = $4
+            deps = $6
+            if (kind == "assembly") {
+                if (src ~ /^src\/tests\//) {
+                    h_n++
+                    h_owner[h_n] = owner
+                    h_cls[h_n] = cls
+                } else {
+                    l_n++
+                    l_owner[l_n] = owner
+                    l_cls[l_n] = cls
+                }
+            }
+            if (deps != "" && deps != "-") {
+                nd = split(deps, dlist, /[[:space:]]+/)
+                k = 0
+                for (i = 1; i <= nd; i++) {
+                    d = dlist[i]
+                    if (d ~ /\.c$/) {
+                        k++
+                        c_n++
+                        c_owner[c_n] = owner
+                        c_dep[c_n] = d
+                        c_idx[c_n] = k
+                    }
+                }
+            }
+        }
+        END {
+            req_total = 0
+            asm_total = 0
+            cdep_total = 0
+            for (i = 1; i <= h_n; i++) {
+                owner = h_owner[i]
+                cdir = workdir_win "\\" owner
+                lbl = "asm__" owner
+                emit_req(lbl, cdir "\\" owner ".obj", cdir "\\" owner ".asm.stdout", cdir "\\" owner ".asm.stderr", 5,
+                    "--target=x86_64-pc-windows-msvc", "-c", cdir "\\" owner ".s", "-o", cdir "\\" owner ".obj")
+                print lbl "|" owner "|asm|" h_cls[i] "|" owner ".asm.stdout|" owner ".asm.stderr" >> cases_out
+                req_total++; asm_total++
+            }
+            for (i = 1; i <= l_n; i++) {
+                owner = l_owner[i]
+                cdir = workdir_win "\\" owner
+                lbl = "asm__" owner
+                emit_req(lbl, cdir "\\" owner ".obj", cdir "\\" owner ".asm.stdout", cdir "\\" owner ".asm.stderr", 5,
+                    "--target=x86_64-pc-windows-msvc", "-c", cdir "\\" owner ".s", "-o", cdir "\\" owner ".obj")
+                print lbl "|" owner "|asm|" l_cls[i] "|" owner ".asm.stdout|" owner ".asm.stderr" >> cases_out
+                req_total++; asm_total++
+            }
+            for (i = 1; i <= c_n; i++) {
+                owner = c_owner[i]
+                d = c_dep[i]
+                k = c_idx[i]
+                base = d
+                sub(/^.*\//, "", base)
+                sub(/\.c$/, "", base)
+                dwin = d
+                gsub(/\//, "\\", dwin)
+                cdir = workdir_win "\\" owner
+                lbl = "cdep__" owner "__" k
+                objp = cdir "\\" base ".native.obj"
+                stout_rel = base "_" k ".cdep.stdout"
+                sterr_rel = base "_" k ".cdep.stderr"
+                emit_req(lbl, objp, cdir "\\" stout_rel, cdir "\\" sterr_rel, 8,
+                    "--target=x86_64-pc-windows-msvc", "-std=c99", "-Wall", "-Wextra", "-c", cdir "\\" dwin, "-o", objp)
+                print lbl "|" owner "|cdep|cdep|" stout_rel "|" sterr_rel >> cases_out
+                print owner "|" objp >> cdep_out
+                req_total++; cdep_total++
+            }
+            if (req_total > 0 && (close(req_out) != 0 || close(cases_out) != 0)) exit 1
+            if (cdep_total > 0 && close(cdep_out) != 0) exit 1
+            print req_total "|" asm_total "|" cdep_total > counts_out
+            if (close(counts_out) != 0) exit 1
+        }
+    ' "$_win_ready"; then
+        return 1
+    fi
+    IFS='|' read -r WINDOWS_ASSEMBLE_REQUESTS WINDOWS_MANIFEST_ASSEMBLES WINDOWS_MANIFEST_CDEP_ASSEMBLES \
+        < "$_win_asm_counts" || return 1
+
+    # Run all clang.exe -c jobs in parallel via windows-integration-linker.ps1.
+    if [ "$WINDOWS_ASSEMBLE_REQUESTS" -gt 0 ]; then
+        WINDOWS_ASSEMBLE_POWERSHELL_STARTS=1
+        ci_timing_set_now_ms
+        _asm_helper_started=$CI_TIMING_NOW_MS
+        set +e
+        powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$WINDOWS_LINKER_WIN" \
+            -RequestPath "$WINDOWS_ASSEMBLE_REQUEST_WIN" \
+            -ResultPath "$WINDOWS_ASSEMBLE_RESULTS_WIN" \
+            -SummaryPath "$WINDOWS_ASSEMBLE_SUMMARY_WIN" \
+            -Jobs "$WINDOWS_ASSEMBLE_JOBS" \
+            > "$WINDOWS_ASSEMBLE_RUNNER_STDOUT" 2> "$WINDOWS_ASSEMBLE_RUNNER_STDERR"
+        _asm_helper_status=$?
+        set -e
+        ci_timing_set_now_ms
+        _asm_helper_finished=$CI_TIMING_NOW_MS
+        WINDOWS_MANIFEST_ASSEMBLE_HELPER_MS=$((_asm_helper_finished - _asm_helper_started))
+        if [ "$_asm_helper_status" -ne 0 ]; then
+            echo "FAIL: Windows integration assemble scheduler failed" >&2
+            show_stream_if_nonempty stdout "$WINDOWS_ASSEMBLE_RUNNER_STDOUT"
+            show_stream_if_nonempty stderr "$WINDOWS_ASSEMBLE_RUNNER_STDERR"
+            return 1
+        fi
+
+        WINDOWS_ASSEMBLE_SUMMARY_REQUESTS=
+        WINDOWS_ASSEMBLE_SUMMARY_CHILD_STARTS=
+        WINDOWS_ASSEMBLE_SUMMARY_LAUNCH_FAILURES=
+        WINDOWS_ASSEMBLE_SUMMARY_FAILED_PROCESSES=
+        WINDOWS_ASSEMBLE_SUMMARY_MISSING_OUTPUTS=
+        WINDOWS_ASSEMBLE_SUMMARY_JOBS=
+        WINDOWS_ASSEMBLE_SUMMARY_PEAK_CONCURRENCY=
+        WINDOWS_ASSEMBLE_SUMMARY_CHILD_MS=
+        WINDOWS_ASSEMBLE_SUMMARY_RESULT_PROCESS_MS=
+        WINDOWS_ASSEMBLE_SUMMARY_ELAPSED_MS=
+        while IFS='=' read -r _asm_s_key _asm_s_val || [ -n "$_asm_s_key" ]; do
+            case "$_asm_s_key" in
+                requests) WINDOWS_ASSEMBLE_SUMMARY_REQUESTS=$_asm_s_val ;;
+                child_starts) WINDOWS_ASSEMBLE_SUMMARY_CHILD_STARTS=$_asm_s_val ;;
+                launch_failures) WINDOWS_ASSEMBLE_SUMMARY_LAUNCH_FAILURES=$_asm_s_val ;;
+                failed_processes) WINDOWS_ASSEMBLE_SUMMARY_FAILED_PROCESSES=$_asm_s_val ;;
+                missing_outputs) WINDOWS_ASSEMBLE_SUMMARY_MISSING_OUTPUTS=$_asm_s_val ;;
+                jobs) WINDOWS_ASSEMBLE_SUMMARY_JOBS=$_asm_s_val ;;
+                peak_concurrency) WINDOWS_ASSEMBLE_SUMMARY_PEAK_CONCURRENCY=$_asm_s_val ;;
+                child_ms) WINDOWS_ASSEMBLE_SUMMARY_CHILD_MS=$_asm_s_val ;;
+                result_process_ms) WINDOWS_ASSEMBLE_SUMMARY_RESULT_PROCESS_MS=$_asm_s_val ;;
+                elapsed_ms) WINDOWS_ASSEMBLE_SUMMARY_ELAPSED_MS=$_asm_s_val ;;
+            esac
+        done < "$WINDOWS_ASSEMBLE_SUMMARY"
+        if [ "${WINDOWS_ASSEMBLE_SUMMARY_REQUESTS:-}" != "$WINDOWS_ASSEMBLE_REQUESTS" ] ||
+            [ "${WINDOWS_ASSEMBLE_SUMMARY_JOBS:-}" != "$WINDOWS_ASSEMBLE_JOBS" ]; then
+            echo "FAIL: Windows integration assemble scheduler summary mismatch" >&2
+            return 1
+        fi
+        WINDOWS_MANIFEST_ASSEMBLE_WALL_MS=$WINDOWS_ASSEMBLE_SUMMARY_ELAPSED_MS
+        ci_timing_record_elapsed windows-manifest assemble-helper "$WINDOWS_MANIFEST_ASSEMBLE_HELPER_MS" 0
+        ci_timing_record_elapsed windows-manifest assemble-scheduler "$WINDOWS_MANIFEST_ASSEMBLE_WALL_MS" 0
+
+        _win_asm_timing_file=
+        if ci_timing_enabled; then
+            _win_asm_timing_file=$TYPELISP_CI_TIMING_FILE
+        fi
+        _win_asm_failures="$WORKDIR/windows-assemble.failures"
+        _win_asm_totals="$WORKDIR/windows-assemble.totals"
+        : > "$_win_asm_failures" || return 1
+        if ! awk \
+            -v cases_file="$WINDOWS_ASSEMBLE_CASES" \
+            -v results_file="$WINDOWS_ASSEMBLE_RESULTS" \
+            -v timing_file="$_win_asm_timing_file" \
+            -v timing_gate="${TYPELISP_CI_TIMING_GATE:-ungated}" \
+            -v timing_host="${TYPELISP_CI_TIMING_HOST:-$HOST_OS}" \
+            -v failures_out="$_win_asm_failures" \
+            -v failed_owners_out="$_win_failed_owners" \
+            -v totals_out="$_win_asm_totals" '
+            function fail(msg) {
+                print msg > "/dev/stderr"
+                bad = 1
+                exit 1
+            }
+            BEGIN {
+                n = 0
+                while ((getline line < cases_file) > 0) {
+                    if (line == "") continue
+                    split(line, f, "|")
+                    n++
+                    c_lbl[n] = f[1]
+                    c_owner[n] = f[2]
+                    c_kind[n] = f[3]
+                    c_cls[n] = f[4]
+                    c_stout[n] = f[5]
+                    c_sterr[n] = f[6]
+                }
+                close(cases_file)
+
+                r = 0
+                asm_ms = 0; fb_ms = 0; frc_ms = 0; st_ms = 0
+                while ((getline rline < results_file) > 0) {
+                    sub(/\r$/, "", rline)
+                    r++
+                    if (r > n) fail("FAIL: Windows integration assembler returned an unexpected extra result")
+                    split(rline, rf, "\t")
+                    if (rf[1] != c_lbl[r]) fail("FAIL: Windows integration assemble result order changed: expected " c_lbl[r] ", got " rf[1])
+                    status = rf[2]; code = rf[3]; err64 = rf[4]; ms = rf[5] + 0; cmd64 = rf[6]
+                    tstatus = (status == "ok" ? 0 : (status == "failed" ? code : 1))
+                    if (c_kind[r] == "asm") {
+                        asm_ms += ms
+                        if (c_cls[r] == "fallback") fb_ms += ms
+                        else if (c_cls[r] == "forced") frc_ms += ms
+                        else if (c_cls[r] == "standalone") st_ms += ms
+                        if (timing_file != "") {
+                            printf "%s\t%s\t%s\t%s\t%s\t%s\n", timing_gate, c_owner[r], "assemble", ms, tstatus, timing_host >> timing_file
+                        }
+                    }
+                    if (status != "ok") {
+                        print c_owner[r] "\t" c_kind[r] "\t" status "\t" code "\t" err64 "\t" cmd64 "\t" c_stout[r] "\t" c_sterr[r] >> failures_out
+                        if (!failed_owner_seen[c_owner[r]]++) {
+                            print c_owner[r] >> failed_owners_out
+                        }
+                    }
+                }
+                close(results_file)
+                if (r != n) fail("FAIL: Windows integration assembler attributed " r " of " n " requests")
+                if (timing_file != "") close(timing_file)
+                close(failures_out)
+                close(failed_owners_out)
+                print asm_ms "|" fb_ms "|" frc_ms "|" st_ms > totals_out
+                close(totals_out)
+            }
+            END { if (bad) exit 1 }
+        ' < /dev/null; then
+            return 1
+        fi
+        IFS='|' read -r _asm_sum _fb_sum _frc_sum _st_sum < "$_win_asm_totals" || return 1
+        WINDOWS_MANIFEST_ASSEMBLE_MS=$((WINDOWS_MANIFEST_ASSEMBLE_MS + _asm_sum))
+        WINDOWS_MANIFEST_FALLBACK_ASSEMBLE_MS=$((WINDOWS_MANIFEST_FALLBACK_ASSEMBLE_MS + _fb_sum))
+        WINDOWS_MANIFEST_FORCED_ASSEMBLE_MS=$((WINDOWS_MANIFEST_FORCED_ASSEMBLE_MS + _frc_sum))
+        WINDOWS_MANIFEST_STANDALONE_ASSEMBLE_MS=$((WINDOWS_MANIFEST_STANDALONE_ASSEMBLE_MS + _st_sum))
+
+        if [ -s "$_win_asm_failures" ]; then
+            while IFS="$(printf '\t')" read -r _af_owner _af_kind _af_status _af_code _af_err64 _af_cmd64 _af_stout _af_sterr || [ -n "$_af_owner" ]; do
+                [ -n "$_af_owner" ] || continue
+                _af_err=$(windows_queue_decode "$_af_err64")
+                _af_cmd=$(windows_queue_decode "$_af_cmd64")
+                if [ "$_af_kind" = cdep ]; then
+                    echo "FAIL: $_af_owner C dependency compile failed (status=$_af_status exit=$_af_code)" >&2
+                else
+                    echo "FAIL: $_af_owner assemble failed (status=$_af_status exit=$_af_code)" >&2
+                fi
+                echo "  command: $_af_cmd" >&2
+                [ -z "$_af_err" ] || echo "  error: $_af_err" >&2
+                show_compile_stream_diagnostic stdout "$WORKDIR/$_af_owner/$_af_stout"
+                show_compile_stream_diagnostic stderr "$WORKDIR/$_af_owner/$_af_sterr"
+            done < "$_win_asm_failures"
+        fi
+    fi
+
+    # Account for any rows (owners + aliases) whose compile or assemble failed
+    # or was diagnostic-only, and build the NUL-delimited lld-link.exe queue for
+    # all passing unique builds in one awk pass.
+    ci_timing_set_now_ms
+    _link_plan_started=$CI_TIMING_NOW_MS
+    _win_link_prep_counts="$WORKDIR/windows-link.prep-counts"
+    printf 'tlwinlink1\000' > "$WINDOWS_LINK_REQUEST"
+    : > "$WINDOWS_LINK_CASES"
+    if ! awk -F '|' \
+        -v failed_file="$_win_failed_owners" \
+        -v diag_file="$_win_diag_owners" \
+        -v cdep_file="$_win_cdep_objs" \
+        -v plan_file="$MANIFEST_PLAN" \
+        -v ready_file="$_win_ready" \
+        -v workdir_win="$WINDOWS_WORKDIR_WIN" \
+        -v lld_win="$WINDOWS_LLD_LINK_WIN" \
+        -v stdlib_archive_win="$WINDOWS_STDLIB_ARCHIVE_WIN" \
+        -v req_out="$WINDOWS_LINK_REQUEST" \
+        -v cases_out="$WINDOWS_LINK_CASES" \
+        -v counts_out="$_win_link_prep_counts" '
+        function fail(msg) {
+            print msg > "/dev/stderr"
+            bad = 1
+            exit 1
+        }
+        BEGIN {
+            while ((getline line < failed_file) > 0) if (line != "") fail_owner[line] = 1
+            close(failed_file)
+            while ((getline line < diag_file) > 0) if (line != "") diag_owner[line] = 1
+            close(diag_file)
+            while ((getline line < cdep_file) > 0) {
+                if (line == "") continue
+                split(line, cf, "|")
+                cdep_cnt[cf[1]]++
+                cdep_obj[cf[1], cdep_cnt[cf[1]]] = cf[2]
+            }
+            close(cdep_file)
+
+            fail_rows = 0; diag_rows = 0
+            while ((getline pline < plan_file) > 0) {
+                if (pline == "") continue
+                split(pline, pf, "|")
+                ow = pf[1]; nm = pf[2]
+                if (ow in fail_owner) {
+                    if (nm != ow) print "FAIL: " nm " build failed (shared build " ow ")" > "/dev/stderr"
+                    fail_rows++
+                } else if (ow in diag_owner) {
+                    diag_rows++
+                }
+            }
+            close(plan_file)
+
+            link_count = 0
+            while ((getline rline < ready_file) > 0) {
+                if (rline == "") continue
+                split(rline, rf, "|")
+                owner = rf[1]; arch = rf[5]
+                if ((owner in fail_owner) || (owner in diag_owner)) continue
+                cdir = workdir_win "\\" owner
+                obj_win = cdir "\\" owner ".obj"
+                bin_win = cdir "\\" owner ".exe"
+                stout_win = cdir "\\" owner ".build.stdout"
+                sterr_win = cdir "\\" owner ".build.stderr"
+
+                argc = 0
+                argv[++argc] = "-NOLOGO"
+                argv[++argc] = obj_win
+                for (i = 1; i <= cdep_cnt[owner]; i++) {
+                    argv[++argc] = cdep_obj[owner, i]
+                }
+                if (arch == "stdlib-archive") {
+                    if (stdlib_archive_win == "") {
+                        fail("FAIL: " owner " needs the prebuilt stdlib archive, but no lib/x86_64-pc-windows-msvc/libstdlib.a was found")
+                    }
+                    argv[++argc] = "-OPT:REF"
+                    argv[++argc] = stdlib_archive_win
+                }
+                argv[++argc] = "-OUT:" bin_win
+                argv[++argc] = "-SUBSYSTEM:CONSOLE"
+                argv[++argc] = "-STACK:268435456"
+                argv[++argc] = "-ENTRY:_tl_start"
+                argv[++argc] = "-NODEFAULTLIB"
+                argv[++argc] = "kernel32.lib"
+                argv[++argc] = "ntdll.lib"
+
+                printf "%s%c%s%c%s%c%s%c%s%c%d%c", owner, 0, lld_win, 0, bin_win, 0, stout_win, 0, sterr_win, 0, argc, 0 >> req_out
+                for (i = 1; i <= argc; i++) printf "%s%c", argv[i], 0 >> req_out
+                print owner >> cases_out
+                link_count++
+            }
+            close(ready_file)
+            if (link_count > 0 && (close(req_out) != 0 || close(cases_out) != 0)) exit 1
+            print link_count "|" fail_rows "|" diag_rows > counts_out
+            if (close(counts_out) != 0) exit 1
+        }
+        END { if (bad) exit 1 }
+    ' < /dev/null; then
+        return 1
+    fi
+    IFS='|' read -r WINDOWS_LINK_REQUESTS _win_prelink_failed _win_prelink_diag < "$_win_link_prep_counts" || return 1
+    WINDOWS_MANIFEST_LINKS=$WINDOWS_LINK_REQUESTS
+    failed=$((failed + _win_prelink_failed))
+    ran=$((ran + _win_prelink_failed + _win_prelink_diag))
+    ci_timing_set_now_ms
+    WINDOWS_MANIFEST_LINK_PREP_MS=$((CI_TIMING_NOW_MS - _link_plan_started))
+}
+
 windows_run_manifest_links() {
     WINDOWS_LINK_POWERSHELL_STARTS=1
     ci_timing_set_now_ms
@@ -3520,90 +4234,229 @@ windows_run_manifest_links() {
 windows_process_manifest_link_results() {
     ci_timing_set_now_ms
     _link_attribution_started=$CI_TIMING_NOW_MS
-    _link_result_rows=0
-    _link_result_structure_ok=1
-    exec 3< "$WINDOWS_LINK_RESULTS"
-    while IFS='|' read -r \
-        _link_case \
-        _link_want \
-        _link_stdout_spec \
-        _link_stderr_spec \
-        _link_runtime_args || [ -n "$_link_case" ]; do
-        [ -n "$_link_case" ] || continue
-        if ! IFS="$(printf '\t')" read -r \
-            _link_result_label \
-            _link_status \
-            _link_exit \
-            _link_error \
-            _link_elapsed \
-            _link_command <&3; then
-            echo "FAIL: Windows integration link results ended before $_link_case" >&2
-            _link_result_structure_ok=0
-            break
-        fi
-        _link_result_rows=$((_link_result_rows + 1))
-        if [ "$_link_result_label" != "$_link_case" ]; then
-            echo "FAIL: Windows integration link result order changed: expected $_link_case, got $_link_result_label" >&2
-            _link_result_structure_ok=0
-            break
-        fi
+    _link_timing_file=
+    if ci_timing_enabled; then
+        _link_timing_file=$TYPELISP_CI_TIMING_FILE
+    fi
+    _link_failures="$WORKDIR/windows-link.failures"
+    _expected_fallback="$WORKDIR/windows-expected.fallback"
+    _link_attr_counts="$WORKDIR/windows-link.attr-counts"
+    : > "$_link_failures" || return 1
+    : > "$_expected_fallback" || return 1
 
-        case "$_link_status" in
-            ok) _link_timing_status=0 ;;
-            failed) _link_timing_status=$_link_exit ;;
-            *) _link_timing_status=1 ;;
-        esac
-        ci_timing_record_elapsed \
-            "$_link_case" \
-            link \
-            "$_link_elapsed" \
-            "$_link_timing_status"
+    # Single-pass awk validates link results in exact order, emits link timing
+    # rows, writes expected stdout/stderr streams for simple/empty specs, and
+    # queues every manifest row (owners + deduplicated aliases) into tlwinq4.
+    if ! awk \
+        -v cases_file="$WINDOWS_LINK_CASES" \
+        -v results_file="$WINDOWS_LINK_RESULTS" \
+        -v plan_file="$MANIFEST_PLAN" \
+        -v expected_requests="$WINDOWS_LINK_REQUESTS" \
+        -v workdir="$WORKDIR" \
+        -v workdir_win="$WINDOWS_WORKDIR_WIN" \
+        -v timeout_sec="$INTEGRATION_CASE_TIMEOUT_SECONDS" \
+        -v queue_out="$WINDOWS_QUEUE" \
+        -v queued_out="$WINDOWS_QUEUED_CASES" \
+        -v timing_file="$_link_timing_file" \
+        -v timing_gate="${TYPELISP_CI_TIMING_GATE:-ungated}" \
+        -v timing_host="${TYPELISP_CI_TIMING_HOST:-$HOST_OS}" \
+        -v failures_out="$_link_failures" \
+        -v fallback_out="$_expected_fallback" \
+        -v counts_out="$_link_attr_counts" '
+        function fail(msg) {
+            print msg > "/dev/stderr"
+            bad = 1
+            exit 1
+        }
+        function file_exists(p,    rc, tmp) {
+            rc = (getline tmp < p)
+            close(p)
+            return rc >= 0
+        }
+        function write_expected_or_defer(spec, out_path,    i, len, ch, nxt, decoded) {
+            if (spec == "" || spec == "-") {
+                printf "" > out_path
+                close(out_path)
+                return
+            }
+            if (substr(spec, 1, 1) == "@" || index(spec, "@loc{") > 0) {
+                print out_path "|" spec >> fallback_out
+                return
+            }
+            if (index(spec, "\\") == 0) {
+                printf "%s", spec > out_path
+                close(out_path)
+                return
+            }
+            decoded = ""
+            len = length(spec)
+            for (i = 1; i <= len; i++) {
+                ch = substr(spec, i, 1)
+                if (ch == "\\" && i < len) {
+                    nxt = substr(spec, i + 1, 1)
+                    if (nxt == "n") { decoded = decoded "\n"; i++ }
+                    else if (nxt == "t") { decoded = decoded "\t"; i++ }
+                    else if (nxt == "r") { decoded = decoded "\r"; i++ }
+                    else if (nxt == "\\") { decoded = decoded "\\"; i++ }
+                    else {
+                        print out_path "|" spec >> fallback_out
+                        return
+                    }
+                } else {
+                    decoded = decoded ch
+                }
+            }
+            printf "%s", decoded > out_path
+            close(out_path)
+        }
+        BEGIN {
+            nc = 0
+            while ((getline cline < cases_file) > 0) {
+                if (cline == "") continue
+                nc++
+                link_case[nc] = cline
+            }
+            close(cases_file)
 
-        if [ "$_link_status" = ok ]; then
-            if [ ! -f "$WORKDIR/$_link_case/$_link_case.exe" ]; then
-                echo "FAIL: $_link_case link result omitted its executable" >&2
-                failed=$((failed + 1))
-                ran=$((ran + 1))
-                continue
+            nr = 0
+            while ((getline rline < results_file) > 0) {
+                sub(/\r$/, "", rline)
+                nr++
+                if (nr > nc) fail("FAIL: Windows integration linker returned an unexpected extra result")
+                split(rline, rf, "\t")
+                owner = link_case[nr]
+                if (rf[1] != owner) fail("FAIL: Windows integration link result order changed: expected " owner ", got " rf[1])
+                status = rf[2]; code = rf[3]; err64 = rf[4]; elapsed = rf[5]; cmd64 = rf[6]
+                tstatus = (status == "ok" ? 0 : (status == "failed" ? code : 1))
+                if (timing_file != "") {
+                    printf "%s\t%s\t%s\t%s\t%s\t%s\n", timing_gate, owner, "link", elapsed, tstatus, timing_host >> timing_file
+                }
+                if (status == "ok") {
+                    if (!file_exists(workdir "/" owner "/" owner ".exe")) {
+                        link_state[owner] = "missing-exe"
+                    } else {
+                        link_state[owner] = "ok"
+                    }
+                } else {
+                    link_state[owner] = "failed"
+                    print owner "\t" status "\t" code "\t" err64 "\t" cmd64 >> failures_out
+                }
+            }
+            close(results_file)
+            if (nr != nc) fail("FAIL: Windows integration link results ended before " link_case[nr + 1])
+            if (nr != expected_requests) fail("FAIL: Windows integration linker attributed " nr " of " expected_requests " requests")
+
+            queued = 0
+            failed_rows = 0
+            while ((getline pline < plan_file) > 0) {
+                if (pline == "") continue
+                nf = split(pline, pf, "|")
+                owner = pf[1]
+                name = pf[2]
+                want = pf[4]
+                stdout_spec = pf[5]
+                runtime_args = pf[6]
+                extra = (nf >= 8 ? pf[8] : "")
+                if (!(owner in link_state)) continue
+                if (link_state[owner] == "missing-exe") {
+                    print "FAIL: " name " link result omitted its executable (" owner ")" > "/dev/stderr"
+                    failed_rows++
+                    continue
+                }
+                if (link_state[owner] != "ok") {
+                    if (name != owner) {
+                        print "FAIL: " name " link failed (shared build " owner ")" > "/dev/stderr"
+                    }
+                    failed_rows++
+                    continue
+                }
+                rest = extra
+                if (rest ~ /^opt-level:/) {
+                    sub(/^opt-level:[^+]+\+/, "", rest)
+                }
+                stderr_spec = "-"
+                if (rest ~ /^stage-stdlib\+expected-stderr:/) {
+                    stderr_spec = substr(rest, length("stage-stdlib+expected-stderr:") + 1)
+                } else if (rest ~ /^expected-stderr:/) {
+                    stderr_spec = substr(rest, length("expected-stderr:") + 1)
+                }
+
+                cdir = workdir "/" name
+                write_expected_or_defer(stdout_spec, cdir "/" name ".expected.stdout")
+                write_expected_or_defer(stderr_spec, cdir "/" name ".expected.stderr")
+
+                exe_win = workdir_win "\\" owner "\\" owner ".exe"
+                cdir_win = workdir_win "\\" name
+                # compiler_codegen_smoke_suite and compiler_lower_smoke both
+                # write under target/typelisp-fs/; serialize only that pair.
+                lock_group = (name == "compiler_codegen_smoke_suite" || name == "compiler_lower_smoke") ? "typelisp-fs" : "-"
+
+                nargs = 0
+                if (runtime_args != "" && runtime_args != "-") {
+                    nargs = split(runtime_args, argv, /[[:space:]]+/)
+                }
+                printf "%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%d%c", \
+                    name, 0, \
+                    exe_win, 0, \
+                    cdir_win "\\" name ".stdout", 0, \
+                    cdir_win "\\" name ".stderr", 0, \
+                    cdir_win "\\" name ".exit", 0, \
+                    timeout_sec, 0, \
+                    want, 0, \
+                    cdir_win "\\" name ".expected.stdout", 0, \
+                    cdir_win "\\" name ".expected.stderr", 0, \
+                    lock_group, 0, \
+                    nargs, 0 >> queue_out
+                for (i = 1; i <= nargs; i++) {
+                    printf "%s%c", argv[i], 0 >> queue_out
+                }
+                print name >> queued_out
+                queued++
+            }
+            close(plan_file)
+            if (timing_file != "") close(timing_file)
+            close(failures_out)
+            close(fallback_out)
+            if (queued > 0 && (close(queue_out) != 0 || close(queued_out) != 0)) exit 1
+            print nr "|" queued "|" failed_rows > counts_out
+            if (close(counts_out) != 0) exit 1
+        }
+        END { if (bad) exit 1 }
+    ' < /dev/null; then
+        return 1
+    fi
+
+    if [ -s "$_expected_fallback" ]; then
+        while IFS='|' read -r _exp_out _exp_spec || [ -n "$_exp_out" ]; do
+            [ -n "$_exp_out" ] || continue
+            write_expected_stream "$_exp_spec" "$_exp_out"
+        done < "$_expected_fallback"
+    fi
+
+    if [ -s "$_link_failures" ]; then
+        while IFS="$(printf '\t')" read -r _lf_owner _lf_status _lf_exit _lf_err64 _lf_cmd64 || [ -n "$_lf_owner" ]; do
+            [ -n "$_lf_owner" ] || continue
+            _link_decoded_error=$(windows_queue_decode "$_lf_err64")
+            _link_decoded_command=$(windows_queue_decode "$_lf_cmd64")
+            echo "FAIL: $_lf_owner link status=$_lf_status exit=$_lf_exit" >&2
+            echo "  command: $_link_decoded_command" >&2
+            if [ -n "$_link_decoded_error" ]; then
+                echo "  error: $_link_decoded_error" >&2
             fi
-            windows_queue_manifest_case \
-                "$_link_case" \
-                "$_link_want" \
-                "$_link_stdout_spec" \
-                "$_link_stderr_spec" \
-                "$_link_runtime_args"
-            continue
-        fi
+            show_compile_stream_diagnostic \
+                stdout \
+                "$WORKDIR/$_lf_owner/$_lf_owner.build.stdout"
+            show_compile_stream_diagnostic \
+                stderr \
+                "$WORKDIR/$_lf_owner/$_lf_owner.build.stderr"
+        done < "$_link_failures"
+    fi
 
-        _link_decoded_error=$(windows_queue_decode "$_link_error")
-        _link_decoded_command=$(windows_queue_decode "$_link_command")
-        echo "FAIL: $_link_case link status=$_link_status exit=$_link_exit" >&2
-        echo "  command: $_link_decoded_command" >&2
-        if [ -n "$_link_decoded_error" ]; then
-            echo "  error: $_link_decoded_error" >&2
-        fi
-        show_compile_stream_diagnostic \
-            stdout \
-            "$WORKDIR/$_link_case/$_link_case.build.stdout"
-        show_compile_stream_diagnostic \
-            stderr \
-            "$WORKDIR/$_link_case/$_link_case.build.stderr"
-        failed=$((failed + 1))
-        ran=$((ran + 1))
-    done < "$WINDOWS_LINK_CASES"
-
-    if [ "$_link_result_structure_ok" -eq 1 ] && IFS= read -r _link_extra_result <&3; then
-        echo "FAIL: Windows integration linker returned an unexpected extra result" >&2
-        _link_result_structure_ok=0
-    fi
-    exec 3<&-
-    if [ "$_link_result_structure_ok" -ne 1 ]; then
-        return 1
-    fi
-    if [ "$_link_result_rows" -ne "$WINDOWS_LINK_REQUESTS" ]; then
-        echo "FAIL: Windows integration linker attributed $_link_result_rows of $WINDOWS_LINK_REQUESTS requests" >&2
-        return 1
-    fi
+    IFS='|' read -r _link_result_rows _link_queued_rows _link_failed_rows < "$_link_attr_counts" || return 1
+    WINDOWS_MANIFEST_QUEUED=$((WINDOWS_MANIFEST_QUEUED + _link_queued_rows))
+    WINDOWS_QUEUE_REQUESTS=$((WINDOWS_QUEUE_REQUESTS + _link_queued_rows))
+    failed=$((failed + _link_failed_rows))
+    ran=$((ran + _link_failed_rows))
 
     ci_timing_set_now_ms
     _link_attribution_finished=$CI_TIMING_NOW_MS
@@ -3625,10 +4478,10 @@ windows_enqueue_runner_self_tests() {
         "$WINDOWS_WORKDIR_WIN\\windows-runner-self-test\\missing.stdout" \
         "$WINDOWS_WORKDIR_WIN\\windows-runner-self-test\\missing.stderr" \
         "$WINDOWS_WORKDIR_WIN\\windows-runner-self-test\\missing.exit" \
-        - - -
+        - - - serial
     # cmd.exe waits on a ping.exe child that inherits the output pipe, so the
     # request completes near its 1 s deadline only if the tree kill reaches
-    # the child too.
+    # the child too. Kept strictly serial to prevent CPU contention jitter.
     (
         INTEGRATION_CASE_TIMEOUT_SECONDS=1
         windows_queue_append_request "$WINDOWS_QUEUE" "$WINDOWS_RUNNER_DEADLINE_LABEL" \
@@ -3636,12 +4489,13 @@ windows_enqueue_runner_self_tests() {
             "$WINDOWS_WORKDIR_WIN\\windows-runner-self-test\\deadline.stdout" \
             "$WINDOWS_WORKDIR_WIN\\windows-runner-self-test\\deadline.stderr" \
             "$WINDOWS_WORKDIR_WIN\\windows-runner-self-test\\deadline.exit" \
-            - - - /d /c ping -n 60 127.0.0.1
+            - - - serial /d /c ping -n 60 127.0.0.1
     )
     WINDOWS_QUEUE_REQUESTS=$((WINDOWS_QUEUE_REQUESTS + 2))
 }
 
 windows_run_manifest_queue() {
+    mkdir -p "$ROOT/target/exp"
     windows_enqueue_runner_self_tests
     WINDOWS_MANIFEST_POWERSHELL_STARTS=1
     if ! windows_run_request_file \
@@ -3650,7 +4504,8 @@ windows_run_manifest_queue() {
         "$WINDOWS_ASSERTIONS_WIN" \
         "$WINDOWS_SUMMARY_WIN" \
         "$WINDOWS_RUNNER_STDOUT" \
-        "$WINDOWS_RUNNER_STDERR"; then
+        "$WINDOWS_RUNNER_STDERR" \
+        "$WINDOWS_RUNNER_JOBS"; then
         echo "FAIL: Windows integration queue runner failed" >&2
         show_stream_if_nonempty stdout "$WINDOWS_RUNNER_STDOUT"
         show_stream_if_nonempty stderr "$WINDOWS_RUNNER_STDERR"
@@ -3662,6 +4517,9 @@ windows_run_manifest_queue() {
     WINDOWS_SUMMARY_LAUNCH_FAILURES=
     WINDOWS_SUMMARY_TIMEOUTS=
     WINDOWS_SUMMARY_ASSERTIONS=
+    WINDOWS_SUMMARY_JOBS=
+    WINDOWS_SUMMARY_PEAK_CONCURRENCY=
+    WINDOWS_SUMMARY_CHILD_MS=
     WINDOWS_SUMMARY_RESULT_PROCESS_MS=
     WINDOWS_SUMMARY_ASSERT_MS=
     WINDOWS_SUMMARY_ELAPSED_MS=
@@ -3672,6 +4530,9 @@ windows_run_manifest_queue() {
             launch_failures) WINDOWS_SUMMARY_LAUNCH_FAILURES=$_summary_value ;;
             timeouts) WINDOWS_SUMMARY_TIMEOUTS=$_summary_value ;;
             assertions) WINDOWS_SUMMARY_ASSERTIONS=$_summary_value ;;
+            jobs) WINDOWS_SUMMARY_JOBS=$_summary_value ;;
+            peak_concurrency) WINDOWS_SUMMARY_PEAK_CONCURRENCY=$_summary_value ;;
+            child_ms) WINDOWS_SUMMARY_CHILD_MS=$_summary_value ;;
             result_process_ms) WINDOWS_SUMMARY_RESULT_PROCESS_MS=$_summary_value ;;
             assert_ms) WINDOWS_SUMMARY_ASSERT_MS=$_summary_value ;;
             elapsed_ms) WINDOWS_SUMMARY_ELAPSED_MS=$_summary_value ;;
@@ -3683,6 +4544,10 @@ windows_run_manifest_queue() {
     fi
     if [ "$WINDOWS_SUMMARY_ASSERTIONS" -ne "$WINDOWS_MANIFEST_QUEUED" ]; then
         echo "FAIL: Windows integration runner asserted $WINDOWS_SUMMARY_ASSERTIONS cases for $WINDOWS_MANIFEST_QUEUED queued manifest cases" >&2
+        return 1
+    fi
+    if [ "${WINDOWS_SUMMARY_JOBS:-}" != "$WINDOWS_RUNNER_JOBS" ]; then
+        echo "FAIL: Windows integration runner used ${WINDOWS_SUMMARY_JOBS:-none} jobs, expected $WINDOWS_RUNNER_JOBS" >&2
         return 1
     fi
     WINDOWS_MANIFEST_RESULT_PROCESS_MS=$WINDOWS_SUMMARY_RESULT_PROCESS_MS
@@ -3721,77 +4586,107 @@ windows_run_manifest_queue() {
 windows_assert_queued_cases() {
     ci_timing_set_now_ms
     _assert_report_started=$CI_TIMING_NOW_MS
-    _assertion_rows=0
-    while IFS="$(printf '\t')" read -r \
-        _name \
-        _status \
-        _exit \
-        _want \
-        _error \
-        _run_ms \
-        _assert_ms \
-        _exit_matches \
-        _stdout_matches \
-        _stderr_matches || [ -n "$_name" ]; do
-        [ -n "$_name" ] || continue
-        _assertion_rows=$((_assertion_rows + 1))
-        _case_dir="$WORKDIR/$_name"
-        _asm="$_case_dir/$_name.s"
-        _run_shell_stderr="$_case_dir/$_name.run-shell.stderr"
 
-        assert_manifest_assembly_requirements "$_name" "$_asm"
+    # Run assembly text assertions for any queued forced-assembly cases (only 3).
+    for _asm_req_case in $(windows_manifest_assembly_assertion_cases); do
+        if grep -F -x "$_asm_req_case" "$WINDOWS_QUEUED_CASES" >/dev/null 2>&1; then
+            assert_manifest_assembly_requirements "$_asm_req_case" "$WORKDIR/$_asm_req_case/$_asm_req_case.s"
+        fi
+    done
 
-        _case_failed=0
-        if [ "$_status" = timeout ]; then
-            report_case_timeout "$_name" "$(windows_queue_decode "$_error")" \
-                "$_case_dir/$_name.stdout" "$_case_dir/$_name.stderr"
-            _case_failed=1
-        elif [ "$_status" != ok ]; then
-            _decoded_error=$(windows_queue_decode "$_error")
-            echo "FAIL: $_name Windows launch failed: $_decoded_error" >&2
-            _case_failed=1
-        else
-            ci_timing_record_elapsed "$_name" run "$_run_ms" "$_exit"
-            if [ "$_exit_matches" -ne 1 ]; then
-                echo "FAIL: $_name expected exit $_want, got $_exit" >&2
-                _case_failed=1
-            fi
-            if [ "$_stdout_matches" -ne 1 ]; then
-                echo "FAIL: $_name stdout mismatch" >&2
-                if command -v diff >/dev/null 2>&1; then
-                    diff -u \
-                        "$_case_dir/$_name.expected.stdout.cmp" \
-                        "$_case_dir/$_name.stdout.cmp" >&2 || true
+    _assert_timing_file=
+    if ci_timing_enabled; then
+        _assert_timing_file=$TYPELISP_CI_TIMING_FILE
+    fi
+    _assert_failures="$WORKDIR/windows-assert.failures"
+    _assert_totals="$WORKDIR/windows-assert.totals"
+    : > "$_assert_failures" || return 1
+
+    # Single-pass awk prints PASS lines, emits run/assert timing rows, sums
+    # counters, and filters only failed rows for shell diff diagnostics.
+    awk -F '\t' \
+        -v timing_file="$_assert_timing_file" \
+        -v timing_gate="${TYPELISP_CI_TIMING_GATE:-ungated}" \
+        -v timing_host="${TYPELISP_CI_TIMING_HOST:-$HOST_OS}" \
+        -v failures_out="$_assert_failures" \
+        -v totals_out="$_assert_totals" '
+        {
+            sub(/\r$/, "")
+            if ($0 == "" || $1 == "") next
+            name = $1; status = $2; code = $3; want = $4; err = $5
+            run_ms = $6; assert_ms = $7 + 0
+            ex_ok = $8 + 0; out_ok = $9 + 0; err_ok = $10 + 0
+            rows++
+            total_assert_ms += assert_ms
+            if (status == "ok" && timing_file != "") {
+                printf "%s\t%s\t%s\t%s\t%s\t%s\n", timing_gate, name, "run", run_ms, code, timing_host >> timing_file
+            }
+            if (status == "ok" && ex_ok == 1 && out_ok == 1 && err_ok == 1) {
+                print "PASS: " name
+                astat = 0
+            } else {
+                print $0 >> failures_out
+                failed_cnt++
+                astat = 1
+            }
+            if (timing_file != "") {
+                printf "%s\t%s\t%s\t%s\t%s\t%s\n", timing_gate, name, "assert", assert_ms, astat, timing_host >> timing_file
+            }
+        }
+        END {
+            if (timing_file != "") close(timing_file)
+            close(failures_out)
+            print (rows + 0) "|" (failed_cnt + 0) "|" (total_assert_ms + 0) > totals_out
+            close(totals_out)
+        }
+    ' "$WINDOWS_ASSERTIONS" || return 1
+
+    if [ -s "$_assert_failures" ]; then
+        while IFS="$(printf '\t')" read -r \
+            _name _status _exit _want _error _run_ms _assert_ms \
+            _exit_matches _stdout_matches _stderr_matches || [ -n "$_name" ]; do
+            [ -n "$_name" ] || continue
+            _case_dir="$WORKDIR/$_name"
+            _run_shell_stderr="$_case_dir/$_name.run-shell.stderr"
+            if [ "$_status" = timeout ]; then
+                report_case_timeout "$_name" "$(windows_queue_decode "$_error")" \
+                    "$_case_dir/$_name.stdout" "$_case_dir/$_name.stderr"
+            elif [ "$_status" != ok ]; then
+                _decoded_error=$(windows_queue_decode "$_error")
+                echo "FAIL: $_name Windows launch failed: $_decoded_error" >&2
+            else
+                if [ "$_exit_matches" -ne 1 ]; then
+                    echo "FAIL: $_name expected exit $_want, got $_exit" >&2
                 fi
-                _case_failed=1
-            fi
-            if [ "$_stderr_matches" -ne 1 ]; then
-                echo "FAIL: $_name stderr mismatch" >&2
-                if command -v diff >/dev/null 2>&1; then
-                    diff -u \
-                        "$_case_dir/$_name.expected.stderr.cmp" \
-                        "$_case_dir/$_name.stderr.cmp" >&2 || true
+                if [ "$_stdout_matches" -ne 1 ]; then
+                    echo "FAIL: $_name stdout mismatch" >&2
+                    if command -v diff >/dev/null 2>&1; then
+                        diff -u \
+                            "$_case_dir/$_name.expected.stdout.cmp" \
+                            "$_case_dir/$_name.stdout.cmp" >&2 || true
+                    fi
                 fi
-                _case_failed=1
+                if [ "$_stderr_matches" -ne 1 ]; then
+                    echo "FAIL: $_name stderr mismatch" >&2
+                    if command -v diff >/dev/null 2>&1; then
+                        diff -u \
+                            "$_case_dir/$_name.expected.stderr.cmp" \
+                            "$_case_dir/$_name.stderr.cmp" >&2 || true
+                    fi
+                fi
             fi
-        fi
-        if [ "$_case_failed" -ne 0 ] && [ -s "$_run_shell_stderr" ]; then
-            echo "NOTE: $_name shell run diagnostics:" >&2
-            sed 's/^/  /' "$_run_shell_stderr" >&2
-        fi
+            if [ -s "$_run_shell_stderr" ]; then
+                echo "NOTE: $_name shell run diagnostics:" >&2
+                sed 's/^/  /' "$_run_shell_stderr" >&2
+            fi
+        done < "$_assert_failures"
+    fi
 
-        if [ "$_case_failed" -eq 0 ]; then
-            echo "PASS: $_name"
-            _assert_status=0
-        else
-            failed=$((failed + 1))
-            _assert_status=1
-        fi
-        ran=$((ran + 1))
-        WINDOWS_MANIFEST_ASSERT_MS=$((WINDOWS_MANIFEST_ASSERT_MS + _assert_ms))
-        WINDOWS_MANIFEST_ASSERTS=$((WINDOWS_MANIFEST_ASSERTS + 1))
-        ci_timing_record_elapsed "$_name" assert "$_assert_ms" "$_assert_status"
-    done < "$WINDOWS_ASSERTIONS"
+    IFS='|' read -r _assertion_rows _assert_failed_rows _assert_ms_sum < "$_assert_totals" || return 1
+    ran=$((ran + _assertion_rows))
+    failed=$((failed + _assert_failed_rows))
+    WINDOWS_MANIFEST_ASSERT_MS=$((WINDOWS_MANIFEST_ASSERT_MS + _assert_ms_sum))
+    WINDOWS_MANIFEST_ASSERTS=$((WINDOWS_MANIFEST_ASSERTS + _assertion_rows))
     if [ "$_assertion_rows" -ne "$WINDOWS_MANIFEST_QUEUED" ]; then
         echo "FAIL: Windows integration assertion stream contained $_assertion_rows cases for $WINDOWS_MANIFEST_QUEUED queued manifest cases" >&2
         return 1
@@ -3934,8 +4829,9 @@ windows_validate_manifest_artifact_counts() {
         echo "FAIL: Windows COFF batch process accounting mismatch: plan=$WINDOWS_MANIFEST_BATCH_COMPILES chunks=$INTEGRATION_BATCH_CHUNKS" >&2
         return 1
     fi
-    if [ $((INTEGRATION_BATCHED_CASES + INTEGRATION_STANDALONE_COMPILES)) -ne "$WINDOWS_MANIFEST_QUEUED" ]; then
-        echo "FAIL: Windows COFF plan did not account for every queued manifest case" >&2
+    if [ $((INTEGRATION_BATCHED_CASES + INTEGRATION_STANDALONE_COMPILES)) -ne "$WINDOWS_MANIFEST_LINKS" ] ||
+        [ $((WINDOWS_MANIFEST_LINKS + INTEGRATION_DEDUP_ALIAS_CASES)) -ne "$WINDOWS_MANIFEST_QUEUED" ]; then
+        echo "FAIL: Windows COFF plan did not account for every unique build and queued manifest case (batched=$INTEGRATION_BATCHED_CASES standalone=$INTEGRATION_STANDALONE_COMPILES links=$WINDOWS_MANIFEST_LINKS aliases=$INTEGRATION_DEDUP_ALIAS_CASES queued=$WINDOWS_MANIFEST_QUEUED)" >&2
         return 1
     fi
     _fallback_reason_rows=0
@@ -3951,12 +4847,14 @@ windows_validate_manifest_artifact_counts() {
 windows_print_manifest_summary() {
     _legacy_launch_cygpath=$((WINDOWS_MANIFEST_QUEUED * 4))
     echo "Windows integration process/timing summary:"
-    echo "  manifest cases queued: $WINDOWS_MANIFEST_QUEUED"
+    echo "  manifest cases queued: $WINDOWS_MANIFEST_QUEUED (unique_builds=$INTEGRATION_UNIQUE_BUILDS dedup_aliases=$INTEGRATION_DEDUP_ALIAS_CASES)"
     echo "  process starts: legacy powershell=$WINDOWS_MANIFEST_QUEUED, queued powershell=$WINDOWS_MANIFEST_POWERSHELL_STARTS, child executables=$WINDOWS_SUMMARY_CHILD_STARTS"
     echo "  queue encoding helper processes: 0"
     echo "  cygpath conversions: legacy launch-path lower bound=$_legacy_launch_cygpath, queued manifest=$WINDOWS_MANIFEST_CYGPATH_CONVERSIONS"
+    echo "  assemble scheduler: requests=$WINDOWS_ASSEMBLE_REQUESTS asm=$WINDOWS_MANIFEST_ASSEMBLES cdeps=$WINDOWS_MANIFEST_CDEP_ASSEMBLES jobs=$WINDOWS_ASSEMBLE_JOBS peak=${WINDOWS_ASSEMBLE_SUMMARY_PEAK_CONCURRENCY:-0} wall_ms=$WINDOWS_MANIFEST_ASSEMBLE_WALL_MS child_ms=$WINDOWS_MANIFEST_ASSEMBLE_MS powershell=$WINDOWS_ASSEMBLE_POWERSHELL_STARTS"
     echo "  links: requests=$WINDOWS_LINK_SUMMARY_REQUESTS child_starts=$WINDOWS_LINK_SUMMARY_CHILD_STARTS launch_failures=$WINDOWS_LINK_SUMMARY_LAUNCH_FAILURES failed=$WINDOWS_LINK_SUMMARY_FAILED_PROCESSES missing_outputs=$WINDOWS_LINK_SUMMARY_MISSING_OUTPUTS"
     echo "  link scheduler: jobs=$WINDOWS_LINK_SUMMARY_JOBS peak=$WINDOWS_LINK_SUMMARY_PEAK_CONCURRENCY wall_ms=$WINDOWS_MANIFEST_LINK_WALL_MS child_ms=$WINDOWS_MANIFEST_LINK_MS powershell=$WINDOWS_LINK_POWERSHELL_STARTS"
+    echo "  runner scheduler: jobs=$WINDOWS_SUMMARY_JOBS peak=$WINDOWS_SUMMARY_PEAK_CONCURRENCY wall_ms=$WINDOWS_SUMMARY_ELAPSED_MS child_ms=$WINDOWS_SUMMARY_CHILD_MS"
     echo "  queue: requests=$WINDOWS_SUMMARY_REQUESTS launch_failures=$WINDOWS_SUMMARY_LAUNCH_FAILURES timeouts=$WINDOWS_SUMMARY_TIMEOUTS elapsed_ms=$WINDOWS_SUMMARY_ELAPSED_MS"
     echo "  COFF plan: rows=$WINDOWS_MANIFEST_PLAN_ROWS direct_objects=$WINDOWS_MANIFEST_DIRECT_OBJECTS compiler_fallback_assembly=$WINDOWS_MANIFEST_FALLBACK_ASSEMBLIES forced_assertion_assembly=$WINDOWS_MANIFEST_FORCED_ASSEMBLIES"
     echo "  direct-object render: count=$WINDOWS_MANIFEST_DIRECT_OBJECTS timing=included-in-batch-compile batch_compile_ms=$WINDOWS_MANIFEST_BATCH_COMPILE_MS"
@@ -3970,7 +4868,7 @@ windows_print_manifest_summary() {
             done
     fi
     echo "  forced assembly reasons: stdlib-helper-symbol-elision=2 u64-float-cast-instruction-shape=1"
-    echo "  phase_ms: batch_compile=$WINDOWS_MANIFEST_BATCH_COMPILE_MS standalone_compile=$WINDOWS_MANIFEST_COMPILE_MS plan_process=$WINDOWS_MANIFEST_PLAN_PROCESS_MS assemble=$WINDOWS_MANIFEST_ASSEMBLE_MS link_child_sum=$WINDOWS_MANIFEST_LINK_MS link_scheduler=$WINDOWS_MANIFEST_LINK_WALL_MS link_helper=$WINDOWS_MANIFEST_LINK_HELPER_MS link_plan=$WINDOWS_MANIFEST_LINK_PREP_MS link_result_process=$WINDOWS_MANIFEST_LINK_RESULT_PROCESS_MS link_attribution=$WINDOWS_MANIFEST_LINK_ATTRIBUTION_MS queue_prepare=$WINDOWS_MANIFEST_QUEUE_PREP_MS runner=$WINDOWS_MANIFEST_RUN_MS result_process=$WINDOWS_MANIFEST_RESULT_PROCESS_MS assertions=$WINDOWS_MANIFEST_ASSERT_MS assertion_report=$WINDOWS_MANIFEST_ASSERT_REPORT_MS"
+    echo "  phase_ms: batch_compile=$WINDOWS_MANIFEST_BATCH_COMPILE_MS standalone_compile=$WINDOWS_MANIFEST_COMPILE_MS plan_process=$WINDOWS_MANIFEST_PLAN_PROCESS_MS assemble=$WINDOWS_MANIFEST_ASSEMBLE_MS assemble_scheduler=$WINDOWS_MANIFEST_ASSEMBLE_WALL_MS assemble_helper=$WINDOWS_MANIFEST_ASSEMBLE_HELPER_MS link_child_sum=$WINDOWS_MANIFEST_LINK_MS link_scheduler=$WINDOWS_MANIFEST_LINK_WALL_MS link_helper=$WINDOWS_MANIFEST_LINK_HELPER_MS link_plan=$WINDOWS_MANIFEST_LINK_PREP_MS link_result_process=$WINDOWS_MANIFEST_LINK_RESULT_PROCESS_MS link_attribution=$WINDOWS_MANIFEST_LINK_ATTRIBUTION_MS queue_prepare=$WINDOWS_MANIFEST_QUEUE_PREP_MS runner=$WINDOWS_MANIFEST_RUN_MS result_process=$WINDOWS_MANIFEST_RESULT_PROCESS_MS assertions=$WINDOWS_MANIFEST_ASSERT_MS assertion_report=$WINDOWS_MANIFEST_ASSERT_REPORT_MS"
     echo "  phase_counts: batch_compile=$WINDOWS_MANIFEST_BATCH_COMPILES standalone_compile=$WINDOWS_MANIFEST_COMPILES assemble=$WINDOWS_MANIFEST_ASSEMBLES link=$WINDOWS_MANIFEST_LINKS assert=$WINDOWS_MANIFEST_ASSERTS"
     echo "  differential oracle: legacy powershell=$WINDOWS_DIFFERENTIAL_POWERSHELL_STARTS cygpath=$WINDOWS_DIFFERENTIAL_CYGPATH_CONVERSIONS"
 }
@@ -3995,14 +4893,16 @@ INTEGRATION_BATCHED_CASES=0
 INTEGRATION_STANDALONE_COMPILES=0
 
 
-# Stage every case's source and dependencies once, before anything compiles
-# them: the batch pre-pass and the case loop read the same staged tree. The
-# plan is built without forking (see stage_plan_copy), then one helper process
-# creates the directories and writes the files.
+# Stage every unique build's source and dependencies once, before anything
+# compiles them: the batch pre-pass and the case loop read the same staged tree.
+# The plan is built without forking (see stage_plan_copy), then one helper
+# process creates the directories and writes the files.
 STAGE_PLAN="$WORKDIR/stage.plan"
 
 integration_stage_plan() {
     : > "$STAGE_PLAN" || return 1
+    _stage_manifest=${MANIFEST_UNIQUE:-$NORMALIZED_MANIFEST}
+    [ -f "$_stage_manifest" ] || _stage_manifest=$NORMALIZED_MANIFEST
     while IFS='|' read -r _s_name _s_source _s_want _s_stdout _s_args _s_deps _s_extra _s_suite || [ -n "$_s_name" ]; do
         case "$_s_name" in
             "" | \#*) continue ;;
@@ -4022,7 +4922,7 @@ integration_stage_plan() {
             copy_dep "$_s_dep" "${_s_source_path%/*}" "$_s_case_dir" "$_s_stage" \
                 || return 1
         done
-    done < "$NORMALIZED_MANIFEST" || return 1
+    done < "$_stage_manifest" || return 1
 }
 
 # Build the staging helper once per run with the host toolchain the manifest
@@ -4506,14 +5406,30 @@ if [ "$VALIDATE_MANIFEST_ONLY" -eq 1 ]; then
     echo "integration manifest validation passed for $HOST_OS"
     exit 0
 fi
+ci_timing_run manifest dedup integration_build_dedup_plan || exit 1
+echo "[integration] build deduplication: $INTEGRATION_UNIQUE_BUILDS unique build(s) for $INTEGRATION_TOTAL_CASES case(s) ($INTEGRATION_DEDUP_ALIAS_CASES deduplicated alias(es))"
 
 ci_timing_run manifest batch-compile integration_prepare
 integration_batch_sentinel
 
+# Create per-case output directories for deduplicated aliases in one batch so
+# neither Linux nor Windows creates them in per-row loops.
+if [ "$INTEGRATION_DEDUP_ALIAS_CASES" -gt 0 ]; then
+    awk -F '|' -v wd="$WORKDIR" '$1 != $2 { print wd "/" $2 }' "$MANIFEST_PLAN" |
+        xargs mkdir -p || exit 1
+fi
+
 failed=0
 ran=0
 
-while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite_members || [ -n "$name" ]; do
+if [ "$HOST_OS" = windows ]; then
+    if ! windows_build_and_assemble_manifest; then
+        exit 1
+    fi
+fi
+
+while IFS='|' read -r owner name source want stdout_spec runtime_args deps extra suite_members || [ -n "$name" ]; do
+    [ "$HOST_OS" != windows ] || break
     case "$name" in
         "" | \#*) continue ;;
     esac
@@ -4536,253 +5452,136 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
     else
         opt_level_args=
     fi
-    # The batched pre-pass names its sources ROOT-relative and the compiler puts
-    # that spelling in the abort-site descriptors an expected-stderr pins, so a
-    # standalone compile has to name the case the same way. The runner's working
-    # directory is ROOT.
-    work_src_rel="target/integration-verify/$HOST_OS$INTEGRATION_SHARD_SUFFIX/$name/$name.tl"
 
-    # integration_stage_corpus staged this case's source and dependencies.
     case_dir="$WORKDIR/$name"
-    work_src="$case_dir/$name.tl"
-
-    asm="$case_dir/$name.s"
-    if [ "$HOST_OS" = windows ]; then
-        obj="$case_dir/$name.obj"
-    else
-        obj="$case_dir/$name.o"
-    fi
-    bin="$case_dir/$name"
+    owner_dir="$WORKDIR/$owner"
+    asm="$owner_dir/$owner.s"
+    bin="$owner_dir/$owner"
     stdout="$case_dir/$name.stdout"
     stderr="$case_dir/$name.stderr"
-    expected_stdout_cmp="$case_dir/$name.expected.stdout.cmp"
-    expected_stderr_cmp="$case_dir/$name.expected.stderr.cmp"
-    stdout_cmp="$case_dir/$name.stdout.cmp"
-    stderr_cmp="$case_dir/$name.stderr.cmp"
-    expected_stdout="$case_dir/$name.expected.stdout"
-    expected_stderr="$case_dir/$name.expected.stderr"
-    code_file="$case_dir/$name.exit"
-    build_stdout="$case_dir/$name.build.stdout"
-    build_stderr="$case_dir/$name.build.stderr"
     run_shell_stderr="$case_dir/$name.run-shell.stderr"
 
-    echo "[$name] build -> run ($HOST_OS)"
     if [ "$HOST_OS" = windows ]; then
-        # The compile-only bootstrapped stage1 has `compile` but not `build`, so
-        # consume the batch COFF-or-assembly selection, invoke clang only for
-        # selected assembly, then link with lld-link.
-        case_dir_win="$WINDOWS_WORKDIR_WIN\\$name"
-        obj_win="$case_dir_win\\$name.obj"
-        bin_win="$case_dir_win\\$name.exe"
-        build_stdout_win="$case_dir_win\\$name.build.stdout"
-        build_stderr_win="$case_dir_win\\$name.build.stderr"
-        windows_artifact="$case_dir/windows-coff.artifact"
-        windows_needs_assemble=1
-        windows_assembly_class=standalone
-        # Stdlib comes from the embedded payload unless the case opted into
-        # the on-disk layout (stage-stdlib), matching the staged copies.
-        if [ -s "$windows_artifact" ]; then
-            if ! IFS='|' read -r \
-                windows_artifact_kind \
-                windows_artifact_path \
-                windows_artifact_reason \
-                windows_link_archive < "$windows_artifact"; then
-                echo "FAIL: $name has an unreadable Windows COFF artifact marker" >&2
-                exit 1
+        continue
+    else
+        if [ "$name" = "$owner" ]; then
+            work_src_rel="target/integration-verify/$HOST_OS$INTEGRATION_SHARD_SUFFIX/$name/$name.tl"
+            work_src="$case_dir/$name.tl"
+            obj="$case_dir/$name.o"
+            build_stdout="$case_dir/$name.build.stdout"
+            build_stderr="$case_dir/$name.build.stderr"
+
+            echo "[$name] build -> run ($HOST_OS)"
+            set +e
+            # Stdlib comes from the embedded payload unless the case opted into
+            # the on-disk layout (stage-stdlib), matching the staged copies.
+            if [ -s "$asm" ]; then
+                # Produced by the batch pre-pass. A failed chunk removes its
+                # outputs, so reaching here with no assembly means compiling now.
+                INTEGRATION_BATCHED_CASES=$((INTEGRATION_BATCHED_CASES + 1))
+                : > "$build_stdout"
+                : > "$build_stderr"
+                true
+            elif [ "$stage_stdlib" -eq 1 ]; then
+                INTEGRATION_STANDALONE_COMPILES=$((INTEGRATION_STANDALONE_COMPILES + 1))
+                # shellcheck disable=SC2086
+                ci_timing_run "$name" compile integration_standalone_compile "$case_dir/standalone.memory" \
+                    "$COMPILER" compile "$work_src_rel" --verify-ir \
+                    --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" -o "$asm" \
+                    $opt_level_args \
+                    > "$build_stdout" 2> "$build_stderr"
+            else
+                INTEGRATION_STANDALONE_COMPILES=$((INTEGRATION_STANDALONE_COMPILES + 1))
+                # shellcheck disable=SC2086
+                ci_timing_run "$name" compile integration_standalone_compile "$case_dir/standalone.memory" \
+                    "$COMPILER" compile "$work_src_rel" --verify-ir \
+                    --stdlib-root "$ROOT/src" -o "$asm" \
+                    $opt_level_args \
+                    > "$build_stdout" 2> "$build_stderr"
             fi
-            INTEGRATION_BATCHED_CASES=$((INTEGRATION_BATCHED_CASES + 1))
-            build_rc=0
-            : > "$build_stdout"
-            : > "$build_stderr"
-            case "$windows_artifact_kind" in
-                coff-object)
-                    if [ "$windows_artifact_path" != "$obj" ] || [ ! -s "$obj" ]; then
-                        echo "FAIL: $name Windows COFF object marker does not name its object" >&2
-                        exit 1
-                    fi
-                    windows_needs_assemble=0
-                    ;;
-                assembly)
-                    if [ "$windows_artifact_path" != "$asm" ] || [ ! -s "$asm" ]; then
-                        echo "FAIL: $name Windows COFF assembly marker does not name its assembly" >&2
-                        exit 1
-                    fi
-                    if [ "$windows_artifact_reason" = forced-assembly ]; then
-                        windows_assembly_class=forced
-                    else
-                        windows_assembly_class=fallback
-                    fi
-                    ;;
-                *)
-                    echo "FAIL: $name has unknown Windows COFF artifact kind: $windows_artifact_kind" >&2
-                    exit 1
-                    ;;
-            esac
-        elif [ "$stage_stdlib" -eq 1 ]; then
-            INTEGRATION_STANDALONE_COMPILES=$((INTEGRATION_STANDALONE_COMPILES + 1))
-            # shellcheck disable=SC2086
-            windows_timed_compile integration_standalone_compile "$case_dir/standalone.memory" \
-                "$COMPILER" compile "$work_src_rel" --verify-ir --target windows-x86_64 --cfg windows \
-                --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" -o "$asm" \
-                $opt_level_args \
-                > "$build_stdout" 2> "$build_stderr"
-        else
-            INTEGRATION_STANDALONE_COMPILES=$((INTEGRATION_STANDALONE_COMPILES + 1))
-            # shellcheck disable=SC2086
-            windows_timed_compile integration_standalone_compile "$case_dir/standalone.memory" \
-                "$COMPILER" compile "$work_src_rel" --verify-ir --target windows-x86_64 --cfg windows \
-                --stdlib-root "$ROOT/src" -o "$asm" \
-                $opt_level_args \
-                > "$build_stdout" 2> "$build_stderr"
-        fi
-        if [ "$build_rc" -ne 0 ]; then
-            echo "FAIL: $name compile failed" >&2
-            show_compile_failure_diagnostics \
-                "$name" \
-                "$build_rc" \
-                "$COMPILER" \
-                "$work_src" \
-                windows-x86_64 \
-                "$build_stdout" \
-                "$build_stderr" \
-                "$asm" \
-                "compile $work_src_rel --verify-ir --target windows-x86_64 --cfg windows --stdlib-root $ROOT/src -o $asm $opt_level_args (stage-stdlib=$stage_stdlib)"
-            failed=$((failed + 1))
-            ran=$((ran + 1))
-            continue
-        fi
-        if integration_diagnostic_only "$case_dir" "$name"; then
-            ran=$((ran + 1))
-            continue
-        fi
-        if [ "$windows_needs_assemble" -eq 1 ]; then
-            WINDOWS_CURRENT_ASSEMBLY_CLASS=$windows_assembly_class
-            if ! windows_timed_assemble --target=x86_64-pc-windows-msvc -c "$asm" -o "$obj" \
-                >> "$build_stdout" 2>> "$build_stderr"; then
-                echo "FAIL: $name assemble failed" >&2
-                show_build_streams "$build_stdout" "$build_stderr"
+            build_rc=$?
+            set -e
+            if [ "$build_rc" -ne 0 ]; then
+                echo "FAIL: $name compile failed" >&2
+                show_compile_failure_diagnostics \
+                    "$name" \
+                    "$build_rc" \
+                    "$COMPILER" \
+                    "$work_src" \
+                    linux-x86_64 \
+                    "$build_stdout" \
+                    "$build_stderr" \
+                    "$asm" \
+                    "compile $work_src_rel --verify-ir --stdlib-root $ROOT/src -o $asm $opt_level_args (stage-stdlib=$stage_stdlib)"
+                printf 'failed\n' > "$case_dir/.build-status"
                 failed=$((failed + 1))
                 ran=$((ran + 1))
                 continue
             fi
-        fi
-        if [ ! -s "$windows_artifact" ]; then
-            # A standalone compile has no plan row; its assembly names the
-            # archive-runtime symbols it needs.
-            windows_link_archive=none
-            if [ -n "$WINDOWS_STDLIB_ARCHIVE_WIN" ] &&
-                [ -n "$(windows_stdlib_archive_for_asm "$asm" "${COMPILER:-}")" ]; then
-                windows_link_archive=stdlib-archive
+            if integration_diagnostic_only "$case_dir" "$name"; then
+                printf 'diagnostic-only\n' > "$case_dir/.build-status"
+                ran=$((ran + 1))
+                continue
             fi
-        fi
-        if ! native_objs=$(compile_windows_c_deps "$deps" "$case_dir" "$build_stdout" "$build_stderr" "$case_dir_win"); then
-            echo "FAIL: $name C dependency compile failed" >&2
-            show_build_streams "$build_stdout" "$build_stderr"
-            failed=$((failed + 1))
-            ran=$((ran + 1))
-            continue
-        fi
-        windows_queue_manifest_link \
-            "$name" \
-            "$obj_win" \
-            "$native_objs" \
-            "$bin_win" \
-            "$build_stdout_win" \
-            "$build_stderr_win" \
-            "$want" \
-            "$stdout_spec" \
-            "$expected_stderr_spec" \
-            "$runtime_args" \
-            "$windows_link_archive"
-        continue
-    else
-        set +e
-        # Stdlib comes from the embedded payload unless the case opted into
-        # the on-disk layout (stage-stdlib), matching the staged copies.
-        if [ -s "$asm" ]; then
-            # Produced by the batch pre-pass. A failed chunk removes its
-            # outputs, so reaching here with no assembly means compiling now.
-            INTEGRATION_BATCHED_CASES=$((INTEGRATION_BATCHED_CASES + 1))
-            : > "$build_stdout"
-            : > "$build_stderr"
-            true
-        elif [ "$stage_stdlib" -eq 1 ]; then
-            INTEGRATION_STANDALONE_COMPILES=$((INTEGRATION_STANDALONE_COMPILES + 1))
+            if ! ci_timing_run "$name" assemble \
+                as "$asm" -o "$obj" >> "$build_stdout" 2>> "$build_stderr"; then
+                echo "FAIL: $name assemble failed" >&2
+                show_build_streams "$build_stdout" "$build_stderr"
+                printf 'failed\n' > "$case_dir/.build-status"
+                failed=$((failed + 1))
+                ran=$((ran + 1))
+                continue
+            fi
+            entry=$(ci_timing_run "$name" entry-selection \
+                linux_entry_symbol_for_asm "$asm") || exit $?
+            if ! native_objs=$(compile_linux_c_deps "$deps" "$case_dir" "$build_stdout" "$build_stderr"); then
+                echo "FAIL: $name C dependency compile failed" >&2
+                show_build_streams "$build_stdout" "$build_stderr"
+                printf 'failed\n' > "$case_dir/.build-status"
+                failed=$((failed + 1))
+                ran=$((ran + 1))
+                continue
+            fi
+            # Programs with no native FFI objects link freestanding (no libc, no
+            # loader) like every other typelisp binary. Tests that pull in native
+            # objects opt into the C toolchain and still link against libc.
+            if [ -n "$native_objs" ]; then
+                link_extra="-dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc"
+            else
+                link_extra="-static"
+            fi
+            stdlib_archive=$(linux_stdlib_archive_for_asm "$asm" "${COMPILER:-}")
+            if [ -n "$stdlib_archive" ]; then
+                link_extra="$link_extra -z noexecstack --gc-sections -z start-stop-gc --start-group $stdlib_archive --end-group"
+            fi
             # shellcheck disable=SC2086
-            ci_timing_run "$name" compile integration_standalone_compile "$case_dir/standalone.memory" \
-                "$COMPILER" compile "$work_src_rel" --verify-ir \
-                --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" -o "$asm" \
-                $opt_level_args \
-                > "$build_stdout" 2> "$build_stderr"
+            if ! ci_timing_run "$name" link \
+                ld "$obj" $native_objs -o "$bin" $link_extra -e "$entry" \
+                >> "$build_stdout" 2>> "$build_stderr"; then
+                echo "FAIL: $name link failed" >&2
+                show_build_streams "$build_stdout" "$build_stderr"
+                printf 'failed\n' > "$case_dir/.build-status"
+                failed=$((failed + 1))
+                ran=$((ran + 1))
+                continue
+            fi
+            printf 'ok\n' > "$case_dir/.build-status"
         else
-            INTEGRATION_STANDALONE_COMPILES=$((INTEGRATION_STANDALONE_COMPILES + 1))
-            # shellcheck disable=SC2086
-            ci_timing_run "$name" compile integration_standalone_compile "$case_dir/standalone.memory" \
-                "$COMPILER" compile "$work_src_rel" --verify-ir \
-                --stdlib-root "$ROOT/src" -o "$asm" \
-                $opt_level_args \
-                > "$build_stdout" 2> "$build_stderr"
-        fi
-        build_rc=$?
-        set -e
-        if [ "$build_rc" -ne 0 ]; then
-            echo "FAIL: $name compile failed" >&2
-            show_compile_failure_diagnostics \
-                "$name" \
-                "$build_rc" \
-                "$COMPILER" \
-                "$work_src" \
-                linux-x86_64 \
-                "$build_stdout" \
-                "$build_stderr" \
-                "$asm" \
-                "compile $work_src_rel --verify-ir --stdlib-root $ROOT/src -o $asm $opt_level_args (stage-stdlib=$stage_stdlib)"
-            failed=$((failed + 1))
-            ran=$((ran + 1))
-            continue
-        fi
-        if integration_diagnostic_only "$case_dir" "$name"; then
-            ran=$((ran + 1))
-            continue
-        fi
-        if ! ci_timing_run "$name" assemble \
-            as "$asm" -o "$obj" >> "$build_stdout" 2>> "$build_stderr"; then
-            echo "FAIL: $name assemble failed" >&2
-            show_build_streams "$build_stdout" "$build_stderr"
-            failed=$((failed + 1))
-            ran=$((ran + 1))
-            continue
-        fi
-        entry=$(ci_timing_run "$name" entry-selection \
-            linux_entry_symbol_for_asm "$asm") || exit $?
-        if ! native_objs=$(compile_linux_c_deps "$deps" "$case_dir" "$build_stdout" "$build_stderr"); then
-            echo "FAIL: $name C dependency compile failed" >&2
-            show_build_streams "$build_stdout" "$build_stderr"
-            failed=$((failed + 1))
-            ran=$((ran + 1))
-            continue
-        fi
-        # Programs with no native FFI objects link freestanding (no libc, no
-        # loader) like every other typelisp binary. Tests that pull in native
-        # objects opt into the C toolchain and still link against libc.
-        if [ -n "$native_objs" ]; then
-            link_extra="-dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc"
-        else
-            link_extra="-static"
-        fi
-        stdlib_archive=$(linux_stdlib_archive_for_asm "$asm" "${COMPILER:-}")
-        if [ -n "$stdlib_archive" ]; then
-            link_extra="$link_extra -z noexecstack --gc-sections -z start-stop-gc --start-group $stdlib_archive --end-group"
-        fi
-        # shellcheck disable=SC2086
-        if ! ci_timing_run "$name" link \
-            ld "$obj" $native_objs -o "$bin" $link_extra -e "$entry" \
-            >> "$build_stdout" 2>> "$build_stderr"; then
-            echo "FAIL: $name link failed" >&2
-            show_build_streams "$build_stdout" "$build_stderr"
-            failed=$((failed + 1))
-            ran=$((ran + 1))
-            continue
+            echo "[$name] run (reusing build $owner, $HOST_OS)"
+            _owner_status=failed
+            if [ -f "$owner_dir/.build-status" ]; then
+                IFS= read -r _owner_status < "$owner_dir/.build-status" || _owner_status=failed
+            fi
+            if [ "$_owner_status" = diagnostic-only ]; then
+                ran=$((ran + 1))
+                continue
+            fi
+            if [ "$_owner_status" != ok ]; then
+                echo "FAIL: $name build failed (shared build $owner)" >&2
+                failed=$((failed + 1))
+                ran=$((ran + 1))
+                continue
+            fi
         fi
 
         set +e
@@ -4816,7 +5615,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
         "$stderr" \
         "$case_dir" \
         "$run_shell_stderr"
-done < "$NORMALIZED_MANIFEST"
+done < "$MANIFEST_PLAN"
 
 if [ "$HOST_OS" = windows ] && [ "$WINDOWS_LINK_REQUESTS" -gt 0 ]; then
     if ! windows_run_manifest_links; then
@@ -4915,5 +5714,8 @@ if [ "$INTEGRATION_SHARD_CANONICAL" -eq 1 ]; then
     fi
 fi
 
-echo "[integration] compile processes: $INTEGRATION_BATCH_CHUNKS batch chunk(s)"     "+ $INTEGRATION_STANDALONE_COMPILES standalone,"     "$INTEGRATION_BATCHED_CASES case(s) served from a batch"
+echo "[integration] compile processes: $INTEGRATION_BATCH_CHUNKS batch chunk(s)" \
+    "+ $INTEGRATION_STANDALONE_COMPILES standalone," \
+    "$INTEGRATION_BATCHED_CASES unique build(s) served from a batch" \
+    "($INTEGRATION_DEDUP_ALIAS_CASES deduplicated alias(es))"
 echo "All $ran integration case(s) passed for $HOST_OS."

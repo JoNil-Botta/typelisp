@@ -3560,7 +3560,7 @@
       fields
       field-index
       (ast.ast-field-def-fallback))
-      [(Def name _ _)
+      [(Def name _ _ _)
         (compiler-registries-add-field-aliases-list
           (compiler-registries-add-field-alias
             (& registries)
@@ -3748,7 +3748,7 @@
       fields
       field-index
       (ast.ast-field-def-fallback))
-      [(Def name _ _)
+      [(Def name _ _ _)
         (let
           [name-id : i64 (ci.intern-syntax-id-value name)]
           (if (sym_i64_env.sym-i64-contains-id seen name-id)
@@ -4009,7 +4009,7 @@
       fields
       target
       (ast.ast-field-def-fallback))
-      [(Def _ ty _) (Ok ty)])))
+      [(Def _ ty _ _) (Ok ty)])))
 
 (define (compiler-registries-variant-fields-indexed
   [symbols : (& symbols CompilerSymbols)]

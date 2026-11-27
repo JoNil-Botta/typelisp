@@ -1482,7 +1482,7 @@
               8)
             No
             (ast.ast-field-def-cons
-              (& (Def (ci.intern-syntax-id-from-raw field-id) I64 No))
+              (& (Def (ci.intern-syntax-id-from-raw field-id) I64 No true))
               (& (ast.ast-field-def-list-new))))
           1))
       (set! (array-ref path-slots 0) "test.tl")
@@ -1808,7 +1808,10 @@
                                 [_ false])
                               (let
                                 [decl (ast.ast-decl-list-ref hydration.decls 3)]
-                                (ast.ast-decl-must-use? decl))
+                                (and
+                                  (ast.ast-decl-must-use? decl)
+                                  (ast.ast-decl-has-opaque-field? decl)
+                                  (ast.ast-decl-opaque-field? decl 0)))
                               (match (ast.ast-decl-list-ref hydration.decls 3)
                                 [(DefStruct _ _ hydrated-repr _ _)
                                   (and

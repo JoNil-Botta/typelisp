@@ -869,7 +869,7 @@
                   (& fields)
                   0
                   (ast.ast-field-def-fallback))
-                  [(Def field _ _)
+                  [(Def field _ _ _)
                     (compiler-parse-test-name-id?
                       (ci.intern-syntax-id-value field)
                       "parsed-field")]))]

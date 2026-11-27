@@ -18560,7 +18560,7 @@
         [_
           (ast.ast-field-def-list-push
             (&mut fields)
-            (ast.AstFieldDef.Def
+            (ast.ast-field-def-id
               (ci.InternSyntaxId (cast (ci.intern "value") : u64))
               ref-x-i64
               ast.AstFieldCleanup.No))]

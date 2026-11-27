@@ -85,6 +85,38 @@ file same/src/main.tl
   (test.assert-i64-eq (read-handle) 7 "handle id")
   (test.assert-i64-eq (handle-size) 8 "handle size"))
 end-file
+file field-owner/typelisp.pkg
+(package (name "readings") (version "0.1.0") (kind "lib") (entry "src/readings.tl"))
+end-file
+file field-owner/src/readings.tl
+(module readings)
+(defstruct Reading (value i64) (scale i64 (:opaque)))
+(define (reading) : Reading (Reading 40 2))
+end-file
+file field-consumer/typelisp.pkg
+(package (name "consumer") (version "0.1.0") (kind "bin") (entry "src/main.tl"))
+end-file
+file field-consumer/src/main.tl
+(module readings.detail)
+(import readings as model)
+(define (main) : i64 (unsafe (model.reading).scale))
+end-file
+file field-reflection/typelisp.pkg
+(package (name "reflection") (version "0.1.0") (kind "bin") (entry "src/main.tl"))
+end-file
+file field-reflection/src/main.tl
+(module readings.detail)
+(import readings as model)
+(define (main) : i64 (comptime (size-of (struct-field-type (type model.Reading) 1))))
+end-file
+step field-read-other-provider
+run check --target {{host-target}} "{{dir}}/field-consumer/src/main.tl" --stdlib-root "{{dir}}/field-owner/src"
+exit 1
+stderr contains error[E0221]
+step field-reflection-other-provider
+run check --target {{host-target}} "{{dir}}/field-reflection/src/main.tl" --stdlib-root "{{dir}}/field-owner/src"
+exit 1
+stderr contains error[E0221]
 step spoof-check
 run check --target {{host-target}} --manifest-path "{{dir}}/spoof/typelisp.pkg"
 exit 1

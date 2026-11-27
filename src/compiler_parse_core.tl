@@ -5808,6 +5808,7 @@
           rest
           allow-cleanup
           allow-align
+          false
           (No)
           false
           0))]
@@ -5815,9 +5816,8 @@
       (Err
         (parse-kind-message (MalformedForm) "parse: malformed field definition"))]))
 
-;; A field's metadata forms after its type: at most one cleanup form (only in
-;; a `:cleanup` struct) and at most one `(:align N)` (only in a `(:repr c)`
-;; struct). The two slots are independent, in either order.
+;; Each field marker may appear once. Opacity composes with a cleanup marker
+;; in a cleanup struct or with declared alignment in a repr-c struct.
 (define (parse-ast-field-metadata
   [dispatch : sym_i64_env.SymI64Env]
   [name : ci.InternSyntaxId]
@@ -5825,35 +5825,29 @@
   [items : (& program (Slice reader.SpannedSexpr))]
   [allow-cleanup : bool]
   [allow-align : bool]
+  [opaque? : bool]
   [cleanup : ast.AstFieldCleanup]
   [seen-cleanup : bool]
   [align : i64]) : ResultAstFieldParts
   (match items
     [(slice)
       (Ok
-        (ast.ast-field-def-id
+        (ast.ast-field-def-with-opacity-id
           name
           (owned_view.compiler-owned-reference-shared-view ty)
-          cleanup)
+          cleanup
+          opaque?)
         align)]
     [(slice meta & rest)
-      (if (parse-ast-align-metadata? meta)
-        (cond
-          [(not allow-align)
-            (parse-ast-field-align-error
-              dispatch
-              meta
-              "parse: field :align metadata requires struct (:repr c) metadata")]
-          [(> align 0)
-            (parse-ast-field-align-error
-              dispatch
-              meta
-              "parse: duplicate field :align metadata")]
-          [else
-            (match (parse-ast-declared-align-form
-              meta
-              "parse: malformed field :align metadata")
-              [(Ok parsed-align)
+      (cond
+        [(parse-ast-field-meta-key? meta (cbi.compiler-builtin-ctfe ":opaque"))
+          (match (reader.sexpr-view meta)
+            [(List (slice _))
+              (if opaque?
+                (parse-ast-field-metadata-error
+                  dispatch
+                  meta
+                  "parse: duplicate field :opaque metadata")
                 (parse-ast-field-metadata
                   dispatch
                   name
@@ -5861,32 +5855,68 @@
                   rest
                   allow-cleanup
                   allow-align
+                  true
                   cleanup
                   seen-cleanup
-                  parsed-align)]
-              [(Err message)
-                (parse-ast-field-align-error dispatch meta message)])])
-        (cond
-          [(not allow-cleanup)
-            (Err
-              "parse: field cleanup metadata requires struct :cleanup metadata")]
-          [seen-cleanup (Err "parse: duplicate field cleanup metadata")]
-          [else
-            (let
-              [parsed-cleanup (try (parse-ast-field-cleanup dispatch meta))]
-              (parse-ast-field-metadata
+                  align))]
+            [_
+              (parse-ast-field-metadata-error
                 dispatch
-                name
-                ty
-                rest
-                allow-cleanup
-                allow-align
-                parsed-cleanup
-                true
-                align))]))]))
+                meta
+                "parse: field :opaque expects no arguments")])]
+        [(parse-ast-align-metadata? meta)
+          (cond
+            [(not allow-align)
+              (parse-ast-field-metadata-error
+                dispatch
+                meta
+                "parse: field :align metadata requires struct (:repr c) metadata")]
+            [(> align 0)
+              (parse-ast-field-metadata-error
+                dispatch
+                meta
+                "parse: duplicate field :align metadata")]
+            [else
+              (match (parse-ast-declared-align-form
+                meta
+                "parse: malformed field :align metadata")
+                [(Ok parsed-align)
+                  (parse-ast-field-metadata
+                    dispatch
+                    name
+                    ty
+                    rest
+                    allow-cleanup
+                    allow-align
+                    opaque?
+                    cleanup
+                    seen-cleanup
+                    parsed-align)]
+                [(Err message)
+                  (parse-ast-field-metadata-error dispatch meta message)])])]
+        [else
+          (cond
+            [(not allow-cleanup)
+              (Err
+                "parse: field cleanup metadata requires struct :cleanup metadata")]
+            [seen-cleanup (Err "parse: duplicate field cleanup metadata")]
+            [else
+              (let
+                [parsed-cleanup (try (parse-ast-field-cleanup dispatch meta))]
+                (parse-ast-field-metadata
+                  dispatch
+                  name
+                  ty
+                  rest
+                  allow-cleanup
+                  allow-align
+                  opaque?
+                  parsed-cleanup
+                  true
+                  align))])])]))
 
-;; A field-level `(:align N)` error is located at the offending form.
-(define (parse-ast-field-align-error
+;; Locate the diagnostic at the field metadata form.
+(define (parse-ast-field-metadata-error
   [dispatch : sym_i64_env.SymI64Env]
   [form : reader.SpannedSexpr]
   [message : String]) : ResultAstFieldParts
@@ -5895,9 +5925,11 @@
 
 ;; Whether `meta` is an `(:align ...)` form.
 (define (parse-ast-align-metadata? [meta : reader.SpannedSexpr]) : bool
+  (parse-ast-field-meta-key? meta (cbi.compiler-builtin-ctfe ":align")))
+
+(define (parse-ast-field-meta-key? [meta : reader.SpannedSexpr] [id : i64]) : bool
   (match (reader.sexpr-view meta)
-    [(List (slice (Sym key _) & _))
-      (= (ci.intern-syntax-id-value key) (cbi.compiler-builtin-ctfe ":align"))]
+    [(List (slice (Sym key _) & _)) (= (ci.intern-syntax-id-value key) id)]
     [_ false]))
 
 ;; `(:align N)` takes one integer literal, a power of two from 1 through the
@@ -6038,6 +6070,8 @@
         (let
           [field-index : i64 fields.len]
           [next-fields : ast.AstFieldDefList fields]
+          [next-markers : i64
+            (ast.ast-struct-markers-with-field markers (& parsed-field))]
           (match (reader.spanned-sexpr-view head)
             [(BracketList _ _)
               (let
@@ -6062,7 +6096,7 @@
                 field-index
                 field-align))
             cleanup
-            markers
+            next-markers
             0
             next-fields
             seen-lifetimes

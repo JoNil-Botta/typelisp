@@ -4014,9 +4014,60 @@
         (be_state.compiler-backend-state-closed-executable?
           program-index.backend-state)))))
 
+(define (compiler-backend-object-archive-runtime-symbol-text?
+  [text : (& text str)]) : bool
+  (or
+    (be_operand.compiler-backend-stdlib-runtime-function-name? text)
+    (be_operand.compiler-backend-string-prefix-at? text "tl_" 0)
+    (be_operand.compiler-backend-string-prefix-at? text "_tl_" 0)
+    (be_operand.compiler-backend-string-prefix-at? text "__tl_" 0)))
+
+;; Whether `name` refers to a non-provided archive/stdlib external symbol
+;; (a TypeLisp-ABI extern or a compiler/stdlib runtime helper) rather than a
+;; locally defined symbol or a C-ABI foreign binding.
+(define (compiler-backend-object-archive-extern-symbol?
+  [program-index : be_state.CompilerBackendProgramIndex]
+  [name : i64]) : bool
+  (and
+    (not (= program-index.tables (cast 0 : u64)))
+    (not
+      (be_operand.compiler-backend-index-function-defines? program-index name))
+    (let
+      [tables : (& program-index be_state.CompilerBackendProgramTables)
+        (be_state.compiler-backend-program-tables program-index)]
+      (match (be_operand.compiler-backend-index-extern-reference-slot
+        program-index
+        name)
+        [(LookupFound slot)
+          (and
+            (not (array-ref tables.extern-provided slot))
+            (or
+              (not
+                (be_operand.compiler-backend-extern-call-info-c-abi?
+                  (array-ref tables.extern-call-infos slot)))
+              (let
+                [name-text : String
+                  (be_state.compiler-backend-symbol-text-index
+                    program-index
+                    name)]
+                [link-symbol : i64 (array-ref tables.extern-link-symbols slot)]
+                (or
+                  (compiler-backend-object-archive-runtime-symbol-text?
+                    (& name-text))
+                  (and
+                    (not (= link-symbol name))
+                    (let
+                      [link-text : String
+                        (be_state.compiler-backend-symbol-text-index
+                          program-index
+                          link-symbol)]
+                      (compiler-backend-object-archive-runtime-symbol-text?
+                        (& link-text))))))))]
+        [(LookupMissing) false]))))
+
 (define (compiler-backend-object-semantic-binop-supported?
-  [op : compiler_ir_types.CompilerIrBinOp]
-  [ty : compiler_ast_types.AstType]) : bool
+  [op : (& op compiler_ir_types.CompilerIrBinOp)]
+  [ty : (& ty compiler_ast_types.AstType)]) : bool
   (and
     (not (be_operand.compiler-backend-float-type? ty))
     (match op
@@ -4025,8 +4076,8 @@
         true]
       [_ false])))
 
-(define (compiler-backend-object-semantic-value-supported?
-  [value : compiler_ir_types.CompilerIrValue]) : bool
+(define (compiler-backend-object-semantic-value-supported-ref?
+  [value : (& compiler_ir_types.CompilerIrValue)]) : bool
   (match value
     ;; The object emitter currently uses `REX.W C7 /0`, whose imm32 operand is
     ;; sign-extended. Keep wider constants on the assembly path until movabs
@@ -4038,45 +4089,84 @@
     [(or (RuntimeGlobal _) (StaticArray _)) false]
     [_ true]))
 
+(define (compiler-backend-object-semantic-value-supported?
+  [value : compiler_ir_types.CompilerIrValue]) : bool
+  (compiler-backend-object-semantic-value-supported-ref? (& value)))
+
+(define (compiler-backend-object-semantic-value-supported-with-index?
+  [program-index : be_state.CompilerBackendProgramIndex]
+  [archive-runtime? : bool]
+  [value : (& compiler_ir_types.CompilerIrValue)]) : bool
+  (and
+    (compiler-backend-object-semantic-value-supported-ref? value)
+    (or
+      (not archive-runtime?)
+      (match value
+        [(or (Global name) (GlobalAddr name) (Function name))
+          (not
+            (compiler-backend-object-archive-extern-symbol? program-index name))]
+        [_ true]))))
+
 (define (compiler-backend-object-semantic-call-args-array-supported?
-  [values : (__tl_dyn-array compiler_ir_types.CompilerIrValue)]) : bool
+  [program-index : be_state.CompilerBackendProgramIndex]
+  [archive-runtime? : bool]
+  [values : (& (__tl_dyn-array compiler_ir_types.CompilerIrValue))]) : bool
   (let
-    [index : i64 0]
     [count : i64 (array-length values)]
-    [supported : bool true]
-    (while (and supported (< index count))
-      (set!
-        supported
-        (compiler-backend-object-semantic-value-supported?
-          (be_state.compiler-backend-global-array-element-shared-view
-            values
-            index)))
-      (+= index 1))
-    supported))
+    (for [index (iterator.range 0 count)]
+      (when
+        (not
+          (compiler-backend-object-semantic-value-supported-with-index?
+            program-index
+            archive-runtime?
+            (& (array-ref values index))))
+        (return false)))
+    true))
 
 (define (compiler-backend-object-semantic-call-args-supported?
-  [args : compiler_ir_types.CompilerIrCallArgs]) : bool
+  [program-index : be_state.CompilerBackendProgramIndex]
+  [archive-runtime? : bool]
+  [args : (& compiler_ir_types.CompilerIrCallArgs)]) : bool
   (match args
     [(Nil) true]
-    [(One value) (compiler-backend-object-semantic-value-supported? value)]
+    [(One value)
+      (compiler-backend-object-semantic-value-supported-with-index?
+        program-index
+        archive-runtime?
+        value)]
     [(Two lhs rhs)
       (and
-        (compiler-backend-object-semantic-value-supported? lhs)
-        (compiler-backend-object-semantic-value-supported? rhs))]
+        (compiler-backend-object-semantic-value-supported-with-index?
+          program-index
+          archive-runtime?
+          lhs)
+        (compiler-backend-object-semantic-value-supported-with-index?
+          program-index
+          archive-runtime?
+          rhs))]
     [(or (Array values) (Sret values _))
-      (compiler-backend-object-semantic-call-args-array-supported? values)]))
+      (compiler-backend-object-semantic-call-args-array-supported?
+        program-index
+        archive-runtime?
+        values)]))
 
 (define (compiler-backend-object-semantic-call-supported?
-  [backend-state : be_state.CompilerBackendState]
+  [program-index : be_state.CompilerBackendProgramIndex]
+  [archive-runtime? : bool]
   [name : i64]) : bool
   (let
+    [backend-state : be_state.CompilerBackendState program-index.backend-state]
     [text : String
       (be_state.compiler-backend-symbol-text-state backend-state name)]
     (and
-      (not (be_operand.compiler-backend-stdlib-runtime-function-name? text))
-      (not (be_operand.compiler-backend-string-prefix-at? text "tl_" 0))
+      (not (be_operand.compiler-backend-stdlib-runtime-function-name? (& text)))
+      (not (be_operand.compiler-backend-string-prefix-at? (& text) "tl_" 0))
       (not
-        (be_operand.compiler-backend-fixed-fault-symbol-id? backend-state name)))))
+        (be_operand.compiler-backend-fixed-fault-symbol-id? backend-state name))
+      (not
+        (and
+          archive-runtime?
+          (compiler-backend-object-archive-extern-symbol? program-index name))))))
 
 ;; Object-image lowering is deliberately incremental. ELF and COFF can
 ;; serialize every byte record produced by the cases below, but the other IR
@@ -4085,17 +4175,43 @@
 ;; conditions, early returns, and enum matches. This shared scan is therefore
 ;; the authoritative direct-object semantic contract; target serializers and
 ;; linkability checks remain separate, weaker contracts.
-(define (compiler-backend-object-instr-semantically-supported?
-  [backend-state : be_state.CompilerBackendState]
-  [instr : compiler_ir_types.CompilerIrInstr]) : bool
+;;
+;; Direct object targets emit only the minimal entry/boot runtime, not the full
+;; archive runtime (`tl_alloc8..64`, `tl_arena_*`, `tl_memcpy`, ...). When a
+;; prebuilt stdlib/package archive is hydrated (`archive-runtime?`), a program
+;; stays eligible for direct object emission as long as it references no
+;; archive symbol (and has no startup-init calls into an archive).
+(define (compiler-backend-object-instr-semantically-supported-with-index?
+  [program-index : be_state.CompilerBackendProgramIndex]
+  [archive-runtime? : bool]
+  [instr : (& compiler_ir_types.CompilerIrInstr)]) : bool
   (match instr
-    [(or (Mov _ src _) (Store _ src _) (Load _ src _))
-      (compiler-backend-object-semantic-value-supported? src)]
+    [(or (Mov _ src _) (Load _ src _))
+      (compiler-backend-object-semantic-value-supported-with-index?
+        program-index
+        archive-runtime?
+        src)]
+    [(Store name src _)
+      (and
+        (not
+          (and
+            archive-runtime?
+            (compiler-backend-object-archive-extern-symbol? program-index name)))
+        (compiler-backend-object-semantic-value-supported-with-index?
+          program-index
+          archive-runtime?
+          src))]
     [(BinOp _ op lhs rhs ty)
       (and
         (compiler-backend-object-semantic-binop-supported? op ty)
-        (compiler-backend-object-semantic-value-supported? lhs)
-        (compiler-backend-object-semantic-value-supported? rhs))]
+        (compiler-backend-object-semantic-value-supported-with-index?
+          program-index
+          archive-runtime?
+          lhs)
+        (compiler-backend-object-semantic-value-supported-with-index?
+          program-index
+          archive-runtime?
+          rhs))]
     [(UnOp _ op src ty)
       (and
         ;; The legacy object-only path has no production XMM-home plan. Its
@@ -4104,82 +4220,124 @@
         ;; #7205 removes this exclusion only after scalar SSE unary operations
         ;; are emitted from the shared post-regalloc machine program.
         (not (be_operand.compiler-backend-float-type? ty))
-        (compiler-backend-object-semantic-value-supported? src)
+        (compiler-backend-object-semantic-value-supported-with-index?
+          program-index
+          archive-runtime?
+          src)
         (match op
           [(or (Sqrt) (BitLength)) false]
           [_ true]))]
     [(Call _ name args _)
       (and
-        (compiler-backend-object-semantic-call-supported? backend-state name)
-        (compiler-backend-object-semantic-call-args-supported? args))]
+        (compiler-backend-object-semantic-call-supported?
+          program-index
+          archive-runtime?
+          name)
+        (compiler-backend-object-semantic-call-args-supported?
+          program-index
+          archive-runtime?
+          args))]
     [(CallIndirectC _ callee args _)
       (and
-        (compiler-backend-object-semantic-value-supported? callee)
-        (compiler-backend-object-semantic-call-args-supported? args))]
+        (compiler-backend-object-semantic-value-supported-with-index?
+          program-index
+          archive-runtime?
+          callee)
+        (compiler-backend-object-semantic-call-args-supported?
+          program-index
+          archive-runtime?
+          args))]
     [(Jump _) true]
     [(Return maybe)
       (match maybe
         [(No) true]
-        [(Some value) (compiler-backend-object-semantic-value-supported? value)])]
+        [(Some value)
+          (compiler-backend-object-semantic-value-supported-with-index?
+            program-index
+            archive-runtime?
+            value)])]
     [(Gep _ base offset _)
       (and
-        (compiler-backend-object-semantic-value-supported? base)
-        (compiler-backend-object-semantic-value-supported? offset))]
+        (compiler-backend-object-semantic-value-supported-with-index?
+          program-index
+          archive-runtime?
+          base)
+        (compiler-backend-object-semantic-value-supported-with-index?
+          program-index
+          archive-runtime?
+          offset))]
     [_ false]))
 
-(define (compiler-backend-object-instrs-semantically-supported?
+(define (compiler-backend-object-instr-semantically-supported?
   [backend-state : be_state.CompilerBackendState]
-  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : bool
+  [instr : compiler_ir_types.CompilerIrInstr]) : bool
+  (compiler-backend-object-instr-semantically-supported-with-index?
+    (be_state.CompilerBackendProgramIndex
+      (cast 0 : u64)
+      0
+      (profile_state.compiler-profile-state-new)
+      backend-state)
+    false
+    (& instr)))
+
+(define (compiler-backend-object-instrs-semantically-supported?
+  [program-index : be_state.CompilerBackendProgramIndex]
+  [archive-runtime? : bool]
+  [instrs : (& compiler_ir_types.CompilerIrInstrSeq)]) : bool
   (let
-    [index : i64 0]
     [count : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
-    [supported : bool true]
-    (while (and supported (< index count))
-      (set!
-        supported
-        (compiler-backend-object-instr-semantically-supported?
-          backend-state
-          (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)))
-      (+= index 1))
-    supported))
+    (for [index (iterator.range 0 count)]
+      (when
+        (not
+          (compiler-backend-object-instr-semantically-supported-with-index?
+            program-index
+            archive-runtime?
+            (compiler_ir_types.compiler-ir-instr-seq-borrow instrs index)))
+        (return false)))
+    true))
 
 (define (compiler-backend-object-blocks-semantically-supported?
-  [backend-state : be_state.CompilerBackendState]
-  [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
-  (let
-    [cursor : compiler_ir_types.CompilerIrBlockList blocks]
-    (while true
-      (match cursor
-        [(Array seq)
-          (let
-            [count : i64 (compiler_ir_types.compiler-ir-block-seq-count seq)]
-            (for [index (iterator.range 0 count)]
-              (match (compiler_ir_types.compiler-ir-block-seq-ref seq index)
-                [(Block _ instrs)
-                  (when
-                    (not
-                      (compiler-backend-object-instrs-semantically-supported?
-                        backend-state
-                        instrs))
-                    (return false))]))
-            (return true))]))
-    false))
+  [program-index : be_state.CompilerBackendProgramIndex]
+  [archive-runtime? : bool]
+  [blocks : (& compiler_ir_types.CompilerIrBlockList)]) : bool
+  (match blocks
+    [(Array seq)
+      (let
+        [count : i64 (compiler_ir_types.compiler-ir-block-seq-count seq)]
+        (for [index (iterator.range 0 count)]
+          (match (compiler_ir_types.compiler-ir-block-seq-borrow seq index)
+            [(Block _ instrs)
+              (when
+                (not
+                  (compiler-backend-object-instrs-semantically-supported?
+                    program-index
+                    archive-runtime?
+                    instrs))
+                (return false))]))
+        true)]))
 
 (define (compiler-backend-object-globals-semantically-supported?
-  [globals : compiler_ir_types.CompilerIrGlobalSeq]) : bool
+  [program-index : be_state.CompilerBackendProgramIndex]
+  [archive-runtime? : bool]
+  [globals : (& compiler_ir_types.CompilerIrGlobalSeq)]) : bool
   (for [index (iterator.range 0 globals.len)]
-    (match (compiler_ir_types.compiler-ir-global-seq-ref globals index)
+    (match (compiler_ir_types.compiler-ir-global-seq-borrow globals index)
       [(Global _ _ value _)
         (when
-          (not (compiler-backend-object-semantic-value-supported? value))
+          (not
+            (compiler-backend-object-semantic-value-supported-with-index?
+              program-index
+              archive-runtime?
+              value))
           (return false))]))
   true)
 
 (define (compiler-backend-object-functions-semantically-supported?
-  [backend-state : be_state.CompilerBackendState]
-  [functions : compiler_ir_types.CompilerIrFunctionSeq]) : bool
+  [program-index : be_state.CompilerBackendProgramIndex]
+  [archive-runtime? : bool]
+  [functions : (& compiler_ir_types.CompilerIrFunctionSeq)]) : bool
   (for [index (iterator.range 0 functions.len)]
-    (match (owned_view.compiler-owned-element-view functions.slots index)
+    (match (compiler_ir_types.compiler-ir-function-seq-borrow functions index)
       [(Function name _ _ _ blocks function-abi)
         (when
           (match (& function-abi)
@@ -4190,9 +4348,13 @@
           (not
             (or
               (be_operand.compiler-backend-stdlib-runtime-function-name?
-                (be_state.compiler-backend-symbol-text-state backend-state name))
+                (&
+                  (be_state.compiler-backend-symbol-text-index
+                    program-index
+                    name)))
               (compiler-backend-object-blocks-semantically-supported?
-                backend-state
+                program-index
+                archive-runtime?
                 blocks)))
           (return false))]))
   true)
@@ -4684,35 +4846,39 @@
   [program : compiler_ir_types.CompilerIrProgram]) : be_state.CompilerBackendObjectEligibility
   (match program
     [(Program globals functions _ _authority)
-      (cond
-        [(be_state.compiler-backend-state-shared-object-code-model?
-            backend-state)
-          (Unsupported (SharedObjectCodeModel))]
-        [(or
-            (be_state.compiler-backend-state-archive-runtime? backend-state)
-            (>
+      (let
+        [archive-runtime? : bool
+          (be_state.compiler-backend-state-archive-runtime? backend-state)]
+        (cond
+          [(be_state.compiler-backend-state-shared-object-code-model?
+              backend-state)
+            (Unsupported (SharedObjectCodeModel))]
+          [(>
               (array-length
                 (be_state.compiler-backend-state-startup-init-symbols
                   backend-state))
-              0))
-          (Unsupported
-            (be_state.compiler-backend-object-unsupported-semantics-category))]
-        [(not
-            (and
-              (compiler-backend-object-globals-semantically-supported?
-                (be_state.compiler-backend-global-shared-view globals))
-              (compiler-backend-object-functions-semantically-supported?
-                backend-state
-                (be_state.compiler-backend-global-shared-view functions))))
-          (Unsupported
-            (be_state.compiler-backend-object-unsupported-semantics-category))]
-        [else
-          (compiler-backend-object-functions-abi-eligibility
-            program-index.type-segment-bases
-            target
-            program-index
-            (be_facts.compiler-backend-global-types globals)
-            functions)])]))
+              0)
+            (Unsupported
+              (be_state.compiler-backend-object-unsupported-semantics-category))]
+          [(not
+              (and
+                (compiler-backend-object-globals-semantically-supported?
+                  program-index
+                  archive-runtime?
+                  (& globals))
+                (compiler-backend-object-functions-semantically-supported?
+                  program-index
+                  archive-runtime?
+                  (& functions))))
+            (Unsupported
+              (be_state.compiler-backend-object-unsupported-semantics-category))]
+          [else
+            (compiler-backend-object-functions-abi-eligibility
+              program-index.type-segment-bases
+              target
+              program-index
+              (be_facts.compiler-backend-global-types globals)
+              functions)]))]))
 
 (define (compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
   [backend-state : be_state.CompilerBackendState]

@@ -50044,3 +50044,378 @@ user_fn:
         (test.assert-true
           false
           "COFF object image emission for register-group global succeeded")])))
+
+(define (compiler-backend-archive-object-test-extern-with-symbol
+  [name : i64]
+  [link-symbol : i64]
+  [raw-name : String]
+  [ty : ast.AstType]
+  [abi : ast.AstExternAbi]) : ir.CompilerIrExtern
+  (ir.CompilerIrExtern.Extern
+    name
+    name
+    raw-name
+    ty
+    abi
+    link-symbol
+    (ast.ast-extern-link-input-list-new)
+    false
+    (ir.CompilerIrReturnStorage.None)
+    false
+    (ir.CompilerIrGlobalStorage.Word)))
+
+(define (compiler-backend-archive-object-test-extern
+  [name : i64]
+  [raw-name : String]
+  [ty : ast.AstType]
+  [abi : ast.AstExternAbi]) : ir.CompilerIrExtern
+  (compiler-backend-archive-object-test-extern-with-symbol
+    name
+    name
+    raw-name
+    ty
+    abi))
+
+(define (compiler-backend-archive-object-test-one-extern-seq
+  [entry : ir.CompilerIrExtern]) : ir.CompilerIrExternSeq
+  (ir.compiler-ir-extern-seq1 entry))
+
+(define (compiler-backend-archive-object-test-i64-func-type) : ast.AstType
+  (let
+    [i64-ty : ast.AstType (ast.AstType.I64)]
+    (ast.ast-ty-func
+      (ast.ast-type-cons (& i64-ty) (& (ast.ast-type-list-new)))
+      (& i64-ty))))
+
+(define (compiler-backend-archive-object-test-main-program
+  [instrs : ir.CompilerIrInstrSeq]
+  [externs : ir.CompilerIrExternSeq]) : ir.CompilerIrProgram
+  (let
+    [main-id : i64 (ci.intern "main")]
+    [main-fn : ir.CompilerIrFunction
+      (Function
+        main-id
+        (ir.compiler-ir-param-seq-empty)
+        (I64)
+        1
+        (ir.compiler-ir-blocks
+          (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs))
+        Ordinary)]
+    [functions : ir.CompilerIrFunctionSeq
+      (ir.compiler-ir-function-seq-prepend
+        (& main-fn)
+        (& (ir.compiler-ir-function-seq-empty)))]
+    (Program
+      (ir.compiler-ir-global-seq-empty)
+      functions
+      externs
+      (ir.CompilerIrReturnStorageAuthority.None))))
+
+(define (compiler-backend-archive-object-test-main-returning-42
+  [externs : ir.CompilerIrExternSeq]) : ir.CompilerIrProgram
+  (compiler-backend-archive-object-test-main-program
+    (compiler-backend-test-instr-seq-prepend
+      (Return (Some (I64 42)))
+      (ir.compiler-ir-instr-seq-empty))
+    externs))
+
+(define (compiler-backend-archive-object-test-main-calling
+  [callee-id : i64]
+  [externs : ir.CompilerIrExternSeq]) : ir.CompilerIrProgram
+  (compiler-backend-archive-object-test-main-program
+    (compiler-backend-test-instr-seq-prepend
+      (Call 0 callee-id (One (I64 42)) (I64))
+      (compiler-backend-test-instr-seq-prepend
+        (Return (Some (Var 0)))
+        (ir.compiler-ir-instr-seq-empty)))
+    externs))
+
+(define (compiler-backend-archive-object-test-main-reading-global
+  [global-id : i64]
+  [externs : ir.CompilerIrExternSeq]) : ir.CompilerIrProgram
+  (compiler-backend-archive-object-test-main-program
+    (compiler-backend-test-instr-seq-prepend
+      (Mov 0 (Global global-id) (I64))
+      (compiler-backend-test-instr-seq-prepend
+        (Return (Some (Var 0)))
+        (ir.compiler-ir-instr-seq-empty)))
+    externs))
+
+(define (compiler-backend-archive-object-test-main-storing-global
+  [global-id : i64]
+  [externs : ir.CompilerIrExternSeq]) : ir.CompilerIrProgram
+  (compiler-backend-archive-object-test-main-program
+    (compiler-backend-test-instr-seq-prepend
+      (Store global-id (I64 1) (I64))
+      (compiler-backend-test-instr-seq-prepend
+        (Return (Some (I64 42)))
+        (ir.compiler-ir-instr-seq-empty)))
+    externs))
+
+(test
+  object-mode-archive-runtime-eligibility-and-coff
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [type-bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [archive-fn-id : i64 (ci.intern "_tl_stdlib_math_archive_helper")]
+    [archive-global-id : i64 (ci.intern "_tl_stdlib_format_archive_cell")]
+    [win-c-fn-id : i64 (ci.intern "GetStdHandle")]
+    [c-abi-tl-alias-id : i64 (ci.intern "stdlib.io_core/io-runtime-alloc")]
+    [c-abi-tl-symbol-id : i64 (ci.intern "tl_alloc")]
+    [c-abi-underscore-tl-alias-id : i64
+      (ci.intern "stdlib.sync/runtime-helper")]
+    [c-abi-underscore-tl-symbol-id : i64 (ci.intern "_tl_sync_helper")]
+    [c-abi-dunder-tl-alias-id : i64
+      (ci.intern "stdlib.sync/runtime-helper-dunder")]
+    [c-abi-dunder-tl-symbol-id : i64 (ci.intern "__tl_sync_helper")]
+    [archive-fn-externs : ir.CompilerIrExternSeq
+      (compiler-backend-archive-object-test-one-extern-seq
+        (compiler-backend-archive-object-test-extern
+          archive-fn-id
+          "stdlib.math/archive-helper"
+          (compiler-backend-archive-object-test-i64-func-type)
+          (ast.AstExternAbi.TypeLisp)))]
+    [archive-global-externs : ir.CompilerIrExternSeq
+      (compiler-backend-archive-object-test-one-extern-seq
+        (compiler-backend-archive-object-test-extern
+          archive-global-id
+          "stdlib.format/archive-cell"
+          (ast.AstType.I64)
+          (ast.AstExternAbi.TypeLisp)))]
+    [win-c-externs : ir.CompilerIrExternSeq
+      (compiler-backend-archive-object-test-one-extern-seq
+        (compiler-backend-archive-object-test-extern
+          win-c-fn-id
+          "GetStdHandle"
+          (compiler-backend-archive-object-test-i64-func-type)
+          (ast.AstExternAbi.C)))]
+    [c-abi-tl-alias-externs : ir.CompilerIrExternSeq
+      (compiler-backend-archive-object-test-one-extern-seq
+        (compiler-backend-archive-object-test-extern-with-symbol
+          c-abi-tl-alias-id
+          c-abi-tl-symbol-id
+          "stdlib.io_core/io-runtime-alloc"
+          (compiler-backend-archive-object-test-i64-func-type)
+          (ast.AstExternAbi.C)))]
+    [c-abi-underscore-tl-alias-externs : ir.CompilerIrExternSeq
+      (compiler-backend-archive-object-test-one-extern-seq
+        (compiler-backend-archive-object-test-extern-with-symbol
+          c-abi-underscore-tl-alias-id
+          c-abi-underscore-tl-symbol-id
+          "stdlib.sync/runtime-helper"
+          (compiler-backend-archive-object-test-i64-func-type)
+          (ast.AstExternAbi.C)))]
+    [c-abi-dunder-tl-alias-externs : ir.CompilerIrExternSeq
+      (compiler-backend-archive-object-test-one-extern-seq
+        (compiler-backend-archive-object-test-extern-with-symbol
+          c-abi-dunder-tl-alias-id
+          c-abi-dunder-tl-symbol-id
+          "stdlib.sync/runtime-helper-dunder"
+          (compiler-backend-archive-object-test-i64-func-type)
+          (ast.AstExternAbi.C)))]
+    [self-contained : ir.CompilerIrProgram
+      (compiler-backend-archive-object-test-main-returning-42
+        archive-fn-externs)]
+    [calls-c : ir.CompilerIrProgram
+      (compiler-backend-archive-object-test-main-calling
+        win-c-fn-id
+        win-c-externs)]
+    [calls-c-tl-alias : ir.CompilerIrProgram
+      (compiler-backend-archive-object-test-main-calling
+        c-abi-tl-alias-id
+        c-abi-tl-alias-externs)]
+    [calls-c-underscore-tl-alias : ir.CompilerIrProgram
+      (compiler-backend-archive-object-test-main-calling
+        c-abi-underscore-tl-alias-id
+        c-abi-underscore-tl-alias-externs)]
+    [calls-c-dunder-tl-alias : ir.CompilerIrProgram
+      (compiler-backend-archive-object-test-main-calling
+        c-abi-dunder-tl-alias-id
+        c-abi-dunder-tl-alias-externs)]
+    [calls-archive : ir.CompilerIrProgram
+      (compiler-backend-archive-object-test-main-calling
+        archive-fn-id
+        (compiler-backend-archive-object-test-one-extern-seq
+          (compiler-backend-archive-object-test-extern
+            archive-fn-id
+            "stdlib.math/archive-helper"
+            (compiler-backend-archive-object-test-i64-func-type)
+            (ast.AstExternAbi.TypeLisp))))]
+    [reads-archive-global : ir.CompilerIrProgram
+      (compiler-backend-archive-object-test-main-reading-global
+        archive-global-id
+        archive-global-externs)]
+    [stores-archive-global : ir.CompilerIrProgram
+      (compiler-backend-archive-object-test-main-storing-global
+        archive-global-id
+        (compiler-backend-archive-object-test-one-extern-seq
+          (compiler-backend-archive-object-test-extern
+            archive-global-id
+            "stdlib.format/archive-cell"
+            (ast.AstType.I64)
+            (ast.AstExternAbi.TypeLisp))))]
+    [state-archive : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [state-startup : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [state-non-archive : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [startup-syms : (__tl_dyn-array String) (__tl_make-array String 1)]
+    (set! (array-ref startup-syms 0) "_tl___tl_mod_init_stdlib_format")
+    (be_state.compiler-backend-state-set-archive-runtime! state-archive true)
+    (be_state.compiler-backend-state-set-archive-runtime! state-startup true)
+    (be_state.compiler-backend-state-set-startup-init-symbols!
+      state-startup
+      startup-syms)
+    (test.assert-true
+      (match (be_object.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
+        state-archive
+        type-bases
+        (ir.clone-compiler-ir-program (& self-contained))
+        (be_state.CompilerBackendTarget.Windows)
+        (profile_state.compiler-profile-state-new))
+        [(Eligible) true]
+        [_ false])
+      "archive-runtime self-contained program with unreferenced TypeLisp extern stays Windows COFF eligible")
+    (match (be_object.compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
+      state-archive
+      type-bases
+      (ir.clone-compiler-ir-program (& self-contained))
+      (be_state.CompilerBackendTarget.Windows)
+      (Scalar)
+      (ir.compiler-source-spans-empty)
+      true
+      false
+      false
+      (profile_state.compiler-profile-state-new))
+      [(Ok image)
+        (test.assert-true
+          (coff.compiler-object-coff-image-supported? (& image))
+          "archive-runtime self-contained image is COFF-supported")
+        (match (coff.compiler-object-coff-render (& image))
+          [(Ok obj)
+            (test.assert-i64-eq
+              (layout.compiler-object-layout-u16-at (& obj) 0)
+              0x8664
+              "archive-runtime direct COFF carries AMD64 machine header")]
+          [(Err msg)
+            (test.assert-true
+              false
+              (str_cat.str-cat "COFF render failed: " msg))])]
+      [(Err _)
+        (test.assert-true
+          false
+          "archive-runtime self-contained COFF object image emission failed")])
+    (test.assert-true
+      (match (be_object.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
+        state-archive
+        type-bases
+        (ir.clone-compiler-ir-program (& calls-c))
+        (be_state.CompilerBackendTarget.Windows)
+        (profile_state.compiler-profile-state-new))
+        [(Eligible) true]
+        [_ false])
+      "archive-runtime program calling C-ABI GetStdHandle stays Windows COFF eligible")
+    (test.assert-true
+      (match (be_object.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
+        state-archive
+        type-bases
+        (ir.clone-compiler-ir-program (& calls-c-tl-alias))
+        (be_state.CompilerBackendTarget.Windows)
+        (profile_state.compiler-profile-state-new))
+        [(Unsupported (UnsupportedSemantics)) true]
+        [_ false])
+      "archive-runtime call to non-tl_ C-ABI extern with tl_ link symbol falls back on Windows")
+    (test.assert-true
+      (match (be_object.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
+        state-archive
+        type-bases
+        calls-c-tl-alias
+        (be_state.CompilerBackendTarget.Linux)
+        (profile_state.compiler-profile-state-new))
+        [(Unsupported (UnsupportedSemantics)) true]
+        [_ false])
+      "archive-runtime call to non-tl_ C-ABI extern with tl_ link symbol falls back on Linux")
+    (test.assert-true
+      (match (be_object.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
+        state-archive
+        type-bases
+        calls-c-underscore-tl-alias
+        (be_state.CompilerBackendTarget.Windows)
+        (profile_state.compiler-profile-state-new))
+        [(Unsupported (UnsupportedSemantics)) true]
+        [_ false])
+      "archive-runtime call to non-tl_ C-ABI extern with _tl_ link symbol falls back")
+    (test.assert-true
+      (match (be_object.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
+        state-archive
+        type-bases
+        calls-c-dunder-tl-alias
+        (be_state.CompilerBackendTarget.Windows)
+        (profile_state.compiler-profile-state-new))
+        [(Unsupported (UnsupportedSemantics)) true]
+        [_ false])
+      "archive-runtime call to non-tl_ C-ABI extern with __tl_ link symbol falls back")
+    (test.assert-true
+      (match (be_object.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
+        state-startup
+        type-bases
+        (ir.clone-compiler-ir-program (& self-contained))
+        (be_state.CompilerBackendTarget.Windows)
+        (profile_state.compiler-profile-state-new))
+        [(Unsupported (UnsupportedSemantics)) true]
+        [_ false])
+      "non-empty startup-init-symbols still falls back to assembly")
+    (test.assert-true
+      (match (be_object.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
+        state-archive
+        type-bases
+        (ir.clone-compiler-ir-program (& calls-archive))
+        (be_state.CompilerBackendTarget.Windows)
+        (profile_state.compiler-profile-state-new))
+        [(Unsupported (UnsupportedSemantics)) true]
+        [_ false])
+      "archive-runtime call to TypeLisp extern falls back on Windows")
+    (test.assert-true
+      (match (be_object.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
+        state-archive
+        type-bases
+        (ir.clone-compiler-ir-program (& calls-archive))
+        (be_state.CompilerBackendTarget.Linux)
+        (profile_state.compiler-profile-state-new))
+        [(Unsupported (UnsupportedSemantics)) true]
+        [_ false])
+      "archive-runtime call to TypeLisp extern falls back on Linux")
+    (test.assert-true
+      (match (be_object.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
+        state-archive
+        type-bases
+        reads-archive-global
+        (be_state.CompilerBackendTarget.Windows)
+        (profile_state.compiler-profile-state-new))
+        [(Unsupported (UnsupportedSemantics)) true]
+        [_ false])
+      "archive-runtime read of TypeLisp global extern falls back")
+    (test.assert-true
+      (match (be_object.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
+        state-archive
+        type-bases
+        stores-archive-global
+        (be_state.CompilerBackendTarget.Windows)
+        (profile_state.compiler-profile-state-new))
+        [(Unsupported (UnsupportedSemantics)) true]
+        [_ false])
+      "archive-runtime store to TypeLisp global extern falls back")
+    (test.assert-true
+      (match (be_object.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
+        state-non-archive
+        type-bases
+        calls-archive
+        (be_state.CompilerBackendTarget.Windows)
+        (profile_state.compiler-profile-state-new))
+        [(Eligible) true]
+        [_ false])
+      "non-archive-runtime TypeLisp extern call stays eligible for library extraction")))

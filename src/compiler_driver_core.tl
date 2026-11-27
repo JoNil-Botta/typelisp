@@ -1371,6 +1371,9 @@
 (define compiler-driver-last-hydrated-archive-paths-state : (__tl_dyn-array
     String)
   (__tl_make-array String 0))
+(define compiler-driver-last-hydrated-startup-symbols-state : (__tl_dyn-array
+    String)
+  (__tl_make-array String 0))
 (define compiler-driver-last-hydrated-stdlib-state : bool
   false)
 
@@ -1398,6 +1401,9 @@
   (set! compiler-driver-last-hydrated-stdlib-state false)
   (set!
     compiler-driver-last-hydrated-archive-paths-state
+    (__tl_make-array String 0))
+  (set!
+    compiler-driver-last-hydrated-startup-symbols-state
     (__tl_make-array String 0)))
 
 (define (compiler-driver-target-cfg-from-backend
@@ -1452,10 +1458,6 @@
         cfgs
         require-archive)]))
 
-(define compiler-driver-last-hydrated-startup-symbols-state : (__tl_dyn-array
-    String)
-  (__tl_make-array String 0))
-
 (define (compiler-driver-copy-string-array [src : (& (__tl_dyn-array String))]) : (__tl_dyn-array
     String)
   (let
@@ -1507,9 +1509,6 @@
       (be_state.compiler-backend-state-set-startup-init-symbols!
         backend-state
         (__tl_make-array String 0))
-      (set!
-        compiler-driver-last-hydrated-startup-symbols-state
-        (__tl_make-array String 0))
       (compiler-driver-clear-last-hydrated-archive-path!))))
 
 (define (compiler-driver-finish-tli-hydrated-serial-session!) : unit
@@ -1536,11 +1535,7 @@
           compiler-driver-last-hydrated-stdlib-state
           (compiler_load.compiler-load-session-state-tli-stdlib-hydrated?
             (& load-state))))
-      (begin
-        (set!
-          compiler-driver-last-hydrated-startup-symbols-state
-          (__tl_make-array String 0))
-        (compiler-driver-clear-last-hydrated-archive-path!)))
+      (compiler-driver-clear-last-hydrated-archive-path!))
     (compiler_load.compiler-load-session-state-tli-release! (& load-state))
     (compiler_typecheck_core.tc-job-state-set-tli-facts-ptr!
       (compiler_typecheck_core.tc-serial-job-state)
@@ -2047,6 +2042,10 @@
   compile-profile
   (define compiler-driver-load-profile-cache-start-metric : i64
     379))
+(cfg
+  compile-profile
+  (define compiler-driver-load-profile-tli-batch-start-metric : i64
+    383))
 
 (cfg
   compile-profile
@@ -2111,6 +2110,11 @@
       state
       compiler-driver-load-profile-surface-start-metric
       (compiler-driver-profile-arena-bytes surface-arena))
+    (compiler-driver-profile-set!
+      state
+      compiler-driver-load-profile-tli-batch-start-metric
+      (compiler-driver-profile-arena-bytes
+        (tli_cli.tli-batch-cache-arena-handle)))
     (compiler-driver-profile-set!
       state
       compiler-driver-load-profile-intern-start-metric
@@ -2191,7 +2195,12 @@
             compiler-driver-load-profile-type-start-metric))]
       [tli-bytes : i64
         (let
-          [sum : i64 0]
+          [sum : i64
+            (compiler-driver-profile-owner-delta
+              (tli_cli.tli-batch-cache-arena-handle)
+              (compiler-driver-profile-value
+                state
+                compiler-driver-load-profile-tli-batch-start-metric))]
           (for [i (iterator.range 0 (array-length tli-arenas))]
             (let
               [h : i64 (array-ref tli-arenas i)]
@@ -2218,7 +2227,8 @@
           compiler-driver-load-profile-enclosing-handle-metric)]
       [enclosing-is-tli : bool
         (let
-          [hit : bool false]
+          [batch-tli : i64 (tli_cli.tli-batch-cache-arena-handle)]
+          [hit : bool (and (> batch-tli 0) (= enclosing-handle batch-tli))]
           (for [i (iterator.range 0 (array-length tli-arenas))]
             (when
               (and

@@ -16,20 +16,14 @@ case "$(uname -s)" in
 esac
 
 GATE_FAIL_PREFIX='FAIL: '
-. "$ROOT/scripts/lib-gate.sh"
+. "$ROOT/scripts/lib-native-link.sh"
+native_link_detect_host
+configure_toolchain
 gate_compiler
 gate_compiler_absolute
 
 [ -x "$COMPILER" ] || {
     echo "process runtime compiler is not executable: $COMPILER" >&2
-    exit 1
-}
-command -v as >/dev/null 2>&1 || {
-    echo "process runtime verification requires as" >&2
-    exit 1
-}
-command -v ld >/dev/null 2>&1 || {
-    echo "process runtime verification requires ld" >&2
     exit 1
 }
 
@@ -54,8 +48,7 @@ for MODE in faults concurrency; do
             cat "$WORKDIR/$MODE.compile.stdout" "$WORKDIR/$MODE.compile.stderr" >&2
             fail "$MODE fixture compile failed"
         }
-    as "$ASM" -o "$OBJ"
-    ld "$OBJ" -o "$BIN" -e _tl_start
+    assemble_and_link "$MODE" "$ASM" "$OBJ" "$BIN"
 
     set +e
     "$BIN" > "$WORKDIR/$MODE.stdout" 2> "$WORKDIR/$MODE.stderr"

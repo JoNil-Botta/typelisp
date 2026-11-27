@@ -186,11 +186,13 @@ not-contains _tl_alias_row_overflow_aro_mark(%rip)
 contains call _tl_alias_row_overflow_aro_marked_question
 
 # Typed-word alias analysis hoists the descriptor loads into the preheader.
+# With inline 16-byte DynArray (#7963), Vec.slots has no handle indirection, so
+# both header words (data_ptr + length) hoist in 2 loads instead of 3.
 case alias-typed-word
 source tests/integration/alias_typed_word.tl
 in fn _tl_alias_typed_word_atw_scan_ints
 narrow block-after:^\.L[A-Za-z0-9_.]*while_header\.0__rotate_land:$
-count = 3 ^[[:space:]]+movq (8)?\(%r[a-z0-9]+\), %r[a-z0-9]+$
+count = 2 ^[[:space:]]+movq (8)?\(%r[a-z0-9]+\), %r[a-z0-9]+$
 in fn _tl_alias_typed_word_atw_scan_ints
 narrow after:^\.L[A-Za-z0-9_.]*while_body\.1:$
 count = 0 ^[[:space:]]+movq (8)?\(%r[a-z0-9]+\), %r[a-z0-9]+$
@@ -260,7 +262,7 @@ case raw-pointer-field-place-rmw
 source tests/integration/raw_pointer_field_place.tl
 in fn _tl_raw_pointer_field_place_record_bang
 not-match ^[[:space:]]+subq \$[0-9]+, %rsp$
-match ^[[:space:]]+addq 96\(%r[a-z0-9]+\), %r[a-z0-9]+$
-match ^[[:space:]]+movq %r[a-z0-9]+, 96\(%r[a-z0-9]+\)$
-match ^[[:space:]]+movl %[a-z0-9]+, 88\(%r[a-z0-9]+\)$
-match ^[[:space:]]+movb %[a-z0-9]+, 92\(%r[a-z0-9]+\)$
+match ^[[:space:]]+addq 104\(%r[a-z0-9]+\), %r[a-z0-9]+$
+match ^[[:space:]]+movq %r[a-z0-9]+, 104\(%r[a-z0-9]+\)$
+match ^[[:space:]]+movl %[a-z0-9]+, 96\(%r[a-z0-9]+\)$
+match ^[[:space:]]+movb %[a-z0-9]+, 100\(%r[a-z0-9]+\)$

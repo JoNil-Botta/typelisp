@@ -14893,14 +14893,9 @@
         vars
         (& all-blocks)
         (& use-counts))]
-    ;; The frame-escape answer is per function too; see
-    ;; compiler-backend-blocks-expose-frame-at?.
-    [_frame-may-escape-clear : unit
-      (be_state.compiler-backend-function-state-set-i64!
-        (be_state.compiler-backend-state-function-state
-          program-index.backend-state)
-        be_state.compiler-backend-function-i64-frame-may-escape
-        0)]
+    ;; `compiler-backend-emit-function` seeds `frame-may-escape` from the
+    ;; pre-coloring blocks so dead stack-slot var-id reuse cannot cause false
+    ;; frame-escape aliasing at -O0; leave any seeded value intact here.
     [out : be_state.CompilerBackendAsmBuf
       (be_state.compiler-backend-asm-buf-with-capacity
         (+
@@ -24101,6 +24096,14 @@
                 emit-vars
                 (compiler_regalloc.compiler-reg-plan-assignments
                   (& rewritten-reg-plan)))])]
+        ;; Compute whole-function frame escape on pre-coloring blocks so
+        ;; stack-slot var-id remapping cannot alias unrelated pointers with dead
+        ;; `AddrOf` slots at -O0.
+        [frame-may-escape-known : i64
+          (if (compiler_ir_types.compiler-ir-blocks-frame-may-escape?
+            (& rewritten-blocks))
+            2
+            1)]
         [colored-blocks : compiler_ir_types.CompilerIrBlockList
           (match (be_state.compiler-backend-global-shared-view coloring)
             [(None) rewritten-blocks]
@@ -24705,7 +24708,11 @@
                       (+
                         (be_scalar.compiler-backend-cycle-temp-frame-extra
                           (be_scalar.compiler-backend-cycle-temp-max-slots))
-                        (be_scalar.compiler-backend-emergency-slot-size))))))]
+                        (be_scalar.compiler-backend-emergency-slot-size)))))
+                (be_state.compiler-backend-function-state-set-i64!
+                  function-state
+                  be_state.compiler-backend-function-i64-frame-may-escape
+                  frame-may-escape-known))]
             (match (compiler-backend-emit-blocks
               type-segment-bases
               (be_state.compiler-backend-global-shared-view label-scope)

@@ -12,10 +12,11 @@ directly. Public-surface coverage uses native `Slice`/`Vec` values
 
 ## Checks
 
-- `scripts/verify-spmd-simd.sh` builds its `spmd_corpus` list at `scalar`,
-  `avx2` and `avx512` and requires every runnable SIMD mode to exit like the
-  `scalar` reference (or to fail with the pinned diagnostic), then runs
-  `simd.cases`: the per-program assembly shapes and the trap-path programs.
+- `scripts/verify-spmd-simd.sh` batches `corpus.d/*.manifest` at O0, O1 and O2
+  in scalar, SSE2, AVX2 and AVX-512 on Linux and Windows. Each executable must
+  exit like the same program's O1 scalar reference and leave stderr empty.
+  Expected compiler diagnostics are checked individually at every applicable
+  level. The gate also runs `simd.d` for assembly shapes, ISA guards and traps.
 - `gang-width.cases` (run by `scripts/verify-codegen-cases.sh`) pins the
   programs whose result intentionally observes the gang width:
   `broadcast_lane*` (`spmd-broadcast`) and `lane_identity_*`
@@ -40,15 +41,30 @@ ABI), `multi_output_*`, `store_alias_i64` and `uniform_zip_i64` (map shapes),
 ## Running
 
 ```sh
+scripts/ci-verify.sh --gates stage2-spmd-simd-comparison
 TYPELISP_BIN=./target/stage0/typelisp scripts/verify-spmd-simd.sh
 TYPELISP_BIN=./target/stage0/typelisp scripts/verify-codegen-cases.sh tests/spmd/gang-width.cases
 TYPELISP_BIN=./target/stage0/typelisp scripts/verify-spmd-runtime-dispatch.sh
 ```
 
-SIMD execution is gated by `scripts/detect-simd-isa.sh` (CPUID plus OS state,
-not the host OS); AVX-512 requires the aggregate `avx512` token (F+BW+DQ).
-Programs are not run in a mode the host cannot execute.
-To add a same-exit program, add it to `spmd_corpus` in
-`scripts/verify-spmd-simd.sh`; a program whose exit depends on the gang width
-belongs in `gang-width.cases`, and an assembly-shape or trap check in
-`simd.cases`.
+The comparison gate uses the matching prebuilt `stdlib.tli` and `libstdlib.a`
+beside the compiler, in its parent directory, or under `TYPELISP_SYSROOT`.
+Each matrix cell compiles in one batch with a 120-second deadline. Individual
+diagnostic compiles, assembly, links and executions have a 30-second deadline.
+`TYPELISP_SPMD_SIMD_BATCH_SECONDS` and `TYPELISP_SPMD_SIMD_STEP_SECONDS` set
+the deadlines for local investigations. A watchdog timeout fails its row even
+if the watchdog's status equals the scalar reference.
+
+`scripts/detect-simd-isa.sh` checks CPUID and OS state for AVX2 and AVX-512.
+AVX-512 requires F, BW and DQ or the configured Intel SDE route. A mode with
+no execution route still compiles at every level and reports why it could
+not run. CI requires an AVX-512 execution route. The two existing SSE2
+compile-only gather fixtures compare lane IDs across loops that intentionally
+use different widths in SSE2. The forced-SDE gate repeats AVX-512 at all
+three levels against the ordinary gate's O1 scalar receipts.
+
+Add same-exit programs in a new `corpus.d/<feature>.manifest`, with one
+repository-relative source path per line. Put gang-width-dependent exit checks
+in `gang-width.cases` and assembly or trap checks in a `simd.d` fragment.
+The `foreach_active_simd_reject.tl` AVX diagnostics in the comparison script
+belong to the transition to native `foreach-active` execution in #8307.

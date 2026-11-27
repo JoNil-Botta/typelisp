@@ -50751,9 +50751,10 @@ exit:
         (Param "out" (MutRef 0 0) 2)
         (ir.compiler-ir-param-seq-prepend
           (Param "raw" (U64) 20)
-          (ir.compiler-ir-param-seq-prepend
-            (Param "arr" (DynArray 0) 21)
-            (ir.compiler-ir-param-seq-empty)))))))
+          (ir.compiler-ir-param-seq-empty))))))
+
+(define (opt-ec-descriptor-handle-type) : ast.AstType
+  (ast.ast-ty-ref 0 (& (ast.ast-ty-dyn-array (& (I64))))))
 
 (define (opt-ec-test-function [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrFunction
   (Function
@@ -50822,6 +50823,7 @@ exit:
       (opt-test-instrs
         (ir.CompilerIrInstr.Mov 3 (I64 0) (I64))
         (ir.CompilerIrInstr.Gep 6 (Var 2) (I64 head-offset) (U8))
+        (irt.instr "%11 = gep %2, 0 : u8")
         (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))))
     (ir.CompilerIrBlock.Block
       (ir.compiler-ir-label "loop")
@@ -50829,7 +50831,8 @@ exit:
         (opt-test-instrs-with-tail
           (opt-licm-loop-finish-instrs)
           (ir.CompilerIrInstr.Load 7 (Var 6) load-ty)
-          (irt.instr "%8 = gep %21, 0 : i64")
+          (ir.CompilerIrInstr.Load 12 (Var 11) (opt-ec-descriptor-handle-type))
+          (irt.instr "%8 = gep %12, 0 : i64")
           (irt.instr "%9 = load %8 : u64")
           (irt.instr "%10 = gep %9, %4 : i64")
           pre
@@ -50857,10 +50860,13 @@ exit:
 (define (opt-ec-element-store-i64) : ir.CompilerIrInstr
   (irt.instr "store_ptr %10, 100 : i64"))
 
-;; The same element store writing a pointer handle -- the candidate's own
+;; The same element store writing a DESCRIPTOR HANDLE -- the candidate's own
 ;; class -- which the rule must refuse.
 (define (opt-ec-element-store-handle) : ir.CompilerIrInstr
-  (irt.instr "store_ptr %10, %7 : (Box i64)"))
+  (ir.CompilerIrInstr.StorePtr
+    (Var 10)
+    (Var 12)
+    (opt-ec-descriptor-handle-type)))
 
 ;; A store through the `raw` parameter: a pointer whose provenance the walk
 ;; cannot place, so it is a header-or-unknown store and no class bounds it.
@@ -50871,7 +50877,7 @@ exit:
 ;; borrows, and `(set! g v)` copies a whole aggregate over it, so it names no
 ;; class at all.
 (define (opt-ec-cell-store [global : i64]) : ir.CompilerIrInstr
-  (Store global (Var 7) (Box 0)))
+  (Store global (Var 12) (opt-ec-descriptor-handle-type)))
 
 ;; Is the load that defines `var` in the block labelled `label`? The load
 ;; COUNTS the older fixtures use cannot separate this packet's verdict from the
@@ -50915,11 +50921,14 @@ exit:
 
 (define (compiler-optimize-licm-element-class-self-test) : i64
   (let
-    ;; positive: a Box handle word off `out`, against an i64 element
-    ;; store. Different classes, so the load and the data-slot load leave.
+    ;; positive: a descriptor-handle word off `out`, against an i64 element
+    ;; store. Different classes, so the load and the two links behind it leave.
     [moved : ir.CompilerIrBlockList
       (opt-ec-licm-early
-        (opt-ec-loop-blocks 0 (Box 0) (opt-ec-element-store-i64)))]
+        (opt-ec-loop-blocks
+          0
+          (opt-ec-descriptor-handle-type)
+          (opt-ec-element-store-i64)))]
     ;; negative 1 -- the packet's rule, refused: a SAME-CLASS i64 word off the
     ;; same parameter (`out.len`) against the same i64 element store.
     [same-class : ir.CompilerIrBlockList
@@ -50928,20 +50937,29 @@ exit:
     ;; negative 2: the store writes the candidate's OWN class.
     [same-word : ir.CompilerIrBlockList
       (opt-ec-licm-early
-        (opt-ec-loop-blocks 0 (Box 0) (opt-ec-element-store-handle)))]
+        (opt-ec-loop-blocks
+          0
+          (opt-ec-descriptor-handle-type)
+          (opt-ec-element-store-handle)))]
     ;; negative 3: a store through a pointer of unknown provenance.
     [raw : ir.CompilerIrBlockList
-      (opt-ec-licm-early (opt-ec-loop-blocks 0 (Box 0) (opt-ec-raw-store)))]
+      (opt-ec-licm-early
+        (opt-ec-loop-blocks
+          0
+          (opt-ec-descriptor-handle-type)
+          (opt-ec-raw-store)))]
     ;; negative 4: an indirect call in the loop.
     [indirect : ir.CompilerIrBlockList
       (opt-ec-licm-early
-        (opt-ec-loop-blocks-with-call (Box 0) (opt-ec-element-store-i64)))]
+        (opt-ec-loop-blocks-with-call
+          (opt-ec-descriptor-handle-type)
+          (opt-ec-element-store-i64)))]
     ;; negative 5: a write to a global cell that may hold this very object.
     [cell : ir.CompilerIrBlockList
       (opt-ec-licm-early
         (opt-ec-loop-blocks
           0
-          (Box 0)
+          (opt-ec-descriptor-handle-type)
           (opt-ec-cell-store (opt-test-symbol "ec_cell"))))]
     ;; negative 6: an i64 word against an i32 element store. The classes
     ;; differ, but a register-resident aggregate's i64 word holds i32 fields.
@@ -50953,9 +50971,9 @@ exit:
       [(not (opt-ec-hoisted? moved)) 1]
       ;; ...and is gone from the body
       [(opt-ec-kept? moved) 2]
-      ;; and the data-slot buffer load came out with it: two loads in the
-      ;; preheader, none left in the loop
-      [(not (= (opt-fz-preheader-loads moved) 2)) 3]
+      ;; and the data slot and the buffer behind it came out with it: three
+      ;; loads in the preheader, none left in the loop
+      [(not (= (opt-fz-preheader-loads moved) 3)) 3]
       [(not (= (opt-fz-body-loads moved) 0)) 4]
       ;; every negative keeps the candidate in the loop
       [(opt-ec-hoisted? same-class) 5]

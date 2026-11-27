@@ -167,6 +167,7 @@
                 data.representations.word-counts
                 data.representations.class-masks
                 data.representations.stable-word-masks
+                data.representations.header-word-masks
                 (compiler_ir_types.compiler-ir-return-storage-index-authorized
                   pools
                   interns
@@ -5047,6 +5048,12 @@
                 (be_simd.compiler-backend-var-single-use?
                   ctx.use-counts
                   gep-dst2)
+                ;; Slot coloring can remap `load-dst` onto `base`'s own var id
+                ;; when `base` dies at the first load; a subsequent gep off
+                ;; `load-dst` then looks like `base2 == base` even though it is
+                ;; a pointer chase, not a second read off the original base.
+                (not
+                  (be_operand.compiler-backend-branch-uses-var? base load-dst))
                 (compiler_optimize.opt-value-eq (& base2) (& base)))
                 (match (be_operand.compiler-backend-value-as-i64 offset2)
                   [(Some _) (No)]
@@ -8022,6 +8029,12 @@
                 (be_simd.compiler-backend-var-single-use?
                   ctx.use-counts
                   gep-dst2)
+                ;; Slot coloring can remap `load-dst` onto `base`'s own var id
+                ;; when `base` dies at the first load; a subsequent gep off
+                ;; `load-dst` then looks like `base2 == base` even though it is
+                ;; a pointer chase, not a second read off the original base.
+                (not
+                  (be_operand.compiler-backend-branch-uses-var? base load-dst))
                 (compiler_optimize.opt-value-eq (& base2) (& base)))
                 (match (be_operand.compiler-backend-value-as-i64 offset2)
                   [(Some n2)

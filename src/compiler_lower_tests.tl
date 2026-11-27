@@ -6859,11 +6859,11 @@
   (outer-float-box-use (OuterFloatBox (InnerFloatBox 1.5))))")
 
 (define (compiler-lower-c-abi-windows-unsupported-aggregate-source) : String
-  "(defstruct InnerText (value (__tl_dyn-array u8)))
+  "(defstruct InnerText (value (Box u8)))
 (defstruct OuterText (inner InnerText))
 (extern (outer-text-use [arg0 : OuterText]) : i64 (:symbol \"tl_cabi_outer_text_use\"))
 (define (main) : i64
-  (outer-text-use (OuterText (InnerText (__tl_make-array u8 0)))))")
+  (outer-text-use (OuterText (InnerText (box (cast 0 : u8))))))")
 
 (define (compiler-lower-c-abi-windows-small-float-aggregate-source) : String
   "(defstruct FloatPair

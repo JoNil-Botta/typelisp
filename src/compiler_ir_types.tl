@@ -5543,6 +5543,9 @@
   ;; Bit w proves that inline word w keeps its declared type across variants.
   ;; Missing facts and words beyond the mask provide no speculation proof.
   (stable-word-masks ir_i64_i64_map.Map)
+  ;; Bit w proves that inline words [w, w+1] unconditionally hold a DynArray
+  ;; descriptor header `{data_ptr, length}` at byte offset `w * 8`.
+  (header-word-masks ir_i64_i64_map.Map)
   (return-storage CompilerIrReturnStorageIndex))
 
 (defenum CompilerIrRepresentationKind
@@ -5555,6 +5558,7 @@
     (ir_i64_i64_map.with-capacity 1)
     (ir_i64_i64_map.with-capacity 1)
     (ir_i64_i64_map.with-capacity 1)
+    (ir_i64_i64_map.with-capacity 1)
     (compiler-ir-return-storage-index-empty)))
 
 (define (compiler-ir-clone-representation-index
@@ -5564,6 +5568,7 @@
     (ir_i64_i64_map.clone-map (& index.word-counts))
     (ir_i64_i64_map.clone-map (& index.class-masks))
     (ir_i64_i64_map.clone-map (& index.stable-word-masks))
+    (ir_i64_i64_map.clone-map (& index.header-word-masks))
     (compiler-ir-clone-return-storage-index pools (& index.return-storage))))
 
 (define (compiler-ir-representation-index-stable-mask-known?
@@ -5583,6 +5588,28 @@
   [key : i64]
   [mask : i64]) : unit
   (ir_i64_i64_map.insert-ref! (&mut index.stable-word-masks) key mask))
+
+(define (compiler-ir-representation-index-header-mask-known?
+  [index : (& index CompilerIrRepresentationIndex)]
+  [key : i64]) : bool
+  (ir_i64_i64_map.contains? (& index.header-word-masks) key))
+
+(define (compiler-ir-representation-index-header-mask
+  [index : (& index CompilerIrRepresentationIndex)]
+  [key : i64]) : i64
+  (match (ir_i64_i64_map.get (& index.header-word-masks) key)
+    [(LookupFound mask) mask]
+    [(LookupMissing) 0]))
+
+(define (compiler-ir-representation-index-set-header-mask!
+  [index : (&mut index CompilerIrRepresentationIndex)]
+  [key : i64]
+  [mask : i64]) : unit
+  (ir_i64_i64_map.insert-ref! (&mut index.header-word-masks) key mask))
+
+(define (compiler-ir-representation-index-has-header-masks?
+  [index : (& index CompilerIrRepresentationIndex)]) : bool
+  (> (ir_i64_i64_map.len (& index.header-word-masks)) 0))
 
 (define (compiler-ir-representation-index-kind-for-key
   [index : (& index CompilerIrRepresentationIndex)]
@@ -11471,6 +11498,7 @@
           counts
           masks
           index.stable-word-masks
+          index.header-word-masks
           index.return-storage))
       (match (ir_i64_i64_map.get (& counts) key)
         [(LookupMissing)
@@ -11480,6 +11508,7 @@
             counts
             masks
             index.stable-word-masks
+            index.header-word-masks
             index.return-storage)]
         [(LookupFound found-count)
           (match (ir_i64_i64_map.get (& masks) key)
@@ -11493,6 +11522,7 @@
                     counts
                     masks
                     index.stable-word-masks
+                    index.header-word-masks
                     index.return-storage)))]
             [(LookupMissing)
               (ir_i64_i64_map.insert-ref! (&mut counts) key 0)
@@ -11501,6 +11531,7 @@
                 counts
                 masks
                 index.stable-word-masks
+                index.header-word-masks
                 index.return-storage)])]))))
 
 (define (compiler-ir-representation-index-merge-one-word
@@ -11515,6 +11546,7 @@
         counts
         index.class-masks
         index.stable-word-masks
+        index.header-word-masks
         index.return-storage))))
 
 (define (compiler-ir-representation-var-type-set!
@@ -12171,6 +12203,7 @@
           representations.word-counts
           representations.class-masks
           representations.stable-word-masks
+          representations.header-word-masks
           storage))]))
 
 ;; `initial` carries the layout-derived group facts lowering preserved before
@@ -12205,6 +12238,7 @@
           base.word-counts
           base.class-masks
           base.stable-word-masks
+          base.header-word-masks
           storage))]))
 
 ;; Test support: a descriptor's rendering without its generated callee name,

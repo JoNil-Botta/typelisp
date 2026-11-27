@@ -6,7 +6,7 @@ field_opacity_borrow|check-fail|tests/safety/field_opacity_borrow.tl|-|error[E02
 field_opacity_borrow_mut|check-fail|tests/safety/field_opacity_borrow_mut.tl|-|error[E0221]
 field_opacity_ctor|check-fail|tests/safety/field_opacity_ctor.tl|-|error[E0221]
 field_opacity_ctor_value|check-fail|tests/safety/field_opacity_ctor_value.tl|-|error[E0221]
-field_opacity_macro_ctor|check-fail|tests/safety/field_opacity_macro_ctor.tl|-|error[E0221]
+field_opacity_macro_ctor|check-fail|tests/safety/field_opacity_macro_ctor.tl|tests/safety/field_opacity_model.tl|error[E0221]
 field_opacity_pattern|check-fail|tests/safety/field_opacity_pattern.tl|-|error[E0221]
 field_opacity_fields|check-fail|tests/safety/field_opacity_fields.tl|-|error[E0221]
 field_opacity_array|check-fail|tests/safety/field_opacity_array.tl|-|error[E0221]

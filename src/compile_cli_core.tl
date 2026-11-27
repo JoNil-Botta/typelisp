@@ -309,7 +309,11 @@
                 (build_run_core.source-tool-backend-target options.target)
                 options.stdlib-roots
                 options.cfgs
-                (build_run_core.source-tool-backend-mode options.backend-mode)
+                (build_run_core.source-tool-backend-mode
+                  (cli_option.cli-compile-options-backend-mode
+                    options.backend-mode
+                    options.has-backend-mode
+                    options.opt-level))
                 options.opt-level))]))]))
 
 (define (compile-cli-batch-config-from [batch-path-idx : i64] [count : i64]) : ResultCompileCliBatchConfig
@@ -399,7 +403,11 @@
               (build_run_core.source-tool-backend-target options.target)
               options.stdlib-roots
               options.cfgs
-              (build_run_core.source-tool-backend-mode options.backend-mode)
+              (build_run_core.source-tool-backend-mode
+                (cli_option.cli-compile-options-backend-mode
+                  options.backend-mode
+                  options.has-backend-mode
+                  options.opt-level))
               options.opt-level
               prefix-cache-stats
               has-windows-coff-plan

@@ -116,6 +116,18 @@ FILENAME == catalog {
         sub(/^[012]\+/, "", opt_level_spec)
         extra = opt_level_spec
     }
+    if (extra ~ /^backend-mode:/) {
+        backend_mode_spec = extra
+        sub(/^backend-mode:/, "", backend_mode_spec)
+        if (backend_mode_spec ~ /^scalar$/) {
+            extra = ""
+        } else if (backend_mode_spec ~ /^scalar\+/) {
+            sub(/^scalar\+/, "", backend_mode_spec)
+            extra = backend_mode_spec
+        } else {
+            fail("manifest line " FNR " has invalid backend-mode prefix for " name ": " extra)
+        }
+    }
     if (extra == "expected-stderr:" || extra == "stage-stdlib+expected-stderr:") {
         fail("manifest line " FNR " has empty expected stderr for " name)
     }

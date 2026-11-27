@@ -68848,9 +68848,39 @@
     unit)
   false)
 
+(define (opt-unroll-simd-elem-bytes [ty : (& ast.AstType)]) : i64
+  (match ty
+    [(or (I8) (U8) (Bool)) 1]
+    [(or (I16) (U16)) 2]
+    [(or (I32) (U32) (F32)) 4]
+    [(or (I64) (U64) (F64)) 8]
+    [_ 0]))
+
+;; True iff every VectorLoad/VectorStore in the gang body is 128-bit (SSE2)
+;; and at least one exists. Keeps 256-bit AVX2 and 512-bit AVX-512 untouched.
+(define (opt-unroll-simd-128bit?
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [last : i64]) : bool
+  (let
+    [saw-mem : bool false]
+    (for [index (iterator.range 0 last)]
+      (match (ir.compiler-ir-instr-seq-borrow instrs index)
+        [(VectorLoad _ _ _ lanes ty)
+          (if (= (* lanes (opt-unroll-simd-elem-bytes ty)) 16)
+            (set! saw-mem true)
+            (return false))]
+        [(VectorStore p)
+          (if (= (* p.lanes (opt-unroll-simd-elem-bytes (& p.ty))) 16)
+            (set! saw-mem true)
+            (return false))]
+        [_ unit]))
+    saw-mem))
+
 ;; Multiple loads can amortize the address setup across a wider group. Keep
 ;; the smaller group when the surrounding CFG has already acquired phis or
-;; when a gang carries an expanding shuffle check.
+;; when a gang carries an expanding shuffle check. For 128-bit SSE2 vectors
+;; (half the width of AVX2), 8 gangs covers the same 128 bytes per iteration
+;; as 4 AVX2 gangs and keeps per-group address-setup overhead bounded.
 (define (opt-unroll-simd-group-gangs
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
@@ -68859,13 +68889,19 @@
   [stores : i64]) : i64
   (if (= stores 0)
     16
-    (if (or (< loads 2) (opt-ssa-blocks-have-phi? blocks))
-      4
-      (begin
-        (for [index (iterator.range 0 last)]
-          (match (ir.compiler-ir-instr-seq-borrow instrs index)
-            [(VectorShuffle _) (return 4)]
-            [_ unit]))
+    (let
+      [has-shuffle : bool false]
+      (for [index (iterator.range 0 last)]
+        (match (ir.compiler-ir-instr-seq-borrow instrs index)
+          [(VectorShuffle _) (set! has-shuffle true)]
+          [_ unit]))
+      (if (or has-shuffle (< loads 2) (opt-ssa-blocks-have-phi? blocks))
+        (if (and
+          (not has-shuffle)
+          (<= last 8)
+          (opt-unroll-simd-128bit? instrs last))
+          8
+          4)
         16))))
 
 ;; A self-loop candidate must have exactly one predecessor besides itself.
@@ -69352,6 +69388,36 @@
               ty))]
         [_ (opt-unroll-clone-instr rw remap cell copy instr)])]))
 
+;; Software-pipeline pure 128-bit SSE2 streaming map gangs (deferring each
+;; gang's VectorStore by 4 gangs behind subsequent gang loads+binops). This
+;; decouples store addresses from nearby loads (avoiding 4K/32K store-to-load
+;; aliasing hazards), keeps loads and stores balanced per cycle on L1D-resident
+;; loops, and uses only 4 live result vector registers so nothing spills.
+(define (opt-unroll-simd-store-pipeline-depth
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [last : i64]
+  [gangs : i64]) : i64
+  (if (or (< gangs 8) (> last 6))
+    0
+    (if (not (opt-unroll-simd-128bit? instrs last))
+      0
+      (let
+        [loads : i64 0]
+        [stores : i64 0]
+        (for [index (iterator.range 0 last)]
+          (match (opt-unroll-simd-recurrent-vector-dst
+            (ir.compiler-ir-instr-seq-borrow instrs index))
+            [(Some _) (return 0)]
+            [(None) unit])
+          (match (ir.compiler-ir-instr-seq-borrow instrs index)
+            [(VectorLoad _ _ _ _ _) (+= loads 1)]
+            [(VectorStore _) (+= stores 1)]
+            [(or (VectorBinOp _) (Mov _ _ _)) unit]
+            [_ (return 0)]))
+        (if (and (>= loads 2) (= stores 1))
+          4
+          0)))))
+
 ;; Emit sequential remapped copies for the selected group size.
 (define (opt-unroll-simd-copies
   [type-segment-bases : i64]
@@ -69364,24 +69430,67 @@
   [step : i64]
   [gangs : i64]) : ir.CompilerIrInstrSeq
   (let
-    [builder : ir.CompilerIrInstrBuilder
+    [depth : i64 (opt-unroll-simd-store-pipeline-depth instrs last gangs)]
+    [body-builder : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity (* gangs last))]
+    [store-builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity
+        (if (> depth 0)
+          gangs
+          0))]
     [rw : ir.CompilerIrInstrRewrite (ir.compiler-ir-instr-rewrite-new)]
     (for [copy (iterator.range 0 gangs)]
       (for [index (iterator.range 0 last)]
-        (ir.compiler-ir-instr-builder-push!
-          (&mut builder)
-          (opt-unroll-simd-clone-instr
-            (&mut rw)
-            type-segment-bases
-            (owned_view.compiler-owned-reference-shared-view remap)
-            cell
-            memory-bases
-            group-bases
-            step
-            copy
-            (ir.compiler-ir-instr-seq-borrow instrs index)))))
-    (ir.compiler-ir-instr-builder-to-seq builder)))
+        (let
+          [cloned : ir.CompilerIrInstr
+            (opt-unroll-simd-clone-instr
+              (&mut rw)
+              type-segment-bases
+              (owned_view.compiler-owned-reference-shared-view remap)
+              cell
+              memory-bases
+              group-bases
+              step
+              copy
+              (ir.compiler-ir-instr-seq-borrow instrs index))]
+          (if (and
+            (> depth 0)
+            (match (& cloned)
+              [(VectorStore _) true]
+              [_ false]))
+            (ir.compiler-ir-instr-builder-push! (&mut store-builder) cloned)
+            (ir.compiler-ir-instr-builder-push! (&mut body-builder) cloned)))))
+    (if (= depth 0)
+      (ir.compiler-ir-instr-builder-to-seq body-builder)
+      (let
+        [non-store : i64 (- last 1)]
+        [body-seq : ir.CompilerIrInstrSeq
+          (ir.compiler-ir-instr-builder-to-seq body-builder)]
+        [store-seq : ir.CompilerIrInstrSeq
+          (ir.compiler-ir-instr-builder-to-seq store-builder)]
+        [out : ir.CompilerIrInstrBuilder
+          (ir.compiler-ir-instr-builder-with-capacity (* gangs last))]
+        (for [copy (iterator.range 0 gangs)]
+          (ir.compiler-ir-instr-builder-append-seq-range!
+            (&mut out)
+            (& body-seq)
+            (* copy non-store)
+            (* (+ copy 1) non-store))
+          (when
+            (>= copy depth)
+            (let
+              [sidx : i64 (- copy depth)]
+              (ir.compiler-ir-instr-builder-append-seq-range!
+                (&mut out)
+                (& store-seq)
+                sidx
+                (+ sidx 1)))))
+        (ir.compiler-ir-instr-builder-append-seq-range!
+          (&mut out)
+          (& store-seq)
+          (- gangs depth)
+          gangs)
+        (ir.compiler-ir-instr-builder-to-seq out)))))
 
 (define (opt-unroll-simd-group-vars!
   [cell : (&mut cell (__tl_dyn-array i64))]

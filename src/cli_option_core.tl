@@ -229,7 +229,7 @@
   (CliCompileOptions
     target
     false
-    Scalar
+    Sse2
     false
     opt-level
     false
@@ -237,6 +237,16 @@
     (cli_svec.new)
     false
     false))
+
+;; Size-optimized builds default SPMD lowering to scalar (avoiding vector and
+;; masked-tail loop duplication) unless `--backend-mode` was explicit.
+(define (cli-compile-options-backend-mode
+  [mode : CliBackendMode]
+  [has-mode : bool]
+  [opt-level : i64]) : CliBackendMode
+  (if (and (not has-mode) (opt_level.opt-level-size? opt-level))
+    Scalar
+    mode))
 
 (define (cli-compile-option? [name : (& name str)]) : bool
   (or

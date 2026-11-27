@@ -4180,7 +4180,12 @@
   [functions : compiler_ir_types.CompilerIrFunctionSeq]) : bool
   (for [index (iterator.range 0 functions.len)]
     (match (owned_view.compiler-owned-element-view functions.slots index)
-      [(Function name _ _ _ blocks _)
+      [(Function name _ _ _ blocks function-abi)
+        (when
+          (match (& function-abi)
+            [(SpmdPrivate _) true]
+            [_ false])
+          (return false))
         (when
           (not
             (or

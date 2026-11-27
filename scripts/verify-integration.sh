@@ -54,7 +54,7 @@ EOF
 # Windows runner differential).
 integration_shards() {
     cat <<'EOF'
-default|-|stage-stdlib embedded
+default|-|stage-stdlib embedded embedded-scalar
 opt-levels|-opt-levels|stage-stdlib-opt0 stage-stdlib-opt1 stage-stdlib-opt2 embedded-opt0 embedded-opt1 embedded-opt2
 EOF
 }
@@ -449,6 +449,9 @@ integration_batch_group_run() {
     set -- "$@" --verify-ir
     case "$_compile_group" in
         embedded | stage-stdlib) ;;
+        embedded-scalar)
+            set -- "$@" --backend-mode scalar
+            ;;
         embedded-opt0 | stage-stdlib-opt0 | embedded-opt1 | stage-stdlib-opt1 | embedded-opt2 | stage-stdlib-opt2)
             set -- "$@" --opt-level "${_compile_group##*opt}"
             ;;
@@ -458,7 +461,7 @@ integration_batch_group_run() {
             ;;
     esac
     case "$_compile_group" in
-        embedded | embedded-opt*)
+        embedded | embedded-scalar | embedded-opt*)
             # shellcheck disable=SC2086
             "$@" $INTEGRATION_BATCH_TARGET_ARGS --stdlib-root "$ROOT/src"
             ;;
@@ -2080,6 +2083,7 @@ run_path_normalization_self_test() {
 manifest_row_split_opt_level() {
     MANIFEST_ROW_EXTRA=${1:-}
     MANIFEST_ROW_OPT_LEVEL=
+    MANIFEST_ROW_BACKEND_MODE=
     case "$MANIFEST_ROW_EXTRA" in
         opt-level:*)
             MANIFEST_ROW_OPT_LEVEL=${MANIFEST_ROW_EXTRA#opt-level:}
@@ -2089,6 +2093,20 @@ manifest_row_split_opt_level() {
                 0 | 1 | 2) ;;
                 *) echo "invalid manifest optimization level: $MANIFEST_ROW_OPT_LEVEL" >&2; return 1 ;;
             esac
+            ;;
+    esac
+    case "$MANIFEST_ROW_EXTRA" in
+        backend-mode:scalar)
+            MANIFEST_ROW_BACKEND_MODE=scalar
+            MANIFEST_ROW_EXTRA=
+            ;;
+        backend-mode:scalar+*)
+            MANIFEST_ROW_BACKEND_MODE=scalar
+            MANIFEST_ROW_EXTRA=${MANIFEST_ROW_EXTRA#backend-mode:scalar+}
+            ;;
+        backend-mode:*)
+            echo "invalid manifest backend mode: $MANIFEST_ROW_EXTRA" >&2
+            return 1
             ;;
     esac
 }
@@ -2104,6 +2122,8 @@ manifest_row_batch_group() {
     esac
     [ -z "$MANIFEST_ROW_OPT_LEVEL" ] ||
         MANIFEST_ROW_GROUP="$MANIFEST_ROW_GROUP-opt$MANIFEST_ROW_OPT_LEVEL"
+    [ -z "$MANIFEST_ROW_BACKEND_MODE" ] ||
+        MANIFEST_ROW_GROUP="$MANIFEST_ROW_GROUP-$MANIFEST_ROW_BACKEND_MODE"
 }
 
 # Select this shard's rows: the batch pre-pass, the staged tree, the case loop
@@ -4522,6 +4542,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
     stage_stdlib=0
     manifest_row_split_opt_level "${extra:-}"
     opt_level=$MANIFEST_ROW_OPT_LEVEL
+    backend_mode=$MANIFEST_ROW_BACKEND_MODE
     case "$MANIFEST_ROW_EXTRA" in
         "") ;;
         stage-stdlib) stage_stdlib=1 ;;
@@ -4535,6 +4556,9 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
         opt_level_args="--opt-level $opt_level"
     else
         opt_level_args=
+    fi
+    if [ -n "$backend_mode" ]; then
+        opt_level_args="${opt_level_args:+$opt_level_args }--backend-mode $backend_mode"
     fi
     # The batched pre-pass names its sources ROOT-relative and the compiler puts
     # that spelling in the abort-site descriptors an expected-stderr pins, so a

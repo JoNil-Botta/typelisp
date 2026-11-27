@@ -5418,18 +5418,18 @@
   [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
   (match word
     [(I64 k)
-      (if (be_operand.compiler-backend-imm32? k)
-        (Ok
-          (str_cat.str-cat "    movq $" (string.int->string k) ", " slot "\n"))
-        (let
-          [load
-            (try
-              (be_operand.compiler-backend-emit-load-value
-                assignments
-                word
-                (string.copy (& scratch))
-                backend-state))]
-          (Ok (str_cat.str-cat load "    movq " scratch ", " slot "\n"))))]
+      (match (be_operand.compiler-backend-immediate-i64 backend-state k)
+        [(Some imm) (Ok (str_cat.str-cat "    movq " imm ", " slot "\n"))]
+        [(No)
+          (let
+            [load
+              (try
+                (be_operand.compiler-backend-emit-load-value
+                  assignments
+                  word
+                  (string.copy (& scratch))
+                  backend-state))]
+            (Ok (str_cat.str-cat load "    movq " scratch ", " slot "\n")))])]
     [_
       (let
         [load

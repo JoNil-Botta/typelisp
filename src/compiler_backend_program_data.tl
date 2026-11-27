@@ -67,6 +67,10 @@
   [collections : be_state.CompilerBackendProgramCollections]) : be_state.BackendStringSeq
   (compiler-backend-string-set-list collections.strings))
 
+(define (compiler-backend-program-collections-str-descs
+  [collections : be_state.CompilerBackendProgramCollections]) : be_state.BackendStringSeq
+  (compiler-backend-string-set-list collections.str-descs))
+
 (define (compiler-backend-program-collections-floats
   [collections : be_state.CompilerBackendProgramCollections]) : be_state.BackendFloatSeq
   (compiler-backend-float-set-list collections.floats))
@@ -837,6 +841,69 @@
         (byte_buf_core.byte-buf-builder-append-string
           (&mut out)
           (runtime_prune.literal-unit-end)))
+      (byte_buf_core.byte-buf-builder-append-string
+        (&mut out)
+        (runtime_prune.literal-end))
+      (when
+        sectioned
+        (byte_buf_core.byte-buf-builder-append-string
+          (&mut out)
+          "    .section .rodata\n"))
+      (text_buf.append
+        buf
+        (byte_buf_core.byte-buf-builder-finish-string (& out))))))
+
+;; Static 16-byte `{data_ptr, len}` descriptors emitted ONLY for string
+;; literals borrowed as `(& r str)` (`CompilerIrValue.StrDesc`). Empty borrowed
+;; strings share `.L_tl_str_empty` (`{0, 0}`, zero relocations).
+(define (compiler-backend-emit-string-desc-rodata-into
+  [descs : be_state.BackendStringSeq]
+  [sectioned : bool]
+  [buf : text_buf.TextBuf]) : text_buf.TextBuf
+  (if (= descs.len 0)
+    buf
+    (let
+      [out : byte_buf_core.ByteBufBuilder
+        (byte_buf_core.byte-buf-builder-with-capacity 1024)]
+      (byte_buf_core.byte-buf-builder-append-string
+        (&mut out)
+        "    .section .rodata\n")
+      (unless
+        sectioned
+        (byte_buf_core.byte-buf-builder-append-string
+          (&mut out)
+          "    .balign 8\n"))
+      (byte_buf_core.byte-buf-builder-append-string
+        (&mut out)
+        (runtime_prune.literal-begin))
+      (for [i (iterator.range 0 descs.len)]
+        (let
+          [text : (& descs str) (& (array-ref descs.slots i))]
+          [n : i64 (string.string-length text)]
+          [label : String (be_operand.compiler-backend-string-desc-label text)]
+          (when
+            sectioned
+            (byte_buf_core.byte-buf-builder-append-string
+              (&mut out)
+              (compiler-backend-literal-section (& label)))
+            (byte_buf_core.byte-buf-builder-append-string
+              (&mut out)
+              "    .balign 8\n"))
+          (byte_buf_core.byte-buf-builder-append-string
+            (&mut out)
+            (str_cat.str-cat label ":\n"))
+          (if (= n 0)
+            (byte_buf_core.byte-buf-builder-append-string
+              (&mut out)
+              "    .quad 0\n    .quad 0\n")
+            (byte_buf_core.byte-buf-builder-append-string
+              (&mut out)
+              (str_cat.str-cat
+                "    .quad "
+                (be_facts.compiler-backend-string-data-label text)
+                "\n    .quad "
+                (string.int->string n)
+                "\n")))))
       (byte_buf_core.byte-buf-builder-append-string
         (&mut out)
         (runtime_prune.literal-end))
@@ -3240,6 +3307,7 @@
   [closure-names : be_state.BackendSymbolSeq]
   [referenced-symbols : be_state.BackendSymbolSeq]
   [strings : be_state.BackendStringSeq]
+  [str-descs : be_state.BackendStringSeq]
   [bytes : be_state.BackendStringSeq]
   [floats : be_state.BackendFloatSeq]
   [uses-avx2-i64-lane-id : bool]
@@ -3250,14 +3318,19 @@
   [emit-entry : bool]
   [crt-entry : bool]) : text_buf.TextBuf
   (let
+    [sectioned-rodata : bool
+      (and
+        (be_state.compiler-backend-state-library-object?
+          program-index.backend-state)
+        (be_state.compiler-backend-target-elf? target))]
     [string-buf : text_buf.TextBuf
-      (compiler-backend-emit-string-rodata-into
-        strings
-        (and
-          (be_state.compiler-backend-state-library-object?
-            program-index.backend-state)
-          (be_state.compiler-backend-target-elf? target))
-        globals-buf)]
+      (compiler-backend-emit-string-desc-rodata-into
+        str-descs
+        sectioned-rodata
+        (compiler-backend-emit-string-rodata-into
+          strings
+          sectioned-rodata
+          globals-buf))]
     (begin
       (cfg
         compile-profile

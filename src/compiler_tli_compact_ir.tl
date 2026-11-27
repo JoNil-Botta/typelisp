@@ -538,6 +538,8 @@
     [(ir.CompilerIrValue.Bool b) (tli.TliCompactValue.Bool b)]
     [(ir.CompilerIrValue.Char c) (tli.TliCompactValue.Char (cast c : i64))]
     [(ir.CompilerIrValue.String s) (tli.TliCompactValue.String (string.copy s))]
+    [(ir.CompilerIrValue.StrDesc s)
+      (tli.TliCompactValue.StrDesc (string.copy s))]
     [(ir.CompilerIrValue.Bytes s)
       (tli.TliCompactValue.Bytes (tli-compact-bytes-from-string s))]
     [(ir.CompilerIrValue.Unit) (tli.TliCompactValue.Unit)]
@@ -1636,6 +1638,8 @@
     [(tli.TliCompactValue.Char c) (tli.TliCompactValue.Char c)]
     [(tli.TliCompactValue.String s)
       (tli.TliCompactValue.String (string.copy s))]
+    [(tli.TliCompactValue.StrDesc s)
+      (tli.TliCompactValue.StrDesc (string.copy s))]
     [(tli.TliCompactValue.Bytes b)
       (tli.TliCompactValue.Bytes (tli-clone-u8-array b))]
     [(tli.TliCompactValue.Unit) (tli.TliCompactValue.Unit)]
@@ -2058,6 +2062,8 @@
     [(tli.TliCompactValue.Bool b) (ir.CompilerIrValue.Bool b)]
     [(tli.TliCompactValue.Char c) (ir.CompilerIrValue.Char (cast c : char))]
     [(tli.TliCompactValue.String s) (ir.CompilerIrValue.String (string.copy s))]
+    [(tli.TliCompactValue.StrDesc s)
+      (ir.CompilerIrValue.StrDesc (string.copy s))]
     [(tli.TliCompactValue.Bytes raw)
       (ir.CompilerIrValue.Bytes (tli-compact-string-from-bytes raw))]
     [(tli.TliCompactValue.Unit) (ir.CompilerIrValue.Unit)]

@@ -10873,7 +10873,7 @@
 (define (compiler-reg-remat-value? [value : (& ir.CompilerIrValue)]) : bool
   (match value
     [(or (I64 _) (Bool _) (Char _) (F64 _) (GlobalAddr _) (Function _)
-         (String _) (Bytes _))
+         (String _) (StrDesc _) (Bytes _))
       true]
     [_ false]))
 
@@ -10993,7 +10993,7 @@
   [ty : (& ast.AstType)]
   [cells-clean : bool]) : bool
   (match value
-    [(or (GlobalAddr _) (Function _) (String _) (Bytes _)) true]
+    [(or (GlobalAddr _) (Function _) (String _) (StrDesc _) (Bytes _)) true]
     ;; W3 step (c). A read of a FROZEN global cell recomputes as
     ;; `movq g(%rip), %r` -- one instruction, the same one the reload replaced,
     ;; and one a compare can fold outright (compiler-backend-compare-memory-

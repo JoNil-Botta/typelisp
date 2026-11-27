@@ -4503,10 +4503,7 @@
       [(= (array-ref word-set slot) 0)
         (set! (array-ref word-ty slot) ty)
         (set! (array-ref word-set slot) 1)]
-      [(and
-          (= (array-ref word-set slot) 1)
-          (opt-type-eq type-segment-bases (array-ref word-ty slot) (& ty)))
-        unit]
+      [(= (array-ref word-set slot) 1) unit]
       [else
         (opt-aggregate-split-refuse!
           (&mut cand)
@@ -5352,20 +5349,26 @@
           place
           (opt-aggregate-split-word-type plan index word))))))
 
-;; Both sides split: the copy is a run of register moves.
+;; Both sides split: the copy is a run of register moves (or same-width GP
+;; casts when the two aggregates accessed a word under distinct 8-byte GP types).
 (define (opt-aggregate-split-emit-move-words!
+  [type-segment-bases : i64]
   [plan : (& plan OptSplitPlan)]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]
   [dst-index : i64]
   [src-index : i64]
   [count : i64]) : unit
   (for [word (iterator.range 0 count)]
-    (ir.compiler-ir-instr-builder-push!
-      builder
-      (ir.CompilerIrInstr.Mov
-        (opt-aggregate-split-word-var plan dst-index word)
-        (Var (opt-aggregate-split-word-var plan src-index word))
-        (opt-aggregate-split-word-type plan dst-index word)))))
+    (let
+      [dst-ty : ast.AstType (opt-aggregate-split-word-type plan dst-index word)]
+      [src-ty : ast.AstType (opt-aggregate-split-word-type plan src-index word)]
+      [dst-var : i64 (opt-aggregate-split-word-var plan dst-index word)]
+      [src-var : i64 (opt-aggregate-split-word-var plan src-index word)]
+      (ir.compiler-ir-instr-builder-push!
+        builder
+        (if (opt-type-eq type-segment-bases (& src-ty) (& dst-ty))
+          (ir.CompilerIrInstr.Mov dst-var (Var src-var) dst-ty)
+          (ir.CompilerIrInstr.Cast dst-var (Var src-var) src-ty dst-ty))))))
 
 (define (opt-aggregate-split-accepted?
   [plan : (& plan OptSplitPlan)]
@@ -5403,6 +5406,7 @@
       (opt-aggregate-split-word-var plan index word))))
 
 (define (opt-aggregate-split-rewrite-instr!
+  [type-segment-bases : i64]
   [plan : (& plan OptSplitPlan)]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]
   [cursor : (&mut cursor (__tl_dyn-array i64))]
@@ -5446,12 +5450,30 @@
           (ir.compiler-ir-instr-builder-push!
             builder
             (owned_view.compiler-owned-reference-shared-view instr))
-          (ir.compiler-ir-instr-builder-push!
-            builder
-            (ir.CompilerIrInstr.Mov
-              dst
-              (Var (opt-aggregate-split-access-word plan (& src) index))
-              ty))))]
+          (let
+            [offset : i64
+              (opt-aggregate-split-ptr-offset
+                plan.ptr
+                (opt-aggregate-split-value-var-or (& src) 0))]
+            [word : i64 (/ offset 8)]
+            [slot : i64 (opt-aggregate-split-word-index index word)]
+            [word-var : i64
+              (opt-aggregate-split-access-word plan (& src) index)]
+            (ir.compiler-ir-instr-builder-push!
+              builder
+              (if (and
+                (= (array-ref plan.word-set slot) 1)
+                (not
+                  (opt-type-eq
+                    type-segment-bases
+                    (& (opt-aggregate-split-word-type plan index word))
+                    (& ty))))
+                (ir.CompilerIrInstr.Cast
+                  dst
+                  (Var word-var)
+                  (opt-aggregate-split-word-type plan index word)
+                  ty)
+                (ir.CompilerIrInstr.Mov dst (Var word-var) ty))))))]
     [(StorePtr place value ty)
       (let
         [index : i64 (opt-aggregate-split-accepted-value plan place)]
@@ -5459,12 +5481,30 @@
           (ir.compiler-ir-instr-builder-push!
             builder
             (owned_view.compiler-owned-reference-shared-view instr))
-          (ir.compiler-ir-instr-builder-push!
-            builder
-            (ir.CompilerIrInstr.Mov
-              (opt-aggregate-split-access-word plan (& place) index)
-              value
-              ty))))]
+          (let
+            [offset : i64
+              (opt-aggregate-split-ptr-offset
+                plan.ptr
+                (opt-aggregate-split-value-var-or (& place) 0))]
+            [word : i64 (/ offset 8)]
+            [slot : i64 (opt-aggregate-split-word-index index word)]
+            [word-var : i64
+              (opt-aggregate-split-access-word plan (& place) index)]
+            (ir.compiler-ir-instr-builder-push!
+              builder
+              (if (and
+                (= (array-ref plan.word-set slot) 1)
+                (not
+                  (opt-type-eq
+                    type-segment-bases
+                    (& (opt-aggregate-split-word-type plan index word))
+                    (& ty))))
+                (ir.CompilerIrInstr.Cast
+                  word-var
+                  value
+                  ty
+                  (opt-aggregate-split-word-type plan index word))
+                (ir.CompilerIrInstr.Mov word-var value ty))))))]
     [(CopyBytes dst src size)
       (let
         [dst-index : i64 (opt-aggregate-split-accepted-value plan dst)]
@@ -5472,6 +5512,7 @@
         (cond
           [(and (>= dst-index 0) (>= src-index 0))
             (opt-aggregate-split-emit-move-words!
+              type-segment-bases
               plan
               builder
               dst-index
@@ -5526,6 +5567,7 @@
         (owned_view.compiler-owned-reference-shared-view instr))]))
 
 (define (opt-aggregate-split-rewrite-seq
+  [type-segment-bases : i64]
   [plan : (& plan OptSplitPlan)]
   [cursor : (&mut cursor (__tl_dyn-array i64))]
   [instrs : (& ir.CompilerIrInstrSeq)]) : ir.CompilerIrInstrSeq
@@ -5536,6 +5578,7 @@
     [index : i64 0]
     (while (< index count)
       (opt-aggregate-split-rewrite-instr!
+        type-segment-bases
         plan
         (&mut builder)
         cursor
@@ -5544,6 +5587,7 @@
     (ir.compiler-ir-instr-builder-to-seq builder)))
 
 (define (opt-aggregate-split-rewrite-blocks
+  [type-segment-bases : i64]
   [plan : (& plan OptSplitPlan)]
   [cursor : (&mut cursor (__tl_dyn-array i64))]
   [blocks : (& ir.CompilerIrBlockList)]) : ir.CompilerIrBlockList
@@ -5561,7 +5605,11 @@
               [(Block label instrs)
                 (ir.CompilerIrBlock.Block
                   label
-                  (opt-aggregate-split-rewrite-seq plan cursor (& instrs)))]))
+                  (opt-aggregate-split-rewrite-seq
+                    type-segment-bases
+                    plan
+                    cursor
+                    (& instrs)))]))
           (set! index (+ index 1)))
         (Array (ir.CompilerIrBlockSeq out count)))]))
 
@@ -5632,6 +5680,7 @@
                     (let
                       [rewritten : ir.CompilerIrBlockList
                         (opt-aggregate-split-rewrite-blocks
+                          type-segment-bases
                           plan
                           (&mut cursor)
                           (& blocks))]
@@ -5642,6 +5691,495 @@
                         (array-ref cursor 0)
                         rewritten
                         function-abi)))))))))]))
+
+;; --- read-only AddrOf of 2-word GP RegisterGroup -> Word ---------------------
+;;
+;; When a by-value 2-word integer RegisterGroup (such as inline 16B `String`)
+;; is borrowed into an inlined callee taking `(& r str)`, lowering emits
+;; `%p = addr_of %v` (`storage-words == 0`) followed by constant-offset loads
+;; at bytes 0 and 8. When EVERY use of EVERY pointer derived from every
+;; `AddrOf` of `%v` is a whole-word GP load at offset 0 or 8 (no stores, no
+;; escapes, no dynamic geps, no storage-run `Alloc`), rewrite those loads to
+;; `Word dst (Var %v) 0/1 ty` and drop the dead `AddrOf` and derived pointer
+;; chain so `%v` is no longer address-taken and downstream `opt-bounds-dom`
+;; proves `Word %v 1 >= 0`.
+(define (opt-group-addrof-has-candidate?
+  [blocks : (& blocks ir.CompilerIrBlockList)]) : bool
+  (match blocks
+    [(Array seq)
+      (let
+        [bcount : i64 (ir.compiler-ir-block-seq-count seq)]
+        (for [bi (iterator.range 0 bcount)]
+          (match (ir.compiler-ir-block-seq-borrow seq bi)
+            [(Block _ instrs)
+              (let
+                [icount : i64 (ir.compiler-ir-instr-seq-count instrs)]
+                (for [ii (iterator.range 0 icount)]
+                  (match (ir.compiler-ir-instr-seq-borrow instrs ii)
+                    [(AddrOf _ _ storage-words)
+                      (when (= storage-words 0) (return true))]
+                    [_ unit])))]))
+        false)]))
+
+(define (opt-group-addrof-two-word-gp?
+  [type-segment-bases : i64]
+  [representations : (& ir.CompilerIrRepresentationIndex)]
+  [ty : (& ast.AstType)]) : bool
+  (match ty
+    [(ast.AstType.String) true]
+    [(ast.AstType.Region _ inner)
+      (opt-group-addrof-two-word-gp?
+        type-segment-bases
+        representations
+        (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
+    [_
+      (match (ir.compiler-ir-representation-index-kind
+        type-segment-bases
+        representations
+        ty)
+        [(RegisterGroup words mask) (and (= words 2) (= mask 0))]
+        [_ false])]))
+
+(define (opt-group-addrof-scan-instr!
+  [type-segment-bases : i64]
+  [representations : (& ir.CompilerIrRepresentationIndex)]
+  [frame : i64]
+  [is-group2 : (&mut is-group2 (__tl_dyn-array bool))]
+  [non-group : (&mut non-group (__tl_dyn-array bool))]
+  [is-alloc : (&mut is-alloc (__tl_dyn-array bool))]
+  [has-zero-addrof : (&mut has-zero-addrof (__tl_dyn-array bool))]
+  [bad-root : (&mut bad-root (__tl_dyn-array bool))]
+  [def-count : (&mut def-count (__tl_dyn-array i64))]
+  [instr : (& ir.CompilerIrInstr)]) : unit
+  (match instr
+    [(Alloc dst _)
+      (when (and (>= dst 0) (< dst frame)) (set! (array-ref is-alloc dst) true))]
+    [(AddrOf _ src storage-words)
+      (when
+        (and (>= src 0) (< src frame))
+        (if (= storage-words 0)
+          (set! (array-ref has-zero-addrof src) true)
+          (set! (array-ref bad-root src) true)))]
+    [_ unit])
+  (match (opt-instr-def-var instr)
+    [(Some dst)
+      (when
+        (and (>= dst 0) (< dst frame))
+        (set! (array-ref def-count dst) (+ (array-ref def-count dst) 1))
+        (match instr
+          [(or (Mov _ _ ty) (Pack _ _ ty) (Call _ _ _ ty) (Load _ _ ty)
+               (Phi _ _ ty))
+            (if (opt-group-addrof-two-word-gp?
+              type-segment-bases
+              representations
+              ty)
+              (set! (array-ref is-group2 dst) true)
+              (set! (array-ref non-group dst) true))]
+          [_ (set! (array-ref non-group dst) true)]))]
+    [(None) unit]))
+
+(define (opt-group-addrof-rewrite-instr!
+  [frame : i64]
+  [ptr-root : (& (__tl_dyn-array i64))]
+  [ptr-off : (& (__tl_dyn-array i64))]
+  [bad-root : (& (__tl_dyn-array bool))]
+  [touched : (& (__tl_dyn-array bool))]
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
+  [instr : (& ir.CompilerIrInstr)]) : unit
+  (match instr
+    [(AddrOf _ src 0)
+      (unless
+        (and
+          (>= src 0)
+          (< src frame)
+          (not (array-ref bad-root src))
+          (array-ref touched src))
+        (ir.compiler-ir-instr-builder-push!
+          builder
+          (ir.clone-compiler-ir-instr instr)))]
+    [(or (Mov dst _ _) (Gep dst _ _ _) (Cast dst _ _ _) (Bitcast dst _ _ _))
+      (let
+        [r : i64
+          (if (and (>= dst 0) (< dst frame))
+            (array-ref ptr-root dst)
+            -1)]
+        (unless
+          (and (>= r 0) (not (array-ref bad-root r)) (array-ref touched r))
+          (ir.compiler-ir-instr-builder-push!
+            builder
+            (ir.clone-compiler-ir-instr instr))))]
+    [(Load dst (Var s) ty)
+      (let
+        [r : i64
+          (if (and (>= s 0) (< s frame))
+            (array-ref ptr-root s)
+            -1)]
+        (if (and (>= r 0) (not (array-ref bad-root r)) (array-ref touched r))
+          (ir.compiler-ir-instr-builder-push!
+            builder
+            (ir.CompilerIrInstr.Word
+              dst
+              (Var r)
+              (/ (array-ref ptr-off s) 8)
+              (ast.clone-ast-type ty)))
+          (ir.compiler-ir-instr-builder-push!
+            builder
+            (ir.clone-compiler-ir-instr instr))))]
+    [_
+      (ir.compiler-ir-instr-builder-push!
+        builder
+        (ir.clone-compiler-ir-instr instr))]))
+
+(define (opt-group-addrof-to-word-function
+  [type-segment-bases : i64]
+  [representations : (& ir.CompilerIrRepresentationIndex)]
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (match func
+    [(Function name params ret-ty frame blocks function-abi)
+      (if (or (< frame 1) (not (opt-group-addrof-has-candidate? (& blocks))))
+        (Function name params ret-ty frame blocks function-abi)
+        (let
+          [is-group2 : (__tl_dyn-array bool) (__tl_make-array bool frame)]
+          [non-group : (__tl_dyn-array bool) (__tl_make-array bool frame)]
+          [is-alloc : (__tl_dyn-array bool) (__tl_make-array bool frame)]
+          [has-zero-addrof : (__tl_dyn-array bool) (__tl_make-array bool frame)]
+          [bad-root : (__tl_dyn-array bool) (__tl_make-array bool frame)]
+          [touched : (__tl_dyn-array bool) (__tl_make-array bool frame)]
+          [def-count : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+          [ptr-root : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+          [ptr-off : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+          [rec-uses : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+          (for [v (iterator.range 0 frame)]
+            (set! (array-ref ptr-root v) -1))
+          (for [pi (iterator.range 0 params.len)]
+            (match (ir.compiler-ir-param-seq-borrow params pi)
+              [(Param _ ty var)
+                (when
+                  (and (>= var 0) (< var frame))
+                  (set!
+                    (array-ref def-count var)
+                    (+ (array-ref def-count var) 1))
+                  (let
+                    [persisted : ast.AstType (ast.ty-node-persist ty)]
+                    (if (opt-group-addrof-two-word-gp?
+                      type-segment-bases
+                      representations
+                      (& persisted))
+                      (set! (array-ref is-group2 var) true)
+                      (set! (array-ref non-group var) true))))]))
+          (match (& blocks)
+            [(Array seq)
+              (let
+                [bcount : i64 (ir.compiler-ir-block-seq-count seq)]
+                (for [bi (iterator.range 0 bcount)]
+                  (match (ir.compiler-ir-block-seq-borrow seq bi)
+                    [(Block _ instrs)
+                      (let
+                        [icount : i64 (ir.compiler-ir-instr-seq-count instrs)]
+                        (for [ii (iterator.range 0 icount)]
+                          (opt-group-addrof-scan-instr!
+                            type-segment-bases
+                            representations
+                            frame
+                            (&mut is-group2)
+                            (&mut non-group)
+                            (&mut is-alloc)
+                            (&mut has-zero-addrof)
+                            (&mut bad-root)
+                            (&mut def-count)
+                            (ir.compiler-ir-instr-seq-borrow instrs ii))))])))])
+          (let
+            [any-cand : bool false]
+            (for [v (iterator.range 0 frame)]
+              (if (and
+                (array-ref has-zero-addrof v)
+                (array-ref is-group2 v)
+                (not (array-ref non-group v))
+                (not (array-ref is-alloc v))
+                (not (array-ref bad-root v)))
+                (set! any-cand true)
+                (set! (array-ref bad-root v) true)))
+            (if (not any-cand)
+              (Function name params ret-ty frame blocks function-abi)
+              (begin
+                ;; Seed pointers from AddrOf dst src 0.
+                (match (& blocks)
+                  [(Array seq)
+                    (let
+                      [bcount : i64 (ir.compiler-ir-block-seq-count seq)]
+                      (for [bi (iterator.range 0 bcount)]
+                        (match (ir.compiler-ir-block-seq-borrow seq bi)
+                          [(Block _ instrs)
+                            (let
+                              [icount : i64
+                                (ir.compiler-ir-instr-seq-count instrs)]
+                              (for [ii (iterator.range 0 icount)]
+                                (match (ir.compiler-ir-instr-seq-borrow
+                                  instrs
+                                  ii)
+                                  [(AddrOf dst src 0)
+                                    (when
+                                      (and
+                                        (>= src 0)
+                                        (< src frame)
+                                        (not (array-ref bad-root src)))
+                                      (if (or
+                                        (< dst 0)
+                                        (>= dst frame)
+                                        (not (= (array-ref def-count dst) 1)))
+                                        (set! (array-ref bad-root src) true)
+                                        (begin
+                                          (set! (array-ref ptr-root dst) src)
+                                          (set! (array-ref ptr-off dst) 0))))]
+                                  [_ unit])))])))])
+                ;; Propagate derived pointers until fixpoint.
+                (let
+                  [changed : bool true]
+                  [iters : i64 0]
+                  (while (and changed (< iters 8))
+                    (set! changed false)
+                    (+= iters 1)
+                    (match (& blocks)
+                      [(Array seq)
+                        (let
+                          [bcount : i64 (ir.compiler-ir-block-seq-count seq)]
+                          (for [bi (iterator.range 0 bcount)]
+                            (match (ir.compiler-ir-block-seq-borrow seq bi)
+                              [(Block _ instrs)
+                                (let
+                                  [icount : i64
+                                    (ir.compiler-ir-instr-seq-count instrs)]
+                                  (for [ii (iterator.range 0 icount)]
+                                    (match (ir.compiler-ir-instr-seq-borrow
+                                      instrs
+                                      ii)
+                                      [(or (Mov dst (Var s) _)
+                                           (Cast dst (Var s) _ _)
+                                           (Bitcast dst (Var s) _ _))
+                                        (when
+                                          (and
+                                            (>= s 0)
+                                            (< s frame)
+                                            (>= (array-ref ptr-root s) 0))
+                                          (let
+                                            [root : i64 (array-ref ptr-root s)]
+                                            [off : i64 (array-ref ptr-off s)]
+                                            (if (or
+                                              (< dst 0)
+                                              (>= dst frame)
+                                              (not
+                                                (= (array-ref def-count dst) 1)))
+                                              (set!
+                                                (array-ref bad-root root)
+                                                true)
+                                              (let
+                                                [cur : i64
+                                                  (array-ref ptr-root dst)]
+                                                (cond
+                                                  [(< cur 0)
+                                                    (set!
+                                                      (array-ref ptr-root dst)
+                                                      root)
+                                                    (set!
+                                                      (array-ref ptr-off dst)
+                                                      off)
+                                                    (set! changed true)]
+                                                  [(or
+                                                    (not (= cur root))
+                                                    (not
+                                                      (=
+                                                        (array-ref ptr-off dst)
+                                                        off)))
+                                                    (set!
+                                                      (array-ref bad-root root)
+                                                      true)
+                                                    (set!
+                                                      (array-ref bad-root cur)
+                                                      true)]
+                                                  [else unit])))))]
+                                      [(Gep dst (Var s) offset ty)
+                                        (when
+                                          (and
+                                            (>= s 0)
+                                            (< s frame)
+                                            (>= (array-ref ptr-root s) 0))
+                                          (let
+                                            [root : i64 (array-ref ptr-root s)]
+                                            (match offset
+                                              [(I64 k)
+                                                (let
+                                                  [stride : i64
+                                                    (opt-load-loc-type-size
+                                                      type-segment-bases
+                                                      ty)]
+                                                  (if (or
+                                                    (<= stride 0)
+                                                    (< dst 0)
+                                                    (>= dst frame)
+                                                    (not
+                                                      (=
+                                                        (array-ref
+                                                          def-count
+                                                          dst)
+                                                        1)))
+                                                    (set!
+                                                      (array-ref bad-root root)
+                                                      true)
+                                                    (let
+                                                      [off : i64
+                                                        (+
+                                                          (array-ref ptr-off s)
+                                                          (* k stride))]
+                                                      [cur : i64
+                                                        (array-ref ptr-root dst)]
+                                                      (cond
+                                                        [(< cur 0)
+                                                          (set!
+                                                            (array-ref
+                                                              ptr-root
+                                                              dst)
+                                                            root)
+                                                          (set!
+                                                            (array-ref
+                                                              ptr-off
+                                                              dst)
+                                                            off)
+                                                          (set! changed true)]
+                                                        [(or
+                                                          (not (= cur root))
+                                                          (not
+                                                            (=
+                                                              (array-ref
+                                                                ptr-off
+                                                                dst)
+                                                              off)))
+                                                          (set!
+                                                            (array-ref
+                                                              bad-root
+                                                              root)
+                                                            true)
+                                                          (set!
+                                                            (array-ref
+                                                              bad-root
+                                                              cur)
+                                                            true)]
+                                                        [else unit]))))]
+                                              [_
+                                                (set!
+                                                  (array-ref bad-root root)
+                                                  true)])))]
+                                      [_ unit])))])))])))
+                ;; Count recognized uses of every tracked pointer.
+                (match (& blocks)
+                  [(Array seq)
+                    (let
+                      [bcount : i64 (ir.compiler-ir-block-seq-count seq)]
+                      (for [bi (iterator.range 0 bcount)]
+                        (match (ir.compiler-ir-block-seq-borrow seq bi)
+                          [(Block _ instrs)
+                            (let
+                              [icount : i64
+                                (ir.compiler-ir-instr-seq-count instrs)]
+                              (for [ii (iterator.range 0 icount)]
+                                (match (ir.compiler-ir-instr-seq-borrow
+                                  instrs
+                                  ii)
+                                  [(or (Mov dst (Var s) _)
+                                       (Cast dst (Var s) _ _)
+                                       (Bitcast dst (Var s) _ _)
+                                       (Gep dst (Var s) (I64 _) _))
+                                    (when
+                                      (and
+                                        (>= s 0)
+                                        (< s frame)
+                                        (>= (array-ref ptr-root s) 0)
+                                        (>= dst 0)
+                                        (< dst frame)
+                                        (=
+                                          (array-ref ptr-root dst)
+                                          (array-ref ptr-root s)))
+                                      (set!
+                                        (array-ref rec-uses s)
+                                        (+ (array-ref rec-uses s) 1)))]
+                                  [(Load _ (Var s) ty)
+                                    (when
+                                      (and
+                                        (>= s 0)
+                                        (< s frame)
+                                        (>= (array-ref ptr-root s) 0))
+                                      (let
+                                        [root : i64 (array-ref ptr-root s)]
+                                        [off : i64 (array-ref ptr-off s)]
+                                        (if (and
+                                          (or (= off 0) (= off 8))
+                                          (opt-aggregate-split-word-type? ty))
+                                          (begin
+                                            (set!
+                                              (array-ref rec-uses s)
+                                              (+ (array-ref rec-uses s) 1))
+                                            (set! (array-ref touched root) true))
+                                          (set! (array-ref bad-root root) true))))]
+                                  [_ unit])))])))])
+                ;; Reject any root whose tracked pointer has an unrecognized use.
+                (let
+                  [total-uses : (__tl_dyn-array i64)
+                    (opt-collect-blocks-uses-array frame (& blocks))]
+                  [any-accepted : bool false]
+                  (for [p (iterator.range 0 frame)]
+                    (let
+                      [root : i64 (array-ref ptr-root p)]
+                      (when
+                        (and
+                          (>= root 0)
+                          (not
+                            (= (array-ref rec-uses p) (array-ref total-uses p))))
+                        (set! (array-ref bad-root root) true))))
+                  (for [r (iterator.range 0 frame)]
+                    (when
+                      (and (not (array-ref bad-root r)) (array-ref touched r))
+                      (set! any-accepted true)))
+                  (if (not any-accepted)
+                    (Function name params ret-ty frame blocks function-abi)
+                    (let
+                      [rewritten : ir.CompilerIrBlockList
+                        (match (& blocks)
+                          [(Array seq)
+                            (let
+                              [bcount : i64
+                                (ir.compiler-ir-block-seq-count seq)]
+                              [out : (__tl_dyn-array ir.CompilerIrBlock)
+                                (__tl_make-array ir.CompilerIrBlock bcount)]
+                              (for [bi (iterator.range 0 bcount)]
+                                (set!
+                                  (array-ref out bi)
+                                  (match (ir.compiler-ir-block-seq-borrow
+                                    seq
+                                    bi)
+                                    [(Block label instrs)
+                                      (let
+                                        [icount : i64
+                                          (ir.compiler-ir-instr-seq-count
+                                            instrs)]
+                                        [builder : ir.CompilerIrInstrBuilder
+                                          (ir.compiler-ir-instr-builder-with-capacity
+                                            icount)]
+                                        (for [ii (iterator.range 0 icount)]
+                                          (opt-group-addrof-rewrite-instr!
+                                            frame
+                                            (& ptr-root)
+                                            (& ptr-off)
+                                            (& bad-root)
+                                            (& touched)
+                                            (&mut builder)
+                                            (ir.compiler-ir-instr-seq-borrow
+                                              instrs
+                                              ii)))
+                                        (ir.CompilerIrBlock.Block
+                                          label
+                                          (ir.compiler-ir-instr-builder-to-seq
+                                            builder)))])))
+                              (Array (ir.CompilerIrBlockSeq out bcount)))])]
+                      (Function name params ret-ty frame rewritten function-abi)))))))))]))
 
 ;; --- block-local common subexpression elimination ---------------------------
 ;;
@@ -6033,6 +6571,10 @@
       (match b
         [(String sb) (string.eq sa sb)]
         [_ false])]
+    [(StrDesc sa)
+      (match b
+        [(StrDesc sb) (string.eq sa sb)]
+        [_ false])]
     [(Bytes sa)
       (match b
         [(Bytes sb) (string.eq sa sb)]
@@ -6324,6 +6866,7 @@
     [(Bool value) (hash.combine 7 (hash.bool value))]
     [(Char value) (hash.combine 8 (hash.char value))]
     [(String value) (hash.combine 9 (hash.string-key (& value)))]
+    [(StrDesc value) (hash.combine 14 (hash.string-key (& value)))]
     [(Bytes value) (hash.combine 11 (hash.string-key (& value)))]
     [(RuntimeGlobal init) (hash.combine 12 (opt-symbol-hash init))]
     [(StaticArray _) (hash.i64 13)]
@@ -7532,8 +8075,8 @@
 (define (opt-copy-safe-source? [value : (& value ir.CompilerIrValue)]) : bool
   (match value
     [(or (Var _) (I64 _) (Bool _) (Char _) (Unit)) true]
-    [(or (F64 _) (String _) (Bytes _) (Global _) (GlobalAddr _) (Function _)
-         (RuntimeGlobal _) (StaticArray _))
+    [(or (F64 _) (String _) (StrDesc _) (Bytes _) (Global _) (GlobalAddr _)
+         (Function _) (RuntimeGlobal _) (StaticArray _))
       false]))
 
 (define (opt-copy-add-pack-word
@@ -12782,6 +13325,23 @@
 ;; Accept every multi-def var whose definitions all give it one known register
 ;; group type of at most opt-aggregate-split-word-limit words, assigning its
 ;; word vars from `next-var`. Returns the next free var.
+(define (opt-group-split-repr-kind
+  [type-segment-bases : i64]
+  [representations : (& ir.CompilerIrRepresentationIndex)]
+  [ty : (& ast.AstType)]) : ir.CompilerIrRepresentationKind
+  (match ty
+    [(ast.AstType.String) (RegisterGroup 2 0)]
+    [(ast.AstType.Region _ inner)
+      (opt-group-split-repr-kind
+        type-segment-bases
+        representations
+        (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
+    [_
+      (ir.compiler-ir-representation-index-kind
+        type-segment-bases
+        representations
+        ty)]))
+
 (define (opt-group-split-assign!
   [type-segment-bases : i64]
   [representations : (& representations ir.CompilerIrRepresentationIndex)]
@@ -12797,7 +13357,7 @@
       (if (>= (array-ref defs var) 2)
         (match (opt-ssa-var-types-lookup (& plan.types) var)
           [(Some ty)
-            (match (ir.compiler-ir-representation-index-kind
+            (match (opt-group-split-repr-kind
               type-segment-bases
               representations
               (& ty))
@@ -12889,7 +13449,7 @@
   [var : i64]) : i64
   (match (opt-ssa-var-types-lookup (& plan.types) var)
     [(Some ty)
-      (match (ir.compiler-ir-representation-index-kind
+      (match (opt-group-split-repr-kind
         type-segment-bases
         representations
         (& ty))
@@ -12957,7 +13517,7 @@
               (= (array-ref word-uses var) (array-ref uses var)))
               (match (opt-ssa-var-types-lookup (& plan.types) var)
                 [(Some ty)
-                  (match (ir.compiler-ir-representation-index-kind
+                  (match (opt-group-split-repr-kind
                     type-segment-bases
                     representations
                     (& ty))
@@ -22309,6 +22869,17 @@
         (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
     [_ false]))
 
+(define (opt-licm-global-header-type?
+  [type-segment-bases : i64]
+  [ty : (& ast.AstType)]) : bool
+  (match ty
+    [(String) true]
+    [(Region _ inner)
+      (opt-licm-global-header-type?
+        type-segment-bases
+        (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
+    [_ (opt-licm-array-header-type? type-segment-bases ty)]))
+
 (define (opt-licm-array-header-var?
   [type-segment-bases : i64]
   [types : (& types OptSsaVarTypes)]
@@ -22364,7 +22935,7 @@
       [out : opt_i64_i64_map.Map acc]
       (match (ir.compiler-ir-global-seq-borrow globals index)
         [(Global name ty _ _)
-          (if (opt-licm-array-header-type? type-segment-bases (& ty))
+          (if (opt-licm-global-header-type? type-segment-bases (& ty))
             (opt_i64_i64_map.insert-ref!
               (&mut out)
               (ir.compiler-ir-symbol-id name)
@@ -22449,12 +23020,13 @@
     (opt-licm-global-header-admitted? facts name)
     (= (opt-licm-global-storage-code facts name) 0)))
 
-;; The head of the chain, as an OPERAND: `gep @g, <literal>`.
+;; The head of the chain, as an OPERAND: `gep @g, <literal>` or `gep &@g, <literal>`.
 (define (opt-licm-global-header-value?
   [facts : (& facts OptLicmGlobalFacts)]
   [value : (& value ir.CompilerIrValue)]) : bool
   (match value
-    [(Global name) (opt-licm-global-header-ok? facts name)]
+    [(or (Global name) (GlobalAddr name))
+      (opt-licm-global-header-ok? facts name)]
     [_ false]))
 
 ;; The head of the chain, as an ADDRESS KIND.
@@ -22633,7 +23205,7 @@
     ;; that global's cell designates -- the descriptor handle a `Vec`/array
     ;; global holds, or the handle's own header words. A variable offset is
     ;; element indexing and stays Unknown.
-    [(Global name)
+    [(or (Global name) (GlobalAddr name))
       (match offset
         [(I64 k)
           ;; LICM-GDP: word 0 of a header-typed global's object is its
@@ -24904,9 +25476,19 @@
       (opt-licm-deref-referent-extent
         type-segment-bases
         (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
-    [(or (Slice _) (Bytes) (Array _ _) (Func _ _) (CFunc _ _) (Var _)
-         (VarArgs _ _))
-      0]
+    [(Array elem-id count)
+      (let
+        [elem-size : i64
+          (opt-load-loc-type-size
+            type-segment-bases
+            (& (ast.ast-type-segment-bases-get type-segment-bases elem-id)))]
+        (if (and
+          (> count 0)
+          (> elem-size 0)
+          (< count (/ 1099511627776 elem-size)))
+          (* count elem-size)
+          0))]
+    [(or (Slice _) (Bytes) (Func _ _) (CFunc _ _) (Var _) (VarArgs _ _)) 0]
     [_
       (let
         [extent : i64 (opt-licm-deref-type-extent type-segment-bases referent)]
@@ -24962,7 +25544,14 @@
         (ir.compiler-ir-symbol-id name))
         [(LookupFound extent) extent]
         [(LookupMissing) 0])]
+    [(GlobalAddr name)
+      (match (opt_i64_i64_map.get
+        (& opt-licm-deref-global-addr-extents)
+        (ir.compiler-ir-symbol-id name))
+        [(LookupFound extent) extent]
+        [(LookupMissing) 0])]
     [(String text) (string.string-length (& text))]
+    [(StrDesc _) 16]
     ;; A binary literal is a `(__tl_dyn-array u8)` descriptor.
     [(Bytes _) 16]
     [_ 0]))
@@ -25056,6 +25645,10 @@
 ;; object, captured with the extents.
 (define opt-licm-deref-global-masks : opt_i64_i64_map.Map
   (opt_i64_i64_map.with-capacity 1))
+(define opt-licm-deref-global-addr-extents : opt_i64_i64_map.Map
+  (opt_i64_i64_map.with-capacity 1))
+(define opt-licm-deref-global-addr-masks : opt_i64_i64_map.Map
+  (opt_i64_i64_map.with-capacity 1))
 
 ;; The program's value representations, for the size of a register group's
 ;; home and for the inliner's multiblock return gate
@@ -25102,24 +25695,41 @@
     [count : i64 (ir.compiler-ir-global-seq-count globals)]
     [extents : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity (+ count 1))]
     [masks : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity (+ count 1))]
+    [addr-extents : opt_i64_i64_map.Map
+      (opt_i64_i64_map.with-capacity (+ count 1))]
+    [addr-masks : opt_i64_i64_map.Map
+      (opt_i64_i64_map.with-capacity (+ count 1))]
     (for [index (iterator.range 0 count)]
       (match (ir.compiler-ir-global-seq-borrow globals index)
-        [(Global name ty _ _)
+        [(Global name ty _ storage)
           (let
+            [sym : i64 (ir.compiler-ir-symbol-id name)]
             [extent : i64
               (opt-licm-deref-type-extent type-segment-bases (& ty))]
+            [addr-extent : i64
+              (match storage
+                [(Inline size _) size]
+                [(Word) (opt-load-loc-type-size type-segment-bases (& ty))])]
+            [addr-mask : i64
+              (match storage
+                [(Inline _ _)
+                  (opt-licm-deref-value-mask type-segment-bases (& ty))]
+                [(Word) 1])]
             (unless
               (= extent 0)
-              (opt_i64_i64_map.insert-ref!
-                (&mut extents)
-                (ir.compiler-ir-symbol-id name)
-                extent)
+              (opt_i64_i64_map.insert-ref! (&mut extents) sym extent)
               (opt_i64_i64_map.insert-ref!
                 (&mut masks)
-                (ir.compiler-ir-symbol-id name)
-                (opt-licm-deref-pointee-mask type-segment-bases (& ty)))))]))
+                sym
+                (opt-licm-deref-pointee-mask type-segment-bases (& ty))))
+            (when
+              (> addr-extent 0)
+              (opt_i64_i64_map.insert-ref! (&mut addr-extents) sym addr-extent)
+              (opt_i64_i64_map.insert-ref! (&mut addr-masks) sym addr-mask)))]))
     (set! opt-licm-deref-global-extents extents)
-    (set! opt-licm-deref-global-masks masks)))
+    (set! opt-licm-deref-global-masks masks)
+    (set! opt-licm-deref-global-addr-extents addr-extents)
+    (set! opt-licm-deref-global-addr-masks addr-masks)))
 
 ;; A type-stable word mask: bit w set when word w of an object holds a value of
 ;; one type whatever value the object holds. An enum's payload words do not:
@@ -25224,7 +25834,13 @@
             1
             mask)]
         [(LookupMissing) 0])]
-    [(or (String _) (Bytes _)) 3]
+    [(GlobalAddr name)
+      (match (opt_i64_i64_map.get
+        (& opt-licm-deref-global-addr-masks)
+        (ir.compiler-ir-symbol-id name))
+        [(LookupFound mask) mask]
+        [(LookupMissing) 0])]
+    [(or (String _) (StrDesc _) (Bytes _)) 3]
     [_ 0]))
 
 ;; Is a `width`-byte read `offset` bytes past `ptr` inside a live object where
@@ -25236,8 +25852,71 @@
 ;; checked-pointer load that is speculated (`stable?`) also needs every word it
 ;; reads to be type-stable in the root's object (opt-licm-deref-root-mask): a
 ;; payload word holds a pointer only under the tag the source tested (#8124).
+(define (opt-licm-deref-fixed-array-count-matching
+  [type-segment-bases : i64]
+  [ty : (& ast.AstType)]
+  [scale : (& ast.AstType)]) : i64
+  (match ty
+    [(or (Ref _ inner) (MutRef _ inner) (Region _ inner))
+      (opt-licm-deref-fixed-array-count-matching
+        type-segment-bases
+        (& (ast.ast-type-segment-bases-get type-segment-bases inner))
+        scale)]
+    [(Array elem-id count)
+      (if (and
+        (> count 0)
+        (opt-type-eq
+          type-segment-bases
+          (& (ast.ast-type-segment-bases-get type-segment-bases elem-id))
+          scale))
+        count
+        0)]
+    [_ 0]))
+
+(define (opt-licm-deref-fixed-array-bound?
+  [facts : (& facts OptLicmDerefFacts)]
+  [doms : (& doms OptDomInfo)]
+  [at : i64]
+  [index : (& ir.CompilerIrValue)]
+  [count : i64]) : bool
+  (if (or (< at 0) (<= count 0))
+    false
+    (match (opt-licm-deref-resolve
+      facts.defs
+      facts.sources
+      (ir.compiler-ir-clone-value index)
+      (opt-licm-deref-fuel))
+      [(I64 k) (and (>= k 0) (< k count))]
+      [(Var var)
+        (if (and
+          (opt-gvn-stable-var? facts.sources var)
+          (>= var 0)
+          (< (+ var 1) (array-length facts.offsets)))
+          (let
+            [row : i64 (array-ref facts.offsets var)]
+            [end : i64 (array-ref facts.offsets (+ var 1))]
+            [found : bool false]
+            (while (and (not found) (< row end))
+              (let
+                [block : i64 (array-ref facts.blocks row)]
+                [pos : i64 (array-ref facts.positions row)]
+                (when
+                  (and
+                    (opt-dom-info-dominates-id? doms block at)
+                    (or (not (= block at)) (< pos (opt-licm-deref-no-exit)))
+                    (match (& (array-ref facts.lens row))
+                      [(I64 bound-n) (and (> bound-n 0) (<= bound-n count))]
+                      [_ false]))
+                  (set! found true)))
+              (+= row 1))
+            found)
+          false)]
+      [_ false])))
+
 (define (opt-licm-deref-fixed-read?
   [type-segment-bases : i64]
+  [types : (& types OptSsaVarTypes)]
+  [site : (& site OptLicmDerefSite)]
   [facts : (& facts OptLicmDerefFacts)]
   [ptr : (& ir.CompilerIrValue)]
   [offset : i64]
@@ -25250,7 +25929,7 @@
       (opt-licm-deref-resolve
         facts.defs
         facts.sources
-        (owned_view.compiler-owned-reference-shared-view ptr)
+        (ir.compiler-ir-clone-value ptr)
         (opt-licm-deref-fuel))]
     [step : OptBoolBranchDef
       (match (& resolved)
@@ -25270,6 +25949,8 @@
                 (< k (/ 1099511627776 size))
                 (opt-licm-deref-fixed-read?
                   type-segment-bases
+                  types
+                  site
                   facts
                   (& base)
                   (+ offset (* k size))
@@ -25279,7 +25960,49 @@
                   width
                   stable?
                   (- fuel 1))))]
-          [_ false])]
+          [_
+            (let
+              [elem-size : i64
+                (opt-load-loc-type-size type-segment-bases (& scale))]
+              [base-count : i64
+                (match (& base)
+                  [(Var base-var)
+                    (match (opt-ssa-var-types-lookup types base-var)
+                      [(Some base-ty)
+                        (opt-licm-deref-fixed-array-count-matching
+                          type-segment-bases
+                          (& base-ty)
+                          (& scale))]
+                      [(No) 0])]
+                  [_ 0])]
+              [base-extent : i64
+                (if (and (> base-count 0) (> elem-size 0))
+                  (opt-licm-deref-root-extent
+                    type-segment-bases
+                    (& facts.sources)
+                    (& facts.defs)
+                    (& facts.scan.roots)
+                    (& facts.phis)
+                    (& base))
+                  0)]
+              (and
+                (> base-count 0)
+                (> elem-size 0)
+                (>= offset 0)
+                (<= (+ offset width) elem-size)
+                (>= base-extent (* base-count elem-size))
+                (opt-licm-deref-fixed-array-bound?
+                  facts
+                  site.doms
+                  site.at
+                  (& index)
+                  base-count)
+                (or
+                  (not stable?)
+                  (opt-licm-deref-stable-mask-read?
+                    (opt-licm-deref-value-mask type-segment-bases (& scale))
+                    offset
+                    width))))])]
       [_
         (let
           [extent : i64
@@ -25417,6 +26140,8 @@
                 (not element-kind?)
                 (opt-licm-deref-fixed-read?
                   type-segment-bases
+                  types
+                  site
                   facts
                   src
                   0
@@ -49954,8 +50679,8 @@
     (match value
       [(Var id) (opt-gvn-stable-var? sources id)]
       [(or (I64 _) (Bool _) (Char _) (Unit)) true]
-      [(or (F64 _) (String _) (Bytes _) (Global _) (GlobalAddr _) (Function _)
-           (RuntimeGlobal _) (StaticArray _))
+      [(or (F64 _) (String _) (StrDesc _) (Bytes _) (Global _) (GlobalAddr _)
+           (Function _) (RuntimeGlobal _) (StaticArray _))
         false])))
 
 (define (opt-gvn-sources-params-from
@@ -55412,7 +56137,37 @@
                   dst
                   (opt-bounds-dom-var-fact-length-slot))
                 unit)]
+            [(GlobalAddr name)
+              (if (and
+                (opt-licm-global-header? (ir.compiler-ir-symbol-id name))
+                (opt-gvn-stable-var? sources dst)
+                (opt-bounds-object-length-slot?
+                  type-segment-bases
+                  offset
+                  gep-ty))
+                (opt-bounds-dom-var-facts-set!
+                  var-facts
+                  dst
+                  (opt-bounds-dom-var-fact-length-slot))
+                unit)]
             [_ unit])]
+        [(Word dst src index word-ty)
+          (when
+            (= index 1)
+            (match src
+              [(Var base-var)
+                (if (and
+                  (opt-type-eq type-segment-bases word-ty (& (I64)))
+                  (opt-load-slice-var? header base-var)
+                  (let
+                    [value (ir.CompilerIrValue.Var dst)]
+                    (opt-gvn-value-stable? sources value)))
+                  (opt-bounds-dom-var-facts-set!
+                    var-facts
+                    dst
+                    (opt-bounds-dom-var-fact-length))
+                  unit)]
+              [_ unit]))]
         ;; ...and its VALUE half: the word loaded through such an address is
         ;; a container length, so it carries bit 0 wherever it is live. A var
         ;; with more than one definition names more than one runtime value,
@@ -80000,6 +80755,35 @@
                                                               (Some
                                                                 (Var load-var)))))))))]
                                               [_ (No)])]
+                                          [(GlobalAddr sym)
+                                            (match (& offset)
+                                              [(I64 off)
+                                                (if (and
+                                                  (opt-licm-global-header?
+                                                    (ir.compiler-ir-symbol-id
+                                                      sym))
+                                                  (opt-bounds-object-length-slot?
+                                                    type-segment-bases
+                                                    offset
+                                                    gep-ty))
+                                                  (let
+                                                    [load-var : i64
+                                                      (opt-bce-mb-descriptor-root-hoist
+                                                        (ir.compiler-ir-symbol-id
+                                                          sym)
+                                                        base
+                                                        offset
+                                                        off
+                                                        gep-ty
+                                                        load-ty
+                                                        hoists
+                                                        cell
+                                                        acc)]
+                                                    (if (>= load-var 0)
+                                                      (Some (Var load-var))
+                                                      (No)))
+                                                  (No))]
+                                              [_ (No)])]
                                           [_ (No)])]
                                       [_ (No)])]))]
                             [_ (No)])]
@@ -99837,6 +100621,16 @@
               (opt-pass-params s)
               (opt-pass-blocks s)))
           s))]
+    [s
+      (opt-stage-effect
+        "group_addrof"
+        (opt-pass-with-func
+          (&
+            (opt-group-addrof-to-word-function
+              type-segment-bases
+              (& summaries.representations)
+              (opt-pass-func s)))
+          s))]
     ;; SROA-2: the word split runs after slot forwarding and before
     ;; rotation/`ssa`, so the scalar mem2reg below builds the phis the
     ;; per-arm word stores need. It mints word vars, so every pass underneath
@@ -105756,7 +106550,7 @@
     (opt-inline-params-have-sret? params)
     (opt-ssa-register-value-type? ret)
     (match ret
-      [(Unit) true]
+      [(or (Unit) (String)) true]
       [_
         (opt-inline-return-representation-ok?
           (& opt-licm-deref-representations)
@@ -110364,7 +111158,7 @@
   [budget : i64]) : bool
   (when (<= budget 0) (return false))
   (match value
-    [(String text)
+    [(or (String text) (StrDesc text))
       (set!
         (array-ref opt-inline-checked-literal-scan-string 0)
         (string.copy text))
@@ -110518,7 +111312,7 @@
                       [(I64 k)
                         (set! (array-ref opt-inline-checked-literal-scan 1) 1)
                         (set! (array-ref opt-inline-checked-literal-scan 2) k)]
-                      [(String text)
+                      [(or (String text) (StrDesc text))
                         (set! (array-ref opt-inline-checked-literal-scan 1) 2)
                         (set!
                           (array-ref opt-inline-checked-literal-scan-string 0)
@@ -116752,7 +117546,7 @@
     (for [index (iterator.range 0 globals.len)]
       (match (ir.compiler-ir-global-seq-borrow globals index)
         [(Global name ty _ _)
-          (if (opt-licm-array-header-type? type-segment-bases (& ty))
+          (if (opt-licm-global-header-type? type-segment-bases (& ty))
             (opt_i64_i64_map.insert-ref!
               (&mut next)
               (ir.compiler-ir-symbol-id name)
@@ -116785,7 +117579,7 @@
       (match (& base)
         ;; SUM-3: a descriptor-typed GLOBAL's word 0 is its data slot; see
         ;; opt-call-memory-descriptor-globals.
-        [(Global name)
+        [(or (Global name) (GlobalAddr name))
           (if (and
             (opt_i64_i64_map.contains?
               (& descriptor-globals)
@@ -118105,7 +118899,7 @@
   [has-literal : bool]
   [instr : ir.CompilerIrInstr]) : bool
   (match instr
-    [(Gep _ (String _) (I64 0) _) false]
+    [(Gep _ (or (String _) (StrDesc _)) (I64 0) _) false]
     [(Pack _ values _)
       (not
         (and
@@ -118122,7 +118916,7 @@
           (or
             has-literal
             (match src
-              [(String _) true]
+              [(or (String _) (StrDesc _)) true]
               [_ false]))))]
     [_ true]))
 
@@ -118171,7 +118965,28 @@
       (let
         [width : i64 (/ (opt-int-width ty) 8)]
         [length : i64 (string.string-length text)]
-        (if (or (< offset 0) (> offset length) (> width (- length offset)))
+        (if (or
+          (not data)
+          (< offset 0)
+          (> offset length)
+          (> width (- length offset)))
+          (No)
+          (let
+            [bits : i64 0]
+            (for [byte (iterator.range 0 width)]
+              (set!
+                bits
+                (bit-or
+                  bits
+                  (shl
+                    (cast (string.string-ref text (+ offset byte)) : i64)
+                    (* byte 8)))))
+            (opt-fold-cast (& (SomeConst (I64 bits) (U64))) (& (U64)) ty))))]
+    [(StrDesc text)
+      (let
+        [width : i64 (/ (opt-int-width ty) 8)]
+        [length : i64 (string.string-length text)]
+        (if (or data (< offset 0) (> offset length) (> width (- length offset)))
           (No)
           (let
             [bits : i64 0]
@@ -118264,7 +119079,7 @@
               (if (and
                 data
                 (match (& load-ty)
-                  [(Ptr _) true]
+                  [(or (Ptr _) (U64)) true]
                   [_ false]))
                 (opt-string-literal-load-value
                   facts
@@ -118291,6 +119106,22 @@
             [_ (No)])])]
     [_ (No)]))
 
+(define (opt-string-desc-length-value
+  [facts : (& facts OptConstLoadFacts)]
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [value : (& value ir.CompilerIrValue)]
+  [budget : i64]) : i64
+  (if (<= budget 0)
+    (- 0 1)
+    (match value
+      [(StrDesc text) (string.string-length (& text))]
+      [(Var var)
+        (match (opt-string-literal-definition facts blocks var)
+          [(Some (Mov _ source _))
+            (opt-string-desc-length-value facts blocks (& source) (- budget 1))]
+          [_ (- 0 1)])]
+      [_ (- 0 1)])))
+
 (define (opt-cl-rewrite-instr
   [facts : (& facts OptConstLoadFacts)]
   [source-blocks : (& source-blocks ir.CompilerIrBlockList)]
@@ -118305,7 +119136,24 @@
           [(Var v)
             (match (opt_i64_i64_map.get (& facts.lengths) v)
               [(LookupFound n) (return (Mov dst (I64 n) (I64)))]
-              [(LookupMissing) unit])]
+              [(LookupMissing)
+                (when
+                  facts.has-literals
+                  (match (opt-string-literal-definition facts source-blocks v)
+                    [(Some (Gep _ base (I64 index) elem-ty))
+                      (let
+                        [stride : i64 (/ (opt-int-width (& elem-ty)) 8)]
+                        (when
+                          (= (* index stride) 8)
+                          (let
+                            [len : i64
+                              (opt-string-desc-length-value
+                                facts
+                                source-blocks
+                                (& base)
+                                16)]
+                            (when (>= len 0) (return (Mov dst (I64 len) (I64)))))))]
+                    [_ unit]))])]
           [_ unit]))
       (if (and
         facts.has-literals
@@ -129022,11 +129870,13 @@
   (match instr
     [(or (Mov dst _ ty) (Load dst _ ty) (Call dst _ _ ty)
          (CallIndirect dst _ _ ty) (CallIndirectC dst _ _ ty) (Phi dst _ ty)
-         (Cast dst _ _ ty) (Bitcast dst _ _ ty))
-      (opt-load-header-set-mark
-        set
-        dst
-        (opt-licm-array-header-type? type-segment-bases (& ty)))]
+         (Cast dst _ _ ty) (Bitcast dst _ _ ty) (Pack dst _ ty))
+      (if (opt-load-slice-param-type? type-segment-bases (& ty))
+        (opt-load-header-set-mark-code set dst 3)
+        (opt-load-header-set-mark
+          set
+          dst
+          (opt-licm-array-header-type? type-segment-bases (& ty))))]
     [(Word dst source _ _)
       (match source
         [(Var source-var)
@@ -129148,14 +129998,14 @@
   [base : (& ir.CompilerIrValue)]
   [offset : (& ir.CompilerIrValue)]) : bool
   (match base
-    [(Global g)
+    [(or (Global g) (GlobalAddr g))
       (match offset
         [(I64 0)
           (and
             (opt-gvn-stable-var? sources dst)
             (match (opt-global-cell-type-lookup cells g)
               [(Some ty)
-                (opt-licm-array-header-type? type-segment-bases (& ty))]
+                (opt-licm-global-header-type? type-segment-bases (& ty))]
               [(No) false]))]
         [_ false])]
     [_ false]))
@@ -130629,12 +131479,15 @@
     [(Var p)
       (match (opt-load-kinds-lookup kinds p)
         [(OptLoadLocField base off _ header?)
-          (if header?
-            (Field (opt-load-canon-var canon base) off ty header?)
-            (match (opt-load-global-bases-lookup bases p)
-              [(Some global goff value-base?)
-                (GlobalField global goff ty value-base?)]
-              [(No) (Field (opt-load-canon-var canon base) off ty header?)]))]
+          (match (opt-load-global-bases-lookup bases p)
+            [(Some global goff false) (GlobalField global goff ty false)]
+            [_
+              (if header?
+                (Field (opt-load-canon-var canon base) off ty header?)
+                (match (opt-load-global-bases-lookup bases p)
+                  [(Some global goff value-base?)
+                    (GlobalField global goff ty value-base?)]
+                  [(No) (Field (opt-load-canon-var canon base) off ty header?)]))])]
         [(OptLoadLocScaledField base index scale header?)
           (ScaledField
             (opt-load-canon-var canon base)

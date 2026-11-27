@@ -264,6 +264,7 @@
   (Bool bool)
   (Char i64)
   (String String)
+  (StrDesc String)
   (Bytes (__tl_dyn-array u8))
   (Unit)
   (StaticArray (__tl_dyn-array u8)))

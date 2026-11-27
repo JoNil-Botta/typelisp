@@ -24132,6 +24132,15 @@
               (be_state.compiler-backend-global-shared-view emit-blocks-list)
               (compiler_liveness.compiler-live-set-empty))
             (compiler_liveness.compiler-live-set-empty))]
+        [emit-group-vars-filtered : compiler_liveness.CompilerLiveI64Set
+          (be_facts.compiler-backend-const-pack-install!
+            type-segment-bases
+            program-index
+            (& emit-params)
+            (& emit-blocks-list)
+            emit-group-vars
+            (& addressable-group-vars)
+            emit-vars)]
         [_group-var-flags : unit
           (begin
             (be_facts.compiler-backend-current-slot-vars-set!
@@ -24139,7 +24148,7 @@
               slot-vars)
             (be_facts.compiler-backend-group-vars-enable!
               program-index.backend-state
-              emit-group-vars
+              emit-group-vars-filtered
               addressable-group-vars))]
         [label-scope : String
           (be_facts.compiler-backend-function-label-scope program-index name)]
@@ -26533,6 +26542,9 @@ tl_shared_object_init:
     [strings : be_state.BackendStringSeq
       (be_data.compiler-backend-program-collections-strings
         (be_state.compiler-backend-global-shared-view collections))]
+    [str-descs : be_state.BackendStringSeq
+      (be_data.compiler-backend-program-collections-str-descs
+        (be_state.compiler-backend-global-shared-view collections))]
     [bytes : be_state.BackendStringSeq
       (be_data.compiler-backend-program-collections-bytes
         (be_state.compiler-backend-global-shared-view collections))]
@@ -26610,6 +26622,7 @@ tl_shared_object_init:
             (be_state.compiler-backend-global-shared-view closure-names)
             referenced-symbols
             strings
+            str-descs
             bytes
             floats
             uses-avx2-i64-lane-id

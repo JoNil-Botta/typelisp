@@ -2167,6 +2167,13 @@
     ".L_tl_str_data_"
     (compiler-backend-string-label-suffix text)))
 
+(define (compiler-backend-string-desc-label [text : (& text str)]) : String
+  (if (= (string.string-length text) 0)
+    ".L_tl_str_empty"
+    (str_cat.str-cat
+      ".L_tl_str_desc_"
+      (compiler-backend-string-label-suffix text))))
+
 (define (compiler-backend-bytes-fat-label [text : (& text str)]) : String
   (str_cat.str-cat ".L_tl_bin_" (compiler-backend-string-label-suffix text)))
 
@@ -2370,6 +2377,13 @@
           (compiler-backend-string-data-label text)
           reg
           backend-state))
+      (Ok "")]
+    [(StrDesc text)
+      (compiler-backend-emit-literal-address-into
+        out
+        (compiler-backend-string-desc-label text)
+        reg
+        backend-state)
       (Ok "")]
     [(Bytes text)
       (compiler-backend-emit-literal-address-into

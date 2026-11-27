@@ -15430,7 +15430,7 @@
             var-id
             "private SSE2 SPMD helper parameter"
             "xmm"
-            "%xmm14"
+            "%xmm0"
             backend-state)
             [(Ok home)
               (Ok

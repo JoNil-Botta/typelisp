@@ -2216,7 +2216,9 @@
             elem-ty
             instr-diag
             backend-state)]
-        [(be_operand.compiler-backend-byte-vector-shift? op elem-ty)
+        [(and
+            (not (be_state.compiler-backend-mode-sse2? mode))
+            (be_operand.compiler-backend-byte-vector-shift? op elem-ty))
           (compiler-backend-emit-byte-vector-shift
             assignments
             dst
@@ -9836,7 +9838,11 @@
                                                 (not
                                                   (string.eq
                                                     dst-reg
-                                                    (& sel-false))))
+                                                    (& sel-false)))
+                                                (not
+                                                  (string.eq
+                                                    dst-reg
+                                                    (& sel-true))))
                                               (str_cat.str-cat
                                                 "    movdqa %xmm0, "
                                                 dst-reg

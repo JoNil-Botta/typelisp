@@ -40329,6 +40329,96 @@ entry:
       (compiler-backend-spmd-entry-copy-windows-avx2-ok?))
     "entry copies preserve unread inputs and do not borrow nonvolatile XMM6"))
 
+(define (compiler-backend-sse2-select-spilled-mask-case
+  [polarity : i64]
+  [homes : String]) : be_state.ResultCompilerBackend
+  (let
+    [backend-state : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    (be_state.compiler-backend-set-current-mode!
+      (be_state.compiler-backend-state-function-state backend-state)
+      (Sse2))
+    (be_simd.compiler-backend-emit-avx2-blend
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (reg-homes homes)
+      0
+      false
+      polarity
+      (Var 1)
+      (Var 2)
+      (Var 3)
+      2
+      (I64)
+      (cdiag.compiler-diagnostic-at-start "" "")
+      backend-state)))
+
+(test
+  backend-sse2-select-spilled-mask-dst-aliases-sel-true
+  ;; When the SSE2 Select mask spills into %xmm0 and dst aliases sel-true,
+  ;; copying %xmm0 into dst before `pand sel-true, %xmm0` would clobber
+  ;; sel-true. Both normal polarity (sel-true = true-reg) and swapped polarity
+  ;; (sel-true = false-reg) must stage the mask in %xmm1 instead.
+  (test.assert-true
+    (asm-ok?
+      (compiler-backend-sse2-select-spilled-mask-case
+        0
+        "%0=%vec6 %1=spill:-32 %2=%vec6 %3=%vec7")
+      (has
+        "    movdqu -32(%rbp), %xmm0\n    movdqa %xmm0, %xmm1\n    pand %xmm6, %xmm0\n    pandn %xmm7, %xmm1\n    por %xmm1, %xmm0\n    movdqa %xmm0, %xmm6\n")
+      (lacks "    movdqa %xmm0, %xmm6\n    pand %xmm6, %xmm0\n"))
+    "SSE2 Select with spilled mask and dst == sel-true stages mask in %xmm1")
+  (test.assert-true
+    (asm-ok?
+      (compiler-backend-sse2-select-spilled-mask-case
+        2
+        "%0=%vec7 %1=spill:-32 %2=%vec6 %3=%vec7")
+      (has
+        "    movdqu -32(%rbp), %xmm0\n    movdqa %xmm0, %xmm1\n    pand %xmm7, %xmm0\n    pandn %xmm6, %xmm1\n    por %xmm1, %xmm0\n    movdqa %xmm0, %xmm7\n")
+      (lacks "    movdqa %xmm0, %xmm7\n    pand %xmm7, %xmm0\n"))
+    "SSE2 Select with swapped polarity, spilled mask, and dst == sel-true stages mask in %xmm1")
+  (test.assert-true
+    (asm-ok?
+      (compiler-backend-sse2-select-spilled-mask-case
+        0
+        "%0=%vec8 %1=spill:-32 %2=%vec6 %3=%vec7")
+      (has
+        "    movdqu -32(%rbp), %xmm0\n    movdqa %xmm0, %xmm8\n    pand %xmm6, %xmm0\n    pandn %xmm7, %xmm8\n    por %xmm0, %xmm8\n")
+      (lacks "%xmm1"))
+    "SSE2 Select with spilled mask and distinct dst keeps the direct path"))
+
+(test
+  backend-spmd-sse2-win64-private-param-spill-uses-xmm0
+  ;; Private SPMD parameter spills run in the prologue before emergency-save
+  ;; setup, so Win64 SSE2 spills must use caller-saved %xmm0 (after uniform
+  ;; float args have been homed) and never touch unsaved callee-saved %xmm14.
+  (let
+    [sources : (__tl_dyn-array String) (__tl_make-array "%xmm0")]
+    (match (compiler-backend-spmd-entry-copy-spills
+      (be_state.CompilerBackendTarget.Windows)
+      (Sse2)
+      "__tl_spmd_active_mask=%0:bool, __tl_spmd_varying_arg_x=%1:i64, a=%2:f64, __tl_spmd_varying_arg_y=%3:f64"
+      "%0=spill:-32 %1=spill:-48 %2=%xmm7 %3=%xmm2"
+      4)
+      [(Ok text)
+        (test.assert-true
+          (and
+            (compiler-backend-entry-preserves-inputs? text (& sources))
+            (asm-has?
+              text
+              "    movsd %xmm0, %xmm7\n"
+              "    movdqu 0(%r10), %xmm0\n    movdqu %xmm0, -32(%rbp)\n"
+              "    movdqu 16(%r10), %xmm0\n    movdqu %xmm0, -48(%rbp)\n"
+              "    movdqu 32(%r10), %xmm2\n")
+            (asm-lacks? text "%xmm14" "%xmm15"))
+          (str_cat.str-cat
+            "Win64 SSE2 private SPMD param spill must use %xmm0, not %xmm14: "
+            text))]
+      [(Err _)
+        (test.assert-true
+          false
+          "Win64 SSE2 private SPMD param spill emission succeeded")])))
+
 (define (compiler-backend-stream-home-keeps-stable-root-ok?) : bool
   (let
     [caller : arena.Arena (arena.current)]

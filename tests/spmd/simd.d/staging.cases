@@ -51,10 +51,11 @@ after _abort:$
 next-line ^[[:space:]]+call tl_oob_abort$
 match ^[[:space:]]+vperm[dq] [0-9]+\(%rsp\), %[yz]mm0, %[yz]mm[0-9]+$
 
-# A --backtrace frame keeps its %rbp chain; the region is ordinary frame
-# state inside it.
+# A SysV --backtrace frame keeps its %rbp chain; the region is ordinary
+# frame state inside it.
 case simd-staging-rbp-frame
 source tests/integration/spmd_shuffle_abort_nested.tl
+target linux-x86_64
 mode avx2 avx512
 opt 0
 args --backtrace

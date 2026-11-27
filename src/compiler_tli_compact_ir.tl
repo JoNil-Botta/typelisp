@@ -1969,10 +1969,10 @@
       (let
         [n : i64 (array-length bindings)]
         [out : (__tl_dyn-array tli.TliSpmdLetBinding)
-          (__tl_make-array tli.TliSpmdLetBinding n)]
+          (__tl_make-array tli.TliSpmdLetBinding 0)]
         (for [i (iterator.range 0 n)]
-          (set!
-            (array-ref out i)
+          (__tl_array-push!
+            out
             (tli.TliSpmdLetBinding
               (string.copy (& (array-ref bindings i).name))
               (array-ref bindings i).has-type

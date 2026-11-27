@@ -27,6 +27,9 @@
 (cfg
   (any compile-profile compile-profile-summary test)
   (defstruct CompilerProfileStateStorage
+    ;; Cached element-buffer address of `metrics`, kept first so leaf metric
+    ;; views read one word regardless of dynamic-array representation.
+    (metrics-address u64)
     (metrics (__tl_dyn-array i64))
     (summary-keys (__tl_dyn-array i64))
     (summary-names (__tl_dyn-array String))
@@ -84,10 +87,16 @@
     (let
       [storage : (__tl_dyn-array CompilerProfileStateStorage)
         (__tl_make-array CompilerProfileStateStorage 1)]
+      [metrics : (__tl_dyn-array i64)
+        (__tl_make-array i64 compiler-profile-state-metric-capacity)]
+      [metrics-address : u64
+        (unsafe
+          (ptr->int (ptr-cast (__tl_array-data metrics) : (Ptr i64))))]
       (set!
         (array-ref storage 0)
         (CompilerProfileStateStorage
-          (__tl_make-array i64 compiler-profile-state-metric-capacity)
+          metrics-address
+          metrics
           (__tl_make-array i64 compiler-profile-state-summary-row-capacity)
           (__tl_make-array String compiler-profile-state-summary-row-capacity)
           (__tl_make-array i64 compiler-profile-state-summary-row-capacity)
@@ -140,17 +149,11 @@
 (defmacro (compiler-profile-state-metrics-address [_state : Expr]) : Expr
   (cfg
     (any compile-profile test)
-    ;; `metrics` is the storage cell's first field, so the cell's address is
-    ;; the address of the metric array handle.
+    ;; `metrics-address` is the storage cell's first field, so the cell's
+    ;; address is the address of the cached metrics buffer pointer.
     `(unsafe
-      (ptr->int
-        (ptr-cast
-          (__tl_array-data
-            (ptr-read
-              (int->ptr
-                ,(comptime.expr-struct-get _state "storage")
-                : (Ptr (__tl_dyn-array i64)))))
-          : (Ptr i64))))
+      (ptr-read
+        (int->ptr ,(comptime.expr-struct-get _state "storage") : (Ptr u64))))
     `(cast 0 : u64)))
 
 ;; Typecheck owns slots 242-382 as one raw metrics view. Lowering uses
@@ -164,12 +167,11 @@
     `(unsafe
       (ptr->int
         (ptr-offset
-          (ptr-cast
-            (__tl_array-data
-              (ptr-read
-                (int->ptr
-                  ,(comptime.expr-struct-get _state "storage")
-                  : (Ptr (__tl_dyn-array i64)))))
+          (int->ptr
+            (ptr-read
+              (int->ptr
+                ,(comptime.expr-struct-get _state "storage")
+                : (Ptr u64)))
             : (Ptr i64))
           242)))
     `(cast 0 : u64)))

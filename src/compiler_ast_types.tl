@@ -3905,17 +3905,11 @@
           (unsafe
             (arena.Arena pool.base-arena))
           (let
-            [slots-bits : u64
+            [grown-slots : (__tl_dyn-array i64)
               (ast-type-dedup-grow-slots
                 pool.segment-bases
                 (& dedup-slots)
                 pool.base-arena)]
-            [grown-slots : (__tl_dyn-array i64)
-              (unsafe
-                (ptr-read
-                  (ptr-cast
-                    (ptr-addr-of slots-bits)
-                    : (Ptr (__tl_dyn-array i64)))))]
             [grown : AstTypeNodePoolState
               (AstTypeNodePoolState
                 pool.segment-bases
@@ -4226,12 +4220,13 @@
 ;; the first free slot on the new probe path is the right one. Growth is decided
 ;; purely by count against capacity, so it fires at the same push on every run.
 ;; Rehash immutable prefix ids into a replacement index owned by the pool.
-;; Return descriptor bits so an aggregate return cannot move its descriptor
-;; into a transient caller arena. Both append APIs share this insertion order.
+;; Callers run in `base-arena` (or write through a pointer inside `base-arena`)
+;; so the returned dynamic array stays owned by the pool's arena across both
+;; 8B and 16B dynamic-array representations.
 (define (ast-type-dedup-grow-slots
   [type-bases : i64]
   [old-slots : (& old-slots (__tl_dyn-array i64))]
-  [base-arena : i64]) : u64
+  [base-arena : i64]) : (__tl_dyn-array i64)
   (in-arena
     (unsafe
       (arena.Arena base-arena))
@@ -4256,21 +4251,23 @@
               (set! (array-ref new-slots idx) slot)))))
       ;; The rehash fills slots it does not log.
       (set! (array-ref new-slots new-capacity) (+ ty-node-dedup-log-capacity 1))
-      (ast-pool-cell-descriptor new-slots))))
+      new-slots)))
 
 (define (ty-node-dedup-grow!) : unit
   (let
     [new-capacity : i64
       (* (ty-node-dedup-table-capacity ty-node-dedup-slots) 2)]
-    [slots-bits : u64
-      (ast-type-dedup-grow-slots
-        ty-node-pool-segment-bases
-        (& ty-node-dedup-slots)
-        node-pool-base-arena)]
-    (unsafe
-      (ptr-write!
-        (ptr-cast (ptr-addr-of ty-node-dedup-slots) : (MutPtr u64))
-        slots-bits))
+    (in-arena
+      (unsafe
+        (arena.Arena node-pool-base-arena))
+      (let
+        [grown-slots : (__tl_dyn-array i64)
+          (ast-type-dedup-grow-slots
+            ty-node-pool-segment-bases
+            (& ty-node-dedup-slots)
+            node-pool-base-arena)]
+        (unsafe
+          (ptr-write! (ptr-addr-of ty-node-dedup-slots) grown-slots))))
     (set!
       ty-node-dedup-slots-data-address
       (unsafe
@@ -4399,10 +4396,7 @@
     node-pool-base-arena
     ty-node-pool-exhausted
     (unsafe
-      (ptr-read
-        (ptr-cast
-          (__tl_array-data (array (& ty-node-dedup-slots)))
-          : (Ptr (__tl_dyn-array i64)))))
+      (ptr-read (ptr-addr-of ty-node-dedup-slots)))
     ty-node-dedup-count
     ty-node-pool-storage-arena
     ty-node-pool-segment-count
@@ -4430,27 +4424,80 @@
 
 (define (ty-node-pool-state-capture-to-cell! [cell-address : u64]) : unit
   (let
-    [cell : (MutPtr i64)
+    [cell-bytes : (MutPtr u8)
       (unsafe
-        (int->ptr cell-address : (MutPtr i64)))]
-    [dedup-descriptor : i64
-      (unsafe
-        (ptr-read (ptr-cast (ptr-addr-of ty-node-dedup-slots) : (Ptr i64))))]
+        (int->ptr cell-address : (MutPtr u8)))]
     (unsafe
-      (ptr-write! cell ty-node-pool-segment-bases)
-      (ptr-write! (ptr-offset cell 1) ty-node-pool-count)
-      (ptr-write! (ptr-offset cell 2) node-pool-base-arena)
       (ptr-write!
-        (ptr-offset cell 3)
-        (if ty-node-pool-exhausted
-          1
-          0))
-      (ptr-write! (ptr-offset cell 4) dedup-descriptor)
-      (ptr-write! (ptr-offset cell 5) ty-node-dedup-count)
-      (ptr-write! (ptr-offset cell 6) ty-node-pool-storage-arena)
-      (ptr-write! (ptr-offset cell 7) ty-node-pool-segment-count)
-      (ptr-write! (ptr-offset cell 8) ty-node-pool-revision)
-      (ptr-write! (ptr-offset cell 9) (cast ty-node-pool-revision-cell : i64)))))
+        (ptr-cast
+          (ptr-offset
+            cell-bytes
+            (comptime (offset-of (type AstTypeNodePoolState) segment-bases)))
+          : (MutPtr i64))
+        ty-node-pool-segment-bases)
+      (ptr-write!
+        (ptr-cast
+          (ptr-offset
+            cell-bytes
+            (comptime (offset-of (type AstTypeNodePoolState) count)))
+          : (MutPtr i64))
+        ty-node-pool-count)
+      (ptr-write!
+        (ptr-cast
+          (ptr-offset
+            cell-bytes
+            (comptime (offset-of (type AstTypeNodePoolState) base-arena)))
+          : (MutPtr i64))
+        node-pool-base-arena)
+      (ptr-write!
+        (ptr-cast
+          (ptr-offset
+            cell-bytes
+            (comptime (offset-of (type AstTypeNodePoolState) exhausted)))
+          : (MutPtr bool))
+        ty-node-pool-exhausted)
+      (ptr-write!
+        (ptr-cast
+          (ptr-offset
+            cell-bytes
+            (comptime (offset-of (type AstTypeNodePoolState) dedup-slots)))
+          : (MutPtr (__tl_dyn-array i64)))
+        (ptr-read (ptr-addr-of ty-node-dedup-slots)))
+      (ptr-write!
+        (ptr-cast
+          (ptr-offset
+            cell-bytes
+            (comptime (offset-of (type AstTypeNodePoolState) dedup-count)))
+          : (MutPtr i64))
+        ty-node-dedup-count)
+      (ptr-write!
+        (ptr-cast
+          (ptr-offset
+            cell-bytes
+            (comptime (offset-of (type AstTypeNodePoolState) storage-arena)))
+          : (MutPtr i64))
+        ty-node-pool-storage-arena)
+      (ptr-write!
+        (ptr-cast
+          (ptr-offset
+            cell-bytes
+            (comptime (offset-of (type AstTypeNodePoolState) segment-count)))
+          : (MutPtr i64))
+        ty-node-pool-segment-count)
+      (ptr-write!
+        (ptr-cast
+          (ptr-offset
+            cell-bytes
+            (comptime (offset-of (type AstTypeNodePoolState) revision)))
+          : (MutPtr i64))
+        ty-node-pool-revision)
+      (ptr-write!
+        (ptr-cast
+          (ptr-offset
+            cell-bytes
+            (comptime (offset-of (type AstTypeNodePoolState) revision-cell)))
+          : (MutPtr u64))
+        ty-node-pool-revision-cell))))
 
 (define (ast-node-pools-state-install!
   [expr-pool : (& expr-pool AstExprNodePoolState)]
@@ -4492,30 +4539,28 @@
 
 ;; A pool context names a pair of shared state cells; it does not own them.
 ;; Each cell is a one-element dynamic array allocated in the pool's owner arena
-;; (see `ast-node-pool-context-new-with-pool-owner`), and the context keeps the
-;; bits of that array's descriptor, so the context is a Copy handle with the
-;; memory layout it had when it held the descriptors themselves.
+;; (see `ast-node-pool-context-new-with-pool-owner`), and the context stores
+;; the address of each cell's element storage directly, so the context is a
+;; Copy handle independent of dynamic-array representation.
 (defstruct AstNodePoolContext
   (expr-pool u64)
   (type-pool u64)
   (owner-arena i64))
 
-;; Address of the state record in a cell, from the cell's descriptor bits: the
-;; descriptor's first word is its data pointer. The cell macros below expand in
+;; Address of the state record in a cell. The cell macros below expand in
 ;; other modules too, so their templates name no module-local types.
 (defmacro (ast-pool-cell-data [descriptor : Expr]) : Expr
-  `(unsafe
-    (ptr-read (int->ptr ,descriptor : (Ptr u64)))))
+  descriptor)
 
 (define (ast-expr-pool-cell-ptr [descriptor : u64]) : (MutPtr
     AstExprNodePoolState)
   (unsafe
-    (int->ptr (ast-pool-cell-data descriptor) : (MutPtr AstExprNodePoolState))))
+    (int->ptr descriptor : (MutPtr AstExprNodePoolState))))
 
 (define (ast-type-pool-cell-ptr [descriptor : u64]) : (MutPtr
     AstTypeNodePoolState)
   (unsafe
-    (int->ptr (ast-pool-cell-data descriptor) : (MutPtr AstTypeNodePoolState))))
+    (int->ptr descriptor : (MutPtr AstTypeNodePoolState))))
 
 (defmacro (ast-expr-pool-cell-read [descriptor : Expr]) : Expr
   `(unsafe
@@ -4533,20 +4578,10 @@
   `(unsafe
     (ptr-write! (ast-type-pool-cell-ptr ,descriptor) ,state)))
 
-;; The cell itself, for in-place updates through `(&mut (array-ref cell 0))`.
-(defmacro (ast-expr-pool-cell [descriptor : Expr]) : Expr
-  `(let
-    [cell-bits : u64 ,descriptor]
-    (unsafe
-      (ptr-read
-        (ptr-cast
-          (ptr-addr-of cell-bits)
-          : (Ptr (__tl_dyn-array AstExprNodePoolState)))))))
-
-;; Descriptor bits of a cell held in a local or parameter.
+;; Element-storage address of a one-element state cell.
 (defmacro (ast-pool-cell-descriptor [cell : Expr]) : Expr
   `(unsafe
-    (ptr-read (ptr-cast (ptr-addr-of ,cell) : (Ptr u64)))))
+    (ptr->int (__tl_array-data ,cell))))
 
 (define (ast-node-pools-cells-install!
   [expr-cell : u64]
@@ -5294,10 +5329,14 @@
   [pools : AstNodePoolContext]
   [node : AstExpr]) : i64
   (let
-    [cell : (__tl_dyn-array AstExprNodePoolState)
-      (ast-expr-pool-cell pools.expr-pool)]
-    [id : i64
-      (ast-expr-node-pool-state-push-in-place! (&mut (array-ref cell 0)) node)]
+    [expr-cell : (MutPtr AstExprNodePoolState)
+      (ast-expr-pool-cell-ptr pools.expr-pool)]
+    [next : AstExprNodePoolState
+      (unsafe
+        (ptr-read expr-cell))]
+    [id : i64 (ast-expr-node-pool-state-push-in-place! (&mut next) node)]
+    (unsafe
+      (ptr-write! expr-cell next))
     ;; Compatibility adapters historically require eager publication.
     ;; Ordinary explicit owners publish at their stable phase boundary.
     (ast-node-pool-compat-context-sync-installed!)
@@ -5310,14 +5349,16 @@
   ;; A parsed leaf and its source wrapper are published together. The wrapper
   ;; observes the completed semantic row through the same pool cell.
   (let
-    [cell : (__tl_dyn-array AstExprNodePoolState)
-      (ast-expr-pool-cell pools.expr-pool)]
-    [inner : i64
-      (ast-expr-node-pool-state-push-in-place! (&mut (array-ref cell 0)) node)]
+    [expr-cell : (MutPtr AstExprNodePoolState)
+      (ast-expr-pool-cell-ptr pools.expr-pool)]
+    [next : AstExprNodePoolState
+      (unsafe
+        (ptr-read expr-cell))]
+    [inner : i64 (ast-expr-node-pool-state-push-in-place! (&mut next) node)]
     [outer : i64
-      (ast-expr-node-pool-state-push-in-place!
-        (&mut (array-ref cell 0))
-        (Spanned inner span))]
+      (ast-expr-node-pool-state-push-in-place! (&mut next) (Spanned inner span))]
+    (unsafe
+      (ptr-write! expr-cell next))
     (ast-node-pool-compat-context-sync-installed!)
     outer))
 
@@ -7144,17 +7185,11 @@
     (set! (array-ref items.slots index) value)
     (set! items.len (+ index 1))))
 
-(define (ast-spmd-specialization-list-with-capacity [capacity : i64]) : AstSpmdSpecializationList
-  (AstSpmdSpecializationList
-    (__tl_make-array
-      AstSpmdSpecialization
-      (if (< capacity 1)
-        1
-        capacity))
-    0))
+(define (ast-spmd-specialization-list-with-capacity [_capacity : i64]) : AstSpmdSpecializationList
+  (AstSpmdSpecializationList (__tl_make-array AstSpmdSpecialization 0) 0))
 
 (define (ast-spmd-specialization-list-new) : AstSpmdSpecializationList
-  (ast-spmd-specialization-list-with-capacity 2))
+  (ast-spmd-specialization-list-with-capacity 0))
 
 (define (ast-spmd-specialization-list-len
   [items : (& items AstSpmdSpecializationList)]) : i64
@@ -7168,42 +7203,11 @@
     (owned_view.compiler-owned-element-view (& items.slots) index)
     fallback))
 
-(define (ast-spmd-specialization-list-copy-range
-  [dst : (&mut dst (__tl_dyn-array AstSpmdSpecialization))]
-  [src : (& src (__tl_dyn-array AstSpmdSpecialization))]
-  [index : i64]
-  [count : i64]) : unit
-  (unless
-    (>= index count)
-    (set!
-      (array-ref dst index)
-      (owned_view.compiler-owned-element-view src index))
-    (ast-spmd-specialization-list-copy-range dst src (+ index 1) count)))
-
-(define (ast-spmd-specialization-list-grow
-  [items : (&mut items AstSpmdSpecializationList)]) : unit
-  (let
-    [len : i64 items.len]
-    [old-cap : i64 (array-length items.slots)]
-    [next : (__tl_dyn-array AstSpmdSpecialization)
-      (__tl_make-array
-        AstSpmdSpecialization
-        (if (< old-cap 1)
-          1
-          (* old-cap 2)))]
-    (ast-spmd-specialization-list-copy-range (&mut next) (& items.slots) 0 len)
-    (set! items.slots next)))
-
 (define (ast-spmd-specialization-list-push
   [items : (&mut items AstSpmdSpecializationList)]
   [value : AstSpmdSpecialization]) : unit
-  (if (< items.len (array-length items.slots))
-    unit
-    (ast-spmd-specialization-list-grow items))
-  (let
-    [index : i64 items.len]
-    (set! (array-ref items.slots index) value)
-    (set! items.len (+ index 1))))
+  (__tl_array-push! items.slots value)
+  (set! items.len (+ items.len 1)))
 
 (define (ast-spmd-param-class-list-clone
   [items : (& items AstSpmdParamClassList)]) : AstSpmdParamClassList
@@ -11857,18 +11861,9 @@
 ;; owned by the caller's map/generation arena until the copy walk returns. That
 ;; makes this pointer stable for exactly the remap lifetime and saves a
 ;; descriptor load on every expression/type map probe.
-(defstruct AstI32ArrayRef
-  (:lifetimes items)
-  (value (& items (__tl_dyn-array i32))))
-
 (define (ast-i32-array-address-of [items : (& items (__tl_dyn-array i32))]) : u64
-  (let
-    [cell : (AstI32ArrayRef items) (AstI32ArrayRef items)]
-    [descriptor-address : u64
-      (unsafe
-        (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64))))]
-    (unsafe
-      (ptr-read (int->ptr descriptor-address : (Ptr u64))))))
+  (unsafe
+    (ptr->int (__tl_array-data (deref items)))))
 
 (defmacro (ast-i32-array-address [items : Expr]) : Expr
   `(ast-i32-array-address-of (& ,items)))
@@ -12101,16 +12096,16 @@
   [remap : (& remap AstProgramCompactionRemap)]
   [node : AstExpr]) : i64
   (let
-    [pool-cell : (__tl_dyn-array AstExprNodePoolState)
-      (ast-expr-pool-cell remap.dest-pools.expr-pool)]
-    [current-base-arena : i64
-      (__tl-project-field (array-ref pool-cell 0) base-arena)]
-    [id : i64
-      (ast-expr-node-pool-state-push-in-place!
-        (&mut (array-ref pool-cell 0))
-        node)]
-    [next-base-arena : i64
-      (__tl-project-field (array-ref pool-cell 0) base-arena)]
+    [expr-cell : (MutPtr AstExprNodePoolState)
+      (ast-expr-pool-cell-ptr remap.dest-pools.expr-pool)]
+    [next : AstExprNodePoolState
+      (unsafe
+        (ptr-read expr-cell))]
+    [current-base-arena : i64 next.base-arena]
+    [id : i64 (ast-expr-node-pool-state-push-in-place! (&mut next) node)]
+    [next-base-arena : i64 next.base-arena]
+    (unsafe
+      (ptr-write! expr-cell next))
     (if (not (= current-base-arena next-base-arena))
       (ast-compaction-remap-sync-dest-base-arena! remap next-base-arena)
       unit)
@@ -12938,11 +12933,16 @@
   ;; stays checked, and the reserve never exceeds one segment or the record
   ;; count the source already holds.
   (let
-    [cell : (__tl_dyn-array AstExprNodePoolState)
-      (ast-expr-pool-cell dest-pools.expr-pool)]
+    [expr-cell : (MutPtr AstExprNodePoolState)
+      (ast-expr-pool-cell-ptr dest-pools.expr-pool)]
+    [next : AstExprNodePoolState
+      (unsafe
+        (ptr-read expr-cell))]
     (ast-expr-node-pool-state-canonical-records-reserve-in-place!
-      (&mut (array-ref cell 0))
-      (ast-node-pool-context-expr-canonical-span-count source-pools)))
+      (&mut next)
+      (ast-node-pool-context-expr-canonical-span-count source-pools))
+    (unsafe
+      (ptr-write! expr-cell next)))
   (ast-node-pool-compat-context-sync-installed!)
   (let
     [prev-arena : i64 (arena.tl_arena_current)]

@@ -4814,15 +4814,19 @@
   (match (backend.compiler-backend-emit-source
     (compiler-backend-program-argv-entry-capture-source))
     [(Ok asm)
-      (be_state.backend-and8
-        (asm-has? asm "_tl_start:\n")
-        (asm-has? asm "    movq (%rsp), %rax\n")
-        (asm-has? asm "    movq %rax, .L_tl_argc(%rip)\n")
-        (asm-has? asm "    leaq 8(%rsp), %rax\n")
-        (asm-has? asm "    movq %rax, .L_tl_argv(%rip)\n")
-        (asm-has? asm "    call strlen\n")
-        (asm-lacks? asm ".L_tl_arg_count:\n")
-        (asm-lacks? asm ".L_tl_arg:\n"))]
+      (and
+        (be_state.backend-and8
+          (asm-has? asm "_tl_start:\n")
+          (asm-has? asm "    movq (%rsp), %rax\n")
+          (asm-has? asm "    movq %rax, .L_tl_argc(%rip)\n")
+          (asm-has? asm "    leaq 8(%rsp), %rax\n")
+          (asm-has? asm "    movq %rax, .L_tl_argv(%rip)\n")
+          (asm-has? asm "    call strlen\n")
+          (asm-lacks? asm ".L_tl_arg_count:\n")
+          (asm-lacks? asm ".L_tl_arg:\n"))
+        (asm-has?
+          asm
+          "    movq %rax, .L_tl_argc(%rip)\n    leaq 16(%rsp,%rax,8), %rax\n"))]
     [(Err _) false]))
 
 (define (compiler-backend-arg-runtime-source) : String
@@ -5143,7 +5147,7 @@
           (asm-has?
             asm
             "    js .L_tl_main_stack_abort\n"
-            ".ascii \"typelisp runtime: main-stack reservation failed\\n\"\n"
+            ".ascii \"tl: main-stack reservation failed\\n\"\n"
             ".L_tl_main_stack_abort:\n    movq $1, %rax\n")
           (not
             (let
@@ -12505,6 +12509,122 @@ high:
       (asm-lacks? aligned "    .p2align 4,,10\n.Lf0_out:\n")
       (asm-has? aligned "    .p2align 4,,10\n.Lf1_out:\n"))))
 
+;; COLD-EDGE Shape 2: both guard edges carry copies, so the true edge ends in
+;; `jmp O` right before `<guard>_branch_cold_false:` followed by `O:`. Moving
+;; the cold false edge out of line turns `jmp O` into a fallthrough and drops
+;; it, and loop alignment does not misclassify the moved edge's `jmp` as a loop
+;; back-edge.
+(define (compiler-backend-cold-edge-shape2-ok?) : bool
+  (let
+    [src : String
+      (str_cat.str-cat
+        ".text\n.globl f\n    .type f,@function\nf:\n"
+        ".Lf0_while_body.1__unroll_guard:\n"
+        "    testq %rdx, %rdx\n"
+        "    jle .Lf0_while_body.1__unroll_guard_branch_cold_false\n"
+        ".Lf0_while_body.1__unroll_guard_branch_true:\n"
+        "    xorl %eax, %eax\n"
+        "    jmp .Lf0_while_body.1__unroll_body\n"
+        ".Lf0_while_body.1__unroll_guard_branch_cold_false:\n"
+        "    xorl %eax, %eax\n"
+        "    jmp .Lf0_while_body.1\n"
+        ".Lf0_while_body.1__unroll_body:\n"
+        "    addq $4, %rax\n"
+        "    ret\n"
+        ".Lf0_while_body.1:\n"
+        "    addq $1, %rax\n"
+        "    ret\n"
+        "    .size f, . - f\n")]
+    [out : String
+      (text_buf.render
+        (compiler-backend-peephole-text-buf-once
+          (text_buf.append (text_buf.empty) src)))]
+    [aligned : String
+      (be_peephole.compiler-backend-loop-align-text
+        (string.copy (& out))
+        (arena.current))]
+    (and
+      (asm-has?
+        out
+        ".Lf0_while_body.1__unroll_guard_branch_true:\n    xorl %eax, %eax\n.Lf0_while_body.1__unroll_body:\n")
+      (asm-lacks? out "    jmp .Lf0_while_body.1__unroll_body\n")
+      (asm-has?
+        out
+        ".Lf0_while_body.1__unroll_guard_branch_cold_false:\n    xorl %eax, %eax\n    jmp .Lf0_while_body.1\n    .size f, . - f\n")
+      (asm-lacks? aligned "    .p2align 4,,10\n.Lf0_while_body.1:\n"))))
+
+;; Redundant `movzb{l,q}` elimination after `xorl %r32, %r32` and
+;; `movl $K, %r32` (0 <= K <= 255) on the same register; out-of-range
+;; immediates, negative immediates, cross-register xorl, and mismatched
+;; registers stay intact.
+(define (compiler-backend-peephole-redundant-zext-imm-ok?) : bool
+  (let
+    [src : String
+      (str_cat.str-cat
+        "f:\n"
+        "    xorl %eax, %eax\n    movzbl %al, %eax\n"
+        "    movl $1, %r8d\n    movzbq %r8b, %r8\n"
+        "    movl $255, %edx\n    movzbl %dl, %edx\n"
+        "    movl $256, %ecx\n    movzbl %cl, %ecx\n"
+        "    movl $-1, %esi\n    movzbl %sil, %esi\n"
+        "    xorl %eax, %edi\n    movzbl %dil, %edi\n"
+        "    movl $1, %eax\n    movzbl %r9b, %r9d\n"
+        "    ret\n")]
+    [out : String
+      (text_buf.render
+        (compiler-backend-peephole-text-buf-once
+          (text_buf.append (text_buf.empty) src)))]
+    (be_state.backend-and4
+      (asm-lacks?
+        out
+        "    movzbl %al, %eax\n"
+        "    movzbq %r8b, %r8\n"
+        "    movzbl %dl, %edx\n")
+      (asm-has?
+        out
+        "    movl $256, %ecx\n    movzbl %cl, %ecx\n"
+        "    movl $-1, %esi\n    movzbl %sil, %esi\n")
+      (asm-has?
+        out
+        "    xorl %eax, %edi\n    movzbl %dil, %edi\n"
+        "    movl $1, %eax\n    movzbl %r9b, %r9d\n")
+      true)))
+
+;; Self-register Bool reload elides `movzbl`; cross-register Bool and u8/i8
+;; keep their widening moves.
+(define (compiler-backend-load-register-bool-self-elide-ok?) : bool
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    (be_state.backend-and4
+      (string.eq
+        (be_scalar.compiler-backend-emit-load-register-to-reg
+          bases
+          "%rax"
+          (& (Bool))
+          "%rax")
+        "")
+      (string.eq
+        (be_scalar.compiler-backend-emit-load-register-to-reg
+          bases
+          "%rdi"
+          (& (Bool))
+          "%rax")
+        "    movzbl %dil, %eax\n")
+      (string.eq
+        (be_scalar.compiler-backend-emit-load-register-to-reg
+          bases
+          "%rax"
+          (& (U8))
+          "%rax")
+        "    movzbl %al, %eax\n")
+      (string.eq
+        (be_scalar.compiler-backend-emit-load-register-to-reg
+          bases
+          "%rax"
+          (& (I8))
+          "%rax")
+        "    movsbq %al, %rax\n"))))
+
 ;; Compare the final streaming path against the former raw-buffer -> whole
 ;; peephole -> sweep sequence on the same lowered program. Re-lowering resets
 ;; the recorded FPO sweep metadata before the streaming run.
@@ -14562,6 +14682,9 @@ f:
     (compiler-backend-cold-share-ok?)
     (compiler-backend-cold-edge-ok?)
     (compiler-backend-cold-edge-align-ok?)
+    (compiler-backend-cold-edge-shape2-ok?)
+    (compiler-backend-peephole-redundant-zext-imm-ok?)
+    (compiler-backend-load-register-bool-self-elide-ok?)
     (compiler-backend-peephole-flags-branch-ok?)
     (compiler-backend-streamed-final-output-equivalent?)
     (compiler-backend-streamed-final-batch-equivalent?)
@@ -18574,6 +18697,263 @@ f:
             "    .text\n"
             "    .long .Lf0_zero - .Lf0_entry_switch_table\n")))]
     [(Err _) false]))
+
+(define (compiler-backend-total-switch-compact-os-asm-ok?) : bool
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [program : ir.CompilerIrProgram
+      (compiler-backend-total-switch-test-program)]
+    [state-nonpic : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [state-pic : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    (be_state.compiler-backend-state-set-optimize-for-size! state-nonpic true)
+    (be_state.compiler-backend-state-set-optimize-for-size! state-pic true)
+    (let
+      [nonpic-ok : bool
+        (match (backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+          state-nonpic
+          (ast.ast-node-pool-context-capture-active)
+          program
+          (be_state.CompilerBackendTarget.Linux)
+          (Scalar)
+          (ir.compiler-source-spans-empty)
+          true
+          false
+          (profile_state.compiler-profile-state-new))
+          [(Ok asm)
+            (let
+              [body : String (compiler-backend-asm-function-body asm "main")]
+              (and
+                (asm-has?
+                  body
+                  "    movswq .Lf0_entry_switch_table(,%r"
+                  ",2), %r")
+                (asm-has?
+                  body
+                  ".Lf0_entry_switch_base:\n    leaq .Lf0_entry_switch_base(%rip), "
+                  "    addq "
+                  "    jmp *%r")
+                (=
+                  (backend.compiler-backend-string-count asm "    .word .Lf0_")
+                  6)
+                (asm-has?
+                  asm
+                  "    .section .rodata\n    .balign 2\n.Lf0_entry_switch_table:\n"
+                  "    .word .Lf0_zero - .Lf0_entry_switch_base\n"
+                  "    .word .Lf0_five - .Lf0_entry_switch_base\n")))]
+          [(Err _) false])]
+      [pic-ok : bool
+        (match (backend.compiler-backend-emit-program-pic-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
+          state-pic
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (compiler-backend-total-switch-test-program)
+          (be_state.CompilerBackendTarget.Linux)
+          (Scalar)
+          (ir.compiler-source-spans-empty)
+          true
+          false
+          (profile_state.compiler-profile-state-new))
+          [(Ok output)
+            (let
+              [asm : String output.asm]
+              [body : String (compiler-backend-asm-function-body asm "main")]
+              (and
+                (asm-has?
+                  body
+                  "    leaq .Lf0_entry_switch_table(%rip), "
+                  "    movswq ("
+                  ".Lf0_entry_switch_base:\n    leaq .Lf0_entry_switch_base(%rip), "
+                  "    addq ")
+                (=
+                  (backend.compiler-backend-string-count asm "    .word .Lf0_")
+                  6)
+                (asm-has?
+                  asm
+                  "    .section .rodata\n    .balign 2\n.Lf0_entry_switch_table:\n"
+                  "    .word .Lf0_zero - .Lf0_entry_switch_base\n")))]
+          [(Err _) false])]
+      (and nonpic-ok pic-ok))))
+
+(test
+  backend-total-switch-compact-os
+  (test.assert-true
+    (compiler-backend-total-switch-compact-os-asm-ok?)
+    "-Os emits 2-byte intra-function relative switch tables for small functions"))
+
+(define (compiler-backend-compact-os-large-copy-fallback-program) : ir.CompilerIrProgram
+  (Program
+    (ir.compiler-ir-global-seq-empty)
+    (ir.compiler-ir-function-seq-prepend
+      (&
+        (Function
+          (ci.intern "main")
+          (ir.compiler-ir-param-seq-empty)
+          (I64)
+          4
+          (ir.compiler-ir-blocks-with-tail
+            (compiler-backend-total-switch-return-block
+              (ir.compiler-ir-label "one")
+              1
+              (compiler-backend-total-switch-return-block
+                (ir.compiler-ir-label "two")
+                2
+                (compiler-backend-total-switch-return-block
+                  (ir.compiler-ir-label "three")
+                  3
+                  (compiler-backend-total-switch-return-block
+                    (ir.compiler-ir-label "four")
+                    4
+                    (compiler-backend-total-switch-return-block
+                      (ir.compiler-ir-label "five")
+                      5
+                      (ir.compiler-ir-blocks
+                        (ir.CompilerIrBlock.Block
+                          (ir.compiler-ir-label "zero")
+                          (compiler-backend-test-instr-seq-prepend
+                            (CopyBytes (Var 1) (Var 2) 8192)
+                            (compiler-backend-test-instr-seq-prepend
+                              (Return (Some (I64 0)))
+                              (ir.compiler-ir-instr-seq-empty))))
+                        (compiler-backend-total-switch-trap-test-block)))))))
+            (ir.CompilerIrBlock.Block
+              (ir.compiler-ir-label "entry")
+              (compiler-backend-test-instr-seq-prepend
+                (TotalEnumSwitch
+                  (Var 0)
+                  0
+                  (compiler-backend-total-switch-test-cases)
+                  (ir.compiler-ir-label "match_total_trap")
+                  (ir.compiler-ir-label "match_total_trap"))
+                (ir.compiler-ir-instr-seq-empty))))
+          Ordinary))
+      (& (ir.compiler-ir-function-seq-empty)))
+    (ir.compiler-ir-extern-seq-empty)
+    (ir.CompilerIrReturnStorageAuthority.None)))
+
+(define (compiler-backend-compact-os-switch-phi-fallback-program) : ir.CompilerIrProgram
+  (let
+    [case-builder : ir.CompilerIrSwitchCaseBuilder
+      (ir.compiler-ir-switch-case-builder-with-capacity 50)]
+    [join-label : i64 (ir.compiler-ir-label "join")]
+    [entry-label : i64 (ir.compiler-ir-label "entry")]
+    (for [i (iterator.range 0 50)]
+      (ir.compiler-ir-switch-case-builder-push!
+        (&mut case-builder)
+        (ir.CompilerIrSwitchCase.Case i join-label)))
+    (let
+      [join-instrs : ir.CompilerIrInstrSeq
+        (compiler-backend-test-instr-seq-prepend
+          (Return (Some (Var 1)))
+          (ir.compiler-ir-instr-seq-empty))]
+      (for [i (iterator.range 0 20)]
+        (set!
+          join-instrs
+          (compiler-backend-test-instr-seq-prepend
+            (Phi
+              (+ i 1)
+              (ir.compiler-ir-phi-input-seq-prepend
+                (I64 (+ i 1))
+                entry-label
+                (& (ir.compiler-ir-phi-input-seq-empty)))
+              (I64))
+            join-instrs)))
+      (Program
+        (ir.compiler-ir-global-seq-empty)
+        (ir.compiler-ir-function-seq-prepend
+          (&
+            (Function
+              (ci.intern "main")
+              (ir.compiler-ir-param-seq-empty)
+              (I64)
+              22
+              (ir.compiler-ir-blocks
+                (ir.CompilerIrBlock.Block
+                  entry-label
+                  (compiler-backend-test-instr-seq-prepend
+                    (Switch
+                      (Var 0)
+                      0
+                      (ir.compiler-ir-switch-case-builder-to-seq case-builder)
+                      join-label)
+                    (ir.compiler-ir-instr-seq-empty)))
+                (ir.CompilerIrBlock.Block join-label join-instrs))
+              Ordinary))
+          (& (ir.compiler-ir-function-seq-empty)))
+        (ir.compiler-ir-extern-seq-empty)
+        (ir.CompilerIrReturnStorageAuthority.None)))))
+
+(define (compiler-backend-total-switch-compact-os-fallback-asm-ok?) : bool
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [state-copy : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [state-phi : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    (be_state.compiler-backend-state-set-optimize-for-size! state-copy true)
+    (be_state.compiler-backend-state-set-optimize-for-size! state-phi true)
+    (let
+      [copy-ok : bool
+        (match (backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+          state-copy
+          (ast.ast-node-pool-context-capture-active)
+          (compiler-backend-compact-os-large-copy-fallback-program)
+          (be_state.CompilerBackendTarget.Linux)
+          (Scalar)
+          (ir.compiler-source-spans-empty)
+          true
+          false
+          (profile_state.compiler-profile-state-new))
+          [(Ok asm)
+            (and
+              (=
+                (backend.compiler-backend-string-count asm "    .long .Lf0_")
+                6)
+              (=
+                (backend.compiler-backend-string-count asm "    .word .Lf0_")
+                0)
+              (asm-has?
+                asm
+                "    .section .rodata\n    .balign 4\n.Lf0_entry_switch_table:\n")
+              (asm-lacks? asm "_switch_base"))]
+          [(Err _) false])]
+      [phi-ok : bool
+        (match (backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+          state-phi
+          (ast.ast-node-pool-context-capture-active)
+          (compiler-backend-compact-os-switch-phi-fallback-program)
+          (be_state.CompilerBackendTarget.Linux)
+          (Scalar)
+          (ir.compiler-source-spans-empty)
+          true
+          false
+          (profile_state.compiler-profile-state-new))
+          [(Ok asm)
+            (and
+              (=
+                (backend.compiler-backend-string-count
+                  asm
+                  "    .long .Lf0_entry_switch_case_")
+                50)
+              (=
+                (backend.compiler-backend-string-count asm "    .word .Lf0_")
+                0)
+              (asm-has?
+                asm
+                "    .section .rodata\n    .balign 4\n.Lf0_entry_switch_table:\n")
+              (asm-lacks? asm "_switch_base"))]
+          [(Err _) false])]
+      (and copy-ok phi-ok))))
+
+(test
+  backend-total-switch-compact-os-fallback
+  (test.assert-true
+    (compiler-backend-total-switch-compact-os-fallback-asm-ok?)
+    "-Os falls back to 4-byte switch tables when CopyBytes or switch+phi worst-case byte bound exceeds 16-bit headroom"))
 
 (define (compiler-backend-total-switch-object-image-ok?) : bool
   (match (be_object.compiler-backend-emit-program-object-image-linux
@@ -25174,7 +25554,8 @@ entry:
       target
       features
       false
-      false)))
+      false
+      true)))
 
 (define (compiler-backend-runtime-global-inventory-target-ok?
   [target : be_state.CompilerBackendTarget]) : bool
@@ -40067,6 +40448,96 @@ entry:
       (compiler-backend-spmd-entry-copy-windows-avx2-ok?))
     "entry copies preserve unread inputs and do not borrow nonvolatile XMM6"))
 
+(define (compiler-backend-sse2-select-spilled-mask-case
+  [polarity : i64]
+  [homes : String]) : be_state.ResultCompilerBackend
+  (let
+    [backend-state : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    (be_state.compiler-backend-set-current-mode!
+      (be_state.compiler-backend-state-function-state backend-state)
+      (Sse2))
+    (be_simd.compiler-backend-emit-avx2-blend
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (reg-homes homes)
+      0
+      false
+      polarity
+      (Var 1)
+      (Var 2)
+      (Var 3)
+      2
+      (I64)
+      (cdiag.compiler-diagnostic-at-start "" "")
+      backend-state)))
+
+(test
+  backend-sse2-select-spilled-mask-dst-aliases-sel-true
+  ;; When the SSE2 Select mask spills into %xmm0 and dst aliases sel-true,
+  ;; copying %xmm0 into dst before `pand sel-true, %xmm0` would clobber
+  ;; sel-true. Both normal polarity (sel-true = true-reg) and swapped polarity
+  ;; (sel-true = false-reg) must stage the mask in %xmm1 instead.
+  (test.assert-true
+    (asm-ok?
+      (compiler-backend-sse2-select-spilled-mask-case
+        0
+        "%0=%vec6 %1=spill:-32 %2=%vec6 %3=%vec7")
+      (has
+        "    movdqu -32(%rbp), %xmm0\n    movdqa %xmm0, %xmm1\n    pand %xmm6, %xmm0\n    pandn %xmm7, %xmm1\n    por %xmm1, %xmm0\n    movdqa %xmm0, %xmm6\n")
+      (lacks "    movdqa %xmm0, %xmm6\n    pand %xmm6, %xmm0\n"))
+    "SSE2 Select with spilled mask and dst == sel-true stages mask in %xmm1")
+  (test.assert-true
+    (asm-ok?
+      (compiler-backend-sse2-select-spilled-mask-case
+        2
+        "%0=%vec7 %1=spill:-32 %2=%vec6 %3=%vec7")
+      (has
+        "    movdqu -32(%rbp), %xmm0\n    movdqa %xmm0, %xmm1\n    pand %xmm7, %xmm0\n    pandn %xmm6, %xmm1\n    por %xmm1, %xmm0\n    movdqa %xmm0, %xmm7\n")
+      (lacks "    movdqa %xmm0, %xmm7\n    pand %xmm7, %xmm0\n"))
+    "SSE2 Select with swapped polarity, spilled mask, and dst == sel-true stages mask in %xmm1")
+  (test.assert-true
+    (asm-ok?
+      (compiler-backend-sse2-select-spilled-mask-case
+        0
+        "%0=%vec8 %1=spill:-32 %2=%vec6 %3=%vec7")
+      (has
+        "    movdqu -32(%rbp), %xmm0\n    movdqa %xmm0, %xmm8\n    pand %xmm6, %xmm0\n    pandn %xmm7, %xmm8\n    por %xmm0, %xmm8\n")
+      (lacks "%xmm1"))
+    "SSE2 Select with spilled mask and distinct dst keeps the direct path"))
+
+(test
+  backend-spmd-sse2-win64-private-param-spill-uses-xmm0
+  ;; Private SPMD parameter spills run in the prologue before emergency-save
+  ;; setup, so Win64 SSE2 spills must use caller-saved %xmm0 (after uniform
+  ;; float args have been homed) and never touch unsaved callee-saved %xmm14.
+  (let
+    [sources : (__tl_dyn-array String) (__tl_make-array "%xmm0")]
+    (match (compiler-backend-spmd-entry-copy-spills
+      (be_state.CompilerBackendTarget.Windows)
+      (Sse2)
+      "__tl_spmd_active_mask=%0:bool, __tl_spmd_varying_arg_x=%1:i64, a=%2:f64, __tl_spmd_varying_arg_y=%3:f64"
+      "%0=spill:-32 %1=spill:-48 %2=%xmm7 %3=%xmm2"
+      4)
+      [(Ok text)
+        (test.assert-true
+          (and
+            (compiler-backend-entry-preserves-inputs? text (& sources))
+            (asm-has?
+              text
+              "    movsd %xmm0, %xmm7\n"
+              "    movdqu 0(%r10), %xmm0\n    movdqu %xmm0, -32(%rbp)\n"
+              "    movdqu 16(%r10), %xmm0\n    movdqu %xmm0, -48(%rbp)\n"
+              "    movdqu 32(%r10), %xmm2\n")
+            (asm-lacks? text "%xmm14" "%xmm15"))
+          (str_cat.str-cat
+            "Win64 SSE2 private SPMD param spill must use %xmm0, not %xmm14: "
+            text))]
+      [(Err _)
+        (test.assert-true
+          false
+          "Win64 SSE2 private SPMD param spill emission succeeded")])))
+
 (define (compiler-backend-stream-home-keeps-stable-root-ok?) : bool
   (let
     [caller : arena.Arena (arena.current)]
@@ -44217,7 +44688,8 @@ b_keep:
     ;; needs no `.tdata` initial value.
     (has
       ".section .tbss,\"awT\",@nobits\n    .balign 8\n    .globl tl_current_arena\ntl_current_arena:\n    .zero 8\n"
-      ".L_tl_null_arena:\n    .quad 0, 0, 0, 0, 0, 0, 17, 0\n"
+      "    .section .bss\n    .balign 8\n    .globl __tl_null_arena\n__tl_null_arena:\n.L_tl_null_arena:\n    .zero 64\n"
+      "_tl_start:\n    movb $17, .L_tl_null_arena+48(%rip)\n"
       "    leaq .L_tl_null_arena(%rip), %rsi\n    movq %rsi, %fs:tl_current_arena@tpoff\n    ret\n"
       "tl_thread_init:\n"
       "tl_arena_make_atomic:\n"
@@ -46340,6 +46812,7 @@ user_fn:
             backtrace
             63)
           false
+          false
           false))]
     (and
       (asm-has?
@@ -47587,25 +48060,61 @@ user_fn:
 ;; Only a CRT or loader-built TLS block copies `.tdata`; the freestanding
 ;; entry stores the null arena itself, so its arena word is `.tbss`.
 (define (compiler-backend-freestanding-arena-tbss-ok?) : bool
+  (cbi.compiler-builtin-initialize-for-parse!)
   (let
-    [features : runtime_common.CompilerBackendRuntimeFeatures
+    [debug-features : runtime_common.CompilerBackendRuntimeFeatures
+      (runtime_common.CompilerBackendRuntimeFeatures
+        true
+        false
+        false
+        true
+        false
+        false
+        false
+        false
+        31)]
+    [release-features : runtime_common.CompilerBackendRuntimeFeatures
       (be_data.compiler-backend-runtime-features
         (compiler-backend-runtime-helper-full-plan))]
     [freestanding : String
       (be_data.compiler-backend-runtime-data-for-target
         (be_state.CompilerBackendTarget.Linux)
-        features
+        release-features
+        true)]
+    [freestanding-debug : String
+      (be_data.compiler-backend-runtime-data-for-target
+        (be_state.CompilerBackendTarget.Linux)
+        debug-features
         true)]
     [hosted : String
       (be_data.compiler-backend-runtime-data-for-target
         (be_state.CompilerBackendTarget.Linux)
-        features
+        release-features
         false)]
+    [win-freestanding : String
+      (be_data.compiler-backend-runtime-data-for-target
+        (be_state.CompilerBackendTarget.Windows)
+        release-features
+        true)]
+    [win-debug : String
+      (be_data.compiler-backend-runtime-data-for-target
+        (be_state.CompilerBackendTarget.Windows)
+        debug-features
+        true)]
+    [bss-null : String
+      "    .section .bss\n    .balign 8\n    .globl __tl_null_arena\n__tl_null_arena:\n.L_tl_null_arena:\n    .zero 64\n"]
+    [rodata-null : String
+      "    .section .rodata\n    .balign 8\n    .globl __tl_null_arena\n__tl_null_arena:\n.L_tl_null_arena:\n    .quad 0, 0, 0, 0, 0, 0, 17, 0\n"]
     (and
       (not (string.contains (& freestanding) ".tdata"))
       (string.contains
         (& freestanding)
         "    .section .tbss,\"awT\",@nobits\n    .balign 8\n    .globl tl_current_arena\ntl_current_arena:\n    .zero 8\n")
+      (string.contains (& freestanding) (& bss-null))
+      (string.contains (& win-freestanding) (& bss-null))
+      (string.contains (& freestanding-debug) (& rodata-null))
+      (string.contains (& win-debug) (& rodata-null))
+      (string.contains (& hosted) (& rodata-null))
       (string.contains
         (& hosted)
         "    .section .tdata,\"awT\",@progbits\n    .balign 8\n    .globl tl_current_arena\ntl_current_arena:\n    .quad .L_tl_null_arena\n"))))
@@ -49535,3 +50044,378 @@ user_fn:
         (test.assert-true
           false
           "COFF object image emission for register-group global succeeded")])))
+
+(define (compiler-backend-archive-object-test-extern-with-symbol
+  [name : i64]
+  [link-symbol : i64]
+  [raw-name : String]
+  [ty : ast.AstType]
+  [abi : ast.AstExternAbi]) : ir.CompilerIrExtern
+  (ir.CompilerIrExtern.Extern
+    name
+    name
+    raw-name
+    ty
+    abi
+    link-symbol
+    (ast.ast-extern-link-input-list-new)
+    false
+    (ir.CompilerIrReturnStorage.None)
+    false
+    (ir.CompilerIrGlobalStorage.Word)))
+
+(define (compiler-backend-archive-object-test-extern
+  [name : i64]
+  [raw-name : String]
+  [ty : ast.AstType]
+  [abi : ast.AstExternAbi]) : ir.CompilerIrExtern
+  (compiler-backend-archive-object-test-extern-with-symbol
+    name
+    name
+    raw-name
+    ty
+    abi))
+
+(define (compiler-backend-archive-object-test-one-extern-seq
+  [entry : ir.CompilerIrExtern]) : ir.CompilerIrExternSeq
+  (ir.compiler-ir-extern-seq1 entry))
+
+(define (compiler-backend-archive-object-test-i64-func-type) : ast.AstType
+  (let
+    [i64-ty : ast.AstType (ast.AstType.I64)]
+    (ast.ast-ty-func
+      (ast.ast-type-cons (& i64-ty) (& (ast.ast-type-list-new)))
+      (& i64-ty))))
+
+(define (compiler-backend-archive-object-test-main-program
+  [instrs : ir.CompilerIrInstrSeq]
+  [externs : ir.CompilerIrExternSeq]) : ir.CompilerIrProgram
+  (let
+    [main-id : i64 (ci.intern "main")]
+    [main-fn : ir.CompilerIrFunction
+      (Function
+        main-id
+        (ir.compiler-ir-param-seq-empty)
+        (I64)
+        1
+        (ir.compiler-ir-blocks
+          (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs))
+        Ordinary)]
+    [functions : ir.CompilerIrFunctionSeq
+      (ir.compiler-ir-function-seq-prepend
+        (& main-fn)
+        (& (ir.compiler-ir-function-seq-empty)))]
+    (Program
+      (ir.compiler-ir-global-seq-empty)
+      functions
+      externs
+      (ir.CompilerIrReturnStorageAuthority.None))))
+
+(define (compiler-backend-archive-object-test-main-returning-42
+  [externs : ir.CompilerIrExternSeq]) : ir.CompilerIrProgram
+  (compiler-backend-archive-object-test-main-program
+    (compiler-backend-test-instr-seq-prepend
+      (Return (Some (I64 42)))
+      (ir.compiler-ir-instr-seq-empty))
+    externs))
+
+(define (compiler-backend-archive-object-test-main-calling
+  [callee-id : i64]
+  [externs : ir.CompilerIrExternSeq]) : ir.CompilerIrProgram
+  (compiler-backend-archive-object-test-main-program
+    (compiler-backend-test-instr-seq-prepend
+      (Call 0 callee-id (One (I64 42)) (I64))
+      (compiler-backend-test-instr-seq-prepend
+        (Return (Some (Var 0)))
+        (ir.compiler-ir-instr-seq-empty)))
+    externs))
+
+(define (compiler-backend-archive-object-test-main-reading-global
+  [global-id : i64]
+  [externs : ir.CompilerIrExternSeq]) : ir.CompilerIrProgram
+  (compiler-backend-archive-object-test-main-program
+    (compiler-backend-test-instr-seq-prepend
+      (Mov 0 (Global global-id) (I64))
+      (compiler-backend-test-instr-seq-prepend
+        (Return (Some (Var 0)))
+        (ir.compiler-ir-instr-seq-empty)))
+    externs))
+
+(define (compiler-backend-archive-object-test-main-storing-global
+  [global-id : i64]
+  [externs : ir.CompilerIrExternSeq]) : ir.CompilerIrProgram
+  (compiler-backend-archive-object-test-main-program
+    (compiler-backend-test-instr-seq-prepend
+      (Store global-id (I64 1) (I64))
+      (compiler-backend-test-instr-seq-prepend
+        (Return (Some (I64 42)))
+        (ir.compiler-ir-instr-seq-empty)))
+    externs))
+
+(test
+  object-mode-archive-runtime-eligibility-and-coff
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [type-bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [archive-fn-id : i64 (ci.intern "_tl_stdlib_math_archive_helper")]
+    [archive-global-id : i64 (ci.intern "_tl_stdlib_format_archive_cell")]
+    [win-c-fn-id : i64 (ci.intern "GetStdHandle")]
+    [c-abi-tl-alias-id : i64 (ci.intern "stdlib.io_core/io-runtime-alloc")]
+    [c-abi-tl-symbol-id : i64 (ci.intern "tl_alloc")]
+    [c-abi-underscore-tl-alias-id : i64
+      (ci.intern "stdlib.sync/runtime-helper")]
+    [c-abi-underscore-tl-symbol-id : i64 (ci.intern "_tl_sync_helper")]
+    [c-abi-dunder-tl-alias-id : i64
+      (ci.intern "stdlib.sync/runtime-helper-dunder")]
+    [c-abi-dunder-tl-symbol-id : i64 (ci.intern "__tl_sync_helper")]
+    [archive-fn-externs : ir.CompilerIrExternSeq
+      (compiler-backend-archive-object-test-one-extern-seq
+        (compiler-backend-archive-object-test-extern
+          archive-fn-id
+          "stdlib.math/archive-helper"
+          (compiler-backend-archive-object-test-i64-func-type)
+          (ast.AstExternAbi.TypeLisp)))]
+    [archive-global-externs : ir.CompilerIrExternSeq
+      (compiler-backend-archive-object-test-one-extern-seq
+        (compiler-backend-archive-object-test-extern
+          archive-global-id
+          "stdlib.format/archive-cell"
+          (ast.AstType.I64)
+          (ast.AstExternAbi.TypeLisp)))]
+    [win-c-externs : ir.CompilerIrExternSeq
+      (compiler-backend-archive-object-test-one-extern-seq
+        (compiler-backend-archive-object-test-extern
+          win-c-fn-id
+          "GetStdHandle"
+          (compiler-backend-archive-object-test-i64-func-type)
+          (ast.AstExternAbi.C)))]
+    [c-abi-tl-alias-externs : ir.CompilerIrExternSeq
+      (compiler-backend-archive-object-test-one-extern-seq
+        (compiler-backend-archive-object-test-extern-with-symbol
+          c-abi-tl-alias-id
+          c-abi-tl-symbol-id
+          "stdlib.io_core/io-runtime-alloc"
+          (compiler-backend-archive-object-test-i64-func-type)
+          (ast.AstExternAbi.C)))]
+    [c-abi-underscore-tl-alias-externs : ir.CompilerIrExternSeq
+      (compiler-backend-archive-object-test-one-extern-seq
+        (compiler-backend-archive-object-test-extern-with-symbol
+          c-abi-underscore-tl-alias-id
+          c-abi-underscore-tl-symbol-id
+          "stdlib.sync/runtime-helper"
+          (compiler-backend-archive-object-test-i64-func-type)
+          (ast.AstExternAbi.C)))]
+    [c-abi-dunder-tl-alias-externs : ir.CompilerIrExternSeq
+      (compiler-backend-archive-object-test-one-extern-seq
+        (compiler-backend-archive-object-test-extern-with-symbol
+          c-abi-dunder-tl-alias-id
+          c-abi-dunder-tl-symbol-id
+          "stdlib.sync/runtime-helper-dunder"
+          (compiler-backend-archive-object-test-i64-func-type)
+          (ast.AstExternAbi.C)))]
+    [self-contained : ir.CompilerIrProgram
+      (compiler-backend-archive-object-test-main-returning-42
+        archive-fn-externs)]
+    [calls-c : ir.CompilerIrProgram
+      (compiler-backend-archive-object-test-main-calling
+        win-c-fn-id
+        win-c-externs)]
+    [calls-c-tl-alias : ir.CompilerIrProgram
+      (compiler-backend-archive-object-test-main-calling
+        c-abi-tl-alias-id
+        c-abi-tl-alias-externs)]
+    [calls-c-underscore-tl-alias : ir.CompilerIrProgram
+      (compiler-backend-archive-object-test-main-calling
+        c-abi-underscore-tl-alias-id
+        c-abi-underscore-tl-alias-externs)]
+    [calls-c-dunder-tl-alias : ir.CompilerIrProgram
+      (compiler-backend-archive-object-test-main-calling
+        c-abi-dunder-tl-alias-id
+        c-abi-dunder-tl-alias-externs)]
+    [calls-archive : ir.CompilerIrProgram
+      (compiler-backend-archive-object-test-main-calling
+        archive-fn-id
+        (compiler-backend-archive-object-test-one-extern-seq
+          (compiler-backend-archive-object-test-extern
+            archive-fn-id
+            "stdlib.math/archive-helper"
+            (compiler-backend-archive-object-test-i64-func-type)
+            (ast.AstExternAbi.TypeLisp))))]
+    [reads-archive-global : ir.CompilerIrProgram
+      (compiler-backend-archive-object-test-main-reading-global
+        archive-global-id
+        archive-global-externs)]
+    [stores-archive-global : ir.CompilerIrProgram
+      (compiler-backend-archive-object-test-main-storing-global
+        archive-global-id
+        (compiler-backend-archive-object-test-one-extern-seq
+          (compiler-backend-archive-object-test-extern
+            archive-global-id
+            "stdlib.format/archive-cell"
+            (ast.AstType.I64)
+            (ast.AstExternAbi.TypeLisp))))]
+    [state-archive : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [state-startup : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [state-non-archive : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [startup-syms : (__tl_dyn-array String) (__tl_make-array String 1)]
+    (set! (array-ref startup-syms 0) "_tl___tl_mod_init_stdlib_format")
+    (be_state.compiler-backend-state-set-archive-runtime! state-archive true)
+    (be_state.compiler-backend-state-set-archive-runtime! state-startup true)
+    (be_state.compiler-backend-state-set-startup-init-symbols!
+      state-startup
+      startup-syms)
+    (test.assert-true
+      (match (be_object.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
+        state-archive
+        type-bases
+        (ir.clone-compiler-ir-program (& self-contained))
+        (be_state.CompilerBackendTarget.Windows)
+        (profile_state.compiler-profile-state-new))
+        [(Eligible) true]
+        [_ false])
+      "archive-runtime self-contained program with unreferenced TypeLisp extern stays Windows COFF eligible")
+    (match (be_object.compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
+      state-archive
+      type-bases
+      (ir.clone-compiler-ir-program (& self-contained))
+      (be_state.CompilerBackendTarget.Windows)
+      (Scalar)
+      (ir.compiler-source-spans-empty)
+      true
+      false
+      false
+      (profile_state.compiler-profile-state-new))
+      [(Ok image)
+        (test.assert-true
+          (coff.compiler-object-coff-image-supported? (& image))
+          "archive-runtime self-contained image is COFF-supported")
+        (match (coff.compiler-object-coff-render (& image))
+          [(Ok obj)
+            (test.assert-i64-eq
+              (layout.compiler-object-layout-u16-at (& obj) 0)
+              0x8664
+              "archive-runtime direct COFF carries AMD64 machine header")]
+          [(Err msg)
+            (test.assert-true
+              false
+              (str_cat.str-cat "COFF render failed: " msg))])]
+      [(Err _)
+        (test.assert-true
+          false
+          "archive-runtime self-contained COFF object image emission failed")])
+    (test.assert-true
+      (match (be_object.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
+        state-archive
+        type-bases
+        (ir.clone-compiler-ir-program (& calls-c))
+        (be_state.CompilerBackendTarget.Windows)
+        (profile_state.compiler-profile-state-new))
+        [(Eligible) true]
+        [_ false])
+      "archive-runtime program calling C-ABI GetStdHandle stays Windows COFF eligible")
+    (test.assert-true
+      (match (be_object.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
+        state-archive
+        type-bases
+        (ir.clone-compiler-ir-program (& calls-c-tl-alias))
+        (be_state.CompilerBackendTarget.Windows)
+        (profile_state.compiler-profile-state-new))
+        [(Unsupported (UnsupportedSemantics)) true]
+        [_ false])
+      "archive-runtime call to non-tl_ C-ABI extern with tl_ link symbol falls back on Windows")
+    (test.assert-true
+      (match (be_object.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
+        state-archive
+        type-bases
+        calls-c-tl-alias
+        (be_state.CompilerBackendTarget.Linux)
+        (profile_state.compiler-profile-state-new))
+        [(Unsupported (UnsupportedSemantics)) true]
+        [_ false])
+      "archive-runtime call to non-tl_ C-ABI extern with tl_ link symbol falls back on Linux")
+    (test.assert-true
+      (match (be_object.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
+        state-archive
+        type-bases
+        calls-c-underscore-tl-alias
+        (be_state.CompilerBackendTarget.Windows)
+        (profile_state.compiler-profile-state-new))
+        [(Unsupported (UnsupportedSemantics)) true]
+        [_ false])
+      "archive-runtime call to non-tl_ C-ABI extern with _tl_ link symbol falls back")
+    (test.assert-true
+      (match (be_object.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
+        state-archive
+        type-bases
+        calls-c-dunder-tl-alias
+        (be_state.CompilerBackendTarget.Windows)
+        (profile_state.compiler-profile-state-new))
+        [(Unsupported (UnsupportedSemantics)) true]
+        [_ false])
+      "archive-runtime call to non-tl_ C-ABI extern with __tl_ link symbol falls back")
+    (test.assert-true
+      (match (be_object.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
+        state-startup
+        type-bases
+        (ir.clone-compiler-ir-program (& self-contained))
+        (be_state.CompilerBackendTarget.Windows)
+        (profile_state.compiler-profile-state-new))
+        [(Unsupported (UnsupportedSemantics)) true]
+        [_ false])
+      "non-empty startup-init-symbols still falls back to assembly")
+    (test.assert-true
+      (match (be_object.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
+        state-archive
+        type-bases
+        (ir.clone-compiler-ir-program (& calls-archive))
+        (be_state.CompilerBackendTarget.Windows)
+        (profile_state.compiler-profile-state-new))
+        [(Unsupported (UnsupportedSemantics)) true]
+        [_ false])
+      "archive-runtime call to TypeLisp extern falls back on Windows")
+    (test.assert-true
+      (match (be_object.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
+        state-archive
+        type-bases
+        (ir.clone-compiler-ir-program (& calls-archive))
+        (be_state.CompilerBackendTarget.Linux)
+        (profile_state.compiler-profile-state-new))
+        [(Unsupported (UnsupportedSemantics)) true]
+        [_ false])
+      "archive-runtime call to TypeLisp extern falls back on Linux")
+    (test.assert-true
+      (match (be_object.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
+        state-archive
+        type-bases
+        reads-archive-global
+        (be_state.CompilerBackendTarget.Windows)
+        (profile_state.compiler-profile-state-new))
+        [(Unsupported (UnsupportedSemantics)) true]
+        [_ false])
+      "archive-runtime read of TypeLisp global extern falls back")
+    (test.assert-true
+      (match (be_object.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
+        state-archive
+        type-bases
+        stores-archive-global
+        (be_state.CompilerBackendTarget.Windows)
+        (profile_state.compiler-profile-state-new))
+        [(Unsupported (UnsupportedSemantics)) true]
+        [_ false])
+      "archive-runtime store to TypeLisp global extern falls back")
+    (test.assert-true
+      (match (be_object.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
+        state-non-archive
+        type-bases
+        calls-archive
+        (be_state.CompilerBackendTarget.Windows)
+        (profile_state.compiler-profile-state-new))
+        [(Eligible) true]
+        [_ false])
+      "non-archive-runtime TypeLisp extern call stays eligible for library extraction")))

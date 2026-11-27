@@ -280,6 +280,20 @@ spmd_mode_expected_compile_diagnostic() {
     esac
 }
 
+spmd_mode_compile_only_reason() {
+    _prog=$1
+    _mode=$2
+    case "$_prog:$_mode" in
+        tests/integration/spmd_gather_read.tl:sse2 | benchmarks/ispc/perfbench_gathers/bench.tl:sse2)
+            # Both fixtures compare (program-index) across a vectorized loop and
+            # a GatherLoad loop; SSE2 intentionally falls back GatherLoad to
+            # scalar (width 1) while plain (program-index) loops vectorize.
+            printf '%s\n' "gather falls back to scalar in SSE2 while lane-id probes vectorize"
+            ;;
+        *) return 1 ;;
+    esac
+}
+
 CORPUS="$WORKDIR/corpus.txt"
 FAILURES="$WORKDIR/failures.txt"
 spmd_corpus > "$CORPUS"
@@ -453,7 +467,7 @@ run_spmd_corpus_job() {
         echo "[spmd-simd] $_prog scalar -> $scalar_code (ordinary run reference)" >> "$_job_out"
     fi
 
-    for pair in "avx2 avx2" "avx512 avx512"; do
+    for pair in "sse2 sse2" "avx2 avx2" "avx512 avx512"; do
         mode=${pair%% *}
         isa=${pair##* }
         if ! simd_mode_selected "$mode"; then
@@ -476,6 +490,19 @@ run_spmd_corpus_job() {
                 echo "$_prog $mode (wrong diagnostic)" >> "$_job_fail"
             else
                 echo "[spmd-simd]   $mode -> expected diagnostic OK" >> "$_job_out"
+            fi
+            continue
+        fi
+        if compile_only_reason=$(spmd_mode_compile_only_reason "$_prog" "$mode"); then
+            compile_spmd_mode "$_prog" "$mode"
+            if [ "$mode_code" != 0 ] || [ -s "$mode_err" ]; then
+                {
+                    echo "[spmd-simd]   $mode compile error:"
+                    sed 's/^/    /' "$mode_err"
+                } >> "$_job_err"
+                echo "$_prog $mode (compile failed)" >> "$_job_fail"
+            else
+                echo "[spmd-simd]   $mode -> compiled OK ($compile_only_reason)" >> "$_job_out"
             fi
             continue
         fi

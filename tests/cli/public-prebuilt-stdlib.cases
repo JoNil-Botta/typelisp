@@ -176,3 +176,101 @@ not-contains _tl_stdlib_io_stdlib_io_platform_write:
 in file {{dir}}/batch2.s
 contains .extern _tl_stdlib_io_stdlib_io_
 not-contains _tl_stdlib_io_stdlib_io_platform_write:
+
+# `typelisp test` hydrates prebuilt stdlib.tli and links libstdlib.a for
+# non-stdlib tests across single-file, --batch, --batch --combined, and package
+# mode; respects --no-prebuilt-stdlib; and auto-disables prebuilt stdlib for
+# stdlib/ sources so stdlib `(cfg test ...)` inline tests keep full coverage.
+case prebuilt-stdlib-test-command
+file test_a.tl
+(import stdlib.io)
+(import stdlib.test)
+
+(cfg test
+  (define (test-only-helper) : i64 40))
+
+(test non-stdlib-uses-prebuilt-and-cfg-test
+  (io.println "hello prebuilt test a")
+  (test.assert-i64-eq (+ (test-only-helper) 2) 42 "cfg test active"))
+end-file
+file test_b.tl
+(import stdlib.io)
+(import stdlib.test)
+
+(test non-stdlib-batch-second
+  (io.println "hello prebuilt test b")
+  (test.assert-i64-eq (+ 10 11) 21 "batch second"))
+end-file
+file batch.list
+test_a.tl
+test_b.tl
+end-file
+file pkg/typelisp.pkg
+(package (name "prebuilt_test_pkg") (version "0.1.0") (kind "bin") (entry "src/main.tl"))
+end-file
+file pkg/src/main.tl
+(import stdlib.io)
+(import stdlib.test)
+
+(cfg test
+  (define (pkg-test-only) : i64 7))
+
+(define (main) : i64 0)
+
+(test pkg-uses-prebuilt-and-cfg-test
+  (io.println "hello prebuilt pkg test")
+  (test.assert-i64-eq (pkg-test-only) 7 "pkg cfg test"))
+end-file
+cwd {{dir}}
+step single-prebuilt
+run test "test_a.tl" --target {{host-target}}
+stderr contains TypeLisp tests: 1 passed; 0 failed
+stdout contains hello prebuilt test a
+step single-missing-sysroot
+run test "test_a.tl" --target {{host-target}} --sysroot "{{dir}}/missing-sysroot"
+exit 1
+stderr contains sysroot: missing prebuilt stdlib archive:
+step single-no-prebuilt
+run test "test_a.tl" --target {{host-target}} --sysroot "{{dir}}/missing-sysroot" --no-prebuilt-stdlib
+stderr contains TypeLisp tests: 1 passed; 0 failed
+stdout contains hello prebuilt test a
+step batch-prebuilt
+run test --batch "batch.list" --target {{host-target}}
+stderr contains TypeLisp tests: 1 passed; 0 failed
+stdout contains TypeLisp test batch passed: 2 test(s) in 2 file(s)
+step batch-missing-sysroot
+run test --batch "batch.list" --target {{host-target}} --sysroot "{{dir}}/missing-sysroot"
+exit 1
+stderr contains sysroot: missing prebuilt stdlib archive:
+step batch-no-prebuilt
+run test --batch "batch.list" --target {{host-target}} --sysroot "{{dir}}/missing-sysroot" --no-prebuilt-stdlib
+stdout contains TypeLisp test batch passed: 2 test(s) in 2 file(s)
+step combined-prebuilt
+run test --batch "batch.list" --combined --target {{host-target}}
+stderr not-contains fallback to single-file mode
+stdout contains TypeLisp test batch passed: 2 test(s) in 2 file(s)
+step combined-missing-sysroot
+run test --batch "batch.list" --combined --target {{host-target}} --sysroot "{{dir}}/missing-sysroot"
+exit 1
+stderr contains sysroot: missing prebuilt stdlib archive:
+stderr not-contains fallback to single-file mode
+step combined-no-prebuilt
+run test --batch "batch.list" --combined --target {{host-target}} --sysroot "{{dir}}/missing-sysroot" --no-prebuilt-stdlib
+stderr not-contains fallback to single-file mode
+stdout contains TypeLisp test batch passed: 2 test(s) in 2 file(s)
+step stdlib-cfg-test-auto-source
+run test "{{root}}/stdlib/byte_le.tl" --target {{host-target}} --sysroot "{{dir}}/missing-sysroot"
+stderr contains 0 failed
+step package-prebuilt
+run test --manifest-path "pkg/typelisp.pkg" --target {{host-target}}
+stderr contains TypeLisp tests: 1 passed; 0 failed
+stdout contains TypeLisp package tests passed
+step package-missing-sysroot
+run test --manifest-path "pkg/typelisp.pkg" --target {{host-target}} --sysroot "{{dir}}/missing-sysroot"
+exit 1
+stderr contains sysroot:
+stderr contains stdlib.tli
+step package-no-prebuilt
+run test --manifest-path "pkg/typelisp.pkg" --target {{host-target}} --sysroot "{{dir}}/missing-sysroot" --no-prebuilt-stdlib
+stdout contains TypeLisp package tests passed
+cwd -

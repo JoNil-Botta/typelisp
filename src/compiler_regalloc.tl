@@ -6571,7 +6571,7 @@
         [backend (deref payload-box).backend]
         [result (compiler-reg-box-field-shared-view payload-box result)]
         (match backend
-          [(or (Avx512) (Avx2))
+          [(or (Avx512) (Avx2) (Sse2))
             (match result
               [(Unit) set]
               [(Value dst class _)
@@ -6610,7 +6610,7 @@
         [backend (deref payload-box).backend]
         [result (compiler-reg-box-field-shared-view payload-box result)]
         (match backend
-          [(or (Avx512) (Avx2))
+          [(or (Avx512) (Avx2) (Sse2))
             (match result
               [(Unit) set]
               [(Value dst class _)
@@ -28002,7 +28002,7 @@
                       lanes
                       (& elem-ty))]
                   [_ unit])])]
-          [(Avx2)
+          [(or (Avx2) (Sse2))
             (match result
               [(Unit) unit]
               [(Value dst class elem-ty)

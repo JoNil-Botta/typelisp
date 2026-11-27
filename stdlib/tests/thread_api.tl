@@ -10,15 +10,7 @@
 (define (test-array-i64-addr [items : (& items (__tl_dyn-array i64))]) : i64
   (unsafe
     (cast
-      (ptr->int
-        (ptr-cast
-          (__tl_array-data
-            (unsafe
-              (ptr-read
-                (ptr-cast
-                  (__tl_array-data (array items))
-                  : (Ptr (__tl_dyn-array i64))))))
-          : (Ptr u8)))
+      (ptr->int (ptr-cast (__tl_array-data (deref items)) : (Ptr u8)))
       : i64)))
 
 (define (test-addr->mut-i64 [addr : i64]) : (MutPtr i64)

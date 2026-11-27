@@ -1,0 +1,4 @@
+# Native integration cases: dynamic-array mutable-place push lowering and eval order.
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+array_push_place|all|0,1,2|tests/integration/array_push_place.tl|42|-|-|-|-

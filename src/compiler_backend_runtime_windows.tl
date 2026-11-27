@@ -33,7 +33,8 @@
     (compiler-backend-current-arena-load "%rax")))
 
 (define (compiler-backend-runtime-data
-  [features : (& features runtime_common.CompilerBackendRuntimeFeatures)]) : String
+  [features : (& features runtime_common.CompilerBackendRuntimeFeatures)]
+  [freestanding : bool]) : String
   (let
     [data : String
       (str_cat.str-cat
@@ -42,7 +43,8 @@
           (runtime_common.compiler-backend-runtime-arena-poison-data
             (runtime_common.compiler-backend-runtime-arena-debug-text?
               features.arena-debug)))
-        (runtime_common.compiler-backend-runtime-null-arena-data)
+        (runtime_common.compiler-backend-runtime-null-arena-data
+          (and freestanding (not features.arena-debug)))
         "    .section .rodata
 .L_tl_main_stack_reservation_msg:
     .ascii \"typelisp runtime: 1 GiB main-stack reservation failed\\n\"
@@ -65,7 +67,8 @@
 ;; copy plus 32768 pointers fits the 524288-byte boot pool. Decoding compacts
 ;; bytes with write<=read and retains argv[0] pathname quoting separately.
 (define (compiler-backend-runtime-windows-libc-shim-functions
-  [startup-profile : bool]) : String
+  [startup-profile : bool]
+  [init-null-arena : bool]) : String
   (str_cat.str-cat
     "    .globl __chkstk
 __chkstk:
@@ -242,7 +245,12 @@ _tl_start:
 "
       "")
     "    call tl_setup_argv
-    leaq .L_tl_null_arena(%rip), %rax
+"
+    (if init-null-arena
+      "    movb $17, .L_tl_null_arena+48(%rip)
+"
+      "")
+    "    leaq .L_tl_null_arena(%rip), %rax
     movq %rax, %gs:0x28
     leaq .L_tl_stack_overflow_filter(%rip), %rcx
     call SetUnhandledExceptionFilter
@@ -2103,14 +2111,16 @@ tl_tlci_call_macro_entry:
 
 (define (compiler-backend-runtime-functions
   [features : (& features runtime_common.CompilerBackendRuntimeFeatures)]) : String
-  (compiler-backend-runtime-functions-for-executable features false))
+  (compiler-backend-runtime-functions-for-executable features false true))
 
 (define (compiler-backend-runtime-functions-for-executable
   [features : (& features runtime_common.CompilerBackendRuntimeFeatures)]
-  [closed : bool]) : String
+  [closed : bool]
+  [freestanding : bool]) : String
   (let
     [profile : bool features.profile]
     [arena-debug : bool features.arena-debug]
+    [init-null-arena : bool (and freestanding (not arena-debug))]
     [debug-text : bool
       (runtime_common.compiler-backend-runtime-arena-debug-text? arena-debug)]
     (str_cat.str-cat
@@ -2238,11 +2248,16 @@ tl_tlci_call_macro_entry:
       (compiler-backend-runtime-windows-render
         closed
         true
-        (if features.startup-profile
+        (x64_catalog.compiler-x64-template-select-four
+          (WindowsRuntimeLibcShim)
+          (WindowsRuntimeLibcShimDebug)
           (WindowsRuntimeLibcShimStartupProfile)
-          (WindowsRuntimeLibcShim))
+          (WindowsRuntimeLibcShimStartupProfileDebug)
+          features.startup-profile
+          (not init-null-arena))
         (compiler-backend-runtime-windows-libc-shim-functions
-          features.startup-profile)))))
+          features.startup-profile
+          init-null-arena)))))
 
 (define (compiler-backend-runtime-externs
   [features : (& features runtime_common.CompilerBackendRuntimeFeatures)]) : String

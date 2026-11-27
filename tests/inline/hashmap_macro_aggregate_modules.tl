@@ -8,6 +8,49 @@
 (import tests.hashmap_macro_clone_collision_first as collision_first)
 (import tests.hashmap_macro_clone_collision_second as collision_second)
 
+(defstruct AggregateHashPayload
+  (score i64)
+  (weight i64))
+
+(defenum AggregateHashState
+  (AggregateHashReady i64)
+  (AggregateHashFailed)
+  (AggregateHashPaused i64))
+
+(defstruct AggregateHashPoint
+  (x i64)
+  (enabled bool)
+  (label String)
+  (code char))
+
+(defenum AggregateHashTag
+  (AggregateHashTagNone)
+  (AggregateHashTagNumber i64)
+  (AggregateHashTagOtherNumber i64)
+  (AggregateHashTagText bool String char))
+
+(defstruct AggregateHashNestedKey
+  (point AggregateHashPoint)
+  (tag AggregateHashTag))
+
+(stdlib.clone.gen-clone AggregateHashPoint)
+
+(stdlib.clone.gen-clone AggregateHashTag)
+
+(stdlib.clone.gen-clone AggregateHashNestedKey)
+
+(eq.gen AggregateHashPoint)
+
+(hash.gen AggregateHashPoint)
+
+(eq.gen AggregateHashTag)
+
+(hash.gen AggregateHashTag)
+
+(eq.gen AggregateHashNestedKey)
+
+(hash.gen AggregateHashNestedKey)
+
 (defenum GenericHashKeyTag
   (GenericHashKeyNone)
   (GenericHashKeyText String)
@@ -30,14 +73,43 @@
 
 (hash.gen GenericHashKey)
 
-(import (hashmap.hashmap String hashmap.HashPayload) as map_string_payload)
-(import (hashmap.hashmap i64 hashmap.HashState) as map_i64_state)
-(import (hashmap.hashmap hashmap.HashNestedKey i64) as map_nested_i64)
+(import (hashmap.hashmap String AggregateHashPayload) as map_string_payload)
+(import (hashmap.hashmap i64 AggregateHashState) as map_i64_state)
+(import (hashmap.hashmap AggregateHashNestedKey i64) as map_nested_i64)
 (import (hashmap.hashmap GenericHashKey i64) as map_generic_struct)
 (import (hashmap.hashmap GenericHashKeyTag i64) as map_generic_enum)
 (import (hashmap.hashmap (Tuple i64 String) i64) as map_generic_tuple)
 (import (hashmap.hashmap (Array i16 2) i64) as map_generic_array)
 (import (hashmap.hashmap collision_first.DuplicateKey i64) as map_duplicate_name)
+
+(define (aggregate-hash-payload-score [value : AggregateHashPayload]) : i64
+  (+ value.score value.weight))
+
+(define (aggregate-hash-state-score [value : AggregateHashState]) : i64
+  (match value
+    [(AggregateHashReady score) score]
+    [(AggregateHashFailed) -1]
+    [(AggregateHashPaused score) (- 0 score)]))
+
+(define (aggregate-hash-key-alpha) : AggregateHashNestedKey
+  (AggregateHashNestedKey
+    (AggregateHashPoint 1 true "alpha" 'A')
+    (AggregateHashTagNumber 7)))
+
+(define (aggregate-hash-key-alpha-copy) : AggregateHashNestedKey
+  (AggregateHashNestedKey
+    (AggregateHashPoint 1 true "alpha" 'A')
+    (AggregateHashTagNumber 7)))
+
+(define (aggregate-hash-key-beta) : AggregateHashNestedKey
+  (AggregateHashNestedKey
+    (AggregateHashPoint 1 true "alpha" 'A')
+    (AggregateHashTagOtherNumber 7)))
+
+(define (aggregate-hash-key-missing) : AggregateHashNestedKey
+  (AggregateHashNestedKey
+    (AggregateHashPoint 99 false "missing" 'M')
+    (AggregateHashTagNumber 7)))
 
 (define (generic-array-key [first : i64]) : (Array i16 2)
   (array (cast first : i16) 0))
@@ -45,23 +117,23 @@
 (test
   hashmap-macro-aggregate-key-basic-operations
   (let
-    [alpha : hashmap.HashNestedKey (hashmap.hash-key-alpha)]
-    [alpha-copy : hashmap.HashNestedKey (hashmap.hash-key-alpha-copy)]
-    [beta : hashmap.HashNestedKey (hashmap.hash-key-beta)]
-    [missing : hashmap.HashNestedKey (hashmap.hash-key-missing)]
+    [alpha : AggregateHashNestedKey (aggregate-hash-key-alpha)]
+    [alpha-copy : AggregateHashNestedKey (aggregate-hash-key-alpha-copy)]
+    [beta : AggregateHashNestedKey (aggregate-hash-key-beta)]
+    [missing : AggregateHashNestedKey (aggregate-hash-key-missing)]
     [m : map_nested_i64.Map (map_nested_i64.with-capacity 2)]
     (test.assert-i64-eq (map_nested_i64.len (& m)) 0 "fresh aggregate-key len")
     (test.assert-true
       (map_nested_i64.is-empty? (& m))
       "fresh aggregate-key empty")
     (map_nested_i64.insert! m alpha 10)
-    (map_nested_i64.insert! m (hashmap.clone-hash-nested-key (& beta)) 20)
+    (map_nested_i64.insert! m (clone-aggregate-hash-nested-key (& beta)) 20)
     (test.assert-i64-eq (map_nested_i64.len (& m)) 2 "aggregate-key insert len")
     (test.assert-i64-eq
       (map_nested_i64.lookup-value-or
         (map_nested_i64.get
           (& m)
-          (hashmap.clone-hash-nested-key (& alpha-copy)))
+          (clone-aggregate-hash-nested-key (& alpha-copy)))
         -1)
       10
       "aggregate-key owned get by equal copy")
@@ -69,17 +141,19 @@
       (map_nested_i64.borrowed-value-found?
         (map_nested_i64.get-value-borrowed
           (& m)
-          (hashmap.clone-hash-nested-key (& beta))))
+          (clone-aggregate-hash-nested-key (& beta))))
       "aggregate-key borrowed value get")
     (test.assert-false
       (map_nested_i64.contains? (& m) missing)
       "aggregate-key missing absent")
     (test.assert-true
       (map_nested_i64.remove-ok?
-        (map_nested_i64.remove! m (hashmap.clone-hash-nested-key (& beta))))
+        (map_nested_i64.remove! m (clone-aggregate-hash-nested-key (& beta))))
       "aggregate-key remove")
     (test.assert-false
-      (map_nested_i64.contains? (& m) (hashmap.clone-hash-nested-key (& beta)))
+      (map_nested_i64.contains?
+        (& m)
+        (clone-aggregate-hash-nested-key (& beta)))
       "aggregate-key removed absent")
     (match (map_nested_i64.entry-or-insert! m beta 22)
       [(EntryOrInsertInserted value)
@@ -105,25 +179,25 @@
   hashmap-macro-aggregate-struct-value-basic-operations
   (let
     [m : map_string_payload.Map (map_string_payload.with-capacity 2)]
-    (map_string_payload.insert! m "alpha" (hashmap.HashPayload 3 4))
-    (map_string_payload.insert! m "beta" (hashmap.HashPayload 5 6))
+    (map_string_payload.insert! m "alpha" (AggregateHashPayload 3 4))
+    (map_string_payload.insert! m "beta" (AggregateHashPayload 5 6))
     (test.assert-i64-eq
-      (hashmap.hash-payload-score
+      (aggregate-hash-payload-score
         (map_string_payload.lookup-value-or
           (map_string_payload.get (& m) "alpha")
-          (hashmap.HashPayload 0 0)))
+          (AggregateHashPayload 0 0)))
       7
       "aggregate struct value owned get")
     (test.assert-true
       (map_string_payload.borrowed-value-found?
         (map_string_payload.get-value-borrowed (& m) "beta"))
       "aggregate struct value borrowed get")
-    (map_string_payload.insert-or-update! m "alpha" (hashmap.HashPayload 20 1))
+    (map_string_payload.insert-or-update! m "alpha" (AggregateHashPayload 20 1))
     (test.assert-i64-eq
-      (hashmap.hash-payload-score
+      (aggregate-hash-payload-score
         (map_string_payload.lookup-value-or
           (map_string_payload.get (& m) "alpha")
-          (hashmap.HashPayload 0 0)))
+          (AggregateHashPayload 0 0)))
       21
       "aggregate struct value update")
     (test.assert-true
@@ -132,10 +206,10 @@
     (match (map_string_payload.entry-or-insert!
       m
       "beta"
-      (hashmap.HashPayload 8 9))
+      (AggregateHashPayload 8 9))
       [(EntryOrInsertInserted value)
         (test.assert-i64-eq
-          (hashmap.hash-payload-score value)
+          (aggregate-hash-payload-score value)
           17
           "aggregate struct value entry inserted")]
       [(EntryOrInsertFound _)
@@ -144,10 +218,10 @@
       [cursor : i64 (map_string_payload.next-occupied (& m) 0)]
       (test.assert-true
         (>
-          (hashmap.hash-payload-score
+          (aggregate-hash-payload-score
             (map_string_payload.entry-value-or
               (map_string_payload.entry-at (& m) cursor)
-              (hashmap.HashPayload 0 0)))
+              (AggregateHashPayload 0 0)))
           0)
         "aggregate struct value entry cursor returns a value"))))
 
@@ -155,34 +229,34 @@
   hashmap-macro-aggregate-enum-value-basic-operations
   (let
     [m : map_i64_state.Map (map_i64_state.with-capacity 2)]
-    (map_i64_state.insert! m 1 (hashmap.HashReady 10))
-    (map_i64_state.insert! m 2 (hashmap.HashPaused 3))
+    (map_i64_state.insert! m 1 (AggregateHashReady 10))
+    (map_i64_state.insert! m 2 (AggregateHashPaused 3))
     (test.assert-i64-eq
-      (hashmap.hash-state-score
+      (aggregate-hash-state-score
         (map_i64_state.lookup-value-or
           (map_i64_state.get (& m) 1)
-          (hashmap.HashFailed)))
+          (AggregateHashFailed)))
       10
       "aggregate enum value owned get")
     (test.assert-true
       (map_i64_state.borrowed-value-found?
         (map_i64_state.get-value-borrowed (& m) 2))
       "aggregate enum value borrowed get")
-    (map_i64_state.insert-or-update! m 1 (hashmap.HashPaused 7))
+    (map_i64_state.insert-or-update! m 1 (AggregateHashPaused 7))
     (test.assert-i64-eq
-      (hashmap.hash-state-score
+      (aggregate-hash-state-score
         (map_i64_state.lookup-value-or
           (map_i64_state.get (& m) 1)
-          (hashmap.HashFailed)))
+          (AggregateHashFailed)))
       -7
       "aggregate enum value update")
     (test.assert-true
       (map_i64_state.remove-ok? (map_i64_state.remove! m 2))
       "aggregate enum value remove")
-    (match (map_i64_state.entry-or-insert! m 2 (hashmap.HashReady 22))
+    (match (map_i64_state.entry-or-insert! m 2 (AggregateHashReady 22))
       [(EntryOrInsertInserted value)
         (test.assert-i64-eq
-          (hashmap.hash-state-score value)
+          (aggregate-hash-state-score value)
           22
           "aggregate enum value entry inserted")]
       [(EntryOrInsertFound _)
@@ -191,10 +265,10 @@
       [cursor : i64 (map_i64_state.next-occupied (& m) 0)]
       (test.assert-true
         (>=
-          (hashmap.hash-state-score
+          (aggregate-hash-state-score
             (map_i64_state.entry-value-or
               (map_i64_state.entry-at (& m) cursor)
-              (hashmap.HashFailed)))
+              (AggregateHashFailed)))
           -7)
         "aggregate enum value entry cursor returns a value"))))
 

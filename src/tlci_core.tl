@@ -2142,7 +2142,11 @@
       [(string.eq abi "") "tlci metadata: specialization ABI must not be empty"]
       [(and
           (string.eq abi "spmd-call-v1")
-          (not (or (string.eq backend "scalar") (string.eq backend "avx512"))))
+          (not
+            (or
+              (string.eq backend "scalar")
+              (string.eq backend "sse2")
+              (string.eq backend "avx512"))))
         (str_cat.str-cat
           "tlci metadata: unsupported backend `"
           backend

@@ -2866,9 +2866,6 @@
           backend-state
           assignments
           all))]
-    [cands : (__tl_dyn-array i64)
-      (be_state.compiler-backend-i64-array-shared-view
-        (& be_operand.compiler-backend-scavenge-candidate-pool))]
     (compiler-backend-phi-temp-pick-reg-iter
       function-state
       occupied-mask
@@ -2876,8 +2873,8 @@
       (be_state.compiler-backend-function-scratch-i64
         function-state
         be_state.compiler-backend-scratch-i64-scavenge-plan-reg-mask)
-      cands
-      (array-length cands))))
+      (& be_operand.compiler-backend-scavenge-candidate-pool)
+      (array-length be_operand.compiler-backend-scavenge-candidate-pool))))
 
 (define (compiler-backend-emit-arg-move-list
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -5720,9 +5717,6 @@
       (be_operand.compiler-backend-scavenge-occupied-mask-at-point
         function-state
         point)]
-    [cands : (__tl_dyn-array i64)
-      (be_state.compiler-backend-i64-array-shared-view
-        (& be_operand.compiler-backend-scavenge-candidate-pool))]
     [reg-id : i64
       (compiler-backend-phi-temp-pick-reg-iter
         function-state
@@ -5731,8 +5725,8 @@
         (be_state.compiler-backend-function-scratch-i64
           function-state
           be_state.compiler-backend-scratch-i64-scavenge-plan-reg-mask)
-        cands
-        (array-length cands))]
+        (& be_operand.compiler-backend-scavenge-candidate-pool)
+        (array-length be_operand.compiler-backend-scavenge-candidate-pool))]
     [reg : String (compiler_abi.compiler-abi-register-spelling reg-id)]
     reg))
 
@@ -6976,6 +6970,24 @@
 ;; (`compiler-backend-cold-plan`) moves it at render time and inverts the jump,
 ;; and refuses whenever the text no longer has the shape above. Full-speed
 ;; builds only: -O1 and -Os never name a cold edge and stay byte-identical.
+(define (compiler-backend-guard-block-label? [label : i64]) : bool
+  (let
+    [text : String (compiler_ir_types.compiler-ir-label-text label)]
+    (or
+      (string.contains (& text) "__bce_guard")
+      (string.contains (& text) "__unroll_guard")
+      (string.contains (& text) "__unroll2_guard"))))
+
+(define (compiler-backend-guard-fast-target-label? [label : i64]) : bool
+  (let
+    [text : String (compiler_ir_types.compiler-ir-label-text label)]
+    (or
+      (string.contains (& text) "__bool_and.")
+      (string.contains (& text) "__bce_fast")
+      (string.contains (& text) "__unroll_body")
+      (string.contains (& text) "__unroll2_0")
+      (string.contains (& text) "__bce_guard_phi"))))
+
 (define (compiler-backend-branch-cold-edge-side
   [backend-state : be_state.CompilerBackendState]
   [current-label : i64]
@@ -6984,49 +6996,83 @@
   [true-copies : (& true-copies str)]
   [false-copies : (& false-copies str)]
   [fallthrough : be_state.CompilerBackendMaybeLabel]) : i64
-  (let
-    [true-cold? : bool (string.eq false-copies "")]
-    [cold-label : i64
-      (if true-cold?
-        true-label
-        false-label)]
-    [hot-label : i64
-      (if true-cold?
-        false-label
-        true-label)]
-    [function-state : be_state.CompilerBackendFunctionState
-      (be_state.compiler-backend-state-function-state backend-state)]
-    (if (and
+  (if (not
+    (and
       (be_state.compiler-backend-state-scalar-registers-enabled? backend-state)
-      (not (be_state.compiler-backend-state-optimize-for-size? backend-state))
-      (if true-cold?
-        (not (string.eq true-copies ""))
-        (string.eq true-copies ""))
-      (be_scalar.compiler-backend-jump-target-is-fallthrough?
-        (be_scalar.compiler-backend-jump-resolve-target
-          backend-state
-          hot-label
-          fallthrough)
-        fallthrough)
-      (not
+      (not (be_state.compiler-backend-state-optimize-for-size? backend-state))))
+    0
+    (let
+      [true-cold? : bool (string.eq false-copies "")]
+      [cold-label : i64
+        (if true-cold?
+          true-label
+          false-label)]
+      [hot-label : i64
+        (if true-cold?
+          false-label
+          true-label)]
+      [function-state : be_state.CompilerBackendFunctionState
+        (be_state.compiler-backend-state-function-state backend-state)]
+      (if (and
+        (if true-cold?
+          (not (string.eq true-copies ""))
+          (string.eq true-copies ""))
         (be_scalar.compiler-backend-jump-target-is-fallthrough?
           (be_scalar.compiler-backend-jump-resolve-target
             backend-state
-            cold-label
+            hot-label
             fallthrough)
-          fallthrough))
-      (be_state.compiler-backend-function-loop-block?
-        function-state
-        current-label)
-      (be_state.compiler-backend-function-loop-block? function-state hot-label)
-      (not
+          fallthrough)
+        (not
+          (be_scalar.compiler-backend-jump-target-is-fallthrough?
+            (be_scalar.compiler-backend-jump-resolve-target
+              backend-state
+              cold-label
+              fallthrough)
+            fallthrough))
         (be_state.compiler-backend-function-loop-block?
           function-state
-          cold-label)))
-      (if true-cold?
-        1
-        2)
-      0)))
+          current-label)
+        (be_state.compiler-backend-function-loop-block?
+          function-state
+          hot-label)
+        (not
+          (be_state.compiler-backend-function-loop-block?
+            function-state
+            cold-label)))
+        (if true-cold?
+          1
+          2)
+        ;; Speculative guard blocks (`__bce_guard`, `__unroll_guard`,
+        ;; `__unroll2_guard`, plus their `__bool_and.*` chain): the false arm
+        ;; targets the fallback loop while the true arm falls through into the
+        ;; next conjunct or fast loop. Both Shape 1 (`true-copies == ""`) and
+        ;; Shape 2 (both non-empty) name the false edge `_branch_cold_false` so
+        ;; COLD-1 moves it out of line.
+        (let
+          [resolved-true : i64
+            (be_scalar.compiler-backend-jump-resolve-target
+              backend-state
+              true-label
+              fallthrough)]
+          (if (and
+            (not (string.eq false-copies ""))
+            (be_scalar.compiler-backend-jump-target-is-fallthrough?
+              resolved-true
+              fallthrough)
+            (not
+              (be_scalar.compiler-backend-jump-target-is-fallthrough?
+                (be_scalar.compiler-backend-jump-resolve-target
+                  backend-state
+                  false-label
+                  fallthrough)
+                fallthrough))
+            (compiler-backend-guard-block-label? current-label)
+            (or
+              (compiler-backend-guard-fast-target-label? true-label)
+              (compiler-backend-guard-fast-target-label? resolved-true)))
+            2
+            0))))))
 
 ;; `edge-next` is what physically follows this edge block: the other edge block
 ;; when one is still to come, else the next IR block. It lets an edge block
@@ -8463,26 +8509,37 @@
             assignments
             dst
             src
-            (if (be_state.compiler-backend-mode-avx2? mode)
-              "ymm"
-              "zmm")
+            (cond
+              [(be_state.compiler-backend-mode-avx2? mode) "ymm"]
+              [(be_state.compiler-backend-mode-sse2? mode) "xmm"]
+              [else "zmm"])
             elem-ty
             backend-state)]
         [(Mask lanes)
-          (if (be_state.compiler-backend-mode-avx2? mode)
-            (be_simd.compiler-backend-emit-vector-copy
-              assignments
-              dst
-              src
-              "ymm"
-              (Bool)
-              backend-state)
-            (be_simd.compiler-backend-emit-avx512-mask-copy
-              assignments
-              dst
-              src
-              lanes
-              backend-state))]))))
+          (cond
+            [(be_state.compiler-backend-mode-avx2? mode)
+              (be_simd.compiler-backend-emit-vector-copy
+                assignments
+                dst
+                src
+                "ymm"
+                (Bool)
+                backend-state)]
+            [(be_state.compiler-backend-mode-sse2? mode)
+              (be_simd.compiler-backend-emit-vector-copy
+                assignments
+                dst
+                src
+                "xmm"
+                (Bool)
+                backend-state)]
+            [else
+              (be_simd.compiler-backend-emit-avx512-mask-copy
+                assignments
+                dst
+                src
+                lanes
+                backend-state)])]))))
 
 (define (compiler-backend-emit-mov
   [type-segment-bases : i64]
@@ -9686,6 +9743,7 @@
       (compiler-backend-spmd-call-class-count args 0 true))))
 
 (define (compiler-backend-spmd-avx2-save-value
+  [sse2? : bool]
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
@@ -9695,21 +9753,39 @@
   [offset : i64]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
-  (if (if mask?
-    (be_operand.compiler-backend-avx2-mask-shape-ok? lanes)
-    (be_operand.compiler-backend-avx2-shape-ok? elem-ty lanes))
+  (if (if sse2?
+    (if mask?
+      (be_operand.compiler-backend-sse2-mask-shape-ok? lanes)
+      (be_operand.compiler-backend-sse2-shape-ok? elem-ty lanes))
+    (if mask?
+      (be_operand.compiler-backend-avx2-mask-shape-ok? lanes)
+      (be_operand.compiler-backend-avx2-shape-ok? elem-ty lanes)))
     (let
       [storage-ty : compiler_ast_types.AstType
         (if mask?
           (I8)
           elem-ty)]
+      [width : String
+        (if sse2?
+          "xmm"
+          "ymm")]
+      [scratch : String
+        (if sse2?
+          "%xmm14"
+          "%ymm14")]
+      [move-op : String
+        (if sse2?
+          "    movdqu "
+          "    vmovdqu ")]
       (match (be_operand.compiler-backend-vector-register-use
         assignments
         value
-        "private AVX2 SPMD call argument"
-        "ymm"
+        (if sse2?
+          "private SSE2 SPMD call argument"
+          "private AVX2 SPMD call argument")
+        width
         storage-ty
-        "%ymm14"
+        scratch
         backend-state)
         [(Ok use)
           (match use
@@ -9717,22 +9793,31 @@
               (Ok
                 (str_cat.str-cat
                   load-asm
-                  "    vmovdqu "
+                  move-op
                   src
                   ", "
                   (string.int->string offset)
                   "(%rsp)\n"))])]
         [(Err message)
           (be_state.compiler-backend-instr-error instr-diag message)]))
-    (be_operand.compiler-backend-avx2-shape-diagnostic
-      type-segment-bases
-      instr-diag
-      (if mask?
-        (Bool)
-        elem-ty)
-      lanes)))
+    (if sse2?
+      (be_operand.compiler-backend-sse2-shape-diagnostic
+        type-segment-bases
+        instr-diag
+        (if mask?
+          (Bool)
+          elem-ty)
+        lanes)
+      (be_operand.compiler-backend-avx2-shape-diagnostic
+        type-segment-bases
+        instr-diag
+        (if mask?
+          (Bool)
+          elem-ty)
+        lanes))))
 
 (define (compiler-backend-spmd-avx2-save-args
+  [sse2? : bool]
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [args : compiler_ir_types.CompilerIrSpmdCallArgSeq]
@@ -9748,6 +9833,7 @@
       [(Arg class value ty)
         (if (compiler-backend-spmd-class-uniform? class)
           (compiler-backend-spmd-avx2-save-args
+            sse2?
             type-segment-bases
             assignments
             args
@@ -9759,21 +9845,27 @@
             backend-state)
           (let
             [mask? : bool (compiler-backend-spmd-class-mask? class)]
+            [stride : i64
+              (if sse2?
+                16
+                32)]
             [head
               (try
                 (compiler-backend-spmd-avx2-save-value
+                  sse2?
                   type-segment-bases
                   assignments
                   value
                   ty
                   mask?
                   lanes
-                  (+ base-offset (* 32 special-index))
+                  (+ base-offset (* stride special-index))
                   (be_state.compiler-backend-global-shared-view instr-diag)
                   backend-state))]
             [tail
               (try
                 (compiler-backend-spmd-avx2-save-args
+                  sse2?
                   type-segment-bases
                   assignments
                   args
@@ -9786,6 +9878,7 @@
             (Ok (str_cat.str-cat head tail))))])))
 
 (define (compiler-backend-spmd-avx2-result-store
+  [sse2? : bool]
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [result : compiler_ir_types.CompilerIrSpmdCallResult]
@@ -9809,23 +9902,41 @@
             (if (compiler-backend-spmd-class-mask? class)
               (I8)
               ty)]
+          [width : String
+            (if sse2?
+              "xmm"
+              "ymm")]
+          [ret-reg : String
+            (if sse2?
+              "%xmm0"
+              "%ymm0")]
+          [scratch : String
+            (if sse2?
+              "%xmm14"
+              "%ymm14")]
+          [move-op : String
+            (if sse2?
+              "    movdqu "
+              "    vmovdqu ")]
           (match (be_simd.compiler-backend-vector-dst-reg
             assignments
             dst
-            "private AVX2 SPMD call result"
-            "ymm"
-            "%ymm14"
+            (if sse2?
+              "private SSE2 SPMD call result"
+              "private AVX2 SPMD call result")
+            (string.copy (& width))
+            scratch
             backend-state)
             [(Ok home)
               (Ok
                 (str_cat.str-cat
-                  (if (string.eq home "%ymm0")
+                  (if (string.eq home ret-reg)
                     ""
-                    (str_cat.str-cat "    vmovdqu %ymm0, " home "\n" ""))
+                    (str_cat.str-cat move-op ret-reg ", " home "\n"))
                   (be_simd.compiler-backend-vector-store-dst
                     assignments
                     dst
-                    "ymm"
+                    width
                     storage-ty
                     home
                     backend-state)))]
@@ -10273,6 +10384,7 @@
         result-asm))))
 
 (define (compiler-backend-emit-spmd-call-avx2
+  [sse2? : bool]
   [type-segment-bases : i64]
   [target : be_state.CompilerBackendTarget]
   [name : i64]
@@ -10310,9 +10422,13 @@
         (be_state.compiler-backend-global-shared-view uniform-types)
         false
         program-index)]
+    [stride : i64
+      (if sse2?
+        16
+        32)]
     [special-space : i64
       (*
-        32
+        stride
         (compiler-backend-spmd-avx2-special-count
           (be_state.compiler-backend-global-shared-view args)))]
     [total-space : i64 (+ call-space special-space)]
@@ -10338,6 +10454,7 @@
     [active-save
       (try
         (compiler-backend-spmd-avx2-save-value
+          sse2?
           type-segment-bases
           assignments
           active-mask
@@ -10350,6 +10467,7 @@
     [arg-saves
       (try
         (compiler-backend-spmd-avx2-save-args
+          sse2?
           type-segment-bases
           assignments
           args
@@ -10362,6 +10480,7 @@
     [result-asm
       (try
         (compiler-backend-spmd-avx2-result-store
+          sse2?
           type-segment-bases
           assignments
           result
@@ -10430,6 +10549,23 @@
         backend-state)]
     [(Avx2)
       (compiler-backend-emit-spmd-call-avx2
+        false
+        type-segment-bases
+        target
+        name
+        lanes
+        active-mask
+        args
+        result
+        assignments
+        plan
+        program-index
+        vars
+        instr-diag
+        backend-state)]
+    [(Sse2)
+      (compiler-backend-emit-spmd-call-avx2
+        true
         type-segment-bases
         target
         name
@@ -11095,41 +11231,89 @@
     program-index
     vars))
 
-;; The case address for INDEX-REG: TABLE-REG holds the rip-relative table base
-;; and TARGET-REG the sign-extended 4-byte difference, or, for a non-PIC ELF
-;; image, TARGET-REG alone receives the entry's 32-bit absolute address.
+;; The case address for INDEX-REG: for `-Os` compact tables, load a signed
+;; 2-byte offset relative to the intra-function `.L_*_switch_base` label and
+;; add the RIP-relative base address; otherwise TABLE-REG holds the rip-relative
+;; table base and TARGET-REG the sign-extended 4-byte difference, or, for a
+;; non-PIC ELF image, TARGET-REG alone receives the 32-bit absolute address.
 (define (compiler-backend-emit-switch-table-lookup
   [function : String]
   [current-label : i64]
   [index-reg : String]
   [table-reg : String]
   [target-reg : String]
-  [absolute : bool]) : String
-  (if absolute
-    (str_cat.str-cat
-      "    movl "
-      (be_facts.compiler-backend-switch-table-label function current-label)
-      "(,"
-      index-reg
-      ",4), "
-      (be_operand.compiler-backend-reg-part target-reg 4)
-      "\n")
-    (str_cat.str-cat
-      "    leaq "
-      (be_facts.compiler-backend-switch-table-label function current-label)
-      "(%rip), "
-      table-reg
-      "\n    movslq ("
-      table-reg
-      ","
-      index-reg
-      ",4), "
-      target-reg
-      "\n    addq "
-      table-reg
-      ", "
-      target-reg
-      "\n")))
+  [absolute : bool]
+  [compact : bool]) : String
+  (cond
+    [compact
+      (let
+        [table-label : String
+          (be_facts.compiler-backend-switch-table-label
+            (string.copy (& function))
+            current-label)]
+        [base-label : String
+          (be_facts.compiler-backend-switch-base-label function current-label)]
+        [load-offset : String
+          (if absolute
+            (str_cat.str-cat
+              "    movswq "
+              table-label
+              "(,"
+              index-reg
+              ",2), "
+              (string.copy (& target-reg))
+              "\n")
+            (str_cat.str-cat
+              "    leaq "
+              table-label
+              "(%rip), "
+              (string.copy (& table-reg))
+              "\n    movswq ("
+              (string.copy (& table-reg))
+              ","
+              index-reg
+              ",2), "
+              (string.copy (& target-reg))
+              "\n"))]
+        [add-base : String
+          (str_cat.str-cat
+            (string.copy (& base-label))
+            ":\n    leaq "
+            base-label
+            "(%rip), "
+            (string.copy (& table-reg))
+            "\n    addq "
+            table-reg
+            ", "
+            target-reg
+            "\n")]
+        (str_cat.str-cat load-offset add-base))]
+    [absolute
+      (str_cat.str-cat
+        "    movl "
+        (be_facts.compiler-backend-switch-table-label function current-label)
+        "(,"
+        index-reg
+        ",4), "
+        (be_operand.compiler-backend-reg-part target-reg 4)
+        "\n")]
+    [else
+      (str_cat.str-cat
+        "    leaq "
+        (be_facts.compiler-backend-switch-table-label function current-label)
+        "(%rip), "
+        table-reg
+        "\n    movslq ("
+        table-reg
+        ","
+        index-reg
+        ",4), "
+        target-reg
+        "\n    addq "
+        table-reg
+        ", "
+        target-reg
+        "\n")]))
 
 ;; Sound emergency-scavenge dispatch (GAP2b-v2). When the register pool is
 ;; saturated at a switch dispatch, one or both of the index / jump-table-base
@@ -11162,6 +11346,7 @@
   [table-reg : String]
   [target-reg : String]
   [absolute : bool]
+  [compact : bool]
   [load-index : String]
   [backend-state : be_state.CompilerBackendState]) : String
   (let
@@ -11262,7 +11447,8 @@
         index-reg
         table-reg
         target-reg
-        absolute)
+        absolute
+        compact)
       (if (or total-switch (not shares-index))
         ""
         (str_cat.str-cat
@@ -11326,14 +11512,19 @@
         index-home)]
     [absolute : bool
       (be_state.compiler-backend-state-absolute-switch-ok? backend-state)]
+    [compact : bool
+      (be_state.compiler-backend-function-scratch-bool?
+        (be_state.compiler-backend-state-function-state backend-state)
+        be_state.compiler-backend-scratch-bool-compact-switch)]
+    [use-absolute : bool (and absolute (not compact))]
     [table-exclude : (__tl_dyn-array String)
       (be_operand.compiler-backend-one-exclude
         (be_state.compiler-backend-global-shared-view index-reg))]
-    ;; A relative entry is an offset from the table base, so that code model
-    ;; always needs a base register. A 32-bit absolute entry is the address
-    ;; itself, so the non-PIC form addresses the table directly.
+    ;; A relative entry is an offset from the table or intra-function base, so
+    ;; that form always needs a base register. A 32-bit absolute entry is the
+    ;; address itself, so the non-PIC form addresses the table directly.
     [table-reg : String
-      (if absolute
+      (if use-absolute
         ""
         (be_operand.compiler-backend-scavenge-reg-here
           table-exclude
@@ -11350,7 +11541,7 @@
         (be_state.compiler-backend-global-shared-view table-reg))]
     [target-exclude-n : i64 2]
     [target-reg : String
-      (if (and (not absolute) need-index-scratch)
+      (if (and (not use-absolute) need-index-scratch)
         (string.copy (& index-reg))
         (be_operand.compiler-backend-scavenge-reg-here
           target-exclude
@@ -11384,6 +11575,7 @@
           table-reg
           target-reg
           absolute
+          compact
           load-index
           backend-state)
         (compiler-backend-emit-switch-dispatch-direct
@@ -11397,6 +11589,7 @@
           table-reg
           target-reg
           absolute
+          compact
           load-index)))))
 
 ;; The plain dispatch: the final target block address is computed into a scratch
@@ -11413,6 +11606,7 @@
   [table-reg : String]
   [target-reg : String]
   [absolute : bool]
+  [compact : bool]
   [load-index : String]) : String
   (str_cat.str-cat
     load-index
@@ -11443,7 +11637,8 @@
       index-reg
       table-reg
       target-reg
-      absolute)
+      absolute
+      compact)
     "    jmp *"
     target-reg
     "\n"))

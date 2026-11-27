@@ -126,17 +126,17 @@ step compile-unknown-backend-mode
 run compile "{{work}}/main42.tl" --backend-mode neon
 exit nonzero
 stdout empty
-stderr contains invalid --backend-mode 'neon'; expected scalar, avx2, or avx512
+stderr contains invalid --backend-mode 'neon'; expected scalar, sse2, avx2, or avx512
 step build-unknown-backend-mode
 run build "{{work}}/main42.tl" --backend-mode neon
 exit nonzero
 stdout empty
-stderr contains invalid --backend-mode 'neon'; expected scalar, avx2, or avx512
+stderr contains invalid --backend-mode 'neon'; expected scalar, sse2, avx2, or avx512
 step run-unknown-backend-mode
 run run "{{work}}/main42.tl" --backend-mode neon
 exit nonzero
 stdout empty
-stderr contains invalid --backend-mode 'neon'; expected scalar, avx2, or avx512
+stderr contains invalid --backend-mode 'neon'; expected scalar, sse2, avx2, or avx512
 
 case check-unsupported-type-kind
 file main.tl
@@ -985,10 +985,11 @@ file worker/src/lib.tl
     [y : i64 (* x 2)]
     (+ y x)))
 end-file
-# A folded `main` returns its i64 constant through a zero-extending 32-bit
-# move on both hosts.
+# A folded `main` returns its i64 constant through `movq $45, %rax` on Windows's
+# direct COFF object route (rendered by compiler_object_asm) and through a
+# zero-extending 32-bit `movl $45, %eax` on Linux's assembly route.
 if-host windows
-sh CCV_o2a='    movl $45, %eax' CCV_o2b='    leaq (%rcx,%rdx), %rax' CCV_o0='    imulq 24(%rsp), %r8'
+sh CCV_o2a='    movq $45, %rax' CCV_o2b='    leaq (%rcx,%rdx), %rax' CCV_o0='    imulq 24(%rsp), %r8'
 else
 sh CCV_o2a='    movl $45, %eax' CCV_o2b='    leaq (%rdi,%rsi), %rax' CCV_o0='    imulq -24(%rsp), %r8'
 end-if
@@ -1109,7 +1110,7 @@ stderr count = 1 .
 run {{each}} "{{work}}/main42.tl" --backend-mode neon
 exit nonzero
 stdout empty
-stderr match ^invalid --backend-mode 'neon'; expected scalar, avx2, or avx512$
+stderr match ^invalid --backend-mode 'neon'; expected scalar, sse2, avx2, or avx512$
 stderr count = 1 .
 run {{each}} "{{work}}/main42.tl" --opt-level 3
 exit nonzero
@@ -1157,7 +1158,7 @@ stderr match ^invalid --target 'bad'; expected linux-x86_64 or windows-x86_64$
 stderr count = 1 .
 run {{each}} --backend-mode bad
 exit nonzero
-stderr match ^invalid --backend-mode 'bad'; expected scalar, avx2, or avx512$
+stderr match ^invalid --backend-mode 'bad'; expected scalar, sse2, avx2, or avx512$
 stderr count = 1 .
 run {{each}} --opt-level bad
 exit nonzero
@@ -1207,7 +1208,7 @@ stderr match ^invalid --target 'bad'; expected linux-x86_64 or windows-x86_64$
 stderr count = 1 .
 run {{each}} --batch unused-list --backend-mode bad
 exit nonzero
-stderr match ^invalid --backend-mode 'bad'; expected scalar, avx2, or avx512$
+stderr match ^invalid --backend-mode 'bad'; expected scalar, sse2, avx2, or avx512$
 stderr count = 1 .
 run {{each}} --batch unused-list --opt-level 4
 exit nonzero

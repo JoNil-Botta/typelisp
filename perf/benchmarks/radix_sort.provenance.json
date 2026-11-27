@@ -1,0 +1,5 @@
+{
+  "schema": 1,
+  "status": "unknown",
+  "reason": "local Ubuntu 24.04 reproduction (typelisp-c16-ir-pinned); awaiting hosted CI provenance"
+}

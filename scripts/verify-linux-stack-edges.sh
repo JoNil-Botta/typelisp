@@ -205,7 +205,11 @@ for route in initializer object-small-o2; do
         bounded "$route-failure-$kind" 512 gdb -q -nx -batch -ex "set \$kind = $kind" \
             -x "$WORK/main-failure.gdb" --args "$WORK/$route" > "$log" 2>&1
         grep -F "INJECTED=$kind" "$log" >/dev/null || fail "main failure not injected"
-        grep -F 'typelisp runtime: main-stack reservation failed' "$log" >/dev/null || fail "main diagnostic missing"
+        case "$route" in
+            initializer) expected_diag='tl: main-stack reservation failed' ;;
+            *) expected_diag='typelisp runtime: main-stack reservation failed' ;;
+        esac
+        grep -F "$expected_diag" "$log" >/dev/null || fail "main diagnostic missing"
         grep -F 'exited with code 0206' "$log" >/dev/null || fail "main failure did not exit 134"
         if grep -F USER-INIT "$log" >/dev/null; then fail "initializer ran before protection"; fi
         if [ "$kind" -eq 1 ]; then

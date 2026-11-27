@@ -230,7 +230,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          tag="stage0-$(date -u +%Y%m%d-%H%M%S)-r${{ github.run_id }}"
           notes="$(cat <<EOF
           Self-hosted cli.tl stage0 compiler built from commit ${{ github.sha }}.
 
@@ -246,19 +245,137 @@ jobs:
           EOF
           )"
 
-          gh release create "$tag" \
-            --title "Stage0 $tag" \
-            --notes "$notes" \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "${{ github.sha }}" \
-            stage0-artifacts/typelisp-stage0-linux \
-            stage0-artifacts/typelisp-stage0-windows.exe \
-            stage0-artifacts/typelisp-stdlib-x86_64-unknown-linux-gnu.tli \
-            stage0-artifacts/libstdlib-x86_64-unknown-linux-gnu.a \
-            stage0-artifacts/typelisp-stdlib-x86_64-pc-windows-msvc.tli \
-            stage0-artifacts/libstdlib-x86_64-pc-windows-msvc.a \
-            stage0-artifacts/typelisp.vsix \
-            stage0-artifacts/SHA256SUMS
+          used_tags=""
+          tag=""
+          next_tag() {
+            local candidate
+            while :; do
+              candidate="stage0-$(date -u +%Y%m%d-%H%M%S)-r${{ github.run_id }}"
+              case " $used_tags " in
+                *" $candidate "*) sleep 1 ;;
+                *)
+                  used_tags="$used_tags $candidate"
+                  tag="$candidate"
+                  return 0
+                  ;;
+              esac
+            done
+          }
+
+          resolve_draft_id() {
+            local target_tag="$1"
+            local target_url="$2"
+            local page_json ids count
+            page_json=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100&page=1") || return 1
+            ids=$(printf '%s' "$page_json" |
+              jq -r --arg tag "$target_tag" --arg url "$target_url" '
+                .[] | select(.tag_name == $tag and .draft == true and ($url == "" or .html_url == $url)) | .id
+              ') || return 1
+            if [ -z "$ids" ]; then
+              return 1
+            fi
+            count=$(printf '%s\n' "$ids" | wc -l | tr -d ' ')
+            if [ "$count" -ne 1 ]; then
+              echo "[stage0] expected single draft release ID for $target_tag, got: $ids" >&2
+              return 1
+            fi
+            case "$ids" in
+              "" | *[!0-9]*)
+                echo "[stage0] invalid draft release ID for $target_tag: $ids" >&2
+                return 1
+                ;;
+            esac
+            printf '%s\n' "$ids"
+          }
+
+          cleanup_partial_draft() {
+            local target_tag="$1"
+            local target_rid="${2:-}"
+            local draft_ids did
+            if [ -n "$target_rid" ]; then
+              gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$target_rid" --silent 2>/dev/null || true
+            fi
+            gh release delete "$target_tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --yes \
+              --cleanup-tag 2>/dev/null || true
+            draft_ids=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100&page=1" |
+              jq -r --arg tag "$target_tag" '.[] | select(.tag_name == $tag and .draft == true) | .id' 2>/dev/null || true)
+            for did in $draft_ids; do
+              gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$did" --silent 2>/dev/null || true
+            done
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$target_tag" --silent 2>/dev/null || true
+          }
+
+          max_attempts=3
+          attempt=1
+          rid=""
+          while [ "$attempt" -le "$max_attempts" ]; do
+            next_tag
+            if draft_url=$(gh release create "$tag" \
+              --draft \
+              --title "Stage0 $tag" \
+              --notes "$notes" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "${{ github.sha }}" \
+              stage0-artifacts/typelisp-stage0-linux \
+              stage0-artifacts/typelisp-stage0-windows.exe \
+              stage0-artifacts/typelisp-stdlib-x86_64-unknown-linux-gnu.tli \
+              stage0-artifacts/libstdlib-x86_64-unknown-linux-gnu.a \
+              stage0-artifacts/typelisp-stdlib-x86_64-pc-windows-msvc.tli \
+              stage0-artifacts/libstdlib-x86_64-pc-windows-msvc.a \
+              stage0-artifacts/typelisp.vsix \
+              stage0-artifacts/SHA256SUMS); then
+              draft_url=$(printf '%s\n' "$draft_url" | tail -n 1 | tr -d '\r')
+              lookup_attempt=1
+              while [ "$lookup_attempt" -le 3 ]; do
+                if rid=$(resolve_draft_id "$tag" "$draft_url"); then
+                  break
+                fi
+                if [ "$lookup_attempt" -lt 3 ]; then
+                  sleep 2
+                fi
+                lookup_attempt=$((lookup_attempt + 1))
+              done
+              if [ -n "$rid" ]; then
+                echo "[stage0] created draft permanent release $tag (id $rid, $draft_url)"
+                break
+              fi
+              echo "[stage0] created draft permanent release $tag ($draft_url) but could not resolve unique draft ID from page 1 (attempt $attempt/$max_attempts); cleaning partial draft" >&2
+            else
+              echo "[stage0] draft permanent release creation failed for $tag (attempt $attempt/$max_attempts); cleaning partial draft" >&2
+            fi
+            cleanup_partial_draft "$tag"
+            if [ "$attempt" -lt "$max_attempts" ]; then
+              sleep $((attempt * 5))
+            fi
+            attempt=$((attempt + 1))
+          done
+          if [ -z "$rid" ]; then
+            echo "[stage0] failed to create draft permanent release after $max_attempts attempts (last tag: $tag)" >&2
+            exit 1
+          fi
+
+          attempt=1
+          published=false
+          while [ "$attempt" -le "$max_attempts" ]; do
+            if patched_draft=$(gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$rid" \
+              -F draft=false \
+              --jq '.draft') && [ "$patched_draft" = false ]; then
+              published=true
+              break
+            fi
+            echo "[stage0] publishing permanent release $tag (id $rid) failed (attempt $attempt/$max_attempts)" >&2
+            if [ "$attempt" -lt "$max_attempts" ]; then
+              sleep $((attempt * 5))
+            fi
+            attempt=$((attempt + 1))
+          done
+          if [ "$published" != true ]; then
+            echo "[stage0] failed to publish permanent release $tag (id $rid) after $max_attempts attempts; cleaning draft" >&2
+            cleanup_partial_draft "$tag" "$rid"
+            exit 1
+          fi
 
           echo "PERMANENT_TAG=$tag" >> "$GITHUB_ENV"
 

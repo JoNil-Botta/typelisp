@@ -3924,7 +3924,7 @@
               6
               (comptime (size-of (type tli.TliSpmdLetBinding))))]
           [bindings : (__tl_dyn-array tli.TliSpmdLetBinding)
-            (__tl_make-array tli.TliSpmdLetBinding bcount)]
+            (__tl_make-array tli.TliSpmdLetBinding 0)]
           [i : i64 0]
           (while (and rd.cursor.ok? (< i bcount))
             (let
@@ -3936,8 +3936,8 @@
                   (tli.TliType.Unit))]
               [binit : (Box tli.TliSpmdExpr)
                 (tli-read-spmd-expr-box! rd pool next)]
-              (set!
-                (array-ref bindings i)
+              (__tl_array-push!
+                bindings
                 (tli.TliSpmdLetBinding bname has-ty bty binit)))
             (+= i 1))
           (tli.TliSpmdExpr.Let bindings (tli-read-spmd-expr-box! rd pool next)))]

@@ -1,0 +1,37 @@
+# Guard-block COLD-EDGE out-of-line stubs and redundant movzbl elimination
+# (gate stage2-regalloc-backend-asm-shape-gates):
+# - At -O2, speculative guard blocks (__bce_guard, __unroll_guard,
+#   __unroll2_guard, plus __bool_and.* chains) name their cold false-arm edge
+#   block `<block>_branch_cold_false` and move it past the function's last
+#   block so the fast path falls straight through.
+# - -Os, -O0, and -O1 name no cold edge and stay untouched.
+# - Redundant self-register `movzbl` on Bool returns and after `xorl`/`movl $K`
+#   is eliminated.
+# See tests/integration/c49_guard_cold_edge.tl.
+
+args --stdlib-root {{root}}/stdlib --stdlib-root {{root}}/src
+
+case guard-cold-edge-opt2
+source tests/integration/c49_guard_cold_edge.tl
+target linux-x86_64 windows-x86_64
+opt 2
+in fn _tl_c49_guard_cold_edge_sum_offset
+count = 2 ^[.]L[^ ]*__unroll_guard.*_branch_cold_false:$
+after ^[[:space:]]+jg [.]L[^ ]*__unroll_guard_branch_cold_false$
+next-line ^[.]L[^ ]*__unroll_guard__bool_and[.]0:$
+after ^[[:space:]]+jge [.]L[^ ]*__unroll_guard__bool_and[.]0_branch_cold_false$
+next-line ^[.]L[^ ]*__unroll_body__preheader:$
+
+case guard-cold-edge-off-below-o2
+source tests/integration/c49_guard_cold_edge.tl
+target linux-x86_64 windows-x86_64
+opt s 0 1
+in fn _tl_c49_guard_cold_edge_sum_offset
+not-contains _branch_cold_
+
+case bool-return-no-redundant-movzbl
+source tests/integration/c49_guard_cold_edge.tl
+target linux-x86_64 windows-x86_64
+opt 2
+in fn _tl_c49_guard_cold_edge_all_positive_question
+not-contains movzbl %al, %eax

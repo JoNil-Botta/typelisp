@@ -43,6 +43,39 @@
       " x "
       (compiler_ir_types.compiler-ir-type-name type-segment-bases (& elem-ty)))))
 
+(define (compiler-backend-sse2-shape-ok?
+  [elem-ty : (& elem-ty compiler_ast_types.AstType)]
+  [lanes : i64]) : bool
+  (match elem-ty
+    [(or (I64) (U64) (F64)) (= lanes 2)]
+    [(or (F32) (I32) (U32)) (= lanes 4)]
+    [(or (I16) (U16)) (= lanes 8)]
+    [(or (I8) (U8)) (= lanes 16)]
+    [_ false]))
+
+(define (compiler-backend-sse2-mask-shape-ok? [lanes : i64]) : bool
+  (or (= lanes 2) (= lanes 4) (= lanes 8) (= lanes 16)))
+
+(define (compiler-backend-sse2-shape-diagnostic
+  [type-segment-bases : i64]
+  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
+  [elem-ty : compiler_ast_types.AstType]
+  [lanes : i64]) : be_state.ResultCompilerBackend
+  (be_state.compiler-backend-instr-error
+    instr-diag
+    (str_cat.str-cat
+      "backend: unsupported SSE2 vector shape "
+      (string.int->string lanes)
+      " x "
+      (compiler_ir_types.compiler-ir-type-name type-segment-bases (& elem-ty)))))
+
+(define (compiler-backend-sse2-vector-move
+  [elem-ty : (& elem-ty compiler_ast_types.AstType)]) : String
+  (match elem-ty
+    [(F64) "movupd"]
+    [(F32) "movups"]
+    [_ "movdqu"]))
+
 (define compiler-backend-xmm-family-xmm : (__tl_dyn-array String)
   (__tl_make-array
     "%xmm0"
@@ -455,16 +488,17 @@
     [(or (I8) (U8)) "vmovdqu8"]
     [_ ""]))
 
-;; The shared SIMD emitters take the vector ISA as a CompilerBackendMode: Avx2
-;; works in ymm registers, Avx512 in zmm. A shape that fills a zmm is emitted
-;; with AVX-512; every other shape goes to AVX2, which diagnoses the ones that
-;; fit neither.
+;; The shared SIMD emitters take the vector ISA as a CompilerBackendMode: Sse2
+;; works in xmm registers, Avx2 in ymm, Avx512 in zmm. The 16-, 32-, and 64-byte
+;; shapes are pairwise disjoint, so (elem-ty, lanes) determines the ISA.
 (define (compiler-backend-vector-mode
   [elem-ty : (& elem-ty compiler_ast_types.AstType)]
   [lanes : i64]) : be_state.CompilerBackendMode
   (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
     (Avx512)
-    (Avx2)))
+    (if (compiler-backend-sse2-shape-ok? elem-ty lanes)
+      (Sse2)
+      (Avx2))))
 
 (define (compiler-backend-mode-shape-ok?
   [mode : be_state.CompilerBackendMode]
@@ -472,25 +506,33 @@
   [lanes : i64]) : bool
   (match mode
     [(Avx512) (compiler-backend-avx512-shape-ok? elem-ty lanes)]
+    [(Sse2) (compiler-backend-sse2-shape-ok? elem-ty lanes)]
     [_ (compiler-backend-avx2-shape-ok? elem-ty lanes)]))
 
 (define (compiler-backend-vector-move-for-width
   [width : (& width str)]
   [elem-ty : (& elem-ty compiler_ast_types.AstType)]) : String
-  (if (string.eq width "zmm")
-    (compiler-backend-avx512-vector-move elem-ty)
-    (compiler-backend-avx2-vector-move elem-ty)))
+  (cond
+    [(string.eq width "zmm") (compiler-backend-avx512-vector-move elem-ty)]
+    [(string.eq width "xmm") (compiler-backend-sse2-vector-move elem-ty)]
+    [else (compiler-backend-avx2-vector-move elem-ty)]))
 
 (define (compiler-backend-vector-spill-scratch
   [width : (& width str)]
   [index : i64]) : String
-  (if (string.eq width "zmm")
-    (if (= index 0)
-      "%zmm14"
-      "%zmm15")
-    (if (= index 0)
-      "%ymm14"
-      "%ymm15")))
+  (cond
+    [(string.eq width "zmm")
+      (if (= index 0)
+        "%zmm14"
+        "%zmm15")]
+    [(string.eq width "xmm")
+      (if (= index 0)
+        "%xmm14"
+        "%xmm15")]
+    [else
+      (if (= index 0)
+        "%ymm14"
+        "%ymm15")]))
 
 (define (compiler-backend-vector-reg-lower-ymm [reg : String]) : String
   (compiler-backend-xmm-spelling-family-register reg "ymm"))
@@ -503,9 +545,10 @@
   [role : String]) : String
   (let
     [prefix : String
-      (if (string.eq width "zmm")
-        "backend: unsupported AVX-512 vector "
-        "backend: unsupported AVX2 vector ")]
+      (cond
+        [(string.eq width "zmm") "backend: unsupported AVX-512 vector "]
+        [(string.eq width "xmm") "backend: unsupported SSE2 vector "]
+        [else "backend: unsupported AVX2 vector "])]
     (str_cat.str-cat prefix role)))
 
 (define (compiler-backend-vector-var-stack-operand
@@ -544,6 +587,14 @@
         var
         backend-state)
         [(Some operand)
+          (when
+            (and
+              (string.eq width "xmm")
+              (be_state.compiler-backend-current-fn-win64? backend-state)
+              (or (string.eq scratch "%xmm14") (string.eq scratch "%xmm15")))
+            (compiler-backend-emergency-add!
+              (be_state.compiler-backend-state-function-state backend-state)
+              (string.copy (& scratch))))
           (Ok
             (Use
               (compiler-backend-vector-load-stack-asm
@@ -2473,13 +2524,29 @@
     [(F64) ""]
     [_ (str_cat.str-cat "    vmovq " xmm-reg ", " gp-reg "\n")]))
 
+(define (compiler-backend-sse2-vector-reduce-move-scalar
+  [elem-ty : (& elem-ty compiler_ast_types.AstType)]
+  [xmm-reg : String]
+  [gp-reg : String]) : String
+  (match elem-ty
+    [(or (I32) (U32))
+      (str_cat.str-cat
+        "    movd "
+        xmm-reg
+        ", "
+        (compiler-backend-reg-part gp-reg 4)
+        "\n")]
+    [(F64) ""]
+    [_ (str_cat.str-cat "    movq " xmm-reg ", " gp-reg "\n")]))
+
 (define (compiler-backend-i64-u64-type?
   [ty : (& ty compiler_ast_types.AstType)]) : bool
   (match ty
     [(or (I64) (U64)) true]
     [_ false]))
 
-(define (compiler-backend-emit-vmovq-xmm-to-var
+(define (compiler-backend-emit-movq-xmm-to-var
+  [mnemonic : (& mnemonic str)]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var-id : i64]
   [xmm-reg : String]
@@ -2492,14 +2559,18 @@
       (match location
         [(or (Register home) (RegisterPair home _))
           (str_cat.str-cat
-            "    vmovq "
+            "    "
+            mnemonic
+            " "
             xmm-reg
             ", "
             (compiler_abi.compiler-abi-register-spelling home)
             "\n")]
         [(Spill offset)
           (str_cat.str-cat
-            "    vmovq "
+            "    "
+            mnemonic
+            " "
             xmm-reg
             ", "
             (compiler-backend-frame-offset-with-backend-state
@@ -2511,11 +2582,25 @@
         [(Remat _) ""])]
     [(No)
       (str_cat.str-cat
-        "    vmovq "
+        "    "
+        mnemonic
+        " "
         xmm-reg
         ", "
         (compiler-backend-slot-with-backend-state backend-state var-id)
         "\n")]))
+
+(define (compiler-backend-emit-vmovq-xmm-to-var
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [var-id : i64]
+  [xmm-reg : String]
+  [backend-state : be_state.CompilerBackendState]) : String
+  (compiler-backend-emit-movq-xmm-to-var
+    "vmovq"
+    assignments
+    var-id
+    xmm-reg
+    backend-state))
 
 (define (compiler-backend-vector-reduce-store-scalar
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -2523,34 +2608,46 @@
   [elem-ty : compiler_ast_types.AstType]
   [xmm-reg : String]
   [backend-state : be_state.CompilerBackendState]) : String
-  (if (compiler-backend-i64-u64-type? elem-ty)
-    (compiler-backend-emit-vmovq-xmm-to-var
-      assignments
-      dst
-      xmm-reg
-      backend-state)
-    (if (compiler-backend-float-type? elem-ty)
-      (compiler-backend-emit-store-typed-var
+  (let
+    [sse2? : bool
+      (be_state.compiler-backend-current-mode-sse2?
+        (be_state.compiler-backend-state-function-state backend-state))]
+    (if (compiler-backend-i64-u64-type? elem-ty)
+      (compiler-backend-emit-movq-xmm-to-var
+        (if sse2?
+          "movq"
+          "vmovq")
         assignments
         dst
         xmm-reg
-        elem-ty
         backend-state)
-      (let
-        [no-exclude : (__tl_dyn-array String) (__tl_make-array String 0)]
-        [gp-reg : String
-          (compiler-backend-scavenge-reg dst no-exclude 0 "%r8" backend-state)]
-        (str_cat.str-cat
-          (compiler-backend-avx2-vector-reduce-move-scalar
-            elem-ty
-            xmm-reg
-            (be_state.compiler-backend-global-shared-view gp-reg))
-          (compiler-backend-emit-store-typed-var
-            assignments
-            dst
-            gp-reg
-            elem-ty
-            backend-state))))))
+      (if (compiler-backend-float-type? elem-ty)
+        (compiler-backend-emit-store-typed-var
+          assignments
+          dst
+          xmm-reg
+          elem-ty
+          backend-state)
+        (let
+          [no-exclude : (__tl_dyn-array String) (__tl_make-array String 0)]
+          [gp-reg : String
+            (compiler-backend-scavenge-reg dst no-exclude 0 "%r8" backend-state)]
+          (str_cat.str-cat
+            (if sse2?
+              (compiler-backend-sse2-vector-reduce-move-scalar
+                elem-ty
+                xmm-reg
+                (string.copy (& gp-reg)))
+              (compiler-backend-avx2-vector-reduce-move-scalar
+                elem-ty
+                xmm-reg
+                (be_state.compiler-backend-global-shared-view gp-reg)))
+            (compiler-backend-emit-store-typed-var
+              assignments
+              dst
+              gp-reg
+              elem-ty
+              backend-state)))))))
 
 (define (compiler-backend-avx2-vector-reduce-horizontal-asm
   [op : compiler_ir_types.CompilerIrVectorReduceOp]
@@ -3114,6 +3211,244 @@
           [(Err message)
             (be_state.compiler-backend-instr-error instr-diag message)])))
     (compiler-backend-avx2-shape-diagnostic
+      type-segment-bases
+      instr-diag
+      elem-ty
+      lanes)))
+
+(define (compiler-backend-emit-sse2-vector-reduce
+  [type-segment-bases : i64]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [dst : i64]
+  [op : compiler_ir_types.CompilerIrVectorReduceOp]
+  [src : compiler_ir_types.CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : compiler_ast_types.AstType]
+  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
+  [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
+  (if (compiler-backend-sse2-shape-ok? elem-ty lanes)
+    (match (compiler-backend-vector-register-use
+      assignments
+      src
+      "reduce source"
+      "xmm"
+      elem-ty
+      (compiler-backend-vector-spill-scratch "xmm" 0)
+      backend-state)
+      [(Ok src-use)
+        (match src-use
+          [(Use src-asm xmm)
+            (match (& elem-ty)
+              [(I64)
+                (match op
+                  [(Sum)
+                    (Ok
+                      (str_cat.str-cat
+                        src-asm
+                        "    movdqa "
+                        xmm
+                        ", %xmm0\n    movdqa %xmm0, %xmm1\n    psrldq $8, %xmm1\n    paddq %xmm1, %xmm0\n"
+                        (compiler-backend-vector-reduce-store-scalar
+                          assignments
+                          dst
+                          elem-ty
+                          "%xmm0"
+                          backend-state)))]
+                  [(or (Min) (Max))
+                    (let
+                      [gp0 : String
+                        (compiler-backend-scavenge-reg
+                          dst
+                          (__tl_make-array String 0)
+                          0
+                          "%r8"
+                          backend-state)]
+                      [gp1 : String
+                        (compiler-backend-scavenge-reg
+                          dst
+                          (compiler-backend-one-exclude (string.copy (& gp0)))
+                          1
+                          "%r9"
+                          backend-state)]
+                      [cmov : String
+                        (match op
+                          [(Min) "cmovlq"]
+                          [_ "cmovgq"])]
+                      (Ok
+                        (str_cat.str-cat
+                          src-asm
+                          "    movq "
+                          xmm
+                          ", "
+                          gp0
+                          "\n    movdqa "
+                          xmm
+                          ", %xmm0\n    psrldq $8, %xmm0\n    movq %xmm0, "
+                          gp1
+                          "\n    cmpq "
+                          gp0
+                          ", "
+                          gp1
+                          "\n    "
+                          cmov
+                          " "
+                          gp1
+                          ", "
+                          gp0
+                          "\n"
+                          (compiler-backend-emit-store-typed-var
+                            assignments
+                            dst
+                            gp0
+                            elem-ty
+                            backend-state))))]
+                  [_
+                    (be_state.compiler-backend-instr-error
+                      instr-diag
+                      "backend: unsupported SSE2 vector reduction")])]
+              [(I32)
+                (match op
+                  [(Sum)
+                    (Ok
+                      (str_cat.str-cat
+                        src-asm
+                        "    movdqa "
+                        xmm
+                        ", %xmm0\n    movdqa %xmm0, %xmm1\n    psrldq $8, %xmm1\n    paddd %xmm1, %xmm0\n    movdqa %xmm0, %xmm1\n    psrldq $4, %xmm1\n    paddd %xmm1, %xmm0\n"
+                        (compiler-backend-vector-reduce-store-scalar
+                          assignments
+                          dst
+                          elem-ty
+                          "%xmm0"
+                          backend-state)))]
+                  [(or (Min) (Max))
+                    (let
+                      [gp0 : String
+                        (compiler-backend-scavenge-reg
+                          dst
+                          (__tl_make-array String 0)
+                          0
+                          "%r8"
+                          backend-state)]
+                      [gp1 : String
+                        (compiler-backend-scavenge-reg
+                          dst
+                          (compiler-backend-one-exclude (string.copy (& gp0)))
+                          1
+                          "%r9"
+                          backend-state)]
+                      [gp0d : String
+                        (compiler-backend-reg-part (string.copy (& gp0)) 4)]
+                      [gp1d : String
+                        (compiler-backend-reg-part (string.copy (& gp1)) 4)]
+                      [cmov : String
+                        (match op
+                          [(Min) "cmovl"]
+                          [_ "cmovg"])]
+                      [step : String
+                        (str_cat.str-cat
+                          "    psrldq $4, %xmm0\n    movd %xmm0, "
+                          gp1d
+                          "\n    cmpl "
+                          gp0d
+                          ", "
+                          gp1d
+                          "\n    "
+                          cmov
+                          " "
+                          gp1d
+                          ", "
+                          gp0d
+                          "\n")]
+                      (Ok
+                        (str_cat.str-cat
+                          src-asm
+                          "    movd "
+                          xmm
+                          ", "
+                          gp0d
+                          "\n    movdqa "
+                          xmm
+                          ", %xmm0\n"
+                          step
+                          step
+                          step
+                          (compiler-backend-emit-store-typed-var
+                            assignments
+                            dst
+                            gp0
+                            elem-ty
+                            backend-state))))]
+                  [_
+                    (be_state.compiler-backend-instr-error
+                      instr-diag
+                      "backend: unsupported SSE2 vector reduction")])]
+              [(F64)
+                (let
+                  [scalar-op : String
+                    (match op
+                      [(Sum) "addsd"]
+                      [(Min) "minsd"]
+                      [(Max) "maxsd"]
+                      [_ ""])]
+                  (if (= (string.string-length scalar-op) 0)
+                    (be_state.compiler-backend-instr-error
+                      instr-diag
+                      "backend: unsupported SSE2 vector reduction")
+                    (Ok
+                      (str_cat.str-cat
+                        src-asm
+                        "    movapd "
+                        xmm
+                        ", %xmm0\n    movapd %xmm0, %xmm1\n    unpckhpd %xmm1, %xmm1\n    "
+                        scalar-op
+                        " %xmm1, %xmm0\n"
+                        (compiler-backend-vector-reduce-store-scalar
+                          assignments
+                          dst
+                          elem-ty
+                          "%xmm0"
+                          backend-state)))))]
+              [(F32)
+                (let
+                  [packed-op : String
+                    (match op
+                      [(Sum) "addps"]
+                      [(Min) "minps"]
+                      [(Max) "maxps"]
+                      [_ ""])]
+                  [scalar-op : String
+                    (match op
+                      [(Sum) "addss"]
+                      [(Min) "minss"]
+                      [(Max) "maxss"]
+                      [_ ""])]
+                  (if (= (string.string-length packed-op) 0)
+                    (be_state.compiler-backend-instr-error
+                      instr-diag
+                      "backend: unsupported SSE2 vector reduction")
+                    (Ok
+                      (str_cat.str-cat
+                        src-asm
+                        "    movaps "
+                        xmm
+                        ", %xmm0\n    movaps %xmm0, %xmm1\n    shufps $78, %xmm1, %xmm1\n    "
+                        packed-op
+                        " %xmm1, %xmm0\n    movaps %xmm0, %xmm1\n    shufps $177, %xmm1, %xmm1\n    "
+                        scalar-op
+                        " %xmm1, %xmm0\n"
+                        (compiler-backend-vector-reduce-store-scalar
+                          assignments
+                          dst
+                          elem-ty
+                          "%xmm0"
+                          backend-state)))))]
+              [_
+                (be_state.compiler-backend-instr-error
+                  instr-diag
+                  "backend: unsupported SSE2 vector reduction")])])]
+      [(Err message) (be_state.compiler-backend-instr-error instr-diag message)])
+    (compiler-backend-sse2-shape-diagnostic
       type-segment-bases
       instr-diag
       elem-ty
@@ -4568,9 +4903,6 @@
   (let
     [exclude-mask : i64
       (compiler-backend-scavenge-exclude-mask (& exclude) exclude-n)]
-    [cands : (__tl_dyn-array i64)
-      (be_state.compiler-backend-i64-array-shared-view
-        (& compiler-backend-scavenge-candidate-pool))]
     (if (and
       (not (compiler-backend-scavenge-excluded? exclude exclude-n fallback))
       (compiler-backend-scavenge-reg-free-in-mask? occupied-mask fallback)
@@ -4590,8 +4922,8 @@
           function-state
           be_state.compiler-backend-scratch-i64-scavenge-plan-reg-mask)
         fallback
-        cands
-        (array-length cands)))))
+        (& compiler-backend-scavenge-candidate-pool)
+        (array-length compiler-backend-scavenge-candidate-pool)))))
 
 (define (compiler-backend-scavenge-pick-from-mask
   [function-state : be_state.CompilerBackendFunctionState]
@@ -4724,9 +5056,6 @@
       (if (string.eq dst-home "")
         exclude-n
         (+ exclude-n 1))]
-    [cands : (__tl_dyn-array i64)
-      (be_state.compiler-backend-i64-array-shared-view
-        (& compiler-backend-scavenge-xmm-candidate-pool))]
     [occupied : i64
       (compiler-backend-scavenge-occupied-mask-over-range
         function-state
@@ -4742,7 +5071,7 @@
           (if (be_state.compiler-backend-current-fn-win64? backend-state)
             6
             16)
-          cands)
+          (& compiler-backend-scavenge-xmm-candidate-pool))
         "")]
     (if (string.eq extra "")
       (compiler-backend-scavenge-pick-from-mask
@@ -4751,7 +5080,7 @@
         ex
         ex-n
         fallback
-        cands)
+        (& compiler-backend-scavenge-xmm-candidate-pool))
       extra)))
 
 ;; Side-effect-free twin of the GP picker for fusion admission.  It predicts the

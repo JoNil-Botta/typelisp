@@ -292,18 +292,6 @@
 (defmacro (compiler-backend-global-shared-view [place : Expr]) : Expr
   `(owned_view.compiler-owned-shared-view ,place))
 
-(define (compiler-backend-i64-array-shared-view
-  [items : (& items (__tl_dyn-array i64))]) : (__tl_dyn-array i64)
-  (unsafe
-    (ptr-read
-      (ptr-cast (__tl_array-data (array items)) : (Ptr (__tl_dyn-array i64))))))
-
-(define (compiler-backend-string-array-shared-view
-  [items : (& items (__tl_dyn-array String))]) : (__tl_dyn-array String)
-  (unsafe
-    (ptr-read
-      (ptr-cast (__tl_array-data (array items)) : (Ptr (__tl_dyn-array String))))))
-
 (define (compiler-backend-string-shared-view [value : (& value str)]) : String
   (unsafe
     (ptr-read (ptr-cast (__tl_array-data (array value)) : (Ptr String)))))
@@ -2237,6 +2225,7 @@
 
 (defenum CompilerBackendMode
   (Scalar)
+  (Sse2)
   (Avx2)
   (Avx512))
 
@@ -2245,6 +2234,11 @@
 (define (compiler-backend-mode-scalar? [mode : CompilerBackendMode]) : bool
   (match mode
     [(Scalar) true]
+    [_ false]))
+
+(define (compiler-backend-mode-sse2? [mode : CompilerBackendMode]) : bool
+  (match mode
+    [(Sse2) true]
     [_ false]))
 
 (define (compiler-backend-mode-avx2? [mode : CompilerBackendMode]) : bool
@@ -2256,6 +2250,11 @@
   [function-state : CompilerBackendFunctionState]
   [mode : CompilerBackendMode]) : unit
   (compiler-backend-function-state-set-current-mode! function-state mode))
+
+(define (compiler-backend-current-mode-sse2?
+  [function-state : CompilerBackendFunctionState]) : bool
+  (compiler-backend-mode-sse2?
+    (compiler-backend-function-state-current-mode function-state)))
 
 (define (compiler-backend-current-mode-avx2?
   [function-state : CompilerBackendFunctionState]) : bool
@@ -2666,8 +2665,10 @@
 ;; tier borrows an occupied register (see compiler-backend-scavenge-reg).
 (define compiler-backend-scratch-bool-pair-emission : i64
   6)
-(define compiler-backend-scratch-bool-count : i64
+(define compiler-backend-scratch-bool-compact-switch : i64
   7)
+(define compiler-backend-scratch-bool-count : i64
+  8)
 (define compiler-backend-scratch-i64-array-emergency-regs : i64
   0)
 (define compiler-backend-scratch-i64-array-const-hoist-site-points : i64

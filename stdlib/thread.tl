@@ -373,15 +373,7 @@
   (define (array-u8-addr [buf : (& buf (__tl_dyn-array u8))]) : i64
     (unsafe
       (cast
-        (ptr->int
-          (ptr-cast
-            (__tl_array-data
-              (unsafe
-                (ptr-read
-                  (ptr-cast
-                    (__tl_array-data (array buf))
-                    : (Ptr (__tl_dyn-array u8))))))
-            : (Ptr u8)))
+        (ptr->int (ptr-cast (__tl_array-data (deref buf)) : (Ptr u8)))
         : i64))))
 
 ;: Return the integer address of a private dynamic u64 backing buffer.
@@ -389,15 +381,7 @@
   (define (array-u64-addr [buf : (& buf (__tl_dyn-array u64))]) : i64
     (unsafe
       (cast
-        (ptr->int
-          (ptr-cast
-            (__tl_array-data
-              (unsafe
-                (ptr-read
-                  (ptr-cast
-                    (__tl_array-data (array buf))
-                    : (Ptr (__tl_dyn-array u64))))))
-            : (Ptr u8)))
+        (ptr->int (ptr-cast (__tl_array-data (deref buf)) : (Ptr u8)))
         : i64))))
 
 ;: Return the integer address of a private dynamic i64 backing buffer.
@@ -405,15 +389,7 @@
   (define (array-i64-addr [buf : (& buf (__tl_dyn-array i64))]) : i64
     (unsafe
       (cast
-        (ptr->int
-          (ptr-cast
-            (__tl_array-data
-              (unsafe
-                (ptr-read
-                  (ptr-cast
-                    (__tl_array-data (array buf))
-                    : (Ptr (__tl_dyn-array i64))))))
-            : (Ptr u8)))
+        (ptr->int (ptr-cast (__tl_array-data (deref buf)) : (Ptr u8)))
         : i64))))
 
 ;: Return the integer address of a private dynamic i32 backing buffer.
@@ -421,15 +397,7 @@
   (define (array-i32-addr [buf : (& buf (__tl_dyn-array i32))]) : i64
     (unsafe
       (cast
-        (ptr->int
-          (ptr-cast
-            (__tl_array-data
-              (unsafe
-                (ptr-read
-                  (ptr-cast
-                    (__tl_array-data (array buf))
-                    : (Ptr (__tl_dyn-array i32))))))
-            : (Ptr u8)))
+        (ptr->int (ptr-cast (__tl_array-data (deref buf)) : (Ptr u8)))
         : i64))))
 
 ;: Return the integer address of a private dynamic String backing buffer.
@@ -437,15 +405,7 @@
   (define (array-string-addr [buf : (& buf (__tl_dyn-array String))]) : i64
     (unsafe
       (cast
-        (ptr->int
-          (ptr-cast
-            (__tl_array-data
-              (unsafe
-                (ptr-read
-                  (ptr-cast
-                    (__tl_array-data (array buf))
-                    : (Ptr (__tl_dyn-array String))))))
-            : (Ptr u8)))
+        (ptr->int (ptr-cast (__tl_array-data (deref buf)) : (Ptr u8)))
         : i64))))
 
 ;: Return the integer address of a private i64 Vec result cell.
@@ -454,15 +414,7 @@
     [buf : (& buf (__tl_dyn-array thread-i64-vec.Vec))]) : i64
     (unsafe
       (cast
-        (ptr->int
-          (ptr-cast
-            (__tl_array-data
-              (unsafe
-                (ptr-read
-                  (ptr-cast
-                    (__tl_array-data (array buf))
-                    : (Ptr (__tl_dyn-array thread-i64-vec.Vec))))))
-            : (Ptr u8)))
+        (ptr->int (ptr-cast (__tl_array-data (deref buf)) : (Ptr u8)))
         : i64))))
 
 ;: Convert an integer address into a mutable i32 pointer.

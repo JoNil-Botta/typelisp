@@ -592,6 +592,7 @@
 
 (defenum CompilerIrSpmdBackend
   (Scalar)
+  (Sse2)
   (Avx2)
   (Avx512))
 
@@ -3432,6 +3433,10 @@
       (match right
         [(Scalar) true]
         [_ false])]
+    [(Sse2)
+      (match right
+        [(Sse2) true]
+        [_ false])]
     [(Avx2)
       (match right
         [(Avx2) true]
@@ -4299,6 +4304,7 @@
         [backend : String
           (match payload.backend
             [(Scalar) "scalar"]
+            [(Sse2) "sse2"]
             [(Avx2) "avx2"]
             [(Avx512) "avx512"])]
         (if (and
@@ -4312,6 +4318,13 @@
           (string.eq selected.backend backend)
           (or
             (and (string.eq backend "scalar") (= payload.lanes 1))
+            (and
+              (string.eq backend "sse2")
+              (or
+                (= payload.lanes 2)
+                (= payload.lanes 4)
+                (= payload.lanes 8)
+                (= payload.lanes 16)))
             (and
               (string.eq backend "avx512")
               (or
@@ -6803,6 +6816,7 @@
 (define (compiler-ir-clone-spmd-backend [backend : CompilerIrSpmdBackend]) : CompilerIrSpmdBackend
   (match backend
     [(Scalar) (Scalar)]
+    [(Sse2) (Sse2)]
     [(Avx2) (Avx2)]
     [(Avx512) (Avx512)]))
 
@@ -7416,6 +7430,7 @@
     abi.callee
     (match abi.backend
       [(Scalar) (Scalar)]
+      [(Sse2) (Sse2)]
       [(Avx2) (Avx2)]
       [(Avx512) (Avx512)])
     abi.lanes
@@ -7684,6 +7699,7 @@
         payload.callee
         (match payload.backend
           [(Scalar) (Scalar)]
+          [(Sse2) (Sse2)]
           [(Avx2) (Avx2)]
           [(Avx512) (Avx512)])
         payload.lanes
@@ -8320,6 +8336,7 @@
 (define (compiler-ir-spmd-backend-render [backend : CompilerIrSpmdBackend]) : String
   (match backend
     [(Scalar) "scalar"]
+    [(Sse2) "sse2"]
     [(Avx2) "avx2"]
     [(Avx512) "avx512"]))
 
@@ -9841,6 +9858,7 @@
 
 (defenum CompilerSpmdBackend
   (Scalar)
+  (Sse2)
   (Avx2)
   (Avx512))
 
@@ -9936,6 +9954,7 @@
       [(Shuffle) (Shuffle)])
     (match item.backend
       [(Scalar) (Scalar)]
+      [(Sse2) (Sse2)]
       [(Avx2) (Avx2)]
       [(Avx512) (Avx512)])
     item.lanes

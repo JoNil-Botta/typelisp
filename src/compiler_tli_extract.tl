@@ -1446,7 +1446,7 @@
           (let
             [bcount : i64 (ast.ast-let-binding-list-len bindings)]
             [out-bindings : (__tl_dyn-array tli.TliSpmdLetBinding)
-              (__tl_make-array tli.TliSpmdLetBinding bcount)]
+              (__tl_make-array tli.TliSpmdLetBinding 0)]
             [cur-locals : sym_i64_env.SymI64Env locals]
             (for [i (iterator.range 0 bcount)]
               (match (ast.ast-let-binding-list-get
@@ -1472,8 +1472,8 @@
                           (match maybe-ty
                             [(Some ty) (tli-extract-type ctx ty)]
                             [(No) (tli.TliType.Unit)])]
-                        (set!
-                          (array-ref out-bindings i)
+                        (__tl_array-push!
+                          out-bindings
                           (tli.TliSpmdLetBinding
                             (tli-extract-name bname)
                             has-ty

@@ -117876,15 +117876,13 @@
               tc-dependency-tlci-interpreted-fallbacks)
             No)
           (begin
-            (embedded_tlci.compiler-comptime-host-session-open-with-macro-state!
+            (embedded_tlci.compiler-comptime-host-session-open-with-env!
               host-pools
               (& operands)
               count
               (ctfe_support.ctfe-fuel-limit)
               (macro-stdlib-tlci-native-cookie)
-              (ctfe_support.ctfe-env-reflections env)
-              (ctfe_support.ctfe-env-source-names env)
-              (ctfe_support.ctfe-env-macro-state env))
+              env)
             (cfg
               compile-profile
               (if (macro-tlci-resolved-catalog-dependency? catalog)
@@ -117912,6 +117910,16 @@
                       tc-profile-stdlib-entry-invoke-start-ns
                       tc-profile-stdlib-entry-invoke-ns
                       tc-profile-stdlib-entry-invoke-calls)))
+                ;; A native callback declined a protected representation.
+                ;; Let the interpreter produce E0221 at the exact operand.
+                (when
+                  embedded_tlci.compiler-comptime-host-reflection-denied?
+                  (embedded_tlci.compiler-comptime-host-session-close!)
+                  (macro-dependency-tlci-note-if!
+                    route-state
+                    catalog
+                    tc-dependency-tlci-interpreted-fallbacks)
+                  (return No))
                 (match dispatch-result
                   [(Err message)
                     (begin

@@ -81,7 +81,7 @@ rows and the 15,000,000-byte limit from
   `scripts/verify-compile-profile.sh` keeps its `<= 1 MiB` post-emission pool
   release and `<= 4 MiB` batch-live drift bounds.
 
-## `.tli` v3 wire format
+## `.tli` v5 wire format
 
 Bytes are packed in this order with no padding and no gaps: header, string
 pool, module directory, module records, compact IR. Offsets and lengths are
@@ -361,7 +361,7 @@ A compile job keeps the source stdlib, with no prebuilt interface, only when a
 stdlib root explicitly overrides the embedded stdlib (or when disabled via
 `--no-prebuilt-stdlib` / `TYPELISP_SYSROOT=none`). Both `--opt-level 2` and
 SPMD `foreach` (in entry and non-entry modules) compile directly against
-prebuilt `stdlib.tli` + `libstdlib.a` via the v3 `compact_ir` section.
+prebuilt `stdlib.tli` + `libstdlib.a` via the `compact_ir` section.
 
 ## Staged delivery and retirement conditions
 

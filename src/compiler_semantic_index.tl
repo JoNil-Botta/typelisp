@@ -1271,21 +1271,24 @@
 (define (compiler-semantic-family-visible?
   [index : (& index CompilerSemanticSourceIndex)]
   [query : CompilerSemanticVisibleBindingQuery]
-  [owner-name : (& owner-name str)]
+  [owner-module : i64]
   [provider : i64]) : bool
   (and
     (compiler-semantic-visible-binding-query-valid? index query)
+    (>= owner-module 0)
+    (< owner-module index.module-len)
     (tc.tc-provider-same?
       (array-ref index.paths query.path-index).provider-id
       provider)
-    (ctfe_support.ctfe-module-name-in-family?
-      (& (array-ref index.modules query.module-index).name)
-      owner-name)))
+    (or
+      (= query.module-index owner-module)
+      (ctfe_support.ctfe-module-name-descendant?
+        (& (array-ref index.modules query.module-index).name)
+        (& (array-ref index.modules owner-module).name)))))
 
 (define (compiler-semantic-path-family-visible?
   [index : (& index CompilerSemanticSourceIndex)]
   [query : CompilerSemanticVisibleBindingQuery]
-  [owner-name : (& owner-name str)]
   [owner-path : (& owner-path str)]) : bool
   (let
     [path : i64
@@ -1298,7 +1301,7 @@
       (compiler-semantic-family-visible?
         index
         query
-        owner-name
+        (array-ref index.paths path).default-module-index
         (array-ref index.paths path).provider-id))))
 
 ;; The index can outlive the compiler's intern session. Check family names
@@ -1321,13 +1324,7 @@
                 (& index.modules)
                 index.module-len
                 record.module-id)]
-            (and
-              (>= owner 0)
-              (compiler-semantic-family-visible?
-                index
-                query
-                (& (array-ref index.modules owner).name)
-                provider))))))))
+            (compiler-semantic-family-visible? index query owner provider)))))))
 
 (define (compiler-semantic-representation-signature
   [index : (& index CompilerSemanticSourceIndex)]

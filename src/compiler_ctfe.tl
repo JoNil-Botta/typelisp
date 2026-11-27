@@ -2342,18 +2342,16 @@
 ;; the module family that owns DEF-MODULE's (:opaque) representations (#6999).
 ;; Files without a `(module ...)` declaration share the entry module, which
 ;; a negative id or the empty name denotes.
-(define (ctfe-module-name-in-family?
+(define (ctfe-module-name-descendant?
   [use-name : (& use-name str)]
   [def-name : (& def-name str)]) : bool
   (let
     [def-length : i64 (string.string-length def-name)]
-    (or
-      (string.eq use-name def-name)
-      (and
-        (> def-length 0)
-        (> (string.string-length use-name) def-length)
-        (string.is-string-prefix-at use-name def-name 0)
-        (= (string.string-ref use-name def-length) '.')))))
+    (and
+      (> def-length 0)
+      (> (string.string-length use-name) def-length)
+      (string.is-string-prefix-at use-name def-name 0)
+      (= (string.string-ref use-name def-length) '.'))))
 
 (define (ctfe-module-in-family? [use-module : i64] [def-module : i64]) : bool
   (let
@@ -2366,7 +2364,7 @@
         (let
           [def-text : String (ci.intern-syntax-name-text-or def-module "")]
           [use-text : String (ci.intern-syntax-name-text-or use-module "")]
-          (ctfe-module-name-in-family? (& use-text) (& def-text)))])))
+          (ctfe-module-name-descendant? (& use-text) (& def-text)))])))
 
 ;; The type a TypeLiteral with type id `id` denotes: the caller's resolution
 ;; when it recorded one, otherwise the written type.
@@ -6055,6 +6053,24 @@
           index
           second-index))]))
 
+(define (ctfe-type-reflection-representation-ok
+  [name : (& name str)]
+  [ty : (& ast.AstType)]
+  [index : i64]
+  [expr : (& ast.AstExpr)]
+  [env : (& env CtfeEnv)]) : ResultCtfeUnit
+  (let
+    [_
+      (try
+        (if (ctfe-representation-reflection? name)
+          (ctfe-opaque-representation-ok env (string.copy name) ty expr)
+          ResultCtfeUnit.Ok))]
+    (if (and
+      (ctfe-struct-field-reflection? name)
+      (not (string.eq name "struct-field-count")))
+      (ctfe-field-reflection-ok env ty index -1 expr)
+      ResultCtfeUnit.Ok)))
+
 (define (ctfe-eval-type-reflection-at
   [name : String]
   [ty : (& ast.AstType)]
@@ -6066,15 +6082,7 @@
   (let
     [_
       (try
-        (if (ctfe-representation-reflection? name)
-          (ctfe-opaque-representation-ok (& env) (string.copy name) ty expr)
-          ResultCtfeUnit.Ok))]
-    [_
-      (when
-        (and
-          (ctfe-struct-field-reflection? name)
-          (not (string.eq name "struct-field-count")))
-        (try (ctfe-field-reflection-ok (& env) ty index -1 expr)))]
+        (ctfe-type-reflection-representation-ok (& name) ty index expr (& env)))]
     (ctfe-eval-type-reflection-built name ty index second-index expr env fuel)))
 
 (define (ctfe-eval-type-reflection-built

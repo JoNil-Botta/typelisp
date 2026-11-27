@@ -745,6 +745,17 @@ cat >> "$RIGHT/src/lib.tl" <<'EOF'
 (defstruct Whole (:opaque) (whole-secret i64))
 (defstruct Mixed (visible i64) (mixed-secret i64 (:opaque)))
 
+(defmacro (opacity-first-name [T : type]) : Expr
+  (comptime.expr-string (struct-field-name T 0)))
+
+(defmacro (opacity-second-name [T : type]) : Expr
+  (comptime.expr-string (struct-field-name T 1)))
+
+(defmacro (opacity-count [T : type]) : Expr
+  (if (= (struct-field-count (reference-element-type T)) 2)
+    `1
+    `0))
+
 (define (make-mixed) : Mixed (Mixed 9 42))
 (define (read-mixed [value : Mixed]) : i64 value.mixed-secret)
 (define (read-whole [value : (& Whole)]) : i64 value.whole-secret)
@@ -756,7 +767,7 @@ for route in native source; do
     else
         unset TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE || true
     fi
-    for opacity_case in public opaque-field opaque-constructor opaque-type; do
+    for opacity_case in public opaque-field opaque-constructor opaque-type opaque-name opaque-count; do
         case "$opacity_case" in
             public) extra='' ;;
             opaque-field)
@@ -765,15 +776,28 @@ for route in native source; do
                 extra='(define (probe) : right.Mixed (unsafe (right.Mixed 1 2)))' ;;
             opaque-type)
                 extra='(define (probe [w : (& right.Whole)]) : i64 (unsafe w.whole-secret))' ;;
+            opaque-name)
+                extra='(define (probe) : String (right.opacity-second-name right.Mixed))' ;;
+            opaque-count)
+                extra='(define (probe) : i64 (right.opacity-count (& a right.Whole)))' ;;
         esac
         cat > "$CONSUMER/src/main.tl" <<EOF
 (module right.src.lib.consumer)
 (import right.src.lib as right)
+(import stdlib.string)
+
+(defstruct Local (:opaque) (local-visible i64) (local-secret i64))
 
 $extra
 (define (main) : i64
   (let [value : right.Mixed (right.make-mixed)]
-    (+ (right.adjust value.visible) (right.read-mixed value))))
+    (if (and
+        (string.eq (right.opacity-second-name Local) "local-secret")
+        (string.eq (right.opacity-first-name right.Mixed) "visible"))
+      (+ (right.adjust value.visible)
+        (right.read-mixed value)
+        (right.opacity-count (& a Local)))
+      0)))
 EOF
         rm -rf "$CONSUMER/target"
         log="$WORKDIR/opacity-$opacity_case-$route"
@@ -784,19 +808,35 @@ EOF
         if [ "$opacity_case" = public ]; then
             [ "$status" -eq 0 ] || fail "$route public opaque aggregate members failed"
             if [ "$route" = native ]; then
-                assert_tli_route opacity-native "$log.err" 1 3 3 3 0
+                assert_tli_route opacity-native "$log.err" 1 3 1 1 0
                 assert_macro_row opacity-native right.src.lib/adjust 1 1 "$log.err"
-                assert_profile_eq dependency_tlci_native_dispatches 1 "$log.err"
+                assert_macro_row opacity-native right.src.lib/opacity-first-name 1 1 "$log.err"
+                assert_macro_row opacity-native right.src.lib/opacity-second-name 1 1 "$log.err"
+                assert_macro_row opacity-native right.src.lib/opacity-count 1 1 "$log.err"
+                assert_profile_eq dependency_tlci_native_dispatches 4 "$log.err"
             else
                 assert_tli_route opacity-source "$log.err" 0 0 0 0 1
             fi
             status=0
             "$CONSUMER_BIN" > "$log.program.out" 2> "$log.program.err" || status=$?
-            [ "$status" -eq 56 ] || fail "$route opacity control exited $status, expected 56"
+            [ "$status" -eq 57 ] || fail "$route opacity control exited $status, expected 57"
         else
             [ "$status" -ne 0 ] || fail "$route $opacity_case unexpectedly built"
-            grep -F 'error[E0221]:' "$log.err" >/dev/null ||
+            grep -F 'error[E0221]:' "$log.err" > "$log.diag" ||
                 fail "$route $opacity_case did not report E0221"
+            if [ "$route" = native ]; then
+                case "$opacity_case" in
+                    opaque-name)
+                        assert_macro_row "$opacity_case" right.src.lib/opacity-second-name 1 1 "$log.err" ;;
+                    opaque-count)
+                        assert_macro_row "$opacity_case" right.src.lib/opacity-count 1 1 "$log.err" ;;
+                esac
+                assert_catalog_state "$opacity_case" "$log.err" 0 3
+                assert_tli_route "$opacity_case" "$log.err" 1 3 1 1 0
+            else
+                cmp "$WORKDIR/opacity-$opacity_case-native.diag" "$log.diag" ||
+                    fail "$opacity_case native/source diagnostics differ"
+            fi
         fi
     done
 done

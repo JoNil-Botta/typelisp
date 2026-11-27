@@ -848,25 +848,38 @@
 ;; Open the compiler-owned state addressed by the opaque session cookie passed
 ;; to every named callback. The callback's hidden environment carries the host
 ;; context; its explicit arguments begin with this cookie.
-(define (compiler-comptime-host-session-open-with-macro-state!
+(defenum CompilerComptimeHostReflectionEnv
+  (None)
+  (Some ctfe_support.CtfeEnv))
+
+(define compiler-comptime-host-reflection-env : CompilerComptimeHostReflectionEnv
+  None)
+(define compiler-comptime-host-reflection-denied? : bool
+  false)
+
+(define (compiler-comptime-host-session-open-with-env!
   [pools : ast.AstNodePoolContext]
   [operands : (& operands (__tl_dyn-array ctfe_support.CompilerCtfeValue))]
   [operand-count : i64]
   [fuel : i64]
   [cookie : i64]
-  [reflections : ctfe_support.CtfeReflectInfoList]
-  [source-names : ci.InternSourceNameSessionHandle]
-  [macro-state : ctfe_support.CompilerCtfeMacroState]) : unit
+  [env : ctfe_support.CtfeEnv]) : unit
   (begin
     (cfg
       tlci-native-route-stress
       (+= compiler-embedded-stdlib-tlci-stress-session-generations 1))
     (set! (array-ref compiler-comptime-host-pools 0) pools)
-    (set! (array-ref compiler-comptime-host-reflections 0) reflections)
+    (set! compiler-comptime-host-reflection-env (Some env))
+    (set! compiler-comptime-host-reflection-denied? false)
+    (set!
+      (array-ref compiler-comptime-host-reflections 0)
+      (ctfe_support.ctfe-env-reflections env))
     (set!
       (array-ref compiler-comptime-host-session-source-names 0)
-      source-names)
-    (set! (array-ref compiler-comptime-host-session-macro-state 0) macro-state)
+      (ctfe_support.ctfe-env-source-names env))
+    (set!
+      (array-ref compiler-comptime-host-session-macro-state 0)
+      (ctfe_support.ctfe-env-macro-state env))
     (let
       [index : i64 0]
       (while (and
@@ -912,15 +925,16 @@
     (ctfe_support.compiler-ctfe-macro-state-bind-source-names!
       macro-state
       source-names)
-    (compiler-comptime-host-session-open-with-macro-state!
+    (compiler-comptime-host-session-open-with-env!
       pools
       operands
       operand-count
       fuel
       cookie
-      reflections
-      source-names
-      macro-state)))
+      (ctfe_support.ctfe-env-with-reflections-and-pools-and-source-names
+        (& reflections)
+        pools
+        source-names))))
 
 (defmacro (compiler-comptime-host-session-macro-state-value) : Expr
   `(compiler-comptime-host-array-element-shared-view
@@ -948,6 +962,8 @@
 
 (define (compiler-comptime-host-session-close!) : unit
   (set! compiler-comptime-host-session-cookie 0)
+  (set! compiler-comptime-host-reflection-env None)
+  (set! compiler-comptime-host-reflection-denied? false)
   (set!
     (array-ref compiler-comptime-host-session-macro-state 0)
     (ctfe_support.CompilerCtfeMacroState 0))
@@ -1472,6 +1488,29 @@
   (cis.intern-structural-session-handle-from-source-names
     (compiler-comptime-host-session-source-names-value)))
 
+(define (compiler-comptime-host-type-query-allowed?
+  [name : (& name str)]
+  [ty : (& ast.AstType)]
+  [index : i64]) : bool
+  (if (not (ctfe_support.ctfe-representation-reflection? name))
+    true
+    (match compiler-comptime-host-reflection-env
+      [(None) false]
+      [(Some env)
+        (match (ctfe_support.ctfe-type-reflection-representation-ok
+          name
+          ty
+          index
+          (& (ast.AstExpr.Var 0))
+          (&
+            (ctfe_support.ctfe-env-rebase-pools
+              env
+              (compiler-comptime-host-session-pools))))
+          [(Ok) true]
+          [(Err _)
+            (set! compiler-comptime-host-reflection-denied? true)
+            false])])))
+
 ;; Replace the type operand by one shared reflection query's result. A failed
 ;; query answers its authored diagnostic when `report?`, bad-request otherwise.
 (define (compiler-comptime-host-type-query!
@@ -1484,6 +1523,9 @@
     tlci.tlci-host-callback-status-bad-request
     (match (compiler-comptime-host-stack-value 1)
       [(Type ty)
+        (unless
+          (compiler-comptime-host-type-query-allowed? (& name) (& ty) index)
+          (return tlci.tlci-host-callback-status-bad-request))
         (match (ctfe_support.ctfe-type-reflection
           name
           (compiler-comptime-host-session-pools)
@@ -1506,6 +1548,9 @@
     -3
     (match (compiler-comptime-host-stack-value 1)
       [(Type ty)
+        (unless
+          (compiler-comptime-host-type-query-allowed? (& name) (& ty) index)
+          (return -3))
         (match (ctfe_support.ctfe-type-reflection
           name
           (compiler-comptime-host-session-pools)

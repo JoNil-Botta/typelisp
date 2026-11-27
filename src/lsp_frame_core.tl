@@ -6019,7 +6019,6 @@
                         (compiler_semantic_index.compiler-semantic-path-family-visible?
                           index
                           query
-                          (& source.module)
                           (& source.path)))))]
                 (if allowed
                   (lsp-completion-add-workspace-decl!

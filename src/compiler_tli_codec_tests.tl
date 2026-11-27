@@ -745,7 +745,7 @@
     (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.UnknownTag))))
 
 (test
-  tli-v3-wire-tags-and-digests
+  tli-v5-wire-tags-and-digests
   (let
     [wire : (__tl_dyn-array u8) (tli-test-encode-plain (tli.TliType.I64))]
     [bundle : tli.TliBundle (tli-test-bundle false)]
@@ -754,11 +754,11 @@
       (codec.tli-write-context-new
         (codec.tli-collect-pool (& bundle))
         (__tl_make-array codec.TliCompactBodyMeta 0))]
-    (test.assert-i64-eq (array-length wire) 411 "v3 exemplar length")
+    (test.assert-i64-eq (array-length wire) 411 "v5 exemplar length")
     (test.assert-i64-eq
       (tli-test-record (& wire))
       284
-      "v3 exemplar record offset")
+      "v5 exemplar record offset")
     (match (codec.tli-decode-directory (& wire))
       [(codec.TliDirectoryResult.Err error)
         (test.assert-true false error.message)]
@@ -767,7 +767,7 @@
           [entry (& (array-ref directory.entries 0))]
           (test.assert-owned-string-eq
             (sha256.to-hex (& (sha256.Sha256Digest directory.content-sha256)))
-            "e7536133d1a5164e54b3fb72548127f0f6e6cf837dc6de4751341cada60a4115"
+            "eab219c4934b239a82e13aea7d1661fe3fc33d13017a73115b6f3c34ecb04ed2"
             "independently computed content digest")
           (let
             [index : (Array u8 32) (make-array u8 32)]
@@ -777,7 +777,7 @@
                 (array-ref wire (+ tli.tli-index-digest-offset byte))))
             (test.assert-owned-string-eq
               (sha256.to-hex (& (sha256.Sha256Digest index)))
-              "db63901cfd1e18468408a1d6ec675752725f73e5b05882f96a20a35dfde6fb9d"
+              "ca5b9490efe4e6e6ad1335af50903a080d8f30d3195acb9a5c45ad4dfce44183"
               "independently computed index digest"))
           (test.assert-owned-string-eq
             (sha256.to-hex (& (sha256.Sha256Digest entry.module-sha256)))
@@ -804,8 +804,12 @@
     [first-type : i64 (+ first-import (* 6 45) 12 4)]
     [repr : i64 (+ first-type 29)]
     [cleanup : i64 (+ first-type 38)]
-    ;; Enum (63 bytes), struct (112 bytes), then the function count.
-    [first-fn : i64 (+ first-type 63 112 4)]
+    ;; Enum (63 bytes), struct (114 bytes), then the function count.
+    [first-struct : i64 (+ first-type 63)]
+    [first-fn : i64 (+ first-struct 114 4)]
+    ;; Struct metadata and field count (59 bytes), then the first field's
+    ;; 22 bytes before its boolean opacity tag.
+    [field-opacity : i64 (+ first-struct 59 22)]
     [first-name : i64 (le.read-u32 (& bytes) dir)]
     [second-name : i64 (le.read-u32 (& bytes) (+ dir 56))]
     (le.set-u32! (&mut bytes) dir second-name)
@@ -826,6 +830,10 @@
     (tli-test-refresh-module! (&mut bytes) 0)
     (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.UnknownTag))
     (set! (array-ref bytes cleanup) (cast 0 : u8))
+    (set! (array-ref bytes field-opacity) (cast 2 : u8))
+    (tli-test-refresh-module! (&mut bytes) 0)
+    (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.UnknownTag))
+    (set! (array-ref bytes field-opacity) (cast 1 : u8))
     (set! (array-ref bytes (+ first-fn 12)) (cast 4 : u8))
     (tli-test-refresh-module! (&mut bytes) 0)
     (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.UnknownTag))

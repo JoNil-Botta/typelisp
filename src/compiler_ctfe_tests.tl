@@ -3104,6 +3104,58 @@
           [_ false])]
       [(Err _) false])))
 
+(define (compiler-ctfe-quote-pattern-type-unquote-ok?) : bool
+  (let
+    [base-env : ctfe.CtfeEnv (ctfe.ctfe-env-empty)]
+    [pools : ast.AstNodePoolContext (ctfe.ctfe-env-pools (& base-env))]
+    [type-name : i64 (ctfe.ctfe-materialize-generated-name-id "BindingType")]
+    [name : i64 (ctfe.ctfe-materialize-generated-name-id "value")]
+    [type-unquote : ast.AstType
+      (ast.ast-ty-var-args
+        cbi.compiler-builtin-id-fix-unquote
+        (ast.ast-lifetime-cons type-name (& (ast.ast-lifetime-list-new))))]
+    [pattern : ast.AstPattern
+      (ast.ast-pat-tuple
+        (ast.ast-pattern-cons
+          (& (Var name (Some type-unquote)))
+          (& (ast.ast-pattern-list-new))))]
+    [value : i64 (ctfe.ctfe-ast-push base-env (Var name))]
+    [arm : ast.AstMatchArm (ast.ast-match-arm pattern value)]
+    [template : i64
+      (ast.ast-expr-match-with-pools
+        pools
+        value
+        (ast.ast-match-arm-cons (& arm) (& (ast.ast-match-arm-list-new))))]
+    [env : ctfe.CtfeEnv
+      (ctfe.ctfe-env-extend-id base-env type-name (& (Type (I64))))]
+    (and
+      (match (ctfe.ctfe-eval-quote template (& env) 17 true)
+        [(Ok (Expr node _) 17)
+          (match (ctfe.ctfe-ast-get env node)
+            [(Match payload)
+              (match (__tl-box-place payload)
+                [(Match _ arms)
+                  (match (ast.ast-match-arm-list-get
+                    (& arms)
+                    0
+                    (ast.ast-match-arm-fallback))
+                    [(Arm (Tuple items) _)
+                      (match (ast.ast-pattern-list-get
+                        (& (deref items))
+                        0
+                        (ast.ast-pattern-fallback))
+                        [(Var quoted-name (Some (I64))) (= quoted-name name)]
+                        [_ false])]
+                    [_ false])])]
+            [_ false])]
+        [_ false])
+      (match (ctfe.ctfe-eval-quote template (& base-env) 17 true)
+        [(Err diag)
+          (string.eq
+            (cdiag.compiler-diagnostic-message (__tl-box-place diag))
+            "type unquote references an unbound type parameter")]
+        [_ false]))))
+
 ;; A computed body can project the parameter before `expr-lambda1` attaches
 ;; its reflected tuple type. The same fresh Name value must bind and refer to
 ;; the parameter, including heterogeneous reference lifetimes. Refs #6868.
@@ -4559,6 +4611,7 @@
     (unless (compiler-ctfe-checked-expr-rejects-non-bool-cond-ok?) (return 1))
     (unless (compiler-ctfe-quote-syntax-ok?) (return 1))
     (unless (compiler-ctfe-quote-lambda-type-unquote-ok?) (return 1))
+    (unless (compiler-ctfe-quote-pattern-type-unquote-ok?) (return 1))
     (unless (compiler-ctfe-expr-lambda1-ok?) (return 1))
     (unless (compiler-ctfe-captured-quote-syntax-ok?) (return 1))
     (unless (compiler-ctfe-expr-pattern-match-ok?) (return 1))

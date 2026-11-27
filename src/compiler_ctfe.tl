@@ -3220,6 +3220,18 @@
   (Ok ast.AstMaybeType i64)
   (Err (Box cdiag.CompilerDiagnostic)))
 
+(defenum ResultCtfeQuotePattern
+  (Ok ast.AstPattern i64)
+  (Err (Box cdiag.CompilerDiagnostic)))
+
+(defenum ResultCtfeQuotePatternList
+  (Ok ast.AstPatternList i64)
+  (Err (Box cdiag.CompilerDiagnostic)))
+
+(defenum ResultCtfeQuotePatternBuild
+  (Ok i64)
+  (Err (Box cdiag.CompilerDiagnostic)))
+
 (defenum ResultCtfeQuoteParams
   (Ok ast.AstParamList i64)
   (Err (Box cdiag.CompilerDiagnostic)))
@@ -13009,64 +13021,71 @@
 
 (define (ctfe-quote-pattern-list
   [patterns : (& ast.AstPatternList)]
-  [env : (& env CtfeEnv)]) : ast.AstPatternList
+  [env : (& env CtfeEnv)]
+  [origin : (& ast.AstExpr)]
+  [fuel : i64]) : ResultCtfeQuotePatternList
   (let
     [out : ast.AstPatternList (ast.ast-pattern-list-with-capacity patterns.len)]
-    (ctfe-quote-pattern-list-into patterns 0 env (&mut out))
-    out))
-
-(define (ctfe-quote-pattern-list-into
-  [patterns : (& patterns ast.AstPatternList)]
-  [index : i64]
-  [env : (& env CtfeEnv)]
-  [out : (&mut out ast.AstPatternList)]) : unit
-  (unless
-    (>= index patterns.len)
-    (ast.ast-pattern-list-push
-      out
-      (ctfe-quote-pattern
+    (for [index (iterator.range 0 patterns.len)]
+      (match (ctfe-quote-pattern
         (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))
-        env))
-    (ctfe-quote-pattern-list-into patterns (+ index 1) env out)))
+        env
+        origin
+        fuel)
+        [(Ok quoted next-fuel)
+          (ast.ast-pattern-list-push (&mut out) quoted)
+          (set! fuel next-fuel)]
+        [(Err diag) (return (Err diag))]))
+    (Ok out fuel)))
 
-(define (ctfe-quote-pattern [pattern : ast.AstPattern] [env : (& env CtfeEnv)]) : ast.AstPattern
+(define (ctfe-quote-pattern
+  [pattern : ast.AstPattern]
+  [env : (& env CtfeEnv)]
+  [origin : (& ast.AstExpr)]
+  [fuel : i64]) : ResultCtfeQuotePattern
   (match pattern
-    [(Var name maybe-ty) (Var (ctfe-quote-name-id env name) maybe-ty)]
+    [(Var name maybe-ty)
+      (match (ctfe-quote-maybe-type (& maybe-ty) env origin fuel)
+        [(Ok quoted next-fuel)
+          (Ok (Var (ctfe-quote-name-id env name) quoted) next-fuel)]
+        [(Err diag) (Err diag)])]
     [(Tuple patterns-box)
-      (let
-        [patterns : ast.AstPatternList (deref patterns-box)]
-        (ast.ast-pat-tuple (ctfe-quote-pattern-list (& patterns) env)))]
+      (match (ctfe-quote-pattern-list (& (deref patterns-box)) env origin fuel)
+        [(Ok quoted next-fuel) (Ok (ast.ast-pat-tuple quoted) next-fuel)]
+        [(Err diag) (Err diag)])]
     [(Array patterns-box)
-      (let
-        [patterns : ast.AstPatternList (deref patterns-box)]
-        (ast.ast-pat-array (ctfe-quote-pattern-list (& patterns) env)))]
+      (match (ctfe-quote-pattern-list (& (deref patterns-box)) env origin fuel)
+        [(Ok quoted next-fuel) (Ok (ast.ast-pat-array quoted) next-fuel)]
+        [(Err diag) (Err diag)])]
     [(Slice items-box has-rest)
-      (let
-        [items : ast.AstPatternList (deref items-box)]
-        (ast.ast-pat-slice (ctfe-quote-pattern-list (& items) env) has-rest))]
-    [(Wildcard) Wildcard]
-    [(Binding name) (Binding (ctfe-quote-name-id env name))]
+      (match (ctfe-quote-pattern-list (& (deref items-box)) env origin fuel)
+        [(Ok quoted next-fuel)
+          (Ok (ast.ast-pat-slice quoted has-rest) next-fuel)]
+        [(Err diag) (Err diag)])]
+    [(Wildcard) (Ok Wildcard fuel)]
+    [(Binding name) (Ok (Binding (ctfe-quote-name-id env name)) fuel)]
     [(Variant name args-box)
       (let
-        [args : ast.AstPatternList (deref args-box)]
-        (ast.ast-pat-variant-id
-          (ctfe-quote-name-id env name)
-          (ctfe-quote-pattern-list (& args) env)))]
-    [(Literal lit) (Literal lit)]
+        [quoted-name : i64 (ctfe-quote-name-id env name)]
+        (match (ctfe-quote-pattern-list (& (deref args-box)) env origin fuel)
+          [(Ok quoted next-fuel)
+            (Ok (ast.ast-pat-variant-id quoted-name quoted) next-fuel)]
+          [(Err diag) (Err diag)]))]
+    [(Literal lit) (Ok (Literal lit) fuel)]
     [(Or patterns-box)
-      (let
-        [patterns : ast.AstPatternList (deref patterns-box)]
-        (ast.ast-pat-or (ctfe-quote-pattern-list (& patterns) env)))]
+      (match (ctfe-quote-pattern-list (& (deref patterns-box)) env origin fuel)
+        [(Ok quoted next-fuel) (Ok (ast.ast-pat-or quoted) next-fuel)]
+        [(Err diag) (Err diag)])]
     [(Fields patterns-box)
-      (let
-        [patterns : ast.AstPatternList (deref patterns-box)]
-        (ast.ast-pat-fields (ctfe-quote-pattern-list (& patterns) env)))]
+      (match (ctfe-quote-pattern-list (& (deref patterns-box)) env origin fuel)
+        [(Ok quoted next-fuel) (Ok (ast.ast-pat-fields quoted) next-fuel)]
+        [(Err diag) (Err diag)])]
     ;; The field name names a struct field, not a binder, so only the entry's
     ;; pattern is quoted.
     [(Field name patterns-box)
-      (let
-        [patterns : ast.AstPatternList (deref patterns-box)]
-        (Field name (box (ctfe-quote-pattern-list (& patterns) env))))]))
+      (match (ctfe-quote-pattern-list (& (deref patterns-box)) env origin fuel)
+        [(Ok quoted next-fuel) (Ok (Field name (box quoted)) next-fuel)]
+        [(Err diag) (Err diag)])]))
 
 (define (ctfe-quote-let-binding-list
   [bindings : (& ast.AstLetBindingList)]
@@ -13186,18 +13205,24 @@
 ;; is quoted after its body.
 (define (ctfe-quote-child-pattern!
   [env : (& env CtfeEnv)]
+  [origin : (& ast.AstExpr)]
+  [fuel : i64]
   [scratch : (&mut scratch ast.AstExprChildList)]
-  [index : i64]) : unit
+  [index : i64]) : ResultCtfeQuotePatternBuild
   (match (ast.ast-expr-child-list-get
     scratch
     index
     (ast.ast-expr-child-fallback))
     [(ast.AstExprChild.Pattern pattern)
-      (ast.ast-expr-child-list-set!
-        scratch
-        index
-        (ast.AstExprChild.Pattern (ctfe-quote-pattern pattern env)))]
-    [_ unit]))
+      (match (ctfe-quote-pattern pattern env origin fuel)
+        [(Ok quoted next-fuel)
+          (ast.ast-expr-child-list-set!
+            scratch
+            index
+            (ast.AstExprChild.Pattern quoted))
+          (Ok next-fuel)]
+        [(Err diag) (Err diag)])]
+    [_ (Ok fuel)]))
 
 ;; The binder names a rebuilt node carries beside its children, quoted after
 ;; them; loop index types are kept as they are.
@@ -13310,7 +13335,16 @@
               (set! fuel next-fuel)
               (when
                 (>= pattern 0)
-                (ctfe-quote-child-pattern! env scratch pattern)
+                (match (ctfe-quote-child-pattern!
+                  env
+                  (& (ctfe-ast-get env child))
+                  fuel
+                  scratch
+                  pattern)
+                  [(Ok pattern-fuel) (set! fuel pattern-fuel)]
+                  [(Err diag)
+                    (ast.ast-expr-child-list-truncate! scratch start)
+                    (return (Err diag))])
                 (set! pattern -1))]
             [(Err diag)
               (ast.ast-expr-child-list-truncate! scratch start)

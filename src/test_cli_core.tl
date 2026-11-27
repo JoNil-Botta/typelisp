@@ -2202,19 +2202,27 @@
 (define (tltest-prepare-check-program
   [source : (& source str)]
   [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]) : compiler_check_core.CompilerCheckLoadedProgram
+  [paths : ast.AstDeclPathList]
+  [track-unsafe? : bool]) : compiler_check_core.CompilerCheckLoadedProgram
   (match (tltest-collect source decls paths)
     [(Collect runtime-decls runtime-paths tests)
       (let
         [checked-paths : ast.AstDeclPathList
           (tltest-inline-typecheck-paths runtime-paths (& tests))]
-        [test-functions : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
-        (for [index (iterator.range 0 (array-length tests))]
-          (match (& (array-ref tests index))
-            [(Case _ _ _ _ _ _ _ private-id _ _)
-              (set!
-                test-functions
-                (sym_i64_env.sym-i64-bind-id test-functions private-id 1))]))
+        [test-functions : tc_core.TcUnusedUnsafeExcludedFunctions
+          (if (and track-unsafe? (> (array-length tests) 0))
+            (let
+              [index-by-name : tltest_name_map.Map
+                (tltest_name_map.with-capacity (* 2 (array-length tests)))]
+              (for [index (iterator.range 0 (array-length tests))]
+                (match (& (array-ref tests index))
+                  [(Case _ _ _ _ _ _ _ private-id _ _)
+                    (tltest_name_map.insert-ref!
+                      (&mut index-by-name)
+                      private-id
+                      1)]))
+              (tc_core.TcUnusedUnsafeExcludedFunctions.Some index-by-name))
+            tc_core.TcUnusedUnsafeExcludedFunctions.None)]
         (compiler_check_core.CompilerCheckLoadedProgram
           (compiler_load.compiler-load-decl-list-append
             (& runtime-decls)

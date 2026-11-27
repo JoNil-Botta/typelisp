@@ -14,6 +14,9 @@
 (import compiler_load_tests as load_tests)
 (import compiler_driver_core as driver)
 (import compiler_owned_view as owned_view)
+(import compiler_parse_core as parser)
+(import lint_core)
+(import lint_driver_core as lint_driver)
 
 (define semantic-facts-test-calls : i64
   0)
@@ -352,7 +355,9 @@
             [_ (test.assert-true false "retained binding")]))]
       [_ (test.assert-true false "first binding")])))
 
-(define (semantic-facts-test-source [source : String]) : bool
+(define (semantic-facts-test-source-with-consumer
+  [source : String]
+  [consumer : (-> i64 (& snapshot facts.CompilerSemanticFacts) unit)]) : bool
   (let
     [owner : arena.Arena (arena.make)]
     [_next-job : unit (check.compiler-check-reset-interns!)]
@@ -372,7 +377,7 @@
           false
           false
           0
-          semantic-facts-test-consumer))]
+          consumer))]
     (arena.destroy-safe! owner)
     (tc.compiler-typecheck-reset-file-state!)
     (test.assert-i64-eq
@@ -390,6 +395,9 @@
     (match result
       [(check.ResultCompilerCheck.Ok _ _) true]
       [(check.ResultCompilerCheck.Err _ _) false])))
+
+(define (semantic-facts-test-source [source : String]) : bool
+  (semantic-facts-test-source-with-consumer source semantic-facts-test-consumer))
 
 (test
   semantic-facts-one-checked-walk-and-shadowed-locals
@@ -1054,3 +1062,127 @@
     semantic-facts-test-returned-marked
     0
     "no cross-job returns"))
+
+(define (semantic-facts-test-use-code
+  [use : (& facts.CompilerSemanticValueUse)]) : i64
+  (match use
+    [(Returned) 1]
+    [(Discarded) 2]
+    [(Unreliable) 3]
+    [(Consumed) 4]))
+
+(define (semantic-facts-test-has-use?
+  [snapshot : (& snapshot facts.CompilerSemanticFacts)]
+  [line : i64]
+  [type-name : (& type-name str)]
+  [expected : facts.CompilerSemanticValueUse]) : bool
+  (for [index
+    (iterator.range 0 (facts.compiler-semantic-facts-expression-count snapshot))]
+    (match (facts.compiler-semantic-facts-expression-at snapshot index)
+      [(facts.CompilerSemanticFactLookup.Found fact)
+        (when
+          (and
+            (= fact.expression fact.report-expression)
+            (= (cast fact.span.start-line : i64) line)
+            (string.eq (& fact.resolved-type.text) type-name))
+          (return
+            (=
+              (semantic-facts-test-use-code (& fact.value-use))
+              (semantic-facts-test-use-code (& expected)))))]
+      [_ unit]))
+  false)
+
+(define (semantic-facts-test-return-uses
+  [_context : i64]
+  [snapshot : (& snapshot facts.CompilerSemanticFacts)]) : unit
+  (test.assert-true
+    (semantic-facts-test-has-use? snapshot 3 "i64" (Returned))
+    "compatible named tail")
+  (test.assert-true
+    (semantic-facts-test-has-use? snapshot 6 "unit" (Returned))
+    "compatible lambda tail")
+  (test.assert-true
+    (semantic-facts-test-has-use? snapshot 8 "Marked" (Discarded))
+    "named discard survives recovery")
+  (test.assert-true
+    (semantic-facts-test-has-use? snapshot 9 "bool" (Unreliable))
+    "incompatible named tail")
+  (test.assert-true
+    (semantic-facts-test-has-use? snapshot 12 "Marked" (Discarded))
+    "lambda discard survives recovery")
+  (test.assert-true
+    (semantic-facts-test-has-use? snapshot 13 "bool" (Unreliable))
+    "incompatible lambda tail")
+  (test.assert-true
+    (semantic-facts-test-has-use? snapshot 16 "Marked" (Unreliable))
+    "required unit is not a discard"))
+
+(test
+  semantic-facts-return-compatibility-in-recovered-bodies
+  (test.assert-true
+    (not
+      (semantic-facts-test-source-with-consumer
+        "(defstruct Marked (:must-use) (value i64))
+(define (good) : i64
+  7)
+(define (make-unit) : (-> unit)
+  (lambda () : unit
+    unit))
+(define (bad) : i64
+  (Marked 9)
+  true)
+(define (make-bad) : (-> i64)
+  (lambda () : i64
+    (Marked 3)
+    false))
+(define (required-unit) : unit
+  (while true
+    (Marked 4)))"
+        semantic-facts-test-return-uses))
+    "the mismatched returns and loop are rejected"))
+
+(test
+  semantic-facts-inline-tests-share-the-unsafe-fallback-check
+  (let
+    [source : String
+      "(defstruct Marked (:must-use) (value i64))
+(defmacro (identity [value : Expr]) : Expr value)
+(define (runtime) : unit (unsafe (identity unit)))
+(test first-test (unsafe (identity unit)) (Marked 1) unit)
+(test second-test (unsafe (identity unit)) (Marked 2) unit)
+(test bad-tail (Marked 3))"]
+    [cfgs
+      (parser.compiler-cfg-enable
+        (lint_driver.selfhost-lint-language-cfgs)
+        "test")]
+    [before : i64 tc_api.compiler-typecheck-pipeline-runs]
+    [with-fallback : lint_core.LintFindings
+      (lint_driver.selfhost-lint-typed-findings
+        "combined_inline_check.tl"
+        (string.copy (& source))
+        (roots.new)
+        cfgs
+        true
+        true)]
+    [combined-runs : i64 (- tc_api.compiler-typecheck-pipeline-runs before)]
+    [without-fallback : lint_core.LintFindings
+      (lint_driver.selfhost-lint-typed-findings
+        "combined_inline_check.tl"
+        source
+        (roots.new)
+        cfgs
+        false
+        true)]
+    (test.assert-i64-eq combined-runs 1 "one shared pipeline")
+    (test.assert-i64-eq
+      (- tc_api.compiler-typecheck-pipeline-runs before)
+      2
+      "one more pipeline with unsafe tracking disabled")
+    (test.assert-i64-eq
+      (lint_core.lint-findings-count with-fallback)
+      3
+      "one runtime unsafe finding and two test discards")
+    (test.assert-i64-eq
+      (lint_core.lint-findings-count without-fallback)
+      2
+      "the same two test discards with unsafe tracking disabled")))

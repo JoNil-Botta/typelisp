@@ -27,7 +27,7 @@
 (defstruct CompilerCheckLoadedProgram
   (decls ast.AstDeclList)
   (paths ast.AstDeclPathList)
-  (unsafe-excluded-functions sym_i64_env.SymI64Env))
+  (unsafe-excluded-functions tc.TcUnusedUnsafeExcludedFunctions))
 
 (defenum CompilerCheckPreparation
   (Unchanged)
@@ -36,6 +36,7 @@
       (& source str)
       ast.AstDeclList
       ast.AstDeclPathList
+      bool
       CompilerCheckLoadedProgram)))
 
 (defenum CompilerSemanticCheckInput
@@ -275,8 +276,14 @@
               (CompilerCheckLoadedProgram
                 decls
                 paths
-                (sym_i64_env.sym-i64-empty))]
-            [(Prepare prepare) (prepare (& path) decls paths)])]
+                tc.TcUnusedUnsafeExcludedFunctions.None)]
+            [(Prepare prepare)
+              (prepare
+                (& path)
+                decls
+                paths
+                (tc.tc-unused-unsafe-tracking-enabled?
+                  (tc.tc-job-state-unused-unsafe job-state)))])]
         (tc.tc-unused-unsafe-exclude-functions!
           (tc.tc-job-state-unused-unsafe job-state)
           program.unsafe-excluded-functions)

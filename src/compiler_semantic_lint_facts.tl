@@ -243,6 +243,11 @@
   (report-expression i64)
   (sequence-tail i64))
 
+(defstruct CompilerSemanticFactExpansion
+  (template-depth i64)
+  (provenance CompilerSemanticFactProvenance)
+  (path i64))
+
 (defstruct CompilerSemanticFactRecorderData
   (owner arena.Arena)
   (facts CompilerSemanticFactStorage)
@@ -256,7 +261,7 @@
   (current-scope i64)
   (frames (__tl_dyn-array CompilerSemanticFactFrame))
   (frame-count i64)
-  (expansions (__tl_dyn-array CompilerSemanticFactFrame))
+  (expansions (__tl_dyn-array CompilerSemanticFactExpansion))
   (expansion-depth i64)
   (function-parents (__tl_dyn-array i64))
   (function-depth i64)
@@ -331,7 +336,7 @@
         -1
         (__tl_make-array CompilerSemanticFactFrame 0)
         0
-        (__tl_make-array CompilerSemanticFactFrame 0)
+        (__tl_make-array CompilerSemanticFactExpansion 0)
         0
         (__tl_make-array i64 0)
         0
@@ -1346,7 +1351,8 @@
 (define (compiler-semantic-fact-recorder-function-leave!
   [recorder : CompilerSemanticFactRecorder]
   [ctx : tc.TcContext]
-  [result : tc.ResultTcType]) : unit
+  [return-compatible? : bool]
+  [inferred-return : ast.AstMaybeType]) : unit
   (let
     [data : CompilerSemanticFactRecorderData
       (compiler-semantic-fact-recorder-data recorder)]
@@ -1354,31 +1360,22 @@
       (and (>= data.current-function 0) (> data.function-depth 0))
       (begin
         (let
-          [func (& (array-ref data.facts.functions data.current-function))]
-          [body : i64 func.body]
-          [unit-required? : bool (string.eq (& func.return-type.text) "unit")]
+          [body : i64
+            (array-ref data.facts.functions data.current-function).body]
           (compiler-semantic-fact-set-result-use!
             (&mut data)
             body
-            (match (& result)
-              [(tc.ResultTcType.Ok inferred)
-                (cond
-                  [(= body data.initializer) CompilerSemanticValueUse.Consumed]
-                  [(and
-                      unit-required?
-                      (match inferred
-                        [(or (ast.AstType.Unit) (ast.AstType.Never)) false]
-                        [_ true]))
-                    CompilerSemanticValueUse.Unreliable]
-                  [else CompilerSemanticValueUse.Returned])]
-              [(tc.ResultTcType.Err _) CompilerSemanticValueUse.Unreliable])))
-        (match result
-          [(tc.ResultTcType.Ok (ast.AstType.Func _ return-box))
+            (cond
+              [(not return-compatible?) CompilerSemanticValueUse.Unreliable]
+              [(= body data.initializer) CompilerSemanticValueUse.Consumed]
+              [else CompilerSemanticValueUse.Returned])))
+        (match inferred-return
+          [(ast.AstMaybeType.Some ty)
             (let
               [ret : CompilerSemanticFactType
                 (compiler-semantic-fact-type
                   ctx
-                  (tc.tc-context-type-get ctx return-box)
+                  ty
                   (owned_view.compiler-owned-shared-view data.current-path))]
               (in-arena
                 data.owner
@@ -1397,23 +1394,69 @@
             -1))
         (compiler-semantic-fact-recorder-data-set! recorder data)))))
 
-(define (compiler-semantic-fact-source-provenance
+;; A named expansion enters a template. A caller marker steps back through
+;; one template, which can itself be synthetic when a macro calls a helper.
+(define (compiler-semantic-fact-expansion
   [ctx : tc.TcContext]
-  [expression : i64]
-  [fallback : CompilerSemanticFactProvenance]) : CompilerSemanticFactProvenance
-  (match (tc.tc-context-expr-get ctx expression)
-    [(ast.AstExpr.Spanned inner _)
-      (compiler-semantic-fact-source-provenance ctx inner fallback)]
-    [(ast.AstExpr.MacroExpansion inner provenance name)
-      (if (>= name 0)
+  [parent : CompilerSemanticFactExpansion]
+  [path : i64]
+  [name : i64]
+  [inner : i64]) : CompilerSemanticFactExpansion
+  (cond
+    [(>= name 0)
+      (CompilerSemanticFactExpansion
+        (+ parent.template-depth 1)
         CompilerSemanticFactProvenance.Synthetic
+        path)]
+    [(> parent.template-depth 1)
+      (CompilerSemanticFactExpansion
+        (- parent.template-depth 1)
+        CompilerSemanticFactProvenance.Synthetic
+        path)]
+    [else
+      (CompilerSemanticFactExpansion
+        0
         (if (and
-          (>= (tc.macro-expansion-origin-path-id provenance) 0)
-          (match (tc.tc-expr-id-maybe-span (tc.tc-context-expr-bases ctx) inner)
-            [(tc.TcMaybeAstSourceSpan.Some span) (> span.start-line 0)]
+          (>= path 0)
+          (match (tc.tc-context-expr-get ctx inner)
+            [(ast.AstExpr.Spanned _ span) (> span.start-line 0)]
             [_ false]))
           CompilerSemanticFactProvenance.MacroArgument
-          CompilerSemanticFactProvenance.Unknown))]
+          CompilerSemanticFactProvenance.Unknown)
+        path)]))
+
+(define (compiler-semantic-fact-current-expansion
+  [data : (& data CompilerSemanticFactRecorderData)]) : CompilerSemanticFactExpansion
+  (if (> data.expansion-depth 0)
+    (array-ref data.expansions (- data.expansion-depth 1))
+    (CompilerSemanticFactExpansion
+      0
+      (if data.generated
+        CompilerSemanticFactProvenance.Synthetic
+        data.source-provenance)
+      -1)))
+
+(define (compiler-semantic-fact-expression-expansion
+  [ctx : tc.TcContext]
+  [expression : i64]
+  [fallback : CompilerSemanticFactExpansion]) : CompilerSemanticFactExpansion
+  (match (tc.tc-context-expr-get ctx expression)
+    [(ast.AstExpr.Spanned inner _)
+      (compiler-semantic-fact-expression-expansion ctx inner fallback)]
+    [(ast.AstExpr.MacroExpansion inner provenance name)
+      (let
+        [expansion : CompilerSemanticFactExpansion
+          (compiler-semantic-fact-expansion
+            ctx
+            fallback
+            (tc.macro-expansion-origin-path-id provenance)
+            name
+            inner)]
+        ;; Named wrappers retain the invocation's synthetic provenance. A
+        ;; checked source operand below them can provide the report location.
+        (if (>= name 0)
+          expansion
+          (compiler-semantic-fact-expression-expansion ctx inner expansion)))]
     [_ fallback]))
 
 (define (compiler-semantic-fact-wrapper-inner
@@ -1564,14 +1607,11 @@
           expression]
         [(ast.AstExpr.ForeachActive _ body) body]
         [_ data.current-scope])]
-    [fallback : CompilerSemanticFactProvenance
-      (cond
-        [(> data.expansion-depth 0)
-          (array-ref data.expansions (- data.expansion-depth 1)).provenance]
-        [data.generated CompilerSemanticFactProvenance.Synthetic]
-        [else data.source-provenance])]
-    [provenance : CompilerSemanticFactProvenance
-      (compiler-semantic-fact-source-provenance ctx expression fallback)]
+    [expansion : CompilerSemanticFactExpansion
+      (compiler-semantic-fact-expression-expansion
+        ctx
+        expression
+        (compiler-semantic-fact-current-expansion (& data)))]
     [_binding-origins : unit
       (when
         (and (not data.must-use-only) (!= scope data.current-scope))
@@ -1603,10 +1643,8 @@
           data.current-function
           scope
           forbidden
-          provenance
-          (if (> data.expansion-depth 0)
-            (array-ref data.expansions (- data.expansion-depth 1)).expansion-path
-            -1)
+          expansion.provenance
+          expansion.path
           -1
           -1
           false
@@ -1751,49 +1789,25 @@
                 (set!
                   (array-ref data.frames (- data.frame-count 1)).member-handle
                   handle))]
-            [(tc.TcSemanticEvent.ExpansionEnter path name span)
+            [(tc.TcSemanticEvent.ExpansionEnter path name inner)
               (in-arena
                 data.owner
-                (when
-                  (>= data.expansion-depth (array-length data.expansions))
-                  (__tl_array-push!
-                    data.expansions
-                    (CompilerSemanticFactFrame
-                      -1
-                      -1
-                      -1
-                      false
-                      CompilerSemanticFactProvenance.Unknown
-                      -1
-                      -1
-                      -1
-                      false
-                      -1
-                      (ast.ast-decl-span-fallback)
-                      -1
-                      -1)))
-                (set!
-                  (array-ref data.expansions data.expansion-depth)
-                  (CompilerSemanticFactFrame
-                    -1
-                    -1
-                    -1
-                    false
-                    (if (>= name 0)
-                      CompilerSemanticFactProvenance.Synthetic
-                      (if (and (>= path 0) (> span.start-line 0))
-                        CompilerSemanticFactProvenance.MacroArgument
-                        CompilerSemanticFactProvenance.Unknown))
-                    path
-                    -1
-                    -1
-                    false
-                    -1
-                    (ast.ast-decl-span-fallback)
-                    -1
-                    -1))
-                (+= data.expansion-depth 1)
-                (compiler-semantic-fact-recorder-data-set! recorder data))]
+                (let
+                  [expansion : CompilerSemanticFactExpansion
+                    (compiler-semantic-fact-expansion
+                      ctx
+                      (compiler-semantic-fact-current-expansion (& data))
+                      path
+                      name
+                      inner)]
+                  (when
+                    (>= data.expansion-depth (array-length data.expansions))
+                    (__tl_array-push! data.expansions expansion))
+                  (set!
+                    (array-ref data.expansions data.expansion-depth)
+                    expansion)
+                  (+= data.expansion-depth 1)
+                  (compiler-semantic-fact-recorder-data-set! recorder data)))]
             [(tc.TcSemanticEvent.ExpansionLeave)
               (when
                 (> data.expansion-depth 0)
@@ -1844,11 +1858,12 @@
                 name
                 body
                 ret)]
-            [(tc.TcSemanticEvent.FunctionLeave result)
+            [(tc.TcSemanticEvent.FunctionLeave compatible? inferred-return)
               (compiler-semantic-fact-recorder-function-leave!
                 recorder
                 ctx
-                result)]
+                compatible?
+                inferred-return)]
             [(tc.TcSemanticEvent.Binding epoch slot generation name _ _)
               (compiler-semantic-fact-recorder-binding!
                 recorder
@@ -2070,7 +2085,7 @@
   (let
     [data : CompilerSemanticFactRecorderData
       (compiler-semantic-fact-recorder-data recorder)]
-    [span : ast.AstSourceSpan
+    [diagnostic-span : ast.AstSourceSpan
       (match (tc.tc-expr-id-maybe-span
         (tc.tc-context-expr-bases ctx)
         expression)
@@ -2125,6 +2140,15 @@
     [pools : ast.AstNodePoolContext (tc.tc-context-pools ctx)]
     [source-owner : i64
       (ast.ast-node-pool-context-expr-source-owner (& pools) expression)]
+    [span : ast.AstSourceSpan
+      (match (& frame.provenance)
+        [(MacroArgument)
+          ;; A descendant span used for diagnostics is not an editable
+          ;; location for the expression that actually produced the value.
+          (match (ast.ast-node-pool-context-expr-view-span (& pools) expression)
+            [(ast.AstMaybeSourceSpan.Some own) own]
+            [_ (ast.ast-decl-span-fallback)])]
+        [_ diagnostic-span])]
     [provenance : CompilerSemanticFactProvenance
       (if (> span.start-line 0)
         frame.provenance

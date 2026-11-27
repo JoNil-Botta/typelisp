@@ -322,12 +322,16 @@
 ;; Keep both its traversal selectors and retained block records in that
 ;; typecheck job: another compiler job may reset or destroy its own state while
 ;; this collection is active.
+(defenum TcUnusedUnsafeExcludedFunctions
+  (None)
+  (Some tc_i64_i64_map.Map))
+
 (defstruct TcUnusedUnsafeStateData
   (enabled bool)
   (current-block i64)
   (current-path String)
   (target-path String)
-  (excluded-functions sym_i64_env.SymI64Env)
+  (excluded-functions TcUnusedUnsafeExcludedFunctions)
   (block-len i64)
   (block-spans (__tl_dyn-array ast.AstSourceSpan))
   (block-paths (__tl_dyn-array String))
@@ -922,7 +926,7 @@
         -1
         ""
         ""
-        (sym_i64_env.sym-i64-empty)
+        TcUnusedUnsafeExcludedFunctions.None
         0
         (__tl_make-array ast.AstSourceSpan 0)
         (__tl_make-array String 0)
@@ -3438,7 +3442,7 @@
   (address i64))
 
 (defenum TcSemanticEvent
-  (ExpansionEnter i64 i64 ast.AstSourceSpan)
+  (ExpansionEnter i64 i64 i64)
   (ExpansionLeave)
   (ResolvedMember i64)
   (Reference i64 bool)
@@ -3451,7 +3455,7 @@
   (SequenceResult i64 bool bool)
   (Declaration i64 i64 String ast.AstDecl)
   (FunctionEnter i64 i64 ast.AstParamList ast.AstMaybeType)
-  (FunctionLeave ResultTcType)
+  (FunctionLeave bool ast.AstMaybeType)
   (Binding i64 i64 i64 i64 i64 ast.AstType)
   (BindingSite TcMaybeAstSourceSpan)
   (BindingMaterialized i64 i64 i64 i64 i64)
@@ -5385,7 +5389,7 @@
               expanded-id
               provenance-id
               macro-name-id
-              ,at
+              (TcMaybeAstSourceSpan.Some ,at)
               ,syntax
               ,expected
               ,source
@@ -6228,39 +6232,19 @@
     [(ast.AstExpr.Call func-id args)
       (tc-infer-selected-call ctx env func-id args syntax expected source sink)]
     [(ast.AstExpr.MacroExpansion expanded provenance-id macro-name-id)
-      (match (deref span)
-        [(TcMaybeAstSourceSpan.Some at)
-          (tc-infer-selected-expansion
-            ctx
-            env
-            expanded
-            provenance-id
-            macro-name-id
-            at
-            syntax
-            expected
-            source
-            allow-mut-by-value-borrow
-            ordinary?
-            sink)]
-        [(TcMaybeAstSourceSpan.No)
-          (match (tc-macro-unsafe-enter-expansion! ctx env macro-name-id)
-            [(TcMacroUnsafeEnterResult inner-env unsafe-save)
-              (let
-                [result
-                  (tc-infer-selected-transparent-id
-                    ctx
-                    inner-env
-                    expanded
-                    TcMaybeAstSourceSpan.No
-                    syntax
-                    expected
-                    source
-                    allow-mut-by-value-borrow
-                    ordinary?
-                    sink)]
-                (tc-macro-unsafe-leave! ctx unsafe-save)
-                result)])])]
+      (tc-infer-selected-expansion
+        ctx
+        env
+        expanded
+        provenance-id
+        macro-name-id
+        (deref span)
+        syntax
+        expected
+        source
+        allow-mut-by-value-borrow
+        ordinary?
+        sink)]
     [(ast.AstExpr.Match match-box)
       (tc-infer-selected-match ctx env match-box syntax expected source sink)]
     ;; Outside a call argument a borrow keeps its own type, like the legacy
@@ -6576,7 +6560,7 @@
   [id : i64]
   [provenance-id : i64]
   [macro-name-id : i64]
-  [span : ast.AstSourceSpan]
+  [span : TcMaybeAstSourceSpan]
   [syntax : typed.TypedSyntax]
   [expected : ast.AstMaybeType]
   [source : ownership.OwnershipSource]
@@ -6597,7 +6581,7 @@
         (tc-context-semantic-observer ctx)
         ctx
         env
-        (ExpansionEnter origin-path-id macro-name-id span)))
+        (ExpansionEnter origin-path-id macro-name-id id)))
     (match (tc-macro-unsafe-enter-expansion! ctx env macro-name-id)
       [(TcMacroUnsafeEnterResult inner-env unsafe-save)
         (let
@@ -6607,18 +6591,24 @@
               inner-env
               id
               (if compact?
-                (tc-infer-needed-span (& (tc-context-expr-get ctx id)) span)
+                (match (& span)
+                  [(TcMaybeAstSourceSpan.Some at)
+                    (tc-infer-needed-span (& (tc-context-expr-get ctx id)) at)]
+                  [_ TcMaybeAstSourceSpan.No])
                 TcMaybeAstSourceSpan.No)
               syntax
               expected
               (match (& sink)
                 [(TcSelectedSink.Query) source]
                 [_
-                  (tc-selected-expansion-source
-                    (& source)
-                    span
-                    provenance-id
-                    macro-name-id)])
+                  (match (& span)
+                    [(TcMaybeAstSourceSpan.Some at)
+                      (tc-selected-expansion-source
+                        (& source)
+                        at
+                        provenance-id
+                        macro-name-id)]
+                    [_ source])])
               allow-mut-by-value-borrow
               ordinary?
               sink)]
@@ -6632,24 +6622,27 @@
               ExpansionLeave))
           (match result
             [(TcSelectedResult.Err message next)
-              (tc-selected-unrepresented
-                (tc-macro-expansion-result-with-frame
-                  ctx
-                  id
-                  compact?
-                  (macro-expansion-invocation-path-id provenance-id)
-                  origin-path-id
-                  macro-name-id
-                  span
-                  (if compact?
-                    (tc-locate-spanned-error-with-context
+              (match span
+                [(TcMaybeAstSourceSpan.Some at)
+                  (tc-selected-unrepresented
+                    (tc-macro-expansion-result-with-frame
                       ctx
-                      env
-                      (tc-context-expr-get ctx id)
-                      span
-                      message)
-                    (ResultTcType.Err message)))
-                next)]
+                      id
+                      compact?
+                      (macro-expansion-invocation-path-id provenance-id)
+                      origin-path-id
+                      macro-name-id
+                      at
+                      (if compact?
+                        (tc-locate-spanned-error-with-context
+                          ctx
+                          env
+                          (tc-context-expr-get ctx id)
+                          at
+                          message)
+                        (ResultTcType.Err message)))
+                    next)]
+                [_ (TcSelectedResult.Err message next)])]
             [(TcSelectedResult.Ok ty occurrence next)
               (TcSelectedResult.Ok ty occurrence next)]))])))
 
@@ -34142,26 +34135,32 @@
 
 (define (tc-unused-unsafe-exclude-functions!
   [state : TcUnusedUnsafeState]
-  [functions : sym_i64_env.SymI64Env]) : unit
+  [functions : TcUnusedUnsafeExcludedFunctions]) : unit
   (unsafe
     (set!
       (deref (tc-unused-unsafe-state-ptr state)).excluded-functions
       functions)))
 
+(define (tc-unused-unsafe-tracking-enabled? [state : TcUnusedUnsafeState]) : bool
+  (unsafe
+    (deref (tc-unused-unsafe-state-view state)).enabled))
+
 (define (tc-unused-unsafe-suspend-function!
   [state : TcUnusedUnsafeState]
   [function : i64]) : bool
-  (let
-    [data : (MutPtr TcUnusedUnsafeStateData) (tc-unused-unsafe-state-ptr state)]
-    [tracking : TcUnusedUnsafeStateData (tc-unused-unsafe-state-data state)]
-    (unsafe
-      (if (and
-        tracking.enabled
-        (sym_i64_env.sym-i64-contains-id tracking.excluded-functions function))
-        (begin
-          (set! (deref data).enabled false)
-          true)
-        false))))
+  (and
+    (tc-unused-unsafe-tracking-enabled? state)
+    (let
+      [tracking : TcUnusedUnsafeStateData (tc-unused-unsafe-state-data state)]
+      (match (& tracking.excluded-functions)
+        [(TcUnusedUnsafeExcludedFunctions.Some functions)
+          (if (= (tc_i64_i64_map.get-value-or functions function 0) 1)
+            (begin
+              (unsafe
+                (set! (deref (tc-unused-unsafe-state-ptr state)).enabled false))
+              true)
+            false)]
+        [_ false]))))
 
 (define (tc-unused-unsafe-resume-function!
   [state : TcUnusedUnsafeState]
@@ -34188,7 +34187,9 @@
   (let
     [data : (MutPtr TcUnusedUnsafeStateData) (tc-unused-unsafe-state-ptr state)]
     (unsafe
-      (set! (deref data).excluded-functions (sym_i64_env.sym-i64-empty))
+      (set!
+        (deref data).excluded-functions
+        TcUnusedUnsafeExcludedFunctions.None)
       (set! (deref data).enabled false)
       (set! (deref data).current-block -1)
       (set! (deref data).current-path "")
@@ -89191,9 +89192,11 @@
         env
         (FunctionEnter
           -1
-          (match (tc-global-shared-view body)
-            [(ast.AstExpr.Spanned inner _) inner]
-            [_ -1])
+          (if (>= body-id 0)
+            body-id
+            (match (tc-global-shared-view body)
+              [(ast.AstExpr.Spanned inner _) inner]
+              [_ -1]))
           (tc-global-shared-view params)
           (tc-global-shared-view ret))))
     (let
@@ -89246,14 +89249,19 @@
               (tc-context-semantic-observer ctx)
               ctx
               env
-              (FunctionLeave (ResultTcType.Ok (tc-global-shared-view ty))))
+              (FunctionLeave
+                true
+                (match (tc-type-strip-region (ast.clone-ast-type (& ty)))
+                  [(ast.AstType.Func _ return-box)
+                    (ast.AstMaybeType.Some (tc-context-type-get ctx return-box))]
+                  [_ ast.AstMaybeType.No])))
             (TcSelectedResult.Ok ty occurrence next)]
           [(TcSelectedResult.Err message next)
             (tc-semantic-observer-send!
               (tc-context-semantic-observer ctx)
               ctx
               env
-              (FunctionLeave (ResultTcType.Err (tc-global-shared-view message))))
+              (FunctionLeave false ast.AstMaybeType.No))
             (TcSelectedResult.Err message next)])
         result))))
 
@@ -135066,7 +135074,7 @@
               semantic-observer
               ctx
               global-env
-              (FunctionLeave (ResultTcType.Err (tc-global-shared-view message))))
+              (FunctionLeave false ast.AstMaybeType.No))
             (tc-scoped-state-set-semantic-observer!
               (tc-job-state-type-env-scoped-state (tc-context-job-state ctx))
               (TcSemanticObserver 0)))
@@ -135099,7 +135107,7 @@
                 semantic-observer
                 ctx
                 env
-                (FunctionLeave (ResultTcType.Err (tc-selected-error error))))
+                (FunctionLeave false ast.AstMaybeType.No))
               (tc-scoped-state-set-semantic-observer!
                 (tc-job-state-type-env-scoped-state (tc-context-job-state ctx))
                 (TcSemanticObserver 0)))
@@ -135123,19 +135131,15 @@
           [(TcSelectedClosedResult.Ok ty root)
             (set! selected-root root)
             (ResultTcType.Ok ty)]))]
-    [_semantic-function-leave : unit
+    [_semantic-body-checked : unit
       (when
         (!= semantic-observer.address 0)
-        (tc-semantic-observer-send!
-          semantic-observer
-          ctx
-          env
-          (FunctionLeave (tc-global-shared-view typed-result)))
         (tc-scoped-state-set-semantic-observer!
           (tc-job-state-type-env-scoped-state (tc-context-job-state ctx))
           (TcSemanticObserver 0))
         (tc-context-set-semantic-observer! ctx (TcSemanticObserver 0)))]
     [_scoped-restored : unit (tc-type-env-scoped-runtime-restore! scoped-save)]
+    [return-compatible? : bool false]
     [result : ResultTcUnit
       (match typed-result
         [(ResultTcType.Ok inferred)
@@ -135152,7 +135156,9 @@
                 [(TcInferredTypeMatch.Mismatch actual) actual])]
             [expect-result : ResultTcUnit
               (match matched-got
-                [(TcInferredTypeMatch.Compatible _) ResultTcUnit.Ok]
+                [(TcInferredTypeMatch.Compatible _)
+                  (set! return-compatible? true)
+                  ResultTcUnit.Ok]
                 [(TcInferredTypeMatch.Mismatch actual)
                   ;; A mismatch only in region tags is the value's region
                   ;; escaping, named at the value (#9604). Only this error
@@ -135233,6 +135239,11 @@
     (typed.typed-store-retire! (&mut store))
     (when
       (!= semantic-observer.address 0)
+      (tc-semantic-observer-send!
+        semantic-observer
+        ctx
+        env
+        (FunctionLeave return-compatible? ast.AstMaybeType.No))
       (tc-context-set-semantic-observer! ctx semantic-observer))
     result))
 

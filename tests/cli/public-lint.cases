@@ -664,6 +664,30 @@ stdout contains lint_marked_macro.tl:7:21: unused must-use value of type Marked
 stdout contains lint_marked_macro.tl:9:13: unused must-use value of type Marked
 stdout contains lint: 2 finding(s)
 
+case lint-unused-must-use-macro-forwarding
+file lint_marked_forward.tl
+(defstruct Marked (:must-use) (value i64))
+(defmacro (discard-argument [x : Expr]) : Expr `(begin ,x unit))
+(defmacro (forward [x : Expr]) : Expr `(discard-argument ,x))
+(defmacro (forward-twice [x : Expr]) : Expr `(forward ,x))
+(defmacro (synthetic) : Expr `(discard-argument (Marked 42)))
+(defmacro (synthetic-nested) : Expr `(forward-twice (Marked 43)))
+
+(define (main) : unit
+  (synthetic)
+  (synthetic-nested)
+  (forward (Marked 1))
+  (forward-twice (Marked 2)))
+end-file
+run lint "{{dir}}/lint_marked_forward.tl" --format flat
+exit 0
+stderr empty
+stdout not-contains lint_marked_forward.tl:5:
+stdout not-contains lint_marked_forward.tl:6:
+stdout contains lint_marked_forward.tl:11:12: unused must-use value of type Marked
+stdout contains lint_marked_forward.tl:12:18: unused must-use value of type Marked
+stdout contains lint: 2 finding(s)
+
 case lint-unused-must-use-preserves-unsafe-fallback-scope
 file lint_marked_test_unsafe.tl
 (defstruct Marked (:must-use) (number i64))

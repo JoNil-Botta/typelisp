@@ -170,6 +170,11 @@
       "lint policy: first registry decision should be stable")
     (lint-policy-test-expect
       (string.eq
+        (lint_core.lint-rule-list-ref rules 27).rule-id
+        (lint_core.lint-rule-type-name-case-id))
+      "lint policy: type-name-case registry slot should be stable")
+    (lint-policy-test-expect
+      (string.eq
         (lint_core.lint-rule-list-ref rules 28).rule-id
         (lint_core.lint-rule-unused-must-use-value-id))
       "lint policy: last registry decision should be stable")

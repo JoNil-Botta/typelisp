@@ -274,3 +274,82 @@ step package-no-prebuilt
 run test --manifest-path "pkg/typelisp.pkg" --target {{host-target}} --sysroot "{{dir}}/missing-sysroot" --no-prebuilt-stdlib
 stdout contains TypeLisp package tests passed
 cwd -
+
+# Metadata-only `.tli` extraction (`compile --emit-tli`) and hydration
+# (`compile --extra-tli` in standalone and `--batch` modes), including macro
+# expansion with module-local import aliases and negative CLI checks.
+case extra-tli-emit-and-hydrate
+file extra_lib/helper.tl
+(define (extra-add [a : i64] [b : i64]) : i64
+  (+ a b))
+end-file
+file extra_lib/mylib.tl
+(import helper as h)
+
+(define (mylib-double [x : i64]) : i64
+  (h.extra-add x x))
+
+(defmacro (mylib-bump [x : Expr]) : Expr
+  `(h.extra-add ,x 1))
+end-file
+file extra_lib/root.tl
+(import mylib)
+
+(define (main) : i64
+  (mylib.mylib-double 1))
+end-file
+file consumer_a.tl
+(import mylib)
+
+(define (main) : i64
+  (mylib.mylib-bump (mylib.mylib-double 20)))
+end-file
+file consumer_b.tl
+(import mylib)
+
+(define (main) : i64
+  (mylib.mylib-double 21))
+end-file
+cwd {{dir}}
+step emit-tli
+run compile "extra_lib/root.tl" --emit-tli --target {{host-target}} --stdlib-root "{{root}}/stdlib" --stdlib-root "{{dir}}/extra_lib" -o "{{dir}}/mylib.tli"
+stderr empty
+stdout contains Wrote
+step inspect-tli
+run inspect "{{dir}}/mylib.tli"
+stderr empty
+stdout contains format: tli
+stdout contains mylib:
+stdout contains helper:
+step hydrate-standalone-a
+run compile "consumer_a.tl" --target {{host-target}} --stdlib-root "{{root}}/stdlib" --stdlib-root "{{dir}}/extra_lib" --extra-tli "{{dir}}/mylib.tli" -o "{{dir}}/a-standalone.s"
+stderr empty
+in file {{dir}}/a-standalone.s
+contains .extern _tl_
+not-contains mylib_double:
+not-contains extra_add:
+step hydrate-standalone-b
+run compile "consumer_b.tl" --target {{host-target}} --stdlib-root "{{root}}/stdlib" --stdlib-root "{{dir}}/extra_lib" --extra-tli "{{dir}}/mylib.tli" -o "{{dir}}/b-standalone.s"
+stderr empty
+in file {{dir}}/b-standalone.s
+contains .extern _tl_
+not-contains mylib_double:
+not-contains extra_add:
+sh printf '%s|%s\n%s|%s\n' "consumer_a.tl" "{{dir}}/a-batch.s" "consumer_b.tl" "{{dir}}/b-batch.s" > "{{dir}}/batch.txt"
+step hydrate-batch
+run compile --batch "{{dir}}/batch.txt" --target {{host-target}} --stdlib-root "{{root}}/stdlib" --stdlib-root "{{dir}}/extra_lib" --extra-tli "{{dir}}/mylib.tli"
+stderr empty
+sh cmp -s "{{dir}}/a-standalone.s" "{{dir}}/a-batch.s" && cmp -s "{{dir}}/b-standalone.s" "{{dir}}/b-batch.s"
+step error-missing-extra-tli
+run compile "consumer_a.tl" --target {{host-target}} --stdlib-root "{{root}}/stdlib" --stdlib-root "{{dir}}/extra_lib" --extra-tli "{{dir}}/does-not-exist.tli" -o "{{dir}}/err.s"
+exit nonzero
+stderr contains does-not-exist.tli
+step error-emit-tli-with-emit-ir
+run compile "extra_lib/mylib.tl" --emit-tli --emit-ir --target {{host-target}} -o "{{dir}}/bad.tli"
+exit nonzero
+stderr contains --emit-tli
+step error-emit-tli-with-batch
+run compile --batch "{{dir}}/batch.txt" --emit-tli --target {{host-target}}
+exit nonzero
+stderr contains --emit-tli
+cwd -

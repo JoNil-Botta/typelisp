@@ -7,6 +7,8 @@
 (import stdlib.byte_le as le)
 (import stdlib.byte_reader as cursor)
 (import stdlib.crypto_sha256 as sha256)
+(import stdlib.hashmap)
+(import (hashmap.hashmap String i64) as string_set)
 (import stdlib.iterator)
 (import stdlib.sort)
 (import stdlib.string)
@@ -108,8 +110,19 @@
 (defstruct TliWriteContext
   (collecting? bool)
   (pool strings.Vec)
+  (pool-seen string_set.Map)
   (out buf.ByteBufBuilder)
   (body-metas (__tl_dyn-array TliCompactBodyMeta)))
+
+(define (tli-write-context-new
+  [pool : strings.Vec]
+  [body-metas : (__tl_dyn-array TliCompactBodyMeta)]) : TliWriteContext
+  (TliWriteContext
+    false
+    pool
+    (string_set.with-capacity 0)
+    (buf.byte-buf-builder-new)
+    body-metas))
 
 (define (tli-body-meta-less?
   [a-mod : (& str)]
@@ -189,7 +202,10 @@
   [ctx : (&mut ctx TliWriteContext)]
   [name : (& name str)]) : unit
   (if ctx.collecting?
-    (strings.push-ref! (&mut ctx.pool) (string.copy name))
+    (unless
+      (string_set.contains-borrowed? (& ctx.pool-seen) name)
+      (string_set.insert-ref! (&mut ctx.pool-seen) (string.copy name) 1)
+      (strings.push-ref! (&mut ctx.pool) (string.copy name)))
     (le.push-u32! (&mut ctx.out) (tli-find-string (& ctx.pool) name))))
 
 (define (tli-write-names!
@@ -1416,10 +1432,8 @@
           (string.copy (& (array-ref pslots i)))))
       (let
         [ctx : TliWriteContext
-          (TliWriteContext
-            false
+          (tli-write-context-new
             pool-copy
-            (buf.byte-buf-builder-new)
             (__tl_make-array TliCompactBodyMeta 0))]
         [gcount : i64 (array-length bundle.compact-globals)]
         [bcount : i64 (array-length bundle.compact-bodies)]
@@ -1493,10 +1507,10 @@
       (TliWriteContext
         true
         (strings.new)
+        (string_set.with-capacity 256)
         (buf.byte-buf-builder-new)
         (__tl_make-array TliCompactBodyMeta 0))]
-    [pool : strings.Vec (strings.new)]
-    (strings.push-ref! (&mut ctx.pool) "")
+    (tli-write-name! (&mut ctx) "")
     (tli-write-name! (&mut ctx) (& bundle.compiler-build))
     (tli-write-name! (&mut ctx) (& bundle.target-triple))
     (for [index (iterator.range 0 (array-length bundle.modules))]
@@ -1510,17 +1524,7 @@
         (&mut ctx)
         (& (array-ref bundle.compact-bodies index).body)))
     (string_sort.sort! (&mut ctx.pool) sort.string-less?)
-    (let
-      [slots (strings.slots (& ctx.pool))]
-      (for [index (iterator.range 0 (strings.len (& ctx.pool)))]
-        (let
-          [text (& (array-ref slots index))]
-          (when
-            (or
-              (= index 0)
-              (not (string.eq (& (array-ref slots (- index 1))) text)))
-            (strings.push-ref! (&mut pool) (string.copy text))))))
-    pool))
+    ctx.pool))
 
 (define (tli-copy-digest!
   [out : (&mut out (__tl_dyn-array u8))]
@@ -1542,8 +1546,7 @@
       (if has-compact?
         (bit-or bundle.flags tli.tli-has-compact-ir)
         bundle.flags)]
-    [ctx : TliWriteContext
-      (TliWriteContext false pool (buf.byte-buf-builder-new) encoded-ir.metas)]
+    [ctx : TliWriteContext (tli-write-context-new pool encoded-ir.metas)]
     [count : i64 (array-length bundle.modules)]
     [order : keys.Vec (keys.with-capacity count)]
     (for [index (iterator.range 0 count)]

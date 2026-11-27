@@ -25,7 +25,6 @@
 (import sym_i64_env)
 (import stdlib.math)
 (import stdlib.byte_buf)
-(import stdlib.byte_buf_core as buf)
 (import stdlib.crypto_sha256 as sha)
 (import stdlib.fs)
 (import stdlib.hashmap)
@@ -453,10 +452,65 @@
       (tli-extract-module-name owner))))
 
 ;; Index -> source row of each root-owned package declaration, or -1.
-(define (tli-extract-root-origins
-  [ctx : tc.TcContext]
+;; Precompute the declaration-index -> source-path table in one O(N) pass,
+;; matching `symbols.compiler-symbol-path-at-index` without O(N^2) list walks.
+(define (tli-extract-fill-decl-paths-uniform!
+  [out : (&mut (__tl_dyn-array String))]
+  [decls : (& ast.AstDeclList)]
+  [decl-path : (& str)]
+  [cursor : i64]) : i64
+  (let
+    [n : i64 (ast.ast-decl-list-len decls)]
+    [next : i64 cursor]
+    (for [i (iterator.range 0 n)]
+      (match (ast.ast-decl-list-ref-borrowed decls i)
+        [(ModuleBody _ body-box)
+          (set!
+            next
+            (tli-extract-fill-decl-paths-uniform! out body-box decl-path next))]
+        [_
+          (when
+            (symbols.compiler-symbol-decl-counts-for-index?
+              (ast.ast-decl-list-ref-borrowed decls i))
+            (when
+              (< next (array-length (deref out)))
+              (set! (array-ref (deref out) next) (string.copy decl-path)))
+            (+= next 1))]))
+    next))
+
+(define (tli-extract-decl-paths-by-index
   [decls : (& ast.AstDeclList)]
   [paths : (& ast.AstDeclPathList)]
+  [decl-count : i64]) : (__tl_dyn-array String)
+  (let
+    [out : (__tl_dyn-array String) (__tl_make-array String decl-count)]
+    [n : i64 (ast.ast-decl-list-len decls)]
+    [cursor : i64 0]
+    (for [i (iterator.range 0 n)]
+      (let
+        [decl-path : String (ast.ast-decl-path-list-get paths i "")]
+        (match (ast.ast-decl-list-ref-borrowed decls i)
+          [(ModuleBody _ body-box)
+            (set!
+              cursor
+              (tli-extract-fill-decl-paths-uniform!
+                (&mut out)
+                body-box
+                (& decl-path)
+                cursor))]
+          [_
+            (when
+              (symbols.compiler-symbol-decl-counts-for-index?
+                (ast.ast-decl-list-ref-borrowed decls i))
+              (when
+                (< cursor decl-count)
+                (set! (array-ref out cursor) decl-path))
+              (+= cursor 1))])))
+    out))
+
+(define (tli-extract-root-origins
+  [ctx : tc.TcContext]
+  [decl-paths : (& (__tl_dyn-array String))]
   [sources : (& sources (__tl_dyn-array TliSource))]
   [is-stdlib : bool]) : (__tl_dyn-array i64)
   (let
@@ -474,7 +528,7 @@
           -1
           (tli-extract-source-for-path
             sources
-            (& (symbols.compiler-symbol-path-at-index decls paths index 0))))))
+            (& (array-ref (deref decl-paths) index))))))
     out))
 
 (define (tli-extract-symbol-at
@@ -740,23 +794,34 @@
       ;; Put a witness on the indirect union itself so callers are detected
       ;; even when the union has no global writer.
       (effects.add-write! (&mut graph) count count)
-      ;; Every locally impure declaration writes one synthetic key, so its
-      ;; summary marks each function that can reach impure code.
-      (for [index (iterator.range 0 count)]
-        (when
-          (tli-extract-locally-impure? ctx env index)
-          (effects.add-write! (&mut graph) index (+ count 1))))
-      (TliExtractEffects
-        global-writes
-        (effects.summary! (&mut graph) count)
-        (effects.summary!
-          (&mut arena-graph)
-          (tc.tc-arena-store-global-key count))
-        (effects.summary!
-          (&mut arena-graph)
-          (tc.tc-arena-store-argument-key count))
-        (effects.summary! (&mut graph) (+ count 1))
-        arena-graph))))
+      (let
+        [indirect : (__tl_dyn-array i64) (effects.summary! (&mut graph) count)]
+        ;; Every locally impure declaration writes one synthetic key, so its
+        ;; summary marks each function that can reach impure code. A declaration
+        ;; already marked indirect or writing a global (and every transitive
+        ;; caller via `graph`) is already non-pure, so skip the purity walk for
+        ;; it and run each remaining walk in a scratch arena.
+        (for [index (iterator.range 0 count)]
+          (when
+            (and
+              (= (array-ref indirect index) 0)
+              (= (writes.len (& (array-ref global-writes index))) 0)
+              (with-scratch
+                ;; unsafe: interned names live in the persistent intern arena, not this scratch arena.
+                (unsafe
+                  (tli-extract-locally-impure? ctx env index))))
+            (effects.add-write! (&mut graph) index (+ count 1))))
+        (TliExtractEffects
+          global-writes
+          indirect
+          (effects.summary!
+            (&mut arena-graph)
+            (tc.tc-arena-store-global-key count))
+          (effects.summary!
+            (&mut arena-graph)
+            (tc.tc-arena-store-argument-key count))
+          (effects.summary! (&mut graph) (+ count 1))
+          arena-graph)))))
 
 (define (tli-extract-summary
   [facts : (& facts TliExtractEffects)]
@@ -2249,11 +2314,7 @@
     [encoded-ir : codec.TliEncodedCompactIr
       (codec.tli-encode-compact-ir-section (& pool) bundle)]
     [ctx : codec.TliWriteContext
-      (codec.TliWriteContext
-        false
-        pool
-        (buf.byte-buf-builder-new)
-        encoded-ir.metas)]
+      (codec.tli-write-context-new pool encoded-ir.metas)]
     [states : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [digests : (__tl_dyn-array sha.Sha256Digest)
       (__tl_make-array sha.Sha256Digest count)]
@@ -2320,6 +2381,8 @@
         [(Program decls) (deref decls)])]
     [count : i64
       (symbols.compiler-symbols-decl-count (tc.tc-context-symbols (& ctx)))]
+    [decl-paths : (__tl_dyn-array String)
+      (tli-extract-decl-paths-by-index (& decls) paths count)]
     (for [index (iterator.range 0 (array-length sources))]
       (let
         [source (& (array-ref sources index))]
@@ -2342,12 +2405,7 @@
             (when
               (< (tli-extract-find-module sources (& name)) 0)
               (let
-                [path : String
-                  (symbols.compiler-symbol-path-at-index
-                    (& decls)
-                    paths
-                    index
-                    0)]
+                [path : String (string.copy (& (array-ref decl-paths index)))]
                 [origin : i64 (tli-extract-source-for-path sources (& path))]
                 (when
                   (>= origin 0)
@@ -2398,13 +2456,15 @@
     [decls : ast.AstDeclList
       (match (tc.tc-context-program ctx)
         [(Program decls) (deref decls)])]
+    [decl-count : i64
+      (symbols.compiler-symbols-decl-count (tc.tc-context-symbols (& ctx)))]
+    [decl-paths : (__tl_dyn-array String)
+      (tli-extract-decl-paths-by-index (& decls) paths decl-count)]
     [root-origins : (__tl_dyn-array i64)
-      (tli-extract-root-origins ctx (& decls) paths sources is-stdlib)]
+      (tli-extract-root-origins ctx (& decl-paths) sources is-stdlib)]
     [facts : TliExtractEffects
       (tli-extract-effects ctx env sources (& root-origins))]
     [count : i64 (array-length sources)]
-    [decl-count : i64
-      (symbols.compiler-symbols-decl-count (tc.tc-context-symbols (& ctx)))]
     [unsafe-decls : (__tl_dyn-array bool) (__tl_make-array bool decl-count)]
     [live : (__tl_dyn-array bool) (__tl_make-array bool count)]
     [paths-out : (__tl_dyn-array String) (__tl_make-array String count)]
@@ -2450,7 +2510,7 @@
             (symbols.compiler-symbol-root-module-id? raw-owner-id)
             (let
               [decl-path : String
-                (symbols.compiler-symbol-path-at-index (& decls) paths index 0)]
+                (string.copy (& (array-ref decl-paths index)))]
               [origin : i64 (tli-extract-source-for-path sources (& decl-path))]
               (when
                 (>= origin 0)
@@ -2472,8 +2532,7 @@
       (let
         [module-id : i64 (tli-extract-owner ctx index)]
         [raw-module-name : String (tli-extract-module-name module-id)]
-        [decl-path : String
-          (symbols.compiler-symbol-path-at-index (& decls) paths index 0)]
+        [decl-path : String (string.copy (& (array-ref decl-paths index)))]
         [slot : i64
           (if (> (string.string-length (& raw-module-name)) 0)
             (tli-extract-find-module sources (& raw-module-name))

@@ -308,19 +308,20 @@ Output:
 
 (define (cli-compile-help-text) : String
   "Usage:
-    typelisp compile <file.tl> [-o <file>] [--debug|-g|--backtrace] [--emit-ir | --dump-ir [after-<pass>]] [--verify-ir] [--trace-passes] [--pic | --no-entry] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|s>|-Os] [--stdlib-root <dir>...] [--cfg <name>...] [--profile-allocations]
-    typelisp compile --batch <input-output-list> [--debug|-g|--backtrace] [--no-entry] [--verify-ir] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|s>|-Os] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]
-    typelisp compile --batch <artifact-list> --windows-coff-plan <result-plan> --target windows-x86_64 [--debug|-g|--backtrace] [--no-entry] [--verify-ir] [--backend-mode <mode>] [--opt-level <0|1|2|s>|-Os] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]
+    typelisp compile <file.tl> [-o <file>] [--debug|-g|--backtrace] [--emit-ir | --dump-ir [after-<pass>] | --emit-tli] [--verify-ir] [--trace-passes] [--pic | --no-entry] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|s>|-Os] [--stdlib-root <dir>...] [--extra-tli <file>...] [--cfg <name>...] [--profile-allocations]
+    typelisp compile --batch <input-output-list> [--debug|-g|--backtrace] [--no-entry] [--verify-ir] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|s>|-Os] [--stdlib-root <dir>...] [--extra-tli <file>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]
+    typelisp compile --batch <artifact-list> --windows-coff-plan <result-plan> --target windows-x86_64 [--debug|-g|--backtrace] [--no-entry] [--verify-ir] [--backend-mode <mode>] [--opt-level <0|1|2|s>|-Os] [--stdlib-root <dir>...] [--extra-tli <file>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]
 
 Summary:
-    Generate assembly, an IR summary, or a deterministic textual IR dump.
+    Generate assembly, an IR summary, a deterministic textual IR dump, or a metadata-only .tli bundle.
 
 Options:
-    -o <file>                      Output assembly or IR file
+    -o <file>                      Output assembly, IR, or .tli file
     --batch <file>                 Read input|output pairs and compile them in one process
     --windows-coff-plan <file>     Read input|object|assembly[|force-assembly] rows and write source|kind|path|reason|archive results
     --prefix-cache-stats           Print typecheck prefix-cache stats for a batch
     --emit-ir                      Emit intermediate representation
+    --emit-tli                     Emit a metadata-only .tli interface bundle
     --dump-ir [after-<pass>]       Emit textual IR, optionally after a pass
     --verify-ir                    Verify optimized IR before writing output
     --trace-passes                 Trace optimizer pass/function sizes to stderr
@@ -333,6 +334,7 @@ Options:
     --backtrace                    Alias for --debug (includes fatal-backtrace metadata)
     --profile-allocations          Report compiler arena ownership by phase
     --stdlib-root <dir>            Search root for stdlib/... imports
+    --extra-tli <file>             Preload a metadata-only .tli bundle for non-stdlib imports (repeatable)
     --cfg <name>                   Enable a compile-time cfg predicate name
 ")
 

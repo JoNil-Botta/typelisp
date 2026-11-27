@@ -42515,6 +42515,15 @@
           (when (tc-program-lifetime-id? name) (set! found name))]
         [(TcMaybeNameId.No) unit])
       (set! index (+ index 1)))
+    (when
+      (and (< found 0) (tc-tli-hydrated-any-fn-program-shadow? ctx))
+      (let
+        [canonical-id : i64 (tc-tli-hydrated-decl-canonical-id ctx key)]
+        (when
+          (and
+            (>= canonical-id 0)
+            (tc-tli-hydrated-fn-program-shadow? ctx canonical-id))
+          (set! found (tc-program-lifetime-name-id)))))
     found))
 
 ;; The signature a call publishes for the ownership graph, where a `program`
@@ -56266,7 +56275,10 @@
             [alias-key : i64
               (csym.compiler-symbols-import-alias-key-id cur-module-id alias)]
             [seen-key : i64
-              (csym.compiler-composite-pair-key-id alias-key target-module)]
+              (tc-import-alias-materialized-key-id
+                cur-module-id
+                alias-key
+                target-module)]
             (unless
               (tc-import-alias-materialized? seen-aliases seen-key)
               (tc_i64_i64_map.insert-ref! (&mut seen-aliases) seen-key 1)
@@ -97034,6 +97046,38 @@
             -1
             (array-ref facts.fn-summaries.slots slot).effect-flags))))))
 
+(define (tc-tli-hydrated-any-fn-program-shadow? [ctx : TcContext]) : bool
+  (let
+    [facts-ptr : i64 (tc-job-state-tli-facts-ptr (tc-context-job-state ctx))]
+    (if (= facts-ptr 0)
+      false
+      (unsafe
+        (let
+          [facts : tli_hydrate.TliHydratedFacts
+            (ptr-read
+              (int->ptr
+                (cast facts-ptr : u64)
+                : (Ptr tli_hydrate.TliHydratedFacts)))]
+          facts.any-fn-program-shadow)))))
+
+(define (tc-tli-hydrated-fn-program-shadow? [ctx : TcContext] [symbol-id : i64]) : bool
+  (let
+    [facts-ptr : i64 (tc-job-state-tli-facts-ptr (tc-context-job-state ctx))]
+    (if (= facts-ptr 0)
+      false
+      (unsafe
+        (let
+          [facts : tli_hydrate.TliHydratedFacts
+            (ptr-read
+              (int->ptr
+                (cast facts-ptr : u64)
+                : (Ptr tli_hydrate.TliHydratedFacts)))]
+          [slot : i64
+            (tli_hydrate.tli-hydrated-facts-fn-summary-slot (& facts) symbol-id)]
+          (if (< slot 0)
+            false
+            (array-ref facts.fn-summaries.slots slot).program-shadowed))))))
+
 (define (tc-tli-hydrated-fn-summary-arena-arg-store?
   [ctx : TcContext]
   [symbol-id : i64]
@@ -118453,6 +118497,64 @@
   (Source ast.AstExpr i64)
   (Unavailable String))
 
+;; Cache hydrated `defmacro` bodies belonging to `target-module-id` discovered
+;; in one parsed fallback file so repeated expansions of macros from that
+;; verified module reuse the parsed AST nodes in `pools` instead of re-reading
+;; and re-parsing the declaring source.
+(define (macro-cache-tli-hydrated-file-defmacros!
+  [facts-ptr : i64]
+  [pool-bases : i64]
+  [decls : (& ast.AstDeclList)]
+  [initial-module-id : i64]
+  [target-module-id : i64]) : unit
+  (let
+    [current : i64 initial-module-id]
+    [n : i64 (ast.ast-decl-list-len decls)]
+    (for [i (iterator.range 0 n)]
+      (let
+        [decl : ast.AstDecl
+          (ast.ast-decl-list-get decls i (ast.ast-decl-fallback))]
+        (match decl
+          [(Module name) (set! current name)]
+          [(ModuleBody nested body-box)
+            (macro-cache-tli-hydrated-file-defmacros!
+              facts-ptr
+              pool-bases
+              (& (__tl-box-place body-box))
+              nested
+              target-module-id)]
+          [_
+            (when
+              (and (>= current 0) (= current target-module-id))
+              (match (ast.ast-decl-unwrapped (& decl))
+                [(DefMacro _ name _ _ body-id)
+                  (when
+                    (>= body-id 0)
+                    (let
+                      [identity : String (macro-decl-name-display name current)]
+                      [identity-id : i64 (ci.intern (string.copy (& identity)))]
+                      [literal-id : i64 (macro-type-literal-body-id (& decl))]
+                      (unsafe
+                        (let
+                          [facts : tli_hydrate.TliHydratedFacts
+                            (ptr-read
+                              (int->ptr
+                                (cast facts-ptr : u64)
+                                : (Ptr tli_hydrate.TliHydratedFacts)))]
+                          [slot : i64
+                            (tli_hydrate.tli-hydrated-facts-macro-slot
+                              (& facts)
+                              identity-id)]
+                          (when
+                            (>= slot 0)
+                            (tli_hydrate.tli-hydrated-facts-macro-cache-fallback!
+                              (&mut facts)
+                              slot
+                              pool-bases
+                              body-id
+                              literal-id))))))]
+                [_ unit]))])))))
+
 ;; A hydrated (`.tli`) macro carries no body. When its native `.tlci` entry
 ;; cannot run, the interpreted fallback re-reads the declaring source, which
 ;; must be the exact text the interface was produced from, parsed with the
@@ -118470,6 +118572,12 @@
       [identity : String
         (macro-decl-name-display macro-name-id fallback-module-id)]
       [identity-id : i64 (ci.intern (string.copy (& identity)))]
+      [pools : ast.AstNodePoolContext (tc-context-pools ctx)]
+      [pool-bases : i64
+        (ast.ast-node-pool-context-expr-segment-bases (& pools))]
+      [pool-len : i64 (ast.ast-node-pool-context-expr-len pools)]
+      [cached-body-id : i64 -1]
+      [cached-literal-id : i64 -1]
       [entry : tli_hydrate.TliHydratedMacroSource
         (unsafe
           (let
@@ -118481,6 +118589,24 @@
             [slot : i64
               (tli_hydrate.tli-hydrated-facts-macro-slot (& facts) identity-id)]
             (when (< slot 0) (return Own))
+            (set!
+              cached-body-id
+              (tli_hydrate.tli-hydrated-facts-macro-cached-fallback-body-id
+                (& facts)
+                slot
+                pool-bases))
+            (when
+              (and (>= cached-body-id 0) (< cached-body-id pool-len))
+              (set!
+                cached-literal-id
+                (tli_hydrate.tli-hydrated-facts-macro-cached-fallback-literal-body-id
+                  (& facts)
+                  slot
+                  pool-bases))
+              (return
+                (Source
+                  (ast.ast-node-pool-context-expr-get pools cached-body-id)
+                  cached-literal-id)))
             (tli_hydrate.tli-hydrated-facts-macro-source (& facts) slot)))]
       [provenance-id : i64
         (csym.compiler-symbols-provenance-id-at-index-or
@@ -118520,40 +118646,45 @@
                   " source "
                   (string.copy (& path))
                   " changed since its .tli was built; rebuild the dependency"))
-              (let
-                [pools : ast.AstNodePoolContext (tc-context-pools ctx)]
-                (match (parser.parse-ast-source-diagnostic-with-cfg-and-pools
-                  path
-                  (& text)
-                  (macro-tli-fallback-cfgs (& entry.source-cfg-names))
-                  pools)
-                  [(Err _) (Unavailable unavailable)]
-                  [(Ok prog)
-                    (match prog
-                      [(Program decls-box)
-                        (let
-                          [file-decls (& (__tl-box-place decls-box))]
-                          [decl : ast.AstDecl
-                            (macro-find-module-defmacro-in-decls
+              (match (parser.parse-ast-source-diagnostic-with-cfg-and-pools
+                path
+                (& text)
+                (macro-tli-fallback-cfgs (& entry.source-cfg-names))
+                pools)
+                [(Err _) (Unavailable unavailable)]
+                [(Ok prog)
+                  (match prog
+                    [(Program decls-box)
+                      (let
+                        [file-decls (& (__tl-box-place decls-box))]
+                        [initial-mod : i64
+                          (if (macro-decls-declare-module?
+                            file-decls
+                            entry.module-id)
+                            -1
+                            entry.module-id)]
+                        [decl : ast.AstDecl
+                          (macro-find-module-defmacro-in-decls
+                            file-decls
+                            ;; Root forms belong to the file's implicit module.
+                            initial-mod
+                            entry.module-id
+                            macro-name-id)]
+                        [body-id : i64 (macro-defmacro-body-id (& decl))]
+                        (if (>= body-id 0)
+                          (begin
+                            (tc-context-install-pools! ctx)
+                            (macro-cache-tli-hydrated-file-defmacros!
+                              facts-ptr
+                              (ast.ast-node-pool-context-expr-segment-bases
+                                (& pools))
                               file-decls
-                              ;; Root forms belong to the file's implicit module.
-                              (if (macro-decls-declare-module?
-                                file-decls
-                                entry.module-id)
-                                -1
-                                entry.module-id)
-                              entry.module-id
-                              macro-name-id)]
-                          [body-id : i64 (macro-defmacro-body-id (& decl))]
-                          (if (>= body-id 0)
-                            (begin
-                              (tc-context-install-pools! ctx)
-                              (Source
-                                (ast.ast-node-pool-context-expr-get
-                                  pools
-                                  body-id)
-                                (macro-type-literal-body-id (& decl))))
-                            (Unavailable unavailable)))])])))])))))
+                              initial-mod
+                              entry.module-id)
+                            (Source
+                              (ast.ast-node-pool-context-expr-get pools body-id)
+                              (macro-type-literal-body-id (& decl))))
+                          (Unavailable unavailable)))])]))])))))
 
 (define (macro-eval-transformer-interpreted-with-env
   [ctx : TcContext]
@@ -118618,7 +118749,14 @@
               env)])]
       [eval-body : ast.AstExpr
         (match fallback
-          [(Source source-body _) source-body]
+          [(Source source-body _)
+            ;; Any AST nodes parsed while resolving the fallback body must stay
+            ;; below the expansion's produced-node floor so cached template
+            ;; nodes are never rewritten in place by hygiene.
+            (macro-hygiene-produced-eval-start-with-pools!
+              (tc-context-macro-state ctx)
+              (tc-context-pools ctx))
+            source-body]
           [_ body])]
       (match (ctfe_support.ctfe-eval-node
         (& eval-body)
@@ -118662,6 +118800,20 @@
   [call-expr : ast.AstExpr]) : ResultMacroEnv
   (macro-prepare-transformer-pools! ctx)
   (let
+    [uses-expr-type? : bool
+      (or
+        (macro-expand-expr-type-macro?
+          (tc-context-macro-state ctx)
+          fallback-module-id
+          macro-name-id)
+        (and
+          (tc-tli-hydrated-module? ctx fallback-module-id)
+          (tc-tli-hydrated-macro-uses-expr-type?
+            ctx
+            (ci.intern
+              (macro-tlci-catalog-identity
+                (string.copy (& fallback-module))
+                (string.copy (& macro-name)))))))]
     [bind-result : ResultMacroEnv
       (macro-bind-params
         ctx
@@ -118673,10 +118825,7 @@
         params
         expanded-args
         (tc-ctfe-env ctx)
-        (macro-expand-expr-type-macro?
-          (tc-context-macro-state ctx)
-          fallback-module-id
-          macro-name-id)
+        uses-expr-type?
         call-expr)]
     (begin
       (cfg compile-profile (counters.bump! compiler-tc-walk-operand-captures))

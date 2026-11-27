@@ -285,9 +285,18 @@ file extra_lib/helper.tl
 end-file
 file extra_lib/mylib.tl
 (import helper as h)
+(import stdlib.byte_reader as reader)
+(import stdlib.text_buf)
+(import stdlib.text_buf_borrowed)
 
 (define (mylib-double [x : i64]) : i64
   (h.extra-add x x))
+
+(define (reader-at-end? [input : (& reader.ByteReader)]) : bool
+  (reader.at-end? input))
+
+(define (empty-borrowed [anchor : (& text str)]) : (text_buf_borrowed.TextBufBorrowed text)
+  (text_buf_borrowed.empty-like anchor))
 
 (defmacro (mylib-bump [x : Expr]) : Expr
   `(h.extra-add ,x 1))
@@ -335,6 +344,25 @@ in file {{dir}}/b-standalone.s
 contains .extern _tl_
 not-contains mylib_double:
 not-contains extra_add:
+step hydrate-source-stdlib
+run compile "consumer_b.tl" --target {{host-target}} --stdlib-root "{{root}}/stdlib" --extra-tli "{{dir}}/mylib.tli" --no-prebuilt-stdlib -o "{{dir}}/b-source.s"
+stderr empty
+in file {{dir}}/b-source.s
+contains .extern _tl_extra_lib_mylib_mylib_mylib_double
+not-contains _tl_extra_lib_mylib_mylib_mylib_double:
+step emit-debug-tli
+run compile "extra_lib/root.tl" --emit-tli --debug --target {{host-target}} --stdlib-root "{{root}}/stdlib" --stdlib-root "{{dir}}/extra_lib" -o "{{dir}}/mylib-debug.tli"
+stderr empty
+step hydrate-debug-source-stdlib
+run compile "consumer_b.tl" --debug --target {{host-target}} --stdlib-root "{{root}}/stdlib" --extra-tli "{{dir}}/mylib-debug.tli" -o "{{dir}}/b-debug.s"
+stderr empty
+in file {{dir}}/b-debug.s
+contains .extern _tl_extra_lib_mylib_mylib_mylib_double
+not-contains _tl_extra_lib_mylib_mylib_mylib_double:
+step error-extra-tli-cfg-mismatch
+run compile "consumer_b.tl" --debug --target {{host-target}} --stdlib-root "{{root}}/stdlib" --extra-tli "{{dir}}/mylib.tli" -o "{{dir}}/bad-cfg.s"
+exit nonzero
+stderr contains TLI configuration fingerprint mismatch
 sh printf '%s|%s\n%s|%s\n' "consumer_a.tl" "{{dir}}/a-batch.s" "consumer_b.tl" "{{dir}}/b-batch.s" > "{{dir}}/batch.txt"
 step hydrate-batch
 run compile --batch "{{dir}}/batch.txt" --target {{host-target}} --stdlib-root "{{root}}/stdlib" --stdlib-root "{{dir}}/extra_lib" --extra-tli "{{dir}}/mylib.tli"

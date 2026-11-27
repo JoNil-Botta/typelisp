@@ -102238,27 +102238,38 @@
           diag))
       diag)))
 
+(define (macro-diagnostic-site-span [path : String] [span : ast.AstSourceSpan]) : cdiag.CompilerDiagnosticSpan
+  (cdiag.CompilerDiagnosticSpan
+    path
+    (ast.ast-source-span-start-line span)
+    (ast.ast-source-span-start-col span)
+    (ast.ast-source-span-end-line span)
+    (ast.ast-source-span-end-col span)))
+
+(define (macro-diagnostic-author-error?
+  [diag : (& diag cdiag.CompilerDiagnostic)]) : bool
+  (string.eq
+    (cdiag.compiler-diagnostic-code-or-empty diag)
+    (cdiag.compiler-diagnostic-code-for-macro-kind (ComptimeAuthorError))))
+
 (define (macro-diagnostic-with-expansion-site
   [ctx : TcContext]
   [path : String]
   [call-expr : ast.AstExpr]
   [macro-name : String]
+  [decls-splice? : bool]
   [diag : cdiag.CompilerDiagnostic]) : cdiag.CompilerDiagnostic
-  (match (macro-expansion-site-span ctx call-expr)
-    [(Some span)
-      (cdiag.compiler-diagnostic-with-secondary-if-new
-        diag
-        (&
-          (cdiag.CompilerDiagnosticSpan
-            path
-            (ast.ast-source-span-start-line span)
-            (ast.ast-source-span-start-col span)
-            (ast.ast-source-span-end-line span)
-            (ast.ast-source-span-end-col span)))
-        (&
-          (CompilerDiagnosticSomeString
-            (tc-macro-expansion-frame-label (ci.intern macro-name)))))]
-    [(No) diag]))
+  (if (and decls-splice? (macro-diagnostic-author-error? (& diag)))
+    diag
+    (match (macro-expansion-site-span ctx call-expr)
+      [(Some span)
+        (cdiag.compiler-diagnostic-with-secondary-if-new
+          diag
+          (& (macro-diagnostic-site-span path span))
+          (&
+            (CompilerDiagnosticSomeString
+              (tc-macro-expansion-frame-label (ci.intern macro-name)))))]
+      [(No) diag])))
 
 (define (macro-active-decl-path-id [ctx : TcContext]) : i64
   (__tl-project-field
@@ -102328,8 +102339,26 @@
   [decl : ast.AstDecl]
   [path : String]) : unit
   (match decl
-    [(DefMacro _ name _ _ _)
-      (macro-definition-path-record! ctx module-id name path)]
+    [(DefMacro _ name _ ret body-id)
+      (let
+        [source-path : String
+          (if (or
+            (tc-macro-result-decls? (& ret))
+            (tc-macro-result-module? (& ret)))
+            (match (tc-context-expr-get ctx body-id)
+              [(Spanned inner-id _)
+                (match (tc-context-expr-get ctx inner-id)
+                  [(MacroExpansion _ provenance-id _)
+                    (let
+                      [origin-id : i64
+                        (macro-expansion-origin-path-id provenance-id)]
+                      (if (< origin-id 0)
+                        path
+                        (ci.intern-str origin-id)))]
+                  [_ path])]
+              [_ path])
+            path)]
+        (macro-definition-path-record! ctx module-id name source-path))]
     [(Unsafe inner)
       (macro-definition-path-note-decl!
         ctx
@@ -102360,6 +102389,7 @@
   [path : String]
   [call-expr : ast.AstExpr]
   [macro-name : String]
+  [decls-splice? : bool]
   [result : ResultMacroDeclExpansion]) : ResultMacroDeclExpansion
   (match result
     [(Ok decls paths) (Ok decls paths)]
@@ -102371,6 +102401,7 @@
             path
             call-expr
             macro-name
+            decls-splice?
             (macro-failed-operand-diagnostic
               ctx
               type-env
@@ -104486,6 +104517,20 @@
   [macro-name-id : i64]
   [span : ast.AstSourceSpan]) : ast.AstDecl
   (match (tc-global-shared-view decl)
+    [(Import meta (Spec (MacroDecls call-id context) path expected alias _))
+      (Import
+        meta
+        (Spec
+          (MacroDecls
+            (ast.ast-expr-macro-expansion
+              call-id
+              (macro-expansion-provenance-id path-id origin-path-id)
+              macro-name-id)
+            context)
+          path
+          expected
+          alias
+          (box span)))]
     [(Import meta (Spec kind path expected alias _))
       ;; Generated declaration paths belong to the requesting expansion. Keep
       ;; the import span in that same source file, even for an imported macro.
@@ -120243,6 +120288,7 @@
             (macro-invocation-path ctx)
             call-expr
             macro-name
+            false
             (macro-failed-operand-diagnostic
               ctx
               type-env
@@ -125048,7 +125094,7 @@
                   (& call-expr)
                   "typecheck: Module macro output must include a module declaration")))])))))
 
-(define (macro-expand-decls-splice
+(define (macro-expand-decls-splice-at-call
   [ctx : TcContext]
   [top-env : TcTypeEnv]
   [orig-decls : ast.AstDeclList]
@@ -125056,9 +125102,12 @@
   [module-id : i64]
   [call-id : i64]
   [context : ast.AstMaybeModuleName]
+  [span : ast.AstSourceSpan]
   [cfgs : sym_i64_env.SymI64Env]
   [decl-path : String]) : ResultMacroDeclExpansion
   (let
+    ;; Name-resolution diagnostics use the expression's spelling in the
+    ;; template. The declaration span follows the invocation through splices.
     [call-expr : ast.AstExpr (tc-context-expr-get ctx call-id)]
     [pools : ast.AstNodePoolContext (tc-context-pools ctx)]
     (match (ast.ast-expr-unspan-with-pools pools (& call-expr))
@@ -125122,10 +125171,11 @@
                                 call-ctx
                                 global-env
                                 (tc-global-shared-view decl-path)
-                                (tc-global-shared-view call-expr)
+                                (Spanned call-id span)
                                 (macro-decl-name-display
                                   macro-name
                                   definition-module)
+                                true
                                 (match (macro-eval-transformer-expanded-with-env
                                   call-ctx
                                   (tc-global-shared-view orig-decls)
@@ -125208,10 +125258,7 @@
                                                     (macro-decl-name-display
                                                       macro-name
                                                       definition-module)))
-                                                (macro-expr-span-or-zero
-                                                  (tc-context-expr-bases ctx)
-                                                  (tc-global-shared-view
-                                                    call-expr)))]
+                                                span)]
                                             (macro-decls-splice-with-memo
                                               (tc-context-expr-bases call-ctx)
                                               (tc-context-macro-state call-ctx)
@@ -125252,6 +125299,56 @@
               (MacroUse)
               (& call-expr)
               "typecheck: module-scope macro placeholder must be a call")))])))
+
+(define (macro-expand-decls-splice
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [orig-decls : ast.AstDeclList]
+  [module : String]
+  [module-id : i64]
+  [call-id : i64]
+  [context : ast.AstMaybeModuleName]
+  [span : ast.AstSourceSpan]
+  [cfgs : sym_i64_env.SymI64Env]
+  [decl-path : String]) : ResultMacroDeclExpansion
+  (let
+    [site : (Tuple i64 i64)
+      (match (tc-context-expr-get ctx call-id)
+        [(MacroExpansion inner-id provenance-id _)
+          (tuple inner-id (macro-expansion-origin-path-id provenance-id))]
+        [_ (tuple call-id -1)])]
+    (match (macro-expand-decls-splice-at-call
+      ctx
+      top-env
+      orig-decls
+      module
+      module-id
+      (tuple-ref site 0)
+      context
+      span
+      cfgs
+      (string.copy (& decl-path)))
+      [(Ok decls paths) (Ok decls paths)]
+      [(Err boxed)
+        (let
+          [diag (& (deref boxed))]
+          [origin-id : i64 (tuple-ref site 1)]
+          (cond
+            [(macro-diagnostic-author-error? diag)
+              (Err
+                (box
+                  (cdiag.compiler-diagnostic-with-primary-span
+                    diag
+                    (macro-diagnostic-site-span decl-path span))))]
+            [(and
+                (>= origin-id 0)
+                (string.eq (cdiag.compiler-diagnostic-path diag) ""))
+              (Err
+                (box
+                  (cdiag.compiler-diagnostic-with-path
+                    diag
+                    (& (ci.intern-str origin-id)))))]
+            [else (Err boxed)]))])))
 
 (define (macro-expand-module-import
   [ctx : TcContext]
@@ -125401,6 +125498,7 @@
                                       (macro-decl-name-display
                                         macro-name
                                         definition-module)
+                                      false
                                       (match (macro-eval-transformer-expanded-with-env
                                         call-ctx
                                         (tc-global-shared-view orig-decls)
@@ -125556,6 +125654,7 @@
                 module-id
                 call-id
                 context
+                (__tl-box-place span)
                 cfgs
                 decl-path)]
             [_

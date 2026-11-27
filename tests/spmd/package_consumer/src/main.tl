@@ -176,7 +176,7 @@
     (set! f64-ok? (fill-f64 f64-input f64-out n))
     (set! f32-ok? (fill-f32 f32-input f32-out n))
     (if (and
-      (= (fixture.package-answer) 42)
+      (= (fixture.package-answer (-> (& l i64) (& r i64) bool)) 42)
       (= (fixture.package-increment 41) 42)
       (= (fixture.package-unsupported 42) 42)
       (= (fixture.package-unsupported 41) 41)

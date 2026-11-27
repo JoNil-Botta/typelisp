@@ -11,7 +11,7 @@ comptime_mut_borrow_rvalue_temporary_ok|check-ok|tests/safety/comptime_mut_borro
 comptime_mut_call_rvalue_temporary_ok|check-ok|tests/safety/comptime_mut_call_rvalue_temporary_ok.tl|-|-
 gen_clone_missing_dependency_reject|check-fail|tests/safety/gen_clone_missing_dependency_reject.tl|-|gen-clone: missing explicit dependency clone-leaf
 gen_clone_cycle_reject|check-fail|tests/safety/gen_clone_cycle_reject.tl|-|gen-clone: cyclic clone dependency reaches
-gen_clone_name_collision_reject|check-fail|tests/safety/gen_clone_name_collision_reject.tl|-|gen-clone: generated name collision for clone-point
+gen_clone_name_collision_reject|check-fail|tests/safety/gen_clone_name_collision_reject.tl|tests/safety/gen_clone_name_collision_reject.tl:9:1|gen-clone: generated name collision for clone-point
 gen_clone_foreign_owner_reject|check-fail|tests/safety/gen_clone_foreign_owner_reject.tl|-|gen-clone: Leaf must be generated in its canonical owner module clone_deep_missing_owner (current module <root>)
 macro_local_lifetime_coercion_reject|check-fail|tests/safety/macro_local_lifetime_coercion_reject.tl|-|source lifetime `shadowed` does not outlive required lifetime `keep`
 macro_local_lifetime_incoming_ok|run-exit|tests/safety/macro_local_lifetime_incoming_ok.tl|42|-

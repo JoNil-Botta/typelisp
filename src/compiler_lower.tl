@@ -59772,18 +59772,22 @@
   [active-mask : ir.CompilerIrMaybeValue]
   [lanes : i64]
   [exprs : ast.AstExprList]) : ResultLowerExpr
-  (lower-avx512-masked-begin-at
-    ctx
-    state
-    env
-    type-env
-    lane-locals
-    index
-    index-var
-    active-mask
-    lanes
-    (& exprs)
-    0))
+  (let
+    [unit-ty : ast.AstType (Unit)]
+    (lower-avx512-masked-begin-at
+      ctx
+      state
+      env
+      type-env
+      lane-locals
+      index
+      index-var
+      active-mask
+      lanes
+      (& exprs)
+      0
+      false
+      (& unit-ty))))
 
 (define (lower-avx512-masked-begin-at
   [ctx : tc_core.TcContext]
@@ -59796,14 +59800,40 @@
   [active-mask : ir.CompilerIrMaybeValue]
   [lanes : i64]
   [exprs : (& exprs ast.AstExprList)]
-  [expr-index : i64]) : ResultLowerExpr
+  [expr-index : i64]
+  [has-expected : bool]
+  [expected-ty : (& expected-ty ast.AstType)]) : ResultLowerExpr
   (if (>= expr-index exprs.len)
     (Ok (Expr state Unit (Unit)))
     (let
       [expr : ast.AstExpr
         (lower-context-expr-get ctx (ast.ast-expr-list-get exprs expr-index 0))]
-      [lowered
-        (try
+      (if (= (+ expr-index 1) exprs.len)
+        (if has-expected
+          (lower-avx512-masked-expr-expected
+            ctx
+            state
+            env
+            type-env
+            lane-locals
+            index
+            index-var
+            active-mask
+            lanes
+            expr
+            expected-ty)
+          (lower-avx512-masked-expr
+            ctx
+            state
+            env
+            type-env
+            lane-locals
+            index
+            index-var
+            active-mask
+            lanes
+            expr))
+        (match (try
           (lower-avx512-masked-expr
             ctx
             state
@@ -59814,11 +59844,8 @@
             index-var
             (lower-global-shared-view active-mask)
             lanes
-            expr))]
-      (match lowered
-        [(Expr next-state value ty)
-          (if (= (+ expr-index 1) exprs.len)
-            (Ok (Expr next-state value ty))
+            expr))
+          [(Expr next-state _ _)
             (lower-avx512-masked-begin-at
               ctx
               next-state
@@ -59830,7 +59857,9 @@
               active-mask
               lanes
               exprs
-              (+ expr-index 1)))]))))
+              (+ expr-index 1)
+              has-expected
+              expected-ty)])))))
 
 (define (lower-avx512-masked-select-result-supported?
   [state : LowerState]
@@ -64865,6 +64894,7 @@
           cast-ty-id)]
       [(Literal lit)
         (match (lower-global-shared-view lit)
+          [(Unit) (Ok (Expr state Unit (Unit)))]
           [(Bool value)
             (Ok
               (lower-avx512-masked-bool-literal state active-mask lanes value))]
@@ -65200,6 +65230,21 @@
                   (lower-context-expr-get ctx body-box)
                   expected-ty)]
               [(Err message) (Err message)])])]
+      [(Begin exprs)
+        (lower-avx512-masked-begin-at
+          ctx
+          state
+          env
+          type-env
+          lane-locals
+          index
+          index-var
+          active-mask
+          lanes
+          (& exprs)
+          0
+          true
+          (& expected-ty))]
       [(Cast inner-box cast-ty-id)
         (lower-avx512-masked-cast-expected
           ctx
@@ -65217,6 +65262,7 @@
           expected-ty)]
       [(Literal lit)
         (match (lower-global-shared-view lit)
+          [(Unit) (Ok (Expr state Unit (Unit)))]
           [(Bool value)
             (Ok
               (lower-avx512-masked-bool-literal state active-mask lanes value))]

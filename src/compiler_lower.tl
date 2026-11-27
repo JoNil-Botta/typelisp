@@ -9207,18 +9207,6 @@
       (tc_core.tc-spmd-inline-helper-module module-id)
       module-id)))
 
-(define (lower-spmd-float-intrinsic?
-  [ctx : tc_core.TcContext]
-  [type-env : tc_core.TcTypeEnv]
-  [func : (& ast.AstExpr)]
-  [arg-count : i64]) : bool
-  (match (ast.ast-expr-unspan-with-segment-bases
-    (tc_core.tc-context-expr-bases ctx)
-    func)
-    [(Var name)
-      (>= (tc_core.tc-spmd-float-intrinsic-id ctx type-env name arg-count) 0)]
-    [_ false]))
-
 (define (lower-spmd-inline-helper-lookup
   [ctx : tc_core.TcContext]
   [function-state : CompilerLowerFunctionState]
@@ -52502,16 +52490,11 @@
           unit)]))
   false)
 
-;; Calls that affect SPMD strategy. A helper can require its own frame, an
-;; atomic can require ordered scalar execution, and a float intrinsic can
-;; require the scalar-reference loop.
+;; Calls an SPMD strategy depends on: helpers that stay out of line and atomics.
 (defenum LowerSpmdCallProbe
   (OutOfLine)
-  (Atomic)
-  (ScalarFloatIntrinsic))
+  (Atomic))
 
-;; Whether `expr` holds a call `probe` looks for. Atomic and float intrinsic
-;; probes follow helper bodies, including calls used in struct stores.
 (define (lower-spmd-expr-has-call?
   [ctx : tc_core.TcContext]
   [function-state : CompilerLowerFunctionState]
@@ -52565,15 +52548,6 @@
                     [(Imported _ _ _ _ _) true]
                     [(No) false])]
                 [(Err _) false])]
-            [(ScalarFloatIntrinsic)
-              (or
-                (lower-spmd-float-intrinsic? ctx type-env (& func) args.len)
-                (lower-spmd-call-reaches-float-intrinsic?
-                  ctx
-                  function-state
-                  env
-                  type-env
-                  (& func)))]
             [(Atomic)
               (or
                 (>
@@ -52620,9 +52594,7 @@
               ctx
               function-state
               env
-              (if (= probe LowerSpmdCallProbe.ScalarFloatIntrinsic)
-                (lower-spmd-numeric-let-type-env ctx type-env bindings)
-                type-env)
+              type-env
               probe
               (lower-context-expr-get ctx body-box)))])]
     [(or (If cond-box then-box else-box) (ArraySet cond-box then-box else-box))
@@ -52674,84 +52646,8 @@
               type-env
               probe
               (lower-context-expr-get ctx value-box)))]
-        [(OutOfLine) false]
-        [(ScalarFloatIntrinsic)
-          (lower-spmd-expr-list-has-call-at?
-            ctx
-            function-state
-            env
-            type-env
-            probe
-            (& (ast.ast-expr-child-ids expr)))])]
-    [_
-      (and
-        (= probe LowerSpmdCallProbe.ScalarFloatIntrinsic)
-        (lower-spmd-expr-list-has-call-at?
-          ctx
-          function-state
-          env
-          type-env
-          probe
-          (& (ast.ast-expr-child-ids expr))))]))
-
-(define (lower-spmd-call-reaches-float-intrinsic?
-  [ctx : tc_core.TcContext]
-  [function-state : CompilerLowerFunctionState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [func : (& ast.AstExpr)]) : bool
-  (match (ast.ast-expr-unspan-with-segment-bases
-    (tc_core.tc-context-expr-bases ctx)
-    func)
-    [(Var name)
-      (when (tc_core.tc-name-lexically-bound-id? type-env name) (return false))]
-    [_ (return false)])
-  (let
-    [prior-recursion? : bool
-      (compiler-lower-function-state-recursion-detected? function-state)]
-    [helper : ResultLowerSpmdInlineHelper
-      (lower-spmd-inline-helper-lookup
-        ctx
-        function-state
-        env
-        type-env
-        (lower-id-set-empty)
-        (lower-clone-ast-expr func))]
-    (compiler-lower-function-state-recursion-detected-set!
-      function-state
-      prior-recursion?)
-    (match helper
-      [(Ok (Some handle params _ body))
-        (let
-          [previous : LowerIdSet
-            (compiler-lower-function-state-inline-helper-stack function-state)]
-          [helper-ctx : tc_core.TcContext
-            (lower-spmd-helper-context ctx handle)]
-          [helper-env : tc_core.TcTypeEnv
-            (tc_core.tc-spmd-inline-helper-env
-              helper-ctx
-              type-env
-              (tc_core.tc-context-module helper-ctx)
-              (tc_core.tc-context-module-id helper-ctx))]
-          (compiler-lower-function-state-inline-helper-stack-set!
-            function-state
-            (lower-id-set-insert
-              (compiler-lower-function-state-inline-helper-stack function-state)
-              handle))
-          (let
-            [found : bool
-              (lower-spmd-expr-has-call?
-                helper-ctx
-                function-state
-                env
-                (tc_core.tc-bind-params helper-ctx helper-env params)
-                (ScalarFloatIntrinsic)
-                body)]
-            (compiler-lower-function-state-inline-helper-stack-set!
-              function-state
-              previous)
-            found))]
-      [_ false])))
+        [(OutOfLine) false])]
+    [_ false]))
 
 (define (lower-spmd-expr-list-has-call-at?
   [ctx : tc_core.TcContext]
@@ -52780,29 +52676,24 @@
   [type-env : tc_core.TcTypeEnv]
   [probe : LowerSpmdCallProbe]
   [bindings : (& bindings ast.AstLetBindingList)]) : bool
-  (let
-    [probe-env : tc_core.TcTypeEnv type-env]
-    (for [binding-index
-      (iterator.range 0 (ast.ast-let-binding-list-len bindings))]
-      (match (ast.ast-let-binding-list-get
-        bindings
-        binding-index
-        (ast.ast-let-binding-fallback))
-        [(Binding name _ init-box)
-          (when
-            (lower-spmd-expr-has-call?
-              ctx
-              function-state
-              env
-              probe-env
-              probe
-              (lower-context-expr-get ctx init-box))
-            (return true))
-          (when
-            (= probe LowerSpmdCallProbe.ScalarFloatIntrinsic)
-            (set! probe-env (tc_core.tc-bind-id probe-env name (Unit))))
-          unit]))
-    false))
+  (for [binding-index
+    (iterator.range 0 (ast.ast-let-binding-list-len bindings))]
+    (match (ast.ast-let-binding-list-get
+      bindings
+      binding-index
+      (ast.ast-let-binding-fallback))
+      [(Binding _ _ init-box)
+        (when
+          (lower-spmd-expr-has-call?
+            ctx
+            function-state
+            env
+            type-env
+            probe
+            (lower-context-expr-get ctx init-box))
+          (return true))
+        unit]))
+  false)
 
 ;; What a foreach body holds that only the masked SPMD strategy lowers, computed
 ;; once per body: the masked strategy is chosen on these facts, and when it
@@ -68394,6 +68285,177 @@
                 row?
                 (& empty-proven)))))])))
 
+;; The foreach contract gives lane-independent bodies scalar reference
+;; semantics. A float intrinsic requires preserving ordinary call boundaries.
+;; Before using that route in SIMD modes, look for operations whose result
+;; or calling convention depends on the gang, including in source helpers.
+(defstruct LowerSpmdFloatScan
+  (visited lower_i64_i64_map.Map)
+  (definition-fallback tc_core.TcTypeEnv)
+  (simd bool)
+  (needs-scalar bool)
+  (blocker String))
+
+(define (lower-spmd-float-scan-call!
+  [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [scan : (&mut scan LowerSpmdFloatScan)]
+  [func : ast.AstExpr]
+  [arg-count : i64]) : unit
+  (match (ast.ast-expr-unspan-with-segment-bases
+    (tc_core.tc-context-expr-bases ctx)
+    (& func))
+    [(Var name)
+      (when
+        (or
+          (sym_i64_env.sym-i64-contains-id env name)
+          (tc_core.tc-name-lexically-bound-id? type-env name))
+        (return unit))
+      (when
+        (>= (tc_core.tc-spmd-float-intrinsic-id ctx type-env name arg-count) 0)
+        (set! scan.needs-scalar true)
+        (return unit))]
+    [_ (return unit)])
+  (let
+    [prior-recursion? : bool
+      (compiler-lower-function-state-recursion-detected? function-state)]
+    [helper
+      (lower-spmd-inline-helper-lookup
+        ctx
+        function-state
+        env
+        type-env
+        (lower-id-set-empty)
+        func)]
+    (compiler-lower-function-state-recursion-detected-set!
+      function-state
+      prior-recursion?)
+    (match helper
+      [(Ok (Imported _ _ _ _ _))
+        (set! scan.blocker "the imported SPMD specialization")]
+      [(Ok (Some handle params _ body))
+        (when
+          (= (lower_i64_i64_map.get-value-or (& scan.visited) handle 0) 0)
+          ;; The result is accumulated for the entire loop. Mark on entry so
+          ;; a shared helper or a cycle only contributes its body once.
+          (lower_i64_i64_map.insert-ref! (&mut scan.visited) handle 1)
+          (let
+            [helper-ctx : tc_core.TcContext
+              (lower-spmd-helper-context ctx handle)]
+            [helper-env : tc_core.TcTypeEnv
+              (tc_core.tc-spmd-inline-helper-env
+                helper-ctx
+                (tc_core.TcTypeEnv
+                  scan.definition-fallback.store
+                  scan.definition-fallback.head
+                  scan.definition-fallback.abi-pad)
+                (tc_core.tc-context-module helper-ctx)
+                (tc_core.tc-context-module-id helper-ctx))]
+            (lower-spmd-float-scan-expr!
+              helper-ctx
+              function-state
+              (sym_i64_env.sym-i64-empty)
+              (tc_core.tc-bind-params helper-ctx helper-env params)
+              scan
+              body)))]
+      [_ unit])))
+
+(define (lower-spmd-float-scan-expr!
+  [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [scan : (&mut scan LowerSpmdFloatScan)]
+  [expr : ast.AstExpr]) : unit
+  (when
+    (and
+      scan.needs-scalar
+      (or (not scan.simd) (not (string.eq scan.blocker ""))))
+    (return unit))
+  (match (& expr)
+    [(Call func-box args)
+      (lower-spmd-float-scan-call!
+        ctx
+        function-state
+        env
+        type-env
+        scan
+        (lower-context-expr-get ctx func-box)
+        args.len)]
+    [(or (SpmdProgramIndex) (SpmdProgramCount))
+      (set! scan.blocker "program-index or program-count")]
+    [(or (SpmdBroadcast _ _) (SpmdShuffle _ _))
+      (set! scan.blocker "spmd-broadcast or spmd-shuffle")]
+    [(or (ForeachActive _ _) (LaneValue _))
+      (set! scan.blocker "foreach-active or lane-value")]
+    [_ unit])
+  (match expr
+    [(Let let-box)
+      (match (__tl-box-place let-box)
+        [(Let bindings body)
+          (let
+            [body-env : tc_core.TcTypeEnv type-env]
+            (for [index (iterator.range 0 bindings.len)]
+              (match (ast.ast-let-binding-list-get
+                (& bindings)
+                index
+                (ast.ast-let-binding-fallback))
+                [(Binding name _ init)
+                  (lower-spmd-float-scan-expr!
+                    ctx
+                    function-state
+                    env
+                    body-env
+                    scan
+                    (lower-context-expr-get ctx init))
+                  (set! body-env (tc_core.tc-bind-id body-env name (Unit)))]))
+            (lower-spmd-float-scan-expr!
+              ctx
+              function-state
+              env
+              body-env
+              scan
+              (lower-context-expr-get ctx body)))])]
+    [(Match match-box)
+      (match (__tl-box-place match-box)
+        [(Match scrutinee arms)
+          (lower-spmd-float-scan-expr!
+            ctx
+            function-state
+            env
+            type-env
+            scan
+            (lower-context-expr-get ctx scrutinee))
+          (for [index (iterator.range 0 arms.len)]
+            (match (ast.ast-match-arm-list-get
+              (& arms)
+              index
+              (ast.ast-match-arm-fallback))
+              [(Arm pattern body)
+                (lower-spmd-float-scan-expr!
+                  ctx
+                  function-state
+                  (lower-pattern-bind-local-names env pattern)
+                  type-env
+                  scan
+                  (lower-context-expr-get ctx body))]))])]
+    [(Lambda _) unit]
+    [_
+      (let
+        [children : ast.AstExprList (ast.ast-expr-child-ids expr)]
+        (for [index (iterator.range 0 children.len)]
+          (lower-spmd-float-scan-expr!
+            ctx
+            function-state
+            env
+            type-env
+            scan
+            (lower-context-expr-get
+              ctx
+              (ast.ast-expr-list-get (& children) index 0)))))]))
+
 (define (lower-foreach-lowered
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -68406,28 +68468,46 @@
   [end-value : ir.CompilerIrValue]
   [body : ast.AstExpr]
   [row? : bool]) : ResultLowerExpr
-  ;; Scalar float operations use their ordinary calls in the original loop
-  ;; body. Rewriting a helper body into its caller could rebind its intrinsic.
-  (when
-    (lower-spmd-expr-has-call?
+  (let
+    [scan : LowerSpmdFloatScan
+      (LowerSpmdFloatScan
+        (lower_i64_i64_map.with-capacity 0)
+        (tc_core.tc-hygiene-global-env type-env)
+        (lower-mode-simd? (lower-state-mode state))
+        false
+        "")]
+    (lower-spmd-float-scan-expr!
       ctx
       (lower-state-function-state state)
       env
       (tc_core.tc-bind-id type-env index-id (ast.clone-ast-type (& index-ty)))
-      (ScalarFloatIntrinsic)
+      (&mut scan)
       (lower-clone-ast-expr (& body)))
-    (return
-      (lower-scalar-foreach-lowered
-        ctx
-        state
-        env
-        type-env
-        index-id
-        index
-        index-ty
-        start-value
-        end-value
-        body)))
+    (when
+      scan.needs-scalar
+      (when
+        (and scan.simd (not (string.eq scan.blocker "")))
+        (return
+          (Err
+            (box
+              (lower-diagnostic-at-expr
+                ctx
+                (lower-clone-ast-expr (& body))
+                (str_cat.str-cat
+                  "lower: SPMD float intrinsic requires scalar-reference foreach lowering, which cannot preserve "
+                  scan.blocker))))))
+      (return
+        (lower-scalar-foreach-lowered
+          ctx
+          state
+          env
+          type-env
+          index-id
+          index
+          index-ty
+          start-value
+          end-value
+          body))))
   (if (and
     (lower-mode-simd? (lower-state-mode state))
     (lower-type-i64? (lower-global-shared-view index-ty))

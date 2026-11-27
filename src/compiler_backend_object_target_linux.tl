@@ -1,4 +1,5 @@
 ;; compiler_backend_object_target_linux.tl - Linux direct-object policy leaf.
+(import compiler_object_linux_sections as elf_sections)
 (import compiler_backend_object_target as object_target)
 (import compiler_object as cobj)
 (import compiler_x64_executable_template as x64_template)
@@ -97,6 +98,6 @@
           final-parts.data
           final-parts.rodata
           final-parts.bss
-          4))
+          elf_sections.linux-base-section))
       (cobj.compiler-object-symbol-builder-finish final-parts.symbols)
       (cobj.compiler-object-relocation-builder-finish final-parts.relocations))))

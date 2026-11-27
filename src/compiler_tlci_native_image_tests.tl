@@ -1,5 +1,6 @@
 ;; compiler_tlci_native_image_tests.tl - layout, emitter and rejection tests
 ;; for the native TLCI image builder, kept out of the production module.
+(import compiler_object_linux_sections as elf_sections)
 (import compiler_object as cobj)
 (import compiler_object_elf)
 (import tlci_core)
@@ -65,14 +66,14 @@
     [sections1 : cobj.CompilerObjectSectionBuilder
       (cobj.compiler-object-section-builder-push
         sections0
-        (Section
+        (elf_sections.linux-base-section
           (Text)
           empty-data
           (cobj.compiler-object-instr-builder-finish text5)))]
     [sections2 : cobj.CompilerObjectSectionBuilder
       (cobj.compiler-object-section-builder-push
         sections1
-        (Section
+        (elf_sections.linux-base-section
           (Rodata)
           (cobj.compiler-object-data-record-builder-finish rodata2)
           (cobj.compiler-object-instr-builder-finish
@@ -80,7 +81,7 @@
     [sections3 : cobj.CompilerObjectSectionBuilder
       (cobj.compiler-object-section-builder-push
         sections2
-        (Section
+        (elf_sections.linux-base-section
           (Data)
           (cobj.compiler-object-data-record-builder-finish data2)
           (cobj.compiler-object-instr-builder-finish
@@ -88,7 +89,7 @@
     [sections4 : cobj.CompilerObjectSectionBuilder
       (cobj.compiler-object-section-builder-push
         sections3
-        (Section
+        (elf_sections.linux-base-section
           (Bss)
           (cobj.compiler-object-data-record-builder-finish bss2)
           (cobj.compiler-object-instr-builder-finish
@@ -98,23 +99,23 @@
     [symbols1 : cobj.CompilerObjectSymbolBuilder
       (cobj.compiler-object-symbol-builder-push
         symbols0
-        (Symbol "_entry" (Export) (Function) (Some (Text))))]
+        (Symbol "_entry" (Export) (Function) (Some cobj.text-id)))]
     [symbols2 : cobj.CompilerObjectSymbolBuilder
       (cobj.compiler-object-symbol-builder-push
         symbols1
-        (Symbol "_helper" (Local) (Function) (Some (Text))))]
+        (Symbol "_helper" (Local) (Function) (Some cobj.text-id)))]
     [symbols3 : cobj.CompilerObjectSymbolBuilder
       (cobj.compiler-object-symbol-builder-push
         symbols2
-        (Symbol "_constant" (Local) (Data) (Some (Rodata))))]
+        (Symbol "_constant" (Local) (Data) (Some cobj.rodata-id)))]
     [symbols4 : cobj.CompilerObjectSymbolBuilder
       (cobj.compiler-object-symbol-builder-push
         symbols3
-        (Symbol "_pointer" (Local) (Data) (Some (Data))))]
+        (Symbol "_pointer" (Local) (Data) (Some cobj.data-id)))]
     [symbols5 : cobj.CompilerObjectSymbolBuilder
       (cobj.compiler-object-symbol-builder-push
         symbols4
-        (Symbol "_zero" (Local) (Data) (Some (Bss))))]
+        (Symbol "_zero" (Local) (Data) (Some cobj.bss-id)))]
     [symbols6 : cobj.CompilerObjectSymbolBuilder
       (cobj.compiler-object-symbol-builder-push
         symbols5

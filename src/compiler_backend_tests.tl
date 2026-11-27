@@ -1,4 +1,5 @@
 ;; compiler_backend_tests.tl - Selfhost backend test helpers split from production backend.
+(import compiler_object_windows_sections as coff_sections)
 (import compiler_backend_operands as be_operand)
 (import compiler_backend_program_facts as be_facts)
 (import compiler_backend_state as be_state)
@@ -1989,9 +1990,9 @@
           (compiler-object-image-dense? image)
           (be_state.backend-and8
             (= (cobj.compiler-object-section-list-count sections) 4)
-            (> (compiler-object-section-instr-count sections (Text)) 0)
-            (> (compiler-object-section-data-count sections (Data)) 0)
-            (> (compiler-object-section-data-count sections (Rodata)) 0)
+            (> (compiler-object-section-instr-count sections cobj.text-id) 0)
+            (> (compiler-object-section-data-count sections cobj.data-id) 0)
+            (> (compiler-object-section-data-count sections cobj.rodata-id) 0)
             (cobj.compiler-object-symbol-list-contains?
               symbols
               "_tl_start"
@@ -2059,16 +2060,19 @@
           (be_state.backend-and8
             (cobj.compiler-object-section-contains-label?
               sections
-              (Data)
+              cobj.data-id
               "_tl_answer")
             (let
-              [kind (cobj.CompilerObjectSectionKind.Rodata)]
+              [kind cobj.rodata-id]
               [label (be_facts.compiler-backend-string-data-label "hi")]
               (cobj.compiler-object-section-contains-label? sections kind label))
-            (compiler-object-section-contains-string? sections (Rodata) "hi")
+            (compiler-object-section-contains-string?
+              sections
+              cobj.rodata-id
+              "hi")
             (compiler-object-section-contains-f64?
               sections
-              (Rodata)
+              cobj.rodata-id
               (compiler-backend-test-f64-bits "4.0"))
             true
             true
@@ -2076,11 +2080,11 @@
             true)
           (compiler-object-section-contains-f32?
             sections
-            (Data)
+            cobj.data-id
             (compiler-backend-test-f32-bits "2.5"))
           (compiler-object-section-contains-f32?
             sections
-            (Rodata)
+            cobj.rodata-id
             (compiler-backend-test-f32-bits "3.0"))
           (be_state.backend-and8
             (compiler-object-section-contains-call? sections "_tl_inc")
@@ -2254,7 +2258,7 @@
               (&
                 (object_target.compiler-backend-object-bytes-from-hex
                   "4883ec08"))))
-          (match (cobj.compiler-object-section-list-find sections (Text))
+          (match (cobj.compiler-object-section-list-find sections cobj.text-id)
             [(Section _ _ instrs)
               (= (compiler-backend-object-merge-edge-stores instrs) 2)])))]
     [(Err _) false]))
@@ -2419,8 +2423,10 @@
           (SymbolRva32 ".L_target")
           8)
         12)
-      (string.eq (backend.compiler-backend-pic-section-name (Pdata)) "pdata")
-      (string.eq (backend.compiler-backend-pic-section-name (Xdata)) "xdata"))))
+      (string.eq (backend.compiler-backend-pic-section-name ".rodata") "rodata")
+      (string.eq (backend.compiler-backend-pic-section-name ".rdata") "rodata")
+      (string.eq (backend.compiler-backend-pic-section-name ".pdata") "pdata")
+      (string.eq (backend.compiler-backend-pic-section-name ".xdata") "xdata"))))
 
 (define (compiler-backend-pic-ok?) : bool
   (and
@@ -2437,7 +2443,9 @@
         [(Ok obj)
           (let
             [text-header : i64
-              (coff.compiler-object-coff-section-header-offset (Text))]
+              (coff.compiler-object-coff-section-header-offset
+                image
+                cobj.text-id)]
             [text-size : i64
               (layout.compiler-object-layout-u32-at obj (+ text-header 16))]
             [reloc-count : i64
@@ -2458,15 +2466,17 @@
         [(Ok obj)
           (let
             [text-size : i64
-              (elf.compiler-object-elf-section-header-size-at
+              (elf.compiler-object-elf-section-field
                 obj
-                image
-                elf.compiler-object-elf-section-text-index)]
+                (elf.compiler-object-elf-section-index image cobj.text-id)
+                32)]
             [rela-text-size : i64
-              (elf.compiler-object-elf-section-header-size-at
+              (elf.compiler-object-elf-section-field
                 obj
-                image
-                elf.compiler-object-elf-section-rela-text-index)]
+                (+
+                  image.sections.len
+                  (elf.compiler-object-elf-section-index image cobj.text-id))
+                32)]
             (and
               (> text-size 0)
               (> rela-text-size 0)
@@ -2559,7 +2569,7 @@
           [(Ok image)
             (match (cobj.compiler-object-section-list-find
               image.sections
-              (Text))
+              cobj.text-id)
               [(Section _ _ instrs)
                 (compiler-backend-object-branch-flags-shape-ok?
                   instrs
@@ -2946,18 +2956,20 @@
     [manifest-offset : i64
       (layout.compiler-object-layout-section-label-offset
         image
-        (Rsrc)
+        coff_sections.rsrc-id
         (& manifest-label))]
     [data-offset : i64
       (layout.compiler-object-layout-section-label-offset
         image
-        (Rsrc)
+        coff_sections.rsrc-id
         (& rsrc-data-label))]
     (match (coff.compiler-object-coff-render image)
       [(Ok obj)
         (let
           [rsrc-header : i64
-            (coff.compiler-object-coff-section-header-offset (Rsrc))]
+            (coff.compiler-object-coff-section-header-offset
+              image
+              coff_sections.rsrc-id)]
           [rsrc-size : i64
             (layout.compiler-object-layout-u32-at obj (+ rsrc-header 16))]
           [rsrc-ptr : i64
@@ -2979,12 +2991,12 @@
               (= manifest-offset 88)
               (cobj.compiler-object-section-contains-label?
                 sections
-                (Rsrc)
+                coff_sections.rsrc-id
                 ".L_tl_rsrc_base"))
             (be_state.backend-and8
               (cobj.compiler-object-section-contains-label?
                 sections
-                (Rsrc)
+                coff_sections.rsrc-id
                 manifest-label)
               (cobj.compiler-object-symbol-list-contains?
                 symbols
@@ -3109,23 +3121,23 @@
             (be_state.backend-and8
               (cobj.compiler-object-section-contains-label?
                 sections
-                (Data)
+                cobj.data-id
                 ".L_tl_argc")
               (cobj.compiler-object-section-contains-label?
                 sections
-                (Bss)
+                cobj.bss-id
                 "tl_boot_off")
               (cobj.compiler-object-section-contains-label?
                 sections
-                (Bss)
+                cobj.bss-id
                 "tl_boot_pool")
               (cobj.compiler-object-section-contains-label?
                 sections
-                (Bss)
+                cobj.bss-id
                 ".L_tl_main_stack_written")
               (cobj.compiler-object-section-contains-label?
                 sections
-                (Rodata)
+                cobj.rodata-id
                 ".L_tl_main_stack_reservation_msg")
               true
               true
@@ -3134,28 +3146,28 @@
               (>=
                 (layout.compiler-object-layout-section-label-offset
                   image
-                  (Text)
+                  cobj.text-id
                   "tl_setup_argv")
                 0)
               (>=
                 (layout.compiler-object-layout-section-label-offset
                   image
-                  (Text)
+                  cobj.text-id
                   ".L_tl_boot_alloc")
                 0)
               (>=
                 (layout.compiler-object-layout-section-label-offset
                   image
-                  (Text)
+                  cobj.text-id
                   "tl_alloc")
                 0)
               (cobj.compiler-object-section-contains-label?
                 sections
-                (Pdata)
+                coff_sections.pdata-id
                 ".L_tl_start_pdata_begin")
               (cobj.compiler-object-section-contains-label?
                 sections
-                (Xdata)
+                coff_sections.xdata-id
                 ".L_tl_start_xdata")
               (cobj.compiler-object-symbol-list-contains?
                 symbols
@@ -3164,12 +3176,12 @@
                 (Runtime))
               (cobj.compiler-object-section-contains-label?
                 sections
-                (Pdata)
+                coff_sections.pdata-id
                 ".L_tl_main_fiber_pdata_begin")
               (>=
                 (layout.compiler-object-layout-section-label-offset
                   image
-                  (Text)
+                  cobj.text-id
                   ".L_tl_main_fiber")
                 0))
             (be_state.backend-and8
@@ -3284,11 +3296,11 @@
                 (Function))
               (cobj.compiler-object-section-contains-label?
                 sections
-                (Rodata)
+                cobj.rodata-id
                 ".L_tl_stack_overflow_msg")
               (cobj.compiler-object-section-contains-label?
                 sections
-                (Pdata)
+                coff_sections.pdata-id
                 ".L_tl_stack_overflow_filter_pdata_begin")
               (cobj.compiler-object-relocation-list-contains?
                 relocs
@@ -3333,19 +3345,25 @@
             [(Ok obj)
               (let
                 [pdata-header : i64
-                  (coff.compiler-object-coff-section-header-offset (Pdata))]
+                  (coff.compiler-object-coff-section-header-offset
+                    image
+                    coff_sections.pdata-id)]
                 [text-header : i64
-                  (coff.compiler-object-coff-section-header-offset (Text))]
+                  (coff.compiler-object-coff-section-header-offset
+                    image
+                    cobj.text-id)]
                 [text-ptr : i64
                   (layout.compiler-object-layout-u32-at obj (+ text-header 20))]
                 [entry-offset : i64
                   (layout.compiler-object-layout-section-label-offset
                     image
-                    (Text)
+                    cobj.text-id
                     "_tl_start")]
                 [gs-clear-offset : i64 (+ text-ptr (+ entry-offset 9))]
                 [xdata-header : i64
-                  (coff.compiler-object-coff-section-header-offset (Xdata))]
+                  (coff.compiler-object-coff-section-header-offset
+                    image
+                    coff_sections.xdata-id)]
                 [pdata-size : i64
                   (layout.compiler-object-layout-u32-at obj (+ pdata-header 16))]
                 [pdata-relocs : i64
@@ -3359,7 +3377,7 @@
                       (+ xdata-header 20))
                     (layout.compiler-object-layout-section-label-offset
                       image
-                      (Xdata)
+                      coff_sections.xdata-id
                       ".L_tl_start_xdata"))]
                 (and
                   (= pdata-size 48)
@@ -3416,13 +3434,15 @@
         [(Ok obj)
           (let
             [text-header : i64
-              (coff.compiler-object-coff-section-header-offset (Text))]
+              (coff.compiler-object-coff-section-header-offset
+                image
+                cobj.text-id)]
             [text-ptr : i64
               (layout.compiler-object-layout-u32-at obj (+ text-header 20))]
             [main-offset : i64
               (layout.compiler-object-layout-section-label-offset
                 image
-                (Text)
+                cobj.text-id
                 "main")]
             [main-ptr : i64 (+ text-ptr main-offset)]
             (if (< main-offset 0)
@@ -10210,18 +10230,26 @@ high:
 (define (compiler-backend-ir-walker-call-use-counts-ok?) : bool
   (let
     [counts : (__tl_dyn-array i64) (__tl_make-array i64 12)]
+    [ids : ir.CompilerIrIdList (ir.compiler-ir-id-list-new)]
     (backend.compiler-backend-count-instr-uses
       (&mut counts)
-      (irt.instr "%0 = call* %1(%2, %3) : i64"))
+      (& (irt.instr "%0 = call* %1(%2, %3) : i64"))
+      (&mut ids))
     (backend.compiler-backend-count-instr-uses
       (&mut counts)
-      (irt.instr "%4 = call_c* %4(%5) : i64"))
+      (& (irt.instr "%4 = call_c* %4(%5) : i64"))
+      (&mut ids))
     (backend.compiler-backend-count-instr-uses
       (&mut counts)
-      (TailCall (ci.intern "tail") (Two (Var 6) (Var 7)) (I64)))
+      (&
+        (ann
+          (TailCall (ci.intern "tail") (Two (Var 6) (Var 7)) (I64))
+          : ir.CompilerIrInstr))
+      (&mut ids))
     (backend.compiler-backend-count-instr-uses
       (&mut counts)
-      (irt.instr "tailcall* %8(%9, %10) : i64"))
+      (& (irt.instr "tailcall* %8(%9, %10) : i64"))
+      (&mut ids))
     (and
       (be_state.backend-and8
         (= (array-ref counts 1) 1)
@@ -13641,6 +13669,40 @@ f:
     .size f, . - f
 ")))
 
+(test
+  backend-layout-classifies-bare-ret
+  (let
+    [source : String "    ret\nret\n    retq\n    ret $8\n    retry\n je ret\n"]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 7)]
+    [flags : (__tl_dyn-array i64) (__tl_make-array i64 6)]
+    (unsafe
+      (let
+        [data : (Ptr u8) (string-data source)]
+        [lines : i64
+          (be_peephole.compiler-backend-layout-split-lines
+            data
+            (string.string-length (& source))
+            6
+            (__tl_array-data starts))]
+        (be_peephole.compiler-backend-layout-classify-lines!
+          data
+          lines
+          (__tl_array-data starts)
+          (__tl_array-data flags))))
+    (test.assert-true
+      (and
+        (= (array-ref flags 0) be_peephole.compiler-backend-layout-flag-ret)
+        (= (array-ref flags 1) be_peephole.compiler-backend-layout-flag-ret)
+        (= (array-ref flags 2) be_peephole.compiler-backend-layout-flag-ret)
+        (= (array-ref flags 3) be_peephole.compiler-backend-layout-flag-ret)
+        (= (array-ref flags 4) 0)
+        (=
+          (array-ref flags 5)
+          (bit-or
+            be_peephole.compiler-backend-layout-flag-jcc
+            (shl 4 be_peephole.compiler-backend-layout-flag-ops-shift))))
+      "identify returns by mnemonic and preserve a branch to a symbol named ret")))
+
 ;; PREDICTED-COLD ARM OUT-OF-LINING, one case per prediction rule.
 (define (compiler-backend-layout-cold-arm-ok?) : bool
   (and
@@ -16942,7 +17004,7 @@ f:
         "b$end"
         bytes)]
     (test.assert-i64-eq
-      parts.xdata.count
+      (array-ref parts.metadata 1).count
       3
       "identical unwind bytes keep one aligned, labeled record")
     (test.assert-true
@@ -18951,7 +19013,7 @@ f:
               (& (be_object.compiler-backend-object-cmp-imm32-rax-bytes 5))))
           (cobj.compiler-object-section-contains-label?
             sections
-            (Rodata)
+            cobj.rodata-id
             ".Lf0_entry_switch_table_entry_5")
           (cobj.compiler-object-relocation-list-contains?
             relocs
@@ -19241,7 +19303,17 @@ f:
         [table-label : String ".Lf0_entry_switch_table"]
         (and
           (elf.compiler-object-elf-image-supported? image)
-          (coff.compiler-object-coff-image-supported? image)
+          (not (coff.compiler-object-coff-image-supported? image))
+          (match (be_object.compiler-backend-emit-program-object-image-target-with-mode-and-crt
+            (compiler-backend-switch-test-program)
+            (be_state.CompilerBackendTarget.Windows)
+            (Scalar)
+            (ir.compiler-source-spans-empty)
+            true
+            false)
+            [(Ok windows-image)
+              (coff.compiler-object-coff-image-supported? windows-image)]
+            [(Err _) false])
           (cobj.compiler-object-symbol-list-contains?
             symbols
             table-label
@@ -19249,12 +19321,12 @@ f:
             (Data))
           (cobj.compiler-object-section-contains-label?
             sections
-            (Rodata)
+            cobj.rodata-id
             table-label)
-          (compiler-object-section-contains-align? sections (Rodata) 8)
+          (compiler-object-section-contains-align? sections cobj.rodata-id 8)
           (cobj.compiler-object-section-contains-label?
             sections
-            (Rodata)
+            cobj.rodata-id
             ".Lf0_entry_switch_table_entry_0")
           (cobj.compiler-object-relocation-list-contains?
             relocs
@@ -26364,6 +26436,44 @@ entry:
         (asm-lacks? asm "%xmm0" "    movq -40(%rbp), %r10\n"))]
     [(Err _) false]))
 
+(define (compiler-backend-fused-load-order-ok?
+  [source : String]
+  [expected : String]) : bool
+  (asm-ok?
+    (compiler-backend-emit-test-instrs
+      (irt.instrs source)
+      (reg-homes "%0=%r12")
+      5)
+    (has expected)))
+
+(test
+  backend-fused-load-branch-comparison-signedness
+  (test.assert-true
+    (and
+      (compiler-backend-fused-load-order-ok?
+        "%1 = gep %0, 1 : i64
+         %2 = load %1 : i64
+         %3 = le %2, 7 : u64
+         branch %3, yes, no"
+        "    cmpq $7, 8(%r12)\n    jbe ")
+      (compiler-backend-fused-load-order-ok?
+        "%1 = gep %0, 1 : u64
+         %2 = load %1 : u64
+         %3 = le %2, 7 : i64
+         branch %3, yes, no"
+        "    cmpq $7, 8(%r12)\n    jle ")
+      (compiler-backend-fused-load-order-ok?
+        "%2 = load %0 : i64
+         %3 = lt %2, 7 : u64
+         branch %3, yes, no"
+        "    cmpq $7, (%r12)\n    jb ")
+      (compiler-backend-fused-load-order-ok?
+        "%2 = load %0 : u64
+         %3 = lt %2, 7 : i64
+         branch %3, yes, no"
+        "    cmpq $7, (%r12)\n    jl "))
+    "the memory compare must branch with the signedness of its BinOp"))
+
 (define (compiler-backend-gep-load-compare-priority-shape-ok?) : bool
   (asm-ok?
     (compiler-backend-emit-test-instrs
@@ -30398,12 +30508,12 @@ entry:
               (Data))
             (cobj.compiler-object-section-contains-label?
               sections
-              (Rodata)
+              cobj.rodata-id
               label)
-            (compiler-object-section-contains-align? sections (Rodata) 16)
+            (compiler-object-section-contains-align? sections cobj.rodata-id 16)
             (compiler-object-section-label-has-i64-pair?
               sections
-              (Rodata)
+              cobj.rodata-id
               label
               -9223372036854775808
               0)
@@ -30479,11 +30589,14 @@ entry:
             label
             (Local)
             (Data))
-          (cobj.compiler-object-section-contains-label? sections (Rodata) label)
-          (compiler-object-section-contains-align? sections (Rodata) 16)
+          (cobj.compiler-object-section-contains-label?
+            sections
+            cobj.rodata-id
+            label)
+          (compiler-object-section-contains-align? sections cobj.rodata-id 16)
           (compiler-object-section-label-has-i64-pair?
             sections
-            (Rodata)
+            cobj.rodata-id
             label
             2147483648
             0)
@@ -42622,7 +42735,7 @@ b_keep:
             "_tl_cell")
           (cobj.compiler-object-section-contains-label?
             image.sections
-            (Bss)
+            cobj.bss-id
             "_tl_cell"))
         (match (object_asm.compiler-object-asm-render image)
           [(Ok text)
@@ -44043,7 +44156,7 @@ b_keep:
           [group : text_buf.TextBuf
             (unsafe
               (in-arena
-                (arena.Arena (arena.raw-handle group-arena))
+                (arena.from-raw-handle (arena.raw-handle group-arena))
                 (text_buf.append at-boundary.group chunk)))]
           (set! state (CompilerBackendPeepholeChunkState at-boundary.out group))))
       (let
@@ -44228,7 +44341,7 @@ b_keep:
     ;; owner after emission before inspecting the caller-owned records.
     [owner : arena.Arena
       (unsafe
-        (arena.Arena (arena.tl_arena_make_small)))]
+        (arena.from-raw-handle (arena.tl_arena_make_small)))]
     [items : be_state.BackendStringSeq
       (in-arena
         owner
@@ -44268,7 +44381,7 @@ b_keep:
         (and
           (compiler-object-section-contains-string?
             image.sections
-            Rodata
+            cobj.rodata-id
             "lower-owned-object-payload")
           (match (object_asm.compiler-object-asm-render image)
             [(Ok assembly)
@@ -44988,19 +45101,19 @@ b_keep:
           false)
         (be_state.compiler-backend-function-state-set-bool!
           function-a
-          be_state.compiler-backend-function-bool-use-home-mask-active
+          be_state.compiler-backend-function-bool-identity-tail-forwarder-active
           true)
         (be_state.compiler-backend-function-state-set-bool!
           function-b
-          be_state.compiler-backend-function-bool-use-home-mask-active
+          be_state.compiler-backend-function-bool-identity-tail-forwarder-active
           false)
         (be_state.compiler-backend-function-state-set-i64!
           function-a
-          be_state.compiler-backend-function-i64-use-home-mask-value
+          be_state.compiler-backend-function-i64-red-zone-guard
           85)
         (be_state.compiler-backend-function-state-set-i64!
           function-b
-          be_state.compiler-backend-function-i64-use-home-mask-value
+          be_state.compiler-backend-function-i64-red-zone-guard
           170)
         (be_scalar.compiler-backend-set-emit-plan-reg-mask!
           state-a
@@ -45167,20 +45280,20 @@ b_keep:
           be_state.compiler-backend-function-bool-fpo-bare-frame))
       (be_state.compiler-backend-function-state-bool?
         function-a
-        be_state.compiler-backend-function-bool-use-home-mask-active)
+        be_state.compiler-backend-function-bool-identity-tail-forwarder-active)
       (not
         (be_state.compiler-backend-function-state-bool?
           function-b
-          be_state.compiler-backend-function-bool-use-home-mask-active))
+          be_state.compiler-backend-function-bool-identity-tail-forwarder-active))
       (=
         (be_state.compiler-backend-function-state-i64
           function-a
-          be_state.compiler-backend-function-i64-use-home-mask-value)
+          be_state.compiler-backend-function-i64-red-zone-guard)
         85)
       (=
         (be_state.compiler-backend-function-state-i64
           function-b
-          be_state.compiler-backend-function-i64-use-home-mask-value)
+          be_state.compiler-backend-function-i64-red-zone-guard)
         170)
       (be_operand.compiler-backend-plan-uses-reg?
         state-a
@@ -45292,20 +45405,20 @@ b_keep:
       (not
         (be_state.compiler-backend-function-state-bool?
           function-a
-          be_state.compiler-backend-function-bool-use-home-mask-active))
+          be_state.compiler-backend-function-bool-identity-tail-forwarder-active))
       (not
         (be_state.compiler-backend-function-state-bool?
           function-b
-          be_state.compiler-backend-function-bool-use-home-mask-active))
+          be_state.compiler-backend-function-bool-identity-tail-forwarder-active))
       (=
         (be_state.compiler-backend-function-state-i64
           function-a
-          be_state.compiler-backend-function-i64-use-home-mask-value)
+          be_state.compiler-backend-function-i64-red-zone-guard)
         0)
       (=
         (be_state.compiler-backend-function-state-i64
           function-b
-          be_state.compiler-backend-function-i64-use-home-mask-value)
+          be_state.compiler-backend-function-i64-red-zone-guard)
         170)
       (not
         (be_state.compiler-backend-function-state-bool?
@@ -46328,13 +46441,13 @@ b_keep:
 
 (define (compiler-object-section-data-count
   [sections : (& sections cobj.CompilerObjectSectionList)]
-  [kind : cobj.CompilerObjectSectionKind]) : i64
+  [kind : cobj.CompilerObjectSectionId]) : i64
   (match (cobj.compiler-object-section-list-find sections kind)
     [(Section _ data _) (cobj.compiler-object-data-record-list-count data)]))
 
 (define (compiler-object-section-instr-count
   [sections : (& sections cobj.CompilerObjectSectionList)]
-  [kind : cobj.CompilerObjectSectionKind]) : i64
+  [kind : cobj.CompilerObjectSectionId]) : i64
   (match (cobj.compiler-object-section-list-find sections kind)
     [(Section _ _ instrs) (cobj.compiler-object-instr-list-count instrs)]))
 
@@ -46454,7 +46567,7 @@ b_keep:
 
 (define (compiler-object-section-contains-string?
   [sections : (& sections cobj.CompilerObjectSectionList)]
-  [kind : cobj.CompilerObjectSectionKind]
+  [kind : cobj.CompilerObjectSectionId]
   [text : String]) : bool
   (match (cobj.compiler-object-section-list-find sections kind)
     [(Section _ data _)
@@ -46462,7 +46575,7 @@ b_keep:
 
 (define (compiler-object-section-contains-f64?
   [sections : (& sections cobj.CompilerObjectSectionList)]
-  [kind : cobj.CompilerObjectSectionKind]
+  [kind : cobj.CompilerObjectSectionId]
   [bits : u64]) : bool
   (match (cobj.compiler-object-section-list-find sections kind)
     [(Section _ data _)
@@ -46470,7 +46583,7 @@ b_keep:
 
 (define (compiler-object-section-contains-f32?
   [sections : (& sections cobj.CompilerObjectSectionList)]
-  [kind : cobj.CompilerObjectSectionKind]
+  [kind : cobj.CompilerObjectSectionId]
   [bits : u64]) : bool
   (match (cobj.compiler-object-section-list-find sections kind)
     [(Section _ data _)
@@ -46478,7 +46591,7 @@ b_keep:
 
 (define (compiler-object-section-contains-align?
   [sections : (& sections cobj.CompilerObjectSectionList)]
-  [kind : cobj.CompilerObjectSectionKind]
+  [kind : cobj.CompilerObjectSectionId]
   [align : i64]) : bool
   (match (cobj.compiler-object-section-list-find sections kind)
     [(Section _ data _)
@@ -46486,7 +46599,7 @@ b_keep:
 
 (define (compiler-object-section-contains-i64?
   [sections : (& sections cobj.CompilerObjectSectionList)]
-  [kind : cobj.CompilerObjectSectionKind]
+  [kind : cobj.CompilerObjectSectionId]
   [value : i64]) : bool
   (match (cobj.compiler-object-section-list-find sections kind)
     [(Section _ data _)
@@ -46494,7 +46607,7 @@ b_keep:
 
 (define (compiler-object-section-label-has-i64-pair?
   [sections : (& sections cobj.CompilerObjectSectionList)]
-  [kind : cobj.CompilerObjectSectionKind]
+  [kind : cobj.CompilerObjectSectionId]
   [label : (& label str)]
   [first : i64]
   [second : i64]) : bool
@@ -46525,7 +46638,7 @@ b_keep:
 (define (compiler-object-section-contains-call?
   [sections : (& sections cobj.CompilerObjectSectionList)]
   [target : String]) : bool
-  (match (cobj.compiler-object-section-list-find sections (Text))
+  (match (cobj.compiler-object-section-list-find sections cobj.text-id)
     [(Section _ _ instrs)
       (compiler-object-instr-list-contains-call? instrs target)]))
 
@@ -46548,7 +46661,7 @@ b_keep:
 (define (compiler-object-section-contains-xorpd-rip?
   [sections : cobj.CompilerObjectSectionList]
   [target : (& target str)]) : bool
-  (match (cobj.compiler-object-section-list-find sections (Text))
+  (match (cobj.compiler-object-section-list-find sections cobj.text-id)
     [(Section _ _ instrs)
       (compiler-object-instr-list-contains-xorpd-rip? instrs target)]))
 
@@ -47798,7 +47911,7 @@ user_fn:
   (let
     [owner : arena.Arena
       (unsafe
-        (arena.Arena (arena.tl_arena_make_small)))]
+        (arena.from-raw-handle (arena.tl_arena_make_small)))]
     [items : be_state.BackendStringSeq
       (in-arena
         owner
@@ -48185,11 +48298,13 @@ user_fn:
                   (layout.compiler-object-layout-u32-at
                     bytes
                     (+
-                      (coff.compiler-object-coff-section-header-offset (Text))
+                      (coff.compiler-object-coff-section-header-offset
+                        image
+                        cobj.text-id)
                       20))
                   (layout.compiler-object-layout-section-label-offset
                     image
-                    (Text)
+                    cobj.text-id
                     "__tl$c_entry"))]
               (test.assert-owned-string-eq
                 (string.substring bytes offset 16)
@@ -48323,22 +48438,26 @@ user_fn:
                   (layout.compiler-object-layout-u32-at
                     bytes
                     (+
-                      (coff.compiler-object-coff-section-header-offset (Text))
+                      (coff.compiler-object-coff-section-header-offset
+                        image
+                        cobj.text-id)
                       20))
                   (layout.compiler-object-layout-section-label-offset
                     image
-                    (Text)
+                    cobj.text-id
                     "bridge_c"))]
               [unwind : i64
                 (+
                   (layout.compiler-object-layout-u32-at
                     bytes
                     (+
-                      (coff.compiler-object-coff-section-header-offset (Xdata))
+                      (coff.compiler-object-coff-section-header-offset
+                        image
+                        coff_sections.xdata-id)
                       20))
                   (layout.compiler-object-layout-section-label-offset
                     image
-                    (Xdata)
+                    coff_sections.xdata-id
                     "bridge_c$unwind"))]
               [prefix : String
                 (object_target.compiler-backend-object-bytes-from-hex
@@ -49925,7 +50044,7 @@ user_fn:
 (define (compiler-backend-object-bss-label-zero-bytes
   [image : (& cobj.CompilerObjectImage)]
   [label : (& str)]) : i64
-  (match (cobj.compiler-object-section-list-find image.sections (Bss))
+  (match (cobj.compiler-object-section-list-find image.sections cobj.bss-id)
     [(Section _ records _)
       (let
         [count : i64 (cobj.compiler-object-data-record-list-count (& records))]

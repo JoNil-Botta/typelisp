@@ -9,6 +9,22 @@ cd "$ROOT"
 . "$ROOT/scripts/lib-gate.sh"
 gate_compiler
 
+# Only lowering roles belong in this enum. All target metadata lives on
+# extensible section records. Count declarations in the writers are functions
+# of the image; literal count globals would silently omit extra sections.
+awk '/^\(defenum CompilerObjectSectionKind([[:space:]]|$)/ { role = 1 }
+     role { body = body " " $0 }
+     role && /\)\)[[:space:]]*$/ { role = 0 }
+     END { gsub(/[[:space:]]/, "", body)
+           exit(body != "(defenumCompilerObjectSectionKind(Text)(Data)(Rodata)(Bss))") }' \
+    src/compiler_object.tl || { echo "unexpected compiler-wide section role" >&2; exit 1; }
+if grep -En '^\(define compiler-object-(layout|elf|coff)-(section|loadable)-count[[:space:]]' \
+    src/compiler_object_layout.tl src/compiler_object_elf.tl src/compiler_object_coff.tl; then
+    echo "object section count must depend on the image" >&2
+    exit 1
+fi
+"$COMPILER" test src/compiler_object_sections_tests.tl --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src"
+
 HOST_OS=linux
 case "$(uname -s)" in
     Linux*) HOST_OS=linux ;;

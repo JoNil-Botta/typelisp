@@ -284,7 +284,7 @@
           (io-win-get-file-attributes path))
         (cast -1 : i32))
         (begin
-          (set-error-code 2)
+          (set-error-code (cast (io-win-get-last-error) : i64))
           (cast -1 : i32))
         (cast 0 : i32)))))
 
@@ -1633,9 +1633,7 @@
     [status : i64 (stdlib.io.file-exists-status path)]
     (if (= status 0)
       true
-      (if (if (= status 2)
-        true
-        (= status 20))
+      (if (status-expected-absence? status)
         false
         (panic "tl: file-exists? failed\n")))))
 
@@ -2144,7 +2142,12 @@
 (define (status-expected-absence? [code : i64]) : bool
   (if (= code stdlib.io.io-status-not-found)
     true
-    (= code stdlib.io.io-status-not-directory)))
+    (cfg
+      windows
+      (if (= code 3)
+        true
+        (= code stdlib.io.io-status-not-directory))
+      (= code stdlib.io.io-status-not-directory))))
 
 ;: Construct an invalid-path diagnostic from a borrowed path.
 (define (invalid-path-error [path : (& path str)]) : IoError
@@ -3159,3 +3162,39 @@
       (begin
         (exercise-linux-file-handles)
         (exercise-linux-file-handle-reuse)))))
+
+(cfg
+  test
+  (test
+    io-access-status
+    (cfg
+      windows
+      (let
+        [missing-file : String (io-missing-file)]
+        [missing-parent-file : String (io-missing-parent-file)]
+        [existing-file : String "tests/scratch/io_windows_access_file.txt"]
+        [contents : String "access"]
+        (begin
+          (write-file existing-file (byte_buf.str-as-bytes (& contents)))
+          (test.assert-i64-eq
+            (file-exists-status existing-file)
+            0
+            "windows access existing file succeeds")
+          (test.assert-i64-eq
+            (file-exists-status missing-file)
+            2
+            "windows access missing file in existing parent reports ERROR_FILE_NOT_FOUND")
+          (test.assert-i64-eq
+            (file-exists-status (string.copy missing-parent-file))
+            3
+            "windows access missing path prefix reports ERROR_PATH_NOT_FOUND")
+          (test.assert-false
+            (file-exists? missing-parent-file)
+            "windows missing path prefix does not exist")))
+      (begin
+        (test.assert-true
+          (status-expected-absence? 2)
+          "linux access not-found remains absence")
+        (test.assert-false
+          (status-expected-absence? 3)
+          "linux access code 3 is not absence")))))

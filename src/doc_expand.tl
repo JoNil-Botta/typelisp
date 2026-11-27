@@ -747,7 +747,7 @@
   [field : ast.AstFieldDef]
   [align : i64]) : String
   (match field
-    [(Def name ty _)
+    [(Def name ty _ _)
       (doc-cat5
         "\n  ("
         (doc-expand-source-name ctx (ci.intern-syntax-id-value name))

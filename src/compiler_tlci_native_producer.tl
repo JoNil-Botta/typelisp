@@ -6112,7 +6112,7 @@
     [(While cond-node body-node)
       (let
         [condition : EmbeddedNativeDataValue
-          (embedded-native-data-value context params cond-node)]
+          (embedded-native-condition-data-value context params cond-node)]
         [body-code : String
           (embedded-native-computed-statement-list-code
             context
@@ -6125,25 +6125,35 @@
             (embedded-native-fallback-code "statement-while:body")
             (let
               [status : String (embedded-native-temp-name!)]
+              [guard : String (embedded-native-temp-name!)]
+              ;; Reevaluate the entire condition, including its probes and
+              ;; temporaries, after each successful iteration.
               (str_cat.str-cat
-                condition.open
-                "  (let ["
-                (owned_view.compiler-owned-shared-view status)
-                " : i64 0]\n"
-                "  (begin\n"
-                "  (while (if (= "
-                condition.text
-                " 1) (= "
-                (owned_view.compiler-owned-shared-view status)
-                " 0) false)\n"
-                "  (set! "
-                (owned_view.compiler-owned-shared-view status)
-                "\n"
+                (string.concat5-borrowed
+                  "  (let ["
+                  (& status)
+                  " : i64 0]\n  (while (if (= "
+                  (& status)
+                  " 0)\n")
+                (string.concat5-borrowed
+                  "  (let ["
+                  (& guard)
+                  " : i64 0]\n  (set! "
+                  (& status)
+                  "\n")
+                (embedded-native-data-store-status-code
+                  condition
+                  (string.copy (& guard)))
+                (string.concat3-borrowed ")\n  (if (= " (& status) " 0) (= ")
+                guard
+                (string.concat3-borrowed
+                  " 1) false))\n  false)\n  (set! "
+                  (& status)
+                  "\n")
                 body-code
                 "))\n"
                 status
-                "))\n"
-                (embedded-native-closing-parens (* 2 condition.opens)))))))]
+                ")\n")))))]
     [(Set name-id value-node)
       (let
         [target : String

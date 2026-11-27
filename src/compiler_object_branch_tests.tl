@@ -1,4 +1,6 @@
 ;; Cross-route contract for conditional branches, including malformed records.
+(import compiler_object_windows_sections as coff_sections)
+(import compiler_object_linux_sections as elf_sections)
 (import stdlib.iterator)
 (import compiler_object as cobj)
 (import compiler_object_asm as asm)
@@ -15,7 +17,7 @@
 (define (branch-i64! [actual : i64] [expected : i64]) : unit
   (test.assert-i64-eq actual expected "branch encoding and relocation"))
 
-(define (branch-image [cc : i64] [target : String]) : cobj.CompilerObjectImage
+(define (branch-image [coff? : bool] [cc : i64] [target : String]) : cobj.CompilerObjectImage
   (let
     [body : parts.CompilerBackendObjectTargetParts
       (parts.compiler-backend-object-parts-empty)]
@@ -62,10 +64,15 @@
       (cobj.compiler-object-section-builder-finish
         (cobj.compiler-object-section-builder-push
           (cobj.compiler-object-section-builder-with-capacity 1)
-          (Section
-            (Text)
-            (cobj.compiler-object-data-record-builder-finish body.data)
-            (cobj.compiler-object-instr-builder-finish body.text))))
+          (if coff?
+            (coff_sections.windows-base-section
+              (Text)
+              (cobj.compiler-object-data-record-builder-finish body.data)
+              (cobj.compiler-object-instr-builder-finish body.text))
+            (elf_sections.linux-base-section
+              (Text)
+              (cobj.compiler-object-data-record-builder-finish body.data)
+              (cobj.compiler-object-instr-builder-finish body.text)))))
       (cobj.compiler-object-symbol-builder-finish body.symbols)
       (cobj.compiler-object-relocation-builder-finish body.relocations))))
 
@@ -99,7 +106,7 @@
         "jg")]
     (for [cc (iterator.range 0 16)]
       (let
-        [image : cobj.CompilerObjectImage (branch-image cc "end")]
+        [image : cobj.CompilerObjectImage (branch-image false cc "end")]
         (match (asm.compiler-object-asm-render
           (owned_view.compiler-owned-shared-view image))
           [(Err message) (test.assert-true false message)]
@@ -121,8 +128,12 @@
           [(Err message) (test.assert-true false message)]
           [(Ok bytes)
             (let
-              [text : i64 (elf.compiler-object-elf-load-offset image 0)]
-              [relocs : i64 (elf.compiler-object-elf-rela-offset image 0)]
+              [text : i64 (elf.compiler-object-elf-section-field bytes 1 24)]
+              [relocs : i64
+                (elf.compiler-object-elf-section-field
+                  bytes
+                  (+ image.sections.len 1)
+                  24)]
               (for [index (iterator.range 0 2)]
                 (branch-bytes! bytes (+ text (* index 7)) cc)
                 (branch-i64!
@@ -150,14 +161,13 @@
                     relocs
                     index)
                   "ELF branch addend is -4")))])
-        (match (coff.compiler-object-coff-render image)
+        (match (coff.compiler-object-coff-render
+          (& (branch-image true cc "end")))
           [(Err message) (test.assert-true false message)]
           [(Ok bytes)
             (let
-              [text : i64
-                (coff.compiler-object-coff-section-raw-pointer image (Text))]
-              [relocs : i64
-                (coff.compiler-object-coff-relocation-pointer image (Text))]
+              [text : i64 (layout.compiler-object-layout-u32-at bytes 40)]
+              [relocs : i64 (layout.compiler-object-layout-u32-at bytes 44)]
               (for [index (iterator.range 0 2)]
                 (let
                   [record : i64 (+ relocs (* index 10))]
@@ -200,6 +210,7 @@
       (let
         [image : cobj.CompilerObjectImage
           (branch-image
+            false
             (array-ref codes index)
             (if (= index 4)
               "missing"
@@ -218,7 +229,14 @@
             [_ false])
           "ELF rejects invalid codes and missing symbols")
         (test.assert-true
-          (match (coff.compiler-object-coff-render image)
+          (match (coff.compiler-object-coff-render
+            (&
+              (branch-image
+                true
+                (array-ref codes index)
+                (if (= index 4)
+                  "missing"
+                  "end"))))
             [(Err _) true]
             [_ false])
           "COFF rejects invalid codes and missing symbols")

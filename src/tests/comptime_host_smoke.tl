@@ -557,12 +557,12 @@
       fields
       (ctfe.ctfe-reflect-field-list-push
         fields
-        (Field (ci.intern "alpha") (I64))))
+        (Field (ci.intern "alpha") (I64) false)))
     (set!
       fields
       (ctfe.ctfe-reflect-field-list-push
         fields
-        (Field (ci.intern "beta") (Bool))))
+        (Field (ci.intern "beta") (Bool) false)))
     (ast.ast-type-list-push
       (&mut payloads)
       (ast.ast-node-pool-context-type-push pools (I64)))

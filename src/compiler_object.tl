@@ -1,21 +1,61 @@
 ;; compiler_object.tl - Structured object-image records for backend object emitters.
 (import stdlib.iterator)
+(import stdlib.vector)
+(import stdlib.sort)
+(import stdlib.clone)
+(import stdlib.hashmap)
+(import (hashmap.hashmap i64 i64) as section_ids)
 (import compiler_owned_view as owned_view)
 (import compiler_machine_x64 as mx)
 (import stdlib.string)
 
+;; Lowering asks the target for one of these four semantic roles.
 (defenum CompilerObjectSectionKind
   (Text)
   (Data)
   (Rodata)
-  (Bss)
-  (Pdata)
-  (Xdata)
-  (Rsrc))
+  (Bss))
+
+;; IDs are assigned by the image producer. Sorting a section never changes
+;; the ID recorded by a symbol or a relocation.
+(defstruct CompilerObjectSectionId
+  (value i64))
+
+(defenum CompilerObjectSectionFormat
+  (Elf i64 i64)
+  (Coff i64))
+
+(defenum CompilerObjectSectionStorage
+  (Initialized)
+  (ZeroFill i64))
+
+(defstruct CompilerObjectSectionSpec
+  (id CompilerObjectSectionId)
+  (order i64)
+  (name String)
+  (align i64)
+  (storage CompilerObjectSectionStorage)
+  (format CompilerObjectSectionFormat))
+
+(define text-id : CompilerObjectSectionId
+  (CompilerObjectSectionId 0))
+(define data-id : CompilerObjectSectionId
+  (CompilerObjectSectionId 1))
+(define rodata-id : CompilerObjectSectionId
+  (CompilerObjectSectionId 2))
+(define bss-id : CompilerObjectSectionId
+  (CompilerObjectSectionId 3))
+
+(define (compiler-object-role-id [role : CompilerObjectSectionKind]) : CompilerObjectSectionId
+  (match role
+    [(Text) text-id]
+    [(Data) data-id]
+    [(Rodata) rodata-id]
+    [(Bss) bss-id]))
 
 (defenum CompilerObjectMaybeSection
   (No)
-  (Some CompilerObjectSectionKind))
+  (Some CompilerObjectSectionId))
 
 (defenum CompilerObjectSymbolBinding
   (Local)
@@ -130,7 +170,7 @@
 
 (defenum CompilerObjectRelocation
   (Relocation
-    CompilerObjectSectionKind
+    CompilerObjectSectionId
     String
     CompilerObjectRelocationKind
     String))
@@ -141,13 +181,14 @@
 
 (defenum CompilerObjectSection
   (Section
-    CompilerObjectSectionKind
+    CompilerObjectSectionSpec
     CompilerObjectDataRecordList
     CompilerObjectX64InstrList))
 
 (defstruct CompilerObjectSectionList
   (slots (__tl_dyn-array CompilerObjectSection))
-  (len i64))
+  (len i64)
+  (indices section_ids.Map))
 
 (defstruct CompilerObjectImage
   (sections CompilerObjectSectionList)
@@ -373,6 +414,17 @@
       (compiler-object-relocation-builder-grow builder)
       reloc)))
 
+(define (compiler-object-section-less?
+  [left : (& CompilerObjectSection)]
+  [right : (& CompilerObjectSection)]) : bool
+  (match left
+    [(Section a _ _)
+      (match right
+        [(Section b _ _)
+          (or
+            (< a.order b.order)
+            (and (= a.order b.order) (< a.id.value b.id.value)))])]))
+
 (define (compiler-object-section-builder-push
   [builder : CompilerObjectSectionBuilder]
   [section : CompilerObjectSection]) : CompilerObjectSectionBuilder
@@ -402,9 +454,75 @@
   [builder : CompilerObjectRelocationBuilder]) : CompilerObjectRelocationList
   (CompilerObjectRelocationList builder.slots builder.count))
 
+;; Sort scalar keys so the merge sort never clones section payloads.
+(defstruct SectionSortKey
+  (order i64)
+  (id i64)
+  (source i64))
+
+(clone.gen-clone SectionSortKey)
+
+(define (eq-section-sort-key [a : (& SectionSortKey)] [b : (& SectionSortKey)]) : bool
+  (and (= a.order b.order) (= a.id b.id) (= a.source b.source)))
+
+(import (stdlib.vector.vector SectionSortKey) as section_keys)
+(import (stdlib.sort.vec SectionSortKey) as section_sort)
+
+(define (section-sort-key-less? [a : SectionSortKey] [b : SectionSortKey]) : bool
+  (or (< a.order b.order) (and (= a.order b.order) (< a.id b.id))))
+
+(define (compiler-object-empty-section [id : CompilerObjectSectionId]) : CompilerObjectSection
+  (Section
+    (CompilerObjectSectionSpec id 0 "" 1 (Initialized) (Elf 0 0))
+    (compiler-object-data-record-list-empty)
+    (compiler-object-instr-list-empty)))
+
 (define (compiler-object-section-builder-finish
   [builder : CompilerObjectSectionBuilder]) : CompilerObjectSectionList
-  (CompilerObjectSectionList builder.slots builder.count))
+  (let
+    [count : i64 builder.count]
+    [slots : (__tl_dyn-array CompilerObjectSection) builder.slots]
+    [indices : section_ids.Map (section_ids.with-capacity count)]
+    [ordered? : bool true]
+    (for [i (iterator.range 1 count)]
+      (when
+        (compiler-object-section-less?
+          (& (array-ref slots i))
+          (& (array-ref slots (- i 1))))
+        (set! ordered? false)
+        (break)))
+    (unless
+      ordered?
+      (let
+        [keys : section_keys.Vec (section_keys.with-capacity count)]
+        [sorted : (__tl_dyn-array CompilerObjectSection)
+          (__tl_make-array CompilerObjectSection count)]
+        (for [i (iterator.range 0 count)]
+          (match (& (array-ref slots i))
+            [(Section spec _ _)
+              (section_keys.push-ref!
+                (&mut keys)
+                (SectionSortKey spec.order spec.id.value i))]))
+        (section_sort.sort! (&mut keys) section-sort-key-less?)
+        (for [i (iterator.range 0 count)]
+          (let
+            [key (section_keys.get (& keys) i (SectionSortKey 0 0 0))]
+            (set!
+              (array-ref sorted i)
+              (replace!
+                (array-ref slots key.source)
+                (compiler-object-empty-section text-id)))))
+        (set! slots sorted)))
+    (for [i (iterator.range 0 count)]
+      (match (& (array-ref slots i))
+        [(Section spec _ _)
+          (section_ids.insert-ref! (&mut indices) spec.id.value i)]))
+    (CompilerObjectSectionList slots count indices)))
+
+(define (compiler-object-section-list-index
+  [sections : (& CompilerObjectSectionList)]
+  [id : CompilerObjectSectionId]) : i64
+  (section_ids.get-value-or (& sections.indices) id.value -1))
 
 ;; Fresh empty lists: each section that has no records or instructions owns
 ;; its own.
@@ -452,38 +570,10 @@
             (+= index 1))]))
     found))
 
-(define (compiler-object-section-kind-eq?
-  [a : CompilerObjectSectionKind]
-  [b : CompilerObjectSectionKind]) : bool
-  (match a
-    [(Text)
-      (match b
-        [(Text) true]
-        [_ false])]
-    [(Data)
-      (match b
-        [(Data) true]
-        [_ false])]
-    [(Rodata)
-      (match b
-        [(Rodata) true]
-        [_ false])]
-    [(Bss)
-      (match b
-        [(Bss) true]
-        [_ false])]
-    [(Pdata)
-      (match b
-        [(Pdata) true]
-        [_ false])]
-    [(Xdata)
-      (match b
-        [(Xdata) true]
-        [_ false])]
-    [(Rsrc)
-      (match b
-        [(Rsrc) true]
-        [_ false])]))
+(define (compiler-object-section-id-eq?
+  [a : CompilerObjectSectionId]
+  [b : CompilerObjectSectionId]) : bool
+  (= a.value b.value))
 
 (define (compiler-object-symbol-binding-eq?
   [a : CompilerObjectSymbolBinding]
@@ -611,33 +701,12 @@
     (& (array-ref sections.slots index))))
 
 (define (compiler-object-section-list-find
-  [sections : (& sections CompilerObjectSectionList)]
-  [kind : CompilerObjectSectionKind]) : CompilerObjectSection
+  [sections : (& CompilerObjectSectionList)]
+  [id : CompilerObjectSectionId]) : CompilerObjectSection
   (let
-    [count : i64 (compiler-object-section-list-count sections)]
-    [index : i64 0]
-    [result : CompilerObjectSection
-      (Section
-        kind
-        (CompilerObjectDataRecordList
-          (__tl_make-array CompilerObjectDataRecord 0)
-          0)
-        (CompilerObjectX64InstrList
-          (__tl_make-array CompilerObjectX64Instr 0)
-          0))]
-    [found : bool false]
-    (while (and (not found) (< index count))
-      (let
-        [section : CompilerObjectSection
-          (compiler-object-section-list-ref sections index)]
-        (if (match (& section)
-          [(Section found-kind _ _)
-            (compiler-object-section-kind-eq? found-kind kind)])
-          (begin
-            (set! result section)
-            (set! found true))
-          (+= index 1))))
-    result))
+    [i (compiler-object-section-list-index sections id)]
+    (when (>= i 0) (return (compiler-object-section-list-ref sections i))))
+  (compiler-object-empty-section id))
 
 (define (compiler-object-symbol-list-contains?
   [symbols : (& symbols CompilerObjectSymbolList)]
@@ -695,7 +764,7 @@
 
 (define (compiler-object-section-contains-label?
   [sections : (& sections CompilerObjectSectionList)]
-  [kind : CompilerObjectSectionKind]
+  [kind : CompilerObjectSectionId]
   [label : (& label str)]) : bool
   (match (compiler-object-section-list-find sections kind)
     [(Section _ data _)
@@ -745,6 +814,6 @@
 (define (compiler-object-section-contains-bytes?
   [sections : (& sections CompilerObjectSectionList)]
   [bytes : (& str)]) : bool
-  (match (compiler-object-section-list-find sections (Text))
+  (match (compiler-object-section-list-find sections text-id)
     [(Section _ _ instrs)
       (compiler-object-instr-list-contains-bytes? (& instrs) bytes)]))

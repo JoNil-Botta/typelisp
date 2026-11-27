@@ -13644,9 +13644,9 @@ f:
 (test
   backend-layout-classifies-bare-ret
   (let
-    [source : String "    ret\nret\n    retq\n    ret $8\n    retry\n"]
-    [starts : (__tl_dyn-array i64) (__tl_make-array i64 6)]
-    [flags : (__tl_dyn-array i64) (__tl_make-array i64 5)]
+    [source : String "    ret\nret\n    retq\n    ret $8\n    retry\n je ret\n"]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 7)]
+    [flags : (__tl_dyn-array i64) (__tl_make-array i64 6)]
     (unsafe
       (let
         [data : (Ptr u8) (string-data source)]
@@ -13654,7 +13654,7 @@ f:
           (be_peephole.compiler-backend-layout-split-lines
             data
             (string.string-length (& source))
-            5
+            6
             (__tl_array-data starts))]
         (be_peephole.compiler-backend-layout-classify-lines!
           data
@@ -13667,8 +13667,13 @@ f:
         (= (array-ref flags 1) be_peephole.compiler-backend-layout-flag-ret)
         (= (array-ref flags 2) be_peephole.compiler-backend-layout-flag-ret)
         (= (array-ref flags 3) be_peephole.compiler-backend-layout-flag-ret)
-        (= (array-ref flags 4) 0))
-      "both classifier paths must recognize a return at the end of its line")))
+        (= (array-ref flags 4) 0)
+        (=
+          (array-ref flags 5)
+          (bit-or
+            be_peephole.compiler-backend-layout-flag-jcc
+            (shl 4 be_peephole.compiler-backend-layout-flag-ops-shift))))
+      "identify returns by mnemonic and preserve a branch to a symbol named ret")))
 
 ;; PREDICTED-COLD ARM OUT-OF-LINING, one case per prediction rule.
 (define (compiler-backend-layout-cold-arm-ok?) : bool

@@ -16287,13 +16287,7 @@
   [e : i64]) : i64
   (if (= (be_state.compiler-backend-peephole-byte-at data s) 32)
     (let
-      [t : i64
-        (if (and
-          (< (+ s 4) e)
-          (= (be_state.compiler-backend-peephole-byte-at data (+ s 3)) 32)
-          (not (= (be_state.compiler-backend-peephole-byte-at data (+ s 4)) 32)))
-          (+ s 4)
-          (compiler-backend-layout-skip-spaces data s e))]
+      [t : i64 (compiler-backend-layout-skip-spaces data s e)]
       (if (>= t e)
         compiler-backend-layout-flag-blank
         (let
@@ -16397,9 +16391,11 @@
           (ptr-write!
             (ptr-offset flags k)
             (if (and
-              (not (= head 32))
-              (= (be_state.compiler-backend-peephole-byte-at data i) 32)
-              (= (be_state.compiler-backend-peephole-byte-at data (+ i 3)) 32))
+              (not (compiler-backend-layout-space-byte? head))
+              ;; The head sentinel above ensures four readable prefix bytes.
+              (=
+                (ptr-read (ptr-cast (ptr-offset data i) : (Ptr i32)))
+                538976288))
               (let
                 [kind : i64
                   (be_state.compiler-backend-peephole-byte-at head-table head)]

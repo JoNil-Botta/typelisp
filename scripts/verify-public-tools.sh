@@ -74,6 +74,7 @@ cli_transcripts_files() {
                 tests/cli/public-package.cases \
                 tests/cli/public-package-tli.cases \
                 tests/cli/public-package-opaque-provider.cases \
+                tests/cli/public-package-opaque-field-provider.cases \
                 tests/cli/public-cond-diagnostics.cases
             ;;
         3)

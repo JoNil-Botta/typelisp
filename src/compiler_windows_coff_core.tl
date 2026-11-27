@@ -116,7 +116,7 @@
   (match (cobj.compiler-object-relocation-list-ref image.relocations index)
     [(Relocation section label _ target)
       (UndeclaredExternal
-        (compiler_object_coff.compiler-object-coff-section-name section)
+        (string.copy (layout.compiler-object-layout-spec image section).name)
         (owned_view.compiler-owned-shared-view label)
         (layout.compiler-object-layout-section-label-offset
           image
@@ -148,11 +148,13 @@
       [(<
           (layout.compiler-object-layout-section-label-offset
             image
-            (Text)
+            cobj.text-id
             "tl_setup_argv")
           0)
         (Unavailable MissingRuntimeEntry)]
-      [(<= (layout.compiler-object-layout-section-raw-size image (Text)) 0)
+      [(<=
+          (layout.compiler-object-layout-section-raw-size image cobj.text-id)
+          0)
         (Unavailable EmptyTextSection)]
       [else (Linkable)])))
 

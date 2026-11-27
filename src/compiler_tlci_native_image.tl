@@ -43,13 +43,13 @@
 
 (define (compiler-tlci-native-section-instrs
   [image : (& cobj.CompilerObjectImage)]
-  [kind : cobj.CompilerObjectSectionKind]) : cobj.CompilerObjectX64InstrList
+  [kind : cobj.CompilerObjectSectionId]) : cobj.CompilerObjectX64InstrList
   (match (cobj.compiler-object-section-list-find image.sections kind)
     [(Section _ _ instrs) instrs]))
 
 (define (compiler-tlci-native-section-data
   [image : cobj.CompilerObjectImage]
-  [kind : cobj.CompilerObjectSectionKind]) : cobj.CompilerObjectDataRecordList
+  [kind : cobj.CompilerObjectSectionId]) : cobj.CompilerObjectDataRecordList
   (match (cobj.compiler-object-section-list-find image.sections kind)
     [(Section _ data _) data]))
 
@@ -120,7 +120,7 @@
   [bases : CompilerTlciNativeBases]) : CompilerTlciNativeSymbolIndex
   (let
     [instrs : cobj.CompilerObjectX64InstrList
-      (compiler-tlci-native-section-instrs (& image) (Text))]
+      (compiler-tlci-native-section-instrs (& image) cobj.text-id)]
     [instr-count : i64 (cobj.compiler-object-instr-list-count instrs)]
     [offsets : tlci_native_string_i64_map.Map
       (tlci_native_string_i64_map.with-capacity (+ instr-count 16))]
@@ -147,17 +147,17 @@
       (&mut offsets)
       (compiler-tlci-native-section-data
         (owned_view.compiler-owned-shared-view image)
-        (Rodata))
+        cobj.rodata-id)
       bases.rodata)
     (compiler-tlci-native-index-data-labels!
       (&mut offsets)
       (compiler-tlci-native-section-data
         (owned_view.compiler-owned-shared-view image)
-        (Data))
+        cobj.data-id)
       bases.data)
     (compiler-tlci-native-index-data-labels!
       (&mut offsets)
-      (compiler-tlci-native-section-data image (Bss))
+      (compiler-tlci-native-section-data image cobj.bss-id)
       bases.bss)
     (for [symbol-index (iterator.range 0 symbol-count)]
       (match (cobj.compiler-object-symbol-list-ref symbols symbol-index)
@@ -326,7 +326,7 @@
   [bytes : (__tl_dyn-array u8)]) : bool
   (let
     [instrs : cobj.CompilerObjectX64InstrList
-      (compiler-tlci-native-section-instrs (& image) (Text))]
+      (compiler-tlci-native-section-instrs (& image) cobj.text-id)]
     [count : i64 (cobj.compiler-object-instr-list-count instrs)]
     [index : i64 0]
     [offset : i64 bases.text]
@@ -475,7 +475,7 @@
   [symbols : (& symbols CompilerTlciNativeSymbolIndex)]
   [image : cobj.CompilerObjectImage]
   [bytes : (&mut bytes (__tl_dyn-array u8))]
-  [kind : cobj.CompilerObjectSectionKind]
+  [kind : cobj.CompilerObjectSectionId]
   [region-base : i64]
   [fixup-offsets : (&mut fixup-offsets (__tl_dyn-array i64))]
   [fixup-count : (__tl_dyn-array i64)]) : bool
@@ -536,13 +536,13 @@
 (define (compiler-tlci-native-layout-image [image : cobj.CompilerObjectImage]) : ResultCompilerTlciNativeLayout
   (let
     [text-instrs : cobj.CompilerObjectX64InstrList
-      (compiler-tlci-native-section-instrs (& image) (Text))]
+      (compiler-tlci-native-section-instrs (& image) cobj.text-id)]
     [text-size : i64
       (layout.compiler-object-layout-instrs-size (& text-instrs))]
     [rodata-records : cobj.CompilerObjectDataRecordList
       (compiler-tlci-native-section-data
         (owned_view.compiler-owned-shared-view image)
-        (Rodata))]
+        cobj.rodata-id)]
     [rodata-base : i64 (compiler-tlci-native-align text-size 16)]
     [rodata-size : i64
       (layout.compiler-object-layout-data-records-size-from
@@ -551,7 +551,7 @@
     [data-records : cobj.CompilerObjectDataRecordList
       (compiler-tlci-native-section-data
         (owned_view.compiler-owned-shared-view image)
-        (Data))]
+        cobj.data-id)]
     [data-base : i64 (compiler-tlci-native-align rodata-size 16)]
     [data-size : i64
       (layout.compiler-object-layout-data-records-size-from
@@ -562,7 +562,7 @@
     [bss-records : cobj.CompilerObjectDataRecordList
       (compiler-tlci-native-section-data
         (owned_view.compiler-owned-shared-view image)
-        (Bss))]
+        cobj.bss-id)]
     [bss-base : i64 (compiler-tlci-native-align (+ got-base got-size) 16)]
     [bss-size : i64
       (-
@@ -632,7 +632,7 @@
             (& symbols-index)
             (owned_view.compiler-owned-shared-view image)
             (&mut bytes)
-            (Rodata)
+            cobj.rodata-id
             rodata-base
             (&mut fixup-offsets)
             (owned_view.compiler-owned-shared-view fixup-count))
@@ -648,7 +648,7 @@
             (& symbols-index)
             (owned_view.compiler-owned-shared-view image)
             (&mut bytes)
-            (Data)
+            cobj.data-id
             data-base
             (&mut fixup-offsets)
             (owned_view.compiler-owned-shared-view fixup-count))
@@ -718,7 +718,7 @@
   [image : (& cobj.CompilerObjectImage)]
   [name : String]) : i64
   (layout.compiler-object-layout-instr-label-offset-from
-    (& (compiler-tlci-native-section-instrs image (Text)))
+    (& (compiler-tlci-native-section-instrs image cobj.text-id))
     (& name)
     0))
 

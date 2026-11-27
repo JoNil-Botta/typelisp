@@ -81,11 +81,8 @@
   [module : String]
   [name-id : i64]) : String
   (if (= (string.string-length module) 0)
-    (ci.intern-compat-state-str context.intern-state name-id)
-    (str_cat.str-cat
-      module
-      "/"
-      (ci.intern-compat-state-str context.intern-state name-id))))
+    (embedded-native-intern-str context name-id)
+    (str_cat.str-cat module "/" (embedded-native-intern-str context name-id))))
 
 ;; Every collected macro's parsed source is captured so the producer can
 ;; compile each eligible expression body to a native entry; identities whose
@@ -164,27 +161,38 @@
     (set! (array-ref embedded-native-temp-seq 0) (+ seq 1))
     (str_cat.str-cat "k" (string.int->string seq))))
 
+;; Source spelling for a plain interned id, or "" for an expansion-produced
+;; (hygienic/structural) id that has no plain pool slot.
+(define (embedded-native-intern-str
+  [context : (& context TlciNativeSourceContext)]
+  [id : i64]) : String
+  (ci.intern-compat-state-syntax-name-text-or context.intern-state id ""))
+
 ;; The generated i64 variable of a compile-time data local, or "" when unbound.
 (define (embedded-native-data-local-text [name : String]) : String
-  (let
-    [index : i64 (- (array-ref embedded-native-data-local-len 0) 1)]
-    [found : i64 -1]
-    (while (and (< found 0) (>= index 0))
-      (if (string.eq (array-ref embedded-native-data-local-names index) name)
-        (set! found index)
-        (-= index 1)))
-    (if (< found 0)
-      ""
-      (owned_view.compiler-owned-element-view
-        (embedded-native-global-shared-view embedded-native-data-local-texts)
-        found))))
+  (if (= (string.string-length (& name)) 0)
+    ""
+    (let
+      [index : i64 (- (array-ref embedded-native-data-local-len 0) 1)]
+      [found : i64 -1]
+      (while (and (< found 0) (>= index 0))
+        (if (string.eq (array-ref embedded-native-data-local-names index) name)
+          (set! found index)
+          (-= index 1)))
+      (if (< found 0)
+        ""
+        (owned_view.compiler-owned-element-view
+          (embedded-native-global-shared-view embedded-native-data-local-texts)
+          found)))))
 
 ;; Bind `name` to the generated i64 variable `text`; false when the slot budget
-;; is exhausted (the caller then keeps the fallback shell).
+;; is exhausted or `name` is empty (the caller then keeps the fallback shell).
 (define (embedded-native-data-local-push! [name : String] [text : String]) : bool
   (let
     [slot : i64 (array-ref embedded-native-data-local-len 0)]
-    (if (>= slot embedded-native-data-locals-cap)
+    (if (or
+      (= (string.string-length (& name)) 0)
+      (>= slot embedded-native-data-locals-cap))
       false
       (begin
         (set! (array-ref embedded-native-data-local-names slot) name)
@@ -194,21 +202,25 @@
 
 ;; The session-slot index of a let-bound local, or -1 when unbound.
 (define (embedded-native-local-index [name : String]) : i64
-  (let
-    [index : i64 (- (array-ref embedded-native-local-len 0) 1)]
-    [found : i64 -1]
-    (while (and (< found 0) (>= index 0))
-      (if (string.eq (array-ref embedded-native-local-names index) name)
-        (set! found index)
-        (-= index 1)))
-    found))
+  (if (= (string.string-length (& name)) 0)
+    -1
+    (let
+      [index : i64 (- (array-ref embedded-native-local-len 0) 1)]
+      [found : i64 -1]
+      (while (and (< found 0) (>= index 0))
+        (if (string.eq (array-ref embedded-native-local-names index) name)
+          (set! found index)
+          (-= index 1)))
+      found)))
 
 ;; Bind `name` into the next session slot; returns the slot, or -1 when the
-;; slot budget is exhausted (the caller then keeps the fallback shell).
+;; slot budget is exhausted or `name` is empty (the caller keeps the fallback).
 (define (embedded-native-local-push-kind! [name : String] [boolean? : bool]) : i64
   (let
     [slot : i64 (array-ref embedded-native-local-len 0)]
-    (if (>= slot embedded-native-locals-cap)
+    (if (or
+      (= (string.string-length (& name)) 0)
+      (>= slot embedded-native-locals-cap))
       -1
       (begin
         (set! (array-ref embedded-native-local-names slot) name)
@@ -225,8 +237,7 @@
   [context : (& context TlciNativeSourceContext)]
   [bind-id : i64]) : i64
   (if (and (>= bind-id 0) (< bind-id (ci.intern-capacity)))
-    (embedded-native-local-push!
-      (ci.intern-compat-state-str context.intern-state bind-id))
+    (embedded-native-local-push! (embedded-native-intern-str context bind-id))
     -1))
 
 (define (embedded-native-local-bool? [slot : i64]) : bool
@@ -656,7 +667,7 @@
       (let
         [slot : i64
           (embedded-native-local-index
-            (ci.intern-compat-state-str context.intern-state pname))]
+            (embedded-native-intern-str context pname))]
         (if (< slot 0)
           -1
           (begin
@@ -706,10 +717,10 @@
           (if (and
             (or
               (string.eq
-                (ci.intern-compat-state-str context.intern-state fold-head)
+                (embedded-native-intern-str context fold-head)
                 "comptime.expr-clause-list-fold-if")
               (string.eq
-                (ci.intern-compat-state-str context.intern-state fold-head)
+                (embedded-native-intern-str context fold-head)
                 "expr-clause-list-fold-if"))
             (= (compiler_ast_types.ast-expr-list-len (& fold-args)) 3))
             (let
@@ -751,10 +762,10 @@
             (if (and
               (or
                 (string.eq
-                  (ci.intern-compat-state-str context.intern-state fold-head)
+                  (embedded-native-intern-str context fold-head)
                   "comptime.expr-list-fold-if")
                 (string.eq
-                  (ci.intern-compat-state-str context.intern-state fold-head)
+                  (embedded-native-intern-str context fold-head)
                   "expr-list-fold-if"))
               (= (compiler_ast_types.ast-expr-list-len (& fold-args)) 4))
               (let
@@ -837,10 +848,10 @@
           (if (and
             (or
               (string.eq
-                (ci.intern-compat-state-str context.intern-state var-head)
+                (embedded-native-intern-str context var-head)
                 "comptime.expr-var")
               (string.eq
-                (ci.intern-compat-state-str context.intern-state var-head)
+                (embedded-native-intern-str context var-head)
                 "expr-var"))
             (= (compiler_ast_types.ast-expr-list-len (& var-args)) 1))
             (match (embedded-stdlib-tlci-unwrap-expr
@@ -848,8 +859,7 @@
               (compiler_ast_types.ast-expr-list-get (& var-args) 0 0))
               [(Literal lit)
                 (match lit
-                  [(String text)
-                    (ci.intern-compat-state-str context.intern-state text)]
+                  [(String text) (embedded-native-intern-str context text)]
                   [_ ""])]
               [_ ""])
             "")]
@@ -867,10 +877,10 @@
           (if (and
             (or
               (string.eq
-                (ci.intern-compat-state-str context.intern-state bool-head)
+                (embedded-native-intern-str context bool-head)
                 "comptime.expr-bool")
               (string.eq
-                (ci.intern-compat-state-str context.intern-state bool-head)
+                (embedded-native-intern-str context bool-head)
                 "expr-bool"))
             (= (compiler_ast_types.ast-expr-list-len (& bool-args)) 1))
             (embedded-native-bool-literal-flag
@@ -995,9 +1005,11 @@
   [context : (& context TlciNativeSourceContext)]
   [op : String]
   [name-id : i64]) : EmbeddedNativeTemplateOpSpec
-  (let
-    [name : String (ci.intern-compat-state-str context.intern-state name-id)]
-    (embedded-native-text-op-spec op (& name) false)))
+  (if (not (ci.intern-renderable-id? name-id))
+    (embedded-native-op-spec "" "0")
+    (let
+      [name : String (embedded-native-intern-str context name-id)]
+      (embedded-native-text-op-spec op (& name) false))))
 
 ;; Per-variant TLCI host callback name for uniform zero-immediate template
 ;; expressions whose children walk in payload order via `ast-expr-children`.
@@ -1092,14 +1104,15 @@
               (tlci_core.tlci-host-callback-name expr-borrow)
               mut-flag)]
           [(Named lid)
-            (let
-              [lname : String
-                (ci.intern-compat-state-str context.intern-state lid)]
-              (EmbeddedNativeTemplateOpSpec
-                (tlci_core.tlci-host-callback-name expr-borrow)
-                mut-flag
-                (embedded-native-name-arg (& lname))
-                (string.int->string (string.string-length (& lname)))))]))]
+            (if (not (ci.intern-renderable-id? lid))
+              (embedded-native-op-spec "" "0")
+              (let
+                [lname : String (embedded-native-intern-str context lid)]
+                (EmbeddedNativeTemplateOpSpec
+                  (tlci_core.tlci-host-callback-name expr-borrow)
+                  mut-flag
+                  (embedded-native-name-arg (& lname))
+                  (string.int->string (string.string-length (& lname))))))]))]
     [_
       (embedded-native-op-spec
         (embedded-native-template-uniform-callback expr)
@@ -1326,8 +1339,7 @@
                   (embedded-native-op-spec "" "0"))]
               [(String sid)
                 (let
-                  [text : String
-                    (ci.intern-compat-state-str context.intern-state sid)]
+                  [text : String (embedded-native-intern-str context sid)]
                   (embedded-native-text-op-spec
                     (tlci_core.tlci-host-callback-name expr-string)
                     (& text)
@@ -1550,7 +1562,7 @@
                   [slot : i64
                     (if (< param 0)
                       (embedded-native-local-index
-                        (ci.intern-compat-state-str context.intern-state pname))
+                        (embedded-native-intern-str context pname))
                       -1)]
                   (if (and (< param 0) (< slot 0))
                     (set! ok false)
@@ -1642,65 +1654,65 @@
                     "0")
                   1]
                 [(Binding pat-name-id)
-                  (let
-                    [pat-name : String
-                      (ci.intern-compat-state-str
-                        context.intern-state
-                        pat-name-id)]
-                    (embedded-native-template-push!
-                      ops
-                      ops-count
-                      (tlci_core.tlci-host-callback-name pattern-binding)
-                      (embedded-native-name-arg
-                        (owned_view.compiler-owned-shared-view pat-name))
-                      (string.int->string (string.string-length pat-name))
-                      "0")
-                    1)]
+                  (if (not (ci.intern-renderable-id? pat-name-id))
+                    -1
+                    (let
+                      [pat-name : String
+                        (embedded-native-intern-str context pat-name-id)]
+                      (embedded-native-template-push!
+                        ops
+                        ops-count
+                        (tlci_core.tlci-host-callback-name pattern-binding)
+                        (embedded-native-name-arg
+                          (owned_view.compiler-owned-shared-view pat-name))
+                        (string.int->string (string.string-length pat-name))
+                        "0")
+                      1))]
                 [(Var pat-name-id pat-maybe-ty)
                   (match pat-maybe-ty
                     [(No)
-                      (let
-                        [pat-name : String
-                          (ci.intern-compat-state-str
-                            context.intern-state
-                            pat-name-id)]
-                        (embedded-native-template-push!
-                          ops
-                          ops-count
-                          (tlci_core.tlci-host-callback-name pattern-var)
-                          (embedded-native-name-arg
-                            (owned_view.compiler-owned-shared-view pat-name))
-                          (string.int->string (string.string-length pat-name))
-                          "0")
-                        1)]
+                      (if (not (ci.intern-renderable-id? pat-name-id))
+                        -1
+                        (let
+                          [pat-name : String
+                            (embedded-native-intern-str context pat-name-id)]
+                          (embedded-native-template-push!
+                            ops
+                            ops-count
+                            (tlci_core.tlci-host-callback-name pattern-var)
+                            (embedded-native-name-arg
+                              (owned_view.compiler-owned-shared-view pat-name))
+                            (string.int->string (string.string-length pat-name))
+                            "0")
+                          1))]
                     [_ -1])]
                 [(Variant pat-name-id pat-args-box)
-                  (let
-                    [pat-name : String
-                      (ci.intern-compat-state-str
-                        context.intern-state
-                        pat-name-id)]
-                    [pat-args : compiler_ast_types.AstPatternList
-                      (deref pat-args-box)]
-                    [pat-arg-opened : i64
-                      (embedded-native-pattern-list-ops
-                        context
-                        (& pat-args)
-                        ops
-                        ops-count
-                        0)]
-                    (if (< pat-arg-opened 0)
-                      -1
-                      (begin
-                        (embedded-native-template-push!
+                  (if (not (ci.intern-renderable-id? pat-name-id))
+                    -1
+                    (let
+                      [pat-name : String
+                        (embedded-native-intern-str context pat-name-id)]
+                      [pat-args : compiler_ast_types.AstPatternList
+                        (deref pat-args-box)]
+                      [pat-arg-opened : i64
+                        (embedded-native-pattern-list-ops
+                          context
+                          (& pat-args)
                           ops
                           ops-count
-                          (tlci_core.tlci-host-callback-name pattern-variant)
-                          (embedded-native-name-arg
-                            (owned_view.compiler-owned-shared-view pat-name))
-                          (string.int->string (string.string-length pat-name))
-                          (string.int->string pat-args.len))
-                        (+ pat-arg-opened 1))))]
+                          0)]
+                      (if (< pat-arg-opened 0)
+                        -1
+                        (begin
+                          (embedded-native-template-push!
+                            ops
+                            ops-count
+                            (tlci_core.tlci-host-callback-name pattern-variant)
+                            (embedded-native-name-arg
+                              (owned_view.compiler-owned-shared-view pat-name))
+                            (string.int->string (string.string-length pat-name))
+                            (string.int->string pat-args.len))
+                          (+ pat-arg-opened 1)))))]
                 [_
                   (embedded-native-fallback-opened
                     "template-match-arm:unsupported-pattern")])]
@@ -1759,8 +1771,7 @@
       1]
     [(Binding name-id)
       (let
-        [name : String
-          (ci.intern-compat-state-str context.intern-state name-id)]
+        [name : String (embedded-native-intern-str context name-id)]
         (embedded-native-template-push!
           ops
           ops-count
@@ -1774,8 +1785,7 @@
       (match maybe-ty
         [(No)
           (let
-            [name : String
-              (ci.intern-compat-state-str context.intern-state name-id)]
+            [name : String (embedded-native-intern-str context name-id)]
             (embedded-native-template-push!
               ops
               ops-count
@@ -1788,8 +1798,7 @@
         [_ -1])]
     [(Variant name-id args-box)
       (let
-        [name : String
-          (ci.intern-compat-state-str context.intern-state name-id)]
+        [name : String (embedded-native-intern-str context name-id)]
         [args : compiler_ast_types.AstPatternList (deref args-box)]
         [arg-opened : i64
           (embedded-native-pattern-list-ops context (& args) ops ops-count 0)]
@@ -1899,8 +1908,7 @@
   [ops : (&mut ops (__tl_dyn-array String))]
   [ops-count : (&mut ops-count (__tl_dyn-array i64))]) : i64
   (let
-    [region : String
-      (ci.intern-compat-state-str context.intern-state region-id)]
+    [region : String (embedded-native-intern-str context region-id)]
     [inner-opened : i64
       (embedded-native-template-type-ops
         context
@@ -1933,7 +1941,7 @@
   [name : i64]
   [lifetimes : (& lifetimes compiler_ast_types.AstLifetimeList)]) : String
   (let
-    [payload : String (ci.intern-compat-state-str context.intern-state name)]
+    [payload : String (embedded-native-intern-str context name)]
     (for [index
       (iterator.range 0 (compiler_ast_types.ast-lifetime-list-len lifetimes))]
       (set!
@@ -1941,8 +1949,8 @@
         (str_cat.str-cat
           payload
           "\n"
-          (ci.intern-compat-state-str
-            context.intern-state
+          (embedded-native-intern-str
+            context
             (compiler_ast_types.ast-lifetime-list-get
               lifetimes
               index
@@ -2079,7 +2087,7 @@
             [slot : i64
               (if (and valid (< param 0))
                 (embedded-native-local-index
-                  (ci.intern-compat-state-str context.intern-state operand-name))
+                  (embedded-native-intern-str context operand-name))
                 -1)]
             (if (and (< param 0) (< slot 0))
               (embedded-native-fallback-opened "template-type:unquote")
@@ -2120,8 +2128,7 @@
                 1)))))]
     [(Var type-name-id)
       (let
-        [type-name : String
-          (ci.intern-compat-state-str context.intern-state type-name-id)]
+        [type-name : String (embedded-native-intern-str context type-name-id)]
         (embedded-native-template-push!
           ops
           ops-count
@@ -2208,7 +2215,7 @@
                   1
                   0))
               ":"
-              (ci.intern-compat-state-str context.intern-state name)
+              (embedded-native-intern-str context name)
               "\n"))]))
     payload))
 
@@ -2264,8 +2271,7 @@
       (compiler_ast_types.ast-let-binding-fallback))
       [(Binding name-id maybe-ty init)
         (let
-          [name : String
-            (ci.intern-compat-state-str context.intern-state name-id)]
+          [name : String (embedded-native-intern-str context name-id)]
           [init-opened : i64
             (embedded-native-template-ops context params init ops ops-count)]
           (if (< init-opened 0)
@@ -2457,8 +2463,7 @@
       (match lit
         [(String sid)
           (let
-            [text : String
-              (ci.intern-compat-state-str context.intern-state sid)]
+            [text : String (embedded-native-intern-str context sid)]
             (embedded-native-template-push!
               ops
               ops-count
@@ -2551,8 +2556,7 @@
       (match (embedded-stdlib-tlci-unwrap-expr context func)
         [(Var head-id)
           (let
-            [head : String
-              (ci.intern-compat-state-str context.intern-state head-id)]
+            [head : String (embedded-native-intern-str context head-id)]
             [argc : i64 (compiler_ast_types.ast-expr-list-len (& args))]
             [_walked : unit
               (embedded-native-full-walked-note!
@@ -3811,9 +3815,7 @@
                         (compiler_ast_types.ast-expr-list-get (& args) 0 0))
                         [(Var list-name)
                           (embedded-native-local-index
-                            (ci.intern-compat-state-str
-                              context.intern-state
-                              list-name))]
+                            (embedded-native-intern-str context list-name))]
                         [_ -1]))]
                   [index-text : String
                     (embedded-native-data-index-text
@@ -3891,7 +3893,7 @@
         "0")]
     [(Var name)
       (embedded-native-data-local-text
-        (ci.intern-compat-state-str context.intern-state name))]
+        (embedded-native-intern-str context name))]
     [(Cast inner ty-id)
       (if (embedded-native-data-cast-type?
         (compiler_ast_types.ast-node-pool-context-type-get context.pools ty-id))
@@ -4470,7 +4472,7 @@
       (let
         [slot : i64
           (embedded-native-local-index
-            (ci.intern-compat-state-str context.intern-state name-id))]
+            (embedded-native-intern-str context name-id))]
         (if (not (embedded-native-local-bool? slot))
           (embedded-native-data-value context params node)
           (embedded-native-data-probe-value
@@ -4538,7 +4540,7 @@
           (let
             [slot : i64
               (embedded-native-local-index
-                (ci.intern-compat-state-str context.intern-state name))]
+                (embedded-native-intern-str context name))]
             (if (< slot 0)
               (embedded-native-data-value-none)
               (embedded-native-data-probe-value
@@ -4564,10 +4566,10 @@
             (= (compiler_ast_types.ast-expr-list-len (& args)) 1)
             (or
               (string.eq
-                (ci.intern-compat-state-str context.intern-state head-id)
+                (embedded-native-intern-str context head-id)
                 qualified-name)
               (string.eq
-                (ci.intern-compat-state-str context.intern-state head-id)
+                (embedded-native-intern-str context head-id)
                 short-name)))
             (embedded-native-data-expr-probe-value
               context
@@ -4680,7 +4682,7 @@
     (if (< scrutinee-opened 0)
       (embedded-native-data-value-none)
       (let
-        [literal : String (ci.intern-compat-state-str context.intern-state sid)]
+        [literal : String (embedded-native-intern-str context sid)]
         (embedded-native-template-push!
           (&mut ops)
           (&mut ops-count)
@@ -4753,7 +4755,7 @@
       [(Var name)
         (>=
           (embedded-native-local-index
-            (ci.intern-compat-state-str context.intern-state name))
+            (embedded-native-intern-str context name))
           0)]
       [_ false]))
     (embedded-native-data-string-match-arms-value
@@ -4844,8 +4846,7 @@
       (match (embedded-stdlib-tlci-unwrap-expr context func)
         [(Var head-id)
           (let
-            [head : String
-              (ci.intern-compat-state-str context.intern-state head-id)]
+            [head : String (embedded-native-intern-str context head-id)]
             [argc : i64 (compiler_ast_types.ast-expr-list-len (& args))]
             [op : String
               (cond
@@ -4926,10 +4927,10 @@
             (= (compiler_ast_types.ast-expr-list-len (& args)) 1)
             (or
               (string.eq
-                (ci.intern-compat-state-str context.intern-state head-id)
+                (embedded-native-intern-str context head-id)
                 "comptime.expr-binding-clause-list-length")
               (string.eq
-                (ci.intern-compat-state-str context.intern-state head-id)
+                (embedded-native-intern-str context head-id)
                 "expr-binding-clause-list-length")))
             (embedded-native-var-param-index
               context
@@ -4951,10 +4952,10 @@
             (= (compiler_ast_types.ast-expr-list-len (& args)) 1)
             (or
               (string.eq
-                (ci.intern-compat-state-str context.intern-state head-id)
+                (embedded-native-intern-str context head-id)
                 "comptime.expr-binding-clause-has-type?")
               (string.eq
-                (ci.intern-compat-state-str context.intern-state head-id)
+                (embedded-native-intern-str context head-id)
                 "expr-binding-clause-has-type?")))
             (match (embedded-stdlib-tlci-unwrap-expr
               context
@@ -4963,7 +4964,7 @@
                 (let
                   [slot : i64
                     (embedded-native-local-index
-                      (ci.intern-compat-state-str context.intern-state name-id))]
+                      (embedded-native-intern-str context name-id))]
                   (if (< slot 0)
                     (embedded-native-data-value-none)
                     (embedded-native-data-probe-value
@@ -4985,8 +4986,7 @@
       (match (embedded-stdlib-tlci-unwrap-expr context func)
         [(Var head-id)
           (let
-            [head : String
-              (ci.intern-compat-state-str context.intern-state head-id)]
+            [head : String (embedded-native-intern-str context head-id)]
             (if (and
               (= (compiler_ast_types.ast-expr-list-len (& args)) 2)
               (or
@@ -5013,8 +5013,7 @@
       (match (embedded-stdlib-tlci-unwrap-expr context func)
         [(Var head-id)
           (let
-            [head : String
-              (ci.intern-compat-state-str context.intern-state head-id)]
+            [head : String (embedded-native-intern-str context head-id)]
             (if (and
               (= (compiler_ast_types.ast-expr-list-len (& args)) 2)
               (or
@@ -5039,8 +5038,7 @@
       (match (embedded-stdlib-tlci-unwrap-expr context func)
         [(Var head-id)
           (let
-            [head : String
-              (ci.intern-compat-state-str context.intern-state head-id)]
+            [head : String (embedded-native-intern-str context head-id)]
             (if (and
               (= (compiler_ast_types.ast-expr-list-len (& args)) 2)
               (or
@@ -5167,8 +5165,7 @@
       (match (embedded-stdlib-tlci-unwrap-expr context func)
         [(Var head-id)
           (let
-            [head : String
-              (ci.intern-compat-state-str context.intern-state head-id)]
+            [head : String (embedded-native-intern-str context head-id)]
             [argc : i64 (compiler_ast_types.ast-expr-list-len (& args))]
             [slot : i64
               (if (= argc 0)
@@ -5227,8 +5224,7 @@
     [(Var name)
       (if (>= (embedded-stdlib-tlci-param-index params name) 0)
         -1
-        (embedded-native-local-index
-          (ci.intern-compat-state-str context.intern-state name)))]
+        (embedded-native-local-index (embedded-native-intern-str context name)))]
     [_ -1]))
 
 ;: A `stdlib.string` helper call spelled the way the module-qualified imports
@@ -5288,10 +5284,10 @@
           (if (and
             (or
               (string.eq
-                (ci.intern-compat-state-str context.intern-state length-head)
+                (embedded-native-intern-str context length-head)
                 "comptime.expr-list-length")
               (string.eq
-                (ci.intern-compat-state-str context.intern-state length-head)
+                (embedded-native-intern-str context length-head)
                 "expr-list-length"))
             (= (compiler_ast_types.ast-expr-list-len (& length-args)) 1)
             (<
@@ -5305,7 +5301,7 @@
               (compiler_ast_types.ast-expr-list-get (& length-args) 0 0))
               [(Var list-name)
                 (embedded-native-local-index
-                  (ci.intern-compat-state-str context.intern-state list-name))]
+                  (embedded-native-intern-str context list-name))]
               [_ -1])
             -1)]
         [_ -1])]
@@ -5769,8 +5765,7 @@
       (match (embedded-stdlib-tlci-unwrap-expr context func)
         [(Var head-id)
           (let
-            [head : String
-              (ci.intern-compat-state-str context.intern-state head-id)]
+            [head : String (embedded-native-intern-str context head-id)]
             [argc : i64 (compiler_ast_types.ast-expr-list-len (& args))]
             (cond
               ;; A computed branch feeding `expr-var` must retain the outer
@@ -5793,13 +5788,13 @@
                           (and
                             (or
                               (string.eq
-                                (ci.intern-compat-state-str
-                                  context.intern-state
+                                (embedded-native-intern-str
+                                  context
                                   inner-head-id)
                                 "comptime.string-append")
                               (string.eq
-                                (ci.intern-compat-state-str
-                                  context.intern-state
+                                (embedded-native-intern-str
+                                  context
                                   inner-head-id)
                                 "string-append"))
                             (=
@@ -6126,7 +6121,7 @@
       (let
         [target : String
           (embedded-native-data-local-text
-            (ci.intern-compat-state-str context.intern-state name-id))]
+            (embedded-native-intern-str context name-id))]
         (if (not (string.eq target ""))
           (let
             [value : EmbeddedNativeDataValue
@@ -6144,7 +6139,7 @@
           (let
             [slot : i64
               (embedded-native-local-index
-                (ci.intern-compat-state-str context.intern-state name-id))]
+                (embedded-native-intern-str context name-id))]
             (if (< slot 0)
               ""
               (embedded-native-computed-expr-code
@@ -6368,9 +6363,7 @@
                     [(Var cond-head)
                       (let
                         [cond-name : String
-                          (ci.intern-compat-state-str
-                            context.intern-state
-                            cond-head)]
+                          (embedded-native-intern-str context cond-head)]
                         (cond
                           [(and
                               (or
@@ -6663,9 +6656,7 @@
                             (array-ref embedded-native-local-len 0)]
                           [bind-slot : i64
                             (embedded-native-local-push!
-                              (ci.intern-compat-state-str
-                                context.intern-state
-                                bind-id))]
+                              (embedded-native-intern-str context bind-id))]
                           [then-code : String
                             (if (or (< scrut-slot 0) (< bind-slot 0))
                               ""
@@ -6809,9 +6800,7 @@
                           [(Wildcard) true]
                           [(Binding bind-id)
                             (embedded-native-data-local-push!
-                              (ci.intern-compat-state-str
-                                context.intern-state
-                                bind-id)
+                              (embedded-native-intern-str context bind-id)
                               (owned_view.compiler-owned-shared-view value))]
                           [_ false])]
                       [then-code : String
@@ -7089,8 +7078,7 @@
         (match pattern
           [(Literal (String sid))
             (let
-              [lit : String
-                (ci.intern-compat-state-str context.intern-state sid)]
+              [lit : String (embedded-native-intern-str context sid)]
               [blockers-before : i64 embedded-native-full-blocker-events]
               [arm-code : String
                 (embedded-native-computed-expr-code
@@ -7301,7 +7289,7 @@
                 (embedded-native-fallback-reason-note!
                   (str_cat.str-cat
                     "let-binding:"
-                    (ci.intern-compat-state-str context.intern-state name)
+                    (embedded-native-intern-str context name)
                     ":unsupported-init")))
               (if embedded-native-full-blocker-diagnostic-active
                 (embedded-native-let-bindings-open
@@ -7348,10 +7336,10 @@
         (if (and
           (<
             (embedded-native-local-index
-              (ci.intern-compat-state-str context.intern-state name))
+              (embedded-native-intern-str context name))
             0)
           (embedded-native-data-local-push!
-            (ci.intern-compat-state-str context.intern-state name)
+            (embedded-native-intern-str context name)
             (owned_view.compiler-owned-shared-view generated)))
           (begin
             (set!
@@ -7368,7 +7356,7 @@
       (if (not
         (string.eq
           (embedded-native-data-local-text
-            (ci.intern-compat-state-str context.intern-state name))
+            (embedded-native-intern-str context name))
           ""))
         "$tlci-unsupported"
         (embedded-native-let-session-binding-open
@@ -7393,7 +7381,7 @@
         [_ false])]
     [slot : i64
       (embedded-native-local-push-kind!
-        (ci.intern-compat-state-str context.intern-state name)
+        (embedded-native-intern-str context name)
         boolean?)]
     (if (< slot 0)
       "$tlci-unsupported"
@@ -7448,8 +7436,7 @@
         (match pattern
           [(Literal (String sid))
             (let
-              [kind : String
-                (ci.intern-compat-state-str context.intern-state sid)]
+              [kind : String (embedded-native-intern-str context sid)]
               [arm-code : String
                 (embedded-native-body-code context params body-node)]
               [rest : String
@@ -7528,8 +7515,7 @@
       (match (embedded-stdlib-tlci-unwrap-expr context head-id)
         [(Var head-name)
           (let
-            [head : String
-              (ci.intern-compat-state-str context.intern-state head-name)]
+            [head : String (embedded-native-intern-str context head-name)]
             [kind? : bool
               (or
                 (string.eq head "type-kind")
@@ -7585,10 +7571,10 @@
           (if (and
             (or
               (string.eq
-                (ci.intern-compat-state-str context.intern-state head-name)
+                (embedded-native-intern-str context head-name)
                 "comptime.expr-type")
               (string.eq
-                (ci.intern-compat-state-str context.intern-state head-name)
+                (embedded-native-intern-str context head-name)
                 "expr-type"))
             (= (compiler_ast_types.ast-expr-list-len (& args)) 1))
             (embedded-native-var-param-index
@@ -7639,10 +7625,10 @@
           (if (and
             (or
               (string.eq
-                (ci.intern-compat-state-str context.intern-state length-head)
+                (embedded-native-intern-str context length-head)
                 "comptime.expr-list-length")
               (string.eq
-                (ci.intern-compat-state-str context.intern-state length-head)
+                (embedded-native-intern-str context length-head)
                 "expr-list-length"))
             (= (compiler_ast_types.ast-expr-list-len (& length-args)) 1))
             (embedded-native-var-param-index
@@ -7750,7 +7736,7 @@
   [context : (& context TlciNativeSourceContext)]
   [name-id : i64]) : String
   (let
-    [name : String (ci.intern-compat-state-str context.intern-state name-id)]
+    [name : String (embedded-native-intern-str context name-id)]
     (cond
       [(string.eq name "comptime.Expr.Call") "Call"]
       [(string.eq name "Expr.Call") "Call"]
@@ -7784,7 +7770,7 @@
         [(Wildcard) true]
         [(Binding bind-id)
           (embedded-native-data-local-push!
-            (ci.intern-compat-state-str context.intern-state bind-id)
+            (embedded-native-intern-str context bind-id)
             (owned_view.compiler-owned-shared-view value))]
         [_ false])]
     [arm-code : String
@@ -8152,7 +8138,7 @@
     [saved : i64 (array-ref embedded-native-data-local-len 0)]
     [bound : bool
       (embedded-native-data-local-push!
-        (ci.intern-compat-state-str context.intern-state binder)
+        (embedded-native-intern-str context binder)
         name)]
     [code : String
       (if bound

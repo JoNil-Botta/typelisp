@@ -16,5 +16,8 @@
       (set! (array-ref scratch 0) before)
       (+ before (array-length values)))))
 
+(define load-across-fresh-alloc-fn : (-> (__tl_dyn-array i64) i64)
+  load-across-fresh-alloc)
+
 (define (main) : i64
-  (load-across-fresh-alloc (__tl_make-array i64 2)))
+  (load-across-fresh-alloc-fn (__tl_make-array i64 2)))

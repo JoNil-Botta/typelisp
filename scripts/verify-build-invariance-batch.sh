@@ -701,4 +701,110 @@ bounded_pool_start "$POOL" 3
 bounded_pool_join "$POOL"
 mkdir "$POOL/held/stamp"
 reject bounded_pool_require_complete "$POOL"
+
+# bounded_pool_unlock must not re-stat the lock after rm succeeds: if a waiting
+# worker immediately acquires the lock, looping would delete the new owner's lock.
+REAL_RM=$(command -v rm)
+UNLOCK_POOL="$WORKDIR/unlock-race-pool"
+UNLOCK_SHIM="$WORKDIR/unlock-race-bin"
+mkdir -p "$UNLOCK_POOL" "$UNLOCK_SHIM"
+printf 'old-owner\n' > "$UNLOCK_POOL/lock"
+: > "$UNLOCK_SHIM/calls"
+cat > "$UNLOCK_SHIM/rm" <<EOF
+#!/usr/bin/env sh
+set -eu
+printf 'call\n' >> "$UNLOCK_SHIM/calls"
+"$REAL_RM" "\$@"
+printf 'new-owner\n' > "$UNLOCK_POOL/lock"
+EOF
+chmod +x "$UNLOCK_SHIM/rm"
+(
+    set -eu
+    PATH="$UNLOCK_SHIM:$PATH"
+    bounded_pool_unlock "$UNLOCK_POOL"
+)
+test "$(wc -l < "$UNLOCK_SHIM/calls" | tr -d ' ')" -eq 1
+test -f "$UNLOCK_POOL/lock"
+test "$(cat "$UNLOCK_POOL/lock")" = 'new-owner'
+
+# Transient rm failures retry under set -e and remove the lock once rm succeeds.
+UNLOCK_RETRY_POOL="$WORKDIR/unlock-retry-pool"
+UNLOCK_RETRY_SHIM="$WORKDIR/unlock-retry-bin"
+mkdir -p "$UNLOCK_RETRY_POOL" "$UNLOCK_RETRY_SHIM"
+printf 'owner\n' > "$UNLOCK_RETRY_POOL/lock"
+: > "$UNLOCK_RETRY_SHIM/calls"
+cat > "$UNLOCK_RETRY_SHIM/rm" <<EOF
+#!/usr/bin/env sh
+set -eu
+printf 'call\n' >> "$UNLOCK_RETRY_SHIM/calls"
+count=\$(wc -l < "$UNLOCK_RETRY_SHIM/calls" | tr -d ' ')
+if [ "\$count" -le 2 ]; then
+    exit 1
+fi
+"$REAL_RM" "\$@"
+EOF
+cat > "$UNLOCK_RETRY_SHIM/sleep" <<'EOF'
+#!/usr/bin/env sh
+exit 0
+EOF
+chmod +x "$UNLOCK_RETRY_SHIM/rm" "$UNLOCK_RETRY_SHIM/sleep"
+(
+    set -eu
+    PATH="$UNLOCK_RETRY_SHIM:$PATH"
+    bounded_pool_unlock "$UNLOCK_RETRY_POOL"
+)
+test "$(wc -l < "$UNLOCK_RETRY_SHIM/calls" | tr -d ' ')" -eq 3
+test ! -e "$UNLOCK_RETRY_POOL/lock"
+
+# Persistent rm failures retry 50 times and fail closed with exit 2 and a diagnostic.
+UNLOCK_FAIL_POOL="$WORKDIR/unlock-fail-pool"
+UNLOCK_FAIL_SHIM="$WORKDIR/unlock-fail-bin"
+mkdir -p "$UNLOCK_FAIL_POOL" "$UNLOCK_FAIL_SHIM"
+printf 'stuck\n' > "$UNLOCK_FAIL_POOL/lock"
+: > "$UNLOCK_FAIL_SHIM/calls"
+cat > "$UNLOCK_FAIL_SHIM/rm" <<EOF
+#!/usr/bin/env sh
+set -eu
+printf 'call\n' >> "$UNLOCK_FAIL_SHIM/calls"
+exit 1
+EOF
+cat > "$UNLOCK_FAIL_SHIM/sleep" <<'EOF'
+#!/usr/bin/env sh
+exit 0
+EOF
+chmod +x "$UNLOCK_FAIL_SHIM/rm" "$UNLOCK_FAIL_SHIM/sleep"
+unlock_fail_status=0
+sh -eu -c '
+    BOUNDED_POOL_LABEL=build-invariance
+    . "$1/scripts/lib-bounded-pool.sh"
+    PATH="$2:$PATH"
+    bounded_pool_unlock "$3"
+' _ "$ROOT" "$UNLOCK_FAIL_SHIM" "$UNLOCK_FAIL_POOL" \
+    > "$WORKDIR/stdout" 2> "$WORKDIR/stderr" || unlock_fail_status=$?
+test "$unlock_fail_status" -eq 2
+test "$(wc -l < "$UNLOCK_FAIL_SHIM/calls" | tr -d ' ')" -eq 50
+grep -q "could not release pool lock: $UNLOCK_FAIL_POOL/lock" "$WORKDIR/stderr"
+test -f "$UNLOCK_FAIL_POOL/lock"
+
+# High-contention worker pool: 8 workers racing through 40 fast jobs must claim
+# and finish every job exactly once with zero lock-stealing collisions.
+CONTENTION_POOL="$WORKDIR/contention-pool"
+CONTENTION_QUEUE="$WORKDIR/contention-queue"
+CONTENTION_RAN="$WORKDIR/contention-ran"
+mkdir "$CONTENTION_RAN"
+: > "$CONTENTION_QUEUE"
+i=0
+while [ "$i" -lt 40 ]; do
+    printf 'fast-%03d|1\n' "$i" >> "$CONTENTION_QUEUE"
+    i=$((i + 1))
+done
+bounded_pool_run_job() {
+    mkdir "$CONTENTION_RAN/$1"
+}
+bounded_pool_init "$CONTENTION_POOL" 8 "$CONTENTION_QUEUE"
+bounded_pool_start "$CONTENTION_POOL" 8 2> "$WORKDIR/contention.stderr"
+bounded_pool_join "$CONTENTION_POOL"
+test ! -s "$WORKDIR/contention.stderr"
+test "$(count_entries "$CONTENTION_RAN")" -eq 40
+
 echo 'build-invariance batch reuse and worker pool checks passed'

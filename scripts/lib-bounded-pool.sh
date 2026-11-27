@@ -112,16 +112,17 @@ bounded_pool_lock() {
 
 bounded_pool_unlock() {
     # MSYS2 can refuse to unlink a file another process still holds open, so
-    # retry instead of leaving the lock behind for the next pool to trip over.
+    # retry only when `rm` itself fails. Never re-stat `$1/lock` after `rm`
+    # succeeds: a waiting worker may acquire the lock immediately, and looping
+    # would delete the new holder's lock.
     _bp_unlock_tries=0
-    while [ -e "$1/lock" ]; do
+    until rm -f -- "$1/lock" 2>/dev/null; do
+        _bp_unlock_tries=$((_bp_unlock_tries + 1))
         if [ "$_bp_unlock_tries" -ge 50 ]; then
             echo "[$BOUNDED_POOL_LABEL] could not release pool lock: $1/lock" >&2
             return 2
         fi
-        rm -f -- "$1/lock" 2>/dev/null
-        _bp_unlock_tries=$((_bp_unlock_tries + 1))
-        [ ! -e "$1/lock" ] || sleep 0.1
+        sleep 0.1
     done
 }
 

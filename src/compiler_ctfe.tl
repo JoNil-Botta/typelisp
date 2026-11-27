@@ -5329,10 +5329,10 @@
   [layouts : (& CtfeLayoutInfoList)]
   [ty : (& ast.AstType)]) : i64
   (match ty
-    [(or (I64) (U64) (F64) (CFunc _ _) (Func _ _) (Tuple _) (DynArray _) (Box _)
-         (Ptr _) (MutPtr _))
+    [(or (I64) (U64) (F64) (CFunc _ _) (Func _ _) (Tuple _) (Box _) (Ptr _)
+         (MutPtr _))
       8]
-    [(String) 16]
+    [(or (String) (DynArray _)) 16]
     [(or (I32) (U32) (F32)) 4]
     [(or (I16) (U16)) 2]
     [(or (I8) (U8) (Bool) (Char)) 1]

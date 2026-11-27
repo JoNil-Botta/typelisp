@@ -29715,20 +29715,44 @@
     (ptr-read ,cache-ptr)))
 
 ;; Physical byte offsets in TcTypeEnvCache after the four-word chain prefix:
-;; ids=32 (the map is inline and 24 bytes), values=56, sidecar arrays=64/72,
-;; flags=80/81, and rest/below=88/96. Keep these literals paired with the
-;; raw-layout smoke and
-;; cache behavior tests; `offset-of` currently treats the inline map as one word
-;; and therefore under-reports every following field.
+;; `ids` is an inline `tc_i64_i64_map.Map` (1 DynArray + 2 i64 = dyn + 16 bytes),
+;; followed by three DynArray fields (`values`, `unsafe-flags`, `shadow-flags`),
+;; three bool flags (`scan-through`, `partial`, `has-region-activation`), and
+;; two i64 heads (`rest`, `below`). Compute each offset from
+;; `(size-of (type (__tl_dyn-array i64)))` so both stage0 (8B) and stage1+ (16B)
+;; agree with the actual struct layout while `offset-of` still under-reports the
+;; inline map field.
 (defmacro (tc-type-env-cache-field-at
   [cache-ptr : comptime.Expr]
-  [byte-offset : comptime.Expr]
+  [field : comptime.Expr]
   [_T : type]) : comptime.Expr
-  `(unsafe
-    (ptr-read
-      (ptr-cast
-        (ptr-offset (ptr-cast ,cache-ptr : (Ptr u8)) ,byte-offset)
-        : (Ptr ,_T)))))
+  (let
+    [dyn-size : i64 (size-of (type (__tl_dyn-array i64)))]
+    [byte-offset : i64
+      (match field
+        [(comptime.Expr.Var name)
+          (match name
+            ["ids" 32]
+            ["values" (+ 48 dyn-size)]
+            ["unsafe-flags" (+ 48 (* dyn-size 2))]
+            ["shadow-flags" (+ 48 (* dyn-size 3))]
+            ["scan-through" (+ 48 (* dyn-size 4))]
+            ["partial" (+ 49 (* dyn-size 4))]
+            ["rest" (+ 56 (* dyn-size 4))]
+            ["below" (+ 64 (* dyn-size 4))]
+            [_
+              (comptime.comptime-error
+                (comptime.string-append "unknown TcTypeEnvCache field: " name))])]
+        [_
+          (comptime.comptime-error
+            "tc-type-env-cache-field-at expects a field name")])]
+    `(unsafe
+      (ptr-read
+        (ptr-cast
+          (ptr-offset
+            (ptr-cast ,cache-ptr : (Ptr u8))
+            ,(comptime.expr-int byte-offset))
+          : (Ptr ,_T))))))
 
 (define (tc-type-env-store-push-binding!
   [store-handle : i64]
@@ -29857,15 +29881,15 @@
             (tc-type-env-cache-ptr store-handle (tc-type-env-cache-index head))]
           (Cache
             cache-ptr
-            (tc-type-env-cache-field-at cache-ptr 80 bool)
-            (tc-type-env-cache-field-at cache-ptr 81 bool)
+            (tc-type-env-cache-field-at cache-ptr scan-through bool)
+            (tc-type-env-cache-field-at cache-ptr partial bool)
             (TcTypeEnv
               store-handle
-              (tc-type-env-cache-field-at cache-ptr 88 i64)
+              (tc-type-env-cache-field-at cache-ptr rest i64)
               env.abi-pad)
             (TcTypeEnv
               store-handle
-              (tc-type-env-cache-field-at cache-ptr 96 i64)
+              (tc-type-env-cache-field-at cache-ptr below i64)
               env.abi-pad)))])))
 
 (define (tc-empty-env) : TcTypeEnv
@@ -30295,7 +30319,10 @@
     [(Cache cache-ptr scan-through partial _ below)
       (let
         [values : (__tl_dyn-array ast.AstType)
-          (tc-type-env-cache-field-at cache-ptr 56 (__tl_dyn-array ast.AstType))]
+          (tc-type-env-cache-field-at
+            cache-ptr
+            values
+            (__tl_dyn-array ast.AstType))]
         (if (and scan-through partial)
           (+
             (/ (array-length values) 2)
@@ -32468,8 +32495,18 @@
       (ptr-offset (int->ptr (cast ,addr : u64) : (Ptr u64)) ,word-offset))))
 
 (define (tc-chain-array-length [array-address : u64]) : i64
-  (unsafe
-    (ptr-read (ptr-offset (int->ptr array-address : (Ptr i64)) 1))))
+  (if (= array-address 0)
+    0
+    (unsafe
+      (ptr-read (ptr-offset (int->ptr array-address : (Ptr i64)) 1)))))
+
+(define (tc-chain-alloc-array-descriptor [data-address : u64] [len : i64]) : u64
+  (let
+    [desc : (__tl_dyn-array u64) (__tl_make-array u64 2)]
+    (set! (array-ref desc 0) data-address)
+    (set! (array-ref desc 1) (cast len : u64))
+    (unsafe
+      (ptr->int (__tl_array-data desc)))))
 
 (define (tc-chain-array-ref [array-address : u64] [index : i64]) : i64
   (let
@@ -32752,8 +32789,18 @@
                 (tc-global-shared-view tc-chain-empty-i64-array)
                 (__tl_make-array i64 levels))]
             [prev : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
-            [jumps-address : u64 (tc-array-address jumps)]
-            [prev-address : u64 (tc-array-address prev)]
+            [jumps-address : u64
+              (if (= levels 0)
+                0
+                (tc-chain-alloc-array-descriptor
+                  (unsafe
+                    (ptr->int (__tl_array-data jumps)))
+                  levels))]
+            [prev-address : u64
+              (tc-chain-alloc-array-descriptor
+                (unsafe
+                  (ptr->int (__tl_array-data prev)))
+                capacity)]
             [seq : i64
               (let
                 [state : TcChainIndex (tc-chain-state-read state-addr)]
@@ -38967,7 +39014,7 @@
     [(Cache cache-ptr scan-through _ rest _)
       (let
         [ids : tc_i64_i64_map.Map
-          (tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
+          (tc-type-env-cache-field-at cache-ptr ids tc_i64_i64_map.Map)]
         ;; A module's explicit cache now contains only imported aliases. Those
         ;; aliases still shadow a declaration owned by the current module, even
         ;; though marker scans stop at this cache boundary.
@@ -40212,9 +40259,12 @@
     [(Cache cache-ptr _ partial _ below)
       (let
         [ids : tc_i64_i64_map.Map
-          (tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
+          (tc-type-env-cache-field-at cache-ptr ids tc_i64_i64_map.Map)]
         [sidecar-flags : (__tl_dyn-array i64)
-          (tc-type-env-cache-field-at cache-ptr 72 (__tl_dyn-array i64))]
+          (tc-type-env-cache-field-at
+            cache-ptr
+            shadow-flags
+            (__tl_dyn-array i64))]
         (match (tc_i64_i64_map.get (& ids) name-id)
           [(LookupFound index)
             (not (= (bit-and (array-ref sidecar-flags index) sidecar-flag) 0))]
@@ -40629,11 +40679,11 @@
   [lifetime-id : i64]) : i64
   (let
     [ids : tc_i64_i64_map.Map
-      (tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
+      (tc-type-env-cache-field-at cache-ptr ids tc_i64_i64_map.Map)]
     [sidecar-flags : (__tl_dyn-array i64)
-      (tc-type-env-cache-field-at cache-ptr 72 (__tl_dyn-array i64))]
+      (tc-type-env-cache-field-at cache-ptr shadow-flags (__tl_dyn-array i64))]
     [values : (__tl_dyn-array ast.AstType)
-      (tc-type-env-cache-field-at cache-ptr 56 (__tl_dyn-array ast.AstType))]
+      (tc-type-env-cache-field-at cache-ptr values (__tl_dyn-array ast.AstType))]
     [ordinary-index : i64 (tc_i64_i64_map.get-value-or (& ids) lifetime-id -1)]
     [marker-index : i64
       (tc_i64_i64_map.get-value-or
@@ -40719,11 +40769,17 @@
     [(Cache cache-ptr scan-through partial rest below)
       (let
         [ids : tc_i64_i64_map.Map
-          (tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
+          (tc-type-env-cache-field-at cache-ptr ids tc_i64_i64_map.Map)]
         [values : (__tl_dyn-array ast.AstType)
-          (tc-type-env-cache-field-at cache-ptr 56 (__tl_dyn-array ast.AstType))]
+          (tc-type-env-cache-field-at
+            cache-ptr
+            values
+            (__tl_dyn-array ast.AstType))]
         [sidecar-flags : (__tl_dyn-array i64)
-          (tc-type-env-cache-field-at cache-ptr 72 (__tl_dyn-array i64))]
+          (tc-type-env-cache-field-at
+            cache-ptr
+            shadow-flags
+            (__tl_dyn-array i64))]
         (if scan-through
           (match (tc_i64_i64_map.get (& ids) name-id)
             [(LookupFound index)
@@ -59636,9 +59692,12 @@
     [(Cache cache-ptr _ partial _ below)
       (let
         [ids : tc_i64_i64_map.Map
-          (tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
+          (tc-type-env-cache-field-at cache-ptr ids tc_i64_i64_map.Map)]
         [shadow-flags : (__tl_dyn-array i64)
-          (tc-type-env-cache-field-at cache-ptr 72 (__tl_dyn-array i64))]
+          (tc-type-env-cache-field-at
+            cache-ptr
+            shadow-flags
+            (__tl_dyn-array i64))]
         (match (tc_i64_i64_map.get (& ids) name-id)
           [(LookupFound index)
             (=
@@ -59680,8 +59739,8 @@
         (let
           [cache-ptr : (Ptr TcTypeEnvCache)
             (tc-type-env-cache-ptr store-handle (tc-type-env-cache-index head))]
-          (if (tc-type-env-cache-field-at cache-ptr 80 bool)
-            (set! head (tc-type-env-cache-field-at cache-ptr 88 i64))
+          (if (tc-type-env-cache-field-at cache-ptr scan-through bool)
+            (set! head (tc-type-env-cache-field-at cache-ptr rest i64))
             (set! head -1)))))
     found))
 
@@ -78464,10 +78523,10 @@
     [(or (I8) (U8) (Bool) (Char)) (Ok (tc-inline-aggregate-layout-info 1 1))]
     [(or (Unit) (Never) (Expr) (ExprList))
       (Ok (tc-inline-aggregate-zero-layout-info))]
-    [(or (Func _ _) (DynArray _) (Box _) (CFunc _ _) (Ptr _) (MutPtr _) (Str)
-         (Var _) (VarArgs _ _))
+    [(or (Func _ _) (Box _) (CFunc _ _) (Ptr _) (MutPtr _) (Str) (Var _)
+         (VarArgs _ _))
       (Ok (tc-inline-aggregate-pointer-layout-info))]
-    [(String) (Ok (tc-inline-aggregate-layout-info 16 8))]
+    [(or (String) (DynArray _)) (Ok (tc-inline-aggregate-layout-info 16 8))]
     [(Slice _)
       (Err
         "typecheck: slice has no by-value layout; use a borrowed slice reference")]
@@ -87610,7 +87669,6 @@
 ;; Why a storage shape has no zero value, as the ZII classifier below reports
 ;; it. The tokens are stable: diagnostics and fixtures name them.
 (defenum TcNotZiiReason
-  (DynBuffer)
   (Box)
   (Function)
   (Reference)
@@ -87624,7 +87682,6 @@
 ;; The stable reason token diagnostics and tests name.
 (define (tc-not-zii-reason-text [reason : TcNotZiiReason]) : String
   (match reason
-    [(DynBuffer) "dynamic-buffer"]
     [(Box) "box"]
     [(Function) "function"]
     [(Reference) "reference"]
@@ -87896,10 +87953,10 @@
   (NotZii TcNotZiiReason))
 
 ;; An aggregate reports its highest-ranked reason. 1: its value fill allocates
-;; (a box, a dynamic buffer); 2: make-array cannot initialize it.
+;; (a box); 2: make-array cannot initialize it.
 (define (tc-not-zii-reason-rank [reason : TcNotZiiReason]) : i64
   (match reason
-    [(or (DynBuffer) (Box)) 1]
+    [(Box) 1]
     [_ 2]))
 
 (define (tc-not-zii-reason-rejects? [reason : TcNotZiiReason]) : bool
@@ -87950,13 +88007,12 @@
               (Zii)
               (NotZii (Unsupported)))]
           [(or (I64) (I32) (I16) (I8) (U64) (U32) (U16) (U8) (F64) (F32) (Bool)
-               (Char) (Unit) (Ptr _) (MutPtr _) (String))
+               (Char) (Unit) (Ptr _) (MutPtr _) (String) (DynArray _))
             (Zii)]
           [(CFunc _ mode)
             (if (ast.ast-c-function-mode-nullable? mode)
               (Zii)
               (NotZii (NonNullCFunc)))]
-          [(DynArray _) (NotZii (DynBuffer))]
           [(Box _) (NotZii (Box))]
           [(Func _ _) (NotZii (Function))]
           [(or (Ref _ _) (MutRef _ _)) (NotZii (Reference))]

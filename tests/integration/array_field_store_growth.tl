@@ -106,12 +106,15 @@
       (unsafe
         (ptr-cast (__tl_array-data selected) : (Ptr Pair)))]
     (set! (array-ref selected 0).b (rebind-selected))
-    (test.assert-i64-eq (array-ref selected 0).b 40 "receiver binding effect")
+    ;; Inline dynamic-array global retains its 16-byte descriptor home across
+    ;; assignment (SPEC 5.10), so the store lands in `selected`'s current buffer.
+    (test.assert-i64-eq (array-ref selected 0).b 70 "receiver binding effect")
+    (test.assert-i64-eq (array-ref selected 0).a 30 "receiver sibling field")
     (test.assert-i64-eq
       (unsafe
         (ptr-read old)).b
-      70
-      "original descriptor"))
+      2
+      "overwritten buffer untouched"))
   (let
     [old : (Ptr Pair)
       (unsafe
@@ -125,13 +128,13 @@
       80)
     (test.assert-i64-eq
       (array-ref selected 0).b
-      40
-      "receiver before index effects")
+      80
+      "receiver home after index effects")
     (test.assert-i64-eq
       (unsafe
         (ptr-read old)).b
-      80
-      "original index receiver")))
+      70
+      "previous buffer untouched")))
 
 (define (tuple-growth) : unit
   (let

@@ -5,9 +5,10 @@
     (ptr-cast
       (__tl_array-data
         (ptr-read
-          (ptr-cast
-            (__tl_array-data (array items))
-            : (Ptr (__tl_dyn-array i64)))))
+          (ptr-read
+            (ptr-cast
+              (__tl_array-data (array items))
+              : (Ptr (Ptr (__tl_dyn-array i64)))))))
       : (Ptr i64))))
 
 (define (borrowed-u8-data [items : (& items (__tl_dyn-array u8))]) : (Ptr u8)
@@ -15,7 +16,10 @@
     (ptr-cast
       (__tl_array-data
         (ptr-read
-          (ptr-cast (__tl_array-data (array items)) : (Ptr (__tl_dyn-array u8)))))
+          (ptr-read
+            (ptr-cast
+              (__tl_array-data (array items))
+              : (Ptr (Ptr (__tl_dyn-array u8)))))))
       : (Ptr u8))))
 
 (define (main) : i64

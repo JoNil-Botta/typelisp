@@ -42499,12 +42499,12 @@ b_keep:
       (and
         (be_state.backend-and8
           ;; (i) the cell reserves the aggregate itself, not a box pointer.
-          (asm-has? asm "    .comm _tl_cell, 16, 8\n")
+          (asm-has? asm "    .comm _tl_cell, 24, 8\n")
           (asm-has? asm "    .comm _tl_triple, 24, 8\n")
           ;; (i) `CompilerIrValue.Global` materialises as the symbol's address.
           (asm-has? asm "    leaq _tl_cell(%rip), %rdi\n")
           ;; (ii) a constant-offset field read folds to ONE rip-relative load.
-          (asm-has? asm "    movq _tl_cell+8(%rip), %r8\n")
+          (asm-has? asm "    movq _tl_cell+16(%rip), %r8\n")
           (asm-has? asm "    movq _tl_triple+16(%rip), %r8\n")
           ;; ... and the cell is never read as a pointer any more.
           (asm-lacks? asm "    movq _tl_cell(%rip), %")
@@ -42540,10 +42540,10 @@ b_keep:
     (be_state.CompilerBackendTarget.Windows))
     [(Ok asm)
       (be_state.backend-and8
-        (asm-has? asm "    .comm _tl_cell, 16, 3\n")
+        (asm-has? asm "    .comm _tl_cell, 24, 3\n")
         (asm-has? asm "    .comm _tl_triple, 24, 3\n")
         (asm-has? asm "    leaq _tl_cell(%rip), %rcx\n")
-        (asm-has? asm "    movq _tl_cell+8(%rip), %r8\n")
+        (asm-has? asm "    movq _tl_cell+16(%rip), %r8\n")
         (asm-has? asm "    movq _tl_triple+16(%rip), %r8\n")
         (asm-has?
           asm
@@ -42568,7 +42568,7 @@ b_keep:
     [(Ok asm)
       (and
         (be_state.backend-and4
-          (asm-has? asm "    .comm _tl_cell, 16, 8\n")
+          (asm-has? asm "    .comm _tl_cell, 24, 8\n")
           (asm-has?
             asm
             "    leaq _tl_cell(%rip), %rdi\n    call _tl___global_init_cell\n")
@@ -42611,7 +42611,7 @@ b_keep:
           (cobj.compiler-object-section-contains-bytes?
             image.sections
             (&
-              (be_object.compiler-backend-object-inline-aggregate-copy-bytes 16)))
+              (be_object.compiler-backend-object-inline-aggregate-copy-bytes 24)))
           (cobj.compiler-object-section-contains-bytes?
             image.sections
             (&
@@ -42628,7 +42628,7 @@ b_keep:
           [(Ok text)
             (be_state.backend-and4
               ;; The .bss reservation is the aggregate, not a box pointer.
-              (asm-has? text "_tl_cell:\n    .zero 16\n")
+              (asm-has? text "_tl_cell:\n    .zero 24\n")
               (asm-has? text "_tl_triple:\n    .zero 24\n")
               ;; A `Global` read materialises the symbol's ADDRESS.
               (asm-has? text "    leaq _tl_cell(%rip), %rax\n")
@@ -49433,9 +49433,9 @@ user_fn:
           [(Ok asm)
             (test.assert-true
               (and
-                ;; The cell is the aggregate: reserved whole, never read as a
-                ;; box pointer.
-                (asm-has? asm "_tl_cell:\n    .zero 16\n")
+                ;; The cell is the aggregate: reserved whole (16B DynArray + 8B len),
+                ;; never read as a box pointer.
+                (asm-has? asm "_tl_cell:\n    .zero 24\n")
                 (asm-has? asm "_tl_triple:\n    .zero 24\n")
                 (asm-lacks? asm "    movq _tl_cell(%rip), %")
                 (asm-lacks? asm "    movq _tl_triple(%rip), %"))

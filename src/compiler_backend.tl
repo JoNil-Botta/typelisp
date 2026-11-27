@@ -7132,7 +7132,13 @@
                   (be_state.compiler-backend-global-shared-view ctx)
                   staged-value
                   (if (string.eq addr "")
-                    staged-base
+                    (if staged-scavenged?
+                      (compiler-backend-gep-load-cmp-scavenged-staging-base
+                        (be_state.compiler-backend-global-shared-view ctx)
+                        (be_state.compiler-backend-global-shared-view instrs)
+                        index
+                        true)
+                      staged-base)
                     "")
                   cmp-asm
                   true-jcc

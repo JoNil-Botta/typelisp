@@ -4686,6 +4686,7 @@
     [(ast.AstType.EnumArgs _ _) true]
     [(ast.AstType.Tuple _) true]
     [(ast.AstType.Array _ _) true]
+    [(ast.AstType.DynArray _) true]
     [_ false]))
 
 ;; Lowering retypes an inline aggregate storage pointer to the physical `u64`

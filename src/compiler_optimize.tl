@@ -22182,12 +22182,21 @@
     [_ false]))
 
 ;; Is this load's address a word of one of this activation's frame objects?
+;; With inline 16B DynArray descriptors (#7963), a local DynArray `Alloc` is a
+;; `LocalObject` whose header/data GEPs classify as `HeaderSlot`/`DataSlot`
+;; pointing back to that `LocalObject`/`LocalSlot`, so those slots are also
+;; frame words that a `frame-store?` (e.g. a call to `array-push!` on `(&mut a)`)
+;; may overwrite.
 (define (opt-licm-frame-word-source?
   [ptrs : (& ptrs OptLicmPtrEnv)]
   [src : (& src ir.CompilerIrValue)]) : bool
   (match src
     [(Var ptr-var)
-      (opt-licm-frame-object-kind? (opt-licm-ptr-lookup ptrs ptr-var))]
+      (match (opt-licm-ptr-lookup ptrs ptr-var)
+        [(or (LocalObject _) (LocalSlot _)) true]
+        [(or (HeaderSlot base) (DataSlot base))
+          (opt-licm-frame-object-kind? (opt-licm-ptr-lookup ptrs base))]
+        [_ false])]
     [_ false]))
 
 ;; The header-load-safety a Load candidate reads: the frame-word reading for a
@@ -23145,7 +23154,7 @@
         (or
           (opt-bounds-object-length-slot? type-segment-bases offset ty)
           (opt-licm-data-slot? offset ty)))]
-    [(Global _)
+    [(or (Global _) (GlobalAddr _))
       (and
         (opt-licm-global-header-value? globals base)
         (match offset
@@ -25176,7 +25185,7 @@
         (opt-licm-array-header-var? type-segment-bases types var))
         var
         (- 0 1))]
-    [(Global name)
+    [(or (Global name) (GlobalAddr name))
       (if (opt-licm-global-header? (ir.compiler-ir-symbol-id name))
         (opt-licm-deref-global-key name)
         (- 0 1))]
@@ -28562,7 +28571,7 @@
       (match offset
         [(I64 _)
           (match base
-            [(Global name)
+            [(or (Global name) (GlobalAddr name))
               (let
                 [key : i64 (ir.compiler-ir-symbol-id name)]
                 [counts : opt_i64_i64_map.Map scan.counts]
@@ -55311,7 +55320,8 @@
     (let
       [instr (ir.compiler-ir-instr-seq-ref instrs index)]
       (match (compiler-opt-global-shared-view instr)
-        [(or (Load dst _ _) (Gep dst _ _ _) (Mov dst (Global _) (DynArray _)))
+        [(or (Load dst _ _) (Gep dst _ _ _) (Mov dst (Global _) (DynArray _))
+             (Mov dst (GlobalAddr _) (DynArray _)))
           (if (and (>= dst 0) (< dst (array-length defs)))
             (set! (array-ref defs dst) (OptBoolBranchDef.Some instr 0))
             unit)]
@@ -55538,7 +55548,7 @@
 
 (define (opt-len-eq-global-of [value : (& ir.CompilerIrValue)]) : i64
   (match value
-    [(Global name) (ir.compiler-ir-symbol-id name)]
+    [(or (Global name) (GlobalAddr name)) (ir.compiler-ir-symbol-id name)]
     [_ (- 0 1)]))
 
 ;; Resolve the raw descriptor itself or a typed move of its handle.
@@ -80856,7 +80866,7 @@
                     (match cell-instr
                       [(Gep _ cell-base cell-off cell-ty)
                         (match (& cell-base)
-                          [(Global sym)
+                          [(or (Global sym) (GlobalAddr sym))
                             (match (& cell-off)
                               [(I64 off)
                                 (opt-bce-mb-descriptor-root-hoist
@@ -122876,6 +122886,31 @@
                         dst
                         true))
                     (set! (array-ref tables.raw? dst) true))]
+                [(AddrOf dst storage 2)
+                  (when
+                    (and
+                      (match (opt-len-eq-def tables storage)
+                        [(Some (Alloc _ (DynArray _)) _) true]
+                        [_ false])
+                      (= (opt-len-eq-def-count tables storage) 1)
+                      (= (array-ref tables.uses storage) 1)
+                      (= (opt-len-eq-def-count tables dst) 1)
+                      (= (array-ref tables.uses dst) 3)
+                      (opt-len-eq-raw-word?
+                        type-segment-bases
+                        tables
+                        instrs
+                        (+ pos 1)
+                        dst
+                        false)
+                      (opt-len-eq-raw-word?
+                        type-segment-bases
+                        tables
+                        instrs
+                        (+ pos 3)
+                        dst
+                        true))
+                    (set! (array-ref tables.raw? dst) true))]
                 [_ unit]))]))]))
 
 (define (opt-len-eq-defs-build
@@ -123369,7 +123404,7 @@
   [ctx : (& ctx OptLenEqCtx)]
   [value : (& value ir.CompilerIrValue)]) : i64
   (match value
-    [(Global name)
+    [(or (Global name) (GlobalAddr name))
       (let
         [id : i64 (ir.compiler-ir-symbol-id name)]
         (if (opt_i64_i64_map.contains? (& ctx.cand) id)
@@ -123586,14 +123621,12 @@
       (opt-len-eq-propagate! ctx taint tables bad dst (& src) false)]
     [(Load dst src _)
       (opt-len-eq-propagate! ctx taint tables bad dst (& src) true)]
-    [(CopyBytes (Global name) value size)
+    [(or (CopyBytes (Global name) value size)
+         (CopyBytes (GlobalAddr name) value size))
       (opt-len-eq-refuse-value! ctx taint bad (& value))
       (let
         [id : i64 (ir.compiler-ir-symbol-id name)]
-        (if (and
-          (>= size 16)
-          (not (opt_i64_i64_map.contains? (& ctx.raw) id))
-          (opt_i64_i64_map.contains? (& ctx.cand) id))
+        (if (and (>= size 16) (opt_i64_i64_map.contains? (& ctx.cand) id))
           (opt-len-eq-record-write! ctx tables bad id (& value))
           (opt-len-eq-refuse!
             bad
@@ -123687,7 +123720,8 @@
   [raw : (& raw opt_i64_i64_map.Map)]
   [instr : ir.CompilerIrInstr]) : bool
   (match (& instr)
-    [(Store name _ _)
+    [(or (Store name _ _) (CopyBytes (Global name) _ _)
+         (CopyBytes (GlobalAddr name) _ _))
       (opt_i64_i64_map.contains? raw (ir.compiler-ir-symbol-id name))]
     [_ false]))
 
@@ -130616,7 +130650,7 @@
     [(or (I16) (U16)) 3]
     [(F64) 4]
     [(F32) 5]
-    [(or (DynArray _) (Box _) (Ptr _) (MutPtr _) (Func _ _)) 6]
+    [(or (Box _) (Ptr _) (MutPtr _) (Func _ _)) 6]
     [(or (Ref _ inner) (MutRef _ inner))
       (if (ast.ast-type-segment-bases-fat-referent? type-segment-bases inner)
         0
@@ -133176,13 +133210,22 @@
             kinds
             instr
             next-epoch)]
+        [filter-class
+          : OptLoadStoreClass
+          ;; A CopyBytes into an element buffer can overwrite an inline 16B
+          ;; DynArray descriptor (or struct containing one), so do not let the
+          ;; scalar element-store exemption keep `header?` or `GlobalField`
+          ;; loads alive across it.
+          (match (& class)
+            [(OptLoadStoreElement _) (OptLoadStoreUnknown)]
+            [_ (opt-load-classify-store kinds dst size (U8))])]
         [filtered : OptLoadTable
           (opt-load-table-filter-store
             type-segment-bases
             (& table)
             facts
             store-root
-            (& class))]
+            (& filter-class))]
         (match class
           [(or (OptLoadStoreUnknown) (OptLoadStoreElement _)
                (OptLoadStoreObject _ _))
@@ -138558,7 +138601,7 @@
                                   self
                                   (- 0 1)
                                   true)]
-                              [(Global sym)
+                              [(or (Global sym) (GlobalAddr sym))
                                 (OptGuardImplyTerm
                                   (opt-guard-imply-kind-cell)
                                   sym

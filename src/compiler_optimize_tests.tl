@@ -50751,7 +50751,9 @@ exit:
         (Param "out" (MutRef 0 0) 2)
         (ir.compiler-ir-param-seq-prepend
           (Param "raw" (U64) 20)
-          (ir.compiler-ir-param-seq-empty))))))
+          (ir.compiler-ir-param-seq-prepend
+            (Param "arr" (DynArray 0) 21)
+            (ir.compiler-ir-param-seq-empty)))))))
 
 (define (opt-ec-test-function [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrFunction
   (Function
@@ -50820,7 +50822,6 @@ exit:
       (opt-test-instrs
         (ir.CompilerIrInstr.Mov 3 (I64 0) (I64))
         (ir.CompilerIrInstr.Gep 6 (Var 2) (I64 head-offset) (U8))
-        (irt.instr "%11 = gep %2, 0 : u8")
         (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))))
     (ir.CompilerIrBlock.Block
       (ir.compiler-ir-label "loop")
@@ -50828,8 +50829,7 @@ exit:
         (opt-test-instrs-with-tail
           (opt-licm-loop-finish-instrs)
           (ir.CompilerIrInstr.Load 7 (Var 6) load-ty)
-          (irt.instr "%12 = load %11 : (__tl_dyn-array i64)")
-          (irt.instr "%8 = gep %12, 0 : i64")
+          (irt.instr "%8 = gep %21, 0 : i64")
           (irt.instr "%9 = load %8 : u64")
           (irt.instr "%10 = gep %9, %4 : i64")
           pre
@@ -50857,10 +50857,10 @@ exit:
 (define (opt-ec-element-store-i64) : ir.CompilerIrInstr
   (irt.instr "store_ptr %10, 100 : i64"))
 
-;; The same element store writing a DESCRIPTOR HANDLE -- the candidate's own
+;; The same element store writing a pointer handle -- the candidate's own
 ;; class -- which the rule must refuse.
 (define (opt-ec-element-store-handle) : ir.CompilerIrInstr
-  (irt.instr "store_ptr %10, %12 : (__tl_dyn-array i64)"))
+  (irt.instr "store_ptr %10, %7 : (Box i64)"))
 
 ;; A store through the `raw` parameter: a pointer whose provenance the walk
 ;; cannot place, so it is a header-or-unknown store and no class bounds it.
@@ -50871,7 +50871,7 @@ exit:
 ;; borrows, and `(set! g v)` copies a whole aggregate over it, so it names no
 ;; class at all.
 (define (opt-ec-cell-store [global : i64]) : ir.CompilerIrInstr
-  (Store global (Var 12) (DynArray 0)))
+  (Store global (Var 7) (Box 0)))
 
 ;; Is the load that defines `var` in the block labelled `label`? The load
 ;; COUNTS the older fixtures use cannot separate this packet's verdict from the
@@ -50915,11 +50915,11 @@ exit:
 
 (define (compiler-optimize-licm-element-class-self-test) : i64
   (let
-    ;; positive: a descriptor-handle word off `out`, against an i64 element
-    ;; store. Different classes, so the load and the two links behind it leave.
+    ;; positive: a Box handle word off `out`, against an i64 element
+    ;; store. Different classes, so the load and the data-slot load leave.
     [moved : ir.CompilerIrBlockList
       (opt-ec-licm-early
-        (opt-ec-loop-blocks 0 (DynArray 0) (opt-ec-element-store-i64)))]
+        (opt-ec-loop-blocks 0 (Box 0) (opt-ec-element-store-i64)))]
     ;; negative 1 -- the packet's rule, refused: a SAME-CLASS i64 word off the
     ;; same parameter (`out.len`) against the same i64 element store.
     [same-class : ir.CompilerIrBlockList
@@ -50928,20 +50928,20 @@ exit:
     ;; negative 2: the store writes the candidate's OWN class.
     [same-word : ir.CompilerIrBlockList
       (opt-ec-licm-early
-        (opt-ec-loop-blocks 0 (DynArray 0) (opt-ec-element-store-handle)))]
+        (opt-ec-loop-blocks 0 (Box 0) (opt-ec-element-store-handle)))]
     ;; negative 3: a store through a pointer of unknown provenance.
     [raw : ir.CompilerIrBlockList
-      (opt-ec-licm-early (opt-ec-loop-blocks 0 (DynArray 0) (opt-ec-raw-store)))]
+      (opt-ec-licm-early (opt-ec-loop-blocks 0 (Box 0) (opt-ec-raw-store)))]
     ;; negative 4: an indirect call in the loop.
     [indirect : ir.CompilerIrBlockList
       (opt-ec-licm-early
-        (opt-ec-loop-blocks-with-call (DynArray 0) (opt-ec-element-store-i64)))]
+        (opt-ec-loop-blocks-with-call (Box 0) (opt-ec-element-store-i64)))]
     ;; negative 5: a write to a global cell that may hold this very object.
     [cell : ir.CompilerIrBlockList
       (opt-ec-licm-early
         (opt-ec-loop-blocks
           0
-          (DynArray 0)
+          (Box 0)
           (opt-ec-cell-store (opt-test-symbol "ec_cell"))))]
     ;; negative 6: an i64 word against an i32 element store. The classes
     ;; differ, but a register-resident aggregate's i64 word holds i32 fields.
@@ -50953,9 +50953,9 @@ exit:
       [(not (opt-ec-hoisted? moved)) 1]
       ;; ...and is gone from the body
       [(opt-ec-kept? moved) 2]
-      ;; and the data slot and the buffer behind it came out with it: three
-      ;; loads in the preheader, none left in the loop
-      [(not (= (opt-fz-preheader-loads moved) 3)) 3]
+      ;; and the data-slot buffer load came out with it: two loads in the
+      ;; preheader, none left in the loop
+      [(not (= (opt-fz-preheader-loads moved) 2)) 3]
       [(not (= (opt-fz-body-loads moved) 0)) 4]
       ;; every negative keeps the candidate in the loop
       [(opt-ec-hoisted? same-class) 5]
@@ -76333,20 +76333,18 @@ done:
 
 ;; --- P1: typed-word store filtering in the redundant-load CSE ---------------
 ;;
-;; TypeLisp memory is typed: the word that holds a `(__tl_dyn-array i64)`
+;; TypeLisp memory is typed: the word that holds a `(Box i64)`
 ;; handle is only ever written by a store of that handle type, so an i64
 ;; element store cannot change it. These fixtures pin the survival cases that
 ;; buys, and the fences that keep it sound -- same-class stores, byte stores,
 ;; CopyBytes, and same-object punning all still drop the entry.
-;; Two reads of `(gep param 0) : (__tl_dyn-array i64)` -- the `Vec.slots` handle
-;; word of an `&mut Vec`-shaped parameter -- with one ELEMENT store of
-;; `store-ty` in between. This is the loop-to-loop reload shape from
-;; cfg-build-csr: var 3 is the slots handle, var 5 its data pointer, var 6 an
-;; element address inside the buffer.
+;; Two reads of `(gep param 0) : (Box i64)` with one ELEMENT store of
+;; `store-ty` in between: var 3 is the handle word, var 5 its data pointer,
+;; var 6 an element address inside the buffer.
 (define (opt-load-cse-typed-element-store-instrs [store-ty : ast.AstType]) : ir.CompilerIrInstrSeq
   (opt-test-instrs
-    (irt.instr "%2 = gep %0, 0 : (__tl_dyn-array i64)")
-    (irt.instr "%3 = load %2 : (__tl_dyn-array i64)")
+    (irt.instr "%2 = gep %0, 0 : (Box i64)")
+    (irt.instr "%3 = load %2 : (Box i64)")
     (irt.instr "%4 = gep %3, 0 : i64")
     (ir.CompilerIrInstr.Load 5 (Var 4) (I64))
     (ir.CompilerIrInstr.Gep
@@ -76355,11 +76353,11 @@ done:
       (I64 2)
       (opt.compiler-opt-global-shared-view store-ty))
     (ir.CompilerIrInstr.StorePtr (Var 6) (I64 7) store-ty)
-    (irt.instr "%8 = gep %0, 0 : (__tl_dyn-array i64)")
-    (irt.instr "%9 = load %8 : (__tl_dyn-array i64)")))
+    (irt.instr "%8 = gep %0, 0 : (Box i64)")
+    (irt.instr "%9 = load %8 : (Box i64)")))
 
 ;; A generic FIELD store of `store-ty` through base var `store-base`, between
-;; two reads of `Field(1, 0, (__tl_dyn-array i64))`. With store-base 0 the two
+;; two reads of `Field(1, 0, (Box i64))`. With store-base 0 the two
 ;; bases are DIFFERENT handles (the typed-word rule is the only thing that can
 ;; separate them); with store-base 1 they are the SAME object, where only the
 ;; byte-range rule applies.
@@ -76367,27 +76365,40 @@ done:
   [store-base : i64]
   [store-ty : ast.AstType]) : ir.CompilerIrInstrSeq
   (opt-test-instrs
-    (irt.instr "%2 = gep %1, 0 : (__tl_dyn-array i64)")
-    (irt.instr "%3 = load %2 : (__tl_dyn-array i64)")
+    (irt.instr "%2 = gep %1, 0 : (Box i64)")
+    (irt.instr "%3 = load %2 : (Box i64)")
     (ir.CompilerIrInstr.Gep
       4
       (Var store-base)
       (I64 0)
       (opt.compiler-opt-global-shared-view store-ty))
     (ir.CompilerIrInstr.StorePtr (Var 4) (I64 7) store-ty)
-    (irt.instr "%5 = gep %1, 0 : (__tl_dyn-array i64)")
-    (irt.instr "%6 = load %5 : (__tl_dyn-array i64)")))
+    (irt.instr "%5 = gep %1, 0 : (Box i64)")
+    (irt.instr "%6 = load %5 : (Box i64)")))
 
 ;; The same shape with a CopyBytes in the store's place: raw bytes carry no
 ;; static type, so the generic Field entry must still die.
 (define (opt-load-cse-typed-copybytes-instrs) : ir.CompilerIrInstrSeq
   (irt.instrs
-    "%2 = gep %1, 0 : (__tl_dyn-array i64)
-     %3 = load %2 : (__tl_dyn-array i64)
+    "%2 = gep %1, 0 : (Box i64)
+     %3 = load %2 : (Box i64)
      %4 = gep %0, 0 : i64
      copy_bytes %4, %2, 8
-     %5 = gep %1, 0 : (__tl_dyn-array i64)
-     %6 = load %5 : (__tl_dyn-array i64)"))
+     %5 = gep %1, 0 : (Box i64)
+     %6 = load %5 : (Box i64)"))
+
+;; CopyBytes overwriting an inline 16B DynArray descriptor through an element
+;; address must kill cached `header?` (descriptor data/length) loads (#7963).
+(define (opt-load-cse-copybytes-kills-header-instrs) : ir.CompilerIrInstrSeq
+  (irt.instrs
+    "%2 = gep %1, 8 : u8
+     %3 = load %2 : i64
+     %4 = gep %0, 0 : u64
+     %5 = load %4 : u64
+     %7 = gep %5, 0 : u8
+     copy_bytes %7, %1, 16
+     %8 = gep %1, 8 : u8
+     %6 = load %8 : i64"))
 
 ;; Two shared-ref params: the alias layer proves nothing about a store rooted
 ;; at a Shared root, so every verdict below is the location rule's alone.
@@ -76439,27 +76450,27 @@ done:
   (let
     [copybytes : ir.CompilerIrInstrSeq
       (opt-load-cse-typed-run (opt-load-cse-typed-copybytes-instrs))]
+    [copybytes-header : ir.CompilerIrInstrSeq
+      (opt-load-cse-typed-run (opt-load-cse-copybytes-kills-header-instrs))]
     (cond
-      ;; (a) an i64 ELEMENT store cannot write the slots handle word.
+      ;; (a) an i64 ELEMENT store cannot write the Box handle word.
       [(not (opt-load-cse-typed-element-kept? (I64))) 1]
       ;; (b) an element store of the SAME class (a buffer of handles) can.
-      [(not
-          (opt-load-cse-typed-element-dropped? (ast.ast-ty-dyn-array (& (I64)))))
-        2]
+      [(not (opt-load-cse-typed-element-dropped? (ast.ast-ty-box (& (I64))))) 2]
       ;; (c) a byte store re-types any word it touches: no exemption.
       [(not (opt-load-cse-typed-element-dropped? (U8))) 3]
       ;; (d) a FIELD store of i64 through a DIFFERENT base leaves a handle
       ;; entry alone; the same store typed as the handle does not.
       [(not (opt-load-cse-typed-field-kept? 0 (I64))) 4]
-      [(not
-          (opt-load-cse-typed-field-dropped? 0 (ast.ast-ty-dyn-array (& (I64)))))
-        5]
+      [(not (opt-load-cse-typed-field-dropped? 0 (ast.ast-ty-box (& (I64))))) 5]
       ;; (e) SAME object, overlapping range, different class: still dropped --
       ;; one object's own storage can be punned through a Bitcast.
       [(not (opt-load-cse-typed-field-dropped? 1 (I64))) 6]
-      ;; (f) CopyBytes still drops a generic Field entry.
+      ;; (f) CopyBytes still drops a generic Field entry and kills header loads.
       [(not (= (opt-count-load-instr-seq copybytes) 2)) 7]
       [(not (= (opt-count-mov-dst-instr-seq copybytes 6) 0)) 8]
+      [(not (= (opt-count-load-instr-seq copybytes-header) 3)) 9]
+      [(not (= (opt-count-mov-dst-instr-seq copybytes-header 6) 0)) 10]
       [else 42])))
 
 (test
@@ -76521,15 +76532,15 @@ done:
 ;; the other-base handle entry and the store's own key both survive.
 (define (opt-load-cse-object-scaled-keep-instrs) : ir.CompilerIrInstrSeq
   (irt.instrs
-    "%2 = gep %1, 0 : (__tl_dyn-array i64)
-     %3 = load %2 : (__tl_dyn-array i64)
+    "%2 = gep %1, 0 : (Box i64)
+     %3 = load %2 : (Box i64)
      %4 = gep %0, 0 : u8
      %5 = add 0, 4 : i64
      %7 = gep %4, %5 : u8
      %8 = gep %7, 0 : u8
      store_ptr %8, 39 : i32
-     %9 = gep %1, 0 : (__tl_dyn-array i64)
-     %10 = load %9 : (__tl_dyn-array i64)
+     %9 = gep %1, 0 : (Box i64)
+     %10 = load %9 : (Box i64)
      %11 = gep %7, 0 : u8
      %6 = load %11 : i32"))
 
@@ -79870,11 +79881,11 @@ done:
 ;; by MF-4 (ii)'s class field.
 (define (opt-t22-element-call-instrs [callee : i64]) : ir.CompilerIrInstrSeq
   (opt-test-instrs
-    (irt.instr "%2 = gep %1, 0 : (__tl_dyn-array i64)")
-    (irt.instr "%3 = load %2 : (__tl_dyn-array i64)")
+    (irt.instr "%2 = gep %1, 0 : (Box i64)")
+    (irt.instr "%3 = load %2 : (Box i64)")
     (ir.CompilerIrInstr.Call 4 callee (One (Var 0)) (Unit))
-    (irt.instr "%5 = gep %1, 0 : (__tl_dyn-array i64)")
-    (irt.instr "%6 = load %5 : (__tl_dyn-array i64)")
+    (irt.instr "%5 = gep %1, 0 : (Box i64)")
+    (irt.instr "%6 = load %5 : (Box i64)")
     (irt.instr "return %6")))
 
 ;; The `cm_elem` accessor writer, with the stored element type as a parameter:

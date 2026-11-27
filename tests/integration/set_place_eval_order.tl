@@ -17,15 +17,16 @@
       (unsafe
         (ptr-cast (__tl_array-data global-array) : (Ptr i64)))]
     (set! (array-ref global-array 0) (rebind-global-array))
+    ;; Inline dynamic-array global retains its 16-byte descriptor home (SPEC 5.10).
     (test.assert-i64-eq
       (array-ref global-array 0)
-      30
-      "global binding write retained")
+      7
+      "global inline descriptor store retained")
     (test.assert-i64-eq
       (unsafe
         (ptr-read old))
-      7
-      "selected global receiver value")))
+      10
+      "overwritten buffer untouched")))
 
 (define trace : i64
   0)

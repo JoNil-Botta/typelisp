@@ -9541,6 +9541,10 @@
          (TailCall _ _ _) (TailCallIndirect _ _ _) (Switch _ _ _ _)
          (TotalEnumSwitch _ _ _ _ _))
       true]
+    [(or (Call _ _ _ ty) (CallIndirect _ _ _ ty) (CallIndirectC _ _ _ ty))
+      (match ty
+        [(ast.AstType.Never) true]
+        [_ false])]
     [_ false]))
 
 (define (compiler-reg-loop-nest-falls-through? [block : (& ir.CompilerIrBlock)]) : bool
@@ -9560,6 +9564,10 @@
     [(Jump _) 1]
     [(or (Branch _ _ _) (TotalEnumBranch _ _ _)) 2]
     [(or (Return _) (TailCall _ _ _) (TailCallIndirect _ _ _)) 0]
+    [(or (Call _ _ _ ty) (CallIndirect _ _ _ ty) (CallIndirectC _ _ _ ty))
+      (match ty
+        [(ast.AstType.Never) 0]
+        [_ 1])]
     [(Switch _ _ cases _) (+ 1 (ir.compiler-ir-switch-case-seq-count cases))]
     [(TotalEnumSwitch _ _ cases _ _)
       (+ 2 (ir.compiler-ir-switch-case-seq-count cases))]
@@ -11340,7 +11348,7 @@
     [(or (I16) (U16)) 3]
     [(F64) 4]
     [(F32) 5]
-    [(or (DynArray _) (Box _) (Ptr _) (MutPtr _) (Func _ _)) 6]
+    [(or (Box _) (Ptr _) (MutPtr _) (Func _ _)) 6]
     [_ 0]))
 
 (define (compiler-reg-invariant-var-type
@@ -16468,6 +16476,10 @@
         [stop : i64 (array-ref pred-offsets (+ m 1))]
         (unless
           (= m header)
+          ;; Function entry (block 0) has an implicit incoming edge from the
+          ;; caller; if it is pulled into a non-entry header's loop, that header
+          ;; does not dominate the region.
+          (when (= m 0) (return false))
           (for [edge (iterator.range (array-ref pred-offsets m) stop)]
             (unless
               (compiler-reg-loop-nest-member?

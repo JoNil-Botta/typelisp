@@ -2423,6 +2423,8 @@
           (SymbolRva32 ".L_target")
           8)
         12)
+      (string.eq (backend.compiler-backend-pic-section-name ".rodata") "rodata")
+      (string.eq (backend.compiler-backend-pic-section-name ".rdata") "rodata")
       (string.eq (backend.compiler-backend-pic-section-name ".pdata") "pdata")
       (string.eq (backend.compiler-backend-pic-section-name ".xdata") "xdata"))))
 

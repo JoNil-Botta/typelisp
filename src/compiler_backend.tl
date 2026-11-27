@@ -28267,9 +28267,12 @@ tl_shared_object_init:
         [_ (compiler-backend-pic-data-label-offset-from data label 0)])]))
 
 (define (compiler-backend-pic-section-name [name : (& str)]) : String
-  (if (and (> (string.string-length name) 0) (= (string.string-ref name 0) '.'))
-    (string.substring name 1 (- (string.string-length name) 1))
-    (string.copy name)))
+  ;; The v1 fixup table uses rodata for COFF's .rdata section as well.
+  (cond
+    [(string.eq name ".rdata") "rodata"]
+    [(and (> (string.string-length name) 0) (= (string.string-ref name 0) '.'))
+      (string.substring name 1 (- (string.string-length name) 1))]
+    [else (string.copy name)]))
 
 (define (compiler-backend-pic-fixup-line
   [section : (& str)]

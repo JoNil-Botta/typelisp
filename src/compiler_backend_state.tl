@@ -1484,6 +1484,7 @@
           retained.class-masks
           retained.stable-word-masks
           retained.header-word-masks
+          retained.header-free-word-masks
           (compiler_ir_types.compiler-ir-return-storage-index-reconcile
             type-segment-bases
             (compiler_ir_types.compiler-ir-return-storage-index-claims

@@ -5546,6 +5546,13 @@
   ;; Bit w proves that inline words [w, w+1] unconditionally hold a DynArray
   ;; descriptor header `{data_ptr, length}` at byte offset `w * 8`.
   (header-word-masks ir_i64_i64_map.Map)
+  ;; Header-free buffer proofs for nominal types:
+  ;;   -1       => the nominal type itself contains no inline header anywhere
+  ;;               (safe element type for a header-free DynArray buffer).
+  ;;   mask > 0 => bit w proves the inline DynArray at byte offset `w * 8` has
+  ;;               a provably header-free element type.
+  ;;   0/absent => no proof.
+  (header-free-word-masks ir_i64_i64_map.Map)
   (return-storage CompilerIrReturnStorageIndex))
 
 (defenum CompilerIrRepresentationKind
@@ -5555,6 +5562,7 @@
 
 (define (compiler-ir-representation-index-empty) : CompilerIrRepresentationIndex
   (CompilerIrRepresentationIndex
+    (ir_i64_i64_map.with-capacity 1)
     (ir_i64_i64_map.with-capacity 1)
     (ir_i64_i64_map.with-capacity 1)
     (ir_i64_i64_map.with-capacity 1)
@@ -5569,6 +5577,7 @@
     (ir_i64_i64_map.clone-map (& index.class-masks))
     (ir_i64_i64_map.clone-map (& index.stable-word-masks))
     (ir_i64_i64_map.clone-map (& index.header-word-masks))
+    (ir_i64_i64_map.clone-map (& index.header-free-word-masks))
     (compiler-ir-clone-return-storage-index pools (& index.return-storage))))
 
 (define (compiler-ir-representation-index-stable-mask-known?
@@ -5610,6 +5619,19 @@
 (define (compiler-ir-representation-index-has-header-masks?
   [index : (& index CompilerIrRepresentationIndex)]) : bool
   (> (ir_i64_i64_map.len (& index.header-word-masks)) 0))
+
+(define (compiler-ir-representation-index-header-free-mask
+  [index : (& index CompilerIrRepresentationIndex)]
+  [key : i64]) : i64
+  (match (ir_i64_i64_map.get (& index.header-free-word-masks) key)
+    [(LookupFound mask) mask]
+    [(LookupMissing) 0]))
+
+(define (compiler-ir-representation-index-set-header-free-mask!
+  [index : (&mut index CompilerIrRepresentationIndex)]
+  [key : i64]
+  [mask : i64]) : unit
+  (ir_i64_i64_map.insert-ref! (&mut index.header-free-word-masks) key mask))
 
 (define (compiler-ir-representation-index-kind-for-key
   [index : (& index CompilerIrRepresentationIndex)]
@@ -11504,6 +11526,7 @@
           masks
           index.stable-word-masks
           index.header-word-masks
+          index.header-free-word-masks
           index.return-storage))
       (match (ir_i64_i64_map.get (& counts) key)
         [(LookupMissing)
@@ -11514,6 +11537,7 @@
             masks
             index.stable-word-masks
             index.header-word-masks
+            index.header-free-word-masks
             index.return-storage)]
         [(LookupFound found-count)
           (match (ir_i64_i64_map.get (& masks) key)
@@ -11528,6 +11552,7 @@
                     masks
                     index.stable-word-masks
                     index.header-word-masks
+                    index.header-free-word-masks
                     index.return-storage)))]
             [(LookupMissing)
               (ir_i64_i64_map.insert-ref! (&mut counts) key 0)
@@ -11537,6 +11562,7 @@
                 masks
                 index.stable-word-masks
                 index.header-word-masks
+                index.header-free-word-masks
                 index.return-storage)])]))))
 
 (define (compiler-ir-representation-index-merge-one-word
@@ -11552,6 +11578,7 @@
         index.class-masks
         index.stable-word-masks
         index.header-word-masks
+        index.header-free-word-masks
         index.return-storage))))
 
 (define (compiler-ir-representation-var-type-set!
@@ -12209,6 +12236,7 @@
           representations.class-masks
           representations.stable-word-masks
           representations.header-word-masks
+          representations.header-free-word-masks
           storage))]))
 
 ;; `initial` carries the layout-derived group facts lowering preserved before
@@ -12244,6 +12272,7 @@
           base.class-masks
           base.stable-word-masks
           base.header-word-masks
+          base.header-free-word-masks
           storage))]))
 
 ;; Test support: a descriptor's rendering without its generated callee name,

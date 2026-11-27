@@ -58213,9 +58213,13 @@ done:
         (& profile-state)
         (opt.opt-load-kinds-empty-with-cap (& profile-state) 1)
         1
-        (OptLoadLocElement))]
+        (OptLoadLocElement true))]
     [kinds2 : opt.OptLoadPtrKinds
-      (opt.opt-load-kinds-bind (& profile-state) kinds1 2 (OptLoadLocElement))]
+      (opt.opt-load-kinds-bind
+        (& profile-state)
+        kinds1
+        2
+        (OptLoadLocElement true))]
     [field-ok : opt.OptLoadLocKind
       (opt.opt-load-loc-field-checked
         (& profile-state)
@@ -58261,7 +58265,7 @@ done:
             [_ false])]
         [(No) false])
       (match (opt.opt-load-kinds-lookup (& kinds2) 1)
-        [(OptLoadLocElement) true]
+        [(OptLoadLocElement true) true]
         [_ false])
       (match (opt.opt-load-kinds-lookup (& kinds2) 2)
         [(OptLoadLocUnknown) true]
@@ -91386,3 +91390,142 @@ inl.entry.0.cont:
               (ir.compiler-ir-label "hit")
               (ir.compiler-ir-label "miss"))
             "guard branches to hit/miss"))])))
+
+(test
+  load-header-set-pre-ssa-multi-def-loop-latch-does-not-propagate-gep
+  (let
+    [type-segment-bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [dyn-ty : ast.AstType (ast.ast-ty-dyn-array (& (ast.AstType.I64)))]
+    [ref-dyn-ty : ast.AstType (ast.ast-ty-ref 0 (& dyn-ty))]
+    [ptr-i64-ty : ast.AstType (ast.ast-ty-ptr (& (ast.AstType.I64)))]
+    [params : ir.CompilerIrParamSeq
+      (ir.compiler-ir-param-seq-prepend
+        (ir.CompilerIrParam.Param "arr" (ast.clone-ast-type (& ref-dyn-ty)) 0)
+        (ir.compiler-ir-param-seq-prepend
+          (ir.CompilerIrParam.Param "raw" (ast.clone-ast-type (& ptr-i64-ty)) 3)
+          (ir.compiler-ir-param-seq-prepend
+            (ir.CompilerIrParam.Param "cond" (ast.AstType.Bool) 5)
+            (ir.compiler-ir-param-seq-empty))))]
+    ;; Pre-SSA multi-def loop:
+    ;;   entry: %1 = mov %0 : (& (__tl_dyn-array i64))
+    ;;          %4 = gep %0, 0 : i64   (valid single-def base %0)
+    ;;          jump loop
+    ;;   loop:  %2 = gep %1, 0 : i64   (reads %1 BEFORE latch redef!)
+    ;;          %1 = mov %3 : (Ptr i64)
+    ;;          branch %5, loop, exit
+    ;;   exit:  return 0
+    [b0-builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity 3)]
+    [b1-builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity 3)]
+    [b2-builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity 1)]
+    [_init-b0 : unit
+      (begin
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b0-builder)
+          (ir.CompilerIrInstr.Mov 1 (ir.CompilerIrValue.Var 0) ref-dyn-ty))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b0-builder)
+          (ir.CompilerIrInstr.Gep
+            4
+            (ir.CompilerIrValue.Var 0)
+            (ir.CompilerIrValue.I64 0)
+            (ast.AstType.I64)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b0-builder)
+          (ir.CompilerIrInstr.Jump 1)))]
+    [_init-b1 : unit
+      (begin
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b1-builder)
+          (ir.CompilerIrInstr.Gep
+            2
+            (ir.CompilerIrValue.Var 1)
+            (ir.CompilerIrValue.I64 0)
+            (ast.AstType.I64)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b1-builder)
+          (ir.CompilerIrInstr.Mov 1 (ir.CompilerIrValue.Var 3) ptr-i64-ty))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b1-builder)
+          (ir.CompilerIrInstr.Branch (ir.CompilerIrValue.Var 5) 1 2)))]
+    [_init-b2 : unit
+      (ir.compiler-ir-instr-builder-push!
+        (&mut b2-builder)
+        (ir.CompilerIrInstr.Return
+          (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 0))))]
+    [bb-builder : ir.CompilerIrBlockBuilder
+      (ir.compiler-ir-block-builder-with-capacity 3)]
+    [_init-bb : unit
+      (begin
+        (ir.compiler-ir-block-builder-push!
+          (&mut bb-builder)
+          (ir.CompilerIrBlock.Block
+            0
+            (ir.compiler-ir-instr-builder-to-seq b0-builder)))
+        (ir.compiler-ir-block-builder-push!
+          (&mut bb-builder)
+          (ir.CompilerIrBlock.Block
+            1
+            (ir.compiler-ir-instr-builder-to-seq b1-builder)))
+        (ir.compiler-ir-block-builder-push!
+          (&mut bb-builder)
+          (ir.CompilerIrBlock.Block
+            2
+            (ir.compiler-ir-instr-builder-to-seq b2-builder))))]
+    [blocks : ir.CompilerIrBlockList
+      (ir.compiler-ir-block-builder-to-list bb-builder)]
+    [hs-sparse : opt.OptLoadHeaderSet
+      (opt.opt-load-header-set-from-function
+        type-segment-bases
+        (& params)
+        (& blocks))]
+    [hs-dense : opt.OptLoadHeaderSet
+      (opt.opt-load-header-set-from-function-with-size
+        type-segment-bases
+        (& params)
+        (& blocks)
+        8)]
+    (test.assert-true
+      (not (opt.opt-load-header-var? (& hs-sparse) 2))
+      "sparse: Gep 0 off pre-SSA multi-def loop-latch var %1 is not marked header")
+    (test.assert-true
+      (not (opt.opt-load-header-var? (& hs-dense) 2))
+      "dense: Gep 0 off pre-SSA multi-def loop-latch var %1 is not marked header")
+    (test.assert-true
+      (opt.opt-load-header-var? (& hs-sparse) 4)
+      "sparse: Gep 0 off single-def header param %0 is marked header")
+    (test.assert-true
+      (opt.opt-load-header-var? (& hs-dense) 4)
+      "dense: Gep 0 off single-def header param %0 is marked header")
+    (test.assert-true
+      (opt.opt-load-header-free-var? (& hs-dense) 4)
+      "dense: Gep 0 off (__tl_dyn-array i64) header param %0 is header-free")))
+
+(test
+  load-cse-nested-dynarray-element-store-kills-header-load
+  (let
+    [type-segment-bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [header-entry : opt.OptLoadEntry
+      (opt.OptLoadEntry
+        (opt.OptLoadKey.Field 0 8 (ast.AstType.I64) true)
+        (ir.CompilerIrValue.Var 10)
+        0)]
+    [nested-elem-store : opt.OptLoadStoreClass
+      (opt.OptLoadStoreClass.OptLoadStoreElement (ast.AstType.I64) false)]
+    [scalar-elem-store : opt.OptLoadStoreClass
+      (opt.OptLoadStoreClass.OptLoadStoreElement (ast.AstType.I64) true)]
+    (test.assert-true
+      (not
+        (opt.opt-load-entry-survives-store-location?
+          type-segment-bases
+          (& nested-elem-store)
+          (& header-entry)))
+      "non-header-free OptLoadStoreElement kills same-class header load")
+    (test.assert-true
+      (opt.opt-load-entry-survives-store-location?
+        type-segment-bases
+        (& scalar-elem-store)
+        (& header-entry))
+      "header-free OptLoadStoreElement preserves scalar buffer header load")))

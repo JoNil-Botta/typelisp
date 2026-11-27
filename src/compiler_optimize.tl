@@ -22780,6 +22780,11 @@
 (define opt-licm-global-header-masks : opt_i64_i64_map.Map
   (opt_i64_i64_map.with-capacity 1))
 
+;; Subset of `opt-licm-global-header-masks` whose inline DynArray element type
+;; is provably header-free.
+(define opt-licm-global-header-free-masks : opt_i64_i64_map.Map
+  (opt_i64_i64_map.with-capacity 1))
+
 (define (opt-licm-global-header? [global : i64]) : bool
   (opt_i64_i64_map.contains? (& opt-licm-global-headers) global))
 
@@ -22787,6 +22792,65 @@
   (match (opt_i64_i64_map.get (& opt-licm-global-header-masks) global)
     [(LookupFound mask) mask]
     [(LookupMissing) 0]))
+
+(define (opt-licm-global-header-free-mask [global : i64]) : i64
+  (match (opt_i64_i64_map.get (& opt-licm-global-header-free-masks) global)
+    [(LookupFound mask) mask]
+    [(LookupMissing) 0]))
+
+(define (opt-licm-type-header-free?
+  [type-segment-bases : i64]
+  [ty : (& ast.AstType)]
+  [fuel : i64]) : bool
+  (if (<= fuel 0)
+    false
+    (match ty
+      [(or (I64) (I32) (I16) (I8) (U64) (U32) (U16) (U8) (F64) (F32) (Bool)
+           (Char) (Unit) (Never) (Box _) (Ptr _) (MutPtr _) (Ref _ _)
+           (MutRef _ _) (Func _ _) (CFunc _ _))
+        true]
+      [(or (Region _ inner) (Array inner _))
+        (opt-licm-type-header-free?
+          type-segment-bases
+          (& (ast.ast-type-segment-bases-get type-segment-bases inner))
+          (- fuel 1))]
+      [(or (Struct _) (StructArgs _ _) (Enum _) (EnumArgs _ _))
+        (match (ast.ast-aggregate-type-key type-segment-bases ty)
+          [(Some key)
+            (=
+              (ir.compiler-ir-representation-index-header-free-mask
+                (& opt-licm-deref-representations)
+                key)
+              (- 0 1))]
+          [(None) false])]
+      [_ false])))
+
+(define (opt-licm-array-header-free-type?
+  [type-segment-bases : i64]
+  [ty : (& ast.AstType)]) : bool
+  (match ty
+    [(DynArray elem)
+      (opt-licm-type-header-free?
+        type-segment-bases
+        (& (ast.ast-type-segment-bases-get type-segment-bases elem))
+        8)]
+    [(or (Str) (String) (Bytes)) true]
+    [(or (Ref _ inner) (MutRef _ inner) (Region _ inner))
+      (opt-licm-array-header-free-type?
+        type-segment-bases
+        (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
+    [_ false]))
+
+(define (opt-licm-global-header-free-type?
+  [type-segment-bases : i64]
+  [ty : (& ast.AstType)]) : bool
+  (match ty
+    [(String) true]
+    [(Region _ inner)
+      (opt-licm-global-header-free-type?
+        type-segment-bases
+        (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
+    [_ (opt-licm-array-header-free-type? type-segment-bases ty)]))
 
 (define (opt-licm-nominal-header-mask
   [type-segment-bases : i64]
@@ -22801,6 +22865,28 @@
         [(None) 0])]
     [(or (Ref _ inner) (MutRef _ inner) (Region _ inner))
       (opt-licm-nominal-header-mask
+        type-segment-bases
+        (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
+    [_ 0]))
+
+(define (opt-licm-nominal-header-free-mask
+  [type-segment-bases : i64]
+  [ty : (& ast.AstType)]) : i64
+  (match ty
+    [(or (Struct _) (StructArgs _ _) (Enum _) (EnumArgs _ _))
+      (match (ast.ast-aggregate-type-key type-segment-bases ty)
+        [(Some key)
+          (let
+            [mask : i64
+              (ir.compiler-ir-representation-index-header-free-mask
+                (& opt-licm-deref-representations)
+                key)]
+            (if (> mask 0)
+              mask
+              0))]
+        [(None) 0])]
+    [(or (Ref _ inner) (MutRef _ inner) (Region _ inner))
+      (opt-licm-nominal-header-free-mask
         type-segment-bases
         (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
     [_ 0]))
@@ -22852,6 +22938,24 @@
   (match (opt-ssa-var-types-lookup types var)
     [(Some ty)
       (opt-licm-type-header-at-offset? type-segment-bases (& ty) offset gep-ty)]
+    [(No) false]))
+
+(define (opt-licm-var-header-free-at-offset?
+  [type-segment-bases : i64]
+  [types : (& types OptSsaVarTypes)]
+  [var : i64]
+  [offset : (& offset ir.CompilerIrValue)]
+  [gep-ty : (& gep-ty ast.AstType)]) : bool
+  (match (opt-ssa-var-types-lookup types var)
+    [(Some ty)
+      (let
+        [mask : i64
+          (opt-licm-nominal-header-free-mask type-segment-bases (& ty))]
+        (if (= mask 0)
+          false
+          (opt-licm-mask-has-byte-offset?
+            mask
+            (opt-licm-gep-byte-offset type-segment-bases offset gep-ty))))]
     [(No) false]))
 
 (define (opt-licm-var-header-length-at-offset?
@@ -22944,7 +23048,8 @@
 (define (opt-licm-global-headers-reset!) : unit
   (set! opt-licm-global-data-slot-on false)
   (set! opt-licm-global-headers (opt_i64_i64_map.with-capacity 1))
-  (set! opt-licm-global-header-masks (opt_i64_i64_map.with-capacity 1)))
+  (set! opt-licm-global-header-masks (opt_i64_i64_map.with-capacity 1))
+  (set! opt-licm-global-header-free-masks (opt_i64_i64_map.with-capacity 1)))
 
 (define (opt-licm-global-headers-fill
   [type-segment-bases : i64]
@@ -22986,6 +23091,34 @@
                 (ir.compiler-ir-symbol-id name)
                 mask)))])
       (opt-licm-global-header-masks-fill
+        type-segment-bases
+        globals
+        out
+        (+ index 1)))))
+
+(define (opt-licm-global-header-free-masks-fill
+  [type-segment-bases : i64]
+  [globals : (& ir.CompilerIrGlobalSeq)]
+  [acc : opt_i64_i64_map.Map]
+  [index : i64]) : opt_i64_i64_map.Map
+  (if (>= index (ir.compiler-ir-global-seq-count globals))
+    acc
+    (let
+      [out : opt_i64_i64_map.Map acc]
+      (match (ir.compiler-ir-global-seq-borrow globals index)
+        [(Global name ty _ _)
+          (let
+            [mask : i64
+              (if (opt-licm-global-header-free-type? type-segment-bases (& ty))
+                1
+                (opt-licm-nominal-header-free-mask type-segment-bases (& ty)))]
+            (when
+              (not (= mask 0))
+              (opt_i64_i64_map.insert-ref!
+                (&mut out)
+                (ir.compiler-ir-symbol-id name)
+                mask)))])
+      (opt-licm-global-header-free-masks-fill
         type-segment-bases
         globals
         out
@@ -23178,34 +23311,39 @@
     [(Var base-var)
       (let
         [base-kind : OptLicmPtrKind (opt-licm-ptr-lookup ptrs base-var)]
-        (or
-          (and
+        (match base-kind
+          ;; An inline DynArray/Vec living inside an outer element buffer is
+          ;; NOT disjoint from element stores into that buffer.
+          [(or (DataBuffer _) (DataElement _)) false]
+          [_
             (or
-              (opt-licm-array-header-var? type-segment-bases types base-var)
-              (match base-kind
-                [(InlineHeader _) true]
-                [(GlobalDataSlot g) (opt-licm-global-header-ok? globals g)]
-                [_ false]))
-            (or
-              (opt-bounds-object-length-slot? type-segment-bases offset ty)
-              (opt-licm-data-slot? offset ty)))
-          (and
-            (match base-kind
-              [(Unknown) true]
-              [_ false])
-            (or
-              (opt-licm-var-header-at-offset?
-                type-segment-bases
-                types
-                base-var
-                offset
-                ty)
-              (opt-licm-var-header-length-at-offset?
-                type-segment-bases
-                types
-                base-var
-                offset
-                ty)))))]
+              (and
+                (or
+                  (opt-licm-array-header-var? type-segment-bases types base-var)
+                  (match base-kind
+                    [(InlineHeader _) true]
+                    [(GlobalDataSlot g) (opt-licm-global-header-ok? globals g)]
+                    [_ false]))
+                (or
+                  (opt-bounds-object-length-slot? type-segment-bases offset ty)
+                  (opt-licm-data-slot? offset ty)))
+              (and
+                (match base-kind
+                  [(Unknown) true]
+                  [_ false])
+                (or
+                  (opt-licm-var-header-at-offset?
+                    type-segment-bases
+                    types
+                    base-var
+                    offset
+                    ty)
+                  (opt-licm-var-header-length-at-offset?
+                    type-segment-bases
+                    types
+                    base-var
+                    offset
+                    ty))))]))]
     [(or (Global _) (GlobalAddr _))
       (and
         (opt-licm-global-header-value? globals base)
@@ -23223,42 +23361,48 @@
   [src : (& src ir.CompilerIrValue)]) : bool
   (match src
     [(Var ptr-var)
-      (or
-        ;; GVN canonicalizes a zero-offset descriptor Gep back to the
-        ;; descriptor handle itself. Preserve the same header-slot fact for
-        ;; that direct `load %array` spelling. Enable this only in the
-        ;; post-BCE LICM run so moving the length cannot hide the identity an
-        ;; enclosing loop's bounds-check elimination still needs.
-        (and
-          late?
-          (or
-            (opt-licm-array-header-var? type-segment-bases types ptr-var)
-            (opt-licm-var-header-at-byte-zero? type-segment-bases types ptr-var)))
-        (let
-          [kind : OptLicmPtrKind (opt-licm-ptr-lookup ptrs ptr-var)]
-          (match kind
-            [(or (GlobalSlot g) (GlobalDataSlot g))
+      (let
+        [kind : OptLicmPtrKind (opt-licm-ptr-lookup ptrs ptr-var)]
+        (match kind
+          [(or (DataBuffer _) (DataElement _)) false]
+          [_
+            (or
+              ;; GVN canonicalizes a zero-offset descriptor Gep back to the
+              ;; descriptor handle itself. Preserve the same header-slot fact for
+              ;; that direct `load %array` spelling. Enable this only in the
+              ;; post-BCE LICM run so moving the length cannot hide the identity an
+              ;; enclosing loop's bounds-check elimination still needs.
               (and
-                ;; Callers already require `opt-licm-store-summary-header-load-safe?`,
-                ;; so an `any` obj-mask (e.g. when `obj-mod-ref` was not built)
-                ;; cannot represent an unguarded global-storage store here; when
-                ;; a precise per-global obj-mask is present, still check `g`.
+                late?
                 (or
-                  (opt-global-mod-ref-any? globals.obj-mask)
-                  (not
-                    (opt-global-mod-ref-mask-may-write?
-                      globals.obj-index
-                      globals.obj-mask
-                      g)))
-                (or
-                  globals.clean?
-                  globals.relaxed-clean?
-                  (not
-                    (opt-global-mod-ref-mask-may-write?
-                      globals.index
-                      globals.mask
-                      g))))]
-            [_ (opt-licm-header-slot-ptr-kind? kind)])))]
+                  (opt-licm-array-header-var? type-segment-bases types ptr-var)
+                  (opt-licm-var-header-at-byte-zero?
+                    type-segment-bases
+                    types
+                    ptr-var)))
+              (match kind
+                [(or (GlobalSlot g) (GlobalDataSlot g))
+                  (and
+                    ;; Callers already require `opt-licm-store-summary-header-load-safe?`,
+                    ;; so an `any` obj-mask (e.g. when `obj-mod-ref` was not built)
+                    ;; cannot represent an unguarded global-storage store here; when
+                    ;; a precise per-global obj-mask is present, still check `g`.
+                    (or
+                      (opt-global-mod-ref-any? globals.obj-mask)
+                      (not
+                        (opt-global-mod-ref-mask-may-write?
+                          globals.obj-index
+                          globals.obj-mask
+                          g)))
+                    (or
+                      globals.clean?
+                      globals.relaxed-clean?
+                      (not
+                        (opt-global-mod-ref-mask-may-write?
+                          globals.index
+                          globals.mask
+                          g))))]
+                [_ (opt-licm-header-slot-ptr-kind? kind)]))]))]
     [_ false]))
 
 ;; `Gep <address of a frame object>, <literal>` addresses a FIXED word of that
@@ -25480,6 +25624,13 @@
     (set!
       opt-licm-global-header-masks
       (opt-licm-global-header-masks-fill
+        type-segment-bases
+        globals
+        (opt_i64_i64_map.with-capacity capacity)
+        0))
+    (set!
+      opt-licm-global-header-free-masks
+      (opt-licm-global-header-free-masks-fill
         type-segment-bases
         globals
         (opt_i64_i64_map.with-capacity capacity)
@@ -100638,12 +100789,11 @@
                     (& forwarded))
                     [(Result threaded _ _) (Result threaded true)])])))))]))
 
-;; Zero-offset GEP elimination (live-only, right before `dce_late`):
-;; For verified SSA functions, any single-def `Gep dst (Var base) (I64 0) _`
-;; with single-def `base` computes the exact same address as `base`. Rewriting
-;; all uses of `dst` to `base` lets `dce_late` drop the identity GEP and avoids
-;; pinning an extra callee-saved register across calls/loops for offset-0 inline
-;; fields (e.g. `Vec.slots`, `Map.slots`, `ByteBuf.bytes`).
+;; Zero-offset GEP forwarding (folded into `dce_late` right before the final
+;; sweep): any single-def `Gep dst (Var base) (I64 0) _` with single-def `base`
+;; computes the exact same address as `base`. Rewriting uses of `dst` to `base`
+;; lets `opt-dce-late-sweep` immediately retire the identity GEP without a
+;; separate `opt-verify-function` CFG/dominator rebuild or hash-map pass.
 (define (opt-zero-gep-elim-has-candidate? [blocks : (& ir.CompilerIrBlockList)]) : bool
   (match blocks
     [(Array seq)
@@ -100665,114 +100815,143 @@
   (NoChange)
   (Rewritten ir.CompilerIrBlockList))
 
-(define (opt-zero-gep-elim-compute-blocks [func : (& ir.CompilerIrFunction)]) : OptZeroGepBlocks
-  (match func
-    [(Function _ params _ frame blocks _)
-      (if (or
-        (<= frame 0)
-        (not (opt-zero-gep-elim-has-candidate? (& blocks)))
-        (not (opt-verify-ok? (& (opt-verify-function func)))))
-        (OptZeroGepBlocks.NoChange)
-        (let
-          [sources : OptValueSources
-            (opt-gvn-sources-blocks
-              (& blocks)
-              (& (opt-gvn-sources-params (& params) (opt-value-sources-new))))]
-          [rename : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
-          [any? : bool false]
-          (for [v (iterator.range 0 frame)]
-            (set! (array-ref rename v) (- 0 1)))
-          (match (& blocks)
-            [(Array seq)
-              (let
-                [bcount : i64 seq.len]
-                (for [bi (iterator.range 0 bcount)]
-                  (match (ir.compiler-ir-block-seq-borrow seq bi)
-                    [(Block _ instrs)
+(define (opt-zero-gep-elim-compute-blocks
+  [params : (& ir.CompilerIrParamSeq)]
+  [frame : i64]
+  [blocks : (& ir.CompilerIrBlockList)]) : OptZeroGepBlocks
+  (if (or (<= frame 0) (not (opt-zero-gep-elim-has-candidate? blocks)))
+    (OptZeroGepBlocks.NoChange)
+    (let
+      [defs : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+      [def-block : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+      [addr-taken : (__tl_dyn-array bool) (__tl_make-array bool frame)]
+      [rename : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+      [all-single-def? : bool true]
+      [any? : bool false]
+      (for [v (iterator.range 0 frame)]
+        (set! (array-ref defs v) 0)
+        (set! (array-ref def-block v) (- 0 1))
+        (set! (array-ref addr-taken v) false)
+        (set! (array-ref rename v) (- 0 1)))
+      (let
+        [pcount : i64 (ir.compiler-ir-param-seq-count params)]
+        (for [pi (iterator.range 0 pcount)]
+          (match (ir.compiler-ir-param-seq-borrow params pi)
+            [(Param _ _ p)
+              (when
+                (and (>= p 0) (< p frame))
+                (set! (array-ref defs p) (+ (array-ref defs p) 1))
+                (set! (array-ref def-block p) (- 0 2)))])))
+      (match blocks
+        [(Array seq)
+          (let
+            [bcount : i64 seq.len]
+            (for [bi (iterator.range 0 bcount)]
+              (match (ir.compiler-ir-block-seq-borrow seq bi)
+                [(Block _ instrs)
+                  (let
+                    [icount : i64 instrs.len]
+                    (for [ii (iterator.range 0 icount)]
                       (let
-                        [icount : i64 instrs.len]
-                        (for [ii (iterator.range 0 icount)]
-                          (match (ir.compiler-ir-instr-seq-borrow instrs ii)
-                            [(Gep dst (Var base) (I64 0) _)
-                              (when
-                                (and
-                                  (not (= dst base))
-                                  (>= dst 0)
-                                  (< dst frame)
-                                  (>= base 0)
-                                  (< base frame)
-                                  (opt-gvn-stable-var? (& sources) dst)
-                                  (opt-gvn-stable-var? (& sources) base))
-                                (set! (array-ref rename dst) base)
-                                (set! any? true))]
-                            [_ unit])))])))])
-          (if (not any?)
-            (OptZeroGepBlocks.NoChange)
-            (begin
-              ;; Path-compress rename chains with bounded fuel.
-              (for [v (iterator.range 0 frame)]
+                        [dst : i64
+                          (ir.compiler-ir-instr-dst
+                            (ir.compiler-ir-instr-seq-borrow instrs ii))]
+                        (when
+                          (and (>= dst 0) (< dst frame))
+                          (set! (array-ref defs dst) (+ (array-ref defs dst) 1))
+                          (set! (array-ref def-block dst) bi))
+                        (match (ir.compiler-ir-instr-seq-borrow instrs ii)
+                          [(AddrOf _ src _)
+                            (when
+                              (and (>= src 0) (< src frame))
+                              (set! (array-ref addr-taken src) true))]
+                          [_ unit]))))])))])
+      (for [v (iterator.range 0 frame)]
+        (when
+          (and (not (array-ref addr-taken v)) (> (array-ref defs v) 1))
+          (set! all-single-def? false)))
+      (match blocks
+        [(Array seq)
+          (let
+            [bcount : i64 seq.len]
+            (for [bi (iterator.range 0 bcount)]
+              (match (ir.compiler-ir-block-seq-borrow seq bi)
+                [(Block _ instrs)
+                  (let
+                    [icount : i64 instrs.len]
+                    (for [ii (iterator.range 0 icount)]
+                      (match (ir.compiler-ir-instr-seq-borrow instrs ii)
+                        [(Gep dst (Var base) (I64 0) _)
+                          (when
+                            (and
+                              (not (= dst base))
+                              (>= dst 0)
+                              (< dst frame)
+                              (>= base 0)
+                              (< base frame)
+                              (= (array-ref defs dst) 1)
+                              (not (array-ref addr-taken dst))
+                              (= (array-ref defs base) 1)
+                              (not (array-ref addr-taken base))
+                              (or
+                                all-single-def?
+                                (= (array-ref def-block base) (- 0 2))
+                                (=
+                                  (array-ref def-block base)
+                                  (array-ref def-block dst))))
+                            (set! (array-ref rename dst) base)
+                            (set! any? true))]
+                        [_ unit])))])))])
+      (if (not any?)
+        (OptZeroGepBlocks.NoChange)
+        (begin
+          ;; Path-compress rename chains with bounded fuel.
+          (for [v (iterator.range 0 frame)]
+            (let
+              [cur : i64 (array-ref rename v)]
+              (when
+                (>= cur 0)
                 (let
-                  [cur : i64 (array-ref rename v)]
-                  (when
-                    (>= cur 0)
+                  [fuel : i64 16]
+                  (while (and (> fuel 0) (>= cur 0))
                     (let
-                      [fuel : i64 16]
-                      (while (and (> fuel 0) (>= cur 0))
+                      [next : i64 (array-ref rename cur)]
+                      (if (or (< next 0) (= next v))
+                        (set! fuel 0)
+                        (begin
+                          (set! cur next)
+                          (-= fuel 1)))))
+                  (set! (array-ref rename v) cur)))))
+          (let
+            [rw : ir.CompilerIrInstrRewrite (ir.compiler-ir-instr-rewrite-new)]
+            [op : OptOperandRewrite (OptOperandRewrite.Rename rename)]
+            (match blocks
+              [(Array seq)
+                (let
+                  [bcount : i64 seq.len]
+                  [out : (__tl_dyn-array ir.CompilerIrBlock)
+                    (__tl_make-array ir.CompilerIrBlock bcount)]
+                  (for [bi (iterator.range 0 bcount)]
+                    (match (ir.compiler-ir-block-seq-borrow seq bi)
+                      [(Block label instrs)
                         (let
-                          [next : i64 (array-ref rename cur)]
-                          (if (or (< next 0) (= next v))
-                            (set! fuel 0)
-                            (begin
-                              (set! cur next)
-                              (-= fuel 1)))))
-                      (set! (array-ref rename v) cur)))))
-              (let
-                [rw : ir.CompilerIrInstrRewrite
-                  (ir.compiler-ir-instr-rewrite-new)]
-                [op : OptOperandRewrite (OptOperandRewrite.Rename rename)]
-                (match (& blocks)
-                  [(Array seq)
-                    (let
-                      [bcount : i64 seq.len]
-                      [out : (__tl_dyn-array ir.CompilerIrBlock)
-                        (__tl_make-array ir.CompilerIrBlock bcount)]
-                      (for [bi (iterator.range 0 bcount)]
-                        (match (ir.compiler-ir-block-seq-borrow seq bi)
-                          [(Block label instrs)
-                            (let
-                              [icount : i64 instrs.len]
-                              [builder : ir.CompilerIrInstrBuilder
-                                (ir.compiler-ir-instr-builder-with-capacity
-                                  icount)]
-                              (for [ii (iterator.range 0 icount)]
-                                (ir.compiler-ir-instr-builder-push!
-                                  (&mut builder)
-                                  (opt-rewrite-operands
-                                    (&mut rw)
-                                    (& op)
-                                    (ir.compiler-ir-instr-seq-borrow instrs ii))))
-                              (set!
-                                (array-ref out bi)
-                                (Block
-                                  label
-                                  (ir.compiler-ir-instr-builder-to-seq builder))))]))
-                      (OptZeroGepBlocks.Rewritten
-                        (Array (ir.CompilerIrBlockSeq out bcount))))]))))))]))
-
-(define (opt-zero-gep-elim-final-pass
-  [type-segment-bases : i64]
-  [func : ir.CompilerIrFunction]) : OptFunctionPassResult
-  (match (opt-zero-gep-elim-compute-blocks (& func))
-    [(OptZeroGepBlocks.NoChange) (Result func false)]
-    [(OptZeroGepBlocks.Rewritten rewritten)
-      (match func
-        [(Function name params ret-ty frame _ function-abi)
-          (Result
-            (compiler-opt-debug-observe-function
-              type-segment-bases
-              "zero_gep_elim"
-              (Function name params ret-ty frame rewritten function-abi))
-            true)])]))
+                          [icount : i64 instrs.len]
+                          [builder : ir.CompilerIrInstrBuilder
+                            (ir.compiler-ir-instr-builder-with-capacity icount)]
+                          (for [ii (iterator.range 0 icount)]
+                            (ir.compiler-ir-instr-builder-push!
+                              (&mut builder)
+                              (opt-rewrite-operands
+                                (&mut rw)
+                                (& op)
+                                (ir.compiler-ir-instr-seq-borrow instrs ii))))
+                          (set!
+                            (array-ref out bi)
+                            (Block
+                              label
+                              (ir.compiler-ir-instr-builder-to-seq builder))))]))
+                  (OptZeroGepBlocks.Rewritten
+                    (Array (ir.CompilerIrBlockSeq out bcount))))])))))))
 
 (define (opt-dce-late-final-pass
   [type-segment-bases : i64]
@@ -100803,18 +100982,33 @@
               blocks
               (opt-dce-late-fold-fuel))
             blocks)]
-        (match (opt-dce-late-sweep
-          frame
-          (& folded)
-          (opt-dce-late-sweep-fuel)
-          false)
-          [(Result swept swept-changed?)
-            (Result
-              (compiler-opt-debug-observe-function
-                type-segment-bases
-                "dce_late"
-                (Function name params ret-ty frame swept function-abi))
-              (or changed-in? fold? swept-changed?))]))]))
+        (match (opt-zero-gep-elim-compute-blocks (& params) frame (& folded))
+          [(OptZeroGepBlocks.Rewritten forwarded)
+            (match (opt-dce-late-sweep
+              frame
+              (& forwarded)
+              (opt-dce-late-sweep-fuel)
+              false)
+              [(Result swept _)
+                (Result
+                  (compiler-opt-debug-observe-function
+                    type-segment-bases
+                    "dce_late"
+                    (Function name params ret-ty frame swept function-abi))
+                  true)])]
+          [(OptZeroGepBlocks.NoChange)
+            (match (opt-dce-late-sweep
+              frame
+              (& folded)
+              (opt-dce-late-sweep-fuel)
+              false)
+              [(Result swept swept-changed?)
+                (Result
+                  (compiler-opt-debug-observe-function
+                    type-segment-bases
+                    "dce_late"
+                    (Function name params ret-ty frame swept function-abi))
+                  (or changed-in? fold? swept-changed?))])]))]))
 
 ;; Shorten only multiplication that participates in a value-dependency cycle.
 ;; Broad expansion loses throughput on independent arithmetic. A bounded walk
@@ -101200,14 +101394,6 @@
         ;; priced pipeline: inlining a small predicate is exactly what mints
         ;; the `phi of bool literals -> mov literal -> branch` chain it folds
         ;; away, so it deflates the MERGED side of the checked tier's window.
-        [s
-          (opt-live-only
-            s
-            (opt-pass-with-result
-              (opt-zero-gep-elim-final-pass
-                type-segment-bases
-                (opt-pass-func s))
-              s))]
         [s
           (opt-live-only
             s
@@ -115077,21 +115263,19 @@
     [(Var var)
       (and
         (opt-gvn-stable-var? sources var)
-        (opt-licm-array-header-var? type-segment-bases types var))]
+        (match (opt-ssa-var-types-lookup types var)
+          [(Some ty)
+            (opt-licm-array-header-free-type? type-segment-bases (& ty))]
+          [(No) false]))]
     [_ false]))
 
 ;; SUM-3. The global CELLS whose declared type is a descriptor handle
 ;; (opt-licm-array-header-type?), keyed by symbol id. `Gep <that global>, 0`
 ;; names its data slot exactly as `Gep <descriptor-typed var>, 0` does in
-;; opt-call-memory-element-kind-for-instr. The call-memory builder runs on the
-;; pre-optimization IR, where a global array's data pointer is loaded straight
-;; off the `Global` operand (only the per-function global_cell pass later routes
-;; it through a typed `Mov`), so without this table an element write into a
-;; global array's buffer would have no element kind at all and fall to
-;; `unknown` -- and every loop calling such a helper would reload every
-;; descriptor header on every trip. Built once per program from the declared
-;; types, so a struct global whose first word happens to be a pointer keeps its
-;; `unknown` verdict: only a handle's own word 0 is a data slot.
+;; opt-call-memory-element-kind-for-instr. Only buffers whose element type is
+;; provably header-free are admitted here: a write into an element buffer that
+;; can contain inline DynArray descriptors (`(__tl_dyn-array (__tl_dyn-array T))`
+;; / `(__tl_dyn-array Vec)`) is NOT header-clean and must summarize as `unknown`.
 (define (opt-call-memory-descriptor-globals
   [type-segment-bases : i64]
   [globals : (& ir.CompilerIrGlobalSeq)]
@@ -115103,9 +115287,9 @@
         [(Global name ty _ _)
           (let
             [mask : i64
-              (if (opt-licm-global-header-type? type-segment-bases (& ty))
+              (if (opt-licm-global-header-free-type? type-segment-bases (& ty))
                 1
-                (opt-licm-nominal-header-mask type-segment-bases (& ty)))]
+                (opt-licm-nominal-header-free-mask type-segment-bases (& ty)))]
             (when
               (not (= mask 0))
               (opt_i64_i64_map.insert-ref!
@@ -115170,7 +115354,7 @@
                 [(Var base-var)
                   (if (and
                     (opt-gvn-stable-var? sources base-var)
-                    (opt-licm-var-header-at-offset?
+                    (opt-licm-var-header-free-at-offset?
                       type-segment-bases
                       types
                       base-var
@@ -115362,14 +115546,15 @@
         elements
         (opt-load-type-alias-class type-segment-bases (& ty))
         (& ptr))]
+    ;; A CopyBytes into an element buffer can overwrite an inline 16B DynArray
+    ;; descriptor (or struct containing one), so without a parameter root it is
+    ;; never header-clean and must summarize as `unknown`.
     [(CopyBytes dst _ _)
-      (opt-call-memory-summary-add-write
-        summary
-        (& params)
-        roots
-        elements
-        0
-        (& dst))]
+      (let
+        [root : OptLicmRoot (opt-licm-root-of-value roots (& dst))]
+        (match root
+          [(NoRoot) (opt-call-memory-summary-add-unknown summary)]
+          [_ (opt-call-memory-summary-add-root-write summary (& params) root)]))]
     [(Store _ _ _) (opt-call-memory-summary-add-global summary)]
     [(or (Call _ name args _) (TailCall name args _))
       (opt-call-memory-apply-direct-call
@@ -122809,6 +122994,14 @@
               globals
               (opt_i64_i64_map.with-capacity capacity)
               0))]
+        [_header-free-masks : unit
+          (set!
+            opt-licm-global-header-free-masks
+            (opt-licm-global-header-free-masks-fill
+              type-segment-bases
+              globals
+              (opt_i64_i64_map.with-capacity capacity)
+              0))]
         [_data-slot-on : unit (set! opt-licm-global-data-slot-on true)]
         [addr-taken : opt_i64_i64_map.Map
           (owned_view.compiler-owned-reference-shared-view facts.addr-taken)]
@@ -126638,6 +126831,15 @@
 ;; is poisoned, 3 is a by-value native Slice parameter, and 4 is a Word result
 ;; extracted from such a parameter. Both 1 and 3 are header-typed; only 3 has
 ;; stable register-group Word extractions. Code 4 only narrows copy scheduling.
+;; Header-set codes:
+;;   0 = unseen
+;;   1 = header var (pointer/handle to DynArray, buffer may contain headers)
+;;   2 = poisoned (not header / conflicting defs)
+;;   3 = by-value native Slice / String parameter whose buffer is header-free
+;;   4 = Word result extracted from a Slice / String (code 3 or 7)
+;;   5 = unstable-seen (AddrOf taken before def)
+;;   6 = header var whose element buffer is provably header-free
+;;   7 = by-value native Slice parameter whose buffer may contain headers
 (defenum OptLoadHeaderSet
   (Sparse opt_i64_i64_map.Map)
   (Dense (__tl_dyn-array i64)))
@@ -126661,14 +126863,28 @@
 
 (define (opt-load-header-set-merge-code [current : i64] [code : i64]) : i64
   (cond
-    [(= code 5) (cond [(= current 0) 5] [(= current 3) 2] [else current])]
+    [(= code 5)
+      (cond
+        [(= current 0) 5]
+        [(or (= current 3) (= current 7)) 2]
+        [else current])]
     [(= current 0) code]
-    [(= current 5)
-      (if (= code 1)
-        1
-        2)]
+    [(= current 5) (cond [(= code 1) 1] [(= code 6) 6] [else 2])]
     [(= current code) current]
+    [(or (and (= current 1) (= code 6)) (and (= current 6) (= code 1))) 1]
+    [(or (and (= current 3) (= code 7)) (and (= current 7) (= code 3))) 7]
     [else 2]))
+
+(define (opt-load-header-set-code [set : (& OptLoadHeaderSet)] [var : i64]) : i64
+  (match set
+    [(Sparse map)
+      (match (opt_i64_i64_map.get (& map) var)
+        [(LookupFound value) value]
+        [(LookupMissing) 0])]
+    [(Dense items)
+      (if (or (< var 0) (>= var (array-length items)))
+        0
+        (array-ref items var))]))
 
 (define (opt-load-header-set-mark-code
   [set : OptLoadHeaderSet]
@@ -126711,84 +126927,128 @@
       2)))
 
 ;; Taking a variable's storage address makes by-value register-group words
-;; (code 3: String / Slice) mutable through that escaped address, so poison
-;; code 3 to 2 and record code 5 (unstable-seen) before any def so a later
-;; code-3 def also poisons to 2. Pointer-handle headers (code 1: DynArray /
-;; (& str)) stay code 1 because Load-CSE already invalidates across aliasing
+;; (code 3/7: String / Slice) mutable through that escaped address, so poison
+;; code 3/7 to 2 and record code 5 (unstable-seen) before any def so a later
+;; code-3/7 def also poisons to 2. Pointer-handle headers (code 1/6: DynArray /
+;; (& str)) stay code 1/6 because Load-CSE already invalidates across aliasing
 ;; stores and calls.
 (define (opt-load-header-set-mark-unstable [set : OptLoadHeaderSet] [var : i64]) : OptLoadHeaderSet
   (opt-load-header-set-mark-code set var 5))
 
 (define (opt-load-header-var? [set : (& OptLoadHeaderSet)] [var : i64]) : bool
-  (match set
-    [(Sparse map)
-      (match (opt_i64_i64_map.get (& map) var)
-        [(LookupFound value) (or (= value 1) (= value 3))]
-        [(LookupMissing) false])]
-    [(Dense items)
-      (if (or (< var 0) (>= var (array-length items)))
-        false
-        (let
-          [value : i64 (array-ref items var)]
-          (or (= value 1) (= value 3))))]))
+  (let
+    [value : i64 (opt-load-header-set-code set var)]
+    (or (= value 1) (= value 6) (= value 3) (= value 7))))
+
+(define (opt-load-header-free-var? [set : (& OptLoadHeaderSet)] [var : i64]) : bool
+  (let
+    [value : i64 (opt-load-header-set-code set var)]
+    (or (= value 6) (= value 3))))
 
 (define (opt-load-slice-var? [set : (& set OptLoadHeaderSet)] [var : i64]) : bool
-  (match set
-    [(Sparse map)
-      (match (opt_i64_i64_map.get (& map) var)
-        [(LookupFound value) (= value 3)]
-        [(LookupMissing) false])]
-    [(Dense items)
-      (if (or (< var 0) (>= var (array-length items)))
-        false
-        (= (array-ref items var) 3))]))
+  (let
+    [value : i64 (opt-load-header-set-code set var)]
+    (or (= value 3) (= value 7))))
+
+(define (opt-load-slice-header-free-var?
+  [set : (& set OptLoadHeaderSet)]
+  [var : i64]) : bool
+  (= (opt-load-header-set-code set var) 3))
 
 (define (opt-load-slice-word-var? [set : (& OptLoadHeaderSet)] [var : i64]) : bool
-  (match set
-    [(Sparse map)
-      (match (opt_i64_i64_map.get (& map) var)
-        [(LookupFound value) (= value 4)]
-        [(LookupMissing) false])]
-    [(Dense items)
-      (if (or (< var 0) (>= var (array-length items)))
-        false
-        (= (array-ref items var) 4))]))
+  (= (opt-load-header-set-code set var) 4))
 
 ;; A checked reference to an array/string descriptor addresses that descriptor
 ;; directly, so its parameter var is a header base for GEP/load classification
 ;; just like a by-value descriptor var.
-(define (opt-load-header-param-type?
+;; Returns 0 (not header), 1 (header, buffer may contain headers), or 6 (header,
+;; provably header-free buffer).
+(define (opt-load-header-param-code
   [type-segment-bases : i64]
-  [ty : (& ast.AstType)]) : bool
+  [ty : (& ast.AstType)]) : i64
   (match ty
     [(or (Ref _ inner) (MutRef _ inner))
       (let
         [referent : ast.AstType
           (ast.ast-type-segment-bases-get type-segment-bases inner)]
-        (or
-          (ast.ast-type-segment-bases-fat-referent? type-segment-bases inner)
-          (opt-licm-array-header-type? type-segment-bases (& referent))
-          (opt-licm-mask-has-byte-offset?
-            (opt-licm-nominal-header-mask type-segment-bases (& referent))
-            0)))]
+        (cond
+          [(ast.ast-type-segment-bases-fat-referent? type-segment-bases inner)
+            (match (& referent)
+              [(or (Str) (Bytes)) 6]
+              [(Slice elem)
+                (if (opt-licm-type-header-free?
+                  type-segment-bases
+                  (& (ast.ast-type-segment-bases-get type-segment-bases elem))
+                  8)
+                  6
+                  1)]
+              [_ 1])]
+          [(opt-licm-array-header-type? type-segment-bases (& referent))
+            (if (opt-licm-array-header-free-type?
+              type-segment-bases
+              (& referent))
+              6
+              1)]
+          [(opt-licm-mask-has-byte-offset?
+              (opt-licm-nominal-header-mask type-segment-bases (& referent))
+              0)
+            (if (opt-licm-mask-has-byte-offset?
+              (opt-licm-nominal-header-free-mask
+                type-segment-bases
+                (& referent))
+              0)
+              6
+              1)]
+          [else 0]))]
     [(Region _ inner)
-      (opt-load-header-param-type?
+      (opt-load-header-param-code
         type-segment-bases
         (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
-    [_ (opt-licm-array-header-type? type-segment-bases ty)]))
+    [_
+      (if (opt-licm-array-header-type? type-segment-bases ty)
+        (if (opt-licm-array-header-free-type? type-segment-bases ty)
+          6
+          1)
+        0)]))
+
+;; Returns 0 (not slice), 3 (header-free slice/String), or 7 (slice whose
+;; element buffer may contain inline headers).
+(define (opt-load-slice-param-code
+  [type-segment-bases : i64]
+  [ty : (& ast.AstType)]) : i64
+  (match ty
+    [(String) 3]
+    [(or (Ref _ inner) (MutRef _ inner))
+      (if (ast.ast-type-segment-bases-fat-referent? type-segment-bases inner)
+        (let
+          [referent : ast.AstType
+            (ast.ast-type-segment-bases-get type-segment-bases inner)]
+          (match (& referent)
+            [(or (Str) (Bytes)) 3]
+            [(Slice elem)
+              (if (opt-licm-type-header-free?
+                type-segment-bases
+                (& (ast.ast-type-segment-bases-get type-segment-bases elem))
+                8)
+                3
+                7)]
+            [_ 7]))
+        0)]
+    [(Region _ inner)
+      (opt-load-slice-param-code
+        type-segment-bases
+        (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
+    [_ 0]))
+
+(define (opt-load-header-param-type?
+  [type-segment-bases : i64]
+  [ty : (& ast.AstType)]) : bool
+  (> (opt-load-header-param-code type-segment-bases ty) 0))
 
 (define (opt-load-slice-param-type?
   [type-segment-bases : i64]
   [ty : (& ast.AstType)]) : bool
-  (match ty
-    [(String) true]
-    [(or (Ref _ inner) (MutRef _ inner))
-      (ast.ast-type-segment-bases-fat-referent? type-segment-bases inner)]
-    [(Region _ inner)
-      (opt-load-slice-param-type?
-        type-segment-bases
-        (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
-    [_ false]))
+  (> (opt-load-slice-param-code type-segment-bases ty) 0))
 
 (define (opt-load-header-set-add-param
   [type-segment-bases : i64]
@@ -126796,12 +127056,19 @@
   [set : OptLoadHeaderSet]) : OptLoadHeaderSet
   (match param
     [(Param _ ty var)
-      (if (opt-load-slice-param-type? type-segment-bases (& ty))
-        (opt-load-header-set-mark-code set var 3)
-        (opt-load-header-set-mark
-          set
-          var
-          (opt-load-header-param-type? type-segment-bases (& ty))))]))
+      (let
+        [slice-code : i64 (opt-load-slice-param-code type-segment-bases (& ty))]
+        (if (> slice-code 0)
+          (opt-load-header-set-mark-code set var slice-code)
+          (let
+            [header-code : i64
+              (opt-load-header-param-code type-segment-bases (& ty))]
+            (opt-load-header-set-mark-code
+              set
+              var
+              (if (> header-code 0)
+                header-code
+                2)))))]))
 
 (define (opt-load-header-set-add-param-seq
   [type-segment-bases : i64]
@@ -126825,357 +127092,560 @@
   [set : OptLoadHeaderSet]) : OptLoadHeaderSet
   (opt-load-header-set-add-param-seq type-segment-bases params set))
 
-(define (opt-load-header-nominal-masks-record!
-  [masks : (&mut masks opt_i64_i64_map.Map)]
-  [var : i64]
-  [mask : i64]) : unit
-  (match (opt_i64_i64_map.get (& masks) var)
-    [(LookupMissing)
+;; Single-walk def/addr-taken counter for `OptLoadHeaderSet` construction.
+;; Bits 0..29 hold the definition count; bit 30 marks `AddrOf` taken.
+(define opt-load-header-addr-taken-bit : i64
+  1073741824)
+(define opt-load-header-def-count-mask : i64
+  1073741823)
+
+(defstruct OptLoadHeaderDefs
+  (dense? bool)
+  (dense (__tl_dyn-array i64))
+  (sparse opt_i64_i64_map.Map))
+
+(define (opt-load-header-defs-for-frame [frame : i64]) : OptLoadHeaderDefs
+  (if (>= frame 0)
+    (let
+      [items : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+      (opt-load-header-set-fill-zero! (&mut items) 0)
+      (OptLoadHeaderDefs true items (opt_i64_i64_map.with-capacity 1)))
+    (OptLoadHeaderDefs
+      false
+      (__tl_make-array i64 0)
+      (opt_i64_i64_map.with-capacity 17))))
+
+(define (opt-load-header-defs-raw [defs : (& OptLoadHeaderDefs)] [var : i64]) : i64
+  (if defs.dense?
+    (if (or (< var 0) (>= var (array-length defs.dense)))
+      0
+      (array-ref defs.dense var))
+    (match (opt_i64_i64_map.get (& defs.sparse) var)
+      [(LookupFound v) v]
+      [(LookupMissing) 0])))
+
+(define (opt-load-header-defs-add-def!
+  [defs : (&mut OptLoadHeaderDefs)]
+  [var : i64]) : unit
+  (if defs.dense?
+    (when
+      (and (>= var 0) (< var (array-length defs.dense)))
+      (let
+        [raw : i64 (array-ref defs.dense var)]
+        [cnt : i64 (bit-and raw opt-load-header-def-count-mask)]
+        [next-cnt : i64
+          (if (< cnt 2)
+            (+ cnt 1)
+            cnt)]
+        (set!
+          (array-ref defs.dense var)
+          (bit-or (bit-and raw opt-load-header-addr-taken-bit) next-cnt))))
+    (let
+      [raw : i64
+        (match (opt_i64_i64_map.get (& defs.sparse) var)
+          [(LookupFound v) v]
+          [(LookupMissing) 0])]
+      [cnt : i64 (bit-and raw opt-load-header-def-count-mask)]
+      [next-cnt : i64
+        (if (< cnt 2)
+          (+ cnt 1)
+          cnt)]
       (opt_i64_i64_map.insert-ref!
-        masks
+        (&mut defs.sparse)
         var
-        (if (> mask 0)
-          mask
-          (- 0 1)))]
-    [(LookupFound _) (opt_i64_i64_map.insert-ref! masks var (- 0 1))]))
+        (bit-or (bit-and raw opt-load-header-addr-taken-bit) next-cnt)))))
 
-(defstruct OptLoadHeaderMasks
-  (nominal opt_i64_i64_map.Map)
-  (direct-addr opt_i64_i64_map.Map))
+(define (opt-load-header-defs-mark-addr-taken!
+  [defs : (&mut OptLoadHeaderDefs)]
+  [var : i64]) : unit
+  (if defs.dense?
+    (when
+      (and (>= var 0) (< var (array-length defs.dense)))
+      (set!
+        (array-ref defs.dense var)
+        (bit-or (array-ref defs.dense var) opt-load-header-addr-taken-bit)))
+    (let
+      [raw : i64
+        (match (opt_i64_i64_map.get (& defs.sparse) var)
+          [(LookupFound v) v]
+          [(LookupMissing) 0])]
+      (opt_i64_i64_map.insert-ref!
+        (&mut defs.sparse)
+        var
+        (bit-or raw opt-load-header-addr-taken-bit)))))
 
-(define (opt-load-header-nominal-masks-add-instr!
-  [type-segment-bases : i64]
-  [has-nominal-masks? : bool]
-  [alloc-direct : (&mut alloc-direct opt_i64_i64_map.Map)]
-  [alloc-masks : (&mut alloc-masks opt_i64_i64_map.Map)]
-  [direct-addr : (&mut direct-addr opt_i64_i64_map.Map)]
-  [masks : (&mut masks opt_i64_i64_map.Map)]
-  [instr : (& ir.CompilerIrInstr)]) : unit
-  (match instr
-    [(or (Mov dst _ ty) (Load dst _ ty) (Call dst _ _ ty)
-         (CallIndirect dst _ _ ty) (CallIndirectC dst _ _ ty) (Phi dst _ ty)
-         (Cast dst _ _ ty) (Bitcast dst _ _ ty) (Pack dst _ ty))
-      (when
-        has-nominal-masks?
-        (opt-load-header-nominal-masks-record!
-          masks
-          dst
-          (opt-licm-nominal-header-mask type-segment-bases (& ty))))
-      (opt-load-header-nominal-masks-record! direct-addr dst 0)]
-    [(Alloc dst ty)
-      (let
-        [direct? : bool (opt-licm-array-header-type? type-segment-bases (& ty))]
-        [mask : i64
-          (if direct?
-            1
-            (if has-nominal-masks?
-              (opt-licm-nominal-header-mask type-segment-bases (& ty))
-              0))]
-        (opt-load-header-nominal-masks-record!
-          alloc-direct
-          dst
-          (if direct?
-            1
-            0))
-        (opt-load-header-nominal-masks-record! alloc-masks dst mask)
-        (opt-load-header-nominal-masks-record! direct-addr dst 0)
-        (opt-load-header-nominal-masks-record! masks dst 0))]
-    [(AddrOf dst src _)
-      (let
-        [is-direct : i64
-          (match (opt_i64_i64_map.get (& alloc-direct) src)
-            [(LookupFound v)
-              (if (> v 0)
-                1
-                0)]
-            [(LookupMissing) 0])]
-        [alloc-mask : i64
-          (match (opt_i64_i64_map.get (& alloc-masks) src)
-            [(LookupFound mask)
-              (if (> mask 0)
-                mask
-                0)]
-            [(LookupMissing) 0])]
-        (opt-load-header-nominal-masks-record! direct-addr dst is-direct)
-        (opt-load-header-nominal-masks-record! direct-addr src 0)
-        (opt-load-header-nominal-masks-record! masks dst alloc-mask)
-        (opt-load-header-nominal-masks-record! masks src 0))]
-    [(Gep dst base offset _)
-      (let
-        [mask : i64
-          (match (& offset)
-            [(I64 0)
-              (match (& base)
-                [(Var base-var)
-                  (match (opt_i64_i64_map.get (& masks) base-var)
-                    [(LookupFound m)
-                      (if (> m 0)
-                        m
-                        0)]
-                    [(LookupMissing) 0])]
-                [(or (Global g) (GlobalAddr g))
-                  (opt-licm-global-header-mask (ir.compiler-ir-symbol-id g))]
-                [_ 0])]
-            [_ 0])]
-        (opt-load-header-nominal-masks-record! direct-addr dst 0)
-        (opt-load-header-nominal-masks-record! masks dst mask))]
-    [_
-      (match (opt-instr-def-var instr)
-        [(Some dst)
-          (opt-load-header-nominal-masks-record! direct-addr dst 0)
-          (opt-load-header-nominal-masks-record! masks dst 0)]
-        [(None) unit])]))
+(define (opt-load-header-defs-single-stable?
+  [defs : (& OptLoadHeaderDefs)]
+  [var : i64]) : bool
+  (= (opt-load-header-defs-raw defs var) 1))
 
-(define (opt-load-header-nominal-masks-add-instr-seq!
-  [type-segment-bases : i64]
-  [has-nominal-masks? : bool]
-  [alloc-direct : (&mut alloc-direct opt_i64_i64_map.Map)]
-  [alloc-masks : (&mut alloc-masks opt_i64_i64_map.Map)]
-  [direct-addr : (&mut direct-addr opt_i64_i64_map.Map)]
-  [masks : (&mut masks opt_i64_i64_map.Map)]
-  [instrs : (& ir.CompilerIrInstrSeq)]) : unit
+(define (opt-load-header-defs-single-def?
+  [defs : (& OptLoadHeaderDefs)]
+  [var : i64]) : bool
+  (=
+    (bit-and (opt-load-header-defs-raw defs var) opt-load-header-def-count-mask)
+    1))
+
+;; Flat packed deferred propagation records collected during the single walk so
+;; `AddrOf`, `Gep dst (Var base) off`, and `Word dst (Var src)` only propagate
+;; after every definition in the function (including pre-SSA loop-latch defs)
+;; has been counted.
+;; Each record is 4 i64s: `(kind, dst, src/base, byte-off)`:
+;;   kind 1 = AddrOf dst src 0
+;;   kind 2 = Gep dst base byte-off
+;;   kind 3 = Word dst src 0
+(defstruct OptLoadHeaderDeferred
+  (items (__tl_dyn-array i64))
+  (len i64))
+
+(define (opt-load-header-deferred-empty) : OptLoadHeaderDeferred
+  (OptLoadHeaderDeferred (__tl_make-array i64 0) 0))
+
+(define (opt-load-header-deferred-push!
+  [deferred : (&mut OptLoadHeaderDeferred)]
+  [kind : i64]
+  [dst : i64]
+  [src : i64]
+  [extra : i64]) : unit
   (let
-    [icount : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    (for [ii (iterator.range 0 icount)]
-      (opt-load-header-nominal-masks-add-instr!
-        type-segment-bases
-        has-nominal-masks?
-        alloc-direct
-        alloc-masks
-        direct-addr
-        masks
-        (ir.compiler-ir-instr-seq-borrow instrs ii)))))
+    [len : i64 deferred.len]
+    [cap : i64 (array-length deferred.items)]
+    (when
+      (> (+ len 4) cap)
+      (let
+        [next-cap : i64
+          (if (= cap 0)
+            32
+            (* cap 2))]
+        [next : (__tl_dyn-array i64) (__tl_make-array i64 next-cap)]
+        (for [i (iterator.range 0 len)]
+          (set! (array-ref next i) (array-ref deferred.items i)))
+        (set! deferred.items next)))
+    (set! (array-ref deferred.items len) kind)
+    (set! (array-ref deferred.items (+ len 1)) dst)
+    (set! (array-ref deferred.items (+ len 2)) src)
+    (set! (array-ref deferred.items (+ len 3)) extra)
+    (set! deferred.len (+ len 4))))
 
-(define (opt-load-header-nominal-masks-add-block-seq!
-  [type-segment-bases : i64]
-  [has-nominal-masks? : bool]
-  [alloc-direct : (&mut alloc-direct opt_i64_i64_map.Map)]
-  [alloc-masks : (&mut alloc-masks opt_i64_i64_map.Map)]
-  [direct-addr : (&mut direct-addr opt_i64_i64_map.Map)]
-  [masks : (&mut masks opt_i64_i64_map.Map)]
-  [blocks : (& ir.CompilerIrBlockSeq)]) : unit
-  (let
-    [bcount : i64 (ir.compiler-ir-block-seq-count blocks)]
-    (for [bi (iterator.range 0 bcount)]
-      (match (ir.compiler-ir-block-seq-borrow blocks bi)
-        [(Block _ instrs)
-          (opt-load-header-nominal-masks-add-instr-seq!
-            type-segment-bases
-            has-nominal-masks?
-            alloc-direct
-            alloc-masks
-            direct-addr
-            masks
-            (& instrs))]))))
+(define (opt-load-header-map-get [map : (& opt_i64_i64_map.Map)] [key : i64]) : i64
+  (match (opt_i64_i64_map.get map key)
+    [(LookupFound v) v]
+    [(LookupMissing) 0]))
 
-(define (opt-load-header-nominal-masks-from-function
+;; Single-walk builder for `OptLoadHeaderSet` merging direct type classification,
+;; `Alloc`/`AddrOf` header propagation, and nominal struct header masks into one
+;; pass over params and blocks, followed by a tiny post-walk resolution over only
+;; the deferred `AddrOf`/`Gep`/`Word` records once full-function def counts are
+;; known (sound even on pre-SSA IR with loop-latch redefinitions).
+(define (opt-load-header-set-build
   [type-segment-bases : i64]
   [params : (& ir.CompilerIrParamSeq)]
-  [blocks : (& ir.CompilerIrBlockList)]) : OptLoadHeaderMasks
+  [blocks : (& ir.CompilerIrBlockList)]
+  [frame : i64]) : OptLoadHeaderSet
   (let
     [has-nominal-masks? : bool
       (ir.compiler-ir-representation-index-has-header-masks?
         (& opt-licm-deref-representations))]
+    [work : OptLoadHeaderSet
+      (if (>= frame 0)
+        (opt-load-header-set-with-size frame)
+        (opt-load-header-set-empty))]
+    [defs : OptLoadHeaderDefs (opt-load-header-defs-for-frame frame)]
     [alloc-direct : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
     [alloc-masks : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
-    [direct-addr : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
+    [alloc-free-masks : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
     [masks : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
-    (when
-      has-nominal-masks?
-      (let
-        [param-count : i64 (ir.compiler-ir-param-seq-count params)]
-        (for [i (iterator.range 0 param-count)]
-          (match (ir.compiler-ir-param-seq-borrow params i)
-            [(Param _ ty var)
-              (opt-load-header-nominal-masks-record!
-                (&mut masks)
-                var
-                (opt-licm-nominal-header-mask type-segment-bases (& ty)))]))))
+    [free-masks : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
+    [deferred : OptLoadHeaderDeferred (opt-load-header-deferred-empty)]
+    [pcount : i64 (ir.compiler-ir-param-seq-count params)]
+    (for [pi (iterator.range 0 pcount)]
+      (match (ir.compiler-ir-param-seq-borrow params pi)
+        [(Param _ ty var)
+          (opt-load-header-defs-add-def! (&mut defs) var)
+          (let
+            [slice-code : i64
+              (opt-load-slice-param-code type-segment-bases (& ty))]
+            (if (> slice-code 0)
+              (set! work (opt-load-header-set-mark-code work var slice-code))
+              (let
+                [hcode : i64
+                  (opt-load-header-param-code type-segment-bases (& ty))]
+                (set!
+                  work
+                  (opt-load-header-set-mark-code
+                    work
+                    var
+                    (if (> hcode 0)
+                      hcode
+                      2))))))
+          (when
+            has-nominal-masks?
+            (let
+              [m : i64 (opt-licm-nominal-header-mask type-segment-bases (& ty))]
+              (when
+                (> m 0)
+                (opt_i64_i64_map.insert-ref! (&mut masks) var m)
+                (let
+                  [fm : i64
+                    (opt-licm-nominal-header-free-mask
+                      type-segment-bases
+                      (& ty))]
+                  (when
+                    (> fm 0)
+                    (opt_i64_i64_map.insert-ref! (&mut free-masks) var fm))))))]))
     (match blocks
       [(Array seq)
-        (opt-load-header-nominal-masks-add-block-seq!
-          type-segment-bases
-          has-nominal-masks?
-          (&mut alloc-direct)
-          (&mut alloc-masks)
-          (&mut direct-addr)
-          (&mut masks)
-          (& seq))])
-    (OptLoadHeaderMasks masks direct-addr)))
-
-(define (opt-load-header-inline-gep?
-  [type-segment-bases : i64]
-  [masks : (& masks opt_i64_i64_map.Map)]
-  [base : (& ir.CompilerIrValue)]
-  [offset : (& ir.CompilerIrValue)]
-  [gep-ty : (& ast.AstType)]) : bool
-  (match base
-    [(Var base-var)
-      (match (opt_i64_i64_map.get masks base-var)
-        [(LookupFound mask)
-          (and
-            (> mask 0)
-            (opt-licm-mask-has-byte-offset?
-              mask
-              (opt-licm-gep-byte-offset type-segment-bases offset gep-ty)))]
-        [(LookupMissing) false])]
-    [(or (Global g) (GlobalAddr g))
-      (opt-licm-global-struct-header-at-offset?
-        type-segment-bases
-        (ir.compiler-ir-symbol-id g)
-        offset
-        gep-ty)]
-    [_ false]))
-
-;; Defs with a declared result type mark it; every OTHER defining instruction
-;; poisons its dst (its handle-ness is unknown).
-(define (opt-load-header-set-add-instr
-  [type-segment-bases : i64]
-  [masks : (& masks OptLoadHeaderMasks)]
-  [set : OptLoadHeaderSet]
-  [instr : (& ir.CompilerIrInstr)]) : OptLoadHeaderSet
-  (match instr
-    [(or (Mov dst _ ty) (Load dst _ ty) (Call dst _ _ ty)
-         (CallIndirect dst _ _ ty) (CallIndirectC dst _ _ ty) (Phi dst _ ty)
-         (Cast dst _ _ ty) (Bitcast dst _ _ ty) (Pack dst _ ty))
-      (if (opt-load-slice-param-type? type-segment-bases (& ty))
-        (opt-load-header-set-mark-code set dst 3)
-        (opt-load-header-set-mark
-          set
-          dst
-          (opt-load-header-param-type? type-segment-bases (& ty))))]
-    [(Gep dst base offset gep-ty)
+        (let
+          [bcount : i64 (ir.compiler-ir-block-seq-count (& seq))]
+          (for [bi (iterator.range 0 bcount)]
+            (match (ir.compiler-ir-block-seq-borrow seq bi)
+              [(Block _ instrs)
+                (let
+                  [icount : i64 (ir.compiler-ir-instr-seq-count (& instrs))]
+                  (for [ii (iterator.range 0 icount)]
+                    (match (ir.compiler-ir-instr-seq-borrow instrs ii)
+                      [(or (Mov dst _ ty) (Load dst _ ty) (Call dst _ _ ty)
+                           (CallIndirect dst _ _ ty) (CallIndirectC dst _ _ ty)
+                           (Phi dst _ ty) (Cast dst _ _ ty) (Bitcast dst _ _ ty)
+                           (Pack dst _ ty))
+                        (opt-load-header-defs-add-def! (&mut defs) dst)
+                        (let
+                          [slice-code : i64
+                            (opt-load-slice-param-code
+                              type-segment-bases
+                              (& ty))]
+                          (if (> slice-code 0)
+                            (set!
+                              work
+                              (opt-load-header-set-mark-code
+                                work
+                                dst
+                                slice-code))
+                            (let
+                              [hcode : i64
+                                (opt-load-header-param-code
+                                  type-segment-bases
+                                  (& ty))]
+                              (set!
+                                work
+                                (opt-load-header-set-mark-code
+                                  work
+                                  dst
+                                  (if (> hcode 0)
+                                    hcode
+                                    2))))))
+                        (when
+                          has-nominal-masks?
+                          (let
+                            [m : i64
+                              (opt-licm-nominal-header-mask
+                                type-segment-bases
+                                (& ty))]
+                            (when
+                              (> m 0)
+                              (opt_i64_i64_map.insert-ref! (&mut masks) dst m)
+                              (let
+                                [fm : i64
+                                  (opt-licm-nominal-header-free-mask
+                                    type-segment-bases
+                                    (& ty))]
+                                (when
+                                  (> fm 0)
+                                  (opt_i64_i64_map.insert-ref!
+                                    (&mut free-masks)
+                                    dst
+                                    fm))))))]
+                      [(Alloc dst ty)
+                        (opt-load-header-defs-add-def! (&mut defs) dst)
+                        (set! work (opt-load-header-set-mark-code work dst 2))
+                        (if (opt-licm-array-header-type?
+                          type-segment-bases
+                          (& ty))
+                          (let
+                            [hf? : bool
+                              (opt-licm-array-header-free-type?
+                                type-segment-bases
+                                (& ty))]
+                            (opt_i64_i64_map.insert-ref!
+                              (&mut alloc-direct)
+                              dst
+                              (if hf?
+                                6
+                                1))
+                            (opt_i64_i64_map.insert-ref!
+                              (&mut alloc-masks)
+                              dst
+                              1)
+                            (when
+                              hf?
+                              (opt_i64_i64_map.insert-ref!
+                                (&mut alloc-free-masks)
+                                dst
+                                1)))
+                          (when
+                            has-nominal-masks?
+                            (let
+                              [m : i64
+                                (opt-licm-nominal-header-mask
+                                  type-segment-bases
+                                  (& ty))]
+                              (when
+                                (> m 0)
+                                (opt_i64_i64_map.insert-ref!
+                                  (&mut alloc-masks)
+                                  dst
+                                  m)
+                                (let
+                                  [fm : i64
+                                    (opt-licm-nominal-header-free-mask
+                                      type-segment-bases
+                                      (& ty))]
+                                  (when
+                                    (> fm 0)
+                                    (opt_i64_i64_map.insert-ref!
+                                      (&mut alloc-free-masks)
+                                      dst
+                                      fm)))))))]
+                      [(AddrOf dst src _)
+                        (opt-load-header-defs-add-def! (&mut defs) dst)
+                        (opt-load-header-defs-mark-addr-taken! (&mut defs) src)
+                        (set! work (opt-load-header-set-mark-unstable work src))
+                        (opt-load-header-deferred-push!
+                          (&mut deferred)
+                          1
+                          dst
+                          src
+                          0)]
+                      [(Gep dst base offset gep-ty)
+                        (opt-load-header-defs-add-def! (&mut defs) dst)
+                        (match (& base)
+                          [(or (Global g) (GlobalAddr g))
+                            (let
+                              [gid : i64 (ir.compiler-ir-symbol-id g)]
+                              [byte-off : i64
+                                (opt-licm-gep-byte-offset
+                                  type-segment-bases
+                                  (& offset)
+                                  (& gep-ty))]
+                              [gm : i64 (opt-licm-global-header-mask gid)]
+                              [gfm : i64 (opt-licm-global-header-free-mask gid)]
+                              (if (and
+                                (> gm 0)
+                                (opt-licm-mask-has-byte-offset? gm byte-off))
+                                (set!
+                                  work
+                                  (opt-load-header-set-mark-code
+                                    work
+                                    dst
+                                    (if (opt-licm-mask-has-byte-offset?
+                                      gfm
+                                      byte-off)
+                                      6
+                                      1)))
+                                (set!
+                                  work
+                                  (opt-load-header-set-mark-code work dst 2)))
+                              (when
+                                (and (= byte-off 0) (> gm 0))
+                                (opt_i64_i64_map.insert-ref!
+                                  (&mut masks)
+                                  dst
+                                  gm)
+                                (when
+                                  (> gfm 0)
+                                  (opt_i64_i64_map.insert-ref!
+                                    (&mut free-masks)
+                                    dst
+                                    gfm))))]
+                          [(Var base-var)
+                            (let
+                              [byte-off : i64
+                                (opt-licm-gep-byte-offset
+                                  type-segment-bases
+                                  (& offset)
+                                  (& gep-ty))]
+                              (if (>= byte-off 0)
+                                (opt-load-header-deferred-push!
+                                  (&mut deferred)
+                                  2
+                                  dst
+                                  base-var
+                                  byte-off)
+                                (set!
+                                  work
+                                  (opt-load-header-set-mark-code work dst 2))))]
+                          [_
+                            (set!
+                              work
+                              (opt-load-header-set-mark-code work dst 2))])]
+                      [(Word dst source _ _)
+                        (opt-load-header-defs-add-def! (&mut defs) dst)
+                        (match (& source)
+                          [(Var source-var)
+                            (opt-load-header-deferred-push!
+                              (&mut deferred)
+                              3
+                              dst
+                              source-var
+                              0)]
+                          [_
+                            (set!
+                              work
+                              (opt-load-header-set-mark-code work dst 2))])]
+                      [_
+                        (match (opt-instr-def-var
+                          (ir.compiler-ir-instr-seq-borrow instrs ii))
+                          [(Some dst)
+                            (opt-load-header-defs-add-def! (&mut defs) dst)
+                            (set!
+                              work
+                              (opt-load-header-set-mark-code work dst 2))]
+                          [(None) unit])])))])))])
+    (when
+      (> deferred.len 0)
+      ;; Step A: resolve single-def `AddrOf dst src` from single-def `Alloc src`.
       (let
-        [header? : bool
-          (or
-            (opt-load-header-inline-gep?
-              type-segment-bases
-              (& masks.nominal)
-              (& base)
-              (& offset)
-              (& gep-ty))
-            (and
-              (opt-licm-data-slot? (& offset) (& gep-ty))
-              (match (& base)
-                [(Var base-var)
-                  (and
-                    (opt-load-header-var? (& set) base-var)
-                    (not (opt-load-slice-var? (& set) base-var)))]
-                [_ false])))]
-        (opt-load-header-set-mark set dst header?))]
-    [(Word dst source _ _)
-      (match source
-        [(Var source-var)
-          (if (opt-load-slice-var? set source-var)
-            (opt-load-header-set-mark-code set dst 4)
-            (opt-load-header-set-mark set dst false))]
-        [_ (opt-load-header-set-mark set dst false)])]
-    [(AddrOf dst source _)
+        [at : i64 0]
+        (while (< at deferred.len)
+          (when
+            (= (array-ref deferred.items at) 1)
+            (let
+              [dst : i64 (array-ref deferred.items (+ at 1))]
+              [src : i64 (array-ref deferred.items (+ at 2))]
+              (if (and
+                (opt-load-header-defs-single-stable? (& defs) dst)
+                (opt-load-header-defs-single-def? (& defs) src))
+                (let
+                  [direct-code : i64
+                    (opt-load-header-map-get (& alloc-direct) src)]
+                  [am : i64 (opt-load-header-map-get (& alloc-masks) src)]
+                  [afm : i64 (opt-load-header-map-get (& alloc-free-masks) src)]
+                  (cond
+                    [(> direct-code 0)
+                      (set!
+                        work
+                        (opt-load-header-set-mark-code work dst direct-code))
+                      (opt_i64_i64_map.insert-ref! (&mut masks) dst 1)
+                      (when
+                        (= direct-code 6)
+                        (opt_i64_i64_map.insert-ref! (&mut free-masks) dst 1))]
+                    [(> am 0)
+                      (opt_i64_i64_map.insert-ref! (&mut masks) dst am)
+                      (when
+                        (> afm 0)
+                        (opt_i64_i64_map.insert-ref! (&mut free-masks) dst afm))
+                      (if (opt-licm-mask-has-byte-offset? am 0)
+                        (set!
+                          work
+                          (opt-load-header-set-mark-code
+                            work
+                            dst
+                            (if (opt-licm-mask-has-byte-offset? afm 0)
+                              6
+                              1)))
+                        (set! work (opt-load-header-set-mark-code work dst 2)))]
+                    [else
+                      (set! work (opt-load-header-set-mark-code work dst 2))]))
+                (set! work (opt-load-header-set-mark-code work dst 2)))))
+          (+= at 4)))
+      ;; Step B: resolve `Gep dst (Var base) byte-off` ONLY when both `dst` and
+      ;; `base` are single-def and non-address-taken across the entire function.
       (let
-        [direct-header? : bool
-          (or
-            (match (opt_i64_i64_map.get (& masks.direct-addr) dst)
-              [(LookupFound v) (> v 0)]
-              [(LookupMissing) false])
-            (match (opt_i64_i64_map.get (& masks.nominal) dst)
-              [(LookupFound m)
-                (and (> m 0) (opt-licm-mask-has-byte-offset? m 0))]
-              [(LookupMissing) false]))]
-        (opt-load-header-set-mark-unstable
-          (opt-load-header-set-mark set dst direct-header?)
-          source))]
-    [_
-      (match (opt-instr-def-var instr)
-        [(Some dst) (opt-load-header-set-mark set dst false)]
-        [(None) set])]))
-
-(define (opt-load-header-set-add-instr-seq-from
-  [type-segment-bases : i64]
-  [masks : (& masks OptLoadHeaderMasks)]
-  [instrs : (& ir.CompilerIrInstrSeq)]
-  [index : i64]
-  [set : OptLoadHeaderSet]) : OptLoadHeaderSet
-  (let
-    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    [work : OptLoadHeaderSet set]
-    (for [cursor (iterator.range index count)]
-      (set!
-        work
-        (opt-load-header-set-add-instr
-          type-segment-bases
-          masks
-          work
-          (ir.compiler-ir-instr-seq-borrow instrs cursor))))
+        [pass : i64 0]
+        [changed? : bool true]
+        (while (and changed? (< pass 4))
+          (set! changed? false)
+          (let
+            [at : i64 0]
+            (while (< at deferred.len)
+              (when
+                (= (array-ref deferred.items at) 2)
+                (let
+                  [dst : i64 (array-ref deferred.items (+ at 1))]
+                  [base-var : i64 (array-ref deferred.items (+ at 2))]
+                  [byte-off : i64 (array-ref deferred.items (+ at 3))]
+                  (when
+                    (and
+                      (opt-load-header-defs-single-stable? (& defs) dst)
+                      (opt-load-header-defs-single-stable? (& defs) base-var))
+                    (let
+                      [bm : i64 (opt-load-header-map-get (& masks) base-var)]
+                      [bfm : i64
+                        (opt-load-header-map-get (& free-masks) base-var)]
+                      (if (> bm 0)
+                        (begin
+                          (when
+                            (and
+                              (= byte-off 0)
+                              (!= (opt-load-header-map-get (& masks) dst) bm))
+                            (opt_i64_i64_map.insert-ref! (&mut masks) dst bm)
+                            (when
+                              (> bfm 0)
+                              (opt_i64_i64_map.insert-ref!
+                                (&mut free-masks)
+                                dst
+                                bfm))
+                            (set! changed? true))
+                          (when
+                            (and
+                              (opt-licm-mask-has-byte-offset? bm byte-off)
+                              (not (opt-load-header-var? (& work) dst)))
+                            (set!
+                              work
+                              (opt-load-header-set-mark-code
+                                work
+                                dst
+                                (if (opt-licm-mask-has-byte-offset?
+                                  bfm
+                                  byte-off)
+                                  6
+                                  1)))
+                            (set! changed? true)))
+                        (when
+                          (= byte-off 0)
+                          (let
+                            [bcode : i64
+                              (opt-load-header-set-code (& work) base-var)]
+                            (when
+                              (and
+                                (or (= bcode 1) (= bcode 6))
+                                (not (opt-load-header-var? (& work) dst)))
+                              (set!
+                                work
+                                (opt-load-header-set-mark-code work dst bcode))
+                              (set! changed? true)))))))))
+              (+= at 4)))
+          (+= pass 1)))
+      ;; Step C: resolve `Word dst (Var src)` from single-def slice vars.
+      (let
+        [at : i64 0]
+        (while (< at deferred.len)
+          (when
+            (= (array-ref deferred.items at) 3)
+            (let
+              [dst : i64 (array-ref deferred.items (+ at 1))]
+              [src : i64 (array-ref deferred.items (+ at 2))]
+              (if (and
+                (opt-load-header-defs-single-stable? (& defs) dst)
+                (opt-load-header-defs-single-stable? (& defs) src)
+                (opt-load-slice-var? (& work) src))
+                (set! work (opt-load-header-set-mark-code work dst 4))
+                (set! work (opt-load-header-set-mark-code work dst 2)))))
+          (+= at 4))))
     work))
-
-(define (opt-load-header-set-add-block-seq
-  [type-segment-bases : i64]
-  [masks : (& masks OptLoadHeaderMasks)]
-  [blocks : (& ir.CompilerIrBlockSeq)]
-  [set : OptLoadHeaderSet]) : OptLoadHeaderSet
-  (let
-    [count : i64 (ir.compiler-ir-block-seq-count blocks)]
-    [work : OptLoadHeaderSet set]
-    (for [index (iterator.range 0 count)]
-      (match (ir.compiler-ir-block-seq-borrow blocks index)
-        [(Block _ instrs)
-          (set!
-            work
-            (opt-load-header-set-add-instr-seq-from
-              type-segment-bases
-              masks
-              (& instrs)
-              0
-              work))]))
-    work))
-
-(define (opt-load-header-set-add-blocks
-  [type-segment-bases : i64]
-  [masks : (& masks OptLoadHeaderMasks)]
-  [blocks : (& ir.CompilerIrBlockList)]
-  [set : OptLoadHeaderSet]) : OptLoadHeaderSet
-  (match blocks
-    [(Array seq)
-      (opt-load-header-set-add-block-seq type-segment-bases masks (& seq) set)]))
 
 (define (opt-load-header-set-from-function
   [type-segment-bases : i64]
   [params : (& ir.CompilerIrParamSeq)]
   [blocks : (& blocks ir.CompilerIrBlockList)]) : OptLoadHeaderSet
-  (let
-    [masks : OptLoadHeaderMasks
-      (opt-load-header-nominal-masks-from-function
-        type-segment-bases
-        params
-        blocks)]
-    (opt-load-header-set-add-blocks
-      type-segment-bases
-      (& masks)
-      blocks
-      (opt-load-header-set-add-params
-        type-segment-bases
-        params
-        (opt-load-header-set-empty)))))
+  (opt-load-header-set-build type-segment-bases params blocks (- 0 1)))
 
 (define (opt-load-header-set-from-function-with-size
   [type-segment-bases : i64]
   [params : (& ir.CompilerIrParamSeq)]
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [frame : i64]) : OptLoadHeaderSet
-  (let
-    [masks : OptLoadHeaderMasks
-      (opt-load-header-nominal-masks-from-function
-        type-segment-bases
-        params
-        blocks)]
-    (opt-load-header-set-add-blocks
-      type-segment-bases
-      (& masks)
-      blocks
-      (opt-load-header-set-add-params
-        type-segment-bases
-        params
-        (opt-load-header-set-with-size frame)))))
+  (opt-load-header-set-build type-segment-bases params blocks frame))
 
 ;; GDP-1: a gep at offset 0 off a HEADER-TYPED GLOBAL's handle -- `gep (Global g)
 ;; 0`, the form every `(array-ref g i)` on a global array takes -- is the
@@ -127205,33 +127675,44 @@
           (set! (array-ref items var) code)
           set))]))
 
-(define (opt-load-header-global-handle-gep?
+(define (opt-load-header-global-handle-gep-code
   [type-segment-bases : i64]
   [cells : (& cells OptGlobalCellSummary)]
   [sources : (& sources OptValueSources)]
   [dst : i64]
   [base : (& ir.CompilerIrValue)]
   [offset : (& ir.CompilerIrValue)]
-  [gep-ty : (& ast.AstType)]) : bool
+  [gep-ty : (& ast.AstType)]) : i64
   (match base
     [(or (Global g) (GlobalAddr g))
-      (and
-        (opt-gvn-stable-var? sources dst)
+      (if (opt-gvn-stable-var? sources dst)
         (match (opt-global-cell-type-lookup cells g)
           [(Some ty)
-            (or
-              (and
-                (match offset
-                  [(I64 0) true]
-                  [_ false])
-                (opt-licm-global-header-type? type-segment-bases (& ty)))
-              (opt-licm-type-header-at-offset?
-                type-segment-bases
-                (& ty)
-                offset
-                gep-ty))]
-          [(No) false]))]
-    [_ false]))
+            (cond
+              [(and
+                  (match offset
+                    [(I64 0) true]
+                    [_ false])
+                  (opt-licm-global-header-type? type-segment-bases (& ty)))
+                (if (opt-licm-global-header-free-type?
+                  type-segment-bases
+                  (& ty))
+                  6
+                  1)]
+              [(opt-licm-type-header-at-offset?
+                  type-segment-bases
+                  (& ty)
+                  offset
+                  gep-ty)
+                (if (opt-licm-mask-has-byte-offset?
+                  (opt-licm-nominal-header-free-mask type-segment-bases (& ty))
+                  (opt-licm-gep-byte-offset type-segment-bases offset gep-ty))
+                  6
+                  1)]
+              [else 0])]
+          [(No) 0])
+        0)]
+    [_ 0]))
 
 (define (opt-load-header-set-mark-global-handles-seq-from
   [type-segment-bases : i64]
@@ -127246,16 +127727,19 @@
     (for [cursor (iterator.range index count)]
       (match (ir.compiler-ir-instr-seq-borrow instrs cursor)
         [(Gep dst base offset gep-ty)
-          (if (opt-load-header-global-handle-gep?
-            type-segment-bases
-            cells
-            sources
-            dst
-            (& base)
-            (& offset)
-            (& gep-ty))
-            (set! work (opt-load-header-set-put-code work dst 1))
-            unit)]
+          (let
+            [code : i64
+              (opt-load-header-global-handle-gep-code
+                type-segment-bases
+                cells
+                sources
+                dst
+                (& base)
+                (& offset)
+                (& gep-ty))]
+            (when
+              (> code 0)
+              (set! work (opt-load-header-set-put-code work dst code))))]
         [_ unit]))
     work))
 
@@ -127457,7 +127941,9 @@
 ;; it dies only when its var (or a referenced base var) is redefined.
 (defenum OptLoadLocKind
   (OptLoadLocUnknown)
-  (OptLoadLocElement)
+  ;; `header-free?` is true only when the element buffer provably cannot hold
+  ;; inline 16B DynArray descriptors (so element stores cannot alias header loads).
+  (OptLoadLocElement bool)
   (OptLoadLocField i64 i64 i64 bool)
   ;; A variable-index element pointer: base var, index var, element width,
   ;; header-typed base. Lets identical index geps of the same array share one
@@ -127479,12 +127965,16 @@
 (define opt-load-loc-field-width-limit : i64
   512)
 
-;; Encoding: 0 unknown, 1 element, field = 2 + h*4 + w*8 + off*4096 + B*2^32
-;; (always even), scaled-field = 3 + h*4 + w*8 + idx*4096 + B*2^32 (always odd).
+;; Encoding: 0 unknown, 1 element (may contain headers), 5 element (header-free),
+;; field = 2 + h*4 + w*8 + off*4096 + B*2^32 (always even, >= 10),
+;; scaled-field = 3 + h*4 + w*8 + idx*4096 + B*2^32 (always odd, >= 11).
 (define (opt-load-loc-kind-encode [kind : OptLoadLocKind]) : i64
   (match kind
     [(OptLoadLocUnknown) 0]
-    [(OptLoadLocElement) 1]
+    [(OptLoadLocElement header-free?)
+      (if header-free?
+        5
+        1)]
     [(OptLoadLocField base off width header?)
       (+
         2
@@ -127513,7 +128003,8 @@
 (define (opt-load-loc-kind-decode [value : i64]) : OptLoadLocKind
   (cond
     [(= value 0) (OptLoadLocUnknown)]
-    [(= value 1) (OptLoadLocElement)]
+    [(= value 1) (OptLoadLocElement false)]
+    [(= value 5) (OptLoadLocElement true)]
     [(= (% value 2) 1)
       (OptLoadLocScaledField
         (/ value opt-load-loc-kind-base-scale)
@@ -127675,7 +128166,7 @@
   [kinds : (& OptLoadPtrKinds)]
   [base : i64]) : bool
   (match (opt-load-kinds-lookup kinds base)
-    [(OptLoadLocElement) true]
+    [(OptLoadLocElement _) true]
     [_ false]))
 
 (define (opt-load-kinds-ref-add!
@@ -127966,7 +128457,7 @@
     (opt-gvn-stable-var? sources var)
     (match kind
       [(OptLoadLocUnknown) false]
-      [(OptLoadLocElement) true]
+      [(OptLoadLocElement _) true]
       [(OptLoadLocField base _ _ _) (opt-gvn-stable-var? sources base)]
       [(OptLoadLocScaledField base index _ _)
         (and
@@ -128117,7 +128608,7 @@
         (match base
           [(Var bvar)
             (match (opt-load-kinds-lookup (& invalidated) bvar)
-              [(OptLoadLocElement)
+              [(OptLoadLocElement header-free?)
                 (match offset
                   ;; A variable index into an element base yields a scaled
                   ;; element pointer, so identical index geps of the same
@@ -128138,7 +128629,7 @@
                       profile-state
                       invalidated
                       dst
-                      (OptLoadLocElement))])]
+                      (OptLoadLocElement header-free?))])]
               [(OptLoadLocField b0 o0 _ h0)
                 (match offset
                   [(I64 k)
@@ -128203,39 +128694,58 @@
                         invalidated))]
                   [_ invalidated])]
               [(OptLoadLocScaledField sbase sindex swidth sheader?)
-                (if (opt-load-kinds-scaled-element-base? (& invalidated) sbase)
-                  (opt-load-kinds-bind
-                    profile-state
-                    invalidated
-                    dst
-                    (OptLoadLocElement))
-                  (match offset
-                    [(I64 k)
-                      (if (= k 0)
-                        (opt-load-kinds-bind
-                          profile-state
-                          invalidated
-                          dst
-                          (OptLoadLocScaledField sbase sindex swidth sheader?))
-                        invalidated)]
-                    [_ invalidated]))])]
+                (match (opt-load-kinds-lookup (& invalidated) sbase)
+                  [(OptLoadLocElement header-free?)
+                    (opt-load-kinds-bind
+                      profile-state
+                      invalidated
+                      dst
+                      (OptLoadLocElement header-free?))]
+                  [_
+                    (match offset
+                      [(I64 k)
+                        (if (= k 0)
+                          (opt-load-kinds-bind
+                            profile-state
+                            invalidated
+                            dst
+                            (OptLoadLocScaledField sbase sindex swidth sheader?))
+                          invalidated)]
+                      [_ invalidated])])])]
           [_ invalidated])]
       [(Load dst src ty)
         (match src
           [(Var p)
             (let
-              [header-word0? : bool
+              ;; 0 = not header word 0, 1 = header word 0 (may hold headers),
+              ;; 2 = header word 0 (provably header-free buffer).
+              [header-word0-code : i64
                 (match (opt-load-kinds-lookup (& invalidated) p)
-                  [(OptLoadLocField _ off _ header?) (and header? (= off 0))]
-                  [_ (opt-load-header-var? hs p)])]
+                  [(OptLoadLocField b0 off _ header?)
+                    (cond
+                      [(and header? (= off 0))
+                        (if (opt-load-header-free-var? hs b0)
+                          2
+                          1)]
+                      [(opt-load-header-var? hs p)
+                        (if (opt-load-header-free-var? hs p)
+                          2
+                          1)]
+                      [else 0])]
+                  [_
+                    (if (opt-load-header-var? hs p)
+                      (if (opt-load-header-free-var? hs p)
+                        2
+                        1)
+                      0)])]
               (if (and
-                header-word0?
+                (> header-word0-code 0)
                 (= (opt-load-loc-type-size type-segment-bases (& ty)) 8))
                 (opt-load-kinds-bind
                   profile-state
                   invalidated
                   dst
-                  (OptLoadLocElement))
+                  (OptLoadLocElement (= header-word0-code 2)))
                 invalidated))]
           [_ invalidated])]
       [(Word dst src index ty)
@@ -128249,7 +128759,8 @@
                 profile-state
                 invalidated
                 dst
-                (OptLoadLocElement))
+                (OptLoadLocElement
+                  (opt-load-slice-header-free-var? hs source-var)))
               invalidated)]
           [_ invalidated])]
       [(Mov dst src _)
@@ -128610,9 +129121,11 @@
           [(None) bases]))]))
 
 ;; How a classified store writes memory (Unknown clears the whole table).
+;; `OptLoadStoreElement ty header-free?`: `header-free?` is true only when the
+;; destination element buffer provably cannot hold inline 16B DynArray headers.
 (defenum OptLoadStoreClass
   (OptLoadStoreUnknown)
-  (OptLoadStoreElement ast.AstType)
+  (OptLoadStoreElement ast.AstType bool)
   (OptLoadStoreField i64 i64 i64 bool ast.AstType)
   (OptLoadStoreObject i64 ast.AstType))
 
@@ -128718,7 +129231,8 @@
             scale
             ty
             header?)]
-        [(OptLoadLocElement) (Raw (ir.compiler-ir-clone-value addr) ty true)]
+        [(OptLoadLocElement header-free?)
+          (Raw (ir.compiler-ir-clone-value addr) ty header-free?)]
         [(OptLoadLocUnknown)
           (match (opt-load-global-bases-lookup bases p)
             [(Some global off value-base?)
@@ -128959,11 +129473,11 @@
   [class : (& OptLoadStoreClass)]
   [entry : (& OptLoadEntry)]) : bool
   (match class
-    [(OptLoadStoreElement sty)
+    [(OptLoadStoreElement sty header-free?)
       (match (& entry.key)
         [(Field _ _ ety header?)
           (or
-            header?
+            (and header? header-free?)
             (opt-load-alias-classes-distinct?
               type-segment-bases
               (& sty)
@@ -129104,16 +129618,18 @@
     (match ptr
       [(Var p)
         (match (opt-load-kinds-lookup kinds p)
-          [(OptLoadLocElement) (OptLoadStoreElement ty)]
+          [(OptLoadLocElement header-free?)
+            (OptLoadStoreElement ty header-free?)]
           ;; A scaled element store writes data-buffer memory (base is the
           ;; loaded data pointer), exactly like an Element store: descriptor
-          ;; fields are provably outside it, so header-typed entries survive.
+          ;; fields are provably outside it only when the buffer is header-free.
           ;; A scaled store off an ordinary object base writes that object at
           ;; an offset nothing bounds.
           [(OptLoadLocScaledField base _ _ _)
-            (if (opt-load-kinds-scaled-element-base? kinds base)
-              (OptLoadStoreElement ty)
-              (OptLoadStoreObject base ty))]
+            (match (opt-load-kinds-lookup kinds base)
+              [(OptLoadLocElement header-free?)
+                (OptLoadStoreElement ty header-free?)]
+              [_ (OptLoadStoreObject base ty)])]
           [(OptLoadLocField base off _ header?)
             (OptLoadStoreField base off width header? ty)]
           [(OptLoadLocUnknown) (OptLoadStoreUnknown)])]
@@ -129170,13 +129686,13 @@
     ;; An Object access has no byte range, and only a same-base range test
     ;; ever separates two non-element accesses here.
     [(or (OptLoadStoreUnknown) (OptLoadStoreObject _ _)) false]
-    [(OptLoadStoreElement _)
+    [(OptLoadStoreElement _ header-free?)
       (match candidate
-        [(OptLoadStoreField _ _ _ header? _) header?]
+        [(OptLoadStoreField _ _ _ header? _) (and header? header-free?)]
         [_ false])]
     [(OptLoadStoreField abase aoff awidth aheader? _)
       (match candidate
-        [(OptLoadStoreElement _) aheader?]
+        [(OptLoadStoreElement _ header-free?) (and aheader? header-free?)]
         [(OptLoadStoreField bbase boff bwidth _ _)
           (and
             (= abase bbase)
@@ -129623,12 +130139,14 @@
   [table : (& OptLoadTable)]
   [facts : (& OptAliasFacts)]
   [class : i64]) : OptLoadTable
+  ;; Call-memory summaries only classify writes into provably header-free
+  ;; buffers (and never CopyBytes) as element-only, so `header-free?` is true.
   (opt-load-table-filter-store
     type-segment-bases
     table
     facts
     (NoRoot)
-    (& (OptLoadStoreElement (opt-load-alias-class-witness-type class)))))
+    (& (OptLoadStoreElement (opt-load-alias-class-witness-type class) true))))
 
 (define (opt-load-entry-survives-global-writes?
   [index : (& index opt_i64_i64_map.Map)]
@@ -129941,7 +130459,7 @@
           ;; scalar element-store exemption keep `header?` or `GlobalField`
           ;; loads alive across it.
           (match (& class)
-            [(OptLoadStoreElement _) (OptLoadStoreUnknown)]
+            [(OptLoadStoreElement _ _) (OptLoadStoreUnknown)]
             [_ (opt-load-classify-store kinds dst size (U8))])]
         [filtered : OptLoadTable
           (opt-load-table-filter-store
@@ -129951,7 +130469,7 @@
             store-root
             (& filter-class))]
         (match class
-          [(or (OptLoadStoreUnknown) (OptLoadStoreElement _)
+          [(or (OptLoadStoreUnknown) (OptLoadStoreElement _ _)
                (OptLoadStoreObject _ _))
             (State
               facts2
@@ -133412,16 +133930,21 @@
 (define (opt-load-join-phi-kinds
   [type-segment-bases : i64]
   [profile-state : (& profile_state.CompilerProfileMetrics)]
+  [hs : (& hs OptLoadHeaderSet)]
   [kinds : OptLoadPtrKinds]
   [key : (& key OptLoadKey)]
   [fresh : i64]) : OptLoadPtrKinds
   (match key
-    [(Field _ off ty header?)
+    [(Field base off ty header?)
       (if (and
         header?
         (= off 0)
         (= (opt-load-loc-type-size type-segment-bases (& ty)) 8))
-        (opt-load-kinds-bind profile-state kinds fresh (OptLoadLocElement))
+        (opt-load-kinds-bind
+          profile-state
+          kinds
+          fresh
+          (OptLoadLocElement (opt-load-header-free-var? hs base)))
         kinds)]
     [_ kinds]))
 
@@ -133429,6 +133952,7 @@
 (define (opt-load-join-mint
   [type-segment-bases : i64]
   [index : (& index OptCfgIndex)]
+  [hs : (& hs OptLoadHeaderSet)]
   [exit-states : (& (__tl_dyn-array OptMaybeLoadCseState))]
   [joins : (&mut joins OptLoadJoinPhis)]
   [count : i64]
@@ -133463,6 +133987,7 @@
             (opt-load-join-phi-kinds
               type-segment-bases
               (& profile-state)
+              hs
               kinds
               key
               fresh)
@@ -133479,6 +134004,7 @@
 (define (opt-load-join-scan-table
   [type-segment-bases : i64]
   [index : (& index OptCfgIndex)]
+  [hs : (& hs OptLoadHeaderSet)]
   [sources : (& sources OptValueSources)]
   [exit-states : (& (__tl_dyn-array OptMaybeLoadCseState))]
   [joins : (&mut joins OptLoadJoinPhis)]
@@ -133520,6 +134046,7 @@
             (opt-load-join-mint
               type-segment-bases
               index
+              hs
               exit-states
               joins
               count
@@ -133533,6 +134060,7 @@
 (define (opt-load-join-augment
   [type-segment-bases : i64]
   [context : (& context OptCfgContext)]
+  [hs : (& hs OptLoadHeaderSet)]
   [sources : (& sources OptValueSources)]
   [exit-states : (& (__tl_dyn-array OptMaybeLoadCseState))]
   [processed : (& (__tl_dyn-array bool))]
@@ -133565,6 +134093,7 @@
                   (opt-load-join-scan-table
                     type-segment-bases
                     index
+                    hs
                     sources
                     exit-states
                     joins
@@ -136913,6 +137442,7 @@
       (opt-load-join-augment
         type-segment-bases
         context
+        hs
         sources
         exit-states
         processed

@@ -15488,6 +15488,7 @@
             -1)]
         [mask : i64 0]
         [header-mask : i64 0]
+        [header-free-mask : i64 0]
         ;; Publish no proof while recursively visiting this nominal identity.
         (ir.compiler-ir-representation-index-set-stable-mask! index key 0)
         (when
@@ -15505,6 +15506,23 @@
                   (& layout)
                   fuel))
               (set!
+                header-free-mask
+                (if (= header-mask 0)
+                  (if (lower-representation-layout-header-free?
+                    type-segment-bases
+                    state
+                    index
+                    (& layout)
+                    fuel)
+                    (- 0 1)
+                    0)
+                  (lower-representation-header-free-layout-mask
+                    type-segment-bases
+                    state
+                    index
+                    (& layout)
+                    fuel)))
+              (set!
                 mask
                 (lower-representation-stable-layout-mask
                   type-segment-bases
@@ -15520,7 +15538,225 @@
             index
             key
             header-mask))
+        (when
+          (not (= header-free-mask 0))
+          (ir.compiler-ir-representation-index-set-header-free-mask!
+            index
+            key
+            header-free-mask))
         mask))))
+
+(define (lower-representation-type-header-free?
+  [type-segment-bases : i64]
+  [state : tc_core.TcAggLayoutCacheState]
+  [index : (&mut index ir.CompilerIrRepresentationIndex)]
+  [ty : (& ast.AstType)]
+  [fuel : i64]) : bool
+  (if (<= fuel 0)
+    false
+    (match ty
+      [(or (ast.AstType.I64) (ast.AstType.I32) (ast.AstType.I16)
+           (ast.AstType.I8) (ast.AstType.U64) (ast.AstType.U32)
+           (ast.AstType.U16) (ast.AstType.U8) (ast.AstType.F64)
+           (ast.AstType.F32) (ast.AstType.Bool) (ast.AstType.Char)
+           (ast.AstType.Unit) (ast.AstType.Never) (ast.AstType.Box _)
+           (ast.AstType.Ptr _) (ast.AstType.MutPtr _) (ast.AstType.Ref _ _)
+           (ast.AstType.MutRef _ _) (ast.AstType.Func _ _)
+           (ast.AstType.CFunc _ _))
+        true]
+      [(or (ast.AstType.Region _ inner) (ast.AstType.Invalidate _ inner)
+           (ast.AstType.Array inner _))
+        (lower-representation-type-header-free?
+          type-segment-bases
+          state
+          index
+          (& (ast.ast-type-segment-bases-get type-segment-bases inner))
+          (- fuel 1))]
+      [(or (ast.AstType.Struct name) (ast.AstType.StructArgs name _)
+           (ast.AstType.Enum name) (ast.AstType.EnumArgs name _))
+        (let
+          [_stable : i64
+            (lower-representation-stable-nominal-mask
+              type-segment-bases
+              state
+              index
+              name
+              (- fuel 1))]
+          (=
+            (ir.compiler-ir-representation-index-header-free-mask
+              index
+              (ast.ast-nominal-name-id-key name))
+            (- 0 1)))]
+      [_ false])))
+
+(define (lower-representation-layout-header-free?
+  [type-segment-bases : i64]
+  [state : tc_core.TcAggLayoutCacheState]
+  [index : (&mut index ir.CompilerIrRepresentationIndex)]
+  [layout : (& layout tc_core.TcInlineAggregateLayout)]
+  [fuel : i64]) : bool
+  (if (<= fuel 0)
+    false
+    (match layout
+      [(Struct _ _ fields)
+        (let
+          [count : i64 (tc_core.tc-inline-field-layout-list-count (& fields))]
+          (for [at (iterator.range 0 count)]
+            (match (tc_core.tc-inline-field-layout-list-ref (& fields) at)
+              [(Field _ ty _)
+                (unless
+                  (lower-representation-type-header-free?
+                    type-segment-bases
+                    state
+                    index
+                    (& ty)
+                    (- fuel 1))
+                  (return false))]))
+          true)]
+      [(Enum _ _ variants)
+        (let
+          [vcount : i64
+            (tc_core.tc-inline-variant-layout-list-count (& variants))]
+          (for [vi (iterator.range 0 vcount)]
+            (match (tc_core.tc-inline-variant-layout-list-ref (& variants) vi)
+              [(Variant _ _ _ payloads)
+                (let
+                  [pcount : i64
+                    (tc_core.tc-inline-payload-layout-list-count (& payloads))]
+                  (for [pi (iterator.range 0 pcount)]
+                    (match (tc_core.tc-inline-payload-layout-list-ref
+                      (& payloads)
+                      pi)
+                      [(Payload _ ty _)
+                        (unless
+                          (lower-representation-type-header-free?
+                            type-segment-bases
+                            state
+                            index
+                            (& ty)
+                            (- fuel 1))
+                          (return false))])))]))
+          true)])))
+
+(define (lower-representation-header-free-type-mask
+  [type-segment-bases : i64]
+  [state : tc_core.TcAggLayoutCacheState]
+  [index : (&mut index ir.CompilerIrRepresentationIndex)]
+  [ty : (& ast.AstType)]
+  [fuel : i64]) : i64
+  (if (<= fuel 0)
+    0
+    (match ty
+      [(or (ast.AstType.Struct name) (ast.AstType.StructArgs name _)
+           (ast.AstType.Enum name) (ast.AstType.EnumArgs name _))
+        (let
+          [_stable : i64
+            (lower-representation-stable-nominal-mask
+              type-segment-bases
+              state
+              index
+              name
+              fuel)]
+          [m : i64
+            (ir.compiler-ir-representation-index-header-free-mask
+              index
+              (ast.ast-nominal-name-id-key name))]
+          (if (> m 0)
+            m
+            0))]
+      [(or (ast.AstType.Region _ inner) (ast.AstType.Invalidate _ inner))
+        (lower-representation-header-free-type-mask
+          type-segment-bases
+          state
+          index
+          (& (ast.ast-type-segment-bases-get type-segment-bases inner))
+          (- fuel 1))]
+      [(ast.AstType.DynArray elem)
+        (if (lower-representation-type-header-free?
+          type-segment-bases
+          state
+          index
+          (& (ast.ast-type-segment-bases-get type-segment-bases elem))
+          (- fuel 1))
+          1
+          0)]
+      [_ 0])))
+
+(define (lower-representation-header-free-field-mask
+  [type-segment-bases : i64]
+  [state : tc_core.TcAggLayoutCacheState]
+  [index : (&mut index ir.CompilerIrRepresentationIndex)]
+  [ty : (& ast.AstType)]
+  [offset : i64]
+  [fuel : i64]) : i64
+  (if (or (< offset 0) (>= offset 504) (not (= (% offset 8) 0)))
+    0
+    (shl
+      (lower-representation-header-free-type-mask
+        type-segment-bases
+        state
+        index
+        ty
+        fuel)
+      (/ offset 8))))
+
+(define (lower-representation-header-free-layout-mask
+  [type-segment-bases : i64]
+  [state : tc_core.TcAggLayoutCacheState]
+  [index : (&mut index ir.CompilerIrRepresentationIndex)]
+  [layout : (& layout tc_core.TcInlineAggregateLayout)]
+  [fuel : i64]) : i64
+  (if (or (<= fuel 0) (> (tc_core.tc-inline-aggregate-layout-size layout) 512))
+    0
+    (match layout
+      [(Struct _ _ fields)
+        (let
+          [mask : i64 0]
+          (for [at
+            (iterator.range
+              0
+              (tc_core.tc-inline-field-layout-list-count (& fields)))]
+            (match (tc_core.tc-inline-field-layout-list-ref (& fields) at)
+              [(Field _ ty offset)
+                (set!
+                  mask
+                  (bit-or
+                    mask
+                    (lower-representation-header-free-field-mask
+                      type-segment-bases
+                      state
+                      index
+                      (& ty)
+                      offset
+                      (- fuel 1))))]))
+          mask)]
+      [(Enum _ _ variants)
+        (let
+          [mask : i64 0]
+          (when
+            (= (tc_core.tc-inline-variant-layout-list-count (& variants)) 1)
+            (match (tc_core.tc-inline-variant-layout-list-ref (& variants) 0)
+              [(Variant _ _ _ payloads)
+                (for [at
+                  (iterator.range
+                    0
+                    (tc_core.tc-inline-payload-layout-list-count (& payloads)))]
+                  (match (tc_core.tc-inline-payload-layout-list-ref
+                    (& payloads)
+                    at)
+                    [(Payload _ ty offset)
+                      (set!
+                        mask
+                        (bit-or
+                          mask
+                          (lower-representation-header-free-field-mask
+                            type-segment-bases
+                            state
+                            index
+                            (& ty)
+                            offset
+                            (- fuel 1))))]))]))
+          mask)])))
 
 (define (lower-representation-header-type-mask
   [type-segment-bases : i64]
@@ -45457,6 +45693,27 @@
                           elem-ty
                           value-ir)])])]))])]))
 
+;; Unwrap any remaining `&mut` layers on a captured place before lowering the
+;; pushed value so `(__tl_array-push! h.r x)` and nested `&mut (&mut ...)` write
+;; to the target inline `DynArray` descriptor rather than the reference slot.
+(define (lower-store-place-unwrap-mut-refs
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [place : LowerStorePlace]
+  [origin : ast.AstExpr]) : ResultLowerStorePlace
+  (match (tc_core.tc-type-strip-region
+    (tc_core.tc-resolve-type ctx (ast.clone-ast-type (& place.ty))))
+    [(ast.AstType.MutRef _ _)
+      (match (lower-store-place-inline-root
+        ctx
+        state
+        place
+        (lower-clone-ast-expr (& origin)))
+        [(ResultLowerStorePlace.Ok next-state next-place)
+          (lower-store-place-unwrap-mut-refs ctx next-state next-place origin)]
+        [(ResultLowerStorePlace.Err error) (ResultLowerStorePlace.Err error)])]
+    [_ (ResultLowerStorePlace.Ok state place)]))
+
 ;; `(__tl_array-push! arr value)` -> allocate a new element buffer in the active
 ;; arena, copy old elements, append `value`, and update the inline 16B `{ptr, len}`
 ;; descriptor at the captured mutable place.
@@ -45490,38 +45747,45 @@
                   type-env
                   arr
                   (lower-clone-ast-expr (& origin)))
-                  [(ResultLowerStorePlace.Ok place-state place)
-                    (if (tc_core.tc-never-type?
-                      (ast.clone-ast-type (& place.ty)))
-                      (Ok (Expr place-state Unit (Never)))
-                      (let
-                        [value-lowered
-                          (try
-                            (lower-expr-expected
-                              ctx
-                              place-state
-                              env
-                              type-env
-                              (lower-global-shared-view value)
-                              (lower-global-shared-view elem-ir-ty)
-                              value))]
-                        (match value-lowered
-                          [(Expr value-state value-ir value-ty)
-                            (if (tc_core.tc-never-type? value-ty)
-                              (Ok (Expr value-state Unit (Never)))
-                              (match (lower-store-place-address
-                                ctx
-                                value-state
-                                place
-                                origin)
-                                [(Expr addr-state place-ptr _)
-                                  (Ok
-                                    (lower-array-push-from-values
-                                      ctx
-                                      addr-state
-                                      place-ptr
-                                      elem-ir-ty
-                                      value-ir))]))])))]
+                  [(ResultLowerStorePlace.Ok captured-state captured-place)
+                    (match (lower-store-place-unwrap-mut-refs
+                      ctx
+                      captured-state
+                      captured-place
+                      (lower-clone-ast-expr (& origin)))
+                      [(ResultLowerStorePlace.Ok place-state place)
+                        (if (tc_core.tc-never-type?
+                          (ast.clone-ast-type (& place.ty)))
+                          (Ok (Expr place-state Unit (Never)))
+                          (let
+                            [value-lowered
+                              (try
+                                (lower-expr-expected
+                                  ctx
+                                  place-state
+                                  env
+                                  type-env
+                                  (lower-global-shared-view value)
+                                  (lower-global-shared-view elem-ir-ty)
+                                  value))]
+                            (match value-lowered
+                              [(Expr value-state value-ir value-ty)
+                                (if (tc_core.tc-never-type? value-ty)
+                                  (Ok (Expr value-state Unit (Never)))
+                                  (match (lower-store-place-address
+                                    ctx
+                                    value-state
+                                    place
+                                    origin)
+                                    [(Expr addr-state place-ptr _)
+                                      (Ok
+                                        (lower-array-push-from-values
+                                          ctx
+                                          addr-state
+                                          place-ptr
+                                          elem-ir-ty
+                                          value-ir))]))])))]
+                      [(ResultLowerStorePlace.Err error) (Err error)])]
                   [(ResultLowerStorePlace.Err error) (Err error)]))])]
         [(Err message) (Err (box (lower-diagnostic-at-expr ctx arr message)))])]
     [(Err message) (Err (box (lower-diagnostic-at-expr ctx arr message)))]))

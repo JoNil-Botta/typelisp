@@ -169,6 +169,7 @@
                 data.representations.class-masks
                 data.representations.stable-word-masks
                 data.representations.header-word-masks
+                data.representations.header-free-word-masks
                 (compiler_ir_types.compiler-ir-return-storage-index-authorized
                   pools
                   interns

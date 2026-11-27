@@ -2704,26 +2704,14 @@
             [place-typed : i64 (array-ref state.place-typed place)]
             [view-type? : bool
               (try (normalize-view-type! store lease place-typed))]
-            [handle-type? : bool
-              (and
-                view-type?
-                (try (normalize-arena-handle-type! store lease place-typed)))]
             [frame-view-param? : bool
               (and
                 view-type?
-                (not handle-type?)
                 (=
                   (try (normalize-box-view! (& state) store lease place-typed))
                   0))]
-            ;; Its storage belongs to the call: it ends at every return. An
-            ;; arena/region-tagged handle (`String`, dynamic array) borrows into
-            ;; its backing bytes rather than the parameter slot; a region-tagged
-            ;; aggregate parameter owns call-frame storage, so its projections
-            ;; retire with it.
-            [_storage : unit
-              (unless
-                handle-type?
-                (normalize-push! state.function-places place))]
+            ;; Its storage belongs to the call: it ends at every return.
+            [_storage : unit (normalize-push! state.function-places place)]
             [_frame-view : unit
               (when
                 frame-view-param?
@@ -3851,8 +3839,6 @@
     [typed : i64 (array-ref state.place-typed place)]
     [view-type? : bool (try (normalize-view-type! store lease typed))]
     (cond
-      [(and view-type? (try (normalize-arena-handle-type! store lease typed)))
-        (NormalizeUnit.Ok unit)]
       [(and view-alias? view-type? (normalize-view-class? (& state) typed))
         (normalize-push! state.view-alias-places place)
         (if (= (normalize-binder-owner (& state) place) 7)
@@ -4725,8 +4711,6 @@
               (when
                 (and
                   (try (normalize-view-type! store lease dest-typed))
-                  (not
-                    (try (normalize-arena-handle-type! store lease dest-typed)))
                   (not (normalize-i64-member? (& state.frame-view-places) dest)))
                 (normalize-push! state.frame-view-places dest))))
           ;; Reassigning an initialized cleanup owner would lose its cleanup.
@@ -5799,33 +5783,6 @@
         [inner-ty : ast.AstType (ast.ty-node-get inner)]
         (normalize-box-ast-type? (& inner-ty)))]
     [_ false]))
-
-;; Inline `String` and `(__tl_dyn-array T)` values keep 16-byte stack
-;; descriptors and retire with their frame like inline structs; only `(deref b)`
-;; of an arena-tagged `Box` points directly into arena storage.
-(define (normalize-arena-handle-ast-type? [ty : (& ty ast.AstType)]) : bool
-  (match ty
-    [(ast.AstType.Region _ inner)
-      (let
-        [inner-ty : ast.AstType (ast.ty-node-get inner)]
-        (normalize-arena-handle-ast-type? (& inner-ty)))]
-    [_ false]))
-
-(define (normalize-arena-handle-type!
-  [store : (&mut store typed.TypedStore)]
-  [lease : (& lease (typed.TypedBodyLease intern))]
-  [type : i64]) : NormalizeBool
-  (if (< type 0)
-    (NormalizeBool.Ok false)
-    (match (typed.typed-type-value-at! store lease type)
-      [(typed.TypedTypeValueResult.Ok value)
-        (NormalizeBool.Ok
-          (and
-            (match (& value)
-              [(ast.AstType.Region _ _) true]
-              [_ false])
-            (normalize-arena-handle-ast-type? (& value))))]
-      [(typed.TypedTypeValueResult.Err error) (normalize-bool-typed error)])))
 
 ;; Whether typed type `container` is an arena-tagged `Box` (region-tagged box
 ;; whose arena region was erased in `state.classes`, not a reference view of a

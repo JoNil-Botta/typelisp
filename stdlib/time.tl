@@ -358,18 +358,16 @@
                 (unsafe
                   (__tl_array-data counter)))]
             [elapsed : i64 (- (array-ref counter 0) start)]
-            (if (or (= status (cast 0 : i32)) (< elapsed 0))
-              (set! done true)
-              (if (stdlib.time.windows-sleep-complete?
+            (cond
+              [(or (= status (cast 0 : i32)) (< elapsed 0)) (set! done true)]
+              [(stdlib.time.windows-sleep-complete?
                 elapsed
                 frequency
                 milliseconds)
-                (begin
-                  (set! ok true)
-                  (set! done true))
-                (if (= remaining 0)
-                  (set! remaining 1)
-                  unit))))))
+                (set! ok true)
+                (set! done true)]
+              [(= remaining 0) (set! remaining 1)]
+              [else unit]))))
       (if ok
         (OkTimeUnit)
         (stdlib.time.sleep-unavailable "time: performance counter unavailable")))))

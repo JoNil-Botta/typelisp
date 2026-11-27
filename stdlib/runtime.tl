@@ -203,13 +203,11 @@
 (cfg
   windows
   (define (runtime-windows-fd-handle [fd : i64]) : i64
-    (if (= fd 0)
-      (runtime-windows-get-std-handle (cast -10 : i32))
-      (if (= fd 1)
-        (runtime-windows-get-std-handle (cast -11 : i32))
-        (if (= fd 2)
-          (runtime-windows-get-std-handle (cast -12 : i32))
-          fd)))))
+    (cond
+      [(= fd 0) (runtime-windows-get-std-handle (cast -10 : i32))]
+      [(= fd 1) (runtime-windows-get-std-handle (cast -11 : i32))]
+      [(= fd 2) (runtime-windows-get-std-handle (cast -12 : i32))]
+      [else fd])))
 
 ;: Write `count` bytes from `buf` to `fd`; returns the bytes written or `-1`.
 ;: The caller must provide a live initialized readable range of at least

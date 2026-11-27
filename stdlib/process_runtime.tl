@@ -1622,6 +1622,7 @@
 
 ;: Raw `pipe2(O_CLOEXEC)`. Pipe creation is atomic and is not retried.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-raw-pipe [address : i64]) : i64
     (let
       [injected : i64 (linux-injected-result process-linux-syscall-pipe)]
@@ -1635,6 +1636,7 @@
 
 ;: Raw `memfd_create`. Creation failure has no partial descriptor to clean up.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-raw-memfd [name-address : i64]) : i64
     (let
       [injected : i64 (linux-injected-result process-linux-syscall-memfd)]
@@ -1657,6 +1659,7 @@
 ;: never retried after EINTR because Linux releases the descriptor number early.
 ;: Injected failures perform the real close first so the native gate cannot leak.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-raw-close [fd : i64]) : i64
     (let
       [injected : i64 (linux-injected-result process-linux-syscall-close)]
@@ -1664,7 +1667,7 @@
         (begin
           (cfg
             windows
-            -38
+            unit
             (unsafe
               (syscall 3 fd)))
           injected)
@@ -1684,6 +1687,7 @@
 
 ;: Raw stdin write, optionally bounded by the focused short-write hook.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-raw-stdin-write [fd : i64] [address : i64] [count : i64]) : i64
     (let
       [injected : i64 (linux-injected-result process-linux-syscall-stdin-write)]
@@ -1697,6 +1701,7 @@
 
 ;: Raw exec-status read, optionally bounded by the focused short-read hook.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-raw-exec-read [fd : i64] [address : i64] [count : i64]) : i64
     (let
       [injected : i64 (linux-injected-result process-linux-syscall-exec-read)]
@@ -1711,6 +1716,7 @@
 ;: Raw wait4. An injected non-EINTR failure still performs the real wait so the
 ;: failure gate preserves the production postcondition and cannot leave a zombie.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-raw-wait [pid : i64] [status-address : i64]) : i64
     (let
       [injected : i64 (linux-injected-result process-linux-syscall-wait)]
@@ -1736,6 +1742,7 @@
 
 ;: Raw capture seek used for both end discovery and rewind.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-raw-capture-seek [fd : i64] [offset : i64] [whence : i64]) : i64
     (let
       [injected : i64
@@ -1750,6 +1757,7 @@
 
 ;: Raw capture read, optionally bounded by the focused short-read hook.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-raw-capture-read [fd : i64] [address : i64] [count : i64]) : i64
     (let
       [injected : i64
@@ -1764,6 +1772,7 @@
 
 ;: Raw `rt_sigaction` used while feeding a pipe with SIGPIPE ignored.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-raw-sigaction [action-address : i64] [old-address : i64]) : i64
     (let
       [injected : i64 (linux-injected-result process-linux-syscall-sigaction)]
@@ -1925,6 +1934,7 @@
 ;: Write `len` bytes at `data-addr` to `fd`. EINTR retries without progress and
 ;: positive partial writes advance exactly; zero/impossible progress fails.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-write-all [fd : i64] [data-addr : i64] [len : i64]) : i64
     (cfg
       windows
@@ -1958,16 +1968,21 @@
 ;: error and any later signal-restoration or descriptor-close failure.
 (unsafe
   (define (linux-feed-stdin
+    ;; lint-allow: unused-variable -- Linux-only runtime parameter
     [has-stdin : bool]
+    ;; lint-allow: unused-variable -- Linux-only runtime parameter
     [stdin-r : i64]
+    ;; lint-allow: unused-variable -- Linux-only runtime parameter
     [stdin-w : i64]
+    ;; lint-allow: unused-variable -- Linux-only runtime parameter
     [data-addr : i64]
+    ;; lint-allow: unused-variable -- Linux-only runtime parameter
     [len : i64]
     [failure : ProcessLinuxFailure]) : ProcessLinuxFailure
-    (unsafe
-      (cfg
-        windows
-        (linux-failure-add-primary failure process-linux-operation-stdin -38)
+    (cfg
+      windows
+      (linux-failure-add-primary failure process-linux-operation-stdin -38)
+      (unsafe
         (if (not has-stdin)
           failure
           (begin
@@ -2039,11 +2054,12 @@
 ;: before spawning. `failed` records a pre-spawn OS error. The caller must have
 ;: established the validated-command boundary.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only runtime parameter
   (define (linux-prepare [command : ProcessRuntimeCommand]) : ProcessLinuxSpawn
-    (unsafe
-      (cfg
-        windows
-        (ProcessLinuxSpawn 0 0 0 0 0 false 0 0 -1 -1 -1 -1 -1 -1 true -38)
+    (cfg
+      windows
+      (ProcessLinuxSpawn 0 0 0 0 0 false 0 0 -1 -1 -1 -1 -1 -1 true -38)
+      (unsafe
         (let
           [exec-cstr : (__tl_dyn-array u8)
             (io.c-string
@@ -2164,11 +2180,12 @@
 ;: deliberately creates no stdout/stderr capture descriptors. The caller must
 ;: have established the validated-command boundary.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only runtime parameter
   (define (linux-prepare-inherit [command : ProcessRuntimeCommand]) : ProcessLinuxInheritedSpawn
-    (unsafe
-      (cfg
-        windows
-        (ProcessLinuxInheritedSpawn 0 0 0 0 0 false 0 0 -1 -1 -1 -1 true -38)
+    (cfg
+      windows
+      (ProcessLinuxInheritedSpawn 0 0 0 0 0 false 0 0 -1 -1 -1 -1 true -38)
+      (unsafe
         (let
           [exec-cstr : (__tl_dyn-array u8)
             (io.c-string
@@ -2327,6 +2344,7 @@
 
 ;: Issue one child-side close exactly once. Close is never retried after EINTR.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-child-close [kind : i64] [fd : i64]) : i64
     (let
       [injected : i64 (linux-child-injected-result kind)]
@@ -2394,8 +2412,11 @@
 ;: Issue execve once. A returned result is always a child failure.
 (unsafe
   (define (linux-child-execve
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [exec-address : i64]
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [argv-address : i64]
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [envp-address : i64]) : i64
     (let
       [injected : i64
@@ -2424,6 +2445,7 @@
           (linux-child-write-record fd address length offset false))
         (let
           [remaining : i64 (- length offset)]
+          ;; lint-allow: unused-variable -- Linux-only syscall argument
           [requested : i64
             (if (and (= (linux-marker-mode) 4) (> remaining 3))
               3
@@ -2738,11 +2760,12 @@
 ;: successful exec; one exact record proves child failure; every read error,
 ;: partial EOF, malformed record, or trailing byte is protocol failure.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only runtime parameter
   (define (linux-read-exec-status [exec-r : i64]) : ProcessLinuxExecOutcome
-    (unsafe
-      (cfg
-        windows
-        (ProcessLinuxExecOutcome (ProcessLinuxExecChannelFailed -38) 0)
+    (cfg
+      windows
+      (ProcessLinuxExecOutcome (ProcessLinuxExecChannelFailed -38) 0)
+      (unsafe
         (let
           [buf : (__tl_dyn-array u8) (__tl_make-array u8 9)]
           [offset : i64 0]
@@ -2795,11 +2818,12 @@
 ;: Wait for exactly `pid`, retrying only EINTR. A different positive pid is an
 ;: impossible result for this wait4 invocation and is treated as protocol error.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only runtime parameter
   (define (linux-wait-retry [pid : i64] [status-address : i64]) : i64
-    (unsafe
-      (cfg
-        windows
-        -38
+    (cfg
+      windows
+      -38
+      (unsafe
         (let
           [result : i64 -4]
           (while (= result -4)
@@ -2825,11 +2849,12 @@
 ;: Read one seekable capture exactly. Short reads advance, EINTR retries, and
 ;: early EOF or impossible progress becomes an explicit typed failure.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only runtime parameter
   (define (linux-read-capture [fd : i64]) : ProcessLinuxCaptureResult
-    (unsafe
-      (cfg
-        windows
-        (ProcessLinuxCaptureFailed -38)
+    (cfg
+      windows
+      (ProcessLinuxCaptureFailed -38)
+      (unsafe
         (let
           [end : i64 (stdlib.process_runtime.linux-capture-seek-retry fd 0 2)]
           (if (< end 0)
@@ -2905,11 +2930,12 @@
 ;: Parent path for the captured-output runtime: feed stdin, wait for the child,
 ;: detect `execve` failure, then read the memfd-captured stdout/stderr.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only runtime parameter
   (define (linux-output-parent [spawn : ProcessLinuxSpawn] [pid : i64]) : ResultProcessRuntimeOutput
-    (unsafe
-      (cfg
-        windows
-        (stdlib.process_runtime.wait-error)
+    (cfg
+      windows
+      (stdlib.process_runtime.wait-error)
+      (unsafe
         (let
           [failure : ProcessLinuxFailure (linux-failure-none)]
           [statusbuf : (__tl_dyn-array i32) (__tl_make-array i32 1)]
@@ -3006,12 +3032,14 @@
 (unsafe
   (define (linux-start-parent
     [reservation : (&mut reservation ProcessRuntimeChild)]
+    ;; lint-allow: unused-variable -- Linux-only runtime parameter
     [spawn : ProcessLinuxSpawn]
+    ;; lint-allow: unused-variable -- Linux-only runtime parameter
     [pid : i64]) : ResultProcessRuntimeChild
-    (unsafe
-      (cfg
-        windows
-        (stdlib.process_runtime.wait-error-child)
+    (cfg
+      windows
+      (stdlib.process_runtime.wait-error-child)
+      (unsafe
         (let
           [failure : ProcessLinuxFailure (linux-failure-none)]
           [exec-outcome : ProcessLinuxExecOutcome
@@ -3070,11 +3098,12 @@
 
 ;: Linux captured-output runtime: prepare, vfork, and dispatch parent/child.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only runtime parameter
   (define (linux-output [command : ProcessRuntimeCommand]) : ResultProcessRuntimeOutput
-    (unsafe
-      (cfg
-        windows
-        (stdlib.process_runtime.spawn-error)
+    (cfg
+      windows
+      (stdlib.process_runtime.spawn-error)
+      (unsafe
         (let
           [spawn : ProcessLinuxSpawn
             (unsafe
@@ -3113,12 +3142,14 @@
 ;: stderr stay connected to the caller throughout execution.
 (unsafe
   (define (linux-inherit-parent
+    ;; lint-allow: unused-variable -- Linux-only runtime parameter
     [spawn : ProcessLinuxInheritedSpawn]
+    ;; lint-allow: unused-variable -- Linux-only runtime parameter
     [pid : i64]) : ResultProcessRuntimeOutput
-    (unsafe
-      (cfg
-        windows
-        (stdlib.process_runtime.wait-error)
+    (cfg
+      windows
+      (stdlib.process_runtime.wait-error)
+      (unsafe
         (let
           [failure : ProcessLinuxFailure (linux-failure-none)]
           [statusbuf : (__tl_dyn-array i32) (__tl_make-array i32 1)]
@@ -3174,11 +3205,12 @@
 ;: Linux inherited-stream runtime: prepare without output capture, vfork, and
 ;: keep child stdout/stderr attached to the caller until it exits.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only runtime parameter
   (define (linux-inherit [command : ProcessRuntimeCommand]) : ResultProcessRuntimeOutput
-    (unsafe
-      (cfg
-        windows
-        (stdlib.process_runtime.spawn-error)
+    (cfg
+      windows
+      (stdlib.process_runtime.spawn-error)
+      (unsafe
         (let
           [spawn : ProcessLinuxInheritedSpawn
             (unsafe
@@ -3214,11 +3246,12 @@
 (unsafe
   (define (linux-start-reserved
     [reservation : (&mut reservation ProcessRuntimeChild)]
+    ;; lint-allow: unused-variable -- Linux-only runtime parameter
     [command : ProcessRuntimeCommand]) : ResultProcessRuntimeChild
-    (unsafe
-      (cfg
-        windows
-        (stdlib.process_runtime.spawn-error-child)
+    (cfg
+      windows
+      (stdlib.process_runtime.spawn-error-child)
+      (unsafe
         (let
           [spawn : ProcessLinuxSpawn
             (unsafe
@@ -3258,11 +3291,12 @@
 ;: Reserve capacity before preparing descriptors or executing any child. Every
 ;: unsuccessful start drops the reservation; success moves its authority out.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only runtime parameter
   (define (linux-start [command : ProcessRuntimeCommand]) : ResultProcessRuntimeChild
-    (unsafe
-      (cfg
-        windows
-        (stdlib.process_runtime.async-unsupported-child)
+    (cfg
+      windows
+      (stdlib.process_runtime.async-unsupported-child)
+      (unsafe
         (match (process-runtime-child-reserve)
           [(ProcessRuntimeChildRegistryExhausted)
             (child-spawn-failed "process: child capability registry exhausted")]
@@ -3274,11 +3308,12 @@
 ;: Consume already-claimed Linux native resources: reap the child, read the
 ;: memfd captures, release both descriptors, and decode the exit status.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only runtime parameter
   (define (linux-wait-native [pid : i64] [stdout-fd : i64] [stderr-fd : i64]) : ResultProcessRuntimeOutput
-    (unsafe
-      (cfg
-        windows
-        (stdlib.process_runtime.wait-error)
+    (cfg
+      windows
+      (stdlib.process_runtime.wait-error)
+      (unsafe
         (let
           [statusbuf : (__tl_dyn-array i32) (__tl_make-array i32 1)]
           [failure : ProcessLinuxFailure (linux-failure-none)]
@@ -3786,9 +3821,7 @@
           [stderr-handle : i64
             (stdlib.process_runtime.windows-duplicate-standard-handle
               (cast -12 : i32))]
-          (if (or
-            (= stdin-handle -1)
-            (or (= stdout-handle -1) (= stderr-handle -1)))
+          (if (or (= stdin-handle -1) (= stdout-handle -1) (= stderr-handle -1))
             (begin
               (stdlib.process_runtime.windows-close-if stdin-handle)
               (stdlib.process_runtime.windows-close-if stdout-handle)
@@ -4066,23 +4099,25 @@
 (unsafe
   ;; lint-allow: function-name-case -- stable runtime ABI symbol
   (define (tl_process_start [command : ProcessRuntimeCommand]) : ResultProcessRuntimeChild
-    (unsafe
-      (if (stdlib.process_runtime.command-env-policy-known? command)
-        (cfg
-          windows
-          (stdlib.process_runtime.async-unsupported-child)
-          (stdlib.process_runtime.linux-start command))
-        (stdlib.process_runtime.child-error
-          (stdlib.process_runtime.env-policy-error))))))
+    (if (stdlib.process_runtime.command-env-policy-known? command)
+      (cfg
+        windows
+        (stdlib.process_runtime.async-unsupported-child)
+        (unsafe
+          (stdlib.process_runtime.linux-start command)))
+      (stdlib.process_runtime.child-error
+        (stdlib.process_runtime.env-policy-error)))))
 
 ;: Wait for an issued child authority; Windows reports async as unsupported.
 (unsafe
   ;; lint-allow: function-name-case -- stable runtime ABI symbol
-  (define (tl_process_wait [authority : (Box i64)]) : ResultProcessRuntimeOutput
-    (unsafe
-      (cfg
-        windows
-        (stdlib.process_runtime.async-unsupported-output)
+  (define (tl_process_wait
+    ;; lint-allow: unused-variable -- Linux-only runtime parameter
+    [authority : (Box i64)]) : ResultProcessRuntimeOutput
+    (cfg
+      windows
+      (stdlib.process_runtime.async-unsupported-output)
+      (unsafe
         (stdlib.process_runtime.linux-wait authority)))))
 
 ;: Cleanup adapter for a still-live runtime/public child authority. The registry

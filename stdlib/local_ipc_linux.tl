@@ -415,12 +415,19 @@
 ;: The syscall itself.
 (unsafe
   (define (host-raw
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [number : i64]
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [a : i64]
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [b : i64]
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [c : i64]
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [d : i64]
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [e : i64]
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [f : i64]) : i64
     (cfg
       windows

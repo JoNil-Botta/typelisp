@@ -30,6 +30,7 @@
 (import stdlib.string)
 (import source_text_core as source_text)
 (import sym_i64_env)
+(import tli_cli_core as tli_cli)
 
 ;; Parsed lint CLI config: input paths, stdlib roots, whether `--check`
 ;; enforcing mode was requested (exit non-zero when findings are present), and
@@ -43,7 +44,7 @@
   (Err String))
 
 (define selfhost-lint-language-target : target_cfg.CompilerTargetCfg
-  (target_cfg.compiler-target-cfg-default))
+  (target_cfg.compiler-target-cfg-host))
 (define selfhost-lint-language-cfg-names : lint_svec.Vec
   (lint_svec.new))
 (define selfhost-lint-flat-output : bool
@@ -70,9 +71,10 @@
   (set! selfhost-lint-flat-output enabled))
 
 (define (selfhost-lint-language-config-reset!) : unit
-  (set! selfhost-lint-language-target (target_cfg.compiler-target-cfg-default))
+  (set! selfhost-lint-language-target (target_cfg.compiler-target-cfg-host))
   (set! selfhost-lint-language-cfg-names (lint_svec.new))
-  (set! selfhost-lint-flat-output false))
+  (set! selfhost-lint-flat-output false)
+  (tli_cli.tli-reset-active-sysroot-options!))
 
 (define (selfhost-lint-language-cfgs) : sym_i64_env.SymI64Env
   (target_cfg.compiler-target-cfgs-with-names
@@ -84,7 +86,7 @@
 (define (selfhost-lint-config-from [start : i64] [count : i64]) : ResultSelfhostLintConfig
   (let
     [options : cli_option.CliCompileOptions
-      (cli_option.cli-compile-options (Linux) 1)]
+      (cli_option.cli-compile-options (target_cfg.compiler-target-cfg-host) 1)]
     [args : cli_option.CliArgs
       (begin
         (selfhost-lint-language-config-reset!)
@@ -3759,17 +3761,22 @@
   [print-headers : bool]
   [status : i64]) : i64
   (selfhost-lint-unsafe-surface-cache-reset!)
-  (selfhost-lint-files-from
-    input-paths
-    stdlib-roots
-    enforcing
-    deprecated-string-concat
-    redundant-function-name
-    redundant-begin
-    prefer-dotted-field
-    name-case
-    print-headers
-    status))
+  (tli_cli.tli-batch-cache-begin!)
+  (let
+    [final-status : i64
+      (selfhost-lint-files-from
+        input-paths
+        stdlib-roots
+        enforcing
+        deprecated-string-concat
+        redundant-function-name
+        redundant-begin
+        prefer-dotted-field
+        name-case
+        print-headers
+        status)]
+    (tli_cli.tli-batch-cache-end!)
+    final-status))
 
 (define (selfhost-lint-package-files-from
   [input-paths : (& input-paths lint_svec.Vec)]
@@ -3826,18 +3833,23 @@
   [print-headers : bool]
   [status : i64]) : i64
   (selfhost-lint-unsafe-surface-cache-reset!)
-  (selfhost-lint-package-files-from
-    input-paths
-    stdlib-roots
-    enforcing
-    deprecated-string-concat
-    redundant-function-name
-    redundant-begin
-    prefer-dotted-field
-    name-case
-    dead-decls
-    print-headers
-    status))
+  (tli_cli.tli-batch-cache-begin!)
+  (let
+    [final-status : i64
+      (selfhost-lint-package-files-from
+        input-paths
+        stdlib-roots
+        enforcing
+        deprecated-string-concat
+        redundant-function-name
+        redundant-begin
+        prefer-dotted-field
+        name-case
+        dead-decls
+        print-headers
+        status)]
+    (tli_cli.tli-batch-cache-end!)
+    final-status))
 
 (define (selfhost-lint-package
   [manifest-path : String]

@@ -34,6 +34,7 @@
 
 (defenum CompilerSpmdNumericBackend
   (Scalar)
+  (Sse2)
   (Avx2)
   (Avx512))
 
@@ -175,6 +176,21 @@
         (CheckedActiveLaneExpansion)
         (Unsupported))]))
 
+(define (compiler-spmd-numeric-sse2-binary-strategy
+  [source : CompilerSpmdNumericLane]
+  [op : ast.AstBinOp]) : CompilerSpmdNumericStrategy
+  (match op
+    [(or (Add) (Sub) (Eq) (Ne) (Lt) (Le) (Gt) (Ge)) (NativePacked)]
+    [(Mul)
+      (match source
+        [(or (I8) (U8)) (OwnedVectorExpansion)]
+        [_ (NativePacked)])]
+    [(or (BitAnd) (BitOr) (BitXor))
+      (if (compiler-spmd-numeric-integer-lane? source)
+        (NativePacked)
+        (Unsupported))]
+    [(or (Div) (Mod) (And) (Or) (Shl) (Shr)) (Unsupported)]))
+
 (define (compiler-spmd-numeric-binary-decision
   [source-ty : ast.AstType]
   [destination-ty : ast.AstType]
@@ -204,6 +220,7 @@
                   (ScalarReference)
                   (Unsupported))]
               [_ (ScalarReference)])]
+          [(Sse2) (compiler-spmd-numeric-sse2-binary-strategy source op)]
           [(or (Avx2) (Avx512))
             (compiler-spmd-numeric-simd-binary-strategy source context op)])
         (Unsupported))]
@@ -236,6 +253,10 @@
         (compiler-spmd-numeric-lane? destination))
         (match backend
           [(Scalar) (ScalarReference)]
+          [(Sse2)
+            (if (compiler-spmd-numeric-lane-eq? source destination)
+              (NativePacked)
+              (Unsupported))]
           [(or (Avx2) (Avx512))
             (cond
               [(compiler-spmd-numeric-lane-eq? source destination)
@@ -297,6 +318,7 @@
   [backend : CompilerSpmdNumericBackend]) : String
   (match backend
     [(Scalar) "scalar"]
+    [(Sse2) "SSE2"]
     [(Avx2) "AVX2"]
     [(Avx512) "AVX-512"]))
 
@@ -361,7 +383,8 @@
   (define (compiler-spmd-numeric-backend-at [index : i64]) : CompilerSpmdNumericBackend
     (match index
       [0 (Scalar)]
-      [1 (Avx2)]
+      [1 (Sse2)]
+      [2 (Avx2)]
       [_ (Avx512)])))
 
 (cfg
@@ -395,7 +418,7 @@
       [cast-rows : i64 0]
       [supported-binary : i64 0]
       [supported-casts : i64 0]
-      (for [backend-index (iterator.range 0 3)]
+      (for [backend-index (iterator.range 0 4)]
         (let
           [backend : CompilerSpmdNumericBackend
             (compiler-spmd-numeric-backend-at backend-index)]
@@ -437,10 +460,10 @@
                         (+= supported-casts 1)
                         unit)))))))))
       (and
-        (= binary-rows 2700)
-        (= cast-rows 1500)
-        (= supported-binary 2104)
-        (= supported-casts 936)
+        (= binary-rows 3600)
+        (= cast-rows 2000)
+        (= supported-binary 2674)
+        (= supported-casts 986)
         (match (compiler-spmd-numeric-binary-decision
           (I8)
           (I8)

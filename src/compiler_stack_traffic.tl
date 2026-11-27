@@ -281,7 +281,7 @@
           (compiler-stack-traffic-full-gang? (& region.kind))
           (match facts.backend
             [(Scalar) (return (Err "stack traffic: scalar full-gang region"))]
-            [(or (Avx2) (Avx512)) unit]))))
+            [(or (Sse2) (Avx2) (Avx512)) unit]))))
     (for [index (iterator.range 0 homes)]
       (when
         (<= (array-ref facts.homes index).bytes 0)
@@ -617,6 +617,7 @@
       (compiler-stack-traffic-json-text
         (match facts.backend
           [(Scalar) "scalar"]
+          [(Sse2) "sse2"]
           [(Avx2) "avx2"]
           [(Avx512) "avx512"])))
     (text_buf.append! out ",\"regions\":[")

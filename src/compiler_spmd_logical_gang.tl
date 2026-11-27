@@ -65,6 +65,7 @@
       0
       (match backend
         [(Scalar) 1]
+        [(Sse2) (/ 16 bytes)]
         [(Avx2) (/ 32 bytes)]
         [(Avx512) (/ 64 bytes)]))))
 
@@ -79,6 +80,7 @@
       [(not
           (or
             (= width 1)
+            (= width 2)
             (= width 4)
             (= width 8)
             (= width 16)
@@ -182,7 +184,8 @@
 (define (compiler-spmd-gang-error-message [error : CompilerSpmdGangError]) : String
   (match error
     [(UnsupportedLane) "SPMD gang: expected a numeric lane type"]
-    [(LogicalWidth) "SPMD gang: logical width must be 1, 4, 8, 16, 32, or 64"]
+    [(LogicalWidth)
+      "SPMD gang: logical width must be 1, 2, 4, 8, 16, 32, or 64"]
     [(ScalarWidth) "SPMD gang: scalar backend requires logical width 1"]
     [(PhysicalWidth)
       "SPMD gang: physical width disagrees with backend and lane type"]

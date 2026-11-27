@@ -13,8 +13,8 @@ opt -
 # broadcast is an ordinary bounds trap there.
 case broadcast-lane0-i64
 source tests/spmd/broadcast_lane0_i64.tl
-mode scalar avx2 avx512
-exit scalar=105 avx2=86 avx512=62
+mode scalar sse2 avx2 avx512
+exit scalar=105 sse2=98 avx2=86 avx512=62
 in stderr
 empty
 
@@ -27,15 +27,15 @@ contains array index out of bounds
 
 case broadcast-lane1-i64
 source tests/spmd/broadcast_lane1_i64.tl
-mode avx2 avx512
-exit avx2=32 avx512=16
+mode sse2 avx2 avx512
+exit sse2=40 avx2=32 avx512=16
 in stderr
 empty
 
 case broadcast-lane0-u64
 source tests/spmd/broadcast_lane0_u64.tl
-mode scalar avx2 avx512
-exit scalar=105 avx2=86 avx512=62
+mode scalar sse2 avx2 avx512
+exit scalar=105 sse2=98 avx2=86 avx512=62
 in stderr
 empty
 
@@ -48,15 +48,15 @@ contains array index out of bounds
 
 case broadcast-lane1-u64
 source tests/spmd/broadcast_lane1_u64.tl
-mode avx2 avx512
-exit avx2=32 avx512=16
+mode sse2 avx2 avx512
+exit sse2=40 avx2=32 avx512=16
 in stderr
 empty
 
 case broadcast-lane0-u32
 source tests/spmd/broadcast_lane0_u32.tl
-mode scalar avx2 avx512
-exit scalar=105 avx2=62 avx512=14
+mode scalar sse2 avx2 avx512
+exit scalar=105 sse2=86 avx2=62 avx512=14
 in stderr
 empty
 
@@ -69,23 +69,23 @@ contains array index out of bounds
 
 case broadcast-lane1-u32
 source tests/spmd/broadcast_lane1_u32.tl
-mode avx2 avx512
-exit avx2=16 avx512=16
+mode sse2 avx2 avx512
+exit sse2=32 avx2=16 avx512=16
 in stderr
 empty
 
 # `(program-index)` / `(program-count)` observe the gang identity (#2761).
 case lane-identity-i64
 source tests/spmd/lane_identity_i64.tl
-mode scalar avx2 avx512
-exit scalar=130 avx2=26 avx512=54
+mode scalar sse2 avx2 avx512
+exit scalar=130 sse2=10 avx2=26 avx512=54
 in stderr
 empty
 
 case lane-identity-reduce-i64
 source tests/spmd/lane_identity_reduce_i64.tl
-mode scalar avx2 avx512
-exit scalar=13 avx2=70 avx512=142
+mode scalar sse2 avx2 avx512
+exit scalar=13 sse2=32 avx2=70 avx512=142
 in stderr
 empty
 
@@ -93,7 +93,7 @@ empty
 # row's partial tail reports the full `program-count`.
 case lane-identity-2d
 source tests/spmd/lane_identity_2d.tl
-mode scalar avx2 avx512
-exit scalar=24 avx2=224 avx512=52
+mode scalar sse2 avx2 avx512
+exit scalar=24 sse2=176 avx2=224 avx512=52
 in stderr
 empty

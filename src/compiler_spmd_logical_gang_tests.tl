@@ -197,12 +197,12 @@
   spmd-gang-invalid-input-and-overflow
   (let
     [widths : (Array i64 10)
-      (array -9223372036854775808 -1 0 2 3 5 63 65 128 9223372036854775807)]
+      (array -9223372036854775808 -1 0 3 5 6 63 65 128 9223372036854775807)]
     [lanes : (Array numeric.CompilerSpmdNumericLane 3)
       (array (Bool) (Char) (Other))]
-    [backends : (Array numeric.CompilerSpmdNumericBackend 3)
-      (array (Scalar) (Avx2) (Avx512))]
-    (for [backend-index (iterator.range 0 3)]
+    [backends : (Array numeric.CompilerSpmdNumericBackend 4)
+      (array (Scalar) (Sse2) (Avx2) (Avx512))]
+    (for [backend-index (iterator.range 0 4)]
       (let
         [backend : numeric.CompilerSpmdNumericBackend
           (array-ref backends backend-index)]
@@ -217,9 +217,15 @@
           (gang-test-plan-error
             (gang.compiler-spmd-gang-plan backend 1 (array-ref lanes index))
             (UnsupportedLane)))))
-    (for [width (iterator.range 4 65)]
+    (for [width (iterator.range 2 65)]
       (when
-        (or (= width 4) (= width 8) (= width 16) (= width 32) (= width 64))
+        (or
+          (= width 2)
+          (= width 4)
+          (= width 8)
+          (= width 16)
+          (= width 32)
+          (= width 64))
         (gang-test-plan-error
           (gang.compiler-spmd-gang-plan (Scalar) width (I8))
           (ScalarWidth)))))
@@ -332,7 +338,7 @@
     [messages : (Array String 9)
       (array
         "SPMD gang: expected a numeric lane type"
-        "SPMD gang: logical width must be 1, 4, 8, 16, 32, or 64"
+        "SPMD gang: logical width must be 1, 2, 4, 8, 16, 32, or 64"
         "SPMD gang: scalar backend requires logical width 1"
         "SPMD gang: physical width disagrees with backend and lane type"
         "SPMD gang: piece count does not cover the logical width"

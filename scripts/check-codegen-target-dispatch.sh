@@ -162,7 +162,7 @@ FNR == 1 {
     }
 
     if (scope == "enum:CompilerLowerMode") {
-        if (line ~ /^[[:space:]]*\((Linux|Windows)(Scalar|Avx2|Avx512)\)/) {
+        if (line ~ /^[[:space:]]*\((Linux|Windows)(Scalar|Sse2|Avx2|Avx512)\)/) {
             token = line
             sub(/^[[:space:]]*\(/, "", token)
             sub(/\).*/, "", token)

@@ -8463,26 +8463,37 @@
             assignments
             dst
             src
-            (if (be_state.compiler-backend-mode-avx2? mode)
-              "ymm"
-              "zmm")
+            (cond
+              [(be_state.compiler-backend-mode-avx2? mode) "ymm"]
+              [(be_state.compiler-backend-mode-sse2? mode) "xmm"]
+              [else "zmm"])
             elem-ty
             backend-state)]
         [(Mask lanes)
-          (if (be_state.compiler-backend-mode-avx2? mode)
-            (be_simd.compiler-backend-emit-vector-copy
-              assignments
-              dst
-              src
-              "ymm"
-              (Bool)
-              backend-state)
-            (be_simd.compiler-backend-emit-avx512-mask-copy
-              assignments
-              dst
-              src
-              lanes
-              backend-state))]))))
+          (cond
+            [(be_state.compiler-backend-mode-avx2? mode)
+              (be_simd.compiler-backend-emit-vector-copy
+                assignments
+                dst
+                src
+                "ymm"
+                (Bool)
+                backend-state)]
+            [(be_state.compiler-backend-mode-sse2? mode)
+              (be_simd.compiler-backend-emit-vector-copy
+                assignments
+                dst
+                src
+                "xmm"
+                (Bool)
+                backend-state)]
+            [else
+              (be_simd.compiler-backend-emit-avx512-mask-copy
+                assignments
+                dst
+                src
+                lanes
+                backend-state)])]))))
 
 (define (compiler-backend-emit-mov
   [type-segment-bases : i64]
@@ -9686,6 +9697,7 @@
       (compiler-backend-spmd-call-class-count args 0 true))))
 
 (define (compiler-backend-spmd-avx2-save-value
+  [sse2? : bool]
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
@@ -9695,21 +9707,39 @@
   [offset : i64]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
-  (if (if mask?
-    (be_operand.compiler-backend-avx2-mask-shape-ok? lanes)
-    (be_operand.compiler-backend-avx2-shape-ok? elem-ty lanes))
+  (if (if sse2?
+    (if mask?
+      (be_operand.compiler-backend-sse2-mask-shape-ok? lanes)
+      (be_operand.compiler-backend-sse2-shape-ok? elem-ty lanes))
+    (if mask?
+      (be_operand.compiler-backend-avx2-mask-shape-ok? lanes)
+      (be_operand.compiler-backend-avx2-shape-ok? elem-ty lanes)))
     (let
       [storage-ty : compiler_ast_types.AstType
         (if mask?
           (I8)
           elem-ty)]
+      [width : String
+        (if sse2?
+          "xmm"
+          "ymm")]
+      [scratch : String
+        (if sse2?
+          "%xmm14"
+          "%ymm14")]
+      [move-op : String
+        (if sse2?
+          "    movdqu "
+          "    vmovdqu ")]
       (match (be_operand.compiler-backend-vector-register-use
         assignments
         value
-        "private AVX2 SPMD call argument"
-        "ymm"
+        (if sse2?
+          "private SSE2 SPMD call argument"
+          "private AVX2 SPMD call argument")
+        width
         storage-ty
-        "%ymm14"
+        scratch
         backend-state)
         [(Ok use)
           (match use
@@ -9717,22 +9747,31 @@
               (Ok
                 (str_cat.str-cat
                   load-asm
-                  "    vmovdqu "
+                  move-op
                   src
                   ", "
                   (string.int->string offset)
                   "(%rsp)\n"))])]
         [(Err message)
           (be_state.compiler-backend-instr-error instr-diag message)]))
-    (be_operand.compiler-backend-avx2-shape-diagnostic
-      type-segment-bases
-      instr-diag
-      (if mask?
-        (Bool)
-        elem-ty)
-      lanes)))
+    (if sse2?
+      (be_operand.compiler-backend-sse2-shape-diagnostic
+        type-segment-bases
+        instr-diag
+        (if mask?
+          (Bool)
+          elem-ty)
+        lanes)
+      (be_operand.compiler-backend-avx2-shape-diagnostic
+        type-segment-bases
+        instr-diag
+        (if mask?
+          (Bool)
+          elem-ty)
+        lanes))))
 
 (define (compiler-backend-spmd-avx2-save-args
+  [sse2? : bool]
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [args : compiler_ir_types.CompilerIrSpmdCallArgSeq]
@@ -9748,6 +9787,7 @@
       [(Arg class value ty)
         (if (compiler-backend-spmd-class-uniform? class)
           (compiler-backend-spmd-avx2-save-args
+            sse2?
             type-segment-bases
             assignments
             args
@@ -9759,21 +9799,27 @@
             backend-state)
           (let
             [mask? : bool (compiler-backend-spmd-class-mask? class)]
+            [stride : i64
+              (if sse2?
+                16
+                32)]
             [head
               (try
                 (compiler-backend-spmd-avx2-save-value
+                  sse2?
                   type-segment-bases
                   assignments
                   value
                   ty
                   mask?
                   lanes
-                  (+ base-offset (* 32 special-index))
+                  (+ base-offset (* stride special-index))
                   (be_state.compiler-backend-global-shared-view instr-diag)
                   backend-state))]
             [tail
               (try
                 (compiler-backend-spmd-avx2-save-args
+                  sse2?
                   type-segment-bases
                   assignments
                   args
@@ -9786,6 +9832,7 @@
             (Ok (str_cat.str-cat head tail))))])))
 
 (define (compiler-backend-spmd-avx2-result-store
+  [sse2? : bool]
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [result : compiler_ir_types.CompilerIrSpmdCallResult]
@@ -9809,23 +9856,41 @@
             (if (compiler-backend-spmd-class-mask? class)
               (I8)
               ty)]
+          [width : String
+            (if sse2?
+              "xmm"
+              "ymm")]
+          [ret-reg : String
+            (if sse2?
+              "%xmm0"
+              "%ymm0")]
+          [scratch : String
+            (if sse2?
+              "%xmm14"
+              "%ymm14")]
+          [move-op : String
+            (if sse2?
+              "    movdqu "
+              "    vmovdqu ")]
           (match (be_simd.compiler-backend-vector-dst-reg
             assignments
             dst
-            "private AVX2 SPMD call result"
-            "ymm"
-            "%ymm14"
+            (if sse2?
+              "private SSE2 SPMD call result"
+              "private AVX2 SPMD call result")
+            (string.copy (& width))
+            scratch
             backend-state)
             [(Ok home)
               (Ok
                 (str_cat.str-cat
-                  (if (string.eq home "%ymm0")
+                  (if (string.eq home ret-reg)
                     ""
-                    (str_cat.str-cat "    vmovdqu %ymm0, " home "\n" ""))
+                    (str_cat.str-cat move-op ret-reg ", " home "\n"))
                   (be_simd.compiler-backend-vector-store-dst
                     assignments
                     dst
-                    "ymm"
+                    width
                     storage-ty
                     home
                     backend-state)))]
@@ -10273,6 +10338,7 @@
         result-asm))))
 
 (define (compiler-backend-emit-spmd-call-avx2
+  [sse2? : bool]
   [type-segment-bases : i64]
   [target : be_state.CompilerBackendTarget]
   [name : i64]
@@ -10310,9 +10376,13 @@
         (be_state.compiler-backend-global-shared-view uniform-types)
         false
         program-index)]
+    [stride : i64
+      (if sse2?
+        16
+        32)]
     [special-space : i64
       (*
-        32
+        stride
         (compiler-backend-spmd-avx2-special-count
           (be_state.compiler-backend-global-shared-view args)))]
     [total-space : i64 (+ call-space special-space)]
@@ -10338,6 +10408,7 @@
     [active-save
       (try
         (compiler-backend-spmd-avx2-save-value
+          sse2?
           type-segment-bases
           assignments
           active-mask
@@ -10350,6 +10421,7 @@
     [arg-saves
       (try
         (compiler-backend-spmd-avx2-save-args
+          sse2?
           type-segment-bases
           assignments
           args
@@ -10362,6 +10434,7 @@
     [result-asm
       (try
         (compiler-backend-spmd-avx2-result-store
+          sse2?
           type-segment-bases
           assignments
           result
@@ -10430,6 +10503,23 @@
         backend-state)]
     [(Avx2)
       (compiler-backend-emit-spmd-call-avx2
+        false
+        type-segment-bases
+        target
+        name
+        lanes
+        active-mask
+        args
+        result
+        assignments
+        plan
+        program-index
+        vars
+        instr-diag
+        backend-state)]
+    [(Sse2)
+      (compiler-backend-emit-spmd-call-avx2
+        true
         type-segment-bases
         target
         name

@@ -9,7 +9,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 DEFAULT_CASES=spmd_map,spmd_zip,spmd_reduce,spmd_scan,spmd_shuffle,spmd_short_tail,spmd_mask,spmd_foreach_2d
-DEFAULT_MODES=scalar,avx2
+DEFAULT_MODES=scalar,sse2,avx2
 DEFAULT_SUPPORT="$ROOT/perf/spmd-mode-support.tsv"
 DEFAULT_BASELINE="$ROOT/perf/spmd-mode-insn-baseline.tsv"
 STABLE_EXEC_DIR="$ROOT/target/spmd-mode-instruction-count-exec"
@@ -38,12 +38,12 @@ Options:
   --cycles              Also measure whole-process perf stat user cycles
   --cycle-runs N        Native samples per binary with --cycles (default: 5)
   --cases LIST          Comma-separated SPMD benchmark names
-  --modes LIST          Comma-separated modes: scalar,avx2
+  --modes LIST          Comma-separated modes: scalar,sse2,avx2
   --output DIR          Output root
   --support-table FILE  Checked support/diagnostic matrix
   --baseline FILE       Checked count baseline
   --check-baseline      Require selected rows to exactly match the baseline
-  --update-baseline     Replace the baseline from a full 8x2 matrix run
+  --update-baseline     Replace the baseline from a full 8x3 matrix run
   --self-test           Run fast shell/reporting mutation tests only
   -h, --help            Show this help
 
@@ -169,10 +169,11 @@ validate_selection() {
 
 c_flags_for_mode() {
     case "$1" in
-        # Scalar is the like-for-like codegen comparison. AVX2 deliberately
-        # leaves clang's vectorizers enabled: explicit TypeLisp SPMD is the
-        # data-parallel surface and competes with auto-vectorized C here.
+        # Scalar is the like-for-like codegen comparison. SSE2 and AVX2
+        # deliberately leave clang's vectorizers enabled: explicit TypeLisp
+        # SPMD is the data-parallel surface and competes with auto-vectorized C.
         scalar) C_FLAGS="-O2 -fno-vectorize -fno-slp-vectorize" ;;
+        sse2) C_FLAGS="-O2" ;;
         avx2) C_FLAGS="-O2 -mavx2 -mno-avx512f" ;;
         *) fail "no clang flags for mode: $1" ;;
     esac
@@ -603,15 +604,20 @@ compare_baseline() {
 }
 
 run_self_test() {
-    validate_selection modes scalar scalar,avx2
+    validate_selection modes scalar scalar,sse2,avx2
     csv_contains scalar scalar || fail "self-test mode selection omitted scalar"
     if csv_contains scalar avx2; then fail "self-test mode selection included avx2"; fi
     c_flags_for_mode scalar
     [ "$C_FLAGS" = "-O2 -fno-vectorize -fno-slp-vectorize" ] || fail "self-test scalar C flags"
+    c_flags_for_mode sse2
+    [ "$C_FLAGS" = "-O2" ] || fail "self-test SSE2 C flags"
     c_flags_for_mode avx2
     [ "$C_FLAGS" = "-O2 -mavx2 -mno-avx512f" ] || fail "self-test AVX2 C flags"
 
     validate_support_table
+    support_lookup spmd_mask sse2
+    [ "$SUPPORT_STATUS" = supported ] || fail "self-test supported spmd_mask sse2 row"
+    [ "$SUPPORT_DIAGNOSTIC" = "-" ] || fail "self-test supported spmd_mask sse2 diagnostic"
     support_lookup spmd_mask avx2
     [ "$SUPPORT_STATUS" = supported ] || fail "self-test supported spmd_mask row"
     [ "$SUPPORT_DIAGNOSTIC" = "-" ] || fail "self-test supported spmd_mask diagnostic"
@@ -758,6 +764,9 @@ printf 'clang_version\t%s\n' "$_clang_version" >> "$METADATA_TSV"
 c_flags_for_mode scalar
 printf 'clang_scalar_flags\t%s\n' "$C_FLAGS" >> "$METADATA_TSV"
 printf 'clang_scalar_policy\tscalar-fair, vectorization disabled\n' >> "$METADATA_TSV"
+c_flags_for_mode sse2
+printf 'clang_sse2_flags\t%s\n' "$C_FLAGS" >> "$METADATA_TSV"
+printf 'clang_sse2_policy\tdefault x86-64 SSE2 auto-vectorized C vs explicit TypeLisp SPMD\n' >> "$METADATA_TSV"
 c_flags_for_mode avx2
 printf 'clang_avx2_flags\t%s\n' "$C_FLAGS" >> "$METADATA_TSV"
 printf 'clang_avx2_policy\tauto-vectorized C vs explicit TypeLisp SPMD\n' >> "$METADATA_TSV"

@@ -65,6 +65,8 @@
   (match backend
     [(compiler_ir_types.CompilerSpmdBackend.Scalar)
       compiler_ir_types.CompilerSpmdBackend.Scalar]
+    [(compiler_ir_types.CompilerSpmdBackend.Sse2)
+      compiler_ir_types.CompilerSpmdBackend.Sse2]
     [(compiler_ir_types.CompilerSpmdBackend.Avx2)
       compiler_ir_types.CompilerSpmdBackend.Avx2]
     [(compiler_ir_types.CompilerSpmdBackend.Avx512)
@@ -2682,6 +2684,10 @@
   [target : be_state.CompilerBackendTarget]
   [mode : be_state.CompilerBackendMode]) : compiler_lower.CompilerLowerMode
   (match mode
+    [(Sse2)
+      (match target
+        [(Linux) (LinuxSse2)]
+        [(Windows) (WindowsSse2)])]
     [(Avx2)
       (match target
         [(Linux) (LinuxAvx2)]

@@ -1798,36 +1798,26 @@
     [(or (Add) (BitAnd) (BitOr) (BitXor)) true]
     [_ false]))
 
-;; The var defined by a fusable `gep; load` pair immediately before `index`, or
-;; -1. This is the admission compiler-backend-emit-gep-step applies before the
-;; ALU probe is ever consulted -- a single-use gep whose result the very next
-;; instruction loads -- plus the probe's own load-destination gates: single use,
-;; not float, eight bytes wide. Width is tested as i64/u64 rather than through a
-;; type-size table because that is the width every folded word-loop accumulator
-;; carries and regalloc has no segment bases to size other types with; a narrower
-;; admission only declines preferences, it never mis-states one.
+;; The var defined by a fusable `load` (with or without a preceding fused `gep`)
+;; immediately before `index`, or -1. Both `compiler-backend-emit-gep-step` and
+;; `compiler-backend-emit-load-step` delegate single-use 8-byte integer loads to
+;; the GAP8 ALU memory-operand fold (`compiler-backend-gep-load-alu-probe`).
+;; Width is tested as i64/u64 rather than through a type-size table because that
+;; is the width every folded word-loop accumulator carries and regalloc has no
+;; segment bases to size other types with; a narrower admission only declines
+;; preferences, it never mis-states one.
 (define (compiler-reg-alu-fused-load-dst
   [slots : (& slots (__tl_dyn-array ir.CompilerIrInstr))]
   [index : i64]
   [use-counts : (& use-counts (__tl_dyn-array i64))]) : i64
-  (if (< index 2)
+  (if (< index 1)
     (- 0 1)
     (match (owned_view.compiler-owned-element-view slots (- index 1))
-      [(Load load-dst src load-ty)
+      [(Load load-dst _ load-ty)
         (if (and
           (compiler-reg-int-width-64? (& load-ty))
           (compiler-reg-alu-single-use? use-counts load-dst))
-          (match src
-            [(Var gep-var)
-              (match (owned_view.compiler-owned-element-view slots (- index 2))
-                [(Gep gep-dst _ _ _)
-                  (if (and
-                    (= gep-dst gep-var)
-                    (compiler-reg-alu-single-use? use-counts gep-var))
-                    load-dst
-                    (- 0 1))]
-                [_ (- 0 1)])]
-            [_ (- 0 1)])
+          load-dst
           (- 0 1))]
       [_ (- 0 1)])))
 
@@ -1877,9 +1867,10 @@
               ;; BOTH operands loaded is the backend's PAIR fold
               ;; (compiler-backend-gep-load-pair-alu-probe), which loads one
               ;; memory operand straight into the result home and needs no
-              ;; operand tie at all. Its shape is `gep; load; gep; load; binop`,
-              ;; so the rhs-defining load sits three slots back. Leave those ties
-              ;; exactly where they are.
+              ;; operand tie at all. Its shape is `[gep;] load; [gep;] load; binop`,
+              ;; so the rhs-defining load sits two or three slots back. Leave
+              ;; those ties exactly where they are.
+              (not (compiler-reg-alu-load-defines? slots (- index 2) rhs-var))
               (not (compiler-reg-alu-load-defines? slots (- index 3) rhs-var)))]
           [_ false])]
       [_ false])))

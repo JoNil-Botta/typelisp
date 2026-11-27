@@ -24,12 +24,13 @@ match call (\.L_tl_abort_)?tl_oob_abort
 # GAP4: one length load and one data load survive the interleaved stores, and
 # the store goes through the forwarded data register. With inline 16-byte
 # DynArray (#7963), the by-value descriptor is staged in a frame slot, so the
-# two `8(%r)` loads are length + xs[1] and the two `(%r)` loads are data_ptr +
-# xs[0] (zero descriptor reloads across the interleaved stores).
+# single `8(%r)` movq is the length load (xs[1] folds into `subq`/`addq`) and
+# the two `(%r)` loads are data_ptr + xs[0] (zero descriptor reloads across
+# the interleaved stores).
 case loadcse-forward
 source tests/integration/loadcse_forward.tl
 in fn _tl_loadcse_forward_poke_sum
-count = 2 ^[[:space:]]+movq 8\(%r[a-z0-9]+\), %r[a-z0-9]+$
+count = 1 ^[[:space:]]+movq 8\(%r[a-z0-9]+\), %r[a-z0-9]+$
 count = 2 ^[[:space:]]+movq \(%r[a-z0-9]+\), %r[a-z0-9]+$
 capture data_reg ^[[:space:]]*movq \(%r[a-z0-9]+\), (%r[a-z0-9]*)$
 count >= 1 ^[[:space:]]+movq %r[a-z0-9]+, 16\({{data_reg}}\)$

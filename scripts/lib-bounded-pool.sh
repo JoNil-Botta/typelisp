@@ -83,7 +83,7 @@ bounded_pool_read_report() {
 # in order. State lives in directories whose creation is atomic: `claims/` (one
 # per started job), `running/` (its cap and locks while it runs), `held/` (one
 # per held lock) and `results/` (its exit status).
-BOUNDED_POOL_LOCK_TRIES=${BOUNDED_POOL_LOCK_TRIES:-600}
+BOUNDED_POOL_LOCK_SECONDS=${BOUNDED_POOL_LOCK_SECONDS:-60}
 
 # Idle workers and waiters poll the pool state. Across a pool of many short
 # jobs a whole-second poll leaves workers idle between jobs, so poll five
@@ -102,7 +102,7 @@ bounded_pool_lock() {
     _bp_lock_tries=0
     until (set -C; : > "$1/lock") 2>/dev/null; do
         _bp_lock_tries=$((_bp_lock_tries + 1))
-        if [ "$_bp_lock_tries" -ge "$BOUNDED_POOL_LOCK_TRIES" ]; then
+        if [ "$_bp_lock_tries" -ge "$((BOUNDED_POOL_LOCK_SECONDS * 10))" ]; then
             echo "[$BOUNDED_POOL_LABEL] pool lock was not released: $1/lock" >&2
             return 2
         fi
@@ -111,7 +111,18 @@ bounded_pool_lock() {
 }
 
 bounded_pool_unlock() {
-    rm -f "$1/lock"
+    # MSYS2 can refuse to unlink a file another process still holds open, so
+    # retry instead of leaving the lock behind for the next pool to trip over.
+    _bp_unlock_tries=0
+    while [ -e "$1/lock" ]; do
+        if [ "$_bp_unlock_tries" -ge 50 ]; then
+            echo "[$BOUNDED_POOL_LABEL] could not release pool lock: $1/lock" >&2
+            return 2
+        fi
+        rm -f -- "$1/lock" 2>/dev/null
+        _bp_unlock_tries=$((_bp_unlock_tries + 1))
+        [ ! -e "$1/lock" ] || sleep 0.1
+    done
 }
 
 bounded_pool_require_queue() {

@@ -212,6 +212,9 @@ TOOL_CACHE="$ROOT/target/build-stdlib-sysroot/tools/$TOOL_KEY"
 BUILDER_BIN="$TOOL_CACHE/build-stdlib-sysroot$NL_BIN_EXT"
 
 if [ ! -x "$BUILDER_BIN" ]; then
+    # The builder compile runs for minutes; a lane that waits on this cache
+    # while another lane compiles the same tool must not give up on the lock.
+    BOUNDED_POOL_LOCK_SECONDS=900
     mkdir -p "$TOOL_CACHE/lock"
     bounded_pool_lock "$TOOL_CACHE/lock"
     TOOL_TEMP=

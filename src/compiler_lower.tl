@@ -62803,7 +62803,7 @@
     ;; backend.  Keep the stable package hash intact after that prefix so the
     ;; archive and TLCI still share one deterministic logical identity.
     (match backend
-      [(or (Avx512) (Sse2))
+      [(Avx512)
         (if (string.eq result "v")
           (if (lower-type-bool? result-ty)
             (str_cat.str-cat "__tl_spmd_ret_mask_" stable-name)
@@ -64155,11 +64155,12 @@
                 (lower-diagnostic
                   "lower: :spmd-callable is not supported in AVX2 backend mode; use scalar or avx512")))
             (let
+              ;; :spmd-callable private ABI v1 defines scalar and avx512
+              ;; helpers; sse2 packages emit the scalar helper.
               [backend : ir.CompilerIrSpmdBackend
-                (cond
-                  [(lower-mode-avx512? mode) Avx512]
-                  [(lower-mode-sse2? mode) Sse2]
-                  [else Scalar])]
+                (if (lower-mode-avx512? mode)
+                  Avx512
+                  Scalar)]
               [count : i64
                 (ast.ast-spmd-specialization-list-len (& specializations))]
               (match (lower-spmd-package-specializations-from

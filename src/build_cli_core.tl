@@ -3112,10 +3112,13 @@
       (+= cursor 1))
     dst))
 
+;; :spmd-callable private ABI v1 defines scalar and avx512 package helpers;
+;; sse2 packages emit and advertise the scalar helper while vectorizing other
+;; loops with SSE2.
 (define (build-package-tlci-backend [mode : be_state.CompilerBackendMode]) : ir.CompilerIrSpmdBackend
   (match mode
     [(Scalar) Scalar]
-    [(Sse2) Sse2]
+    [(Sse2) Scalar]
     [(Avx2) Avx2]
     [(Avx512) Avx512]))
 

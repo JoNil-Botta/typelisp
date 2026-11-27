@@ -716,11 +716,19 @@
       2)
     (compiler-lower-spmd-package-helper-count-ok?
       (compiler-lower-spmd-package-callable-source)
+      (lower.CompilerLowerMode.Sse2)
+      2)
+    (compiler-lower-spmd-package-helper-count-ok?
+      (compiler-lower-spmd-package-callable-source)
       (lower.CompilerLowerMode.Avx512)
       2)
     (compiler-lower-spmd-package-helper-count-ok?
       (compiler-lower-spmd-package-scalar-collapse-source)
       (lower.CompilerLowerMode.Scalar)
+      1)
+    (compiler-lower-spmd-package-helper-count-ok?
+      (compiler-lower-spmd-package-scalar-collapse-source)
+      (lower.CompilerLowerMode.Sse2)
       1)
     (compiler-lower-spmd-package-helper-count-ok?
       (compiler-lower-spmd-package-scalar-collapse-source)
@@ -736,6 +744,13 @@
         " 2 source 1 varying i64 : i64] index source 1 result varying i64"))
     (compiler-lower-spmd-package-private-abi-ok?
       (lower.CompilerLowerMode.Scalar)
+      (str_cat.str-cat
+        "scalar lanes 1 [0 active-mask : bool, 1 source 0 varying i64 : i64,"
+        " 2 source 1 uniform i64 : i64] index none result varying i64 | "
+        "scalar lanes 1 [0 active-mask : bool, 1 source 0 uniform i64 : i64,"
+        " 2 source 1 varying i64 : i64] index none result varying i64"))
+    (compiler-lower-spmd-package-private-abi-ok?
+      (lower.CompilerLowerMode.Sse2)
       (str_cat.str-cat
         "scalar lanes 1 [0 active-mask : bool, 1 source 0 varying i64 : i64,"
         " 2 source 1 uniform i64 : i64] index none result varying i64 | "

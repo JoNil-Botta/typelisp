@@ -6007,35 +6007,24 @@
 ;; activation: a call or syscall argument, a stored, returned or packed value,
 ;; a vector operand. Without such a use, nothing the tail transfer leaves
 ;; behind can reach the reused frame. An invalid sequence answers true.
-(define (compiler-ir-frame-derived?
-  [derived : (& derived ir_i64_i64_map.Map)]
-  [value : (& value CompilerIrValue)]) : bool
-  (match value
-    [(CompilerIrValue.Var id) (ir_i64_i64_map.contains? derived id)]
-    [_ false]))
-
-(define (compiler-ir-frame-note-use!
-  [derived : (& derived ir_i64_i64_map.Map)]
-  [hits : (&mut hits (__tl_dyn-array bool))]
-  [role : CompilerIrOperandRole]
-  [value : CompilerIrValue]) : unit
-  (when
-    (compiler-ir-frame-derived? derived (& value))
-    (set! (array-ref hits 0) true)
-    (match role
-      [(or (CompilerIrOperandRole.Address) (CompilerIrOperandRole.Condition))
-        unit]
-      [_ (set! (array-ref hits 1) true)])))
-
 ;; One visit of `instr`'s uses: `hits[0]` records a use of a frame address and
 ;; `hits[1]` a use that may carry one out of the activation.
 (define (compiler-ir-frame-instr-uses!
   [derived : (& derived ir_i64_i64_map.Map)]
   [hits : (&mut hits (__tl_dyn-array bool))]
-  [instr : CompilerIrInstr]) : unit
+  [instr : (& CompilerIrInstr)]
+  [uses : (&mut uses CompilerIrUseList)]) : unit
   (set! (array-ref hits 0) false)
   (set! (array-ref hits 1) false)
-  (compiler-ir-instr-visit-uses instr compiler-ir-frame-note-use! derived hits))
+  (set! uses.len 0)
+  (compiler-ir-instr-uses-into! instr uses)
+  (for [use (& uses)]
+    (when
+      (and (= use.kind (VarUse)) (ir_i64_i64_map.contains? derived use.id))
+      (set! (array-ref hits 0) true)
+      (match use.role
+        [(or (Address) (Condition)) unit]
+        [_ (set! (array-ref hits 1) true)]))))
 
 ;; The destination a frame address flows into through this instruction, or -1.
 (define (compiler-ir-frame-propagating-dst [instr : (& instr CompilerIrInstr)]) : i64
@@ -6052,6 +6041,7 @@
   [derived : (&mut derived ir_i64_i64_map.Map)]) : bool
   (let
     [hits : (__tl_dyn-array bool) (__tl_make-array bool 2)]
+    [uses : CompilerIrUseList (compiler-ir-use-list-new)]
     [escaped : bool false]
     [changed : bool true]
     (while changed
@@ -6061,12 +6051,15 @@
           [(CompilerIrBlock.Block _ instrs)
             (for [i (iterator.range 0 instrs.len)]
               (let
-                [instr : CompilerIrInstr
-                  (owned_view.compiler-owned-element-view instrs.slots i)]
-                [dst : i64 (compiler-ir-frame-propagating-dst (& instr))]
+                [instr (compiler-ir-instr-seq-borrow instrs i)]
+                [dst : i64 (compiler-ir-frame-propagating-dst instr)]
                 (when
                   (and (>= dst 0) (not (ir_i64_i64_map.contains? derived dst)))
-                  (compiler-ir-frame-instr-uses! derived (&mut hits) instr)
+                  (compiler-ir-frame-instr-uses!
+                    derived
+                    (&mut hits)
+                    instr
+                    (&mut uses))
                   (when
                     (array-ref hits 0)
                     (ir_i64_i64_map.insert-ref! derived dst 1)
@@ -6076,15 +6069,18 @@
         [(CompilerIrBlock.Block _ instrs)
           (for [i (iterator.range 0 instrs.len)]
             (let
-              [instr : CompilerIrInstr
-                (owned_view.compiler-owned-element-view instrs.slots i)]
+              [instr (compiler-ir-instr-seq-borrow instrs i)]
               (when
                 (and
-                  (< (compiler-ir-frame-propagating-dst (& instr)) 0)
-                  (match (& instr)
+                  (< (compiler-ir-frame-propagating-dst instr) 0)
+                  (match instr
                     [(CompilerIrInstr.BoundsCheck _ _ _) false]
                     [_ true]))
-                (compiler-ir-frame-instr-uses! derived (&mut hits) instr)
+                (compiler-ir-frame-instr-uses!
+                  derived
+                  (&mut hits)
+                  instr
+                  (&mut uses))
                 (when (array-ref hits 1) (set! escaped true)))))]))
     escaped))
 

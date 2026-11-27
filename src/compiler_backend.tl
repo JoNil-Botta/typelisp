@@ -3146,39 +3146,33 @@
           (set! (array-ref counts var) (+ (array-ref counts var) 1))
           unit)))))
 
-(define (compiler-backend-count-use
-  [counts : (&mut counts (__tl_dyn-array i64))]
-  [_role : compiler_ir_types.CompilerIrOperandRole]
-  [value : compiler_ir_types.CompilerIrValue]) : unit
-  (match value
-    [(Var id) (compiler-backend-use-count-inc counts id)]
-    [_ unit]))
-
 ;; Every use counts, Pack words included, so the single-use fusion peepholes
 ;; cannot elide the home store of a var a Pack/Word still reads (-O2 copy-prop
 ;; substitutes vars directly into Pack/Word operands); so does AddrOf's storage
 ;; var.
 (define (compiler-backend-count-instr-uses
   [counts : (&mut counts (__tl_dyn-array i64))]
-  [instr : compiler_ir_types.CompilerIrInstr]) : unit
-  (match (& instr)
-    [(AddrOf _ src _storage-words) (compiler-backend-use-count-inc counts src)]
+  [instr : (& compiler_ir_types.CompilerIrInstr)]
+  [ids : (&mut ids compiler_ir_types.CompilerIrIdList)]) : unit
+  (match instr
+    [(AddrOf _ src _) (compiler-backend-use-count-inc counts src)]
     [_
-      (compiler_ir_types.compiler-ir-instr-visit-uses
-        instr
-        compiler-backend-count-use
-        counts)]))
+      (set! ids.len 0)
+      (compiler_ir_types.compiler-ir-instr-use-var-ids-into! instr ids)
+      (for [id (& ids)]
+        (compiler-backend-use-count-inc counts (deref id)))]))
 
 (define (compiler-backend-count-instr-seq-uses
   [counts : (__tl_dyn-array i64)]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : unit
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
-    [count : i64 instrs.len]
-    (for [index (iterator.range 0 count)]
+    [ids : compiler_ir_types.CompilerIrIdList
+      (compiler_ir_types.compiler-ir-id-list-new)]
+    (for [index (iterator.range 0 instrs.len)]
       (compiler-backend-count-instr-uses
         (&mut counts)
-        (be_state.compiler-backend-global-array-element-shared-view slots index)))
+        (compiler_ir_types.compiler-ir-instr-seq-borrow instrs index)
+        (&mut ids)))
     unit))
 
 (define (compiler-backend-count-block-uses
@@ -3213,6 +3207,8 @@
     (SelectFactorResult vars blocks)
     (let
       [uses : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+      [ids : compiler_ir_types.CompilerIrIdList
+        (compiler_ir_types.compiler-ir-id-list-new)]
       (match (& blocks)
         [(Array seq)
           (for [b
@@ -3224,7 +3220,8 @@
                 (for [i (iterator.range 0 instrs.len)]
                   (compiler-backend-count-instr-uses
                     (&mut uses)
-                    (compiler_ir_types.compiler-ir-instr-seq-ref instrs i)))]))])
+                    (compiler_ir_types.compiler-ir-instr-seq-borrow instrs i)
+                    (&mut ids)))]))])
       (be_simd.compiler-backend-simd-select-add-factor-blocks
         vars
         blocks
@@ -3299,6 +3296,8 @@
     [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
     [pending : i64 (- 0 1)]
+    [ids : compiler_ir_types.CompilerIrIdList
+      (compiler_ir_types.compiler-ir-id-list-new)]
     (for [index (iterator.range 0 count)]
       (let
         [instr : compiler_ir_types.CompilerIrInstr
@@ -3309,9 +3308,7 @@
           (if (>= pending 0)
             (array-ref counts pending)
             0)]
-        (compiler-backend-count-instr-uses
-          (&mut counts)
-          (be_state.compiler-backend-global-shared-view instr))
+        (compiler-backend-count-instr-uses (&mut counts) (& instr) (&mut ids))
         (if (and (>= pending 0) (> (array-ref counts pending) before))
           (set! (array-ref adjacent pending) true)
           unit)
@@ -3511,10 +3508,13 @@
   (let
     [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [n : i64 instrs.len]
+    [ids : compiler_ir_types.CompilerIrIdList
+      (compiler_ir_types.compiler-ir-id-list-new)]
     (for [j (iterator.range 0 n)]
       (compiler-backend-count-instr-uses
         (&mut counts)
-        (be_state.compiler-backend-global-array-element-shared-view slots j))
+        (& (array-ref slots j))
+        (&mut ids))
       (let
         [v : i64
           (compiler-backend-fuse-free-branch-var
@@ -3601,6 +3601,8 @@
     [pending : i64 -1]
     [pending-root : i64 -1]
     [unproven : bool false]
+    [ids : compiler_ir_types.CompilerIrIdList
+      (compiler_ir_types.compiler-ir-id-list-new)]
     (for [index (iterator.range 0 instrs.len)]
       (let
         [instr
@@ -3627,7 +3629,7 @@
             [before : i64 (array-ref probe pending)]
             (unless
               (or (= kind 1) (= kind 3))
-              (compiler-backend-count-instr-uses probe instr))
+              (compiler-backend-count-instr-uses probe (& instr) (&mut ids)))
             (if (not (= (array-ref probe pending) before))
               (set! (array-ref items pending) pending-root)
               (set! unproven true))))
@@ -17338,7 +17340,16 @@
     (compiler-backend-use-count-inc
       (&mut mask-counts)
       (compiler_ir_types.compiler-ir-instr-dst instr))
-    (compiler-backend-count-instr-uses (&mut mask-counts) instr)
+    (unsafe
+      (let
+        [scratch : (MutPtr compiler_ir_types.CompilerIrIdList)
+          (be_state.compiler-backend-function-use-ids function-state)]
+        [ids : compiler_ir_types.CompilerIrIdList (ptr-read scratch)]
+        (compiler-backend-count-instr-uses
+          (&mut mask-counts)
+          (& instr)
+          (&mut ids))
+        (ptr-write! scratch ids)))
     (be_state.compiler-backend-function-state-set-bool!
       function-state
       be_state.compiler-backend-function-bool-use-home-mask-active

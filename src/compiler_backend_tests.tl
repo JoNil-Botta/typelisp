@@ -10210,18 +10210,26 @@ high:
 (define (compiler-backend-ir-walker-call-use-counts-ok?) : bool
   (let
     [counts : (__tl_dyn-array i64) (__tl_make-array i64 12)]
+    [ids : ir.CompilerIrIdList (ir.compiler-ir-id-list-new)]
     (backend.compiler-backend-count-instr-uses
       (&mut counts)
-      (irt.instr "%0 = call* %1(%2, %3) : i64"))
+      (& (irt.instr "%0 = call* %1(%2, %3) : i64"))
+      (&mut ids))
     (backend.compiler-backend-count-instr-uses
       (&mut counts)
-      (irt.instr "%4 = call_c* %4(%5) : i64"))
+      (& (irt.instr "%4 = call_c* %4(%5) : i64"))
+      (&mut ids))
     (backend.compiler-backend-count-instr-uses
       (&mut counts)
-      (TailCall (ci.intern "tail") (Two (Var 6) (Var 7)) (I64)))
+      (&
+        (ann
+          (TailCall (ci.intern "tail") (Two (Var 6) (Var 7)) (I64))
+          : ir.CompilerIrInstr))
+      (&mut ids))
     (backend.compiler-backend-count-instr-uses
       (&mut counts)
-      (irt.instr "tailcall* %8(%9, %10) : i64"))
+      (& (irt.instr "tailcall* %8(%9, %10) : i64"))
+      (&mut ids))
     (and
       (be_state.backend-and8
         (= (array-ref counts 1) 1)
@@ -10651,6 +10659,7 @@ high:
           (ir.compiler-ir-value-seq-prepend
             (& (F64 (compiler-backend-test-f64-bits "6.25")))
             (& (ir.compiler-ir-value-seq-empty)))))]
+    [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
     [packed : object_target.CompilerBackendObjectTargetParts
       (be_object.compiler-backend-object-instr
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -10662,7 +10671,8 @@ high:
         (ir.compiler-ir-block-list-empty)
         (Pack 0 values (owned_view.compiler-owned-shared-view ty))
         plan
-        index)]
+        index
+        (&mut uses))]
     [worded : object_target.CompilerBackendObjectTargetParts
       (be_object.compiler-backend-object-instr
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -10674,7 +10684,8 @@ high:
         (ir.compiler-ir-block-list-empty)
         (Word 1 (Function word-target-id) 0 ty)
         plan
-        index)]
+        index
+        (&mut uses))]
     [relocs : cobj.CompilerObjectRelocationList
       (cobj.compiler-object-relocation-builder-finish worded.relocations)]
     (and

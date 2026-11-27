@@ -2735,7 +2735,8 @@
   (empty-live-set compiler_liveness.CompilerLiveI64Set)
   (empty-instr-seq compiler_ir_types.CompilerIrInstrSeq)
   (empty-symbol-seq BackendSymbolSeq)
-  (empty-assignment-index compiler_regalloc.CompilerRegAssignmentTable))
+  (empty-assignment-index compiler_regalloc.CompilerRegAssignmentTable)
+  (use-ids compiler_ir_types.CompilerIrIdList))
 
 (define compiler-backend-function-i64-current-slot-vars : i64
   0)
@@ -2978,6 +2979,20 @@
       (int->ptr
         (cast state.address : u64)
         : (Ptr CompilerBackendFunctionStateData)))))
+
+;; The emission walk grows this buffer in its function arena and reuses it
+;; for each reserved-home query.
+(define (compiler-backend-function-use-ids
+  [state : CompilerBackendFunctionState]) : (MutPtr
+    compiler_ir_types.CompilerIrIdList)
+  (unsafe
+    (int->ptr
+      (cast
+        (+
+          state.address
+          (comptime (offset-of (type CompilerBackendFunctionStateData) use-ids)))
+        : u64)
+      : (MutPtr compiler_ir_types.CompilerIrIdList))))
 
 ;; Representation-lane reads intentionally address the field in place.  A
 ;; generic field projection from `(ptr-read StateData)` materialises the entire wide state
@@ -3567,7 +3582,8 @@
         empty-live-set
         empty-instr-seq
         empty-symbol-seq
-        empty-assignment-index))
+        empty-assignment-index
+        (compiler_ir_types.compiler-ir-id-list-new)))
     (CompilerBackendFunctionState
       (cast
         (unsafe
@@ -3992,6 +4008,10 @@
       (array-ref data.phi-targets 0)
       (compiler-backend-global-shared-view data.empty-symbol-seq))
     (set! (array-ref data.abort-targets 0) (CompilerBackendTarget.Linux))
+    (unsafe
+      (ptr-write!
+        (compiler-backend-function-use-ids state)
+        (compiler_ir_types.compiler-ir-id-list-new)))
     (compiler-backend-function-scratch-reset! state)))
 
 (defstruct BackendFloatEntry

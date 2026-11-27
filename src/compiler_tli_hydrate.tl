@@ -600,11 +600,71 @@
       (+= i 1))
     (< na nb)))
 
+;; Stdlib-affecting cfg atoms. Only these atoms can alter any declaration or
+;; body in `stdlib/` (excluding `stdlib/tests/`), so unrelated user or tooling
+;; `--cfg` flags (such as `selfhost-compile-manifest` or
+;; `compiler-dependency-audit`) do not cause spurious `CfgFingerprintMismatch`
+;; source-stdlib fallbacks.
+(define (tli-hydrate-stdlib-cfg-atom? [name : (& str)]) : bool
+  (or
+    (string.eq name "linux")
+    (string.eq name "windows")
+    (string.eq name "unix")
+    (tli-hydrate-string-starts-with? name "target-")
+    (tli-hydrate-string-starts-with? name "os-")
+    (string.eq name "test")
+    (string.eq name "compile-profile")
+    (string.eq name "compiler-arena-debug")
+    (string.eq name "compiler-backtrace")
+    (string.eq name "compiler-build-identity")
+    (string.eq name "compiler-reborrow-bound")
+    (string.eq name "embedded-stdlib-tlci")
+    (string.eq name "fs-rooted-linux-test-hooks")
+    (string.eq name "process-linux-test-hooks")))
+
+(define (tli-hydrate-cfg-digest-from-active
+  [active-names : (&mut active-names (__tl_dyn-array String))]
+  [active-values : (&mut active-values (__tl_dyn-array i64))]
+  [active-count : i64]) : (Array u8 32)
+  ;; Insertion-sort active cfg entries by name.
+  (for [i (iterator.range 1 active-count)]
+    (let
+      [key-name : String (string.copy (& (array-ref active-names i)))]
+      [key-val : i64 (array-ref active-values i)]
+      [j : i64 (- i 1)]
+      (while (and
+        (>= j 0)
+        (tli-hydrate-str-lt? (& key-name) (& (array-ref active-names j))))
+        (set!
+          (array-ref active-names (+ j 1))
+          (string.copy (& (array-ref active-names j))))
+        (set! (array-ref active-values (+ j 1)) (array-ref active-values j))
+        (-= j 1))
+      (set! (array-ref active-names (+ j 1)) key-name)
+      (set! (array-ref active-values (+ j 1)) key-val)))
+  (let
+    [out : buf.ByteBufBuilder (buf.byte-buf-builder-new)]
+    (for [index (iterator.range 0 active-count)]
+      (let
+        [name : String (string.copy (& (array-ref active-names index)))]
+        (le.push-u64! (&mut out) (string.string-length (& name)))
+        (buf.byte-buf-builder-append-string (&mut out) name)
+        (le.push-u64! (&mut out) (array-ref active-values index))))
+    (let
+      [owner : byte_buf.ByteBuf
+        (byte_buf.from-array (buf.byte-buf-builder-finish-array (& out)))]
+      (match (sha256.digest (byte_buf.as-bytes (& owner)))
+        [(Sha256FinalizeOk digest) (sha256.digest-bytes (& digest))]
+        [(Sha256FinalizeErr _) (make-array u8 32)]))))
+
 ;; Configuration fingerprint shared by sysroot validation and extraction:
 ;; canonicalize to the sorted deduplicated set of active (`value != 0`) cfg
 ;; names so shadowing, removed zero bindings, and insertion order do not
-;; cause spurious mismatches.
-(define (tli-hydrate-cfg-digest [cfgs : sym_i64_env.SymI64Env]) : (Array u8 32)
+;; cause spurious mismatches. When `stdlib-only` is true, ignore non-stdlib
+;; cfg atoms that cannot affect any module under `stdlib/`.
+(define (tli-hydrate-cfg-digest-with-filter
+  [cfgs : sym_i64_env.SymI64Env]
+  [stdlib-only : bool]) : (Array u8 32)
   (let
     [snapshot : cfg_core.CompilerCfgSnapshot
       (cfg_core.compiler-cfg-snapshot-from-env cfgs)]
@@ -631,40 +691,78 @@
               (set! (array-ref seen-names seen-count) (string.copy name))
               (+= seen-count 1)
               (when
-                (!= val 0)
+                (and
+                  (!= val 0)
+                  (or (not stdlib-only) (tli-hydrate-stdlib-cfg-atom? name)))
                 (set! (array-ref active-names active-count) (string.copy name))
                 (set! (array-ref active-values active-count) val)
                 (+= active-count 1)))))))
-    ;; Insertion-sort active cfg entries by name.
-    (for [i (iterator.range 1 active-count)]
+    (tli-hydrate-cfg-digest-from-active
+      (&mut active-names)
+      (&mut active-values)
+      active-count)))
+
+(define (tli-hydrate-cfg-digest [cfgs : sym_i64_env.SymI64Env]) : (Array u8 32)
+  (tli-hydrate-cfg-digest-with-filter cfgs false))
+
+(define (tli-hydrate-stdlib-cfg-digest [cfgs : sym_i64_env.SymI64Env]) : (Array
+    u8
+    32)
+  (tli-hydrate-cfg-digest-with-filter cfgs true))
+
+;; Compute the stdlib-scoped cfg digest directly from target + user cfg name
+;; strings without touching the active intern table (used for batch cache
+;; pre-warming before entry 0).
+(define (tli-hydrate-stdlib-cfg-digest-for-names
+  [is-windows : bool]
+  [user-names : (& user-names (__tl_dyn-array String))]
+  [user-count : i64]) : (Array u8 32)
+  (let
+    [cap : i64 (+ 4 user-count)]
+    [active-names : (__tl_dyn-array String) (__tl_make-array String cap)]
+    [active-values : (__tl_dyn-array i64) (__tl_make-array i64 cap)]
+    [active-count : i64 0]
+    (if is-windows
+      (begin
+        (set! (array-ref active-names 0) "windows")
+        (set! (array-ref active-values 0) 1)
+        (set! (array-ref active-names 1) "target-windows")
+        (set! (array-ref active-values 1) 1)
+        (set! (array-ref active-names 2) "os-windows")
+        (set! (array-ref active-values 2) 1)
+        (set! active-count 3))
+      (begin
+        (set! (array-ref active-names 0) "linux")
+        (set! (array-ref active-values 0) 1)
+        (set! (array-ref active-names 1) "unix")
+        (set! (array-ref active-values 1) 1)
+        (set! (array-ref active-names 2) "target-linux")
+        (set! (array-ref active-values 2) 1)
+        (set! (array-ref active-names 3) "os-linux")
+        (set! (array-ref active-values 3) 1)
+        (set! active-count 4)))
+    (for [index (iterator.range 0 user-count)]
       (let
-        [key-name : String (string.copy (& (array-ref active-names i)))]
-        [key-val : i64 (array-ref active-values i)]
-        [j : i64 (- i 1)]
-        (while (and
-          (>= j 0)
-          (tli-hydrate-str-lt? (& key-name) (& (array-ref active-names j))))
-          (set!
-            (array-ref active-names (+ j 1))
-            (string.copy (& (array-ref active-names j))))
-          (set! (array-ref active-values (+ j 1)) (array-ref active-values j))
-          (-= j 1))
-        (set! (array-ref active-names (+ j 1)) key-name)
-        (set! (array-ref active-values (+ j 1)) key-val)))
-    (let
-      [out : buf.ByteBufBuilder (buf.byte-buf-builder-new)]
-      (for [index (iterator.range 0 active-count)]
-        (let
-          [name (& (array-ref active-names index))]
-          (le.push-u64! (&mut out) (string.string-length name))
-          (buf.byte-buf-builder-append-string (&mut out) (string.copy name))
-          (le.push-u64! (&mut out) (array-ref active-values index))))
-      (let
-        [owner : byte_buf.ByteBuf
-          (byte_buf.from-array (buf.byte-buf-builder-finish-array (& out)))]
-        (match (sha256.digest (byte_buf.as-bytes (& owner)))
-          [(Sha256FinalizeOk digest) (sha256.digest-bytes (& digest))]
-          [(Sha256FinalizeErr _) (make-array u8 32)])))))
+        [name : String (string.copy (& (array-ref user-names index)))]
+        (when
+          (and
+            (> (string.string-length (& name)) 0)
+            (tli-hydrate-stdlib-cfg-atom? (& name)))
+          (let
+            [dup? : bool false]
+            (for [j (iterator.range 0 active-count)]
+              (when
+                (string.eq (& (array-ref active-names j)) (& name))
+                (set! dup? true)))
+            (unless
+              dup?
+              (set! (array-ref active-names active-count) name)
+              (set! (array-ref active-values active-count) 1)
+              (+= active-count 1))))))
+    (tli-hydrate-cfg-digest-from-active
+      (&mut active-names)
+      (&mut active-values)
+      active-count)))
 
 ;; Archive symbol mangling matching `compiler-backend-user-symbol-uncached`
 ;; without pulling backend state into the frontend/loader import graph.
@@ -2467,6 +2565,7 @@
 
 (defstruct TliMultiBundle
   (arena i64)
+  (owns-arena bool)
   (is-stdlib bool)
   (package-name String)
   (package-version String)
@@ -2477,7 +2576,8 @@
   (cfg-digest (Array u8 32))
   (cfg-names (__tl_dyn-array String))
   (records (__tl_dyn-array tli.TliModuleRecord))
-  (owned-bytes i64)
+  (record-decoded (__tl_dyn-array bool))
+  (owned-bytes-cell (__tl_dyn-array i64))
   (hydrated-any bool)
   (base-gid i64))
 
@@ -2552,9 +2652,10 @@
         (string.copy (& (array-ref (deref items) index)))))
     out))
 
-(define (tli-multi-catalog-attach-bundle!
+(define (tli-multi-catalog-attach-bundle-with-storage!
   [multi : (&mut TliMultiCatalog)]
   [bundle-arena : i64]
+  [owns-arena : bool]
   [is-stdlib : bool]
   [package-name : String]
   [package-version : String]
@@ -2563,7 +2664,10 @@
   [spmd-callables : tlci.TlciSpmdCallables]
   [directory : codec.TliDirectory]
   [cfg-digest : (& (Array u8 32))]
-  [cfgs : sym_i64_env.SymI64Env]) : TliMultiAttachResult
+  [cfgs : sym_i64_env.SymI64Env]
+  [records : (__tl_dyn-array tli.TliModuleRecord)]
+  [record-decoded : (__tl_dyn-array bool)]
+  [owned-bytes-cell : (__tl_dyn-array i64)]) : TliMultiAttachResult
   (when
     (and is-stdlib multi.has-stdlib-bundle)
     (return (TliMultiAttachResult.Err "duplicate stdlib TLI bundle")))
@@ -2580,59 +2684,131 @@
                 "duplicate TLI module name: "
                 (string.copy mod-name)))))))
     (let
-      [owned : i64
-        (+
-          directory.owned-bytes
-          80
-          (* count (+ 32 (comptime (size-of (type tli.TliModuleRecord))))))]
-      (when
-        (> owned codec.tli-max-owned-bytes)
-        (return
-          (TliMultiAttachResult.Err "TLI catalog exceeds the owned-byte limit")))
-      (let
-        [records : (__tl_dyn-array tli.TliModuleRecord)
-          (in-arena
-            (unsafe
-              (arena.Arena bundle-arena))
-            (__tl_make-array tli.TliModuleRecord count))]
-        [base-gid : i64 (tli_i64_vec.len (& multi.gid-bundle))]
-        [bundle-index : i64 (tli_bundle_vec.len (& multi.bundles))]
+      [base-gid : i64 (tli_i64_vec.len (& multi.gid-bundle))]
+      [bundle-index : i64 (tli_bundle_vec.len (& multi.bundles))]
+      (in-arena
+        (unsafe
+          (arena.Arena multi.root-arena))
+        (for [local (iterator.range 0 count)]
+          (let
+            [mod-name : String
+              (string.copy (& (array-ref directory.entries local).name))]
+            (tli_str_map.insert-ref!
+              (&mut multi.module-to-gid)
+              mod-name
+              (+ base-gid local))
+            (tli_i64_vec.push-ref! (&mut multi.gid-bundle) bundle-index)
+            (tli_i64_vec.push-ref! (&mut multi.gid-local) local)
+            (tli_i64_vec.push-ref! (&mut multi.states) 0)))
+        (tli_bundle_vec.push-ref!
+          (&mut multi.bundles)
+          (TliMultiBundle
+            bundle-arena
+            owns-arena
+            is-stdlib
+            (string.copy (& package-name))
+            (string.copy (& package-version))
+            (string.copy (& package-root))
+            (string.copy (& archive-path))
+            spmd-callables
+            directory
+            (deref cfg-digest)
+            (tli-hydrate-cfg-names cfgs)
+            records
+            record-decoded
+            owned-bytes-cell
+            false
+            base-gid))
+        (when
+          is-stdlib
+          (set! multi.has-stdlib-bundle true)
+          (set! multi.stdlib-bundle-index bundle-index)))
+      (TliMultiAttachResult.Ok bundle-index))))
+
+(define (tli-multi-catalog-attach-bundle!
+  [multi : (&mut TliMultiCatalog)]
+  [bundle-arena : i64]
+  [is-stdlib : bool]
+  [package-name : String]
+  [package-version : String]
+  [package-root : String]
+  [archive-path : String]
+  [spmd-callables : tlci.TlciSpmdCallables]
+  [directory : codec.TliDirectory]
+  [cfg-digest : (& (Array u8 32))]
+  [cfgs : sym_i64_env.SymI64Env]) : TliMultiAttachResult
+  (let
+    [count : i64 (array-length directory.entries)]
+    [owned : i64
+      (+
+        directory.owned-bytes
+        80
+        (* count (+ 32 (comptime (size-of (type tli.TliModuleRecord))))))]
+    (when
+      (> owned codec.tli-max-owned-bytes)
+      (return
+        (TliMultiAttachResult.Err "TLI catalog exceeds the owned-byte limit")))
+    (let
+      [records : (__tl_dyn-array tli.TliModuleRecord)
         (in-arena
           (unsafe
-            (arena.Arena multi.root-arena))
-          (for [local (iterator.range 0 count)]
-            (let
-              [mod-name : String
-                (string.copy (& (array-ref directory.entries local).name))]
-              (tli_str_map.insert-ref!
-                (&mut multi.module-to-gid)
-                mod-name
-                (+ base-gid local))
-              (tli_i64_vec.push-ref! (&mut multi.gid-bundle) bundle-index)
-              (tli_i64_vec.push-ref! (&mut multi.gid-local) local)
-              (tli_i64_vec.push-ref! (&mut multi.states) 0)))
-          (tli_bundle_vec.push-ref!
-            (&mut multi.bundles)
-            (TliMultiBundle
-              bundle-arena
-              is-stdlib
-              (string.copy (& package-name))
-              (string.copy (& package-version))
-              (string.copy (& package-root))
-              (string.copy (& archive-path))
-              spmd-callables
-              directory
-              (deref cfg-digest)
-              (tli-hydrate-cfg-names cfgs)
-              records
-              owned
-              false
-              base-gid))
-          (when
-            is-stdlib
-            (set! multi.has-stdlib-bundle true)
-            (set! multi.stdlib-bundle-index bundle-index)))
-        (TliMultiAttachResult.Ok bundle-index)))))
+            (arena.Arena bundle-arena))
+          (__tl_make-array tli.TliModuleRecord count))]
+      [record-decoded : (__tl_dyn-array bool)
+        (in-arena
+          (unsafe
+            (arena.Arena bundle-arena))
+          (__tl_make-array bool count))]
+      [owned-bytes-cell : (__tl_dyn-array i64)
+        (in-arena
+          (unsafe
+            (arena.Arena bundle-arena))
+          (__tl_make-array owned))]
+      (tli-multi-catalog-attach-bundle-with-storage!
+        multi
+        bundle-arena
+        true
+        is-stdlib
+        package-name
+        package-version
+        package-root
+        archive-path
+        spmd-callables
+        directory
+        cfg-digest
+        cfgs
+        records
+        record-decoded
+        owned-bytes-cell))))
+
+;; Attach a batch-cached stdlib bundle whose arena and decoded-record cache are
+;; owned by the enclosing batch rather than this session's multi-catalog.
+(define (tli-multi-catalog-attach-borrowed-stdlib-bundle!
+  [multi : (&mut TliMultiCatalog)]
+  [bundle-arena : i64]
+  [archive-path : String]
+  [directory : codec.TliDirectory]
+  [cfg-digest : (& (Array u8 32))]
+  [cfgs : sym_i64_env.SymI64Env]
+  [records : (__tl_dyn-array tli.TliModuleRecord)]
+  [record-decoded : (__tl_dyn-array bool)]
+  [owned-bytes-cell : (__tl_dyn-array i64)]) : TliMultiAttachResult
+  (tli-multi-catalog-attach-bundle-with-storage!
+    multi
+    bundle-arena
+    false
+    true
+    ""
+    ""
+    ""
+    archive-path
+    (tlci.tlci-spmd-callables-empty)
+    directory
+    cfg-digest
+    cfgs
+    records
+    record-decoded
+    owned-bytes-cell))
 
 ;; Owning bundle of `gid`, or `-1` when it names no attached module or that
 ;; bundle carries no `compact_ir` section.
@@ -2883,39 +3059,58 @@
             local).record-offset]
         (when
           (= (array-ref multi.states.slots gid) 0)
-          (let
-            [b-arena : i64 (array-ref multi.bundles.slots b-idx).arena]
-            [decoded : codec.TliBudgetedModuleResult
-              (in-arena
-                (unsafe
-                  (arena.Arena b-arena))
-                (codec.tli-decode-record-at
-                  (& (array-ref multi.bundles.slots b-idx).directory)
-                  local
-                  (array-ref multi.bundles.slots b-idx).owned-bytes))]
-            (match decoded
-              [(Err failure)
-                (set! multi.failed true)
-                (return (Err failure))]
-              [(Ok record used)
-                (unless
-                  (codec.tli-digest-eq?
-                    (& record.cfg-fingerprint-sha256)
-                    (& (array-ref multi.bundles.slots b-idx).cfg-digest))
-                  (return
-                    (tli-catalog-fail!
-                      (&mut multi.failed)
-                      (tli.TliDecodeError.CfgFingerprintMismatch)
-                      (+ offset 40)
-                      "TLI configuration fingerprint mismatch")))
-                (set!
-                  (array-ref
-                    (array-ref multi.bundles.slots b-idx).records
-                    local)
-                  record)
-                (set! (array-ref multi.bundles.slots b-idx).owned-bytes used)
-                (set! (array-ref multi.states.slots gid) 1)
-                (set! (array-ref next-edge.slots top) 0)])))
+          (if (array-ref
+            (array-ref multi.bundles.slots b-idx).record-decoded
+            local)
+            (begin
+              (set! (array-ref multi.states.slots gid) 1)
+              (set! (array-ref next-edge.slots top) 0))
+            (let
+              [b-arena : i64 (array-ref multi.bundles.slots b-idx).arena]
+              [cur-owned : i64
+                (array-ref
+                  (array-ref multi.bundles.slots b-idx).owned-bytes-cell
+                  0)]
+              [decoded : codec.TliBudgetedModuleResult
+                (in-arena
+                  (unsafe
+                    (arena.Arena b-arena))
+                  (codec.tli-decode-record-at
+                    (& (array-ref multi.bundles.slots b-idx).directory)
+                    local
+                    cur-owned))]
+              (match decoded
+                [(Err failure)
+                  (set! multi.failed true)
+                  (return (Err failure))]
+                [(Ok record used)
+                  (unless
+                    (codec.tli-digest-eq?
+                      (& record.cfg-fingerprint-sha256)
+                      (& (array-ref multi.bundles.slots b-idx).cfg-digest))
+                    (return
+                      (tli-catalog-fail!
+                        (&mut multi.failed)
+                        (tli.TliDecodeError.CfgFingerprintMismatch)
+                        (+ offset 40)
+                        "TLI configuration fingerprint mismatch")))
+                  (set!
+                    (array-ref
+                      (array-ref multi.bundles.slots b-idx).records
+                      local)
+                    record)
+                  (set!
+                    (array-ref
+                      (array-ref multi.bundles.slots b-idx).record-decoded
+                      local)
+                    true)
+                  (set!
+                    (array-ref
+                      (array-ref multi.bundles.slots b-idx).owned-bytes-cell
+                      0)
+                    used)
+                  (set! (array-ref multi.states.slots gid) 1)
+                  (set! (array-ref next-edge.slots top) 0)]))))
         (let
           [next : i64 (array-ref next-edge.slots top)]
           [imp-count : i64
@@ -3235,7 +3430,11 @@
     [out : (__tl_dyn-array i64) (__tl_make-array i64 (+ bcount 1))]
     (set! (array-ref out 0) multi.root-arena)
     (for [i (iterator.range 0 bcount)]
-      (set! (array-ref out (+ i 1)) (array-ref multi.bundles.slots i).arena))
+      (set!
+        (array-ref out (+ i 1))
+        (if (array-ref multi.bundles.slots i).owns-arena
+          (array-ref multi.bundles.slots i).arena
+          0)))
     out))
 
 (define (tli-multi-catalog-release! [multi : (& TliMultiCatalog)]) : unit
@@ -3244,7 +3443,11 @@
     [bcount : i64 (tli_bundle_vec.len (& multi.bundles))]
     [bundle-arenas : (__tl_dyn-array i64) (__tl_make-array i64 bcount)]
     (for [i (iterator.range 0 bcount)]
-      (set! (array-ref bundle-arenas i) (array-ref multi.bundles.slots i).arena))
+      (set!
+        (array-ref bundle-arenas i)
+        (if (array-ref multi.bundles.slots i).owns-arena
+          (array-ref multi.bundles.slots i).arena
+          0)))
     (for [i (iterator.range 0 bcount)]
       (let
         [ba : i64 (array-ref bundle-arenas i)]

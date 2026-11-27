@@ -4096,3 +4096,22 @@ exit 1
 stdout empty
 stderr contains global_init_temp_cleanup_later_callee_reject.tl:2:3
 stderr contains typecheck: global initializer may read `later` before it is initialized
+
+# Foreign callback-taking externs (Windows CreateThread via stdlib.thread/spawn)
+# must preserve indirect global-call effects on both targets, while non-callback
+# C externs stay unaffected.
+case check-global-call-spawn-targets
+target linux-x86_64 windows-x86_64
+step spawn-reject
+run check "{{root}}/tests/safety/global_call_spawn_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains cannot call `spawn` while global `g` is borrowed
+step spawn-ok
+run check "{{root}}/tests/safety/global_call_spawn_ok.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+stdout contains Type checking passed!
+stderr empty
+step c-extern-ok
+run check "{{root}}/tests/safety/global_call_c_extern_ok.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+stdout contains Type checking passed!
+stderr empty

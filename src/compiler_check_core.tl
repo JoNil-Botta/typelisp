@@ -97,7 +97,9 @@
         "|0|0|0\n"))))
 
 (define (compiler-check-language-cfgs) : sym_i64_env.SymI64Env
-  (target_cfg.compiler-target-cfgs Linux (cfg_core.compiler-cfg-empty)))
+  (target_cfg.compiler-target-cfgs
+    (target_cfg.compiler-target-cfg-host)
+    (cfg_core.compiler-cfg-empty)))
 
 (define (compiler-check-diagnostic-with-fallback-path
   [diag : cdiag.CompilerDiagnostic]

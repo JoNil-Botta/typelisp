@@ -2498,3 +2498,38 @@
             (driver.compiler-driver-reset-file-state!)
             ok))])
     (io.panic "test: --combined duplicate batch path fallback failed")))
+
+(test
+  tltest-prebuilt-stdlib-cfg-and-path-filter
+  (let
+    [cfgs : sym_i64_env.SymI64Env
+      (cfg_core.compiler-cfg-enable
+        (cfg_core.compiler-cfg-enable
+          (cfg_core.compiler-cfg-enable (cfg_core.compiler-cfg-empty) "linux")
+          "test")
+        "custom-user-flag")]
+    [filtered : sym_i64_env.SymI64Env (tltest.tltest-stdlib-tli-cfgs cfgs)]
+    [non-std-paths : cli_svec.Vec (cli_svec.new)]
+    [mixed-paths : cli_svec.Vec (cli_svec.new)]
+    (cli_svec.push-ref! (&mut non-std-paths) "src/test_cli_core.tl")
+    (cli_svec.push-ref! (&mut non-std-paths) "tests/inline/sample.tl")
+    (cli_svec.push-ref! (&mut mixed-paths) "src/test_cli_core.tl")
+    (cli_svec.push-ref! (&mut mixed-paths) "stdlib/hashmap.tl")
+    (when
+      (or
+        (cfg_core.compiler-cfg-enabled? filtered (ci.intern "test"))
+        (not (cfg_core.compiler-cfg-enabled? filtered (ci.intern "linux")))
+        (not
+          (cfg_core.compiler-cfg-enabled?
+            filtered
+            (ci.intern "custom-user-flag")))
+        (not (cfg_core.compiler-cfg-enabled? cfgs (ci.intern "test")))
+        (not (tltest.tltest-stdlib-source-path? "stdlib/io.tl"))
+        (not (tltest.tltest-stdlib-source-path? "./stdlib/net/ip.tl"))
+        (not (tltest.tltest-stdlib-source-path? "/repo/stdlib/hashmap.tl"))
+        (not (tltest.tltest-stdlib-source-path? "C:\\repo\\stdlib\\io.tl"))
+        (tltest.tltest-stdlib-source-path? "src/test_cli_core.tl")
+        (tltest.tltest-stdlib-source-path? "tests/inline/sample.tl")
+        (tltest.tltest-any-stdlib-source-path? (& non-std-paths))
+        (not (tltest.tltest-any-stdlib-source-path? (& mixed-paths))))
+      (io.panic "test: prebuilt stdlib cfg/path filter check failed"))))

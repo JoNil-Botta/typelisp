@@ -4,6 +4,9 @@
   (value i64)
   (scale i64 (:opaque)))
 
+(defstruct Sample
+  (reading Reading))
+
 (defstruct Aligned
   (:repr c)
   (value i64 (:align 8))

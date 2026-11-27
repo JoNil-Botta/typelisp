@@ -19,3 +19,4 @@ field_opacity_generated|check-fail|tests/safety/field_opacity_generated.tl|-|err
 field_opacity_empty|run-exit|tests/safety/field_opacity_empty.tl|3|-
 field_opacity_default_payload|check-fail|tests/safety/field_opacity_default_payload.tl|-|error[E0221]
 field_opacity_cleanup_borrow|check-fail|tests/safety/field_opacity_cleanup_borrow.tl|-|error[E0221]
+field_opacity_nested_fixed|check-fail|tests/safety/field_opacity_nested_fixed.tl|-|error[E0221]

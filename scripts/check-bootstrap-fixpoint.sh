@@ -130,7 +130,7 @@ assemble_and_link_stage2() {
     stdout="$WORKDIR/stage2-link.stdout"
     stderr="$WORKDIR/stage2-link.stderr"
     set +e
-    assemble_and_link "stage2" "$STAGE2_ASM" "$STAGE2_OBJ" "$STAGE2_BIN" \
+    assemble_compiler_output_and_link "$STAGE1_BIN" "stage2" "$STAGE2_ASM" "$STAGE2_OBJ" "$STAGE2_BIN" \
         > "$stdout" 2> "$stderr"
     status=$?
     set -e
@@ -201,7 +201,7 @@ else
     rm -rf "$WORKDIR"
     mkdir -p "$WORKDIR"
 fi
-configure_toolchain
+configure_toolchain linker-only
 
 BOOTSTRAP_SOURCE_ROOT=$ROOT
 BOOTSTRAP_ORIGINAL_SENTINEL=core-when-missing-body
@@ -512,7 +512,7 @@ check_stage1_compile_cli() {
         assert_contains "$STAGE1_CLI_DEBUG_ASM" ".loc "
         assert_contains "$STAGE1_CLI_DEBUG_ASM" ".cfi_startproc"
         assert_contains "$STAGE1_CLI_DEBUG_ASM" ".cfi_endproc"
-        as "$STAGE1_CLI_DEBUG_ASM" -o "$STAGE1_CLI_DEBUG_OBJ"
+        "$STAGE1_BIN" assemble "$STAGE1_CLI_DEBUG_ASM" -o "$STAGE1_CLI_DEBUG_OBJ"
         readelf --debug-dump=decodedline "$STAGE1_CLI_DEBUG_OBJ" |
             grep -qF "stage1_cli_smoke.tl"
         readelf --debug-dump=frames "$STAGE1_CLI_DEBUG_OBJ" |
@@ -708,7 +708,7 @@ bootstrap_build_stage4() {
         bootstrap_tlci_mutation_snapshot stage3 "$STAGE3_BIN"
     echo "[bootstrap] stage3 -> stage4.s"
     bootstrap_step stage3 compile run_bootstrap_compile "stage3 -> stage4.s" "$STAGE3_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE4_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --cfg embedded-stdlib-tlci --stdlib-root "$BOOTSTRAP_COMPILER_ROOT" --opt-level 2 --no-prebuilt-stdlib
-    bootstrap_step stage4 link assemble_and_link "stage4" "$STAGE4_ASM" "$STAGE4_OBJ" "$STAGE4_BIN"
+    bootstrap_step stage4 link assemble_compiler_output_and_link "$STAGE3_BIN" "stage4" "$STAGE4_ASM" "$STAGE4_OBJ" "$STAGE4_BIN"
 }
 
 # The converged compiler: the fixpoint compare decides the binary every
@@ -720,7 +720,7 @@ bootstrap_compiler_phase() {
     echo "[bootstrap] stage0 -> stage1.s"
     bootstrap_step stage0 compile run_bootstrap_compile "stage0 -> stage1.s" "$COMPILER" compile "$BOOTSTRAP_SRC" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --stdlib-root "$BOOTSTRAP_STDLIB_ROOT" --stdlib-root "$BOOTSTRAP_COMPILER_ROOT" --opt-level 2
 
-    bootstrap_step stage1 link assemble_and_link "stage1" "$STAGE1_ASM" "$STAGE1_OBJ" "$STAGE1_BIN"
+    bootstrap_step stage1 link assemble_seed_output_and_link "$COMPILER" "stage1" "$STAGE1_ASM" "$STAGE1_OBJ" "$STAGE1_BIN"
 
     if [ "$BOOTSTRAP_SKIP_CLI_SMOKE" -eq 0 ]; then
         bootstrap_step stage1 cli-smoke check_stage1_compile_cli
@@ -751,7 +751,7 @@ bootstrap_compiler_phase() {
     # gate for the embedded source payload and the native macro route.
     bootstrap_step stage2 compile run_bootstrap_compile "stage2 -> stage3.s" "$STAGE2_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE3_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --cfg embedded-stdlib-tlci --stdlib-root "$BOOTSTRAP_COMPILER_ROOT" --opt-level 2 --no-prebuilt-stdlib
 
-    bootstrap_step stage3 link assemble_and_link "stage3" "$STAGE3_ASM" "$STAGE3_OBJ" "$STAGE3_BIN"
+    bootstrap_step stage3 link assemble_compiler_output_and_link "$STAGE2_BIN" "stage3" "$STAGE3_ASM" "$STAGE3_OBJ" "$STAGE3_BIN"
 
     bootstrap_resolve_fixpoint
     bootstrap_mutation_step "$BOOTSTRAP_COMPILER_STAGE" image \

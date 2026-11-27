@@ -8,7 +8,7 @@ exec 9>&2
 #
 # The runner builds each listed TypeLisp program to a native executable, runs
 # it, and checks exit code, stdout, and stderr. Linux
-# uses the explicit compile -> as -> ld flow; Windows Git Bash/MSYS/Cygwin uses
+# uses the explicit compile -> assemble -> ld flow; Windows Git Bash/MSYS/Cygwin uses
 # bounded native-link and persistent execution queues so independent links can
 # overlap while full Windows exit values and byte streams survive without a
 # PowerShell launch per manifest case.
@@ -5463,7 +5463,7 @@ while IFS='|' read -r owner name source want stdout_spec runtime_args deps extra
                 continue
             fi
             if ! ci_timing_run "$name" assemble \
-                as "$asm" -o "$obj" >> "$build_stdout" 2>> "$build_stderr"; then
+                "$COMPILER" assemble "$asm" -o "$obj" >> "$build_stdout" 2>> "$build_stderr"; then
                 echo "FAIL: $name assemble failed" >&2
                 show_build_streams "$build_stdout" "$build_stderr"
                 printf 'failed\n' > "$case_dir/.build-status"

@@ -62,12 +62,8 @@ case "$SPMD_SIMD_WORKERS" in
 esac
 
 # Windows uses the host-default native toolchain (clang/lld-link); Linux uses
-# the default GNU pipeline.
+# TypeLisp assembly and GNU ld.
 if [ "$HOST_OS" = linux ]; then
-    command -v as >/dev/null 2>&1 || {
-        echo "missing assembler: as" >&2
-        exit 1
-    }
     command -v ld >/dev/null 2>&1 || {
         echo "missing linker: ld" >&2
         exit 1
@@ -321,7 +317,7 @@ run_spmd_mode() {
             mode_code=1
             return
         fi
-        if ! as "$_asm" -o "$_obj" >> "$mode_out" 2>> "$mode_err"; then
+        if ! "$COMPILER" assemble "$_asm" -o "$_obj" >> "$mode_out" 2>> "$mode_err"; then
             mode_code=1
             return
         fi

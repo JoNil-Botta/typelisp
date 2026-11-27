@@ -127,14 +127,13 @@ if [ ! -x "$COMPILER" ]; then
 fi
 
 # Configure host toolchain for building the host-runnable builder tool.
-configure_toolchain
+configure_toolchain linker-only
 
-# Check target assembler + deterministic archiver before doing heavy work.
+# Check the target toolchain before doing heavy work.
 TARGET_CLANG=
 TARGET_AR=
 TARGET_AR_KIND=
 if [ "$TARGET" = linux-x86_64 ]; then
-    command -v as >/dev/null 2>&1 || fail "build-stdlib-sysroot: linux target requires 'as'"
     command -v ar >/dev/null 2>&1 || fail "build-stdlib-sysroot: linux target requires 'ar'"
     TARGET_AR=ar
     TARGET_AR_KIND=gnu
@@ -241,7 +240,7 @@ if [ ! -x "$BUILDER_BIN" ]; then
             --stdlib-root stdlib --stdlib-root src \
             --opt-level 1 \
             $TLCI_CFG_ARGS
-        assemble_and_link "build-stdlib-sysroot" \
+        assemble_compiler_output_and_link "$COMPILER" "build-stdlib-sysroot" \
             "$TOOL_TEMP/builder.s" \
             "$TOOL_TEMP/builder.$NL_OBJ_EXT" \
             "$TOOL_TEMP/builder$NL_BIN_EXT"
@@ -281,9 +280,7 @@ bounded_pool_run_job() {
     _asm_file=$1
     _obj_file="${_asm_file%.s}.$TARGET_OBJ_EXT"
     if [ "$TARGET" = linux-x86_64 ]; then
-        # Module assembly carries no .note.GNU-stack; mark every object
-        # non-executable-stack so linking libstdlib.a stays warning-free.
-        as --noexecstack "$ASM_DIR/$_asm_file" -o "$OBJ_DIR/$_obj_file"
+        "$COMPILER" assemble "$ASM_DIR/$_asm_file" -o "$OBJ_DIR/$_obj_file"
     else
         "$TARGET_CLANG" --target=x86_64-pc-windows-msvc -c "$ASM_DIR/$_asm_file" -o "$OBJ_DIR/$_obj_file"
     fi

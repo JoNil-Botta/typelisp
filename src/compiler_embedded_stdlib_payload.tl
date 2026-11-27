@@ -179,6 +179,8 @@
 
 (include-str-lzss payload-x509 "../stdlib/x509.tl")
 
+(include-str-lzss payload-leb128 "../stdlib/leb128.tl")
+
 (defenum CompilerEmbeddedStdlibPayload
   (CompilerEmbeddedStdlibPayloadNone)
   (CompilerEmbeddedStdlibPayloadSome (__tl_dyn-array u8)))
@@ -360,10 +362,12 @@
       (compiler-embedded-stdlib-payload-copy payload-x509-time)]
     [(string.eq suffix "x509.tl")
       (compiler-embedded-stdlib-payload-copy payload-x509)]
+    [(string.eq suffix "leb128.tl")
+      (compiler-embedded-stdlib-payload-copy payload-leb128)]
     [else (CompilerEmbeddedStdlibPayloadNone)]))
 
 (define (compiler-embedded-stdlib-payload-suffix-count) : i64
-  83)
+  84)
 
 (define (compiler-embedded-stdlib-payload-suffix-at [index : i64]) : String
   (match index
@@ -450,4 +454,5 @@
     [80 "pem.tl"]
     [81 "x509_time.tl"]
     [82 "x509.tl"]
+    [83 "leb128.tl"]
     [_ ""]))

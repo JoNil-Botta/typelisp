@@ -120,7 +120,7 @@ scheme therefore remains a separate trust layer.
 Runtime outputs and the host comptime image have independent freshness. A
 second identical build reports each as `Fresh`, preserves the assembly,
 object, runtime artifact, and `.tlci` bytes and modification times, and does
-not rerun the native assembler, archiver, or linker. Every package-owned source
+not rerun assembly, archiving, or linking. Every package-owned source
 path and byte participates in the `.tlci` source binding, so any source
 add/remove/edit updates that image even when its native runtime assembly is
 unchanged. A comptime-only edit may therefore build only `.tlci`; a runtime
@@ -132,8 +132,9 @@ compile-time metadata or code.
 
 The adjacent `<runtime-artifact>.runtime-inputs` file binds retained runtime
 outputs to all material codegen, assembler, archiver, linker, compiler, tool,
-and dependency inputs and is managed as package build state. The two freshness
-decisions are independent, but every changed side is staged and committed in
+and dependency inputs and is managed as package build state. Linux assembly
+records the in-process assembler route and compiler producer identity.
+The two freshness decisions are independent, but every changed side is staged and committed in
 one transaction. A failure before commit leaves the previous pair untouched;
 a commit failure attempts to restore every previous component in reverse
 order. If a filesystem error prevents a restore, the build still exits nonzero

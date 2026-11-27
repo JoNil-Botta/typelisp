@@ -748,10 +748,8 @@
     [bundle : tli.TliBundle (tli-test-bundle false)]
     [types : (__tl_dyn-array tli.TliType) (tli-test-types)]
     [writer : codec.TliWriteContext
-      (codec.TliWriteContext
-        false
+      (codec.tli-write-context-new
         (codec.tli-collect-pool (& bundle))
-        (buf.byte-buf-builder-new)
         (__tl_make-array codec.TliCompactBodyMeta 0))]
     (test.assert-i64-eq (array-length wire) 411 "v3 exemplar length")
     (test.assert-i64-eq

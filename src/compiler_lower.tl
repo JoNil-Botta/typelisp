@@ -48345,16 +48345,37 @@
           (lower-mode-simd? (lower-state-mode state))
           (lower-type-i64? (lower-global-shared-view index-ty)))
           (let
+            [sse2-split-plan : LowerMaybeVectorReduce
+              (if (lower-mode-sse2? (lower-state-mode state))
+                (match (& split)
+                  [(Split x-id _)
+                    (lower-simple-vector-reduce
+                      ctx
+                      (lower-state-mode state)
+                      env
+                      type-env
+                      op
+                      index
+                      (ast.clone-ast-type (& acc-ty))
+                      (lower-context-expr-get ctx x-id))]
+                  [_ (LowerMaybeVectorReduce.No (ReductionValueShape))])
+                (LowerMaybeVectorReduce.No (ReductionValueShape)))]
+            [use-sse2-split : bool
+              (match (& sse2-split-plan)
+                [(or (Array _ _ _ _) (Value _ _ _ _)) true]
+                [_ false])]
             [plan : LowerMaybeVectorReduce
-              (lower-simple-vector-reduce
-                ctx
-                (lower-state-mode state)
-                env
-                type-env
-                op
-                index
-                (lower-global-shared-view acc-ty)
-                (lower-global-shared-view value))]
+              (if use-sse2-split
+                sse2-split-plan
+                (lower-simple-vector-reduce
+                  ctx
+                  (lower-state-mode state)
+                  env
+                  type-env
+                  op
+                  index
+                  (lower-global-shared-view acc-ty)
+                  (lower-global-shared-view value)))]
             (match (& plan)
               [(or (Array _ _ _ _) (Value _ _ _ _))
                 (lower-avx2-spmd-reduce-lowered
@@ -48367,7 +48388,10 @@
                   end
                   init
                   op
-                  plan)]
+                  plan
+                  (if use-sse2-split
+                    split
+                    (LowerMaybeReduceSplit.No)))]
               [(No reason)
                 (if (lower-mode-sse2? (lower-state-mode state))
                   (begin
@@ -56769,7 +56793,17 @@
     [body : i64 (ir.compiler-ir-label-none)]
     [merge : i64 (ir.compiler-ir-label-none)]
     [remainder : i64 (ir.compiler-ir-label-none)]
-    [width : i64 (* lanes 4)]
+    [sse2-array? : bool
+      (and
+        (lower-mode-sse2? (lower-state-mode state))
+        (match (& input)
+          [(Array _) true]
+          [_ false]))]
+    [group-gangs : i64
+      (if sse2-array?
+        32
+        4)]
+    [width : i64 (* lanes group-gangs)]
     [group-limit : ir.CompilerIrValue Unit]
     [long-enough : ir.CompilerIrValue Unit]
     [first-fits : ir.CompilerIrValue Unit]
@@ -56846,7 +56880,7 @@
         (set! s next)
         (set! group-input rebased)
         (set! relative? relative)])
-    (for [gang (iterator.range 0 4)]
+    (for [gang (iterator.range 0 group-gangs)]
       (let
         [chunk : ir.CompilerIrValue Unit]
         [offset : i64 (* gang lanes)]
@@ -56892,7 +56926,7 @@
           (lower-spmd-reduce-vector-accumulate
             s
             vector-op
-            (array-ref accs gang)
+            (array-ref accs (bit-and gang 3))
             chunk
             lanes
             (ast.clone-ast-type (& elem-ty))))))
@@ -56936,6 +56970,32 @@
         elem-ty))
     (lower-state-finish-block (lower-state-emit s (Jump remainder)) remainder)))
 
+(define (lower-spmd-reduce-finish-split-addend
+  [state : LowerState]
+  [index-var : i64]
+  [index-ty : ast.AstType]
+  [start-value : ir.CompilerIrValue]
+  [acc-var : i64]
+  [elem-ty : ast.AstType]
+  [split-u-var : i64]) : LowerExpr
+  (if (< split-u-var 0)
+    (Expr state (Var acc-var) elem-ty)
+    (match (lower-emit-binop
+      state
+      Sub
+      (Var index-var)
+      start-value
+      (ast.clone-ast-type (& index-ty)))
+      [(Expr s1 trip _)
+        (match (lower-emit-binop
+          s1
+          Mul
+          trip
+          (Var split-u-var)
+          (ast.clone-ast-type (& elem-ty)))
+          [(Expr s2 scaled _)
+            (lower-emit-binop s2 Add (Var acc-var) scaled elem-ty)])])))
+
 (define (lower-avx2-spmd-reduce-build
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -56949,238 +57009,252 @@
   [array-var : i64]
   [vector-op : ir.CompilerIrVectorReduceOp]
   [elem-ty : ast.AstType]
-  [lanes : i64]) : ResultLowerExpr
-  (match (lower-state-alloc-var state)
-    [(Alloc acc-alloc acc-var)
-      (match (lower-state-alloc-var
-        (lower-state-emit
-          acc-alloc
-          (Mov acc-var init-value (lower-global-shared-view elem-ty))))
-        [(Alloc index-alloc index-var)
-          (let
-            [s : LowerState
-              (lower-state-emit
-                index-alloc
-                (Mov index-var start-value (lower-global-shared-view index-ty)))]
-            [header-label : i64 (ir.compiler-ir-label-none)]
-            [body-label : i64 (ir.compiler-ir-label-none)]
-            [tail-init-label : i64 (ir.compiler-ir-label-none)]
-            [tail-header-label : i64 (ir.compiler-ir-label-none)]
-            [tail-body-label : i64 (ir.compiler-ir-label-none)]
-            [exit-label : i64 (ir.compiler-ir-label-none)]
-            [arrays : LowerArrayVarSet
-              (lower-array-var-set-add (lower-array-var-set-empty) array-var 0)]
-            [vector-limit : ir.CompilerIrValue Unit]
-            [vector-start-ok : ir.CompilerIrValue Unit]
-            [next-index : ir.CompilerIrValue Unit]
-            [vector-ok : ir.CompilerIrValue Unit]
-            [tail-cond : ir.CompilerIrValue Unit]
-            [vector-acc-var : i64 0]
-            [data-ptr : ir.CompilerIrValue Unit]
-            (if (lower-spmd-reduce-vector-accumulator? elem-ty)
-              (match (lower-state-alloc-var s)
-                [(Alloc next-s var)
-                  (set! vector-acc-var var)
-                  (set!
-                    s
-                    (lower-state-emit
-                      next-s
-                      (Splat
-                        vector-acc-var
-                        (lower-spmd-reduce-vector-accumulator-init op acc-var)
-                        lanes
-                        (lower-global-shared-view elem-ty))))])
-              unit)
-            (match (lower-state-fresh-label s "spmd_reduce_avx2_header")
-              [(Label next-s label)
-                (set! s next-s)
-                (set! header-label label)])
-            (match (lower-state-fresh-label s "spmd_reduce_avx2_body")
-              [(Label next-s label)
-                (set! s next-s)
-                (set! body-label label)])
-            (match (lower-state-fresh-label s "spmd_reduce_tail_header")
-              [(Label next-s label)
-                (set! s next-s)
-                (set! tail-header-label label)])
-            (if (lower-spmd-reduce-vector-accumulator? elem-ty)
-              (match (lower-state-fresh-label s "spmd_reduce_tail_init")
+  [lanes : i64]
+  [split-u-var : i64]) : ResultLowerExpr
+  (let
+    [saved-start : ir.CompilerIrValue
+      (ir.compiler-ir-clone-value (& start-value))]
+    (match (lower-state-alloc-var state)
+      [(Alloc acc-alloc acc-var)
+        (match (lower-state-alloc-var
+          (lower-state-emit
+            acc-alloc
+            (Mov acc-var init-value (lower-global-shared-view elem-ty))))
+          [(Alloc index-alloc index-var)
+            (let
+              [s : LowerState
+                (lower-state-emit
+                  index-alloc
+                  (Mov
+                    index-var
+                    start-value
+                    (lower-global-shared-view index-ty)))]
+              [header-label : i64 (ir.compiler-ir-label-none)]
+              [body-label : i64 (ir.compiler-ir-label-none)]
+              [tail-init-label : i64 (ir.compiler-ir-label-none)]
+              [tail-header-label : i64 (ir.compiler-ir-label-none)]
+              [tail-body-label : i64 (ir.compiler-ir-label-none)]
+              [exit-label : i64 (ir.compiler-ir-label-none)]
+              [arrays : LowerArrayVarSet
+                (lower-array-var-set-add
+                  (lower-array-var-set-empty)
+                  array-var
+                  0)]
+              [vector-limit : ir.CompilerIrValue Unit]
+              [vector-start-ok : ir.CompilerIrValue Unit]
+              [next-index : ir.CompilerIrValue Unit]
+              [vector-ok : ir.CompilerIrValue Unit]
+              [tail-cond : ir.CompilerIrValue Unit]
+              [vector-acc-var : i64 0]
+              [data-ptr : ir.CompilerIrValue Unit]
+              (if (lower-spmd-reduce-vector-accumulator? elem-ty)
+                (match (lower-state-alloc-var s)
+                  [(Alloc next-s var)
+                    (set! vector-acc-var var)
+                    (set!
+                      s
+                      (lower-state-emit
+                        next-s
+                        (Splat
+                          vector-acc-var
+                          (lower-spmd-reduce-vector-accumulator-init op acc-var)
+                          lanes
+                          (lower-global-shared-view elem-ty))))])
+                unit)
+              (match (lower-state-fresh-label s "spmd_reduce_avx2_header")
                 [(Label next-s label)
                   (set! s next-s)
-                  (set! tail-init-label label)])
-              unit)
-            (match (lower-state-fresh-label s "spmd_reduce_tail_body")
-              [(Label next-s label)
-                (set! s next-s)
-                (set! tail-body-label label)])
-            (match (lower-state-fresh-label s "spmd_reduce_exit")
-              [(Label next-s label)
-                (set! s next-s)
-                (set! exit-label label)])
-            (match (lower-vector-loop-limit
-              s
-              (lower-global-shared-view end-value)
-              arrays
-              lanes)
-              [(Expr next-s value _)
-                (set! s next-s)
-                (set! vector-limit value)])
-            (match (lower-vector-loop-start-ok s index-var lanes)
-              [(Expr next-s value _)
-                (set! s next-s)
-                (set! vector-start-ok value)])
-            (match (lower-sequence-data-pointer-value s array-var)
-              [(Expr next-s value _)
-                (set! s next-s)
-                (set! data-ptr value)])
-            (set!
-              s
-              (lower-avx2-reduce-groups
-                ctx
+                  (set! header-label label)])
+              (match (lower-state-fresh-label s "spmd_reduce_avx2_body")
+                [(Label next-s label)
+                  (set! s next-s)
+                  (set! body-label label)])
+              (match (lower-state-fresh-label s "spmd_reduce_tail_header")
+                [(Label next-s label)
+                  (set! s next-s)
+                  (set! tail-header-label label)])
+              (if (lower-spmd-reduce-vector-accumulator? elem-ty)
+                (match (lower-state-fresh-label s "spmd_reduce_tail_init")
+                  [(Label next-s label)
+                    (set! s next-s)
+                    (set! tail-init-label label)])
+                unit)
+              (match (lower-state-fresh-label s "spmd_reduce_tail_body")
+                [(Label next-s label)
+                  (set! s next-s)
+                  (set! tail-body-label label)])
+              (match (lower-state-fresh-label s "spmd_reduce_exit")
+                [(Label next-s label)
+                  (set! s next-s)
+                  (set! exit-label label)])
+              (match (lower-vector-loop-limit
                 s
-                (Array (ir.compiler-ir-clone-value (& data-ptr)))
-                index-var
-                (ir.compiler-ir-clone-value (& vector-limit))
-                acc-var
-                vector-acc-var
-                op
-                vector-op
-                (lower-global-shared-view elem-ty)
-                lanes))
-            (if (lower-spmd-reduce-vector-accumulator? elem-ty)
+                (lower-global-shared-view end-value)
+                arrays
+                lanes)
+                [(Expr next-s value _)
+                  (set! s next-s)
+                  (set! vector-limit value)])
+              (match (lower-vector-loop-start-ok s index-var lanes)
+                [(Expr next-s value _)
+                  (set! s next-s)
+                  (set! vector-start-ok value)])
+              (match (lower-sequence-data-pointer-value s array-var)
+                [(Expr next-s value _)
+                  (set! s next-s)
+                  (set! data-ptr value)])
               (set!
                 s
-                (lower-state-finish-block
-                  (lower-state-emit
-                    s
-                    (Branch vector-start-ok header-label tail-init-label))
-                  header-label))
-              (set!
-                s
-                (lower-state-finish-block
-                  (lower-state-emit
-                    s
-                    (Branch vector-start-ok header-label tail-header-label))
-                  header-label)))
-            (match (lower-emit-binop
-              s
-              (Add)
-              (Var index-var)
-              (I64 lanes)
-              (lower-global-shared-view index-ty))
-              [(Expr next-s value _)
-                (set! s next-s)
-                (set! next-index value)])
-            (match (lower-vector-loop-next-ok
-              s
-              (lower-global-shared-view next-index)
-              vector-limit)
-              [(Expr next-s value _)
-                (set! s next-s)
-                (set! vector-ok value)])
-            (if (lower-spmd-reduce-vector-accumulator? elem-ty)
-              (set!
-                s
-                (lower-state-finish-block
-                  (lower-state-emit
-                    s
-                    (Branch vector-ok body-label tail-init-label))
-                  body-label))
-              (set!
-                s
-                (lower-state-finish-block
-                  (lower-state-emit
-                    s
-                    (Branch vector-ok body-label tail-header-label))
-                  body-label)))
-            (let
-              [body-lowered
-                (try
-                  (lower-avx2-reduce-vector-body
-                    ctx
-                    s
-                    env
-                    type-env
-                    op
-                    index-var
-                    next-index
-                    acc-var
-                    vector-acc-var
-                    data-ptr
-                    vector-op
-                    (lower-global-shared-view elem-ty)
-                    lanes))]
-              (match body-lowered
-                [(Expr body-state _ _)
-                  (set! s body-state)
-                  (if (lower-spmd-reduce-vector-accumulator? elem-ty)
-                    (set!
+                (lower-avx2-reduce-groups
+                  ctx
+                  s
+                  (Array (ir.compiler-ir-clone-value (& data-ptr)))
+                  index-var
+                  (ir.compiler-ir-clone-value (& vector-limit))
+                  acc-var
+                  vector-acc-var
+                  op
+                  vector-op
+                  (lower-global-shared-view elem-ty)
+                  lanes))
+              (if (lower-spmd-reduce-vector-accumulator? elem-ty)
+                (set!
+                  s
+                  (lower-state-finish-block
+                    (lower-state-emit
                       s
-                      (lower-state-finish-block
-                        (lower-state-emit s (Jump header-label))
-                        tail-init-label))
-                    (set!
+                      (Branch vector-start-ok header-label tail-init-label))
+                    header-label))
+                (set!
+                  s
+                  (lower-state-finish-block
+                    (lower-state-emit
                       s
-                      (lower-state-finish-block
-                        (lower-state-emit s (Jump header-label))
-                        tail-header-label)))
-                  (when
-                    (lower-spmd-reduce-vector-accumulator? elem-ty)
-                    (set!
+                      (Branch vector-start-ok header-label tail-header-label))
+                    header-label)))
+              (match (lower-emit-binop
+                s
+                (Add)
+                (Var index-var)
+                (I64 lanes)
+                (lower-global-shared-view index-ty))
+                [(Expr next-s value _)
+                  (set! s next-s)
+                  (set! next-index value)])
+              (match (lower-vector-loop-next-ok
+                s
+                (lower-global-shared-view next-index)
+                vector-limit)
+                [(Expr next-s value _)
+                  (set! s next-s)
+                  (set! vector-ok value)])
+              (if (lower-spmd-reduce-vector-accumulator? elem-ty)
+                (set!
+                  s
+                  (lower-state-finish-block
+                    (lower-state-emit
                       s
-                      (lower-spmd-reduce-finish-vector-accumulator
+                      (Branch vector-ok body-label tail-init-label))
+                    body-label))
+                (set!
+                  s
+                  (lower-state-finish-block
+                    (lower-state-emit
+                      s
+                      (Branch vector-ok body-label tail-header-label))
+                    body-label)))
+              (let
+                [body-lowered
+                  (try
+                    (lower-avx2-reduce-vector-body
+                      ctx
+                      s
+                      env
+                      type-env
+                      op
+                      index-var
+                      next-index
+                      acc-var
+                      vector-acc-var
+                      data-ptr
+                      vector-op
+                      (lower-global-shared-view elem-ty)
+                      lanes))]
+                (match body-lowered
+                  [(Expr body-state _ _)
+                    (set! s body-state)
+                    (if (lower-spmd-reduce-vector-accumulator? elem-ty)
+                      (set!
                         s
-                        op
-                        acc-var
-                        vector-acc-var
-                        vector-op
-                        lanes
-                        (lower-global-shared-view elem-ty)))
-                    (set!
-                      s
-                      (lower-state-finish-block
-                        (lower-state-emit s (Jump tail-header-label))
-                        tail-header-label)))
-                  (match (lower-vector-loop-i64-compare
-                    s
-                    (Lt)
-                    (Var index-var)
-                    end-value)
-                    [(Expr next-s value _)
-                      (set! s next-s)
-                      (set! tail-cond value)])
-                  (set!
-                    s
-                    (lower-state-finish-block
-                      (lower-state-emit
+                        (lower-state-finish-block
+                          (lower-state-emit s (Jump header-label))
+                          tail-init-label))
+                      (set!
                         s
-                        (Branch tail-cond tail-body-label exit-label))
-                      tail-body-label))
-                  (let
-                    [tail-lowered
-                      (try
-                        (lower-spmd-reduce-scalar-tail-body
-                          ctx
+                        (lower-state-finish-block
+                          (lower-state-emit s (Jump header-label))
+                          tail-header-label)))
+                    (when
+                      (lower-spmd-reduce-vector-accumulator? elem-ty)
+                      (set!
+                        s
+                        (lower-spmd-reduce-finish-vector-accumulator
                           s
-                          env
-                          type-env
                           op
-                          index-var
-                          index-ty
                           acc-var
-                          array-var
-                          (lower-global-shared-view elem-ty)))]
-                    (match tail-lowered
-                      [(Expr tail-state _ _)
-                        (Ok
-                          (Expr
-                            (lower-state-finish-block
-                              (lower-state-emit
-                                tail-state
-                                (Jump tail-header-label))
-                              exit-label)
-                            (Var acc-var)
-                            elem-ty))]))])))])]))
+                          vector-acc-var
+                          vector-op
+                          lanes
+                          (lower-global-shared-view elem-ty)))
+                      (set!
+                        s
+                        (lower-state-finish-block
+                          (lower-state-emit s (Jump tail-header-label))
+                          tail-header-label)))
+                    (match (lower-vector-loop-i64-compare
+                      s
+                      (Lt)
+                      (Var index-var)
+                      end-value)
+                      [(Expr next-s value _)
+                        (set! s next-s)
+                        (set! tail-cond value)])
+                    (set!
+                      s
+                      (lower-state-finish-block
+                        (lower-state-emit
+                          s
+                          (Branch tail-cond tail-body-label exit-label))
+                        tail-body-label))
+                    (let
+                      [tail-lowered
+                        (try
+                          (lower-spmd-reduce-scalar-tail-body
+                            ctx
+                            s
+                            env
+                            type-env
+                            op
+                            index-var
+                            (ast.clone-ast-type (& index-ty))
+                            acc-var
+                            array-var
+                            (lower-global-shared-view elem-ty)))]
+                      (match tail-lowered
+                        [(Expr tail-state _ _)
+                          (Ok
+                            (lower-spmd-reduce-finish-split-addend
+                              (lower-state-finish-block
+                                (lower-state-emit
+                                  tail-state
+                                  (Jump tail-header-label))
+                                exit-label)
+                              index-var
+                              index-ty
+                              saved-start
+                              acc-var
+                              elem-ty
+                              split-u-var))]))])))])])))
 
 (define (lower-avx2-spmd-reduce-value-build
   [ctx : tc_core.TcContext]
@@ -57195,250 +57269,284 @@
   [value-plan : LowerVectorMapValue]
   [vector-op : ir.CompilerIrVectorReduceOp]
   [elem-ty : ast.AstType]
-  [lanes : i64]) : ResultLowerExpr
-  (match (lower-state-alloc-var state)
-    [(Alloc acc-alloc acc-var)
-      (match (lower-state-alloc-var
-        (lower-state-emit
-          acc-alloc
-          (Mov acc-var init-value (lower-global-shared-view elem-ty))))
-        [(Alloc index-alloc index-var)
-          (match (lower-state-alloc-var
-            (lower-state-emit
-              index-alloc
-              (Mov index-var start-value (lower-global-shared-view index-ty))))
-            [(Alloc base-alloc tail-base-var)
-              (let
-                [s : LowerState base-alloc]
-                [header-label : i64 (ir.compiler-ir-label-none)]
-                [body-label : i64 (ir.compiler-ir-label-none)]
-                [tail-init-label : i64 (ir.compiler-ir-label-none)]
-                [tail-check-label : i64 (ir.compiler-ir-label-none)]
-                [tail-body-label : i64 (ir.compiler-ir-label-none)]
-                [exit-label : i64 (ir.compiler-ir-label-none)]
-                [arrays : LowerArrayVarSet
-                  (lower-vector-map-value-array-vars value-plan)]
-                [vector-limit : ir.CompilerIrValue Unit]
-                [vector-start-ok : ir.CompilerIrValue Unit]
-                [next-index : ir.CompilerIrValue Unit]
-                [vector-ok : ir.CompilerIrValue Unit]
-                [active-lanes : ir.CompilerIrValue Unit]
-                [tail-cond : ir.CompilerIrValue Unit]
-                [vector-acc-var : i64 0]
-                [preheader-cache : LowerVectorMapValueCache
-                  (lower-vector-map-value-cache-empty)]
-                (if (lower-spmd-reduce-vector-accumulator? elem-ty)
-                  (match (lower-state-alloc-var s)
-                    [(Alloc next-s var)
-                      (set! vector-acc-var var)
-                      (set!
-                        s
-                        (lower-state-emit
-                          next-s
-                          (Splat
-                            vector-acc-var
-                            (lower-spmd-reduce-vector-accumulator-init
-                              op
-                              acc-var)
-                            lanes
-                            (lower-global-shared-view elem-ty))))])
-                  unit)
-                (match (lower-state-fresh-label s "spmd_reduce_value_header")
-                  [(Label next-s label)
-                    (set! s next-s)
-                    (set! header-label label)])
-                (match (lower-state-fresh-label s "spmd_reduce_value_body")
-                  [(Label next-s label)
-                    (set! s next-s)
-                    (set! body-label label)])
-                (match (lower-state-fresh-label s "spmd_reduce_value_tail_init")
-                  [(Label next-s label)
-                    (set! s next-s)
-                    (set! tail-init-label label)])
-                (match (lower-state-fresh-label
-                  s
-                  "spmd_reduce_value_tail_check")
-                  [(Label next-s label)
-                    (set! s next-s)
-                    (set! tail-check-label label)])
-                (match (lower-state-fresh-label s "spmd_reduce_value_tail_body")
-                  [(Label next-s label)
-                    (set! s next-s)
-                    (set! tail-body-label label)])
-                (match (lower-state-fresh-label s "spmd_reduce_value_exit")
-                  [(Label next-s label)
-                    (set! s next-s)
-                    (set! exit-label label)])
-                (match (lower-vector-loop-limit
-                  s
-                  (lower-global-shared-view end-value)
-                  arrays
-                  lanes)
-                  [(Expr next-s value _)
-                    (set! s next-s)
-                    (set! vector-limit value)])
-                (match (lower-vector-loop-start-ok s index-var lanes)
-                  [(Expr next-s value _)
-                    (set! s next-s)
-                    (set! vector-start-ok value)])
-                (match (lower-vector-map-preheader-cache-plan
-                  s
-                  arrays
-                  lanes
-                  (lower-global-shared-view elem-ty)
-                  (lower-global-shared-view value-plan))
-                  [(Emit next-s _ next-cache)
-                    (set! s next-s)
-                    (set! preheader-cache next-cache)])
-                (set!
-                  s
-                  (lower-avx2-reduce-groups
-                    ctx
-                    s
-                    (Value
-                      (lower-global-shared-view value-plan)
-                      (lower-global-shared-view preheader-cache))
-                    index-var
-                    (ir.compiler-ir-clone-value (& vector-limit))
-                    acc-var
-                    vector-acc-var
-                    op
-                    vector-op
-                    (lower-global-shared-view elem-ty)
-                    lanes))
-                (set!
-                  s
-                  (lower-state-finish-block
-                    (lower-state-emit
-                      s
-                      (Branch vector-start-ok header-label tail-init-label))
-                    header-label))
-                (match (lower-emit-binop
-                  s
-                  (Add)
-                  (Var index-var)
-                  (I64 lanes)
-                  (lower-global-shared-view index-ty))
-                  [(Expr next-s value _)
-                    (set! s next-s)
-                    (set! next-index value)])
-                (match (lower-vector-loop-next-ok
-                  s
-                  (lower-global-shared-view next-index)
-                  vector-limit)
-                  [(Expr next-s value _)
-                    (set! s next-s)
-                    (set! vector-ok value)])
-                (set!
-                  s
-                  (lower-state-finish-block
-                    (lower-state-emit
-                      s
-                      (Branch vector-ok body-label tail-init-label))
-                    body-label))
+  [lanes : i64]
+  [split-u-var : i64]) : ResultLowerExpr
+  (let
+    [saved-start : ir.CompilerIrValue
+      (ir.compiler-ir-clone-value (& start-value))]
+    (match (lower-state-alloc-var state)
+      [(Alloc acc-alloc acc-var)
+        (match (lower-state-alloc-var
+          (lower-state-emit
+            acc-alloc
+            (Mov acc-var init-value (lower-global-shared-view elem-ty))))
+          [(Alloc index-alloc index-var)
+            (match (lower-state-alloc-var
+              (lower-state-emit
+                index-alloc
+                (Mov index-var start-value (lower-global-shared-view index-ty))))
+              [(Alloc base-alloc tail-base-var)
                 (let
-                  [body-lowered
-                    (try
-                      (lower-avx2-reduce-vector-value-body
-                        ctx
-                        s
-                        env
-                        type-env
-                        op
-                        index-var
-                        next-index
-                        acc-var
-                        vector-acc-var
-                        (lower-global-shared-view value-plan)
-                        preheader-cache
-                        vector-op
-                        (lower-global-shared-view elem-ty)
-                        lanes))]
-                  (match body-lowered
-                    [(Expr body-state _ _)
-                      (set! s body-state)
-                      (set!
-                        s
-                        (lower-state-finish-block
-                          (lower-state-emit s (Jump header-label))
-                          tail-init-label))
-                      (if (lower-spmd-reduce-vector-accumulator? elem-ty)
+                  [s : LowerState base-alloc]
+                  [header-label : i64 (ir.compiler-ir-label-none)]
+                  [body-label : i64 (ir.compiler-ir-label-none)]
+                  [tail-init-label : i64 (ir.compiler-ir-label-none)]
+                  [tail-check-label : i64 (ir.compiler-ir-label-none)]
+                  [tail-body-label : i64 (ir.compiler-ir-label-none)]
+                  [exit-label : i64 (ir.compiler-ir-label-none)]
+                  [arrays : LowerArrayVarSet
+                    (lower-vector-map-value-array-vars value-plan)]
+                  [vector-limit : ir.CompilerIrValue Unit]
+                  [vector-start-ok : ir.CompilerIrValue Unit]
+                  [next-index : ir.CompilerIrValue Unit]
+                  [vector-ok : ir.CompilerIrValue Unit]
+                  [active-lanes : ir.CompilerIrValue Unit]
+                  [tail-cond : ir.CompilerIrValue Unit]
+                  [vector-acc-var : i64 0]
+                  [preheader-cache : LowerVectorMapValueCache
+                    (lower-vector-map-value-cache-empty)]
+                  (if (lower-spmd-reduce-vector-accumulator? elem-ty)
+                    (match (lower-state-alloc-var s)
+                      [(Alloc next-s var)
+                        (set! vector-acc-var var)
                         (set!
                           s
-                          (lower-spmd-reduce-finish-vector-accumulator
-                            s
-                            op
-                            acc-var
-                            vector-acc-var
-                            vector-op
-                            lanes
-                            (lower-global-shared-view elem-ty)))
-                        unit)
-                      (set!
+                          (lower-state-emit
+                            next-s
+                            (Splat
+                              vector-acc-var
+                              (lower-spmd-reduce-vector-accumulator-init
+                                op
+                                acc-var)
+                              lanes
+                              (lower-global-shared-view elem-ty))))])
+                    unit)
+                  (match (lower-state-fresh-label s "spmd_reduce_value_header")
+                    [(Label next-s label)
+                      (set! s next-s)
+                      (set! header-label label)])
+                  (match (lower-state-fresh-label s "spmd_reduce_value_body")
+                    [(Label next-s label)
+                      (set! s next-s)
+                      (set! body-label label)])
+                  (match (lower-state-fresh-label
+                    s
+                    "spmd_reduce_value_tail_init")
+                    [(Label next-s label)
+                      (set! s next-s)
+                      (set! tail-init-label label)])
+                  (match (lower-state-fresh-label
+                    s
+                    "spmd_reduce_value_tail_check")
+                    [(Label next-s label)
+                      (set! s next-s)
+                      (set! tail-check-label label)])
+                  (match (lower-state-fresh-label
+                    s
+                    "spmd_reduce_value_tail_body")
+                    [(Label next-s label)
+                      (set! s next-s)
+                      (set! tail-body-label label)])
+                  (match (lower-state-fresh-label s "spmd_reduce_value_exit")
+                    [(Label next-s label)
+                      (set! s next-s)
+                      (set! exit-label label)])
+                  (match (lower-vector-loop-limit
+                    s
+                    (lower-global-shared-view end-value)
+                    arrays
+                    lanes)
+                    [(Expr next-s value _)
+                      (set! s next-s)
+                      (set! vector-limit value)])
+                  (match (lower-vector-loop-start-ok s index-var lanes)
+                    [(Expr next-s value _)
+                      (set! s next-s)
+                      (set! vector-start-ok value)])
+                  (match (lower-vector-map-preheader-cache-plan
+                    s
+                    arrays
+                    lanes
+                    (lower-global-shared-view elem-ty)
+                    (lower-global-shared-view value-plan))
+                    [(Emit next-s _ next-cache)
+                      (set! s next-s)
+                      (set! preheader-cache next-cache)])
+                  (set!
+                    s
+                    (lower-avx2-reduce-groups
+                      ctx
+                      s
+                      (Value
+                        (lower-global-shared-view value-plan)
+                        (lower-global-shared-view preheader-cache))
+                      index-var
+                      (ir.compiler-ir-clone-value (& vector-limit))
+                      acc-var
+                      vector-acc-var
+                      op
+                      vector-op
+                      (lower-global-shared-view elem-ty)
+                      lanes))
+                  (set!
+                    s
+                    (lower-state-finish-block
+                      (lower-state-emit
                         s
-                        (lower-state-emit
+                        (Branch vector-start-ok header-label tail-init-label))
+                      header-label))
+                  (match (lower-emit-binop
+                    s
+                    (Add)
+                    (Var index-var)
+                    (I64 lanes)
+                    (lower-global-shared-view index-ty))
+                    [(Expr next-s value _)
+                      (set! s next-s)
+                      (set! next-index value)])
+                  (match (lower-vector-loop-next-ok
+                    s
+                    (lower-global-shared-view next-index)
+                    vector-limit)
+                    [(Expr next-s value _)
+                      (set! s next-s)
+                      (set! vector-ok value)])
+                  (set!
+                    s
+                    (lower-state-finish-block
+                      (lower-state-emit
+                        s
+                        (Branch vector-ok body-label tail-init-label))
+                      body-label))
+                  (let
+                    [body-lowered
+                      (try
+                        (lower-avx2-reduce-vector-value-body
+                          ctx
                           s
-                          (Mov
-                            tail-base-var
-                            (Var index-var)
-                            (lower-global-shared-view index-ty))))
-                      (match (lower-emit-binop
-                        s
-                        Sub
-                        (lower-global-shared-view end-value)
-                        (Var index-var)
-                        (I64))
-                        [(Expr next-s value _)
-                          (set! s next-s)
-                          (set! active-lanes value)])
-                      (set!
-                        s
-                        (lower-state-finish-block
-                          (lower-state-emit s (Jump tail-check-label))
-                          tail-check-label))
-                      (match (lower-vector-loop-i64-compare
-                        s
-                        (Lt)
-                        (Var index-var)
-                        end-value)
-                        [(Expr next-s value _)
-                          (set! s next-s)
-                          (set! tail-cond value)])
-                      (set!
-                        s
-                        (lower-state-finish-block
+                          env
+                          type-env
+                          op
+                          index-var
+                          next-index
+                          acc-var
+                          vector-acc-var
+                          (lower-global-shared-view value-plan)
+                          preheader-cache
+                          vector-op
+                          (lower-global-shared-view elem-ty)
+                          lanes))]
+                    (match body-lowered
+                      [(Expr body-state _ _)
+                        (set! s body-state)
+                        (set!
+                          s
+                          (lower-state-finish-block
+                            (lower-state-emit s (Jump header-label))
+                            tail-init-label))
+                        (if (lower-spmd-reduce-vector-accumulator? elem-ty)
+                          (set!
+                            s
+                            (lower-spmd-reduce-finish-vector-accumulator
+                              s
+                              op
+                              acc-var
+                              vector-acc-var
+                              vector-op
+                              lanes
+                              (lower-global-shared-view elem-ty)))
+                          unit)
+                        (set!
+                          s
                           (lower-state-emit
                             s
-                            (Branch tail-cond tail-body-label exit-label))
-                          tail-body-label))
-                      (let
-                        [tail-lowered
-                          (try
-                            (lower-spmd-reduce-scalar-tail-value-body
-                              ctx
-                              s
-                              env
-                              type-env
-                              op
+                            (Mov
                               tail-base-var
-                              index-var
-                              active-lanes
-                              index-ty
-                              acc-var
-                              value-plan
-                              (lower-global-shared-view elem-ty)
-                              lanes))]
-                        (match tail-lowered
-                          [(Expr tail-state _ _)
-                            (Ok
-                              (Expr
-                                (lower-state-finish-block
-                                  (lower-state-emit
-                                    tail-state
-                                    (Jump tail-check-label))
-                                  exit-label)
-                                (Var acc-var)
-                                elem-ty))]))])))])])]))
+                              (Var index-var)
+                              (lower-global-shared-view index-ty))))
+                        (match (lower-emit-binop
+                          s
+                          Sub
+                          (lower-global-shared-view end-value)
+                          (Var index-var)
+                          (I64))
+                          [(Expr next-s value _)
+                            (set! s next-s)
+                            (set! active-lanes value)])
+                        (set!
+                          s
+                          (lower-state-finish-block
+                            (lower-state-emit s (Jump tail-check-label))
+                            tail-check-label))
+                        (match (lower-vector-loop-i64-compare
+                          s
+                          (Lt)
+                          (Var index-var)
+                          end-value)
+                          [(Expr next-s value _)
+                            (set! s next-s)
+                            (set! tail-cond value)])
+                        (set!
+                          s
+                          (lower-state-finish-block
+                            (lower-state-emit
+                              s
+                              (Branch tail-cond tail-body-label exit-label))
+                            tail-body-label))
+                        (let
+                          [tail-lowered
+                            (try
+                              (lower-spmd-reduce-scalar-tail-value-body
+                                ctx
+                                s
+                                env
+                                type-env
+                                op
+                                tail-base-var
+                                index-var
+                                active-lanes
+                                (ast.clone-ast-type (& index-ty))
+                                acc-var
+                                value-plan
+                                (lower-global-shared-view elem-ty)
+                                lanes))]
+                          (match tail-lowered
+                            [(Expr tail-state _ _)
+                              (Ok
+                                (lower-spmd-reduce-finish-split-addend
+                                  (lower-state-finish-block
+                                    (lower-state-emit
+                                      tail-state
+                                      (Jump tail-check-label))
+                                    exit-label)
+                                  index-var
+                                  index-ty
+                                  saved-start
+                                  acc-var
+                                  elem-ty
+                                  split-u-var))]))])))])])])))
+
+(define (lower-spmd-reduce-bind-split-u
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [elem-ty : (& ast.AstType)]
+  [split : (& LowerMaybeReduceSplit)]) : ResultLowerExpr
+  (match split
+    [(Split _ u-id)
+      (match (try (lower-expr ctx state env type-env (Var u-id)))
+        [(Expr u-state u-value _)
+          (match (lower-state-alloc-var u-state)
+            [(Alloc next-state u-var)
+              (Ok
+                (Expr
+                  (lower-state-emit
+                    next-state
+                    (Mov u-var u-value (ast.clone-ast-type elem-ty)))
+                  (Var u-var)
+                  (ast.clone-ast-type elem-ty)))])])]
+    [(No) (Ok (Expr state (I64 -1) (I64)))]))
 
 (define (lower-avx2-spmd-reduce-lowered
   [ctx : tc_core.TcContext]
@@ -57450,7 +57558,8 @@
   [end : ast.AstExpr]
   [init : ast.AstExpr]
   [op : ast.AstReduceOp]
-  [plan : LowerMaybeVectorReduce]) : ResultLowerExpr
+  [plan : LowerMaybeVectorReduce]
+  [split : LowerMaybeReduceSplit]) : ResultLowerExpr
   (match plan
     [(Array array-var vector-op elem-ty lanes)
       (lower-spmd-select! state (NativeGangs) (ContiguousReduction) lanes)
@@ -57477,20 +57586,35 @@
                       (try (lower-expr ctx end-state env type-env start))]
                     (match start-lowered
                       [(Expr start-state start-value _)
-                        (lower-avx2-spmd-reduce-build
-                          ctx
-                          start-state
-                          env
-                          type-env
-                          index-ty
-                          init-value
-                          end-value
-                          start-value
-                          op
-                          array-var
-                          vector-op
-                          elem-ty
-                          lanes)]))]))]))]
+                        (match (try
+                          (lower-spmd-reduce-bind-split-u
+                            ctx
+                            start-state
+                            env
+                            type-env
+                            (& elem-ty)
+                            (& split)))
+                          [(Expr split-state split-val _)
+                            (let
+                              [split-u-var : i64
+                                (match split-val
+                                  [(Var v) v]
+                                  [_ -1])]
+                              (lower-avx2-spmd-reduce-build
+                                ctx
+                                split-state
+                                env
+                                type-env
+                                index-ty
+                                init-value
+                                end-value
+                                start-value
+                                op
+                                array-var
+                                vector-op
+                                elem-ty
+                                lanes
+                                split-u-var))])]))]))]))]
     [(Value value-plan vector-op elem-ty lanes)
       (lower-spmd-select! state (NativeGangs) (FusedReduction) lanes)
       (let
@@ -57516,20 +57640,35 @@
                       (try (lower-expr ctx end-state env type-env start))]
                     (match start-lowered
                       [(Expr start-state start-value _)
-                        (lower-avx2-spmd-reduce-value-build
-                          ctx
-                          start-state
-                          env
-                          type-env
-                          index-ty
-                          init-value
-                          end-value
-                          start-value
-                          op
-                          value-plan
-                          vector-op
-                          elem-ty
-                          lanes)]))]))]))]
+                        (match (try
+                          (lower-spmd-reduce-bind-split-u
+                            ctx
+                            start-state
+                            env
+                            type-env
+                            (& elem-ty)
+                            (& split)))
+                          [(Expr split-state split-val _)
+                            (let
+                              [split-u-var : i64
+                                (match split-val
+                                  [(Var v) v]
+                                  [_ -1])]
+                              (lower-avx2-spmd-reduce-value-build
+                                ctx
+                                split-state
+                                env
+                                type-env
+                                index-ty
+                                init-value
+                                end-value
+                                start-value
+                                op
+                                value-plan
+                                vector-op
+                                elem-ty
+                                lanes
+                                split-u-var))])]))]))]))]
     [(No _) (Err (box (lower-diagnostic "lower: missing vector reduce plan")))]))
 
 (define (lower-emit-tail-mask
@@ -59993,18 +60132,22 @@
   [active-mask : ir.CompilerIrMaybeValue]
   [lanes : i64]
   [exprs : ast.AstExprList]) : ResultLowerExpr
-  (lower-avx512-masked-begin-at
-    ctx
-    state
-    env
-    type-env
-    lane-locals
-    index
-    index-var
-    active-mask
-    lanes
-    (& exprs)
-    0))
+  (let
+    [unit-ty : ast.AstType (Unit)]
+    (lower-avx512-masked-begin-at
+      ctx
+      state
+      env
+      type-env
+      lane-locals
+      index
+      index-var
+      active-mask
+      lanes
+      (& exprs)
+      0
+      false
+      (& unit-ty))))
 
 (define (lower-avx512-masked-begin-at
   [ctx : tc_core.TcContext]
@@ -60017,14 +60160,40 @@
   [active-mask : ir.CompilerIrMaybeValue]
   [lanes : i64]
   [exprs : (& exprs ast.AstExprList)]
-  [expr-index : i64]) : ResultLowerExpr
+  [expr-index : i64]
+  [has-expected : bool]
+  [expected-ty : (& expected-ty ast.AstType)]) : ResultLowerExpr
   (if (>= expr-index exprs.len)
     (Ok (Expr state Unit (Unit)))
     (let
       [expr : ast.AstExpr
         (lower-context-expr-get ctx (ast.ast-expr-list-get exprs expr-index 0))]
-      [lowered
-        (try
+      (if (= (+ expr-index 1) exprs.len)
+        (if has-expected
+          (lower-avx512-masked-expr-expected
+            ctx
+            state
+            env
+            type-env
+            lane-locals
+            index
+            index-var
+            active-mask
+            lanes
+            expr
+            expected-ty)
+          (lower-avx512-masked-expr
+            ctx
+            state
+            env
+            type-env
+            lane-locals
+            index
+            index-var
+            active-mask
+            lanes
+            expr))
+        (match (try
           (lower-avx512-masked-expr
             ctx
             state
@@ -60035,11 +60204,8 @@
             index-var
             (lower-global-shared-view active-mask)
             lanes
-            expr))]
-      (match lowered
-        [(Expr next-state value ty)
-          (if (= (+ expr-index 1) exprs.len)
-            (Ok (Expr next-state value ty))
+            expr))
+          [(Expr next-state _ _)
             (lower-avx512-masked-begin-at
               ctx
               next-state
@@ -60051,7 +60217,9 @@
               active-mask
               lanes
               exprs
-              (+ expr-index 1)))]))))
+              (+ expr-index 1)
+              has-expected
+              expected-ty)])))))
 
 (define (lower-avx512-masked-select-result-supported?
   [state : LowerState]
@@ -63024,7 +63192,7 @@
     ;; backend.  Keep the stable package hash intact after that prefix so the
     ;; archive and TLCI still share one deterministic logical identity.
     (match backend
-      [(or (Avx512) (Sse2))
+      [(Avx512)
         (if (string.eq result "v")
           (if (lower-type-bool? result-ty)
             (str_cat.str-cat "__tl_spmd_ret_mask_" stable-name)
@@ -64376,11 +64544,12 @@
                 (lower-diagnostic
                   "lower: :spmd-callable is not supported in AVX2 backend mode; use scalar or avx512")))
             (let
+              ;; :spmd-callable private ABI v1 defines scalar and avx512
+              ;; helpers; sse2 packages emit the scalar helper.
               [backend : ir.CompilerIrSpmdBackend
-                (cond
-                  [(lower-mode-avx512? mode) Avx512]
-                  [(lower-mode-sse2? mode) Sse2]
-                  [else Scalar])]
+                (if (lower-mode-avx512? mode)
+                  Avx512
+                  Scalar)]
               [count : i64
                 (ast.ast-spmd-specialization-list-len (& specializations))]
               (match (lower-spmd-package-specializations-from
@@ -65085,6 +65254,7 @@
           cast-ty-id)]
       [(Literal lit)
         (match (lower-global-shared-view lit)
+          [(Unit) (Ok (Expr state Unit (Unit)))]
           [(Bool value)
             (Ok
               (lower-avx512-masked-bool-literal state active-mask lanes value))]
@@ -65420,6 +65590,21 @@
                   (lower-context-expr-get ctx body-box)
                   expected-ty)]
               [(Err message) (Err message)])])]
+      [(Begin exprs)
+        (lower-avx512-masked-begin-at
+          ctx
+          state
+          env
+          type-env
+          lane-locals
+          index
+          index-var
+          active-mask
+          lanes
+          (& exprs)
+          0
+          true
+          (& expected-ty))]
       [(Cast inner-box cast-ty-id)
         (lower-avx512-masked-cast-expected
           ctx
@@ -65437,6 +65622,7 @@
           expected-ty)]
       [(Literal lit)
         (match (lower-global-shared-view lit)
+          [(Unit) (Ok (Expr state Unit (Unit)))]
           [(Bool value)
             (Ok
               (lower-avx512-masked-bool-literal state active-mask lanes value))]

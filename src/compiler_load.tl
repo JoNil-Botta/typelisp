@@ -1357,6 +1357,52 @@
                 [(Ok _) unit]
                 [(Err _) (compiler-load-session-state-tli-release! state)]))])))))
 
+(define (compiler-load-session-state-tli-attach-borrowed-bundle!
+  [state : (& CompilerLoadSessionState)]
+  [bundle-arena : i64]
+  [is-stdlib : bool]
+  [package-name : String]
+  [package-version : String]
+  [package-root : String]
+  [archive-path : String]
+  [directory : tli_codec.TliDirectory]
+  [cfg-digest : (& (Array u8 32))]
+  [cfgs : sym_i64_env.SymI64Env]
+  [records : (__tl_dyn-array tli.TliModuleRecord)]
+  [record-decoded : (__tl_dyn-array bool)]
+  [owned-bytes-cell : (__tl_dyn-array i64)]) : tli_hydrate.TliMultiAttachResult
+  (let
+    [addr : i64 (compiler-load-session-state-tli-ensure-box! state)]
+    (unsafe
+      (let
+        [p-ro : (Ptr CompilerLoadTliCatalogBox)
+          (int->ptr (cast addr : u64) : (Ptr CompilerLoadTliCatalogBox))]
+        [p-rw : (MutPtr CompilerLoadTliCatalogBox)
+          (int->ptr (cast addr : u64) : (MutPtr CompilerLoadTliCatalogBox))]
+        [holder : CompilerLoadTliCatalogBox (ptr-read p-ro)]
+        (match holder
+          [(CompilerLoadTliCatalogBox multi-v facts-v needed-v hits-v)
+            (let
+              [res : tli_hydrate.TliMultiAttachResult
+                (tli_hydrate.tli-multi-catalog-attach-borrowed-bundle!
+                  (&mut multi-v)
+                  bundle-arena
+                  is-stdlib
+                  package-name
+                  package-version
+                  package-root
+                  archive-path
+                  directory
+                  cfg-digest
+                  cfgs
+                  records
+                  record-decoded
+                  owned-bytes-cell)]
+              (ptr-write!
+                p-rw
+                (CompilerLoadTliCatalogBox multi-v facts-v needed-v hits-v))
+              res)])))))
+
 (define (compiler-load-session-state-tli-hydrated-any?
   [state : (& CompilerLoadSessionState)]) : bool
   (let
@@ -5003,7 +5049,11 @@
   [module-name : String]
   [expected-module : ast.AstMaybeModuleName]) : ResultPkgResolve
   (if (and
-    (compiler-load-string-prefix-at? (& module-name) "stdlib." 0)
+    (or
+      (compiler-load-string-prefix-at? (& module-name) "stdlib." 0)
+      (match (& resolver.mode)
+        [(Ordinary _) true]
+        [(Package _ _) false]))
     (compiler-load-tli-addr-has-module?
       resolver.tli-catalog-addr
       (& module-name)))

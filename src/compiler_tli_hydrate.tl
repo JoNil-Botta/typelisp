@@ -710,13 +710,14 @@
     32)
   (tli-hydrate-cfg-digest-with-filter cfgs true))
 
-;; Compute the stdlib-scoped cfg digest directly from target + user cfg name
-;; strings without touching the active intern table (used for batch cache
-;; pre-warming before entry 0).
-(define (tli-hydrate-stdlib-cfg-digest-for-names
+;; Compute a cfg digest directly from target + user cfg name strings without
+;; touching the active intern table (used for batch cache pre-warming before
+;; entry 0).
+(define (tli-hydrate-cfg-digest-for-names-with-filter
   [is-windows : bool]
   [user-names : (& user-names (__tl_dyn-array String))]
-  [user-count : i64]) : (Array u8 32)
+  [user-count : i64]
+  [stdlib-only : bool]) : (Array u8 32)
   (let
     [cap : i64 (+ 4 user-count)]
     [active-names : (__tl_dyn-array String) (__tl_make-array String cap)]
@@ -747,7 +748,7 @@
         (when
           (and
             (> (string.string-length (& name)) 0)
-            (tli-hydrate-stdlib-cfg-atom? (& name)))
+            (or (not stdlib-only) (tli-hydrate-stdlib-cfg-atom? (& name))))
           (let
             [dup? : bool false]
             (for [j (iterator.range 0 active-count)]
@@ -763,6 +764,26 @@
       (&mut active-names)
       (&mut active-values)
       active-count)))
+
+(define (tli-hydrate-cfg-digest-for-names
+  [is-windows : bool]
+  [user-names : (& user-names (__tl_dyn-array String))]
+  [user-count : i64]) : (Array u8 32)
+  (tli-hydrate-cfg-digest-for-names-with-filter
+    is-windows
+    user-names
+    user-count
+    false))
+
+(define (tli-hydrate-stdlib-cfg-digest-for-names
+  [is-windows : bool]
+  [user-names : (& user-names (__tl_dyn-array String))]
+  [user-count : i64]) : (Array u8 32)
+  (tli-hydrate-cfg-digest-for-names-with-filter
+    is-windows
+    user-names
+    user-count
+    true))
 
 ;; Archive symbol mangling matching `compiler-backend-user-symbol-uncached`
 ;; without pulling backend state into the frontend/loader import graph.
@@ -1072,6 +1093,7 @@
   (inline-ir-len i64)
   (inline-ir-sha256 (Array u8 32))
   (is-extern bool)
+  (program-shadowed bool)
   (record-index i64)
   (fn-index i64))
 
@@ -1090,7 +1112,13 @@
   ;; source digest and cfgs this interface was produced from select its body.
   (module-id i64)
   (source-sha256 (Array u8 32))
-  (source-cfg-names (__tl_dyn-array String)))
+  (source-cfg-names (__tl_dyn-array String))
+  ;; Cached fallback AST body ids for the active pool context (avoids
+  ;; re-parsing the declaring source on repeated expansions of macros from
+  ;; the same file).
+  (fallback-pool-bases i64)
+  (fallback-body-id i64)
+  (fallback-literal-body-id i64))
 
 (defstruct TliHydratedTypeLayout
   (is-struct bool)
@@ -1109,6 +1137,7 @@
   (catalog-ptr i64)
   (emitted (__tl_dyn-array bool))
   (hydrated-module-count i64)
+  (any-fn-program-shadow bool)
   (hydrated-modules tli_i64_map.Map)
   (fn-summary-slots tli_i64_map.Map)
   (fn-summary-by-link-slots tli_i64_map.Map)
@@ -1126,6 +1155,7 @@
     0
     (__tl_make-array bool module-count)
     0
+    false
     (tli_i64_map.with-capacity 32)
     (tli_i64_map.with-capacity 256)
     (tli_i64_map.with-capacity 256)
@@ -1195,6 +1225,38 @@
         (bit-and
           (tli-hydrated-facts-macro-at facts slot).flags
           tli.tli-macro-uses-expr-type)))))
+
+(define (tli-hydrated-facts-macro-cached-fallback-body-id
+  [facts : (& TliHydratedFacts)]
+  [slot : i64]
+  [pool-bases : i64]) : i64
+  (if (and
+    (= (tli-hydrated-facts-macro-at facts slot).fallback-pool-bases pool-bases)
+    (>= (tli-hydrated-facts-macro-at facts slot).fallback-body-id 0))
+    (tli-hydrated-facts-macro-at facts slot).fallback-body-id
+    -1))
+
+(define (tli-hydrated-facts-macro-cached-fallback-literal-body-id
+  [facts : (& TliHydratedFacts)]
+  [slot : i64]
+  [pool-bases : i64]) : i64
+  (if (=
+    (tli-hydrated-facts-macro-at facts slot).fallback-pool-bases
+    pool-bases)
+    (tli-hydrated-facts-macro-at facts slot).fallback-literal-body-id
+    -1))
+
+(define (tli-hydrated-facts-macro-cache-fallback!
+  [facts : (&mut TliHydratedFacts)]
+  [slot : i64]
+  [pool-bases : i64]
+  [body-id : i64]
+  [literal-body-id : i64]) : unit
+  (set! (array-ref facts.macros.slots slot).fallback-pool-bases pool-bases)
+  (set! (array-ref facts.macros.slots slot).fallback-body-id body-id)
+  (set!
+    (array-ref facts.macros.slots slot).fallback-literal-body-id
+    literal-body-id))
 
 ;; What the interpreted fallback needs to re-read a hydrated macro's body.
 (defstruct TliHydratedMacroSource
@@ -1913,12 +1975,16 @@
         [canonical-id : i64
           (csym.compiler-symbol-module-key-id-by-id mod-id fn-info.name)]
         [slot : i64 (fn_summary_vec.len (& facts.fn-summaries))]
+        [program-shadowed? : bool
+          (tli-hydrate-fn-params-shadow-program? (& row.params))]
+        (when program-shadowed? (set! facts.any-fn-program-shadow true))
         (fn_summary_vec.push-ref!
           (&mut facts.fn-summaries)
           (tli-hydrate-summary-row
             (& row.summary)
             archive-sym-id
             row.is-extern
+            program-shadowed?
             record-index
             fn-index))
         (tli_i64_map.insert-ref!
@@ -1932,12 +1998,21 @@
             archive-sym-id
             slot))))))
 
+(define (tli-hydrate-fn-params-shadow-program?
+  [params : (& (__tl_dyn-array tli.TliParam))]) : bool
+  (for [index (iterator.range 0 (array-length (deref params)))]
+    (when
+      (string.eq (& (array-ref (deref params) index).name) "program")
+      (return true)))
+  false)
+
 ;; `record-index` is the owning module's multi-catalog gid; with `fn-index` it
 ;; names the row whose compact body O2 / SPMD hydration decodes on demand.
 (define (tli-hydrate-summary-row
   [summary : (& tli.TliFnSummary)]
   [link-symbol-id : i64]
   [is-extern : bool]
+  [program-shadowed : bool]
   [record-index : i64]
   [fn-index : i64]) : TliHydratedFnSummaryRow
   (let
@@ -1969,6 +2044,7 @@
       summary.inline-ir-len
       summary.inline-ir-sha256
       is-extern
+      program-shadowed
       record-index
       fn-index)))
 
@@ -2042,7 +2118,13 @@
         [slot : i64 (fn_summary_vec.len (& facts.fn-summaries))]
         (fn_summary_vec.push-ref!
           (&mut facts.fn-summaries)
-          (tli-hydrate-summary-row (& row.summary) archive-sym-id false -1 -1))
+          (tli-hydrate-summary-row
+            (& row.summary)
+            archive-sym-id
+            false
+            false
+            -1
+            -1))
         (tli_i64_map.insert-ref!
           (&mut facts.fn-summary-slots)
           canonical-id
@@ -2225,7 +2307,10 @@
             row.tlci-catalog-sha256
             mod-id
             (deref source-sha256)
-            (tli-hydrate-string-array-copy source-cfg-names)))
+            (tli-hydrate-string-array-copy source-cfg-names)
+            0
+            -1
+            -1))
         (tli_i64_map.insert-ref! (&mut facts.macro-slots) identity-id slot)))))
 
 (define (tli-hydrate-default-module-alias [module-name : (& str)]) : String
@@ -2781,6 +2866,39 @@
         record-decoded
         owned-bytes-cell))))
 
+;; Attach a batch-cached bundle whose arena and decoded-record cache are owned
+;; by the enclosing batch rather than this session's multi-catalog.
+(define (tli-multi-catalog-attach-borrowed-bundle!
+  [multi : (&mut TliMultiCatalog)]
+  [bundle-arena : i64]
+  [is-stdlib : bool]
+  [package-name : String]
+  [package-version : String]
+  [package-root : String]
+  [archive-path : String]
+  [directory : codec.TliDirectory]
+  [cfg-digest : (& (Array u8 32))]
+  [cfgs : sym_i64_env.SymI64Env]
+  [records : (__tl_dyn-array tli.TliModuleRecord)]
+  [record-decoded : (__tl_dyn-array bool)]
+  [owned-bytes-cell : (__tl_dyn-array i64)]) : TliMultiAttachResult
+  (tli-multi-catalog-attach-bundle-with-storage!
+    multi
+    bundle-arena
+    false
+    is-stdlib
+    package-name
+    package-version
+    package-root
+    archive-path
+    (tlci.tlci-spmd-callables-empty)
+    directory
+    cfg-digest
+    cfgs
+    records
+    record-decoded
+    owned-bytes-cell))
+
 ;; Attach a batch-cached stdlib bundle whose arena and decoded-record cache are
 ;; owned by the enclosing batch rather than this session's multi-catalog.
 (define (tli-multi-catalog-attach-borrowed-stdlib-bundle!
@@ -2793,16 +2911,14 @@
   [records : (__tl_dyn-array tli.TliModuleRecord)]
   [record-decoded : (__tl_dyn-array bool)]
   [owned-bytes-cell : (__tl_dyn-array i64)]) : TliMultiAttachResult
-  (tli-multi-catalog-attach-bundle-with-storage!
+  (tli-multi-catalog-attach-borrowed-bundle!
     multi
     bundle-arena
-    false
     true
     ""
     ""
     ""
     archive-path
-    (tlci.tlci-spmd-callables-empty)
     directory
     cfg-digest
     cfgs

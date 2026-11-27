@@ -7,14 +7,14 @@ spmd_compact_scalar|all|-|tests/integration/spmd_compact_scalar.tl|42|-|-|-|-
 spmd_compact_overflow_trap|all|-|tests/integration/spmd_compact_overflow_trap.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
 spmd_compact_destination_oob_trap|all|-|tests/integration/spmd_compact_destination_oob_trap.tl|134|-|-|-|expected-stderr:tl: $SRC:10:30: array index out of bounds: index=1 length=1\n
 spmd_foreach|all|-|tests/integration/spmd_foreach.tl|42|-|-|spmd_vec_support.tl|-
-spmd_gather_read|all|-|tests/integration/spmd_gather_read.tl|42|-|-|spmd_vec_support.tl|-
+spmd_gather_read|all|-|tests/integration/spmd_gather_read.tl|42|-|-|spmd_vec_support.tl|backend-mode:scalar
 spmd_loop_carried_copy_shape|all|-|tests/integration/spmd_loop_carried_copy_shape.tl|42|-|-|spmd_vec_support.tl|-
 spmd_gather_oob|all|-|tests/integration/spmd_gather_oob.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: $SRC:31:33: array index out of bounds: index=9223372036854775807 length=8\n
 spmd_gather_lane_offset_oob|all|-|tests/integration/spmd_gather_lane_offset_oob.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: $SRC:28:33: array index out of bounds: index=-9223372036854775808 length=8\n
 spmd_atomic_scatter|all|-|tests/integration/spmd_atomic_scatter.tl|42|-|-|stdlib/atomic.tl spmd_vec_support.tl|-
 spmd_scalar_for_native|all|-|tests/integration/spmd_scalar_for_native.tl|42|-|-|spmd_vec_support.tl|-
 spmd_reduce_scalar|all|-|tests/integration/spmd_reduce_scalar.tl|42|-|-|spmd_vec_support.tl|-
-spmd_lane_identity_scalar|all|-|tests/integration/spmd_lane_identity_scalar.tl|42|-|-|spmd_vec_support.tl|-
+spmd_lane_identity_scalar|all|-|tests/integration/spmd_lane_identity_scalar.tl|42|-|-|spmd_vec_support.tl|backend-mode:scalar
 spmd_scan_scalar|all|-|tests/integration/spmd_scan_scalar.tl|42|-|-|spmd_vec_support.tl|-
 spmd_scan_negative_start_trap|all|-|tests/integration/spmd_scan_negative_start_trap.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: $SRC:18:29: array index out of bounds: index=-1 length=4\n
 spmd_scan_short_output_trap|all|-|tests/integration/spmd_scan_short_output_trap.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: $SRC:19:36: array index out of bounds: index=6 length=6\n

@@ -330,6 +330,59 @@ check_backend_memory() {
     cat "$memory_dir/backend-tests.memory"
 }
 
+SRC_CORE_TLI_CAP_MIB=4096
+
+extract_src_core_tli() {
+    tli_producer=$1
+    tli_compiler=$2
+    tli_dir="$WORKDIR/src-core-tli/$tli_producer"
+    tli_out="$tli_dir/src_core.tli"
+    tli_stdout="$tli_dir/src_core.stdout"
+    tli_stderr="$tli_dir/src_core.stderr"
+    tli_mem="$WORKDIR/backend-memory/src-core-tli.$tli_producer.memory"
+    mkdir -p "$tli_dir"
+    echo "[build-invariance] $tli_producer: extract src_core.tli from src/main.tl (cap $SRC_CORE_TLI_CAP_MIB MiB)"
+    if ! ci_timing_run "$tli_producer:src_core.tli" emit-tli \
+        run_with_heartbeat_capture \
+        "build-invariance $tli_producer emit src_core.tli" \
+        "$tli_stdout" "$tli_stderr" \
+        "$ROOT/scripts/run-memory-bounded.sh" \
+        --limit-mib "$SRC_CORE_TLI_CAP_MIB" --report "$tli_mem" \
+        --timeout-seconds "$POOL_JOB_TIMEOUT_SECONDS" -- \
+        "$tli_compiler" compile src/main.tl --emit-tli -o "$tli_out" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) \
+        --stdlib-root stdlib --stdlib-root src; then
+        print_log_pair "build-invariance $tli_producer emit src_core.tli failed" \
+            "$tli_stdout" "$tli_stderr"
+        exit 1
+    fi
+    check_backend_memory_report "$tli_mem" "$SRC_CORE_TLI_CAP_MIB"
+    if [ ! -s "$tli_out" ]; then
+        print_log_pair "build-invariance $tli_producer emit src_core.tli output" \
+            "$tli_stdout" "$tli_stderr"
+        echo "[build-invariance] empty src_core.tli: $tli_out" >&2
+        exit 1
+    fi
+    tli_peak=$(sed -n 's/^peak_memory_bytes=//p' "$tli_mem")
+    tli_wall=$(sed -n 's/^wall_ms=//p' "$tli_mem")
+    echo "[build-invariance] $tli_producer src_core.tli bytes=$(wc -c < "$tli_out" | tr -d ' ') wall_ms=$tli_wall peak_memory_bytes=$tli_peak"
+}
+
+compare_tli() {
+    tli_label=$1
+    tli_left=$2
+    tli_right=$3
+    if ! ci_timing_run "$tli_label" compare cmp -s "$tli_left" "$tli_right"; then
+        echo "[build-invariance] BUILD-INVARIANCE MISMATCH: $tli_label" >&2
+        print_asm_fingerprint "opt1-built $tli_label" "$tli_left"
+        print_asm_fingerprint "opt2-built $tli_label" "$tli_right"
+        exit 1
+    fi
+    tli_hash=$(sha256sum "$tli_left" | sed 's/[[:space:]].*//')
+    echo "[build-invariance] $tli_label byte-identical sha256=$tli_hash bytes=$(wc -c < "$tli_left" | tr -d ' ')"
+}
+
 write_corpus() {
     corpus_file=$1
     manifest_concat_dir "$ROOT/tests/integration/manifest.d" > "$corpus_file.manifest"
@@ -350,7 +403,7 @@ write_corpus() {
 }
 
 write_batch_chunks() {
-    build_invariance_write_chunks "$1" "$2" "$BATCH_CHUNK_SIZE" "$SRC_WEIGHTS" "$ROOT"
+    build_invariance_write_chunks "$1" "$2" "$BATCH_CHUNK_SIZE" "$SRC_WEIGHTS" "$ROOT" 1
 }
 
 prepare_compile_batches() {
@@ -497,6 +550,13 @@ run_batch_chunk() {
         # Preserve full source-stdlib invariance and the reference envelope's
         # canonical argv contract on selfhost_main_opt1 / selfhost_main_opt2.
         set -- "$@" --no-prebuilt-stdlib
+    elif build_invariance_chunk_uses_src_core_tli "$batch_case_chunk"; then
+        batch_extra_tli="$WORKDIR/src-core-tli/$batch_compiler_label/src_core.tli"
+        if [ ! -s "$batch_extra_tli" ]; then
+            echo "[build-invariance] missing producer src_core.tli for $batch_label: $batch_extra_tli" >&2
+            exit 1
+        fi
+        set -- "$@" --extra-tli "$batch_extra_tli"
     fi
     batch_suffix=${batch_chunk_path##*/entries.}
     batch_memory_report="$WORKDIR/backend-memory/$batch_compiler_label.opt$batch_opt_level.chunk${batch_suffix%.txt}.memory"
@@ -602,11 +662,12 @@ run_batch_sentinel() {
     sentinel_compiler=$2
     sentinel_name=$3
     records="$WORKDIR/batches/$sentinel_compiler_label/cases.txt"
+    sentinel_source=$(case_record_field "$records" "$sentinel_name" 2)
     compile_source=$(case_record_field "$records" "$sentinel_name" 3)
     batch_output=$(case_record_field "$records" "$sentinel_name" 4)
     opt_level=$(case_record_field "$records" "$sentinel_name" 5)
 
-    if [ -z "$compile_source" ] || [ -z "$batch_output" ] || [ -z "$opt_level" ]; then
+    if [ -z "$sentinel_source" ] || [ -z "$compile_source" ] || [ -z "$batch_output" ] || [ -z "$opt_level" ]; then
         echo "[build-invariance] missing batch sentinel case: $sentinel_name" >&2
         exit 1
     fi
@@ -617,18 +678,22 @@ run_batch_sentinel() {
     stderr="$standalone_output.stderr"
     mkdir -p "$sentinel_dir"
     echo "[build-invariance] $sentinel_compiler_label standalone sentinel $sentinel_name opt$opt_level"
-    if ! run_with_heartbeat_capture \
-        "build-invariance $sentinel_compiler_label standalone sentinel $sentinel_name opt$opt_level" \
-        "$stdout" \
-        "$stderr" \
-        "$sentinel_compiler" compile "$compile_source" \
+    set -- "$sentinel_compiler" compile "$compile_source" \
         -o "$standalone_output" \
         --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) \
         --backend-mode scalar \
         --opt-level "$opt_level" \
         --stdlib-root stdlib \
-        --stdlib-root src; then
+        --stdlib-root src
+    if build_invariance_source_uses_src_core_tli "$sentinel_name" "$sentinel_source"; then
+        set -- "$@" --extra-tli "$WORKDIR/src-core-tli/$sentinel_compiler_label/src_core.tli"
+    fi
+    if ! run_with_heartbeat_capture \
+        "build-invariance $sentinel_compiler_label standalone sentinel $sentinel_name opt$opt_level" \
+        "$stdout" \
+        "$stderr" \
+        "$@"; then
         print_log_pair "build-invariance $sentinel_compiler_label standalone sentinel $sentinel_name failed" "$stdout" "$stderr"
         exit 1
     fi
@@ -653,11 +718,12 @@ run_batch_sentinel() {
 run_batch_sentinels() {
     sentinel_compiler_label=$1
     sentinel_compiler=$2
-    # Cover an ordinary imported source and the only staged-input case on each
-    # compiler side. Both occur inside non-trivial chunks, so comparing them
-    # with standalone outputs catches state or cache leakage without weakening
-    # the ordinary opt1-vs-opt2 byte comparisons.
-    for sentinel_name in integration_aggregate_globals integration_sym_i64_env; do
+    # Cover an ordinary imported source, the staged-input case, and a hydrated
+    # `--extra-tli src_core.tli` src/ test on each compiler side. All three
+    # occur inside multi-entry chunks, so comparing them with standalone
+    # outputs catches state or batch-cache leakage without weakening the
+    # ordinary opt1-vs-opt2 byte comparisons.
+    for sentinel_name in integration_aggregate_globals integration_sym_i64_env integration_doc_html_smoke; do
         run_batch_sentinel "$sentinel_compiler_label" "$sentinel_compiler" "$sentinel_name"
     done
 }
@@ -674,6 +740,14 @@ bounded_pool_run_job() {
     fi
     if [ "$pool_job" = backend-tests ]; then
         check_backend_memory
+        return 0
+    fi
+    if [ "$pool_job" = src-core-tli.opt1-built ]; then
+        extract_src_core_tli opt1-built "$OPT1_COMPILER"
+        return 0
+    fi
+    if [ "$pool_job" = src-core-tli.opt2-built ]; then
+        extract_src_core_tli opt2-built "$OPT2_STAGE4"
         return 0
     fi
     pool_job_fields=$(awk -F'|' -v job="$pool_job" '
@@ -705,12 +779,14 @@ bounded_pool_run_job() {
 # Publish the jobs' private rows in queue order. A passing gate requires every
 # job's rows; a failing one still publishes what ran, for the timing artifact.
 pool_merge_rows() {
-    while IFS='|' read -r merge_job merge_cap; do
+    while IFS='|' read -r merge_job merge_cap _merge_needs; do
         for merge_kind in metrics timing; do
             merge_rows="$POOL_DIR/$merge_kind/$merge_job.tsv"
             case "$merge_kind" in
                 metrics)
-                    [ "$merge_job" != backend-tests ] || continue
+                    case "$merge_job" in
+                        backend-tests | src-core-tli.*) continue ;;
+                    esac
                     merge_target=$CHUNK_METRICS
                     ;;
                 timing)
@@ -763,7 +839,11 @@ run_batched_comparison() {
     # opt2-built, ordered LPT (heaviest transitive-LOC weight first).
     pool_order="$WORKDIR/pool-order.txt"
     pair_order="$WORKDIR/pair-order.txt"
-    printf '0|0|0|0|backend-tests|%s\n' "$POOL_FULL_CAP_MIB" > "$pool_order"
+    {
+        printf '0|0|0|0|backend-tests|%s\n' "$POOL_FULL_CAP_MIB"
+        printf '0|1|0|1|src-core-tli.opt1-built|%s\n' "$SRC_CORE_TLI_CAP_MIB"
+        printf '0|2|0|2|src-core-tli.opt2-built|%s\n' "$SRC_CORE_TLI_CAP_MIB"
+    } > "$pool_order"
     : > "$pair_order"
     : > "$POOL_JOBS"
 
@@ -795,11 +875,16 @@ run_batched_comparison() {
             batch_index=$((batch_index + 1))
             left_job="opt1-built.opt$opt_level.$chunk_id"
             right_job="opt2-built.opt$opt_level.$chunk_id"
-            left_class=$(build_invariance_chunk_class "$left_cases" opt1-built "$SRC_WEIGHTS" "$ROOT")
-            right_class=$(build_invariance_chunk_class "$right_cases" opt2-built "$SRC_WEIGHTS" "$ROOT")
+            left_class=$(build_invariance_chunk_class "$left_cases" opt1-built "$SRC_WEIGHTS" "$ROOT" 1)
+            right_class=$(build_invariance_chunk_class "$right_cases" opt2-built "$SRC_WEIGHTS" "$ROOT" 1)
             chunk_weight=$(build_invariance_chunk_weight "$left_cases" "$SRC_WEIGHTS" "$ROOT")
-            printf '%s|1|%s|%s|%s|%s\n' "${left_class#* }" "$chunk_weight" "$batch_index" "$left_job" "${left_class% *}" >> "$pool_order"
-            printf '%s|2|%s|%s|%s|%s\n' "${right_class#* }" "$chunk_weight" "$batch_index" "$right_job" "${right_class% *}" >> "$pool_order"
+            if build_invariance_chunk_uses_src_core_tli "$left_cases"; then
+                printf '%s|1|%s|%s|%s|%s|src-core-tli.opt1-built\n' "${left_class#* }" "$chunk_weight" "$batch_index" "$left_job" "${left_class% *}" >> "$pool_order"
+                printf '%s|2|%s|%s|%s|%s|src-core-tli.opt2-built\n' "${right_class#* }" "$chunk_weight" "$batch_index" "$right_job" "${right_class% *}" >> "$pool_order"
+            else
+                printf '%s|1|%s|%s|%s|%s\n' "${left_class#* }" "$chunk_weight" "$batch_index" "$left_job" "${left_class% *}" >> "$pool_order"
+                printf '%s|2|%s|%s|%s|%s\n' "${right_class#* }" "$chunk_weight" "$batch_index" "$right_job" "${right_class% *}" >> "$pool_order"
+            fi
             printf '%s|opt1-built|%s|%s|%s|%s\n' "$left_job" "$opt_level" "$chunk_id" "$batch_index/$left_chunk_count" "$left_entries" >> "$POOL_JOBS"
             printf '%s|opt2-built|%s|%s|%s|%s\n' "$right_job" "$opt_level" "$chunk_id" "$batch_index/$left_chunk_count" "$right_entries" >> "$POOL_JOBS"
             printf '%s|%s|%s|%s|%s|%s\n' "${left_class#* }" "$chunk_weight" "$batch_index" "$left_job" "$right_job" "$left_cases" >> "$pair_order"
@@ -816,6 +901,13 @@ run_batched_comparison() {
     POOL_ACTIVE=1
     bounded_pool_start "$POOL_DIR" "$POOL_WORKERS"
 
+    # Byte-compare both producers' extracted src_core.tli bundles as soon as
+    # both finish; any difference fails the gate immediately.
+    bounded_pool_wait_for "$POOL_DIR" src-core-tli.opt1-built src-core-tli.opt2-built || exit 1
+    compare_tli "src_core.tli" \
+        "$WORKDIR/src-core-tli/opt1-built/src_core.tli" \
+        "$WORKDIR/src-core-tli/opt2-built/src_core.tli"
+
     # Compare each chunk as soon as both producers have emitted it, so a
     # mismatch stops the gate without waiting for the rest of the corpus.
     while IFS='|' read -r pair_left_job pair_right_job pair_cases; do
@@ -829,9 +921,9 @@ run_batched_comparison() {
 
     pool_merge_rows required
     pool_serial_ms=$(awk -F '\t' '{ total += $1 } END { print total + 0 }' "$CHUNK_METRICS")
-    echo "[build-invariance] worker pool: $((pool_finished - pool_started))ms wall for ${pool_serial_ms}ms of chunk compiles plus the backend-tests build"
+    echo "[build-invariance] worker pool: $((pool_finished - pool_started))ms wall for ${pool_serial_ms}ms of chunk compiles plus the backend-tests build and src_core.tli extractions"
 
-    for required_report in backend-tests codegen-smoke; do
+    for required_report in backend-tests codegen-smoke src-core-tli.opt1-built src-core-tli.opt2-built; do
         if [ ! -s "$WORKDIR/backend-memory/$required_report.memory" ]; then
             echo "[build-invariance] missing complete-fixture memory report: $required_report" >&2
             exit 1
@@ -982,6 +1074,7 @@ cfg_args=$(native_target_cfg_args | tr '\n' ' ')
 backend_mode=scalar
 stdlib_roots=stdlib src
 logical_cases=$CORPUS_CASE_COUNT
+src_core_tli_sha256=$(sha256sum "$WORKDIR/src-core-tli/opt1-built/src_core.tli" | sed 's/[[:space:]].*//')
 batch_chunk_size=$BATCH_CHUNK_SIZE
 pool_workers=$POOL_WORKERS
 pool_budget_mib=$POOL_BUDGET_MIB

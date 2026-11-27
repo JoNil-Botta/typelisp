@@ -71,6 +71,12 @@ expect_failure unsafe-dependency 'unsafe dependency path for unsafe_dep: ../help
     'unsafe_dep|tests/integration/good.tl|0|-|-|../helper.tl'
 expect_failure invalid-extra 'invalid extra field for bad_extra: stage-everything' \
     'bad_extra|tests/integration/good.tl|0|-|-|-|stage-everything'
+expect_failure backend-mode-with-opt-level 'cannot combine opt-level and backend-mode for bad_combo: opt-level:1+backend-mode:scalar' \
+    'bad_combo|tests/integration/good.tl|0|-|-|-|opt-level:1+backend-mode:scalar'
+expect_failure backend-mode-with-stage-stdlib 'cannot combine backend-mode:scalar with stage-stdlib for bad_stage: backend-mode:scalar+stage-stdlib' \
+    'bad_stage|tests/integration/good.tl|0|-|-|-|backend-mode:scalar+stage-stdlib'
+expect_failure backend-mode-with-stage-stdlib-stderr 'cannot combine backend-mode:scalar with stage-stdlib for bad_stage_err: backend-mode:scalar+stage-stdlib+expected-stderr:boom' \
+    'bad_stage_err|tests/integration/good.tl|0|-|-|-|backend-mode:scalar+stage-stdlib+expected-stderr:boom'
 expect_failure missing-suite-member 'names missing suite member for bad_suite: absent_smoke.tl' \
     'bad_suite|src/tests/compiler_frontend_smoke_suite.tl|42|-|-|-||suite-members:absent_smoke.tl'
 expect_failure suite-member-without-main 'suite member has no main for bad_suite: src/tests/compiler_typecheck_reverse_mixed_smoke.tl' \

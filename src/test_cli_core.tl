@@ -603,7 +603,11 @@
         manifest-path
         has-manifest
         (cli_option.cli-option-target-name options.target)
-        (build_run_core.source-tool-backend-mode options.backend-mode)
+        (build_run_core.source-tool-backend-mode
+          (cli_option.cli-compile-options-backend-mode
+            options.backend-mode
+            options.has-backend-mode
+            options.opt-level))
         options.stdlib-roots
         options.opt-level
         test-mode

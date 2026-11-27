@@ -37,19 +37,40 @@
 (import build_run_core)
 (import compiler_target_cfg_core as target_cfg)
 (import compiler_allocation_profile as allocation_profile)
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (import compiler_ast_types as ast))
 (import compiler_backend_peephole as be_peephole)
 (import compiler_backend_object as be_object)
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (import compiler_build_identity as build_identity))
 (import compiler_diagnostic as cdiag)
 (import compiler_load as load)
 (import compiler_intern as ci)
 (import compiler_ir_types as ir)
 (import compiler_lower as lower)
 (import compiler_optimize as opt)
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (import compiler_symbols as csym))
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (import compiler_tli_codec as tli_codec))
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (import compiler_tli_extract as tli_extract))
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (import compiler_tli_types as tli_types))
 (import compiler_driver_core)
 (import tli_cli_core as tli_cli)
 (cfg
   embedded-stdlib-tlci
   (import compiler_embedded_stdlib_tlci as embedded_tlci))
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (import compiler_typecheck_api as tc_api))
 (import compiler_typecheck_core as tc_core)
 (import compiler_windows_coff_core)
 (import doc_test)
@@ -96,6 +117,8 @@
   false)
 (define compile-cli-sysroot-options : tli_cli.TliSysrootOptions
   (tli_cli.tli-sysroot-options))
+(define compile-cli-extra-tli-paths : cli_svec.Vec
+  (cli_svec.new))
 
 (defenum CompileCliConfig
   (Config
@@ -109,6 +132,13 @@
     cli_svec.Vec
     be_state.CompilerBackendMode
     i64))
+
+(defstruct CompileCliEmitTliConfig
+  (input-path String)
+  (output-path String)
+  (target be_state.CompilerBackendTarget)
+  (stdlib-roots cli_svec.Vec)
+  (cfgs cli_svec.Vec))
 
 (defenum CompileCliBatchConfig
   (Config
@@ -126,6 +156,7 @@
 
 (defenum ResultCompileCliConfig
   (Ok CompileCliConfig)
+  (EmitTli CompileCliEmitTliConfig)
   (Err String))
 
 (defenum ResultCompileCliBatchConfig
@@ -134,6 +165,7 @@
 
 (defenum CompileCliAction
   (Run CompileCliConfig)
+  (EmitTli CompileCliEmitTliConfig)
   (Batch CompileCliBatchConfig)
   (Error String))
 
@@ -171,6 +203,9 @@
 (define (compile-cli-default-ir-output [input-path : String]) : String
   (compile-cli-default-output-with-extension input-path ".ir"))
 
+(define (compile-cli-default-tli-output [input-path : String]) : String
+  (compile-cli-default-output-with-extension input-path ".tli"))
+
 (define (compile-cli-common-option!
   [options : (&mut options cli_option.CliCompileOptions)]
   [args : (&mut args cli_option.CliArgs)]) : bool
@@ -179,6 +214,15 @@
     (tli_cli.tli-sysroot-option! (&mut compile-cli-sysroot-options) args))
     true
     (cond
+      [(string.eq args.name "--extra-tli")
+        (let
+          [path : String (cli_option.cli-args-value args)]
+          (if (= (string.string-length (& path)) 0)
+            (cli_option.cli-args-fail!
+              args
+              "compile: --extra-tli requires a non-empty file path")
+            (cli_svec.push-ref! (&mut compile-cli-extra-tli-paths) path)))
+        true]
       [(string.eq args.name "--profile-allocations")
         (if compile-cli-allocation-profile-requested
           (cli_option.cli-args-fail!
@@ -223,8 +267,8 @@
             (str_cat.str-cat
               "--stdlib-root <dir> --cfg <name> --target <target> --opt-level <0|1|2|s> -Os
                --debug|-g|--backtrace --backend-mode <mode> --profile-allocations
-               -o <file> --pic --no-entry --emit-ir --dump-ir --verify-ir
-               --trace-passes "
+               --extra-tli <file> -o <file> --pic --no-entry --emit-ir --emit-tli
+               --dump-ir --verify-ir --trace-passes "
               (tli_cli.tli-sysroot-cli-options))
             (+ input-idx 1)
             count)]
@@ -236,6 +280,7 @@
           (compile-cli-default-output (string.copy (& input-path)))]
         [has-output : bool false]
         [emit-ir : bool false]
+        [emit-tli : bool false]
         [pic : bool false]
         (while (cli_option.cli-args-next! (&mut args))
           (unless
@@ -261,6 +306,12 @@
                   (&mut args)
                   "compile: IR output was requested more than once")]
               [(string.eq args.name "--emit-ir") (set! emit-ir true)]
+              [(string.eq args.name "--emit-tli")
+                (if emit-tli
+                  (cli_option.cli-args-fail!
+                    (&mut args)
+                    "compile: --emit-tli was provided more than once")
+                  (set! emit-tli true))]
               [(string.eq args.name "--dump-ir")
                 (set! compile-cli-dump-ir-requested true)
                 (set! compile-cli-dump-ir-pass "")
@@ -289,6 +340,13 @@
         (unless args.failed (ir.compiler-debug-info-set-enabled! options.debug))
         (cond
           [args.failed (Err args.error)]
+          [(and emit-tli emit-ir)
+            (Err
+              "compile: --emit-tli cannot be combined with --emit-ir or --dump-ir")]
+          [(and emit-tli pic)
+            (Err "compile: --emit-tli cannot be combined with --pic")]
+          [(and emit-tli compile-cli-no-entry-requested)
+            (Err "compile: --emit-tli cannot be combined with --no-entry")]
           [(and emit-ir pic)
             (Err "compile: --pic cannot be combined with --emit-ir")]
           [(and compile-cli-no-entry-requested pic)
@@ -297,6 +355,16 @@
           [(and compile-cli-no-entry-requested emit-ir)
             (Err
               "compile: --no-entry selects assembly output and cannot be combined with --emit-ir or --dump-ir")]
+          [emit-tli
+            (ResultCompileCliConfig.EmitTli
+              (CompileCliEmitTliConfig
+                (string.copy (& input-path))
+                (if has-output
+                  output-path
+                  (compile-cli-default-tli-output input-path))
+                (build_run_core.source-tool-backend-target options.target)
+                options.stdlib-roots
+                options.cfgs))]
           [else
             (Ok
               (CompileCliConfig.Config
@@ -310,7 +378,11 @@
                 (build_run_core.source-tool-backend-target options.target)
                 options.stdlib-roots
                 options.cfgs
-                (build_run_core.source-tool-backend-mode options.backend-mode)
+                (build_run_core.source-tool-backend-mode
+                  (cli_option.cli-compile-options-backend-mode
+                    options.backend-mode
+                    options.has-backend-mode
+                    options.opt-level))
                 options.opt-level))]))]))
 
 (define (compile-cli-batch-config-from [batch-path-idx : i64] [count : i64]) : ResultCompileCliBatchConfig
@@ -326,7 +398,8 @@
           (str_cat.str-cat
             "--stdlib-root <dir> --cfg <name> --target <target> --opt-level <0|1|2|s> -Os
              --debug|-g|--backtrace --backend-mode <mode> --profile-allocations
-             -o --emit-ir --pic --no-entry --verify-ir --prefix-cache-stats --windows-coff-plan "
+             --extra-tli <file> -o --emit-ir --emit-tli --pic --no-entry --verify-ir
+             --prefix-cache-stats --windows-coff-plan "
             (tli_cli.tli-sysroot-cli-options))
           (+ batch-path-idx 1)
           count)]
@@ -352,6 +425,10 @@
                   (&mut args)
                   "compile: IR output was requested more than once")
                 (set! emit-ir true))]
+            [(string.eq args.name "--emit-tli")
+              (cli_option.cli-args-fail!
+                (&mut args)
+                "compile: --batch does not support --emit-tli")]
             [(string.eq args.name "--pic")
               (cli_option.cli-args-fail!
                 (&mut args)
@@ -409,7 +486,11 @@
               (build_run_core.source-tool-backend-target options.target)
               options.stdlib-roots
               options.cfgs
-              (build_run_core.source-tool-backend-mode options.backend-mode)
+              (build_run_core.source-tool-backend-mode
+                (cli_option.cli-compile-options-backend-mode
+                  options.backend-mode
+                  options.has-backend-mode
+                  options.opt-level))
               options.opt-level
               prefix-cache-stats
               has-windows-coff-plan
@@ -423,6 +504,7 @@
       [(Err message) (Error message)])
     (match (compile-cli-config-from 2 count)
       [(Ok config) (Run config)]
+      [(EmitTli config) (CompileCliAction.EmitTli config)]
       [(Err message) (Error message)])))
 
 (define (compile-cli-print-ir-verification-error [message : String]) : unit
@@ -1406,6 +1488,7 @@
         (cli_svec.len (& stdlib-roots))
         (& cfgs.slots)
         (cli_svec.len (& cfgs))
+        (ir.compiler-debug-info-enabled?)
         opt-level
         true)))
   (let
@@ -1644,6 +1727,7 @@
             (cli_svec.len (& stdlib-roots))
             (& cfgs.slots)
             (cli_svec.len (& cfgs))
+            (ir.compiler-debug-info-enabled?)
             opt-level
             true)))]
     [_image-owner : i64
@@ -1844,6 +1928,309 @@
             state)
           status)])))
 
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (define (compile-cli-emit-tli-svec-find
+    [items : (& cli_svec.Vec)]
+    [target : (& str)]) : i64
+    (for [i (iterator.range 0 (cli_svec.len items))]
+      (when (string.eq (& (array-ref items.slots i)) target) (return i)))
+    -1))
+
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (define (compile-cli-emit-tli-file-sha256 [path : (& str)]) : (Array u8 32)
+    (match (io.try-read-file path)
+      [(OkIoBytes raw)
+        (tli_extract.tli-extract-sha256 (byte_buf.as-bytes (& raw)))]
+      [(ErrIoBytes _) (make-array u8 32)])))
+
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (define (compile-cli-emit-tli-pre-sources
+    [load-state : (& load.CompilerLoadSessionState)]
+    [decls : (& ast.AstDeclList)]
+    [paths : (& ast.AstDeclPathList)]
+    [modules : (& ast.AstDeclModuleList)]
+    [input-path : (& str)]) : (__tl_dyn-array tli_extract.TliSource)
+    (let
+      [count : i64 (ast.ast-decl-list-len decls)]
+      [seen-paths : cli_svec.Vec (cli_svec.new)]
+      [seen-mods : cli_svec.Vec (cli_svec.new)]
+      [last-path : String ""]
+      [last-slot : i64 -1]
+      [root-mod-id : i64 (csym.compiler-symbol-root-module-id)]
+      (for [index (iterator.range 0 count)]
+        (let
+          [path : String (ast.ast-decl-path-list-get paths index "")]
+          [mod-id : i64
+            (ast.ast-decl-module-list-get-id modules index root-mod-id)]
+          [mod-name : String
+            (if (csym.compiler-symbol-root-module-id? mod-id)
+              ""
+              (ci.intern-str mod-id))]
+          (unless
+            (or
+              (= (string.string-length (& path)) 0)
+              (source_text.starts-with? (& path) "<tli-stdlib>:")
+              (load.compiler-load-stdlib-import? (& path))
+              (source_text.starts-with? (& mod-name) "stdlib.")
+              (and
+                (> (string.string-length (& mod-name)) 0)
+                (load.compiler-load-session-state-tli-has-module?
+                  load-state
+                  (& mod-name))))
+            (let
+              [slot : i64
+                (if (and (>= last-slot 0) (string.eq (& last-path) (& path)))
+                  last-slot
+                  (compile-cli-emit-tli-svec-find (& seen-paths) (& path)))]
+              (if (< slot 0)
+                (let
+                  [fresh : i64 (cli_svec.len (& seen-paths))]
+                  (cli_svec.push-ref! (&mut seen-paths) (string.copy (& path)))
+                  (cli_svec.push-ref!
+                    (&mut seen-mods)
+                    (string.copy (& mod-name)))
+                  (set! last-path path)
+                  (set! last-slot fresh))
+                (begin
+                  (set! last-path path)
+                  (set! last-slot slot)
+                  (when
+                    (and
+                      (=
+                        (string.string-length
+                          (& (array-ref seen-mods.slots slot)))
+                        0)
+                      (> (string.string-length (& mod-name)) 0))
+                    (set! (array-ref seen-mods.slots slot) mod-name))))))))
+      (when
+        (= (cli_svec.len (& seen-paths)) 0)
+        (cli_svec.push-ref! (&mut seen-paths) (string.copy input-path))
+        (cli_svec.push-ref! (&mut seen-mods) ""))
+      (let
+        [n : i64 (cli_svec.len (& seen-paths))]
+        [out : (__tl_dyn-array tli_extract.TliSource)
+          (__tl_make-array tli_extract.TliSource n)]
+        (for [i (iterator.range 0 n)]
+          (let
+            [path : String (string.copy (& (array-ref seen-paths.slots i)))]
+            [raw-mod : String (string.copy (& (array-ref seen-mods.slots i)))]
+            [mod-name : String
+              (if (> (string.string-length (& raw-mod)) 0)
+                raw-mod
+                (load.compiler-load-canonical-module-id-from-path (& path)))]
+            [digest : (Array u8 32) (compile-cli-emit-tli-file-sha256 (& path))]
+            (set!
+              (array-ref out i)
+              (tli_extract.TliSource mod-name path digest))))
+        out))))
+
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (define (compile-cli-emit-tli-filter-generated-sources
+    [load-state : (& load.CompilerLoadSessionState)]
+    [pre-count : i64]
+    [raw-all : (& (__tl_dyn-array tli_extract.TliSource))]) : (__tl_dyn-array
+      tli_extract.TliSource)
+    (let
+      [total : i64 (array-length (deref raw-all))]
+      [keep : (__tl_dyn-array bool) (__tl_make-array bool total)]
+      [kept : i64 0]
+      (for [i (iterator.range 0 total)]
+        (let
+          [ok : bool
+            (or
+              (< i pre-count)
+              (not
+                (load.compiler-load-session-state-tli-has-module?
+                  load-state
+                  (& (array-ref (deref raw-all) i).module-name))))]
+          (set! (array-ref keep i) ok)
+          (when ok (+= kept 1))))
+      (let
+        [out : (__tl_dyn-array tli_extract.TliSource)
+          (__tl_make-array tli_extract.TliSource kept)]
+        [dst : i64 0]
+        (for [i (iterator.range 0 total)]
+          (when
+            (array-ref keep i)
+            (set!
+              (array-ref out dst)
+              (tli_extract.TliSource
+                (string.copy (& (array-ref (deref raw-all) i).module-name))
+                (string.copy (& (array-ref (deref raw-all) i).path))
+                (array-ref (deref raw-all) i).digest))
+            (+= dst 1)))
+        out))))
+
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (define (compile-cli-emit-tli-snapshot-external-imports!
+    [bundle : (&mut tli_types.TliBundle)]
+    [load-state : (& load.CompilerLoadSessionState)]) : unit
+    (for [m (iterator.range 0 (array-length bundle.modules))]
+      (for [i
+        (iterator.range 0 (array-length (array-ref bundle.modules m).imports))]
+        (let
+          [imp-name : String
+            (string.copy
+              (& (array-ref (array-ref bundle.modules m).imports i).module-name))]
+          (match (load.compiler-load-session-state-tli-module-sha256
+            load-state
+            (& imp-name))
+            [(Some ext-digest)
+              (set!
+                (array-ref (array-ref bundle.modules m).imports i).interface-sha256
+                ext-digest)]
+            [(None) unit]))))))
+
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (define (compile-cli-run-emit-tli [config : CompileCliEmitTliConfig]) : i64
+    (match config
+      [(CompileCliEmitTliConfig input-path output-path target stdlib-roots cfgs)
+        (compiler_driver_core.compiler-driver-reset-file-state!)
+        (let
+          [emit-cfgs : sym_i64_env.SymI64Env
+            (compiler_driver_core.compiler-driver-target-cfgs
+              target
+              (target_cfg.compiler-target-user-cfgs (& cfgs)))]
+          [target-cfg : target_cfg.CompilerTargetCfg
+            (compiler_driver_core.compiler-driver-target-cfg-from-backend
+              target)]
+          [load-state : load.CompilerLoadSessionState
+            (load.compiler-load-serial-test-session-state)]
+          (match (compiler_driver_core.compiler-driver-open-tli-catalog-for-session!
+            (& load-state)
+            (& input-path)
+            target-cfg
+            (& stdlib-roots)
+            emit-cfgs
+            0
+            false)
+            [(Err tli-msg)
+              (compiler_driver_core.compiler-driver-finish-tli-hydrated-serial-session!)
+              (io.print-error tli-msg)
+              1]
+            [(Ok)
+              (match (compiler_driver_core.compiler-driver-load-file-with-runtime
+                (string.copy (& input-path))
+                (cli_svec.clone-vec (& stdlib-roots))
+                emit-cfgs)
+                [(Err diag)
+                  (compiler_driver_core.compiler-driver-finish-tli-hydrated-serial-session!)
+                  (io.print-error
+                    (cdiag.compiler-diagnostic-render (& (__tl-box-place diag))))
+                  1]
+                [(Ok decls paths modules _)
+                  (let
+                    [pre-sources : (__tl_dyn-array tli_extract.TliSource)
+                      (compile-cli-emit-tli-pre-sources
+                        (& load-state)
+                        (& decls)
+                        (& paths)
+                        (& modules)
+                        (& input-path))]
+                    [request : tc_api.TypecheckRequest
+                      (tc_api.typecheck-request-serial
+                        (ast.AstProgram.Program (box decls))
+                        (ast.ast-decl-path-list-with-modules paths (& modules))
+                        (cli_svec.clone-vec (& stdlib-roots))
+                        emit-cfgs
+                        (tc_core.tc-prefix-default-cache-scope))]
+                    [cfg-digest : (Array u8 32)
+                      (tli_extract.tli-extract-cfg-digest request.cfgs)]
+                    [records : (__tl_dyn-array tli_extract.TliExtractModule)
+                      (tli_extract.tli-extract-open-modules
+                        (& request)
+                        (& pre-sources))]
+                    [job : tc_core.TcJobState request.job-state]
+                    [producer : String
+                      (build_identity.compiler-build-producer-identity)]
+                    [target-triple : String
+                      (tli_cli.tli-sysroot-target-triple target-cfg)]
+                    (set! request.retain-global-call-effects true)
+                    (match (tc_api.typecheck-compiler-request-checked request)
+                      [(or (Partial diagnostics _ _ _) (Err diagnostics))
+                        (tc_core.tc-global-call-effects-finish! job)
+                        (compiler_driver_core.compiler-driver-finish-tli-hydrated-serial-session!)
+                        (io.print-error
+                          (compiler_driver_core.compiler-driver-render-source-diagnostic
+                            (cdiag.compiler-diagnostic-list-first
+                              (& (__tl-box-place diagnostics)))))
+                        1]
+                      [(Ok _ ctx env checked-paths)
+                        (let
+                          [raw-all : (__tl_dyn-array tli_extract.TliSource)
+                            (tli_extract.tli-extract-add-generated-sources
+                              ctx
+                              (& checked-paths)
+                              (& pre-sources))]
+                          [all-sources : (__tl_dyn-array tli_extract.TliSource)
+                            (compile-cli-emit-tli-filter-generated-sources
+                              (& load-state)
+                              (array-length pre-sources)
+                              (& raw-all))]
+                          [all-records : (__tl_dyn-array
+                            tli_extract.TliExtractModule)
+                            (tli_extract.tli-extract-extend-records
+                              records
+                              (& all-sources))]
+                          [bundle : tli_types.TliBundle
+                            (tli_extract.tli-extract-checked
+                              ctx
+                              env
+                              (& checked-paths)
+                              (& all-sources)
+                              all-records
+                              (& cfg-digest)
+                              0
+                              producer
+                              target-triple)]
+                          (compile-cli-emit-tli-snapshot-external-imports!
+                            (&mut bundle)
+                            (& load-state))
+                          (tc_core.tc-global-call-effects-finish! job)
+                          (compiler_driver_core.compiler-driver-finish-tli-hydrated-serial-session!)
+                          (if (not
+                            (tli_extract.tli-extract-pin-imports! (&mut bundle)))
+                            (begin
+                              (io.print-error
+                                "compile: TLI import cycle cannot pin module record digests\n")
+                              1)
+                            (let
+                              [encoded : (__tl_dyn-array u8)
+                                (tli_codec.tli-encode-bundle (& bundle))]
+                              [buf : byte_buf.ByteBuf
+                                (byte_buf.from-array encoded)]
+                              (match (io.try-write-file
+                                (& output-path)
+                                (byte_buf.as-bytes (& buf)))
+                                [(OkIoUnit)
+                                  (io.print-format
+                                    "{}"
+                                    (str_cat.str-cat "Wrote " output-path "\n"))
+                                  0]
+                                [(ErrIoUnit error)
+                                  (io.print-error
+                                    (str_cat.str-cat
+                                      "compile: cannot write "
+                                      output-path
+                                      ": "
+                                      (io.error-message error)
+                                      "\n"))
+                                  1]))))]))])]))])))
+
+(cfg
+  (not
+    (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci))
+  (define (compile-cli-run-emit-tli [_config : CompileCliEmitTliConfig]) : i64
+    (io.print-error
+      "compile: --emit-tli requires checked frontend surface support\n")
+    1))
+
 (define (compile-cli-run-action [action : CompileCliAction]) : i64
   (match action
     [(Run config)
@@ -1897,6 +2284,7 @@
                   (startup_profile.compiler-startup-profile-print!)
                   unit)
                 status))]))]
+    [(EmitTli config) (compile-cli-run-emit-tli config)]
     [(Batch config) (compile-cli-run-batch config)]
     [(Error message)
       (io.print-error message)
@@ -1913,7 +2301,9 @@
         (set! compile-cli-verify-ir-requested false)
         (set! compile-cli-trace-passes-requested false)
         (set! compile-cli-sysroot-options (tli_cli.tli-sysroot-options))
+        (set! compile-cli-extra-tli-paths (cli_svec.new))
         (tli_cli.tli-reset-active-sysroot-options!)
+        (tli_cli.tli-reset-active-extra-tli-paths!)
         (ir.compiler-debug-info-set-enabled! false)
         (ir.compiler-debug-type-graph-verify-set! false)
         (ir.compiler-debug-path-remap-clear!)
@@ -1921,6 +2311,8 @@
           [parsed : CompileCliAction (compile-cli-dispatch count)]
           (tli_cli.tli-set-active-sysroot-options!
             (& compile-cli-sysroot-options))
+          (tli_cli.tli-set-active-extra-tli-paths!
+            (& compile-cli-extra-tli-paths))
           parsed))]
     [profile? : bool compile-cli-allocation-profile-requested]
     (if profile?

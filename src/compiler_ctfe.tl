@@ -5029,7 +5029,7 @@
   [args : (& ast.AstPatternList)]
   [ty : (& ast.AstType)]
   [env : CtfeEnv]) : CtfePatternMatch
-  (if (ctfe-pattern-variant-name? variant "Opaque")
+  (if (ctfe-pattern-variant-name? (& env) variant "Opaque")
     (ctfe-match-pattern-list
       args
       (&
@@ -5054,7 +5054,7 @@
           (match info
             [(Struct _ _ _ _ _ fields _)
               (if want-struct
-                (if (ctfe-pattern-variant-name? variant "Struct")
+                (if (ctfe-pattern-variant-name? (& env) variant "Struct")
                   (ctfe-match-pattern-list
                     args
                     (&
@@ -5069,7 +5069,7 @@
             [(Enum _ _ _ _ _ variants _)
               (if want-struct
                 (No)
-                (if (ctfe-pattern-variant-name? variant "Enum")
+                (if (ctfe-pattern-variant-name? (& env) variant "Enum")
                   (ctfe-match-pattern-list
                     args
                     (&
@@ -5099,7 +5099,7 @@
       (ctfe-type-kind-with-reflections-and-pools pools infos (& resolved))]
     (match (ast.clone-ast-type (& resolved))
       [(Array elem count)
-        (if (ctfe-pattern-variant-name? variant "Array")
+        (if (ctfe-pattern-variant-name? (& env) variant "Array")
           (ctfe-match-pattern-list
             args
             (&
@@ -5110,7 +5110,7 @@
             env)
           (No))]
       [(DynArray elem)
-        (if (ctfe-pattern-variant-name? variant "DynArray")
+        (if (ctfe-pattern-variant-name? (& env) variant "DynArray")
           (ctfe-match-pattern-list
             args
             (&
@@ -5120,7 +5120,7 @@
             env)
           (No))]
       [(Slice elem)
-        (if (ctfe-pattern-variant-name? variant "Slice")
+        (if (ctfe-pattern-variant-name? (& env) variant "Slice")
           (ctfe-match-pattern-list
             args
             (&
@@ -5130,7 +5130,7 @@
             env)
           (No))]
       [(Func params ret)
-        (if (ctfe-pattern-variant-name? variant "Function")
+        (if (ctfe-pattern-variant-name? (& env) variant "Function")
           (ctfe-match-pattern-list
             args
             (&
@@ -5140,7 +5140,7 @@
             env)
           (No))]
       [(Tuple elems)
-        (if (ctfe-pattern-variant-name? variant "Tuple")
+        (if (ctfe-pattern-variant-name? (& env) variant "Tuple")
           (ctfe-match-pattern-list
             args
             (& (ctfe-value-list1 (& (TypeInfoList (deref elems)))))
@@ -5152,7 +5152,7 @@
         (ctfe-match-type-info-nominal variant args (& resolved) env false)]
       [_
         (if (ctfe-type-info-builtin-kind? (string.copy kind))
-          (if (ctfe-pattern-variant-name? variant "Builtin")
+          (if (ctfe-pattern-variant-name? (& env) variant "Builtin")
             (ctfe-match-pattern-list
               args
               (& (ctfe-value-list1 (& (ctfe-generated-string-value kind))))
@@ -11412,15 +11412,33 @@
         (string.substring text (- text-len suffix-len) suffix-len)
         suffix))))
 
-(define (ctfe-pattern-variant-name? [name : i64] [expected : String]) : bool
+(define (ctfe-pattern-variant-name?
+  [env : (& CtfeEnv)]
+  [name : i64]
+  [expected : String]) : bool
   (let
-    [actual : String (ci.intern-str name)]
-    (or
-      (string.eq (string.copy actual) (string.copy expected))
-      (ctfe-string-suffix?
-        (& (string.copy actual))
-        (str_cat.str-cat "." (string.copy expected)))
-      (ctfe-string-suffix? (& actual) (str_cat.str-cat "/" expected)))))
+    [source-id : i64
+      (cis.intern-structural-session-syntax-source-name-id-or
+        (ctfe-env-structural-session env)
+        name
+        name)]
+    [leaf-id : i64
+      (cond
+        [(ci.intern-composite-triple-id? source-id)
+          (ci.intern-composite-right-id-unchecked source-id)]
+        [(ci.intern-composite-pair-id? source-id)
+          (ci.intern-composite-right-id-unchecked source-id)]
+        [else source-id])]
+    (if (not (ci.intern-renderable-id? leaf-id))
+      false
+      (let
+        [actual : String (ci.intern-str leaf-id)]
+        (or
+          (string.eq (string.copy actual) (string.copy expected))
+          (ctfe-string-suffix?
+            (& (string.copy actual))
+            (str_cat.str-cat "." (string.copy expected)))
+          (ctfe-string-suffix? (& actual) (str_cat.str-cat "/" expected)))))))
 
 (define (ctfe-literal-matches-value?
   [lit : (& ast.AstLiteral)]
@@ -11500,14 +11518,14 @@
     [(Literal lit)
       (match lit
         [(Bool b)
-          (if (ctfe-pattern-variant-name? variant "Bool")
+          (if (ctfe-pattern-variant-name? (& env) variant "Bool")
             (ctfe-match-pattern-list
               args
               (& (ctfe-value-list1 (& (Bool b))))
               env)
             (No))]
         [(Int n text)
-          (if (ctfe-pattern-variant-name? variant "Int")
+          (if (ctfe-pattern-variant-name? (& env) variant "Int")
             (ctfe-match-pattern-list
               args
               (&
@@ -11517,7 +11535,7 @@
             (No))]
         [_ (No)])]
     [(Var name)
-      (if (ctfe-pattern-variant-name? variant "Var")
+      (if (ctfe-pattern-variant-name? (& env) variant "Var")
         (ctfe-match-pattern-list
           args
           (&
@@ -11529,7 +11547,7 @@
           env)
         (No))]
     [(If cond then-branch else-branch)
-      (if (ctfe-pattern-variant-name? variant "If")
+      (if (ctfe-pattern-variant-name? (& env) variant "If")
         (let
           [pools : ast.AstNodePoolContext (ctfe-env-pools env)]
           (ctfe-match-pattern-list
@@ -11560,7 +11578,7 @@
             env))
         (No))]
     [(Call callee args-list)
-      (if (ctfe-pattern-variant-name? variant "Call")
+      (if (ctfe-pattern-variant-name? (& env) variant "Call")
         (let
           [pools : ast.AstNodePoolContext (ctfe-env-pools env)]
           (ctfe-match-pattern-list
@@ -11583,7 +11601,7 @@
             env))
         (No))]
     [(Begin exprs)
-      (if (ctfe-pattern-variant-name? variant "Begin")
+      (if (ctfe-pattern-variant-name? (& env) variant "Begin")
         (let
           [pools : ast.AstNodePoolContext (ctfe-env-pools env)]
           (ctfe-match-pattern-list
@@ -11599,7 +11617,7 @@
             env))
         (No))]
     [(Quote inner)
-      (if (ctfe-pattern-variant-name? variant "Quote")
+      (if (ctfe-pattern-variant-name? (& env) variant "Quote")
         (let
           [pools : ast.AstNodePoolContext (ctfe-env-pools env)]
           (ctfe-match-pattern-list
@@ -11616,7 +11634,7 @@
             env))
         (No))]
     [(Quasiquote inner)
-      (if (ctfe-pattern-variant-name? variant "Quasiquote")
+      (if (ctfe-pattern-variant-name? (& env) variant "Quasiquote")
         (let
           [pools : ast.AstNodePoolContext (ctfe-env-pools env)]
           (ctfe-match-pattern-list
@@ -11633,7 +11651,7 @@
             env))
         (No))]
     [(Unquote inner)
-      (if (ctfe-pattern-variant-name? variant "Unquote")
+      (if (ctfe-pattern-variant-name? (& env) variant "Unquote")
         (let
           [pools : ast.AstNodePoolContext (ctfe-env-pools env)]
           (ctfe-match-pattern-list
@@ -11650,7 +11668,7 @@
             env))
         (No))]
     [(UnquoteSplicing inner)
-      (if (ctfe-pattern-variant-name? variant "UnquoteSplicing")
+      (if (ctfe-pattern-variant-name? (& env) variant "UnquoteSplicing")
         (let
           [pools : ast.AstNodePoolContext (ctfe-env-pools env)]
           (ctfe-match-pattern-list
@@ -11715,14 +11733,14 @@
           [(TypeInfo ty)
             (ctfe-match-type-info-variant variant (& args) (& ty) env)]
           [(TypeInfoBox ty)
-            (if (ctfe-pattern-variant-name? variant "box")
+            (if (ctfe-pattern-variant-name? (& env) variant "box")
               (ctfe-match-pattern-list
                 (& args)
                 (& (ctfe-value-list1 (& (TypeInfo ty))))
                 env)
               (No))]
           [(ExprClause clause)
-            (if (ctfe-pattern-variant-name? variant "ExprClause")
+            (if (ctfe-pattern-variant-name? (& env) variant "ExprClause")
               (ctfe-match-pattern-list
                 (& args)
                 (&
@@ -11738,7 +11756,7 @@
                 env)
               (No))]
           [(CapturedExprClause clause pools)
-            (if (ctfe-pattern-variant-name? variant "ExprClause")
+            (if (ctfe-pattern-variant-name? (& env) variant "ExprClause")
               (ctfe-match-pattern-list
                 (& args)
                 (&

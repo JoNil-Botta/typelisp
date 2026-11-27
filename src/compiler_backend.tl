@@ -253,8 +253,12 @@
          (VectorReduce _ _ _ _ _) (VectorCompare _) (MaskBinOp _ _ _ _ _)
          (MaskNot _ _ _) (MaskReduce _ _ _ _) (VectorLoad _ _ _ _ _)
          (VectorStore _) (PredicatedStore _) (PredicatedLoad _) (GatherLoad _)
-         (VectorShuffle _) (TailMask _ _ _ _) (SpmdCall _))
+         (VectorShuffle _) (TailMask _ _ _ _))
       true]
+    [(SpmdCall p)
+      (match (& p.backend)
+        [(Scalar) false]
+        [_ true])]
     [(Select p) (> p.lanes 0)]
     [_ false]))
 
@@ -262,7 +266,10 @@
   [function-abi : (& function-abi compiler_ir_types.CompilerIrFunctionAbi)]
   [blocks : (& blocks compiler_ir_types.CompilerIrBlockList)]) : bool
   (if (match function-abi
-    [(SpmdPrivate _) true]
+    [(SpmdPrivate abi)
+      (match (& abi.backend)
+        [(Scalar) false]
+        [_ true])]
     [_ false])
     true
     (match blocks
@@ -287,6 +294,22 @@
                     (set! i (+ i 1))))])
             (set! b (+ b 1)))
           found)])))
+
+(define (compiler-backend-program-uses-simd?
+  [program : (& program compiler_ir_types.CompilerIrProgram)]) : bool
+  (match program
+    [(Program _ functions _ _)
+      (let
+        [f : i64 0]
+        [found : bool false]
+        (while (and (< f functions.len) (not found))
+          (match (& (array-ref functions.slots f))
+            [(Function _ _ _ _ blocks function-abi)
+              (when
+                (compiler-backend-function-uses-simd? function-abi blocks)
+                (set! found true))])
+          (set! f (+ f 1)))
+        found)]))
 
 (define (compiler-backend-emit-vector-reduce
   [type-segment-bases : i64]
@@ -23575,21 +23598,24 @@
               (& params)
               vars
               raw-blocks))]
-        ;; In SSE2 mode, non-SIMD functions follow the exact scalar pipeline so
-        ;; shrinkwrap, cold-call rewrite, %rbp pool, call-hole/loop splitting,
-        ;; caller-save rewrite, and stack coloring stay identical to scalar.
+        ;; In SSE2 mode, non-SIMD functions demote to Scalar so every downstream
+        ;; check (direct stack params, emergency XMM parking, red-zone leaf
+        ;; frames, shrinkwrap, cold-call rewrite, %rbp pool, call-hole/loop
+        ;; splitting, caller-save rewrite, stack coloring) stays bit-identical
+        ;; to scalar mode.
         [function-uses-simd? : bool
           (if (be_state.compiler-backend-mode-sse2? mode)
             (compiler-backend-function-uses-simd?
               (& function-abi)
               (& folded-blocks))
             (not (be_state.compiler-backend-mode-scalar? mode)))]
-        [scalar-pipeline? : bool
-          (or
-            (be_state.compiler-backend-mode-scalar? mode)
-            (and
-              (be_state.compiler-backend-mode-sse2? mode)
-              (not function-uses-simd?)))]
+        [mode : be_state.CompilerBackendMode
+          (if (and
+            (be_state.compiler-backend-mode-sse2? mode)
+            (not function-uses-simd?))
+            (Scalar)
+            mode)]
+        [scalar-pipeline? : bool (be_state.compiler-backend-mode-scalar? mode)]
         ;; Pre-regalloc SIMD algebraic select-add/sub factoring: hoist shared
         ;; `x` out of `select(m, x +- a, x +- b)` so regalloc allocates the
         ;; factored loop (and hoisted negated splats) cleanly.

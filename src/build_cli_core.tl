@@ -592,7 +592,11 @@
             has-manifest
             (cli_option.cli-option-target-name options.target)
             options.has-target
-            (cli_option.cli-option-backend-mode-name options.backend-mode)
+            (cli_option.cli-option-backend-mode-name
+              (cli_option.cli-compile-options-backend-mode
+                options.backend-mode
+                options.has-backend-mode
+                options.opt-level))
             profile
             options.has-opt-level
             (if options.has-opt-level
@@ -696,7 +700,11 @@
             manifest-path
             has-manifest
             (build_run_core.source-tool-backend-target options.target)
-            (build_run_core.source-tool-backend-mode options.backend-mode)
+            (build_run_core.source-tool-backend-mode
+              (cli_option.cli-compile-options-backend-mode
+                options.backend-mode
+                options.has-backend-mode
+                options.opt-level))
             profile
             options.opt-level
             lock-policy
@@ -2574,7 +2582,7 @@
 (define (build-package-direct-object-mode?
   [mode : be_state.CompilerBackendMode]) : bool
   (match mode
-    [(Scalar) true]
+    [(or (Scalar) (Sse2)) true]
     [_ false]))
 
 (define (build-package-decl-has-spmd-callable? [decl : ast.AstDecl]) : bool
@@ -3104,10 +3112,13 @@
       (+= cursor 1))
     dst))
 
+;; :spmd-callable private ABI v1 defines scalar and avx512 package helpers;
+;; sse2 packages emit and advertise the scalar helper while vectorizing other
+;; loops with SSE2.
 (define (build-package-tlci-backend [mode : be_state.CompilerBackendMode]) : ir.CompilerIrSpmdBackend
   (match mode
     [(Scalar) Scalar]
-    [(Sse2) Sse2]
+    [(Sse2) Scalar]
     [(Avx2) Avx2]
     [(Avx512) Avx512]))
 
@@ -8827,7 +8838,11 @@
             output
             has-output
             (build_run_core.source-tool-backend-target options.target)
-            (build_run_core.source-tool-backend-mode options.backend-mode)
+            (build_run_core.source-tool-backend-mode
+              (cli_option.cli-compile-options-backend-mode
+                options.backend-mode
+                options.has-backend-mode
+                options.opt-level))
             options.stdlib-roots
             options.cfgs
             options.opt-level

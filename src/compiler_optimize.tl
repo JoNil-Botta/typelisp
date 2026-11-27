@@ -3076,6 +3076,10 @@
 (define opt-dce-no-mirror : (__tl_dyn-array i64)
   (__tl_make-array i64 0))
 
+;; DryRun and InPlace never access the output array.
+(define opt-dce-no-out : (__tl_dyn-array ir.CompilerIrInstr)
+  (__tl_make-array ir.CompilerIrInstr 0))
+
 (define (opt-dce-no-mirror-shared-view) : (__tl_dyn-array i64)
   (unsafe
     (ptr-read (ptr-addr-of opt-dce-no-mirror))))
@@ -3443,6 +3447,7 @@
 ;; Deleting a user on the backward walk can make an earlier definition dead.
 ;; Survivors fill a suffix, then slide down to index zero in their original order.
 (define (opt-dce-sweep!
+  [ids : (&mut ir.CompilerIrIdList)]
   [items : (&mut (__tl_dyn-array i64))]
   [mirror : (&mut (__tl_dyn-array i64))]
   [slots : (&mut (__tl_dyn-array ir.CompilerIrInstr))]
@@ -3450,7 +3455,6 @@
   [out : (&mut (__tl_dyn-array ir.CompilerIrInstr))]
   [keep : OptDceKeep]) : i64
   (let
-    [ids : ir.CompilerIrIdList (ir.compiler-ir-id-list-new)]
     [index : i64 (- count 1)]
     [write : i64 index]
     (while (>= index 0)
@@ -3458,15 +3462,8 @@
         [instr : ir.CompilerIrInstr
           (owned_view.compiler-owned-reference-shared-view
             (& (array-ref slots index)))]
-        (if (opt-dce-dead-array?
-          (&mut ids)
-          items
-          mirror
-          slots
-          count
-          index
-          (& instr))
-          (opt-uncount-instr-uses-array (&mut ids) items (& instr))
+        (if (opt-dce-dead-array? ids items mirror slots count index (& instr))
+          (opt-uncount-instr-uses-array ids items (& instr))
           (begin
             ;; The deadness query can rewrite slots[index].
             (match keep
@@ -3503,6 +3500,7 @@
 
 (define (opt-dce-copy-instr-seq
   [keep : OptDceKeep]
+  [ids : (&mut ir.CompilerIrIdList)]
   [items : (&mut (__tl_dyn-array i64))]
   [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
   (let
@@ -3510,6 +3508,7 @@
       (__tl_make-array ir.CompilerIrInstr instrs.len)]
     [live : i64
       (opt-dce-sweep!
+        ids
         items
         (&mut opt-dce-no-mirror)
         (&mut instrs.slots)
@@ -3521,20 +3520,36 @@
 (define (opt-dce-instr-seq-array
   [items : (__tl_dyn-array i64)]
   [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
-  (opt-dce-copy-instr-seq (Copy) (&mut items) instrs))
+  (opt-dce-copy-instr-seq
+    (Copy)
+    (&mut (ir.compiler-ir-id-list-new))
+    (&mut items)
+    instrs))
 
 (define (opt-dce-instr-seq-array-escape
   [pools : ast.AstNodePoolContext]
   [items : (__tl_dyn-array i64)]
   [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
-  (opt-dce-copy-instr-seq (Escape pools) (&mut items) instrs))
+  (opt-dce-copy-instr-seq
+    (Escape pools)
+    (&mut (ir.compiler-ir-id-list-new))
+    (&mut items)
+    instrs))
+
+(define (opt-dce-copy-blocks
+  [keep : OptDceKeep]
+  [ids : (&mut ir.CompilerIrIdList)]
+  [items : (&mut (__tl_dyn-array i64))]
+  [blocks : (& ir.CompilerIrBlockList)]) : ir.CompilerIrBlockList
+  (opt-blocks-map-seq blocks opt-dce-copy-instr-seq keep ids items))
 
 (define (opt-dce-block-list-array
   [items : (& (__tl_dyn-array i64))]
   [blocks : (& ir.CompilerIrBlockList)]) : ir.CompilerIrBlockList
   (let
     [counts (owned_view.compiler-owned-reference-shared-view items)]
-    (opt-blocks-map-seq blocks opt-dce-copy-instr-seq (Copy) (&mut counts))))
+    [ids : ir.CompilerIrIdList (ir.compiler-ir-id-list-new)]
+    (opt-dce-copy-blocks (Copy) (&mut ids) (&mut counts) blocks)))
 
 (define (opt-dce-copy-used [source : (& source (__tl_dyn-array i64))]) : (__tl_dyn-array
     i64)
@@ -3545,12 +3560,11 @@
     out))
 
 (define (opt-dce-blocks-array-have-dead!
+  [ids : (&mut ir.CompilerIrIdList)]
   [mirror : (&mut (__tl_dyn-array i64))]
   [blocks : (& ir.CompilerIrBlockList)]) : bool
   (let
     [items : (__tl_dyn-array i64) (opt-dce-copy-used mirror)]
-    [unused : (__tl_dyn-array ir.CompilerIrInstr)
-      (__tl_make-array ir.CompilerIrInstr 0)]
     (match blocks
       [(Array seq)
         (for [index (iterator.range 0 seq.len)]
@@ -3559,11 +3573,12 @@
               (when
                 (<
                   (opt-dce-sweep!
+                    ids
                     (&mut items)
                     mirror
                     (&mut instrs.slots)
                     instrs.len
-                    (&mut unused)
+                    (&mut opt-dce-no-out)
                     (DryRun))
                   instrs.len)
                 (return true))]))
@@ -3575,9 +3590,10 @@
   (let
     ;; This legacy entry takes a shared view of the caller's counts.
     [counts (owned_view.compiler-owned-reference-shared-view items)]
-    (if (opt-dce-blocks-array-have-dead! (&mut counts) (& blocks))
+    [ids : ir.CompilerIrIdList (ir.compiler-ir-id-list-new)]
+    (if (opt-dce-blocks-array-have-dead! (&mut ids) (&mut counts) (& blocks))
       (Result
-        (opt-blocks-map-seq blocks opt-dce-copy-instr-seq (Copy) (&mut counts))
+        (opt-dce-copy-blocks (Copy) (&mut ids) (&mut counts) (& blocks))
         true)
       (Result blocks false))))
 
@@ -3596,22 +3612,27 @@
         next)]))
 
 (define (opt-dce-compact-instr-seq!
+  [ids : (&mut ir.CompilerIrIdList)]
   [items : (&mut (__tl_dyn-array i64))]
   [instrs : (&mut instrs ir.CompilerIrInstrSeq)]) : unit
   (set!
     instrs.len
     (opt-dce-sweep!
+      ids
       items
       (&mut opt-dce-no-mirror)
       (&mut instrs.slots)
       instrs.len
-      (&mut (__tl_make-array ir.CompilerIrInstr 0))
+      (&mut opt-dce-no-out)
       (InPlace))))
 
 (define (opt-dce-instr-seq-array-in-place!
   [items : (__tl_dyn-array i64)]
   [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
-  (opt-dce-compact-instr-seq! (&mut items) (&mut instrs))
+  (opt-dce-compact-instr-seq!
+    (&mut (ir.compiler-ir-id-list-new))
+    (&mut items)
+    (&mut instrs))
   instrs)
 
 (define (opt-dce-block-list-array-in-place
@@ -3619,12 +3640,14 @@
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (match blocks
     [(Array seq)
-      (for [index (iterator.range 0 seq.len)]
-        (match (ir.compiler-ir-block-seq-ref seq index)
-          [(Block label instrs)
-            (opt-dce-compact-instr-seq! (&mut items) (&mut instrs))
-            (set! (array-ref seq.slots index) (Block label instrs))]))
-      (Array seq)]))
+      (let
+        [ids : ir.CompilerIrIdList (ir.compiler-ir-id-list-new)]
+        (for [index (iterator.range 0 seq.len)]
+          (match (ir.compiler-ir-block-seq-ref seq index)
+            [(Block label instrs)
+              (opt-dce-compact-instr-seq! (&mut ids) (&mut items) (&mut instrs))
+              (set! (array-ref seq.slots index) (Block label instrs))]))
+        (Array seq))]))
 
 (define (opt-dce-block-list-array-escape
   [pools : ast.AstNodePoolContext]
@@ -3632,11 +3655,8 @@
   [blocks : (& ir.CompilerIrBlockList)]) : ir.CompilerIrBlockList
   (let
     [counts (owned_view.compiler-owned-reference-shared-view items)]
-    (opt-blocks-map-seq
-      blocks
-      opt-dce-copy-instr-seq
-      (Escape pools)
-      (&mut counts))))
+    [ids : ir.CompilerIrIdList (ir.compiler-ir-id-list-new)]
+    (opt-dce-copy-blocks (Escape pools) (&mut ids) (&mut counts) blocks)))
 
 ;; --- aggregate allocation classification ------------------------------------
 ;;

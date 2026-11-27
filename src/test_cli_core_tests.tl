@@ -2533,3 +2533,91 @@
         (tltest.tltest-any-stdlib-source-path? (& non-std-paths))
         (not (tltest.tltest-any-stdlib-source-path? (& mixed-paths))))
       (io.panic "test: prebuilt stdlib cfg/path filter check failed"))))
+
+(test
+  tltest-tli-hydrated-extern-decl-guards-and-matches
+  (let
+    [sym-id : i64 (ci.intern "c_helper")]
+    [sym-intern-id : ci.InternId (ci.intern-id-from-renderable sym-id)]
+    [std-prov-id : i64 (ci.intern "<tli-stdlib>:io.tl")]
+    [plain-owner-id : i64 (ci.intern "app.plain")]
+    [c-extern : ast.AstDecl
+      (ast.ast-decl-extern-id
+        sym-id
+        (Function)
+        (Metadata
+          (C)
+          sym-intern-id
+          (ast.ast-extern-link-input-list-new)
+          0
+          ast.AstImportedSpmdMetadata.No)
+        (Unit))]
+    [tl-extern : ast.AstDecl
+      (ast.ast-decl-extern-id
+        sym-id
+        (Function)
+        (Metadata
+          (TypeLisp)
+          sym-intern-id
+          (ast.ast-extern-link-input-list-new)
+          0
+          ast.AstImportedSpmdMetadata.No)
+        (Unit))]
+    [unsafe-c-extern : ast.AstDecl
+      (Unsafe
+        (box
+          (ast.ast-decl-extern-id
+            sym-id
+            (Function)
+            (Metadata
+              (C)
+              sym-intern-id
+              (ast.ast-extern-link-input-list-new)
+              0
+              ast.AstImportedSpmdMetadata.No)
+            (Unit))))]
+    [fn-decl : ast.AstDecl
+      (ast.ast-decl-def-fn-id
+        sym-id
+        (ast.ast-param-list-new)
+        (Unit)
+        (ast.ast-node-push (Literal (Unit))))]
+    (when
+      (or
+        (tltest.tltest-tli-hydrated-extern-decl? (& c-extern) "app.tl" -1 -1)
+        (tltest.tltest-tli-hydrated-extern-decl?
+          (& c-extern)
+          "app.tl"
+          plain-owner-id
+          -1)
+        (not
+          (tltest.tltest-tli-hydrated-extern-decl?
+            (& c-extern)
+            "<tli-stdlib>:io.tl"
+            -1
+            -1))
+        (not
+          (tltest.tltest-tli-hydrated-extern-decl?
+            (& c-extern)
+            "app.tl"
+            -1
+            std-prov-id))
+        (not
+          (tltest.tltest-tli-hydrated-extern-decl? (& tl-extern) "app.tl" -1 -1))
+        (tltest.tltest-tli-hydrated-extern-decl?
+          (& unsafe-c-extern)
+          "app.tl"
+          -1
+          -1)
+        (not
+          (tltest.tltest-tli-hydrated-extern-decl?
+            (& unsafe-c-extern)
+            "<tli-stdlib>:io.tl"
+            -1
+            -1))
+        (tltest.tltest-tli-hydrated-extern-decl?
+          (& fn-decl)
+          "<tli-stdlib>:io.tl"
+          -1
+          std-prov-id))
+      (io.panic "test: tltest-tli-hydrated-extern-decl? guard/match failed"))))

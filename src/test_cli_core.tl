@@ -2024,21 +2024,32 @@
 (define (tltest-tli-hydrated-extern-decl?
   [decl : (& ast.AstDecl)]
   [decl-path : (& decl-path str)]
+  [decl-owner-id : i64]
   [decl-prov-id : i64]) : bool
   (match decl
     [(Extern _ _ _ meta-box _)
       (or
         (source_text.starts-with? decl-path "<tli-stdlib>:")
-        (source_text.starts-with?
-          (& (ci.intern-str decl-prov-id))
-          "<tli-stdlib>:")
+        (and
+          (>= decl-prov-id 0)
+          (source_text.starts-with?
+            (& (ci.intern-str decl-prov-id))
+            "<tli-stdlib>:"))
+        (and
+          (>= decl-owner-id 0)
+          (compiler_load.compiler-load-tli-has-module?
+            (& (ci.intern-str decl-owner-id))))
         (match meta-box
           [(Metadata abi _ _ _ _)
             (match abi
               [(TypeLisp) true]
               [_ false])]))]
     [(Unsafe inner-box)
-      (tltest-tli-hydrated-extern-decl? inner-box decl-path decl-prov-id)]
+      (tltest-tli-hydrated-extern-decl?
+        inner-box
+        decl-path
+        decl-owner-id
+        decl-prov-id)]
     [_ false]))
 
 (define (tltest-prune-runtime-decls-in
@@ -2088,6 +2099,7 @@
                     (tltest-tli-hydrated-extern-decl?
                       (& decl)
                       (& decl-path)
+                      decl-owner-id
                       decl-prov-id)
                     (and
                       (or

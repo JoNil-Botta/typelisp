@@ -474,8 +474,6 @@ inline_test_plan_chunks() {
                 w[f] = closure_weight(f)
                 if (f ~ /^stdlib\//) {
                     std_files[++nstd] = f
-                } else if (f == "tests/inline/hashmap_macro_aggregate_modules.tl") {
-                    no_prebuilt_plain_files[++nno_prebuilt_plain] = f
                 } else if ((f ~ /^src\//) || (f ~ /^tests\/inline\// && imports_src[f] && !has_explicit_mod[f])) {
                     if (core_hub_count[f] >= 2 && full_hub_count[f] > core_hub_count[f]) {
                         hk = full_hub_key[f]
@@ -543,22 +541,6 @@ inline_test_plan_chunks() {
             for (i = 1; i <= ncomb; i++) {
                 idx = comb_ord[i]
                 print comb_job[idx] "|" comb_cap[idx] >> queue
-            }
-
-            # Isolated non-stdlib files that depend on stdlib `(cfg test ...)`
-            # definitions stay on `--no-prebuilt-stdlib` without disabling
-            # prebuilt stdlib for other plain chunks.
-            if (nno_prebuilt_plain > 0) {
-                sort_asc_path(no_prebuilt_plain_files, nno_prebuilt_plain)
-                c++
-                last = sprintf("chunk-%03d", c)
-                for (i = 1; i <= nno_prebuilt_plain; i++) {
-                    print no_prebuilt_plain_files[i] > (dir "/" last ".list")
-                }
-                close(dir "/" last ".list")
-                print "1" > (dir "/" last ".no-prebuilt-stdlib")
-                close(dir "/" last ".no-prebuilt-stdlib")
-                print last "|" light_cap >> queue
             }
 
             # Standalone / non-combined files in regular LPT chunks.
@@ -823,7 +805,8 @@ inline_test_self_test_chunks() {
     inline_test_plan_chunks "$_tier_dir/discovered.txt" "$_tier_dir" "$_tier_dir/queue"
     INLINE_TEST_CHUNK_FILES=$_tier_saved_size
     INLINE_TEST_CHUNK_TARGET_COUNT=$_tier_saved_target
-    if [ "$(cat "$_tier_dir/queue")" != "chunk-001|$INLINE_TEST_LIGHT_CHUNK_CAP_MIB" ]; then
+    if [ "$(cat "$_tier_dir/queue")" != "chunk-001|$INLINE_TEST_LIGHT_CHUNK_CAP_MIB" ] ||
+        [ -f "$_tier_dir/chunk-001.no-prebuilt-stdlib" ]; then
         echo "inline test chunk self-test: >=3-file light chunk did not get light cap" >&2
         exit 1
     fi
@@ -849,23 +832,6 @@ inline_test_self_test_chunks() {
         [ -f "$_comb_dir/chunk-003.list" ] ||
         [ "$(cat "$_comb_dir"/chunk-*.list | LC_ALL=C sort)" != "$(printf '%s\n' src/a.tl src/b.tl src/c.tl stdlib/s1.tl stdlib/s2.tl)" ]; then
         echo "inline test chunk self-test: combined chunk planner did not group and partition sources" >&2
-        exit 1
-    fi
-
-    _hm_dir=$(mktemp -d "$INLINE_TEST_SELF_TEST_ROOT/hashmap-no-prebuilt.XXXXXX")
-    mkdir -p "$_hm_dir/tests/inline"
-    printf '(test a unit)\n' > "$_hm_dir/tests/inline/hashmap_macro_aggregate_modules.tl"
-    printf '(test b unit)\n' > "$_hm_dir/tests/inline/other_inline.tl"
-    (
-        cd "$_hm_dir" || exit 1
-        printf '%s\n' tests/inline/hashmap_macro_aggregate_modules.tl tests/inline/other_inline.tl > discovered.txt
-        inline_test_plan_chunks discovered.txt "$_hm_dir" "$_hm_dir/queue"
-    )
-    if [ ! -f "$_hm_dir/chunk-001.no-prebuilt-stdlib" ] ||
-        [ "$(cat "$_hm_dir/chunk-001.list")" != "tests/inline/hashmap_macro_aggregate_modules.tl" ] ||
-        [ -f "$_hm_dir/chunk-002.no-prebuilt-stdlib" ] ||
-        [ "$(cat "$_hm_dir/chunk-002.list")" != "tests/inline/other_inline.tl" ]; then
-        echo "inline test chunk self-test: hashmap_macro_aggregate_modules.tl was not isolated with --no-prebuilt-stdlib" >&2
         exit 1
     fi
 

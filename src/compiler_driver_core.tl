@@ -1369,6 +1369,9 @@
 (define compiler-driver-last-hydrated-archive-paths-state : (__tl_dyn-array
     String)
   (__tl_make-array String 0))
+(define compiler-driver-last-hydrated-startup-symbols-state : (__tl_dyn-array
+    String)
+  (__tl_make-array String 0))
 (define compiler-driver-last-hydrated-stdlib-state : bool
   false)
 
@@ -1396,6 +1399,9 @@
   (set! compiler-driver-last-hydrated-stdlib-state false)
   (set!
     compiler-driver-last-hydrated-archive-paths-state
+    (__tl_make-array String 0))
+  (set!
+    compiler-driver-last-hydrated-startup-symbols-state
     (__tl_make-array String 0)))
 
 (define (compiler-driver-target-cfg-from-backend
@@ -1450,10 +1456,6 @@
         cfgs
         require-archive)]))
 
-(define compiler-driver-last-hydrated-startup-symbols-state : (__tl_dyn-array
-    String)
-  (__tl_make-array String 0))
-
 (define (compiler-driver-copy-string-array [src : (& (__tl_dyn-array String))]) : (__tl_dyn-array
     String)
   (let
@@ -1505,9 +1507,6 @@
       (be_state.compiler-backend-state-set-startup-init-symbols!
         backend-state
         (__tl_make-array String 0))
-      (set!
-        compiler-driver-last-hydrated-startup-symbols-state
-        (__tl_make-array String 0))
       (compiler-driver-clear-last-hydrated-archive-path!))))
 
 (define (compiler-driver-finish-tli-hydrated-serial-session!) : unit
@@ -1534,11 +1533,7 @@
           compiler-driver-last-hydrated-stdlib-state
           (compiler_load.compiler-load-session-state-tli-stdlib-hydrated?
             (& load-state))))
-      (begin
-        (set!
-          compiler-driver-last-hydrated-startup-symbols-state
-          (__tl_make-array String 0))
-        (compiler-driver-clear-last-hydrated-archive-path!)))
+      (compiler-driver-clear-last-hydrated-archive-path!))
     (compiler_load.compiler-load-session-state-tli-release! (& load-state))
     (compiler_typecheck_core.tc-job-state-set-tli-facts-ptr!
       (compiler_typecheck_core.tc-serial-job-state)

@@ -7,10 +7,10 @@
 (define (main) : i64
   (let
     [owner (arena.make-atomic)]
-    [root : i64 owner.handle]
+    [root : i64 (arena.raw-handle owner)]
     [captured-root?
       (lambda () : bool
-        (= owner.handle root))]
+        (= (arena.raw-handle owner) root))]
     [same-root : bool (captured-root?)]
     (begin
       (arena.destroy-safe! owner)

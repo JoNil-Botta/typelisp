@@ -289,7 +289,7 @@
       (>= root-key 0))
       (in-arena
         (unsafe
-          (arena.Arena surface-typecheck-facts-recording-arena))
+          (arena.from-raw-handle surface-typecheck-facts-recording-arena))
         (surface-clone-observation-seq-push!
           (&mut surface-typecheck-facts-recording-observations)
           (SurfaceCloneObservation

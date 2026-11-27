@@ -1830,7 +1830,7 @@
                 (unless
                   found
                   (in-arena
-                    (arena.Arena multi-v.root-arena)
+                    (arena.from-raw-handle multi-v.root-arena)
                     (svec.push-ref! (&mut needed-v) (string.copy module-name))))
                 (ptr-write!
                   p-rw
@@ -2038,7 +2038,7 @@
     [slots : (__tl_dyn-array CompilerLoadDependencyCatalogEntry)
       (in-arena
         (unsafe
-          (arena.Arena owner))
+          (arena.from-raw-handle owner))
         (__tl_make-array CompilerLoadDependencyCatalogEntry capacity))]
     (for [index (iterator.range 0 items.len)]
       (set!
@@ -2621,7 +2621,7 @@
       (compiler-load-session-state-source-provider (& state))]
     (in-arena
       (unsafe
-        (arena.Arena state.owner-arena))
+        (arena.from-raw-handle state.owner-arena))
       (set!
         (array-ref state.source-provider 0)
         (compiler-load-source-provider-inactive)))
@@ -2640,7 +2640,7 @@
     (if provider.active
       (in-arena
         (unsafe
-          (arena.Arena provider.owner-arena))
+          (arena.from-raw-handle provider.owner-arena))
         (source_overlay.compiler-source-ledger-record!
           (&mut provider.ledger)
           class
@@ -2663,7 +2663,7 @@
     (if provider.active
       (in-arena
         (unsafe
-          (arena.Arena provider.owner-arena))
+          (arena.from-raw-handle provider.owner-arena))
         (source_overlay.compiler-source-ledger-record-text!
           (&mut provider.ledger)
           class
@@ -3114,7 +3114,7 @@
       [persistent-key : CompilerLoadProgramCacheKey
         (in-arena
           (unsafe
-            (arena.Arena ast.node-pool-base-arena))
+            (arena.from-raw-handle ast.node-pool-base-arena))
           (compiler-load-program-cache-key-copy key))]
       (compiler-load-session-state-program-admission-record
         (&mut (compiler-load-session-state-shared-view state))
@@ -3518,7 +3518,7 @@
     ;; scratch arenas and remain valid until the next session intern reset.
     (in-arena
       (unsafe
-        (arena.Arena
+        (arena.from-raw-handle
           (compiler-load-session-state-embedded-provenance-arena state)))
       (set!
         (array-ref state.embedded-stdlib-provenance.module-ids 0)
@@ -3573,7 +3573,7 @@
             (& (string.copy disk-path)))]
         (in-arena
           (unsafe
-            (arena.Arena
+            (arena.from-raw-handle
               (compiler-load-session-state-embedded-provenance-arena state)))
           (set!
             (array-ref state.embedded-stdlib-provenance.equivalence-cache 0)
@@ -3657,7 +3657,7 @@
       (> proofs.arena 0)
       (in-arena
         (unsafe
-          (arena.Arena proofs.arena))
+          (arena.from-raw-handle proofs.arena))
         (match (ces.compiler-embedded-stdlib-dropped-spans disk-text)
           [(NoDropped) unit]
           [(SomeDropped dropped)
@@ -3768,7 +3768,7 @@
     [claimant : i64 (sym_i64_env.sym-i64-lookup-id-or (& claims) suffix-id -1)]
     (in-arena
       (unsafe
-        (arena.Arena
+        (arena.from-raw-handle
           (compiler-load-session-state-embedded-provenance-arena state)))
       (if (< claimant 0)
         (begin
@@ -4646,7 +4646,7 @@
         [retained : String
           (in-arena
             (unsafe
-              (arena.Arena
+              (arena.from-raw-handle
                 (compiler-load-session-state-dotted-path-arena-ensure! state)))
             (let
               [path : String
@@ -7203,7 +7203,7 @@
     ;; a handle into the destroyed generation between batch entries.
     (in-arena
       (unsafe
-        (arena.Arena state.owner-arena))
+        (arena.from-raw-handle state.owner-arena))
       (owned_view.compiler-owned-cell-set!
         state.surface-summaries
         0
@@ -7332,7 +7332,7 @@
       [copy-into-owner? : bool (not (= (arena.tl_arena_current) payload-owner))]
       (in-arena
         (unsafe
-          (arena.Arena payload-owner))
+          (arena.from-raw-handle payload-owner))
         (let
           [owned : CompilerLoadSurfaceSummary
             (if copy-into-owner?
@@ -7554,7 +7554,7 @@
         (& state))]
     (in-arena
       (unsafe
-        (arena.Arena payload-owner))
+        (arena.from-raw-handle payload-owner))
       (set!
         (array-ref state.surface-summaries 0)
         (compiler-load-surface-summary-remove-source-in
@@ -12018,7 +12018,7 @@
       [persistent : CompilerLoadPersistentProgramResult
         (in-arena
           (unsafe
-            (arena.Arena ast.node-pool-base-arena))
+            (arena.from-raw-handle ast.node-pool-base-arena))
           (CompilerLoadPersistentProgramResult
             (compiler-load-program-cache-key-copy key)
             (compiler-load-parse-file-diagnostic-escaping path cfgs)))]
@@ -12040,7 +12040,7 @@
       [persistent : CompilerLoadPersistentProgramResult
         (in-arena
           (unsafe
-            (arena.Arena (ast.ast-node-pool-context-base-arena pools)))
+            (arena.from-raw-handle (ast.ast-node-pool-context-base-arena pools)))
           (CompilerLoadPersistentProgramResult
             (compiler-load-program-cache-key-copy key)
             (compiler-load-parse-file-diagnostic-escaping-with-pools
@@ -12269,7 +12269,7 @@
       [persistent : CompilerLoadPersistentProgramResult
         (in-arena
           (unsafe
-            (arena.Arena ast.node-pool-base-arena))
+            (arena.from-raw-handle ast.node-pool-base-arena))
           (CompilerLoadPersistentProgramResult
             (compiler-load-program-cache-key-copy key)
             (compiler-load-parse-source-diagnostic-escaping path source cfgs)))]
@@ -12292,7 +12292,7 @@
       [persistent : CompilerLoadPersistentProgramResult
         (in-arena
           (unsafe
-            (arena.Arena (ast.ast-node-pool-context-base-arena pools)))
+            (arena.from-raw-handle (ast.ast-node-pool-context-base-arena pools)))
           (CompilerLoadPersistentProgramResult
             (compiler-load-program-cache-key-copy key)
             (compiler-load-parse-source-diagnostic-escaping-with-pools
@@ -16389,7 +16389,7 @@
           (& canonical)))
       (in-arena
         (unsafe
-          (arena.Arena
+          (arena.from-raw-handle
             (compiler-load-session-state-embedded-provenance-arena state)))
         (let
           [grown : (__tl_dyn-array String) (__tl_make-array String (+ count 1))]
@@ -16487,7 +16487,7 @@
         (sym_i64_env.sym-i64-contains-id ids provenance-id)
         (in-arena
           (unsafe
-            (arena.Arena
+            (arena.from-raw-handle
               (compiler-load-session-state-embedded-provenance-arena state)))
           (owned_view.compiler-owned-cell-set!
             state.embedded-stdlib-provenance.tli-stdlib-provenance-ids

@@ -68,7 +68,7 @@
     [owner : i64 store.arena]
     (in-arena
       (unsafe
-        (arena.Arena owner))
+        (arena.from-raw-handle owner))
       (let
         [bigger : (__tl_dyn-array SymI64Binding)
           (__tl_make-array

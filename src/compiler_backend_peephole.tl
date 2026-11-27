@@ -9459,7 +9459,8 @@
                               replacement
                               (unsafe
                                 (in-arena
-                                  (arena.Arena (arena.raw-handle home))
+                                  (arena.from-raw-handle
+                                    (arena.raw-handle home))
                                   (let
                                     [target : i64
                                       (- (array-ref redirects (- index lo)) 1)]
@@ -9599,7 +9600,7 @@
   [home : arena.Arena]) : unit
   (unsafe
     (in-arena
-      (arena.Arena (arena.raw-handle home))
+      (arena.from-raw-handle (arena.raw-handle home))
       (let
         [name : String (compiler-backend-tail-suffix-name v anchor canonical)]
         (compiler-backend-tail-replace!
@@ -9616,7 +9617,7 @@
   [home : arena.Arena]) : unit
   (unsafe
     (in-arena
-      (arena.Arena (arena.raw-handle home))
+      (arena.from-raw-handle (arena.raw-handle home))
       (let
         [text : String
           (let
@@ -10261,7 +10262,7 @@
       [plan : CompilerBackendColdPlan
         (unsafe
           (in-arena
-            (arena.Arena (arena.raw-handle scratch))
+            (arena.from-raw-handle (arena.raw-handle scratch))
             (compiler-backend-cold-plan v)))]
       [_merge : unit
         (when
@@ -10713,7 +10714,7 @@
               (deref data).win64-xdata-count)]
           (unsafe
             (in-arena
-              (arena.Arena (arena.raw-handle home))
+              (arena.from-raw-handle (arena.raw-handle home))
               (backend_string_i64_map.insert-ref!
                 (&mut ids)
                 (string.copy (& info))
@@ -10885,7 +10886,7 @@
         (set! i next)))
     (unsafe
       (in-arena
-        (arena.Arena (arena.raw-handle home))
+        (arena.from-raw-handle (arena.raw-handle home))
         (let
           [total : i64 (+ n delta)]
           [out : (__tl_dyn-array u8)
@@ -10955,40 +10956,10 @@
       (-= p 1))
     p))
 
-;; Whether line `line` is a `ret`. The layout classifier flags only `ret ` and
-;; `retq`, so the bare `ret` the backend emits is recognised here by its bytes.
-(define (compiler-backend-align-ret-line?
-  [data : (Ptr u8)]
-  [starts : (MutPtr i64)]
-  [flags : (MutPtr i64)]
-  [line : i64]) : bool
-  (let
-    [s : i64
-      (unsafe
-        (ptr-read (ptr-offset starts line)))]
-    [e : i64
-      (-
-        (unsafe
-          (ptr-read (ptr-offset starts (+ line 1))))
-        1)]
-    (or
-      (not
-        (=
-          (bit-and
-            (unsafe
-              (ptr-read (ptr-offset flags line)))
-            compiler-backend-layout-flag-ret)
-          0))
-      (and
-        (= (- e s) 7)
-        (be_operand.compiler-backend-peephole-range-eq? data s e "    ret")))))
-
 ;; Whether the block that starts at label line `line` ends in `ret`: such a
 ;; block has no successor, so a branch back to it is a loop EXIT laid out above
 ;; the loop, not a back edge.
 (define (compiler-backend-align-block-returns?
-  [data : (Ptr u8)]
-  [starts : (MutPtr i64)]
   [flags : (MutPtr i64)]
   [line : i64]
   [lines : i64]) : bool
@@ -11000,7 +10971,9 @@
     [returns : bool false]
     (while (and (not done) (< q lines))
       (cond
-        [(compiler-backend-align-ret-line? data starts flags q)
+        [(compiler-backend-layout-flag?
+          (compiler-backend-align-flags-at flags q)
+          compiler-backend-layout-flag-ret)
           (set! returns true)
           (set! done true)]
         [(not
@@ -11203,13 +11176,7 @@
           (when
             (and
               (= (array-ref top l) 1)
-              (not
-                (compiler-backend-align-block-returns?
-                  data
-                  starts-raw
-                  flags-raw
-                  l
-                  lines)))
+              (not (compiler-backend-align-block-returns? flags-raw l lines)))
             (let
               [run : i64 l]
               (while (and
@@ -11226,18 +11193,14 @@
                 (when
                   (and
                     (>= p 0)
-                    (or
-                      (not
-                        (=
-                          (bit-and
-                            (compiler-backend-align-flags-at flags-raw p)
-                            compiler-backend-layout-flag-jmp)
-                          0))
-                      (compiler-backend-align-ret-line?
-                        data
-                        starts-raw
-                        flags-raw
-                        p))
+                    (not
+                      (=
+                        (bit-and
+                          (compiler-backend-align-flags-at flags-raw p)
+                          (bit-or
+                            compiler-backend-layout-flag-jmp
+                            compiler-backend-layout-flag-ret))
+                        0))
                     (or
                       (= site-count 0)
                       (not (= (array-ref sites (- site-count 1)) run))))
@@ -11245,7 +11208,7 @@
                   (+= site-count 1)))))))
       (unsafe
         (in-arena
-          (arena.Arena (arena.raw-handle home))
+          (arena.from-raw-handle (arena.raw-handle home))
           (let
             [directive : String "    .p2align 4,,10\n"]
             [width : i64 (string.string-length (& directive))]
@@ -12309,7 +12272,7 @@
     [owned : String
       (unsafe
         (in-arena
-          (arena.Arena (arena.raw-handle home))
+          (arena.from-raw-handle (arena.raw-handle home))
           (string.substring text 0 len)))]
     [old-meta : i64 (array-ref v.lines index).meta]
     [meta : i64
@@ -16263,7 +16226,11 @@
                     compiler-backend-layout-flag-jcc)
                   (shl (- ops s) compiler-backend-layout-flag-ops-shift))
                 0))]
-          [(and (= b0 114) (= b1 101) (= b2 116) (or (= b3 32) (= b3 113)))
+          [(and
+              (= b0 114)
+              (= b1 101)
+              (= b2 116)
+              (or (= b3 0) (= b3 32) (= b3 113)))
             compiler-backend-layout-flag-ret]
           [(and (= b0 99) (= b1 97) (= b2 108) (= b3 108))
             compiler-backend-layout-flag-call]
@@ -16299,7 +16266,7 @@
         0)]
     (cond
       [(= kind 50)
-        (if (and (= b1 101) (= b2 116) (or (= b3 32) (= b3 113)))
+        (if (and (= b1 101) (= b2 116) (or (= b3 0) (= b3 32) (= b3 113)))
           compiler-backend-layout-flag-ret
           0)]
       [(= kind 51)
@@ -16321,13 +16288,7 @@
   [e : i64]) : i64
   (if (= (be_state.compiler-backend-peephole-byte-at data s) 32)
     (let
-      [t : i64
-        (if (and
-          (< (+ s 4) e)
-          (= (be_state.compiler-backend-peephole-byte-at data (+ s 3)) 32)
-          (not (= (be_state.compiler-backend-peephole-byte-at data (+ s 4)) 32)))
-          (+ s 4)
-          (compiler-backend-layout-skip-spaces data s e))]
+      [t : i64 (compiler-backend-layout-skip-spaces data s e)]
       (if (>= t e)
         compiler-backend-layout-flag-blank
         (let
@@ -16431,9 +16392,11 @@
           (ptr-write!
             (ptr-offset flags k)
             (if (and
-              (not (= head 32))
-              (= (be_state.compiler-backend-peephole-byte-at data i) 32)
-              (= (be_state.compiler-backend-peephole-byte-at data (+ i 3)) 32))
+              (not (compiler-backend-layout-space-byte? head))
+              ;; The head sentinel above ensures four readable prefix bytes.
+              (=
+                (ptr-read (ptr-cast (ptr-offset data i) : (Ptr i32)))
+                538976288))
               (let
                 [kind : i64
                   (be_state.compiler-backend-peephole-byte-at head-table head)]
@@ -17301,40 +17264,6 @@
       (+= i 1))
     found))
 
-;; Is line `i` a `ret`? The line classifier flags `ret` only with an operand
-;; or as `retq`, since a bare `ret` reads the zero past its line, so a bare one
-;; is read from the text.
-(define (compiler-backend-layout-ret-line?
-  [data : (Ptr u8)]
-  [starts : (MutPtr i64)]
-  [flags : (MutPtr i64)]
-  [i : i64]) : bool
-  (or
-    (not
-      (=
-        (bit-and
-          (unsafe
-            (ptr-read (ptr-offset flags i)))
-          compiler-backend-layout-flag-ret)
-        0))
-    (let
-      [e : i64
-        (-
-          (unsafe
-            (ptr-read (ptr-offset starts (+ i 1))))
-          1)]
-      [t : i64
-        (compiler-backend-layout-skip-spaces
-          data
-          (unsafe
-            (ptr-read (ptr-offset starts i)))
-          e)]
-      (and
-        (= (- e t) 3)
-        (= (be_state.compiler-backend-peephole-byte-at data t) 114)
-        (= (be_state.compiler-backend-peephole-byte-at data (+ t 1)) 101)
-        (= (be_state.compiler-backend-peephole-byte-at data (+ t 2)) 116)))))
-
 ;; ISLAND PLACEMENT. A small sunk region goes in front of the first label after
 ;; its join that control cannot fall into: the line emitted before it is an
 ;; unconditional `jmp` (not one into that label run) or a `ret`, counted as the
@@ -17345,8 +17274,6 @@
 ;; an island, 0 for the function end. Islands only move forward with the
 ;; sinks, and so do function ends, so each class is placed by its own cursor.
 (define (compiler-backend-layout-place-islands!
-  [data : (Ptr u8)]
-  [starts : (MutPtr i64)]
   [flags : (MutPtr i64)]
   [target : (MutPtr i64)]
   [lines : i64]
@@ -17422,11 +17349,9 @@
                         (and
                           (>= prev 0)
                           (or
-                            (compiler-backend-layout-ret-line?
-                              data
-                              starts
-                              flags
-                              prev)
+                            (compiler-backend-layout-flag?
+                              (compiler-backend-align-flags-at flags prev)
+                              compiler-backend-layout-flag-ret)
                             (and
                               (not
                                 (=
@@ -18230,8 +18155,6 @@
           [sink-class-raw : (MutPtr i64) cand-shape-raw]
           [_islands : unit
             (compiler-backend-layout-place-islands!
-              data
-              starts-raw
               flags-raw
               target-raw
               lines
@@ -19230,7 +19153,7 @@
       (set! (array-ref event-ends i) events.len))
     (unsafe
       (in-arena
-        (arena.Arena (arena.raw-handle home))
+        (arena.from-raw-handle (arena.raw-handle home))
         (let
           [out : text_buf.TextBuf (text_buf.empty)]
           [view : (& events (Slice CompilerBackendArgEntryEvent))
@@ -21782,7 +21705,7 @@
     [plan : CompilerBackendOutline
       (unsafe
         (in-arena
-          (arena.Arena (arena.raw-handle scratch))
+          (arena.from-raw-handle (arena.raw-handle scratch))
           (compiler-backend-outline-plan data length coff?)))]
     [result : String
       (if (and (= plan.tails 0) (= plan.helper-pos.len 0))

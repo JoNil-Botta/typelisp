@@ -3688,7 +3688,7 @@
     [functions : ir.CompilerIrFunctionSeq
       (in-arena
         (unsafe
-          (arena.Arena source))
+          (arena.from-raw-handle source))
         (opt-input-arena-functions))]
     [placed-before? : bool
       (opt-input-arena-all-placed? (& input) (& functions))]
@@ -4024,7 +4024,7 @@
     [source-functions : ir.CompilerIrFunctionSeq
       (in-arena
         (unsafe
-          (arena.Arena source))
+          (arena.from-raw-handle source))
         (ir.compiler-ir-clone-function-seq pools (& functions)))]
     [function-count : i64 functions.len]
     [control : ir.CompilerIrProgram
@@ -4056,7 +4056,7 @@
           (ir.compiler-ir-global-seq-empty)
           (in-arena
             (unsafe
-              (arena.Arena source))
+              (arena.from-raw-handle source))
             (ir.compiler-ir-clone-function-seq pools (& source-functions)))
           (ir.compiler-ir-extern-seq-empty)
           (ir.CompilerIrReturnStorageAuthority.None))
@@ -4201,25 +4201,25 @@
     [builder : ir.CompilerIrFunctionBuilder
       (in-arena
         (unsafe
-          (arena.Arena carrier))
+          (arena.from-raw-handle carrier))
         (ir.compiler-ir-function-builder-with-capacity functions.len))]
     (for [i (iterator.range 0 functions.len)]
       (let
         [body : ir.CompilerIrFunction
           (in-arena
             (unsafe
-              (arena.Arena
+              (arena.from-raw-handle
                 (array-ref state.chunks (opt-test-chunk-of bounds i))))
             (ir.compiler-ir-clone-function
               pools
               (& (array-ref functions.slots i))))]
         (in-arena
           (unsafe
-            (arena.Arena carrier))
+            (arena.from-raw-handle carrier))
           (ir.compiler-ir-function-builder-push! (&mut builder) body))))
     (in-arena
       (unsafe
-        (arena.Arena carrier))
+        (arena.from-raw-handle carrier))
       (ir.compiler-ir-function-builder-to-seq builder))))
 
 ;; Optimize FUNCTIONS at level 2 from chunk arenas split at BOUNDS, with chunk
@@ -68009,7 +68009,7 @@ done:
     [_normalize : unit
       (in-arena
         (unsafe
-          (arena.Arena scratch))
+          (arena.from-raw-handle scratch))
         (opt.opt-pure-call-inline-memory-install!
           (ast.ast-node-pool-reader-context-current)
           bases

@@ -390,7 +390,7 @@
     [surface-state : CompilerDriverSurfaceState
       (in-arena
         (unsafe
-          (arena.Arena surface-arena))
+          (arena.from-raw-handle surface-arena))
         (State
           (cfg
             (any compile-profile test)
@@ -907,7 +907,7 @@
     ;; arena before an error path gets a chance to release this pool.
     (in-arena
       (unsafe
-        (arena.Arena pool-arena))
+        (arena.from-raw-handle pool-arena))
       (compiler_ast_types.ast-node-pool-context-new-with-capacities-in-arena
         compiler-driver-checked-lower-expr-pool-initial-capacity
         compiler-driver-compile-type-pool-initial-capacity
@@ -943,7 +943,7 @@
     [retained-program : compiler_ir_types.CompilerIrProgram
       (in-arena
         (unsafe
-          (arena.Arena
+          (arena.from-raw-handle
             (compiler_ast_types.ast-node-pool-context-base-arena retained)))
         (compiler_ir_types.compiler-ir-program-after-type-copy
           pools
@@ -1154,7 +1154,7 @@
   [owner : i64]) : ci.InternSourceNameSessionHandle
   (in-arena
     (unsafe
-      (arena.Arena owner))
+      (arena.from-raw-handle owner))
     (let
       [intern-state : ci.InternCompatState
         (compiler-driver-state-owned-interns state)]
@@ -3500,7 +3500,7 @@
     compiler_diagnostic.CompilerDiagnostic)
   (in-arena
     (unsafe
-      (arena.Arena (compiler-driver-state-surface-arena state)))
+      (arena.from-raw-handle (compiler-driver-state-surface-arena state)))
     (box (compiler_diagnostic.compiler-diagnostic-copy (deref diag)))))
 
 (define (compiler-driver-retirement-clone-shells? [opt-level : i64]) : bool
@@ -3963,7 +3963,7 @@
         Missing
         (in-arena
           (unsafe
-            (arena.Arena surface-arena))
+            (arena.from-raw-handle surface-arena))
           (match (embedded_tlci.compiler-embedded-stdlib-tlci-surface
             surface-arena)
             [(Unavailable _) Missing]
@@ -4013,7 +4013,7 @@
   [profile-state : profile_state.CompilerProfileState]) : compiler_load.ResultCompilerLoadWithPaths
   (in-arena
     (unsafe
-      (arena.Arena compiler_ast_types.node-pool-base-arena))
+      (arena.from-raw-handle compiler_ast_types.node-pool-base-arena))
     (let
       [persistent-key : compiler_load.CompilerLoadPreludeCacheKey
         (compiler_load.compiler-load-prelude-cache-key-copy key)]
@@ -4151,7 +4151,8 @@
   [profile-state : profile_state.CompilerProfileState]) : compiler_load.ResultCompilerLoadWithPaths
   (in-arena
     (unsafe
-      (arena.Arena (compiler_ast_types.ast-node-pool-context-base-arena pools)))
+      (arena.from-raw-handle
+        (compiler_ast_types.ast-node-pool-context-base-arena pools)))
     (let
       [persistent-key : compiler_load.CompilerLoadPreludeCacheKey
         (compiler_load.compiler-load-prelude-cache-key-copy key)]
@@ -4718,7 +4719,7 @@
           (compiler-driver-state-owned-lower-state state)))]
     (in-arena
       (unsafe
-        (arena.Arena (compiler-driver-state-surface-arena state)))
+        (arena.from-raw-handle (compiler-driver-state-surface-arena state)))
       (CompilerDriverCheckedLowerHandoff
         dest-pools
         entry-arena
@@ -4801,7 +4802,7 @@
         [(Ok _ _ _) unit])]
     (in-arena
       (unsafe
-        (arena.Arena (compiler-driver-state-surface-arena state)))
+        (arena.from-raw-handle (compiler-driver-state-surface-arena state)))
       (CompilerDriverCheckedLowerResult
         lowered
         result-pools
@@ -5709,7 +5710,7 @@
     [loaded : compiler_load.ResultCompilerLoadWithPaths
       (in-arena
         (unsafe
-          (arena.Arena (array-ref scope.frontend-arena 0)))
+          (arena.from-raw-handle (array-ref scope.frontend-arena 0)))
         (compiler-driver-load-package-file-with-runtime-cfg
           path
           roots
@@ -5750,7 +5751,7 @@
         ;; retirement; file-state reset clears it before this arena is destroyed.
         (in-arena
           (unsafe
-            (arena.Arena (compiler-driver-state-surface-arena state)))
+            (arena.from-raw-handle (compiler-driver-state-surface-arena state)))
           (surface_facts.surface-typecheck-facts-retain-current!))
         (compiler_lower.compiler-lower-state-set-spmd-package!
           (compiler-driver-state-owned-lower-state state)

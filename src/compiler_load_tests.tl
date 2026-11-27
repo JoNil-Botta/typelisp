@@ -5813,7 +5813,7 @@
       false)
     (in-arena
       (unsafe
-        (arena.Arena owner))
+        (arena.from-raw-handle owner))
       (let
         [outer-root : String
           (load.compiler-load-canonical-path

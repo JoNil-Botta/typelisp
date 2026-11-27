@@ -13,14 +13,14 @@
 (define (main) : i64
   (let
     [owner : arena.Arena (arena.make)]
-    [raw : i64 owner.handle]
+    [raw : i64 (arena.raw-handle owner)]
     ;; The live owner remains live through every use of this raw view.
     [view : arena.Arena
       (unsafe
-        (arena.Arena raw))]
+        (arena.from-raw-handle raw))]
     [zero : arena.Arena
       (unsafe
-        (arena.Arena 0))]
+        (arena.from-raw-handle 0))]
     [local : Arena (Arena 40)]
     [size : i64 (in-arena view (string.string-length (string.concat "a" "b")))]
     (begin
@@ -33,6 +33,6 @@
       (unsafe
         ;; lint-allow: raw-arena-op
         (arena.destroy owner))
-      (if (= zero.handle 0)
+      (if (= (arena.raw-handle zero) 0)
         (+ local.handle size)
         1))))

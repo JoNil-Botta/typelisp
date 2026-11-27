@@ -480,7 +480,7 @@
         state.exhausted
         (in-arena
           (unsafe
-            (arena.Arena state.base-arena))
+            (arena.from-raw-handle state.base-arena))
           (ast.ty-node-dedup-slots-new 8))
         state.dedup-count
         state.storage-arena

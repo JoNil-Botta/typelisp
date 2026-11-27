@@ -217,10 +217,17 @@ if [ ! -x "$BUILDER_BIN" ]; then
     BOUNDED_POOL_LOCK_SECONDS=900
     mkdir -p "$TOOL_CACHE/lock"
     bounded_pool_lock "$TOOL_CACHE/lock"
+    TOOL_LOCK_HELD=1
     TOOL_TEMP=
     cleanup_tool_build() {
-        [ -z "$TOOL_TEMP" ] || rm -rf -- "$TOOL_TEMP"
-        bounded_pool_unlock "$TOOL_CACHE/lock"
+        if [ -n "$TOOL_TEMP" ]; then
+            rm -rf -- "$TOOL_TEMP"
+            TOOL_TEMP=
+        fi
+        if [ "$TOOL_LOCK_HELD" -eq 1 ]; then
+            TOOL_LOCK_HELD=0
+            bounded_pool_unlock "$TOOL_CACHE/lock"
+        fi
     }
     trap cleanup_tool_build EXIT
     trap 'exit 1' HUP INT TERM

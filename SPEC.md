@@ -6909,10 +6909,12 @@ Serialized lanes:
   of serialized work uses the backend's `i64` gang width (2, 4 or 8).
   In a rank-2 row, a contiguous array access may add a row-stable signed
   offset to the inner index. Only active elements undergo bounds checks.
-  The backend packs the current predicate into one bit per lane and visits
-  its set bits from lowest to highest. Gang-local values are captured before
-  the loop. Checked reads and scalar calls inside the body occur when their
-  lane reaches them, including in the final partial gang.
+  The backend visits set bits from lowest to highest, using constant bits for
+  a full range, low bits for a short tail, or the bits of a branch predicate.
+  It may evaluate independent, nontrapping gang expressions together. Reads
+  that can observe an earlier lane's writes and expressions that can trap
+  run in logical index order, including when they precede `foreach-active`.
+  A lane's checked reads and scalar calls retain their source order.
 
 Runtime-dispatched SIMD variants:
 

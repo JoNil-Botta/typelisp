@@ -2250,6 +2250,8 @@
   (serialized-index i64)
   (serialized-width i64)
   (serialized-lane i64)
+  (serialized-range-mask i64)
+  (serialized-remaining i64)
   ;; Whether an instruction emitted after a terminator opened a block nothing
   ;; branches to (`lower-state-leave-terminated-block!`): building the
   ;; function's blocks then drops the unreachable ones.
@@ -2329,6 +2331,8 @@
         (No)
         -1
         1
+        -1
+        -1
         -1
         false))))
 
@@ -31791,6 +31795,17 @@
         (lower-xgetbv ctx state env type-env index))]
     [(Syscall args) (lower-syscall ctx state env type-env args)]
     [(ForeachActive lane body-box)
+      (let
+        [slot (deref (lower-state-box state)).serialized-lane]
+        (when
+          (>= slot 0)
+          (return
+            (lower-expr
+              ctx
+              state
+              (sym_i64_env.sym-i64-bind-id env lane slot)
+              (tc_core.tc-bind-id type-env lane (I64))
+              (lower-context-expr-get ctx body-box)))))
       (when
         (lower-mode-simd? (lower-state-mode state))
         (return
@@ -59601,22 +59616,12 @@
       (Expr child-state child-mask child-ty)]))
 
 (define (lower-emit-active-load
-  [ctx : (& tc_core.TcContext)]
-  [origin : (& ast.AstExpr)]
   [state : LowerState]
   [sequence-var : i64]
   [index : ir.CompilerIrValue]
   [active-mask : ir.CompilerIrMaybeValue]
   [lanes : i64]
   [elem-ty : ast.AstType]) : LowerExpr
-  (lower-serialized-bounds
-    ctx
-    origin
-    state
-    sequence-var
-    (& index)
-    (& active-mask)
-    lanes)
   (if (lower-type-bool? elem-ty)
     (match (lower-masked-active-mask-value state active-mask lanes)
       [(Expr mask-state mask _)
@@ -59640,8 +59645,6 @@
           elem-ty)])))
 
 (define (lower-emit-active-store
-  [ctx : (& tc_core.TcContext)]
-  [origin : (& ast.AstExpr)]
   [state : LowerState]
   [sequence-var : i64]
   [index : ir.CompilerIrValue]
@@ -59649,14 +59652,6 @@
   [active-mask : ir.CompilerIrMaybeValue]
   [lanes : i64]
   [elem-ty : ast.AstType]) : LowerState
-  (lower-serialized-bounds
-    ctx
-    origin
-    state
-    sequence-var
-    (& index)
-    (& active-mask)
-    lanes)
   (if (lower-type-bool? elem-ty)
     (match (lower-masked-active-mask-value state active-mask lanes)
       [(Expr mask-state mask _)
@@ -59690,8 +59685,6 @@
 (define (lower-avx512-masked-index-value
   [ctx : tc_core.TcContext]
   [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
   [index : (& index str)]
   [index-var : i64]
   [expr : ast.AstExpr]) : ResultLowerExpr
@@ -59701,16 +59694,6 @@
         ctx
         index
         (lower-global-shared-view expr))]
-    (when
-      (and
-        (< offset 0)
-        (lower-serialized-row-index?
-          ctx
-          (lower-state-function-state state)
-          env
-          type-env
-          (lower-clone-ast-expr (& expr))))
-      (return (lower-expr ctx state env type-env expr)))
     (if (< offset 0)
       (lower-avx512-masked-unsupported
         ctx
@@ -59859,43 +59842,44 @@
             ctx
             expr
             "mixed lane widths inside one masked foreach")
-          (match (lower-masked-load-cache-get
-            state
-            array-var
-            offset
-            (lower-global-shared-view active-mask))
-            [(Some value) (Ok (Expr state value lane-ty))]
-            [(No)
-              (let
-                [idx-lowered : LowerExpr
-                  (try
-                    (lower-avx512-masked-index-value
-                      ctx
-                      state
-                      env
-                      type-env
-                      index
-                      index-var
-                      idx))]
-                (match idx-lowered
-                  [(Expr idx-state idx-value _)
-                    (match (lower-emit-active-load
-                      (& ctx)
-                      (& expr)
-                      idx-state
-                      array-var
-                      idx-value
-                      (lower-global-shared-view active-mask)
-                      lanes
-                      lane-ty)
-                      [(Expr load-state load-value load-ty)
-                        (lower-masked-load-cache-put!
-                          load-state
-                          array-var
-                          offset
-                          active-mask
-                          (lower-global-shared-view load-value))
-                        (Ok (Expr load-state load-value load-ty))])]))])))]
+          (if (< offset 0)
+            (lower-avx512-masked-unsupported
+              ctx
+              expr
+              "non-contiguous array indexes in this AVX-512 slice")
+            (match (lower-masked-load-cache-get
+              state
+              array-var
+              offset
+              (lower-global-shared-view active-mask))
+              [(Some value) (Ok (Expr state value lane-ty))]
+              [(No)
+                (let
+                  [idx-lowered : LowerExpr
+                    (try
+                      (lower-avx512-masked-index-value
+                        ctx
+                        state
+                        index
+                        index-var
+                        idx))]
+                  (match idx-lowered
+                    [(Expr idx-state idx-value _)
+                      (match (lower-emit-active-load
+                        idx-state
+                        array-var
+                        idx-value
+                        (lower-global-shared-view active-mask)
+                        lanes
+                        lane-ty)
+                        [(Expr load-state load-value load-ty)
+                          (lower-masked-load-cache-put!
+                            load-state
+                            array-var
+                            offset
+                            active-mask
+                            (lower-global-shared-view load-value))
+                          (Ok (Expr load-state load-value load-ty))])]))]))))]
     [(No)
       (lower-avx512-masked-unsupported
         ctx
@@ -59924,14 +59908,7 @@
           (let
             [idx-lowered : LowerExpr
               (try
-                (lower-avx512-masked-index-value
-                  ctx
-                  state
-                  env
-                  type-env
-                  index
-                  index-var
-                  idx))]
+                (lower-avx512-masked-index-value ctx state index index-var idx))]
             (match idx-lowered
               [(Expr idx-state idx-value _)
                 (let
@@ -59954,8 +59931,6 @@
                       (Ok
                         (Expr
                           (lower-emit-active-store
-                            (& ctx)
-                            (& expr)
                             value-state
                             array-var
                             idx-value
@@ -59976,8 +59951,6 @@
                   (lower-avx512-masked-index-value
                     ctx
                     state
-                    env
-                    type-env
                     index
                     index-var
                     idx))]
@@ -60003,8 +59976,6 @@
                         (Ok
                           (Expr
                             (lower-emit-active-store
-                              (& ctx)
-                              (& expr)
                               value-state
                               array-var
                               idx-value
@@ -60036,8 +60007,6 @@
   [lane-locals : (& lane-locals LowerIdSet)]
   [index : (& index str)]
   [index-var : i64]
-  [active-mask : (& ir.CompilerIrMaybeValue)]
-  [lanes : i64]
   [expr : ast.AstExpr]) : ResultLowerMaskedEnumSource
   (match (& expr)
     [(or (Spanned inner-box _) (Ann inner-box _) (Cast inner-box _))
@@ -60049,8 +60018,6 @@
         lane-locals
         index
         index-var
-        active-mask
-        lanes
         (lower-context-expr-get ctx inner-box))]
     [(Var name)
       (if (lower-id-set-contains? lane-locals name)
@@ -60093,22 +60060,12 @@
                 (match (lower-avx512-masked-index-value
                   ctx
                   state
-                  env
-                  type-env
                   index
                   index-var
                   idx)
                   [(Ok idx-lowered)
                     (match idx-lowered
                       [(Expr idx-state idx-value _)
-                        (lower-serialized-bounds
-                          (& ctx)
-                          (& expr)
-                          idx-state
-                          array-var
-                          (& idx-value)
-                          active-mask
-                          lanes)
                         (match (lower-sequence-data-pointer-value
                           idx-state
                           array-var)
@@ -60184,8 +60141,6 @@
                 lane-locals
                 index
                 index-var
-                (& active-mask)
-                lanes
                 (lower-global-shared-view init))
               No)]
           (match enum-source
@@ -62196,8 +62151,6 @@
     lane-locals
     index
     index-var
-    (& (Some (lower-ir-copy-value (& active-mask))))
-    lanes
     scrutinee)
     [(Ok source)
       (match source
@@ -67094,9 +67047,9 @@
   (when
     (lower-mode-simd? (lower-state-mode state))
     (let
-      [sites (lower-serialized-site-count ctx (lower-clone-ast-expr (& body)))]
+      [site (lower-serialized-site ctx (lower-clone-ast-expr (& body)))]
       (when
-        (> sites 0)
+        (!= site lower-active-no-site)
         (let
           [mode (lower-state-mode state)]
           [function-state (lower-state-function-state state)]
@@ -67139,7 +67092,7 @@
                 (if (= width 0)
                   (lower-simd-lanes-for-elem mode (I64))
                   width)
-                (> sites 1)))]
+                site))]
           (lower-swap-serialized-row! function-state enclosing-row)
           (return result)))))
   (match (lower-plan-foreach
@@ -67996,7 +67949,9 @@
   [index-id : i64]
   [body : ast.AstExpr]) : LowerRowOriginPlan
   (when
-    (> (lower-serialized-site-count ctx (lower-clone-ast-expr (& body))) 0)
+    (!=
+      (lower-serialized-site ctx (lower-clone-ast-expr (& body)))
+      lower-active-no-site)
     (return (lower-row-origin-plan-empty)))
   (let
     [flags : lower_i64_i64_map.Map (lower_i64_i64_map.with-capacity 16)]
@@ -69079,7 +69034,17 @@
                     (__tl_array-push! captures (LowerLaneCapture name addr ty)))]
                 [else unit]))])))
     (let
-      [loop (lower-open-active-loop s (lower-active-bits s mask lanes))]
+      [bits
+        (match (& mask)
+          [(Some (Var v))
+            (if (= v (deref data).serialized-range-mask)
+              (lower-range-active-bits
+                s
+                (Var (deref data).serialized-remaining)
+                lanes)
+              (lower-active-bits s mask lanes))]
+          [_ (lower-active-bits s mask lanes)])]
+      [loop (lower-open-active-loop s bits)]
       [lane-var loop.lane]
       (let
         [index-var (lower-fresh-var-id s)]
@@ -69140,6 +69105,119 @@
                   Unit
                   (Unit))))])))))
 
+;; A lane-local binding inherits the independence of its initializer. An outer
+;; local must also have an unaliased register and no writes or mutable borrows in the gang.
+;; Calls, indirect reads, and operations that could trap run in lane order.
+(define (lower-active-independent?
+  [ctx : tc_core.TcContext]
+  [s : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [locals : (& LowerIdSet)]
+  [type-env : tc_core.TcTypeEnv]
+  [site : i64]
+  [expr : ast.AstExpr]) : bool
+  (match (& expr)
+    [(ForeachActive _ _) true]
+    [(Literal _) true]
+    [(Var name)
+      (or
+        (lower-id-set-contains? locals name)
+        (let
+          [id (sym_i64_env.sym-i64-lookup-id-or env name -1)]
+          [budget lower-snapshot-scan-budget]
+          (and
+            (>= id 0)
+            (= (lower-state-pattern-place s id) 0)
+            (not (lower-state-address-taken-var? s id))
+            (not
+              (lower-snapshot-writes-root? ctx type-env site name (&mut budget))))))]
+    [(Let binding-box)
+      (match binding-box
+        [(Let bindings body)
+          (let
+            [bound (lower-id-set-copy locals bindings.len)]
+            (for [i (iterator.range 0 bindings.len)]
+              (match (owned_view.compiler-owned-element-view bindings.slots i)
+                [(Binding name _ init)
+                  (when
+                    (not
+                      (lower-active-independent?
+                        ctx
+                        s
+                        env
+                        (& bound)
+                        type-env
+                        site
+                        (lower-context-expr-get ctx init)))
+                    (return false))
+                  (set! bound (lower-id-set-push bound name))]))
+            (lower-active-independent?
+              ctx
+              s
+              env
+              (& bound)
+              type-env
+              site
+              (lower-context-expr-get ctx body)))])]
+    [_
+      (let
+        [total?
+          (match (& expr)
+            [(or (Spanned _ _) (Ann _ _) (If _ _ _) (Begin _) (Unary _ _)) true]
+            [(Binary op _ _)
+              (match op
+                [(or (Shl) (Shr) (Div) (Mod)) false]
+                [_ true])]
+            [_ false])]
+        (when (not total?) (return false))
+        (let
+          [children (ast.ast-expr-child-ids expr)]
+          (for [i (iterator.range 0 children.len)]
+            (when
+              (not
+                (lower-active-independent?
+                  ctx
+                  s
+                  env
+                  locals
+                  type-env
+                  site
+                  (lower-context-expr-get
+                    ctx
+                    (ast.ast-expr-list-get (& children) i 0))))
+              (return false)))
+          true))]))
+
+;; The gang is nonempty. Only its short tail shifts by a runtime count,
+;; strictly below the native width even when a gang has 64 byte lanes.
+(define (lower-range-active-bits
+  [s : LowerState]
+  [remaining : ir.CompilerIrValue]
+  [lanes : i64]) : ir.CompilerIrValue
+  (let
+    [bits (lower-fresh-var-id s)]
+    [tail (lower-fresh-block-id s "active_tail")]
+    [ready (lower-fresh-block-id s "active_range")]
+    [full
+      (lower-built-value
+        (lower-emit-binop
+          s
+          (Ge)
+          (lower-ir-copy-value (& remaining))
+          (I64 lanes)
+          (U64)))]
+    (lower-state-emit s (Mov bits (lower-active-bits s (No) lanes) (U64)))
+    (lower-state-finish-block
+      (lower-state-emit s (Branch full ready tail))
+      tail)
+    (let
+      [end-bit
+        (lower-built-value
+          (lower-emit-binop s (Shl (U64)) (I64 1) remaining (U64)))]
+      (lower-state-emit s (BinOp bits (Sub) end-bit (I64 1) (U64))))
+    (lower-state-finish-block (lower-state-emit s (Jump ready)) ready)
+    (Var bits)))
+
 ;; These loops execute the scalar body at a particular lane. Keep all
 ;; potentially faulting lane-value arithmetic and reads at the use site.
 (define (lower-serialized-gangs
@@ -69153,7 +69231,7 @@
   [end : ir.CompilerIrValue]
   [body : ast.AstExpr]
   [lanes : i64]
-  [ordered? : bool]) : ResultLowerExpr
+  [site : i64]) : ResultLowerExpr
   (let
     [base (lower-fresh-var-id s)]
     [limit (lower-fresh-var-id s)]
@@ -69182,14 +69260,21 @@
             (lower-ir-copy-value (& remaining))
             (I64 lanes)
             (U64)))]
-      [count
-        (lower-built-value
-          (lower-vector-loop-select
-            s
-            (lower-ir-copy-value (& more))
-            (I64 lanes)
-            remaining))]
-      [mask (lower-built-value (lower-emit-tail-mask s (I64 0) count lanes))]
+      [ordered?
+        (or
+          (= site lower-active-multiple-sites)
+          (match (ast.ast-expr-unspan (& body))
+            [(ForeachActive _ _) true]
+            [_
+              (not
+                (lower-active-independent?
+                  ctx
+                  s
+                  env
+                  (& (lower-id-set-insert (lower-id-set-empty) index-id))
+                  type-env
+                  site
+                  (lower-clone-ast-expr (& body))))]))]
       (set! (deref data).serialized-index index-id)
       (set! (deref data).serialized-width lanes)
       (let
@@ -69197,39 +69282,55 @@
           (if ordered?
             (lower-open-active-loop
               s
-              (lower-active-bits s (Some (lower-ir-copy-value (& mask))) lanes))
+              (lower-range-active-bits
+                s
+                (lower-ir-copy-value (& remaining))
+                lanes))
             (LowerActiveLoop -1 -1 -1 -1))]
-        [active
-          (if ordered?
-            (let
-              [ty (lower-enum-mask-lane-type (lower-state-mode s) lanes)]
-              [ids
-                (lower-built-value
-                  (lower-emit-lane-id s lanes (ast.clone-ast-type (& ty))))]
-              [slot
-                (lower-built-value
-                  (lower-emit-splat
-                    s
-                    (Var loop.lane)
-                    lanes
-                    (ast.clone-ast-type (& ty))))]
-              (lower-built-value
-                (lower-emit-vector-compare s (Eq) ids slot lanes ty)))
-            mask)]
         [lowered
           (try
-            (lower-avx512-masked-map-body
-              ctx
-              s
-              env
-              type-env
-              index-id
-              index
-              (I64)
-              base
-              (Some active)
-              lanes
-              body))]
+            (if ordered?
+              (let
+                [logical (lower-fresh-var-id s)]
+                (lower-state-emit
+                  s
+                  (BinOp logical (Add) (Var base) (Var loop.lane) (I64)))
+                (set! (deref data).serialized-lane loop.lane)
+                (lower-expr
+                  ctx
+                  s
+                  (sym_i64_env.sym-i64-bind-id env index-id logical)
+                  (tc_core.tc-bind-id type-env index-id (I64))
+                  body))
+              (let
+                [count
+                  (lower-built-value
+                    (lower-vector-loop-select
+                      s
+                      (lower-ir-copy-value (& more))
+                      (I64 lanes)
+                      (lower-ir-copy-value (& remaining))))]
+                [mask
+                  (lower-built-value
+                    (lower-emit-tail-mask s (I64 0) count lanes))]
+                (match (& mask)
+                  [(Var v) (set! (deref data).serialized-range-mask v)]
+                  [_ unit])
+                (match (& remaining)
+                  [(Var v) (set! (deref data).serialized-remaining v)]
+                  [_ unit])
+                (lower-avx512-masked-map-body
+                  ctx
+                  s
+                  env
+                  type-env
+                  index-id
+                  index
+                  (I64)
+                  base
+                  (Some mask)
+                  lanes
+                  body))))]
         (match lowered
           [(Expr after _ _)
             (let
@@ -69241,6 +69342,7 @@
                     (lower-state-emit after (Jump loop.header))
                     loop.exit)
                   unit))
+              (set! (deref after-data).serialized-lane -1)
               (set! (deref after-data).serialized-index -1)
               (set! (deref after-data).serialized-width 1)
               (lower-state-emit
@@ -69254,104 +69356,17 @@
                   Unit
                   (Unit))))])))))
 
-;; Outside the scalar body, a native masked memory operation must check the
-;; first and last selected indices. Within a contiguous run these bound every
-;; address accessed, including masks with holes and negative base indices.
-(define (lower-serialized-bounds
-  [ctx : (& tc_core.TcContext)]
-  [origin : (& ast.AstExpr)]
-  [s : LowerState]
-  [sequence-var : i64]
-  [base : (& ir.CompilerIrValue)]
-  [mask : (& ir.CompilerIrMaybeValue)]
-  [lanes : i64]) : unit
-  (let
-    [data (lower-state-box s)]
-    (when
-      (> (deref data).serialized-width 1)
-      (let
-        [bits
-          (lower-active-bits
-            s
-            (match mask
-              [(No) (No)]
-              [(Some v) (Some (lower-ir-copy-value v))])
-            lanes)]
-        [any
-          (lower-built-value
-            (lower-vector-loop-i64-compare
-              s
-              (Ne)
-              (lower-ir-copy-value (& bits))
-              (I64 0)))]
-        [check (lower-fresh-block-id s "active_bounds")]
-        [done (lower-fresh-block-id s "active_bounds_done")]
-        (lower-state-finish-block
-          (lower-state-emit s (Branch any check done))
-          check)
-        (let
-          [len (lower-built-value (lower-sequence-len-value s sequence-var))]
-          [neg
-            (lower-built-value
-              (lower-emit-binop
-                s
-                (Sub)
-                (I64 0)
-                (lower-ir-copy-value (& bits))
-                (U64)))]
-          [low
-            (lower-built-value
-              (lower-emit-binop
-                s
-                (BitAnd)
-                neg
-                (lower-ir-copy-value (& bits))
-                (U64)))]
-          [first (lower-fresh-var-id s)]
-          [last (lower-fresh-var-id s)]
-          (lower-state-emit s (UnOp first (BitLength) low (U64)))
-          (lower-state-emit s (UnOp last (BitLength) bits (U64)))
-          (let
-            [bias
-              (lower-built-value
-                (lower-emit-binop
-                  s
-                  (Sub)
-                  (lower-ir-copy-value base)
-                  (I64 1)
-                  (I64)))]
-            (lower-state-record-latest-bounds-check-at-expr
-              ctx
-              (lower-emit-bounds-check
-                s
-                (lower-built-value
-                  (lower-emit-binop
-                    s
-                    (Add)
-                    (lower-ir-copy-value (& bias))
-                    (Var first)
-                    (I64)))
-                (lower-ir-copy-value (& len)))
-              (lower-clone-ast-expr origin))
-            (lower-state-record-latest-bounds-check-at-expr
-              ctx
-              (lower-emit-bounds-check
-                s
-                (lower-built-value
-                  (lower-emit-binop s (Add) bias (Var last) (I64)))
-                len)
-              (lower-clone-ast-expr origin)))
-          (lower-state-finish-block (lower-state-emit s (Jump done)) done)
-          unit))
-      unit)))
+(define lower-active-no-site : i64
+  -1)
+(define lower-active-multiple-sites : i64
+  -2)
 
-;; Two sites, or one revisited by a varying loop, must complete all
-;; serialized effects of an earlier lane before proceeding to the next lane.
-(define (lower-serialized-site-count
-  [ctx : tc_core.TcContext]
-  [expr : ast.AstExpr]) : i64
+;; Return the body expression ID of a single site, so its write effects
+;; can be checked before evaluating any other lane. Repeated sites always
+;; require completing the surrounding code one logical index at a time.
+(define (lower-serialized-site [ctx : tc_core.TcContext] [expr : ast.AstExpr]) : i64
   (match (& expr)
-    [(ForeachActive _ _) 1]
+    [(ForeachActive _ body) body]
     [_
       (let
         [repeated?
@@ -69359,17 +69374,25 @@
             [(While _ _) true]
             [_ false])]
         [children (ast.ast-expr-child-ids expr)]
-        [count : i64 0]
+        [site lower-active-no-site]
         (for [i (iterator.range 0 children.len)]
-          (+=
-            count
-            (lower-serialized-site-count
-              ctx
-              (lower-context-expr-get
+          (let
+            [child
+              (lower-serialized-site
                 ctx
-                (ast.ast-expr-list-get (& children) i 0))))
-          (when (or (>= count 2) (and repeated? (> count 0))) (return 2)))
-        count)]))
+                (lower-context-expr-get
+                  ctx
+                  (ast.ast-expr-list-get (& children) i 0)))]
+            (when
+              (!= child lower-active-no-site)
+              (when
+                (or
+                  repeated?
+                  (!= site lower-active-no-site)
+                  (= child lower-active-multiple-sites))
+                (return lower-active-multiple-sites))
+              (set! site child))))
+        site)]))
 
 ;; Scalar reference lowering: the scalar gang is one lane wide, so the body
 ;; runs once, for lane 0, the lane program-index reads. A masked-out index

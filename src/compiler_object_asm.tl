@@ -2,6 +2,8 @@
 ;; assembly. This is a cheap side-artifact path for direct object emission: it
 ;; preserves the already-selected instruction bytes and relocatable operations
 ;; without running lowering, optimization, or instruction selection again.
+(import compiler_object_layout as layout)
+(cfg test (import compiler_object_windows_sections as coff_sections))
 (import stdlib.iterator)
 (import stdlib.byte_buf_core)
 (import stdlib.string)
@@ -293,7 +295,7 @@
 
 (define (compiler-object-asm-render-data-records!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [records : cobj.CompilerObjectDataRecordList]) : unit
+  [records : (& cobj.CompilerObjectDataRecordList)]) : unit
   (let
     [count : i64 (cobj.compiler-object-data-record-list-count records)]
     (for [index (iterator.range 0 count)]
@@ -302,16 +304,55 @@
         (cobj.compiler-object-data-record-list-ref records index)))
     unit))
 
-(define (compiler-object-asm-section-header
-  [kind : cobj.CompilerObjectSectionKind]) : String
-  (match kind
-    [(Text) ".text\n    .balign 16\n"]
-    [(Data) ".data\n    .balign 8\n"]
-    [(Rodata) ".section .rdata,\"dr\"\n    .balign 8\n"]
-    [(Bss) ".bss\n    .balign 8\n"]
-    [(Pdata) ".section .pdata,\"dr\"\n    .balign 8\n"]
-    [(Xdata) ".section .xdata,\"dr\"\n    .balign 8\n"]
-    [(Rsrc) ".section .rsrc,\"dr\"\n    .balign 8\n"]))
+(define (compiler-object-asm-section-header!
+  [out : (&mut byte_buf_core.ByteBufBuilder)]
+  [spec : (& cobj.CompilerObjectSectionSpec)]) : unit
+  (if (match spec.format
+    [(Elf ty flags)
+      (or
+        (and (= ty 1) (= flags 6) (string.eq spec.name ".text"))
+        (and (= ty 1) (= flags 3) (string.eq spec.name ".data"))
+        (and (= ty 8) (= flags 3) (string.eq spec.name ".bss")))]
+    [(Coff flags)
+      (or
+        (and (= flags 0x60000020) (string.eq spec.name ".text"))
+        (and (= flags 0xc0000040) (string.eq spec.name ".data"))
+        (and (= flags 0xc0000080) (string.eq spec.name ".bss")))])
+    (compiler-object-asm-append! out (string.copy spec.name))
+    (begin
+      (compiler-object-asm-append! out ".section ")
+      (compiler-object-asm-append! out (string.copy spec.name))
+      (compiler-object-asm-append! out ",\"")
+      (match spec.format
+        [(Elf ty flags)
+          (when (!= (bit-and flags 2) 0) (compiler-object-asm-append! out "a"))
+          (when (!= (bit-and flags 1) 0) (compiler-object-asm-append! out "w"))
+          (when (!= (bit-and flags 4) 0) (compiler-object-asm-append! out "x"))
+          (compiler-object-asm-append!
+            out
+            (if (= ty 8)
+              "\",@nobits"
+              "\",@progbits"))]
+        [(Coff flags)
+          (compiler-object-asm-append!
+            out
+            (match (bit-and flags 0xe0)
+              [32 "x"]
+              [128 "b"]
+              [_ "d"]))
+          (compiler-object-asm-append!
+            out
+            (if (!= (bit-and flags 0x80000000) 0)
+              "w"
+              "r"))
+          (compiler-object-asm-append!
+            out
+            (if (!= (bit-and flags 0x02000000) 0)
+              "D\""
+              "\""))])))
+  (compiler-object-asm-append! out "\n    .balign ")
+  (compiler-object-asm-append-int! out spec.align)
+  (compiler-object-asm-append! out "\n"))
 
 (define (compiler-object-asm-render-symbols!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
@@ -339,16 +380,37 @@
     (while (and ok (< index count))
       (match (cobj.compiler-object-section-list-ref sections index)
         [(Section kind records instrs)
-          (compiler-object-asm-append!
-            out
-            (compiler-object-asm-section-header kind))
-          (compiler-object-asm-render-data-records! out records)
+          (compiler-object-asm-section-header! out (& kind))
+          (compiler-object-asm-render-data-records! out (& records))
+          (match kind.storage
+            [(ZeroFill size)
+              (let
+                [tail : i64
+                  (-
+                    size
+                    (layout.compiler-object-layout-data-records-size
+                      (& records)))]
+                (when
+                  (> tail 0)
+                  (compiler-object-asm-render-data-record! out (Zero tail))))]
+            [_ unit])
           (set! ok (compiler-object-asm-render-instrs! out instrs))
           (compiler-object-asm-push-char! out '\n')])
       (+= index 1))
     ok))
 
 (define (compiler-object-asm-render [image : cobj.CompilerObjectImage]) : ResultCompilerObjectAsm
+  (let
+    [coff? : bool
+      (and
+        (> image.sections.len 0)
+        (match (& (array-ref image.sections.slots 0))
+          [(Section spec _ _)
+            (match spec.format
+              [(Coff _) true]
+              [_ false])]))]
+    [error : String (layout.compiler-object-layout-image-error (& image) coff?)]
+    (unless (string.eq (& error) "") (return (Err error))))
   (let
     [out : byte_buf_core.ByteBufBuilder
       (byte_buf_core.byte-buf-builder-with-capacity 65536)]
@@ -410,12 +472,12 @@
         (cobj.compiler-object-section-builder-push
           (cobj.compiler-object-section-builder-push
             (cobj.compiler-object-section-builder-with-capacity 2)
-            (Section
+            (coff_sections.windows-base-section
               (Text)
               (cobj.compiler-object-data-record-builder-finish
                 (cobj.compiler-object-data-record-builder-with-capacity 1))
               (cobj.compiler-object-instr-builder-finish text-instrs)))
-          (Section
+          (coff_sections.windows-base-section
             (Data)
             (cobj.compiler-object-data-record-builder-finish data-records)
             (cobj.compiler-object-instr-builder-finish
@@ -423,7 +485,7 @@
       [symbols : cobj.CompilerObjectSymbolBuilder
         (cobj.compiler-object-symbol-builder-push
           (cobj.compiler-object-symbol-builder-with-capacity 1)
-          (Symbol "_tl_start" (Export) (Function) (Some (Text))))]
+          (Symbol "_tl_start" (Export) (Function) (Some cobj.text-id)))]
       [image : cobj.CompilerObjectImage
         (cobj.CompilerObjectImage
           (cobj.compiler-object-section-builder-finish sections)

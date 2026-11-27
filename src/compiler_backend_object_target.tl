@@ -15,8 +15,7 @@
   (data cobj.CompilerObjectDataRecordBuilder)
   (rodata cobj.CompilerObjectDataRecordBuilder)
   (bss cobj.CompilerObjectDataRecordBuilder)
-  (pdata cobj.CompilerObjectDataRecordBuilder)
-  (xdata cobj.CompilerObjectDataRecordBuilder)
+  (metadata (__tl_dyn-array cobj.CompilerObjectDataRecordBuilder))
   (symbols cobj.CompilerObjectSymbolBuilder)
   (relocations cobj.CompilerObjectRelocationBuilder))
 
@@ -26,8 +25,7 @@
     (cobj.compiler-object-data-record-builder-new)
     (cobj.compiler-object-data-record-builder-new)
     (cobj.compiler-object-data-record-builder-new)
-    (cobj.compiler-object-data-record-builder-new)
-    (cobj.compiler-object-data-record-builder-new)
+    (__tl_make-array cobj.CompilerObjectDataRecordBuilder 0)
     (cobj.compiler-object-symbol-builder-new)
     (cobj.compiler-object-relocation-builder-new)))
 
@@ -61,22 +59,6 @@
     (cobj.compiler-object-data-record-builder-push parts.bss record))
   parts)
 
-(define (compiler-backend-object-add-pdata
-  [parts : CompilerBackendObjectTargetParts]
-  [record : cobj.CompilerObjectDataRecord]) : CompilerBackendObjectTargetParts
-  (set!
-    parts.pdata
-    (cobj.compiler-object-data-record-builder-push parts.pdata record))
-  parts)
-
-(define (compiler-backend-object-add-xdata
-  [parts : CompilerBackendObjectTargetParts]
-  [record : cobj.CompilerObjectDataRecord]) : CompilerBackendObjectTargetParts
-  (set!
-    parts.xdata
-    (cobj.compiler-object-data-record-builder-push parts.xdata record))
-  parts)
-
 (define (compiler-backend-object-add-symbol
   [parts : CompilerBackendObjectTargetParts]
   [name : String]
@@ -88,8 +70,7 @@
     parts.data
     parts.rodata
     parts.bss
-    parts.pdata
-    parts.xdata
+    parts.metadata
     (cobj.compiler-object-symbol-builder-push
       parts.symbols
       (Symbol name binding kind section))
@@ -97,7 +78,7 @@
 
 (define (compiler-backend-object-add-relocation
   [parts : CompilerBackendObjectTargetParts]
-  [section : cobj.CompilerObjectSectionKind]
+  [section : cobj.CompilerObjectSectionId]
   [site : String]
   [kind : cobj.CompilerObjectRelocationKind]
   [target : String]) : CompilerBackendObjectTargetParts
@@ -106,8 +87,7 @@
     parts.data
     parts.rodata
     parts.bss
-    parts.pdata
-    parts.xdata
+    parts.metadata
     parts.symbols
     (cobj.compiler-object-relocation-builder-push
       parts.relocations
@@ -118,14 +98,24 @@
   [name : String]
   [section : cobj.CompilerObjectSectionKind]
   [kind : cobj.CompilerObjectSymbolKind]) : CompilerBackendObjectTargetParts
-  (compiler-backend-object-add-symbol parts name (Local) kind (Some section)))
+  (compiler-backend-object-add-symbol
+    parts
+    name
+    (Local)
+    kind
+    (Some (cobj.compiler-object-role-id section))))
 
 (define (compiler-backend-object-symbol-export-section
   [parts : CompilerBackendObjectTargetParts]
   [name : String]
   [section : cobj.CompilerObjectSectionKind]
   [kind : cobj.CompilerObjectSymbolKind]) : CompilerBackendObjectTargetParts
-  (compiler-backend-object-add-symbol parts name (Export) kind (Some section)))
+  (compiler-backend-object-add-symbol
+    parts
+    name
+    (Export)
+    kind
+    (Some (cobj.compiler-object-role-id section))))
 
 (define (compiler-backend-object-symbol-extern
   [parts : CompilerBackendObjectTargetParts]
@@ -150,28 +140,21 @@
   [site : String]
   [kind : cobj.CompilerObjectRelocationKind]
   [target : String]) : CompilerBackendObjectTargetParts
-  (compiler-backend-object-add-relocation parts (Text) site kind target))
+  (compiler-backend-object-add-relocation parts cobj.text-id site kind target))
 
 (define (compiler-backend-object-add-data-relocation
   [parts : CompilerBackendObjectTargetParts]
   [site : String]
   [kind : cobj.CompilerObjectRelocationKind]
   [target : String]) : CompilerBackendObjectTargetParts
-  (compiler-backend-object-add-relocation parts (Data) site kind target))
+  (compiler-backend-object-add-relocation parts cobj.data-id site kind target))
 
 (define (compiler-backend-object-add-rodata-relocation
   [parts : CompilerBackendObjectTargetParts]
   [site : String]
   [kind : cobj.CompilerObjectRelocationKind]
   [target : String]) : CompilerBackendObjectTargetParts
-  (compiler-backend-object-add-relocation parts (Rodata) site kind target))
-
-(define (compiler-backend-object-add-pdata-relocation
-  [parts : CompilerBackendObjectTargetParts]
-  [site : String]
-  [kind : cobj.CompilerObjectRelocationKind]
-  [target : String]) : CompilerBackendObjectTargetParts
-  (compiler-backend-object-add-relocation parts (Pdata) site kind target))
+  (compiler-backend-object-add-relocation parts cobj.rodata-id site kind target))
 
 (define (compiler-backend-object-bytes-from-hex [hex : (& str)]) : String
   (let
@@ -250,34 +233,39 @@
   [data : cobj.CompilerObjectDataRecordBuilder]
   [rodata : cobj.CompilerObjectDataRecordBuilder]
   [bss : cobj.CompilerObjectDataRecordBuilder]
-  [capacity : i64]) : cobj.CompilerObjectSectionBuilder
+  [make-section
+    : (->
+      cobj.CompilerObjectSectionKind
+      cobj.CompilerObjectDataRecordList
+      cobj.CompilerObjectX64InstrList
+      cobj.CompilerObjectSection)]) : cobj.CompilerObjectSectionBuilder
   (let
     [sections0 : cobj.CompilerObjectSectionBuilder
-      (cobj.compiler-object-section-builder-with-capacity capacity)]
+      (cobj.compiler-object-section-builder-with-capacity 4)]
     [sections1 : cobj.CompilerObjectSectionBuilder
       (cobj.compiler-object-section-builder-push
         sections0
-        (Section
+        (make-section
           (Text)
           (cobj.compiler-object-data-record-list-empty)
           (cobj.compiler-object-instr-builder-finish text)))]
     [sections2 : cobj.CompilerObjectSectionBuilder
       (cobj.compiler-object-section-builder-push
         sections1
-        (Section
+        (make-section
           (Data)
           (cobj.compiler-object-data-record-builder-finish data)
           (cobj.compiler-object-instr-list-empty)))]
     [sections3 : cobj.CompilerObjectSectionBuilder
       (cobj.compiler-object-section-builder-push
         sections2
-        (Section
+        (make-section
           (Rodata)
           (cobj.compiler-object-data-record-builder-finish rodata)
           (cobj.compiler-object-instr-list-empty)))]
     (cobj.compiler-object-section-builder-push
       sections3
-      (Section
+      (make-section
         (Bss)
         (cobj.compiler-object-data-record-builder-finish bss)
         (cobj.compiler-object-instr-list-empty)))))

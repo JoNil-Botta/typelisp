@@ -1,0 +1,10 @@
+path	required	advisory	reason
+src/compiler_object.tl	stage2-coff-relocation-overflow-verifier	@compiler	Direct section schema and projection coverage in verify-coff-relocation-overflow.sh.
+src/compiler_object_layout.tl	stage2-coff-relocation-overflow-verifier	@compiler	Direct section schema and projection coverage in verify-coff-relocation-overflow.sh.
+src/compiler_object_elf.tl	stage2-coff-relocation-overflow-verifier	@compiler	Direct section schema and projection coverage in verify-coff-relocation-overflow.sh.
+src/compiler_object_coff.tl	stage2-coff-relocation-overflow-verifier	@compiler	Direct section schema and projection coverage in verify-coff-relocation-overflow.sh.
+src/compiler_object_sections_tests.tl	stage2-coff-relocation-overflow-verifier	@compiler	Direct section schema and projection coverage in verify-coff-relocation-overflow.sh.
+src/compiler_object_linux_sections.tl	stage2-coff-relocation-overflow-verifier	@compiler	Direct section schema and projection coverage in verify-coff-relocation-overflow.sh.
+src/compiler_object_windows_sections.tl	stage2-coff-relocation-overflow-verifier	@compiler	Direct section schema and projection coverage in verify-coff-relocation-overflow.sh.
+src/compiler_object_asm.tl	stage2-coff-relocation-overflow-verifier	@compiler	Direct section schema and projection coverage in verify-coff-relocation-overflow.sh.
+scripts/verify-coff-relocation-overflow.sh	stage2-coff-relocation-overflow-verifier	@compiler	The owning gate runs the section projection and COFF extended-count verifier.

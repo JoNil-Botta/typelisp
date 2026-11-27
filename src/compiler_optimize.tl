@@ -116539,6 +116539,15 @@
       (opt-global-cell-scan-ref! scan (ir.compiler-ir-symbol-id use.id))]
     [_ unit]))
 
+(define (opt-global-cell-scan-uses!
+  [scan : (&mut OptGlobalCellScan)]
+  [uses : (&mut ir.CompilerIrUseList)]
+  [instr : (& ir.CompilerIrInstr)]) : unit
+  (set! uses.len 0)
+  (ir.compiler-ir-instr-symbol-uses-into! instr uses)
+  (for [at (iterator.range 0 uses.len)]
+    (opt-global-cell-scan-use! scan (& (array-ref uses.slots at)))))
+
 (define (opt-global-cell-scan-instr!
   [scan : (&mut OptGlobalCellScan)]
   [uses : (&mut ir.CompilerIrUseList)]
@@ -116561,10 +116570,7 @@
             [(Mov _ _ _) true]
             [_ false]))
         (return unit))])
-  (set! uses.len 0)
-  (ir.compiler-ir-instr-symbol-uses-into! instr uses)
-  (for [at (iterator.range 0 uses.len)]
-    (opt-global-cell-scan-use! scan (& (array-ref uses.slots at)))))
+  (opt-global-cell-scan-uses! scan uses instr))
 
 (define (opt-global-cell-scan-instr
   [entry? : bool]
@@ -130379,21 +130385,25 @@
   [candidates : (& candidates opt_i64_i64_map.Map)]
   [reads : (&mut reads (__tl_dyn-array i64))]
   [counters : (&mut counters (__tl_dyn-array i64))]
+  [uses : (&mut ir.CompilerIrUseList)]
   [block-id : i64]
   [index : i64]
   [instr : (& ir.CompilerIrInstr)]) : unit
   (match instr
     [(Phi _ _ _) unit]
     [_
-      (match (opt-global-cell-scan-uses (opt-global-cell-scan-new) instr)
-        [(OptGlobalCellScan _ ref-list _ _ _ _)
-          (opt-load-cell-record-names!
-            candidates
-            reads
-            counters
-            block-id
-            index
-            ref-list)])]))
+      (let
+        [scan : OptGlobalCellScan (opt-global-cell-scan-new)]
+        (opt-global-cell-scan-uses! (&mut scan) uses instr)
+        (match scan
+          [(OptGlobalCellScan _ ref-list _ _ _ _)
+            (opt-load-cell-record-names!
+              candidates
+              reads
+              counters
+              block-id
+              index
+              ref-list)]))]))
 
 ;; A `Store g` of a candidate cell marks every natural loop around its block as
 ;; a writer of g.
@@ -130430,6 +130440,7 @@
   [instrs : (& instrs ir.CompilerIrInstrSeq)]) : unit
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
     (for [index (iterator.range 0 count)]
       (let
         [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
@@ -130437,6 +130448,7 @@
           candidates
           reads
           counters
+          (&mut uses)
           block-id
           index
           instr)

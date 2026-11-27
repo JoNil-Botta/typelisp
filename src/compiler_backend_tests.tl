@@ -13641,6 +13641,40 @@ f:
     .size f, . - f
 ")))
 
+(test
+  backend-layout-classifies-bare-ret
+  (let
+    [source : String "    ret\nret\n    retq\n    ret $8\n    retry\n je ret\n"]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 7)]
+    [flags : (__tl_dyn-array i64) (__tl_make-array i64 6)]
+    (unsafe
+      (let
+        [data : (Ptr u8) (string-data source)]
+        [lines : i64
+          (be_peephole.compiler-backend-layout-split-lines
+            data
+            (string.string-length (& source))
+            6
+            (__tl_array-data starts))]
+        (be_peephole.compiler-backend-layout-classify-lines!
+          data
+          lines
+          (__tl_array-data starts)
+          (__tl_array-data flags))))
+    (test.assert-true
+      (and
+        (= (array-ref flags 0) be_peephole.compiler-backend-layout-flag-ret)
+        (= (array-ref flags 1) be_peephole.compiler-backend-layout-flag-ret)
+        (= (array-ref flags 2) be_peephole.compiler-backend-layout-flag-ret)
+        (= (array-ref flags 3) be_peephole.compiler-backend-layout-flag-ret)
+        (= (array-ref flags 4) 0)
+        (=
+          (array-ref flags 5)
+          (bit-or
+            be_peephole.compiler-backend-layout-flag-jcc
+            (shl 4 be_peephole.compiler-backend-layout-flag-ops-shift))))
+      "identify returns by mnemonic and preserve a branch to a symbol named ret")))
+
 ;; PREDICTED-COLD ARM OUT-OF-LINING, one case per prediction rule.
 (define (compiler-backend-layout-cold-arm-ok?) : bool
   (and
@@ -26363,6 +26397,44 @@ entry:
         (asm-has? asm "    movsd (%r10), %xmm2\n" "    movsd 8(%r10), %xmm2\n")
         (asm-lacks? asm "%xmm0" "    movq -40(%rbp), %r10\n"))]
     [(Err _) false]))
+
+(define (compiler-backend-fused-load-order-ok?
+  [source : String]
+  [expected : String]) : bool
+  (asm-ok?
+    (compiler-backend-emit-test-instrs
+      (irt.instrs source)
+      (reg-homes "%0=%r12")
+      5)
+    (has expected)))
+
+(test
+  backend-fused-load-branch-comparison-signedness
+  (test.assert-true
+    (and
+      (compiler-backend-fused-load-order-ok?
+        "%1 = gep %0, 1 : i64
+         %2 = load %1 : i64
+         %3 = le %2, 7 : u64
+         branch %3, yes, no"
+        "    cmpq $7, 8(%r12)\n    jbe ")
+      (compiler-backend-fused-load-order-ok?
+        "%1 = gep %0, 1 : u64
+         %2 = load %1 : u64
+         %3 = le %2, 7 : i64
+         branch %3, yes, no"
+        "    cmpq $7, 8(%r12)\n    jle ")
+      (compiler-backend-fused-load-order-ok?
+        "%2 = load %0 : i64
+         %3 = lt %2, 7 : u64
+         branch %3, yes, no"
+        "    cmpq $7, (%r12)\n    jb ")
+      (compiler-backend-fused-load-order-ok?
+        "%2 = load %0 : u64
+         %3 = lt %2, 7 : i64
+         branch %3, yes, no"
+        "    cmpq $7, (%r12)\n    jl "))
+    "the memory compare must branch with the signedness of its BinOp"))
 
 (define (compiler-backend-gep-load-compare-priority-shape-ok?) : bool
   (asm-ok?

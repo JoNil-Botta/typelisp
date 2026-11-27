@@ -669,35 +669,37 @@ run_expect guard-die 42 "$GUARD_BIN" die "$GUARD_SHARED"
 run_expect guard-try-after-exit 42 "$GUARD_BIN" try "$GUARD_SHARED"
 assert_mode "$GUARD_SHARED/shared-lock" 600
 
-# Exercise the direct-object-enabled source planner. This backend closure uses
-# unsupported direct-object records today, so the asserted behavior is the
-# documented assembler fallback; the first probe proves the assembler is used.
+# Exercise the assembly route selected when direct object emission cannot
+# handle this fixture. Check the staged assembly at the linker boundary and
+# require the run to succeed even with GNU as blocked.
 DIRECT_SOURCE="$ROOT/tests/integration/fs_rooted_linux_direct.tl"
 DIRECT_SHIM="$WORKDIR/no-assembler-bin"
 mkdir -p "$DIRECT_SHIM" "$WORKDIR/direct-run/root"
 printf '%s\n' \
     '#!/usr/bin/env sh' \
-    'echo "expected rooted semantic assembler fallback" >&2' \
+    'echo "unexpected external assembler for rooted fixture" >&2' \
     'exit 97' > "$DIRECT_SHIM/as"
-chmod +x "$DIRECT_SHIM/as"
-set +e
-(cd "$WORKDIR/direct-run" && \
-    PATH="$DIRECT_SHIM:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 \
-    "$COMPILER" run "$DIRECT_SOURCE" \
-        --target linux-x86_64 --backend-mode scalar \
-        --cfg fs-rooted-linux-test-hooks --stdlib-root "$ROOT/stdlib") \
-        > "$WORKDIR/direct-probe.stdout" 2> "$WORKDIR/direct-probe.stderr"
-DIRECT_PROBE_STATUS=$?
-set -e
-[ "$DIRECT_PROBE_STATUS" -ne 0 ] ||
-    fail "rooted semantic fallback unexpectedly bypassed the assembler"
-grep -F "expected rooted semantic assembler fallback" \
-    "$WORKDIR/direct-probe.stderr" >/dev/null 2>&1 ||
-    fail "direct-object-enabled probe did not reach the assembler fallback"
+cat > "$DIRECT_SHIM/ld" <<'SHIM'
+#!/usr/bin/env sh
+for arg do
+    case "$arg" in
+        *.o)
+            if [ -f "${arg%.o}.s" ]; then
+                PATH=${PATH#*:}
+                exec ld "$@"
+            fi
+            break
+            ;;
+    esac
+done
+echo "expected rooted fixture assembly beside the object at link time" >&2
+exit 97
+SHIM
+chmod +x "$DIRECT_SHIM/as" "$DIRECT_SHIM/ld"
 
 set +e
 (cd "$WORKDIR/direct-run" && \
-    TYPELISP_LINUX_DIRECT_OBJECT=1 \
+    PATH="$DIRECT_SHIM:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 \
     "$COMPILER" run "$DIRECT_SOURCE" \
         --target linux-x86_64 --backend-mode scalar \
         --cfg fs-rooted-linux-test-hooks \
@@ -705,12 +707,14 @@ set +e
         > "$WORKDIR/direct-build.stdout" 2> "$WORKDIR/direct-build.stderr"
 DIRECT_RUN_STATUS=$?
 set -e
-[ "$DIRECT_RUN_STATUS" -eq 42 ] ||
-    fail "direct-object-enabled rooted fallback exited $DIRECT_RUN_STATUS"
+[ "$DIRECT_RUN_STATUS" -eq 42 ] || {
+    cat "$WORKDIR/direct-build.stderr" >&2
+    fail "direct-object-enabled rooted assembly run exited $DIRECT_RUN_STATUS"
+}
 [ ! -s "$WORKDIR/direct-build.stdout" ] ||
-    fail "direct-object-enabled rooted fallback run wrote stdout"
+    fail "direct-object-enabled rooted assembly run wrote stdout"
 [ ! -s "$WORKDIR/direct-build.stderr" ] ||
-    fail "direct-object-enabled rooted fallback run wrote stderr"
+    fail "direct-object-enabled rooted assembly run wrote stderr"
 printf 'direct object\n' > "$WORKDIR/direct.expected"
 cmp -s "$WORKDIR/direct.expected" "$WORKDIR/direct-run/root/direct.txt" ||
     fail "direct-object-enabled rooted payload mismatch"

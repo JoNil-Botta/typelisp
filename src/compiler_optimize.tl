@@ -4477,6 +4477,20 @@
 (define (opt-aggregate-split-word-index [index : i64] [word : i64]) : i64
   (+ (* index (opt-aggregate-split-word-limit)) word))
 
+(define (opt-aggregate-split-ptr-u64-compat?
+  [a : (& ast.AstType)]
+  [b : (& ast.AstType)]) : bool
+  (match a
+    [(or (Ptr _) (MutPtr _))
+      (match b
+        [(U64) true]
+        [_ false])]
+    [(U64)
+      (match b
+        [(or (Ptr _) (MutPtr _)) true]
+        [_ false])]
+    [_ false]))
+
 (define (opt-aggregate-split-bind-word!
   [type-segment-bases : i64]
   [plan : (& plan OptSplitPlan)]
@@ -4500,7 +4514,14 @@
       [(= (array-ref word-set slot) 0)
         (set! (array-ref word-ty slot) ty)
         (set! (array-ref word-set slot) 1)]
-      [(= (array-ref word-set slot) 1) unit]
+      [(and
+          (= (array-ref word-set slot) 1)
+          (or
+            (opt-type-eq type-segment-bases (array-ref word-ty slot) (& ty))
+            (opt-aggregate-split-ptr-u64-compat?
+              (& (array-ref word-ty slot))
+              (& ty))))
+        unit]
       [else
         (opt-aggregate-split-refuse!
           (&mut cand)
@@ -21473,6 +21494,7 @@
       [(string.eq pass "affine") (Shared)]
       [(string.eq pass "ctor_fwd") (Effect)]
       [(string.eq pass "slot_fwd") (Effect)]
+      [(string.eq pass "group_addrof") (Effect)]
       [(string.eq pass "aggregate_split") (Effect)]
       [(string.eq pass "counter_sink") (Shared)]
       [(string.eq pass "rotation") (Shared)]
@@ -21919,6 +21941,7 @@
 ;; program outside the table's preconditions byte-identical.
 (defstruct OptLicmGlobalFacts
   (clean? bool)
+  (relaxed-clean? bool)
   (mask i64)
   (index opt_i64_i64_map.Map)
   ;; IAG-2. The per-global answer for a global's OWN STORAGE: `obj-mask` is the
@@ -21942,6 +21965,7 @@
 
 (define (opt-licm-global-facts
   [clean? : bool]
+  [relaxed-clean? : bool]
   [cells : OptGlobalCellSummary]
   [mask : i64]
   [obj-mask : i64]
@@ -21953,6 +21977,7 @@
     [obj : OptGlobalModRef cells.obj-mod-ref]
     (OptLicmGlobalFacts
       clean?
+      relaxed-clean?
       mask
       mod-ref.index
       obj.index
@@ -23131,6 +23156,7 @@
 (define (opt-licm-header-slot-source?
   [type-segment-bases : i64]
   [types : (& types OptSsaVarTypes)]
+  [globals : (& globals OptLicmGlobalFacts)]
   [ptrs : (& ptrs OptLicmPtrEnv)]
   [late? : bool]
   [src : (& src ir.CompilerIrValue)]) : bool
@@ -23145,7 +23171,19 @@
         (and
           late?
           (opt-licm-array-header-var? type-segment-bases types ptr-var))
-        (opt-licm-header-slot-ptr-kind? (opt-licm-ptr-lookup ptrs ptr-var)))]
+        (let
+          [kind : OptLicmPtrKind (opt-licm-ptr-lookup ptrs ptr-var)]
+          (match kind
+            [(or (GlobalSlot g) (GlobalDataSlot g))
+              (or
+                globals.clean?
+                globals.relaxed-clean?
+                (not
+                  (opt-global-mod-ref-mask-may-write?
+                    globals.index
+                    globals.mask
+                    g)))]
+            [_ (opt-licm-header-slot-ptr-kind? kind)])))]
     [_ false]))
 
 ;; `Gep <address of a frame object>, <literal>` addresses a FIXED word of that
@@ -27135,6 +27173,7 @@
               (opt-licm-header-slot-source?
                 cfg.type-segment-bases
                 types
+                globals
                 ptrs
                 (opt-licm-mode-late? cfg.licm-mode)
                 (& src)))
@@ -27151,6 +27190,7 @@
             (opt-licm-header-slot-source?
               cfg.type-segment-bases
               types
+              globals
               ptrs
               true
               (& src))))
@@ -29377,6 +29417,7 @@
         [globals : OptLicmGlobalFacts
           (opt-licm-global-facts
             globals-clean?
+            globals-clean-relaxed?
             (owned_view.compiler-owned-reference-shared-view global-cells)
             cell-writes
             obj-writes
@@ -118887,7 +118928,9 @@
   [has-literal : bool]
   [instr : ir.CompilerIrInstr]) : bool
   (match instr
-    [(Gep _ (or (String _) (StrDesc _)) (I64 0) _) false]
+    [(Gep _ (String _) (I64 0) _) false]
+    [(Gep _ (StrDesc _) (I64 _) _) false]
+    [(Mov _ (StrDesc _) _) false]
     [(Pack _ values _)
       (not
         (and

@@ -240,7 +240,7 @@ write_fallback_differential_expected() {
         "$_source" "$WORKDIR" "$_name" >> "$DIFFERENTIAL_EXPECTED"
 }
 write_differential_expected ordinary tests/integration/hello.tl
-write_fallback_differential_expected string_data tests/integration/string_length.tl
+write_differential_expected string_data tests/integration/string_length.tl
 write_differential_expected string_record_extent tests/integration/string_record_extent.tl
 write_differential_expected allowed_external "$ALLOWED_EXTERN_SOURCE"
 write_differential_expected nt_create_file "$NT_CREATE_FILE_SOURCE"
@@ -264,7 +264,7 @@ write_fallback_differential_expected u64_float_casts tests/integration/u64_float
 cmp "$DIFFERENTIAL_EXPECTED" "$DIFFERENTIAL_PLAN" ||
     fail "Windows COFF differential plan changed classification"
 
-for differential_case in ordinary string_record_extent \
+for differential_case in ordinary string_data string_record_extent \
     allowed_external nt_create_file; do
     [ -s "$WORKDIR/$differential_case.direct.obj" ] ||
         fail "differential direct object missing: $differential_case"
@@ -275,7 +275,7 @@ for differential_case in ordinary string_record_extent \
     [ ! -e "$WORKDIR/$differential_case.forced-unused.obj" ] ||
         fail "differential forced row wrote an object: $differential_case"
 done
-for differential_case in string_data nt_open_file float_position runtime_trap wide_immediate branch_phi_switch \
+for differential_case in nt_open_file float_position runtime_trap wide_immediate branch_phi_switch \
     tail_call register_group pointer_copy bounds_check string_match \
     u64_float_casts; do
     [ -s "$WORKDIR/$differential_case.direct.s" ] ||

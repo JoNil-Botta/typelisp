@@ -63963,7 +63963,7 @@ done:
         (ir.compiler-ir-label "sl_data")
         (opt-test-instrs-with-tail
           (irt.instrs (string.copy (& case.body)))
-          (ir.CompilerIrInstr.Mov 0 (String (string.copy (& case.text))) (Str)))))
+          (ir.CompilerIrInstr.Mov 0 (StrDesc (string.copy (& case.text))) (Str)))))
     (string.copy (& case.params))
     (string.copy (& case.expected))
     (string.copy (& case.label))))
@@ -64306,7 +64306,7 @@ done:
           (opt-test-instrs-with-tail
             (irt.instrs
               "%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n%4 = load %3 : u32\nreturn")
-            (ir.CompilerIrInstr.Gep 1 (String "abcd") (I64 0) (U8)))))
+            (ir.CompilerIrInstr.Gep 1 (StrDesc "abcd") (I64 0) (U8)))))
       ""
       "%4 = mov 1684234849 : u32"
       "direct literal descriptor")
@@ -64327,7 +64327,7 @@ done:
           (opt-test-instrs-with-tail
             (irt.instrs
               "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\njump sl_data_next")
-            (ir.CompilerIrInstr.Mov 0 (String "abcd") (Str))))
+            (ir.CompilerIrInstr.Mov 0 (StrDesc "abcd") (Str))))
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "sl_data_next")
           (irt.instrs "%3 = gep %2, 1 : u8\n%4 = load %3 : u16\nreturn")))

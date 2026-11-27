@@ -69393,6 +69393,8 @@
 ;; decouples store addresses from nearby loads (avoiding 4K/32K store-to-load
 ;; aliasing hazards), keeps loads and stores balanced per cycle on L1D-resident
 ;; loops, and uses only 4 live result vector registers so nothing spills.
+;; Require the single VectorStore to sit at (- last 1) so lifting it out of
+;; body-seq cannot move a store past a later VectorLoad in the same gang.
 (define (opt-unroll-simd-store-pipeline-depth
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [last : i64]
@@ -69411,7 +69413,10 @@
             [(None) unit])
           (match (ir.compiler-ir-instr-seq-borrow instrs index)
             [(VectorLoad _ _ _ _ _) (+= loads 1)]
-            [(VectorStore _) (+= stores 1)]
+            [(VectorStore _)
+              (if (= index (- last 1))
+                (+= stores 1)
+                (return 0))]
             [(or (VectorBinOp _) (Mov _ _ _)) unit]
             [_ (return 0)]))
         (if (and (>= loads 2) (= stores 1))

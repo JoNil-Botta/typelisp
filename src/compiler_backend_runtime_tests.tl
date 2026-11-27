@@ -69,7 +69,7 @@
     [linux : String
       (runtime_linux.compiler-backend-runtime-data (& features) false)]
     [windows : String
-      (runtime_windows.compiler-backend-runtime-data (& features))]
+      (runtime_windows.compiler-backend-runtime-data (& features) false)]
     [header : String
       ".L_tl_global_aggregate_arena:
     .quad 0
@@ -133,11 +133,11 @@
     [linux-min-data : String
       (runtime_linux.compiler-backend-runtime-data (& minimal) false)]
     [windows-min-data : String
-      (runtime_windows.compiler-backend-runtime-data (& minimal))]
+      (runtime_windows.compiler-backend-runtime-data (& minimal) false)]
     [linux-full-data : String
       (runtime_linux.compiler-backend-runtime-data (& full) false)]
     [windows-full-data : String
-      (runtime_windows.compiler-backend-runtime-data (& full))]
+      (runtime_windows.compiler-backend-runtime-data (& full) false)]
     [linux-min-functions : String
       (runtime_linux.compiler-backend-runtime-functions (& minimal))]
     [windows-min-functions : String

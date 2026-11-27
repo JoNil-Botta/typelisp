@@ -2217,11 +2217,8 @@
     [fields : (Ptr u64)
       (unsafe
         (int->ptr pools-address : (Ptr u64)))]
-    [array-descriptor : u64
-      (unsafe
-        (ptr-read (ptr-offset fields field-index)))]
     (unsafe
-      (ptr-read (int->ptr array-descriptor : (Ptr u64))))))
+      (ptr-read (ptr-offset fields field-index)))))
 
 (define (ctfe-env-syntax-expr-cell-address-live [env : (& env CtfeEnv)]) : u64
   (ctfe-pool-context-cell-address-at

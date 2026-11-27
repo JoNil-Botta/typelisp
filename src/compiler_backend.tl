@@ -23444,6 +23444,15 @@
         [shrinkwrap-state-admissible? : bool
           (be_scalar.compiler-backend-prepare-shrinkwrap-admission!
             function-state)]
+        [_compact-switch : unit
+          (be_state.compiler-backend-function-scratch-set-bool!
+            function-state
+            be_state.compiler-backend-scratch-bool-compact-switch
+            (match (& raw-blocks)
+              [(Array seq)
+                (be_facts.compiler-backend-compact-switch-blocks?
+                  backend-state
+                  seq)]))]
         ;; GAP9: fold constant gep index offsets into addressing displacements
         ;; BEFORE the register plan, so liveness sees the folded program (the
         ;; shared counter stays live; the offset adds vanish).
@@ -26769,7 +26778,9 @@ tl_shared_object_init:
                                     (be_state.compiler-backend-state-closed-executable?
                                       program-index.backend-state)
                                     (be_state.compiler-backend-state-archive-runtime?
-                                      program-index.backend-state))
+                                      program-index.backend-state)
+                                    (not
+                                      (or crt-entry target-policy.shared-object)))
                                   "")))
                             (cond
                               [(not emit-entry) ""]
@@ -28587,5 +28598,5 @@ tl_shared_object_init:
 
 (define (compiler-backend-test-get-compiler-backend-rsp-rebase-no-push) : (__tl_dyn-array
     String)
-  (be_state.compiler-backend-string-array-shared-view
-    (& be_peephole.compiler-backend-rsp-rebase-no-push)))
+  (unsafe
+    (ptr-read (ptr-addr-of be_peephole.compiler-backend-rsp-rebase-no-push))))

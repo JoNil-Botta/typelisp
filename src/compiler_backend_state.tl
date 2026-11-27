@@ -292,18 +292,6 @@
 (defmacro (compiler-backend-global-shared-view [place : Expr]) : Expr
   `(owned_view.compiler-owned-shared-view ,place))
 
-(define (compiler-backend-i64-array-shared-view
-  [items : (& items (__tl_dyn-array i64))]) : (__tl_dyn-array i64)
-  (unsafe
-    (ptr-read
-      (ptr-cast (__tl_array-data (array items)) : (Ptr (__tl_dyn-array i64))))))
-
-(define (compiler-backend-string-array-shared-view
-  [items : (& items (__tl_dyn-array String))]) : (__tl_dyn-array String)
-  (unsafe
-    (ptr-read
-      (ptr-cast (__tl_array-data (array items)) : (Ptr (__tl_dyn-array String))))))
-
 (define (compiler-backend-string-shared-view [value : (& value str)]) : String
   (if (= (comptime (size-of (type String))) 16)
     (unsafe
@@ -2669,8 +2657,10 @@
 ;; tier borrows an occupied register (see compiler-backend-scavenge-reg).
 (define compiler-backend-scratch-bool-pair-emission : i64
   6)
-(define compiler-backend-scratch-bool-count : i64
+(define compiler-backend-scratch-bool-compact-switch : i64
   7)
+(define compiler-backend-scratch-bool-count : i64
+  8)
 (define compiler-backend-scratch-i64-array-emergency-regs : i64
   0)
 (define compiler-backend-scratch-i64-array-const-hoist-site-points : i64

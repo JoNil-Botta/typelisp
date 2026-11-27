@@ -1978,16 +1978,6 @@
                   (__tl_array-data data-cell)
                   : (Ptr TcTypeEnvScopedStateData))))
             : i64))]
-      [carrier-cell : (__tl_dyn-array TcTypeEnvScopedCarrier)
-        (__tl_make-array TcTypeEnvScopedCarrier 1)]
-      [carrier-address : i64
-        (cast
-          (unsafe
-            (ptr->int
-              (ptr-cast
-                (__tl_array-data carrier-cell)
-                : (Ptr TcTypeEnvScopedCarrier))))
-          : i64)]
       [dummy-env : TcTypeEnv (TcTypeEnv 0 -1 0)]
       [dense-indices : (__tl_dyn-array i64)
         (__tl_make-array i64 tc-type-env-scoped-dense-lookup-capacity)]
@@ -2012,6 +2002,20 @@
           0
           0
           0)]
+      [carrier-cell : (__tl_dyn-array TcTypeEnvScopedCarrier)
+        (__tl_make-array
+          (TcTypeEnvScopedCarrier
+            dummy-env
+            (TcTypeEnvScopedSidecar dummy-env dummy-stack 0)
+            false))]
+      [carrier-address : i64
+        (cast
+          (unsafe
+            (ptr->int
+              (ptr-cast
+                (__tl_array-data carrier-cell)
+                : (Ptr TcTypeEnvScopedCarrier))))
+          : i64)]
       (set!
         (array-ref visible-cache 0)
         (TcTypeEnvScopedVisibleCache false -1 -1 -1 -1 -1 false))
@@ -2021,12 +2025,6 @@
       (set!
         (array-ref outlives-lifetime-cache 0)
         (TcTypeEnvScopedOutlivesLifetimeCache false -1 -1 -1 -1 -1 -1 false))
-      (set!
-        (array-ref carrier-cell 0)
-        (TcTypeEnvScopedCarrier
-          dummy-env
-          (TcTypeEnvScopedSidecar dummy-env dummy-stack 0)
-          false))
       (set!
         (array-ref data-cell 0)
         (TcTypeEnvScopedStateData
@@ -29583,20 +29581,40 @@
       -1
       scoped-state.address)))
 
+(defmacro (tc-type-env-store-field-ptr
+  [handle : comptime.Expr]
+  [field : comptime.Expr]
+  [_T : type]) : comptime.Expr
+  `(unsafe
+    (ptr-cast
+      (ptr-offset
+        (int->ptr (cast ,handle : u64) : (MutPtr u8))
+        (comptime (offset-of (type TcTypeEnvStore) ,field)))
+      : (MutPtr ,_T))))
+
 (define (tc-type-env-structural-session [env : TcTypeEnv]) : cis.InternStructuralSessionHandle
   (cis.InternStructuralSessionHandle
     (unsafe
-      (ptr-read (ptr-offset (int->ptr env.store : (Ptr i64)) 9)))))
+      (ptr-read
+        (tc-type-env-store-field-ptr env.store structural-session-address i64)))))
 
 (define (tc-type-env-topenv-membership-state [env : TcTypeEnv]) : TcTopEnvMembershipState
   (TcTopEnvMembershipState
     (unsafe
-      (ptr-read (ptr-offset (int->ptr env.store : (Ptr i64)) 7)))))
+      (ptr-read
+        (tc-type-env-store-field-ptr
+          env.store
+          topenv-membership-state-address
+          i64)))))
 
 (define (tc-type-env-type-resolution-cache-state [env : TcTypeEnv]) : TcTypeResolutionCacheState
   (TcTypeResolutionCacheState
     (unsafe
-      (ptr-read (ptr-offset (int->ptr env.store : (Ptr i64)) 10)))))
+      (ptr-read
+        (tc-type-env-store-field-ptr
+          env.store
+          type-resolution-cache-state-address
+          i64)))))
 
 (defmacro (tc-type-env-scoped-state [env : Expr]) : Expr
   `(TcTypeEnvScopedState ,(comptime.expr-struct-get env "abi-pad")))
@@ -29606,7 +29624,10 @@
   [state : TcTopEnvMembershipState]) : unit
   (unsafe
     (ptr-write!
-      (ptr-offset (int->ptr env.store : (MutPtr i64)) 7)
+      (tc-type-env-store-field-ptr
+        env.store
+        topenv-membership-state-address
+        i64)
       state.address)))
 
 (define (tc-type-env-store-grow-bindings!
@@ -29713,16 +29734,17 @@
   [store-handle : i64]
   [binding : TcTypeEnvBinding]) : i64
   (let
-    [store-words : (MutPtr i64)
-      (unsafe
-        (int->ptr (cast store-handle : u64) : (MutPtr i64)))]
+    [len-ptr : (MutPtr i64)
+      (tc-type-env-store-field-ptr store-handle binding-len i64)]
+    [cap-ptr : (MutPtr i64)
+      (tc-type-env-store-field-ptr store-handle binding-capacity i64)]
     [index : i64
       (unsafe
-        (ptr-read (ptr-offset store-words 2)))]
+        (ptr-read len-ptr))]
     (if (<
       index
       (unsafe
-        (ptr-read (ptr-offset store-words 1))))
+        (ptr-read cap-ptr)))
       unit
       (let
         [store : TcTypeEnvStore (tc-type-env-store-read store-handle)]
@@ -29733,10 +29755,13 @@
       [items : (__tl_dyn-array TcTypeEnvBinding)
         (unsafe
           (ptr-read
-            (ptr-cast store-words : (Ptr (__tl_dyn-array TcTypeEnvBinding)))))]
+            (tc-type-env-store-field-ptr
+              store-handle
+              bindings
+              (__tl_dyn-array TcTypeEnvBinding))))]
       (set! (array-ref items index) binding)
       (unsafe
-        (ptr-write! (ptr-offset store-words 2) (+ index 1)))
+        (ptr-write! len-ptr (+ index 1)))
       (unsafe
         (cast
           (ptr->int
@@ -32477,17 +32502,15 @@
 
 (define (tc-chain-store-owner [store-handle : i64]) : i64
   (unsafe
-    (ptr-read (ptr-offset (int->ptr (cast store-handle : u64) : (Ptr i64)) 6))))
+    (ptr-read (tc-type-env-store-field-ptr store-handle owner-arena i64))))
 
 (define (tc-chain-state-address [store-handle : i64]) : i64
   (unsafe
-    (ptr-read (ptr-offset (int->ptr (cast store-handle : u64) : (Ptr i64)) 8))))
+    (ptr-read (tc-type-env-store-field-ptr store-handle chain-state i64))))
 
 (define (tc-chain-state-set! [store-handle : i64] [addr : i64]) : unit
   (unsafe
-    (ptr-write!
-      (ptr-offset (int->ptr (cast store-handle : u64) : (MutPtr i64)) 8)
-      addr)))
+    (ptr-write! (tc-type-env-store-field-ptr store-handle chain-state i64) addr)))
 
 (define (tc-chain-state-read [addr : i64]) : TcChainIndex
   (unsafe
@@ -89246,6 +89269,14 @@
   [env : TcTypeEnv]
   [mutable : bool]
   [place : ast.AstExpr]) : ResultTcType
+  (tc-place-value-type-with-access ctx env mutable false place))
+
+(define (tc-place-value-type-with-access
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [mutable : bool]
+  [push? : bool]
+  [place : ast.AstExpr]) : ResultTcType
   (match (ast.ast-expr-unspan-with-segment-bases
     (tc-context-expr-segment-bases ctx)
     (& place))
@@ -89255,10 +89286,11 @@
           (tc-context-structural-session ctx)
           name)
           [(ResultTcExprId.Ok virtual-id)
-            (tc-replace-place-value-type-with-access
+            (tc-place-value-type-with-access
               ctx
               env
               mutable
+              push?
               (ast.ast-expr-segment-bases-get
                 (tc-context-expr-bases ctx)
                 virtual-id))]
@@ -89291,16 +89323,19 @@
               (ResultTcType.Err
                 (tc-kind-message
                   (cdiag.CompilerTypecheckKind.BorrowViolation)
-                  "typecheck: replace! requires mutable place access"))]
+                  (if push?
+                    "typecheck: __tl_array-push! requires mutable place access"
+                    "typecheck: replace! requires mutable place access")))]
             [_ (ResultTcType.Ok (tc-resolve-type ctx ty))])))]
     [(ast.AstExpr.StructGet receiver-box field)
       (let
         [receiver-ty : ast.AstType
           (try
-            (tc-replace-place-value-type-with-access
+            (tc-place-value-type-with-access
               ctx
               env
               mutable
+              push?
               (ast.ast-expr-segment-bases-get
                 (tc-context-expr-bases ctx)
                 receiver-box)))]
@@ -89315,10 +89350,11 @@
       (let
         [receiver-ty : ast.AstType
           (try
-            (tc-replace-place-value-type-with-access
+            (tc-place-value-type-with-access
               ctx
               env
               mutable
+              push?
               (ast.ast-expr-segment-bases-get
                 (tc-context-expr-bases ctx)
                 receiver-box)))]
@@ -89349,7 +89385,10 @@
               (try (tc-array-set-receiver ctx array-ty))]
             (match receiver
               [(TcArrayReceiver _ elem-ty) (ResultTcType.Ok elem-ty)]))
-          (ResultTcType.Err "typecheck: replace! array index must be integer")))]
+          (ResultTcType.Err
+            (if push?
+              "typecheck: __tl_array-push! array index must be integer"
+              "typecheck: replace! array index must be integer"))))]
     [(ast.AstExpr.BoxGet receiver-box)
       (tc-box-set-inner-type
         ctx
@@ -89358,7 +89397,13 @@
       (tc-box-set-inner-type
         ctx
         (try (tc-deref-place-receiver-type ctx env mutable receiver-box)))]
-    [_ (ResultTcType.Err "typecheck: replace! target must be a mutable place")]))
+    [_
+      (ResultTcType.Err
+        (if push?
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.Place)
+            "typecheck: __tl_array-push! target must be a mutable place")
+          "typecheck: replace! target must be a mutable place"))]))
 
 ;; The type of the storage `(deref receiver)` dereferences, as a place's value
 ;; type follows its parent place's (`tc-selected-place-box`). A projection
@@ -89503,6 +89548,14 @@
     [array-ty (try (tc-expr-id ctx env array-box))]
     [_admission : unit (try (tc-place-mutation-admission ctx env (& array)))]
     [receiver (try (tc-array-push-receiver ctx array-ty))]
+    [_place-ty : ast.AstType
+      (try
+        (tc-place-value-type-with-access
+          ctx
+          env
+          true
+          true
+          (tc-context-expr-get ctx array-box)))]
     (match receiver
       [(TcArrayReceiver container-ty elem-ty)
         (let
@@ -112432,11 +112485,13 @@
   `(array-ref
     (unsafe
       (ptr-read
-        (ptr-offset
-          (int->ptr
-            (cast (tc-macro-import-index-state-address ,state) : u64)
-            : (Ptr (__tl_dyn-array i64)))
-          8)))
+        (ptr-cast
+          (ptr-offset
+            (int->ptr
+              (cast (tc-macro-import-index-state-address ,state) : u64)
+              : (Ptr u8))
+            (comptime (offset-of (type TcMacroImportIndexStateData) control)))
+          : (Ptr (__tl_dyn-array i64)))))
     ,index))
 
 (define (tc-macro-import-index-control-set!
@@ -112447,53 +112502,53 @@
     (array-ref
       (unsafe
         (ptr-read
-          (ptr-offset
-            (int->ptr
-              (cast (tc-macro-import-index-state-address state) : u64)
-              : (Ptr (__tl_dyn-array i64)))
-            8)))
+          (ptr-cast
+            (ptr-offset
+              (int->ptr
+                (cast (tc-macro-import-index-state-address state) : u64)
+                : (Ptr u8))
+              (comptime (offset-of (type TcMacroImportIndexStateData) control)))
+            : (Ptr (__tl_dyn-array i64)))))
       index)
     value))
 
 (defmacro (tc-macro-import-index-array [state : Expr] [field : Expr]) : Expr
   (match field
     [(comptime.Expr.Var name)
-      (let
-        [index : i64
-          (match name
-            ["alias-module-keys" 0]
-            ["alias-qualifier-keys" 1]
-            ["alias-values" 2]
-            ["unqualified-module-keys" 3]
-            ["unqualified-name-keys" 4]
-            ["unqualified-values" 5]
-            ["flat-module-keys" 6]
-            ["flat-values" 7]
-            [_ -1])]
-        (if (< index 0)
-          (if (string.eq name "field")
-            `(unsafe
-              (ptr-read
-                (int->ptr
-                  (cast (tc-macro-import-index-state-address ,state) : u64)
-                  : (Ptr (__tl_dyn-array i64)))))
-            (comptime.comptime-error
-              (comptime.string-append "unknown macro import index array: " name)))
-          (if (string.eq name "flat-values")
-            `(unsafe
-              (ptr-read
+      (match name
+        ["field"
+          `(unsafe
+            (ptr-read
+              (int->ptr
+                (cast (tc-macro-import-index-state-address ,state) : u64)
+                : (Ptr (__tl_dyn-array i64)))))]
+        ["flat-values"
+          `(unsafe
+            (ptr-read
+              (ptr-cast
                 (ptr-offset
                   (int->ptr
                     (cast (tc-macro-import-index-state-address ,state) : u64)
-                    : (Ptr (__tl_dyn-array MacroFlatImportTargetList)))
-                  7)))
-            `(unsafe
-              (ptr-read
+                    : (Ptr u8))
+                  (comptime
+                    (offset-of (type TcMacroImportIndexStateData) flat-values)))
+                : (Ptr (__tl_dyn-array MacroFlatImportTargetList)))))]
+        [(or "alias-module-keys" "alias-qualifier-keys" "alias-values"
+             "unqualified-module-keys" "unqualified-name-keys"
+             "unqualified-values" "flat-module-keys")
+          `(unsafe
+            (ptr-read
+              (ptr-cast
                 (ptr-offset
                   (int->ptr
                     (cast (tc-macro-import-index-state-address ,state) : u64)
-                    : (Ptr (__tl_dyn-array i64)))
-                  ,(comptime.expr-int index)))))))]
+                    : (Ptr u8))
+                  (comptime
+                    (offset-of (type TcMacroImportIndexStateData) ,field)))
+                : (Ptr (__tl_dyn-array i64)))))]
+        [_
+          (comptime.comptime-error
+            (comptime.string-append "unknown macro import index array: " name))])]
     [_ (comptime.comptime-error "macro import index expects a field name")]))
 
 (define (macro-unqualified-import-cache-storage-ensure! [state : TcMacroState]) : unit

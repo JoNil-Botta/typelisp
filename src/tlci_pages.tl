@@ -128,14 +128,7 @@
 (define (tlci-pages-array-ptr [bytes : (& bytes (__tl_dyn-array u8))]) : (Ptr
     u8)
   (unsafe
-    (ptr-cast
-      (__tl_array-data
-        (unsafe
-          (ptr-read
-            (ptr-cast
-              (__tl_array-data (array bytes))
-              : (Ptr (__tl_dyn-array u8))))))
-      : (Ptr u8))))
+    (ptr-cast (__tl_array-data (deref bytes)) : (Ptr u8))))
 
 (unsafe
   (extern (tlci-pages-runtime-copy-bytes!

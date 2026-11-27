@@ -20,33 +20,93 @@ no runtime type tagging, no garbage collector, and no interpreter.
 
 ### Design goals
 
-The language is built around these pillars; later sections give the binding
-contracts for each.
+The language is built around these ten pillars; later sections give the
+binding contracts for each. They are decision criteria and measured targets,
+not a claim that every current implementation already meets them: section 8
+records the implemented subset.
 
-- **Typed.** Every expression has a known type at compile time; no runtime
-  type tagging.
-- **Native.** Programs compile straight to x86_64 machine code for
-  `linux-x86_64` and `windows-x86_64`. No bytecode VM, no interpreter, no
-  garbage collector.
-- **Self-hosted, zero dependencies.** Compiler, stdlib, tooling, and tests
-  are written in TypeLisp; each published stage0 builds its own successor.
-  The only build inputs are the native assembler/linker toolchain.
-- **Safe.** Safe code has no undefined behavior (see the table below).
-  Ownership, moves, borrows, lifetimes, and arena regions are checked
-  statically, in the spirit of Rust but with arenas instead of general
-  `free` or garbage collection.
-- **Comptime as the abstraction mechanism.** No source-level generics,
-  traits, interfaces, or `impl`; compile-time generation and typed macros
-  produce concrete declarations (section 3.7).
-- **SPMD data parallelism.** ISPC-style `foreach`/`spmd-reduce`/`spmd-scan`/`spmd-compact`
-  with uniform/varying semantics and scalar-equivalent SIMD lowering
-  (section 5.15).
-- **Module identity.** C3-style modules where module identity participates
-  in name resolution and symbol naming (section 4.4).
-- **Fast.** Generated code quality should approach LLVM (`clang -O2`) on
-  the benchmark corpus while compilation itself stays fast. Performance is
-  tracked deterministically through paired C baselines and
-  instruction-count CI gates.
+- **C-class control and native layout.** Programs compile straight to x86_64
+  machine code for `linux-x86_64` and `windows-x86_64`, and structs and enums
+  keep their declared native/C layout. There is no bytecode VM, interpreter,
+  or garbage collector, and no hidden representation change such as implicit
+  boxing (sections 3.5.3 and 4.7.3). This does not inherit C's undefined
+  behavior into safe code.
+- **Rust-class safety and usability.** Every expression has a known type at
+  compile time; there is no runtime type tagging. Safe code has no undefined
+  behavior (see the table below). Ownership, moves, borrows, lifetimes, and
+  arena regions are checked statically, in the spirit of Rust but with arenas
+  instead of general `free` or garbage collection. Usability means
+  diagnostics, workflows, documentation, and ordinary API use meet a
+  comparable practical standard without importing Rust's language
+  complexity.
+- **`clang -O2`-class generated-code performance with fast compilation.**
+  Generated code quality is a measured target, approaching `clang -O2` on the
+  benchmark corpus and tracked deterministically through paired C baselines
+  and instruction-count CI gates. It is not a claim that every current
+  program already meets it. Compilation itself stays fast as an independent
+  guarded target, and optimization work accounts for both.
+- **Lisp simplicity and minimal magic.** The language keeps a small core of
+  explicit, inspectable mechanisms. Ordinary data does not acquire hidden
+  heap identity, and the compiler does not silently insert pointers, boxes,
+  or other representation changes.
+- **Zig-style comptime expressed as Lisp macros.** No source-level generics,
+  traits, interfaces, or `impl`; compile-time generation and typed expression
+  or declaration macros produce concrete declarations (sections 3.7 and
+  5.17).
+- **ISPC-style SPMD.** One source model with
+  `foreach`/`spmd-reduce`/`spmd-scan`/`spmd-compact` uniform/varying semantics
+  and scalar-equivalent SIMD lowering for supported subsets (section 5.15).
+  Gaps are stated honestly in section 8 rather than silently scalarized.
+- **Full self-hosting and zero package dependencies.** Compiler, stdlib,
+  tooling, and tests are written in TypeLisp; each published stage0 builds
+  its own successor. Host OS interfaces and the documented native
+  assembler/linker inputs are distinguished from package dependencies until
+  owned object/linker chains remove them.
+- **Deterministic, native Linux/Windows tooling.** Identities, diagnostics,
+  and artifacts where specified are reproducible, and supported behavior is
+  equivalent on both native targets. This does not require byte-identical
+  binaries across different ABIs.
+- **Zero is initialization.** The all-zero state of every ZII storage type is
+  valid, safely overwritable, and safely discardable without hidden
+  construction, allocation, or cleanup (section 5.12.1). It does not require
+  a compiler-special `(init)` expression, silently choose a domain
+  constructor, or make a checked non-null reference readable before explicit
+  initialization.
+- **Arena-based allocation and reclamation.** There is no garbage collector
+  and no general-purpose per-object `free`: allocation is explicit, ordinary
+  data does not acquire hidden heap identity, and memory is reclaimed through
+  program-lifetime, scoped, first-class, or atomic arenas under the checked
+  ownership and lifetime model (section 7).
+
+C3-style module identity remains a binding design rule rather than a pillar:
+module identity participates in name resolution and symbol naming (section
+4.4).
+
+### Recursive native layout and explicit indirection
+
+Structs and enums use ordinary explicit native layout. The compiler never
+silently boxes a field or variant, and it never inserts a hidden pointer to
+make a source layout finite.
+
+1. A recursive-by-value cycle is rejected because no finite native layout can
+   contain itself inline (section 4.7.3).
+2. A recursive edge is an explicit finite-size representation supported by
+   the language: a raw pointer field in a C-compatible `(:repr c)` declaration
+   (section 3.4), a checked reference `(& r T)` or `(&mut r T)` (section
+   3.10), or an owning arena-backed indirection such as `(Box T)` (section
+   3.4.1).
+3. C-compatible declarations model C recursive structures through explicit
+   raw pointer fields, preserving the C ABI shape and the ordinary unsafe
+   access rules.
+4. Safe ownership, lifetime, nullability, allocation, and reclamation claims
+   depend on the chosen indirection type. Native C layout alone does not
+   prove any of them, and a raw pointer edge is not documented as safe merely
+   because the layout is finite.
+5. `(Box T)` remains an available arena-owning value type, but it is not the
+   required or defining representation of recursive TypeLisp data.
+
+The same rule covers mutually recursive declarations: every cycle in the
+aggregate layout graph must cross one of those explicit edges.
 
 ### Safe code: no undefined behavior
 
@@ -529,8 +589,12 @@ valid for every later raw-pointer use.
 
 `(Box T)` is an explicit, safe, arena-owned indirection type. A box value is a
 pointer-shaped owning handle to storage that contains one `T`, allocated in
-the active arena. It is the source-level escape hatch for recursive aggregate
-layouts under the default inline aggregate contract.
+the active arena. It is one supported way to cross a recursive aggregate
+layout edge, not hidden boxing: structs and enums keep their declared inline
+native layout, a recursive-by-value cycle is rejected, and a raw pointer in a
+C-compatible `(:repr c)` declaration or a checked reference are equally
+supported finite-size edges (section 1 and section 4.7.3). A box is neither
+required nor the defining representation of recursive data.
 
 `(Box T)` is distinct from every other pointer-like surface:
 
@@ -4866,9 +4930,10 @@ site. Invalid or unresolved types are conservatively `MoveOnly`.
 
 Nested aggregates and lifetime-parameterized `StructArgs`/`EnumArgs` use the
 same rules after substituting their lifetime arguments. A cycle encountered
-while classifying a nominal aggregate is conservatively `MoveOnly`; malformed
-recursive layouts are still rejected by layout checking. Cleanup metadata has
-precedence: a cleanup-owning struct or enum is always `MoveOnly`, even when
+while classifying a nominal aggregate is conservatively `MoveOnly`;
+recursive-by-value layouts are still rejected by layout checking. Cleanup
+metadata has precedence: a cleanup-owning struct or enum is always `MoveOnly`,
+even when
 all of its fields or payloads would otherwise be copyable.
 
 **Move-only leaves and poison.** The following are move-only regardless of
@@ -5344,12 +5409,23 @@ The borrowed `match` inspects `m` without moving it. Payload bindings follow
 the borrowed-pattern binding rule of section 5.13; the `String` payload above
 binds `s` as `(& m str)`.
 
-#### 4.7.3 Recursive aggregate layout and boxed recursion
+#### 4.7.3 Recursive native layout and explicit indirection
 
-Ordinary TypeLisp structs and enums have a default inline layout contract.
-Recursive-by-value aggregate cycles are therefore infinite source layouts and
-must use explicit indirection through `(Box T)`, a raw pointer, or a reference
-edge.
+Ordinary TypeLisp structs and enums have a default inline native layout
+contract. Recursive-by-value aggregate cycles are therefore infinite source
+layouts: the compiler rejects them and never inserts a hidden pointer or box
+to make the layout finite. A recursive edge must be an explicit finite-size
+representation supported by the language:
+
+- A raw pointer field in a C-compatible `(:repr c)` declaration models C
+  recursion with the C ABI shape and the unsafe access rules of section 3.4.
+  It carries no ownership, lifetime, or nullability guarantee.
+- A checked reference field `(& r T)` or `(&mut r T)`, declared through
+  `(:lifetimes ...)`, is a non-owning edge under the borrow and lifetime rules
+  of section 3.10.
+- An owning arena-backed indirection such as `(Box T)` stores only the owning
+  handle, so it may reach the aggregate currently being defined and is
+  reclaimed with its arena (section 3.4.1).
 
 The finite-layout rule is structural:
 
@@ -5362,9 +5438,16 @@ The finite-layout rule is structural:
   without crossing a box, raw pointer, or reference edge is an infinite layout
   and must be rejected.
 - Mutually recursive inline aggregates are checked the same way: every cycle
-  in the aggregate layout graph must cross an explicit indirection edge.
+  in the aggregate layout graph must cross an explicit finite-size edge.
 
 Every default aggregate declaration is checked against this rule.
+
+```lisp test=ignore name=c-recursive-struct-layout-ok reason="positive C-compatible raw-pointer recursive edge"
+(defstruct CNode
+  (:repr c)
+  (value i64)
+  (next (Ptr CNode)))
+```
 
 ```lisp test=ignore name=box-recursive-list-layout-ok reason="positive recursive aggregate layout example"
 (defenum ListI64
@@ -5385,7 +5468,8 @@ Every default aggregate declaration is checked against this rule.
 ```
 
 `BadList` is rejected for inline representation because `BadCons` contains a
-`BadList` payload by value. The accepted spelling is `(Box BadList)`.
+`BadList` payload by value. The accepted forms cross the edge explicitly, for
+example with `(Box BadList)`, a raw pointer, or a checked reference.
 
 ```lisp test=ignore name=box-reject-arena-escape reason="negative Box region escape example"
 (defenum ListI64

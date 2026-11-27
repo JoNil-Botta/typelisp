@@ -7445,6 +7445,27 @@
     (begin
       (__tl_array-push! a 5)
       (array-length a))))")
+    (compiler-typecheck-ok?
+      "(defstruct Holder (items (__tl_dyn-array i64)))
+(define (push-field) : i64
+  (let
+    [h : Holder (Holder (__tl_make-array i64 0))]
+    (__tl_array-push! h.items 5)
+    (array-length h.items)))")
+    (compiler-typecheck-ok?
+      "(defstruct Holder (items (__tl_dyn-array i64)))
+(define (push-mut-field [h : (&mut h Holder)]) : unit
+  (__tl_array-push! h.items 5))")
+    (compiler-typecheck-ok?
+      "(define (push-elem) : i64
+  (let
+    [rows : (__tl_dyn-array (__tl_dyn-array i64))
+      (__tl_make-array (__tl_make-array i64 0))]
+    (__tl_array-push! (array-ref rows 0) 5)
+    (array-length (array-ref rows 0))))")
+    (compiler-typecheck-ok?
+      "(define (push-mut [a : (&mut a (__tl_dyn-array i64))]) : unit
+  (__tl_array-push! a 5))")
     (compiler-typecheck-error-ok?
       "(define (f [a : (__tl_dyn-array i64)]) : i64 (array-ref a true))"
       "typecheck: array index must be integer")
@@ -7468,7 +7489,33 @@
       "typecheck: __tl_array-push! value type mismatch: expected i64, found bool")
     (compiler-typecheck-error-ok?
       "(define (f [a : (Array i64 2)]) : unit (__tl_array-push! a 5))"
-      "typecheck: __tl_array-push! requires dynamic array type")))
+      "typecheck: __tl_array-push! requires dynamic array type")
+    (compiler-typecheck-error-ok?
+      "(define (f) : unit (__tl_array-push! (__tl_make-array i64 0) 5))"
+      "typecheck: __tl_array-push! target must be a mutable place")
+    (compiler-typecheck-error-ok?
+      "(define (mk) : (__tl_dyn-array i64) (__tl_make-array i64 0))
+(define (f) : unit (__tl_array-push! (mk) 5))"
+      "typecheck: __tl_array-push! target must be a mutable place")
+    (compiler-typecheck-error-ok?
+      "(defstruct Holder (items (__tl_dyn-array i64)))
+(define (mk) : Holder (Holder (__tl_make-array i64 0)))
+(define (f) : unit (__tl_array-push! (mk).items 5))"
+      "typecheck: __tl_array-push! target must be a mutable place")
+    (compiler-typecheck-error-ok?
+      "(define (f [a : (& a (__tl_dyn-array i64))]) : unit (__tl_array-push! a 5))"
+      "typecheck: __tl_array-push! requires mutable dynamic array access")
+    (compiler-typecheck-error-ok?
+      "(defstruct Holder (items (__tl_dyn-array i64)))
+(define (f [h : (& h Holder)]) : unit (__tl_array-push! h.items 5))"
+      "typecheck: __tl_array-push! requires mutable place access")
+    (compiler-typecheck-error-ok?
+      "(define (f [rows : (& rows (__tl_dyn-array (__tl_dyn-array i64)))]) : unit
+  (__tl_array-push! (array-ref rows 0) 5))"
+      "typecheck: set! array element requires mutable array access")
+    (compiler-typecheck-error-ok?
+      "(define (f [r : (& r (__tl_dyn-array i64))]) : unit (__tl_array-push! (deref r) 5))"
+      "typecheck: set! deref requires mutable access")))
 
 ;; comptime typecheck rules: a `(comptime ...)` form is typed by its
 ;; inner expression and flows that type to the use site (so an `i64` body is an

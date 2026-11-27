@@ -43,6 +43,25 @@ native assembler/linker toolchain. This keeps the project simple, auditable, and
 free from supply-chain risk. If you need functionality that isn't available,
 implement it in TypeLisp.
 
+## Project Goals as Review Criteria
+
+Evaluate language, compiler, tooling, documentation, and performance changes
+against the ten project pillars in [README.md](README.md#why-typelisp):
+C-class control and native layout, Rust-class safety and usability,
+`clang -O2`-class generated-code performance with fast compilation, Lisp
+simplicity and minimal magic, Zig-style comptime expressed as Lisp macros,
+ISPC-style SPMD, full self-hosting and zero package dependencies,
+deterministic native Linux/Windows tooling, zero is initialization, and
+arena-based allocation and reclamation.
+
+State in the PR which pillar a change serves and, when it trades one against
+another (for example optimization against compile time), why the trade is
+justified. These are decision criteria and measured targets, not a status
+report: do not turn aspirations such as universal `clang -O2` parity,
+Rust-class usability, or complete SIMD coverage into claims that the current
+implementation already meets them. Describe implemented behavior as
+implemented and link remaining work to an open issue.
+
 ## Implementation Languages Rule
 
 **Implementation, tooling, tests, and build logic must be written in TypeLisp

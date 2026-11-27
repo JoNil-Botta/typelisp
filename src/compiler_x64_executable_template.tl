@@ -113,7 +113,9 @@
   (WindowsRuntimeRegionResetDebugSanitize)
   (WindowsRuntimeRegionResetProfileSanitize)
   (WindowsRuntimeRegionResetProfileDebugSanitize)
-  (LinuxObjectStackBytes))
+  (LinuxObjectStackBytes)
+  (WindowsRuntimeLibcShimDebug)
+  (WindowsRuntimeLibcShimStartupProfileDebug))
 
 (defenum CompilerX64TemplateTarget
   (AnyX64)

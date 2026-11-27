@@ -1,0 +1,4 @@
+# Native integration cases: recursive native layout with explicit finite-size edges.
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+recursive_native_layout|all|0,1,2|tests/integration/recursive_native_layout.tl|42|-|-|-|-

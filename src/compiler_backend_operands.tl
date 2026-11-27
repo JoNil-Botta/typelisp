@@ -4586,9 +4586,6 @@
   (let
     [exclude-mask : i64
       (compiler-backend-scavenge-exclude-mask (& exclude) exclude-n)]
-    [cands : (__tl_dyn-array i64)
-      (be_state.compiler-backend-i64-array-shared-view
-        (& compiler-backend-scavenge-candidate-pool))]
     (if (and
       (not (compiler-backend-scavenge-excluded? exclude exclude-n fallback))
       (compiler-backend-scavenge-reg-free-in-mask? occupied-mask fallback)
@@ -4608,8 +4605,8 @@
           function-state
           be_state.compiler-backend-scratch-i64-scavenge-plan-reg-mask)
         fallback
-        cands
-        (array-length cands)))))
+        (& compiler-backend-scavenge-candidate-pool)
+        (array-length compiler-backend-scavenge-candidate-pool)))))
 
 (define (compiler-backend-scavenge-pick-from-mask
   [function-state : be_state.CompilerBackendFunctionState]
@@ -4742,9 +4739,6 @@
       (if (string.eq dst-home "")
         exclude-n
         (+ exclude-n 1))]
-    [cands : (__tl_dyn-array i64)
-      (be_state.compiler-backend-i64-array-shared-view
-        (& compiler-backend-scavenge-xmm-candidate-pool))]
     [occupied : i64
       (compiler-backend-scavenge-occupied-mask-over-range
         function-state
@@ -4760,7 +4754,7 @@
           (if (be_state.compiler-backend-current-fn-win64? backend-state)
             6
             16)
-          cands)
+          (& compiler-backend-scavenge-xmm-candidate-pool))
         "")]
     (if (string.eq extra "")
       (compiler-backend-scavenge-pick-from-mask
@@ -4769,7 +4763,7 @@
         ex
         ex-n
         fallback
-        cands)
+        (& compiler-backend-scavenge-xmm-candidate-pool))
       extra)))
 
 ;; Side-effect-free twin of the GP picker for fusion admission.  It predicts the

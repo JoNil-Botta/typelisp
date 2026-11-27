@@ -1596,6 +1596,8 @@
   [state : (& state CompilerLoadSessionState)]
   [module-name : (& str)]
   [seen : sym_i64_env.SymI64Env]
+  [stdlib-roots : (& svec.Vec)]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (let
     [addr : i64 (array-ref state.tli-catalog-ptr 0)]
@@ -1655,7 +1657,16 @@
               (compiler-load-session-state-note-tli-stdlib-paths!
                 state
                 (& paths))
-              (Ok decls paths modules next-seen)]
+              (compiler-load-tli-complete-source-stdlib!
+                state
+                ""
+                stdlib-roots
+                cfgs
+                pools
+                decls
+                paths
+                modules
+                next-seen)]
             [(Err failure)
               (Err
                 (box
@@ -5954,9 +5965,11 @@
         (compiler-load-tli-has-module? (& mod-name))
         (return
           (compiler-load-session-state-tli-hydrate-module!
-            (& compiler-load-active-session-state)
+            (& (compiler-load-serial-test-session-state))
             (& mod-name)
             seen
+            stdlib-roots
+            cfgs
             (ast.ast-node-pool-context-capture-active))))))
   (let
     [suffix : String (compiler-load-stdlib-suffix (string.copy path))]
@@ -6031,6 +6044,8 @@
             (& load-state)
             (& mod-name)
             seen
+            stdlib-roots
+            cfgs
             pools)))))
   (let
     [suffix : String (compiler-load-stdlib-suffix (string.copy path))]
@@ -11155,6 +11170,8 @@
                           (& traversal.load-state)
                           (& import-path)
                           seen
+                          stdlib-roots
+                          cfgs
                           pools)
                         (compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-state-and-pools
                           (owned_view.compiler-owned-shared-view
@@ -12917,6 +12934,35 @@
                           "compiler-load: cannot read import "
                           path)))))])))))))
 
+(define (compiler-load-source-fallback-with-pools
+  [state : (& CompilerLoadSessionState)]
+  [path : (& str)]
+  [seen : sym_i64_env.SymI64Env]
+  [stdlib-roots : (& svec.Vec)]
+  [expected-module : ast.AstMaybeModuleName]
+  [cfgs : sym_i64_env.SymI64Env]
+  [module-id-fallback : String]
+  [source-module-fallback : (& str)]
+  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-fallback-with-pools
+    (compiler-load-session-state-shared-view state)
+    (string.copy path)
+    (compiler-load-source-path-id path)
+    seen
+    stdlib-roots
+    expected-module
+    (& (compiler-load-dirname path))
+    cfgs
+    true
+    pools
+    cbi.compiler-builtin-id-fix-empty
+    module-id-fallback
+    (string.copy source-module-fallback)
+    (if (= (string.string-length source-module-fallback) 0)
+      cbi.compiler-builtin-id-fix-empty
+      -1)
+    cbi.compiler-builtin-id-fix-empty))
+
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-fallback
   [path : (& str)]
   [seen : sym_i64_env.SymI64Env]
@@ -12928,26 +12974,109 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : ResultCompilerLoadWithPaths
-      (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-fallback-with-pools
-        (compiler-load-active-session-state-shared-view)
-        (string.copy path)
-        (compiler-load-source-path-id path)
+      (compiler-load-source-fallback-with-pools
+        (& (compiler-load-serial-test-session-state))
+        path
         seen
         stdlib-roots
         expected-module
-        (& (compiler-load-dirname path))
         cfgs
-        true
-        pools
-        cbi.compiler-builtin-id-fix-empty
         module-id-fallback
-        (string.copy source-module-fallback)
-        (if (= (string.string-length source-module-fallback) 0)
-          cbi.compiler-builtin-id-fix-empty
-          -1)
-        cbi.compiler-builtin-id-fix-empty)]
+        source-module-fallback
+        pools)]
     (ast.ast-node-pool-context-install! pools)
     result))
+
+;; A metadata-only closure can refer to stdlib modules omitted from the TLI
+;; catalog. Load their declarations before the projected imports that use them.
+;; Package dependencies pass their source path for package-relative lookup.
+(define (compiler-load-tli-complete-source-stdlib!
+  [state : (& CompilerLoadSessionState)]
+  [importer-path : (& str)]
+  [stdlib-roots : (& svec.Vec)]
+  [cfgs : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]
+  [modules : ast.AstDeclModuleList]
+  [seen : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
+  (let
+    [pending : (__tl_dyn-array String)
+      (compiler-load-session-state-tli-take-pending-source-stdlib! state)]
+    [out-decls : ast.AstDeclList (ast.ast-decl-list-new)]
+    [out-paths : ast.AstDeclPathList (ast.ast-decl-path-list-new)]
+    [out-modules : ast.AstDeclModuleList (ast.ast-decl-module-list-new)]
+    [out-seen : sym_i64_env.SymI64Env seen]
+    (for [idx (iterator.range 0 (array-length pending))]
+      (let
+        [module-name : (& pending str) (& (array-ref pending idx))]
+        [module-id : i64 (ci.intern (string.copy module-name))]
+        (compiler-load-session-state-tli-note-source-stdlib-needed!
+          state
+          module-name)
+        (unless
+          (sym_i64_env.sym-i64-contains-id out-seen module-id)
+          (let
+            [module-path : String
+              (compiler-load-dotted-module-path-uncached module-name)]
+            (match (if (= (string.string-length importer-path) 0)
+              (ResultPkgResolve.Ok
+                (compiler-load-resolve-stdlib-module-path
+                  module-path
+                  stdlib-roots))
+              (compiler-load-resolve-import-result-with-roots
+                importer-path
+                module-path
+                stdlib-roots))
+              [(Err msg)
+                (return
+                  (Err
+                    (box
+                      (cdiag.compiler-diagnostic-at-start
+                        (string.copy importer-path)
+                        msg))))]
+              [(Ok resolved)
+                (let
+                  [previous : ast.AstNodePoolContext
+                    (ast.ast-node-pool-context-capture-active)]
+                  [loaded : ResultCompilerLoadWithPaths
+                    (compiler-load-source-fallback-with-pools
+                      state
+                      (& resolved)
+                      out-seen
+                      stdlib-roots
+                      (Some module-id)
+                      cfgs
+                      (string.copy module-name)
+                      module-name
+                      pools)]
+                  (ast.ast-node-pool-context-install! previous)
+                  (match loaded
+                    [(Err diag) (return (Err diag))]
+                    [(Ok src-decls src-paths src-modules src-seen)
+                      (set!
+                        out-decls
+                        (compiler-load-decl-list-append
+                          (& out-decls)
+                          (& src-decls)))
+                      (set!
+                        out-paths
+                        (compiler-load-decl-path-list-append
+                          (& out-paths)
+                          (& src-paths)))
+                      (set!
+                        out-modules
+                        (compiler-load-decl-module-list-append
+                          (& out-modules)
+                          (& src-modules)))
+                      (set! out-seen src-seen)]))])))))
+    (if (= (ast.ast-decl-list-len (& out-decls)) 0)
+      (Ok decls paths modules out-seen)
+      (Ok
+        (compiler-load-decl-list-append (& out-decls) (& decls))
+        (compiler-load-decl-path-list-append (& out-paths) (& paths))
+        (compiler-load-decl-module-list-append (& out-modules) (& modules))
+        out-seen))))
 
 (define (compiler-load-entry-file-with-paths-and-roots-cfg
   [path : (& str)]
@@ -13676,91 +13805,42 @@
                   imported-modules
                   import-seen
                   primary-mod-id)
-                (let
-                  [pending-stdlib : (__tl_dyn-array String)
-                    (compiler-load-session-state-tli-take-pending-source-stdlib!
-                      (& compiler-load-active-session-state))]
-                  [out-decls : ast.AstDeclList imported-decls]
-                  [out-paths : ast.AstDeclPathList imported-paths]
-                  [out-modules : ast.AstDeclModuleList imported-modules]
-                  [out-seen : sym_i64_env.SymI64Env import-seen]
-                  (for [idx (iterator.range 0 (array-length pending-stdlib))]
-                    (let
-                      [smod : String
-                        (string.copy (& (array-ref pending-stdlib idx)))]
-                      (compiler-load-session-state-tli-note-source-stdlib-needed!
-                        (& compiler-load-active-session-state)
-                        (& smod))
-                      (let
-                        [smod-id : i64 (ci.intern (string.copy (& smod)))]
-                        (unless
-                          (sym_i64_env.sym-i64-contains-id out-seen smod-id)
-                          (let
-                            [rel-path : String
-                              (compiler-load-dotted-module-path-uncached
-                                (& smod))]
-                            (match (compiler-load-resolve-import-result-with-roots
+                (match (compiler-load-tli-complete-source-stdlib!
+                  (& (compiler-load-serial-test-session-state))
+                  (& resolved)
+                  stdlib-roots
+                  cfgs
+                  pools
+                  imported-decls
+                  imported-paths
+                  imported-modules
+                  import-seen)
+                  [(Err diag) (Err diag)]
+                  [(Ok out-decls out-paths out-modules out-seen)
+                    (match (compiler-load-session-state-surface-summary-find-source
+                      (& compiler-load-active-session-state)
+                      resolved-id)
+                      [(CompilerLoadSomeSurfaceSummary _) unit]
+                      [(CompilerLoadNoSurfaceSummary)
+                        (compiler-load-record-surface-summary!
+                          (&
+                            (compiler-load-surface-summary-from-decls
                               (& resolved)
-                              rel-path
-                              stdlib-roots)
-                              [(Err msg)
-                                (return
-                                  (Err
-                                    (box
-                                      (cdiag.compiler-diagnostic-at-start
-                                        resolved
-                                        msg))))]
-                              [(Ok sres)
-                                (match (compiler-load-file-with-paths-and-roots-expect-cfg-fallback
-                                  (& sres)
-                                  out-seen
-                                  stdlib-roots
-                                  (Some smod-id)
-                                  cfgs
-                                  (string.copy (& smod))
-                                  (& smod))
-                                  [(Err diag) (return (Err diag))]
-                                  [(Ok sdecls spaths smods sseen)
-                                    (set!
-                                      out-decls
-                                      (compiler-load-decl-list-append
-                                        (& sdecls)
-                                        (& out-decls)))
-                                    (set!
-                                      out-paths
-                                      (compiler-load-decl-path-list-append
-                                        (& spaths)
-                                        (& out-paths)))
-                                    (set!
-                                      out-modules
-                                      (compiler-load-decl-module-list-append
-                                        (& smods)
-                                        (& out-modules)))
-                                    (set! out-seen sseen)])]))))))
-                  (match (compiler-load-session-state-surface-summary-find-source
-                    (& compiler-load-active-session-state)
-                    resolved-id)
-                    [(CompilerLoadSomeSurfaceSummary _) unit]
-                    [(CompilerLoadNoSurfaceSummary)
-                      (compiler-load-record-surface-summary!
-                        (&
-                          (compiler-load-surface-summary-from-decls
-                            (& resolved)
-                            resolved-id
-                            (& entry.manifest-dir)
-                            primary-mod-id
-                            primary-mod-id
-                            true
-                            (not
-                              (compiler-load-no-expected-module?
-                                expected-module))
-                            (& out-decls))))])
-                  (ResultCompilerLoadPackageDepImport.Ok
-                    out-decls
-                    out-paths
-                    out-modules
-                    out-seen
-                    primary-mod-id))]))]))))
+                              resolved-id
+                              (& entry.manifest-dir)
+                              primary-mod-id
+                              primary-mod-id
+                              true
+                              (not
+                                (compiler-load-no-expected-module?
+                                  expected-module))
+                              (& out-decls))))])
+                    (ResultCompilerLoadPackageDepImport.Ok
+                      out-decls
+                      out-paths
+                      out-modules
+                      out-seen
+                      primary-mod-id)])]))]))))
 
 (define (compiler-load-package-expand-include
   [kind : CompilerLoadIncludeKind]
@@ -14020,9 +14100,11 @@
                           seen)]
                       [tli-hit
                         (compiler-load-session-state-tli-hydrate-module!
-                          (& compiler-load-active-session-state)
+                          (& (compiler-load-serial-test-session-state))
                           (& import-path)
                           seen
+                          stdlib-roots
+                          cfgs
                           preload-pools)]
                       [package-externs
                         (match (compiler-load-package-dependency-import!
@@ -16519,13 +16601,14 @@
 
 ;: Whether PATH is the provenance path of a stdlib module hydrated from a
 ;: prebuilt stdlib `.tli` in this session (#8733). The `<tli-stdlib>:` prefix
-;: separates hydrated stdlib declarations from any same-named disk file under
-;: the cwd's `stdlib/`, and rejecting any existing disk file keeps the prefix
-;: unforgeable even if a file bears that literal name.
+;: separates hydrated stdlib declarations from disk files. On Linux, reject
+;: any existing disk file with that literal name to prevent spoofing. Windows
+;: rejects the prefix's characters in filenames, so there is no disk collision
+;: to check. The session registry authenticates the name on both hosts.
 (define (compiler-load-tli-stdlib-provider-path? [path : (& str)]) : bool
   (and
     (compiler-load-string-prefix-at? path "<tli-stdlib>:" 0)
-    (not (io.file-exists? (string.copy path)))
+    (cfg windows true (not (io.file-exists? (string.copy path))))
     (let
       [ids : sym_i64_env.SymI64Env
         (array-ref

@@ -1,0 +1,33 @@
+# A float call must preserve the selected backend gang or report a diagnostic.
+target -
+opt 0 1 2
+
+case stdlib-math-program-count-scalar
+source tests/spmd/stdlib_math_program_count.tl
+mode scalar
+do link-run
+exit 1
+
+case stdlib-math-program-count-simd
+source tests/spmd/stdlib_math_program_count.tl
+mode sse2 avx2 avx512
+exit 1
+in stderr
+contains SPMD float intrinsic requires scalar-reference foreach lowering
+contains cannot preserve program-index or program-count
+
+case stdlib-math-broadcast-scalar
+source tests/spmd/stdlib_math_broadcast.tl
+mode scalar
+do link-run
+exit nonzero
+in stderr
+contains array index out of bounds
+
+case stdlib-math-broadcast-simd
+source tests/spmd/stdlib_math_broadcast.tl
+mode sse2 avx2 avx512
+exit 1
+in stderr
+contains SPMD float intrinsic requires scalar-reference foreach lowering
+contains cannot preserve spmd-broadcast or spmd-shuffle

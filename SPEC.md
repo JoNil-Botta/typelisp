@@ -6423,6 +6423,11 @@ Lane identity forms:
   backend-mode-observable; the compiler need not preserve scalar-equivalent
   exit status, output, or memory contents for them. Safe SPMD programs that
   do not evaluate these forms retain scalar equivalence.
+- Ordinary float bit conversions and square root reached through a `foreach`
+  body or its source helpers can use scalar-reference lowering. In SIMD
+  modes this route requires a body independent of gang identity, lane
+  collectives, and imported SPMD specializations. Combining these operations
+  with a call that requires this route produces a compile-time diagnostic.
 - In `spmd-reduce`, lane identity forms are allowed only in the `value`
   expression. Such a value is pure but backend-mode-observable, so the
   reduced result may differ between scalar and SIMD backend modes.

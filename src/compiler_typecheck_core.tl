@@ -126711,9 +126711,9 @@
     ;; takes its clone-out step from expansion.
     [(or (Break) (Continue) (SpmdReduce _) (SpmdScan _) (SpmdCompact _)
          (SpmdBroadcast _ _) (SpmdShuffle _ _) (WithRegion _ _) (WithResource _)
+         (Quote _) (Quasiquote _) (Unquote _) (UnquoteSplicing _)
          (ForOwnedState _) (ForOwnedStep _) (WithEscape _ _) (WithScratch _))
       true]
-    [(or (Quote _) (Quasiquote _) (Unquote _) (UnquoteSplicing _)) false]
     [_
       (macro-exprs-use-macro?
         ctx
@@ -126727,9 +126727,16 @@
   [decls : ast.AstDeclList]
   [decl : ast.AstDecl]) : bool
   (match decl
-    [(or (Def _ _ _ expr-box) (DefFn _ _ _ _ expr-box _)
-         (DefMacro _ _ _ _ expr-box))
+    [(or (Def _ _ _ expr-box) (DefFn _ _ _ _ expr-box _))
       (macro-node-uses-macro? ctx expr-bases decls expr-box)]
+    [(DefMacro _ _ _ _ expr-box)
+      ;; A quoted template alone must not trigger a transformer body rebuild.
+      (and
+        (macro-expr-id-might-fire?
+          (tc-context-macro-state ctx)
+          expr-bases
+          expr-box)
+        (macro-node-uses-macro? ctx expr-bases decls expr-box))]
     [(Test _ _ _ _) true]
     [(Import decl-meta (Spec kind _ _ _ _))
       (match kind

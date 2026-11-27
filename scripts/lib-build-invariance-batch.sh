@@ -128,28 +128,174 @@ build_invariance_copy_aliases() {
     done < "$_bib_alias_file"
 }
 
+# Compute transitive LOC for every unique `src/` path in column 2 of a corpus or
+# prepared-cases file, writing `source|loc` rows (or `-1` if unreadable).
+# Uses the same import-closure traversal as verify-integration.sh so heavy
+# compiler-importing tests are isolated and right-sized without hardcoding names.
+build_invariance_write_src_weights() {
+    _bib_weight_input=$1
+    _bib_weight_out=$2
+    _bib_weight_root=${3:-.}
+    awk -F'|' -v root="$_bib_weight_root" '
+        function full_path(rel) {
+            if (root == "" || root == ".") return rel
+            return root "/" rel
+        }
+        function resolve_mod(mod,    p, fp, _line) {
+            if (mod ~ /^stdlib\./ || mod == "stdlib") return ""
+            p = "src" "/" mod ".tl"
+            fp = full_path(p)
+            if ((getline _line < fp) >= 0) {
+                close(fp)
+                return p
+            }
+            p = "src" "/tests/" mod ".tl"
+            fp = full_path(p)
+            if ((getline _line < fp) >= 0) {
+                close(fp)
+                return p
+            }
+            p = mod
+            gsub(/\./, "/", p)
+            p = p ".tl"
+            fp = full_path(p)
+            if ((getline _line < fp) >= 0) {
+                close(fp)
+                return p
+            }
+            return ""
+        }
+        function scan_file(path,    fp, line, n, mod, dep, i, in_str, ch, esc, k, len, rc) {
+            if (path in scanned) return
+            scanned[path] = 1
+            n = 0
+            deg[path] = 0
+            in_str = 0
+            fp = full_path(path)
+            rc = (getline line < fp)
+            if (rc < 0) {
+                lines[path] = -1
+                return
+            }
+            while (rc > 0) {
+                n++
+                if (!in_str && line ~ /^[[:space:]]*(\(cfg[[:space:]]+[^()]+[[:space:]]+)?\(import[[:space:]]+/) {
+                    mod = line
+                    sub(/^[[:space:]]*(\(cfg[[:space:]]+[^()]+[[:space:]]+)?\(import[[:space:]]+\(?/, "", mod)
+                    sub(/[[:space:]\)\r].*/, "", mod)
+                    if (mod != "" && !seen_edge[path SUBSEP mod]++) {
+                        dep = resolve_mod(mod)
+                        if (dep != "" && dep != path) {
+                            deg[path]++
+                            edge[path, deg[path]] = dep
+                        }
+                    }
+                }
+                if (index(line, "\"") > 0) {
+                    len = length(line)
+                    esc = 0
+                    for (k = 1; k <= len; k++) {
+                        ch = substr(line, k, 1)
+                        if (in_str) {
+                            if (esc) { esc = 0 }
+                            else if (ch == "\\") { esc = 1 }
+                            else if (ch == "\"") { in_str = 0 }
+                        } else {
+                            if (ch == ";") { break }
+                            else if (ch == "\"") { in_str = 1 }
+                        }
+                    }
+                }
+                rc = (getline line < fp)
+            }
+            close(fp)
+            lines[path] = n
+            for (i = 1; i <= deg[path]; i++) {
+                scan_file(edge[path, i])
+            }
+        }
+        function trans_loc(src,    qhead, qtail, u, v, i, tot, vis, q) {
+            if (src == "") return -1
+            if (src in cache) return cache[src]
+            scan_file(src)
+            if (lines[src] <= 0) {
+                cache[src] = -1
+                return -1
+            }
+            qhead = 1
+            qtail = 1
+            q[1] = src
+            vis[src] = 1
+            tot = 0
+            while (qhead <= qtail) {
+                u = q[qhead++]
+                if (lines[u] > 0) tot += lines[u]
+                for (i = 1; i <= deg[u]; i++) {
+                    v = edge[u, i]
+                    if (!(v in vis)) {
+                        vis[v] = 1
+                        q[++qtail] = v
+                    }
+                }
+            }
+            cache[src] = tot
+            return tot
+        }
+        $2 ~ /^src\// && !emitted[$2]++ {
+            print $2 "|" trans_loc($2)
+        }
+    ' "$_bib_weight_input" > "$_bib_weight_out"
+}
+
 # A large source remains the only unique input in its process. Consecutive
 # logical aliases of that input share the fresh output through the ordinary
 # chunk planner; they still count toward the logical-case ceiling. Sources
 # under src/ import the compiler itself and never share a chunk with test
 # programs, so one slow compiler-source chunk cannot carry a test-program tail
-# and a test-program chunk keeps the light memory class.
+# and a test-program chunk keeps the light memory class. Any src/ source with
+# >100k transitive LOC is isolated as a singleton so heavy non-compiler_* tests
+# cannot pile into one multi-entry straggler chunk.
 build_invariance_write_chunks() {
     _bib_chunk_records=$1
     _bib_chunk_dir=$2
     _bib_chunk_size=$3
+    _bib_chunk_weights=${4:-}
+    _bib_chunk_root=${5:-.}
     # A new invocation gets a fresh directory. Reject stale plans rather than
     # deleting a caller-supplied path or accidentally reusing earlier chunks.
     if ! mkdir "$_bib_chunk_dir"; then
         echo "[build-invariance] chunk directory must be fresh: $_bib_chunk_dir" >&2
         return 1
     fi
-    awk -F'|' -v chunk_dir="$_bib_chunk_dir" -v chunk_size="$_bib_chunk_size" '
-        function singleton(name, source) {
-            return name ~ /^selfhost_main_/ || source ~ /^src\/tests\/compiler_[^/]*\.tl$/
+    _bib_chunk_tmp_weights=""
+    if [ -z "$_bib_chunk_weights" ]; then
+        _bib_chunk_tmp_weights="$_bib_chunk_dir/.src-weights.tmp"
+        build_invariance_write_src_weights "$_bib_chunk_records" "$_bib_chunk_tmp_weights" "$_bib_chunk_root" || {
+            rm -f -- "$_bib_chunk_tmp_weights"
+            return 1
+        }
+        _bib_chunk_weights=$_bib_chunk_tmp_weights
+    fi
+    awk -F'|' -v chunk_dir="$_bib_chunk_dir" -v chunk_size="$_bib_chunk_size" \
+        -v weights_file="$_bib_chunk_weights" '
+        BEGIN {
+            if (weights_file != "") {
+                while ((getline wline < weights_file) > 0) {
+                    sep = index(wline, "|")
+                    if (sep > 1) {
+                        src_loc[substr(wline, 1, sep - 1)] = substr(wline, sep + 1) + 0
+                    }
+                }
+                close(weights_file)
+            }
         }
         function compiler_source(source) {
             return source ~ /^src\//
+        }
+        function singleton(name, source) {
+            return name ~ /^selfhost_main_/ ||
+                source ~ /^src\/tests\/compiler_[^/]*\.tl$/ ||
+                (compiler_source(source) && (source in src_loc) && src_loc[source] > 100000)
         }
         function finish_chunk() {
             if (chunk_entries > 0) {
@@ -179,6 +325,11 @@ build_invariance_write_chunks() {
         }
         END { finish_chunk() }
     ' "$_bib_chunk_records"
+    _bib_write_rc=$?
+    if [ -n "$_bib_chunk_tmp_weights" ]; then
+        rm -f -- "$_bib_chunk_tmp_weights"
+    fi
+    return "$_bib_write_rc"
 }
 
 # Several logical aliases still represent one complete smoke compilation.
@@ -191,31 +342,130 @@ build_invariance_chunk_is_codegen_smoke() {
 }
 
 # Pool admission of one producer's chunk, printed as `CAP_MIB RANK`. Every
-# chunk runs under its hard cap; the classes follow the per-chunk peaks of
-# hosted run 45535549120 with headroom. The opt1-built complete codegen smoke
-# (3.5 GiB) keeps the full 8 GiB ownership-regression cap; whole-compiler
-# opt2 selfhost compiles (3.7 GiB) get 6 GiB; the opt1 selfhost compile
-# (1.1 GiB), the opt2-built codegen smoke and every chunk with a src/ source
-# (up to 3.5 GiB) get 4 GiB; chunks of test programs alone (under 0.6 GiB)
-# get 2 GiB. RANK orders the queue longest-first by class: whole-compiler and
-# compiler-source compiles first, test-program chunks last, so the light
-# chunks fill the workers that the larger caps leave free and the pool ends
-# without a long compile running alone.
+# chunk runs under its hard cap; the classes follow measured hosted peaks with
+# >= 1.8x headroom. The opt1-built complete codegen smoke (3.5 GiB) keeps the
+# full 8 GiB ownership-regression cap; whole-compiler opt2 selfhost compiles
+# (3.7 GiB) get 6 GiB; the opt1 selfhost compile (1.1 GiB) and opt2-built
+# codegen smoke get 4 GiB. Other src/ chunks use 3-tier right-sized caps by max
+# transitive LOC across their src/ entries (fail-closed to 4 GiB if any src/
+# entry is unmeasured): >400k LOC -> 4096 MiB (rank 3), 100k-400k LOC -> 3072
+# MiB (rank 4, peaks <1.65 GiB), <100k LOC -> 2048 MiB (rank 5, peaks <730
+# MiB). Chunks of test programs alone (under 0.6 GiB) get 2048 MiB (rank 6).
+# Within each rank/producer, check-build-invariance.sh orders chunks LPT
+# (heaviest-first) by build_invariance_chunk_weight so 4 workers pack cleanly
+# inside 14336 MiB without a long compile running alone at the tail.
 build_invariance_chunk_class() {
-    if build_invariance_chunk_is_codegen_smoke "$1"; then
-        if [ "$2" = opt1-built ]; then
+    _bib_class_chunk=$1
+    _bib_class_producer=$2
+    _bib_class_weights=${3:-}
+    _bib_class_root=${4:-.}
+    if build_invariance_chunk_is_codegen_smoke "$_bib_class_chunk"; then
+        if [ "$_bib_class_producer" = opt1-built ]; then
             printf '8192 2\n'
         else
             printf '4096 2\n'
         fi
-    elif build_invariance_chunk_is_selfhost "$1"; then
-        case "$(awk -F'|' 'NR == 1 { print $1; exit }' "$1")" in
+    elif build_invariance_chunk_is_selfhost "$_bib_class_chunk"; then
+        case "$(awk -F'|' 'NR == 1 { print $1; exit }' "$_bib_class_chunk")" in
             selfhost_main_opt2) printf '6144 1\n' ;;
             *) printf '4096 4\n' ;;
         esac
-    elif awk -F'|' '$2 ~ /^src\// { found = 1; exit } END { exit !found }' "$1"; then
-        printf '4096 3\n'
+    elif awk -F'|' '$2 ~ /^src\// { found = 1; exit } END { exit !found }' "$_bib_class_chunk"; then
+        _bib_class_tmp_weights=""
+        if [ -z "$_bib_class_weights" ]; then
+            _bib_class_tmp_weights="${_bib_class_chunk}.src-weights.$$"
+            build_invariance_write_src_weights "$_bib_class_chunk" "$_bib_class_tmp_weights" "$_bib_class_root" || {
+                rm -f -- "$_bib_class_tmp_weights"
+                return 1
+            }
+            _bib_class_weights=$_bib_class_tmp_weights
+        fi
+        awk -F'|' -v weights_file="$_bib_class_weights" '
+            BEGIN {
+                if (weights_file != "") {
+                    while ((getline wline < weights_file) > 0) {
+                        sep = index(wline, "|")
+                        if (sep > 1) {
+                            src_loc[substr(wline, 1, sep - 1)] = substr(wline, sep + 1) + 0
+                        }
+                    }
+                    close(weights_file)
+                }
+                max_loc = 0
+                unmeasured = 0
+            }
+            $2 ~ /^src\// {
+                if (!($2 in src_loc) || src_loc[$2] <= 0) {
+                    unmeasured = 1
+                } else if (src_loc[$2] > max_loc) {
+                    max_loc = src_loc[$2]
+                }
+            }
+            END {
+                if (unmeasured || max_loc > 400000) {
+                    print "4096 3"
+                } else if (max_loc >= 100000) {
+                    print "3072 4"
+                } else {
+                    print "2048 5"
+                }
+            }
+        ' "$_bib_class_chunk"
+        _bib_class_rc=$?
+        if [ -n "$_bib_class_tmp_weights" ]; then
+            rm -f -- "$_bib_class_tmp_weights"
+        fi
+        return "$_bib_class_rc"
     else
-        printf '2048 5\n'
+        printf '2048 6\n'
     fi
+}
+
+# LPT scheduling weight for one chunk: sum of transitive LOC across unique
+# inputs (since aliases share the canonical compile), falling back to source
+# line count or unique entry count for non-src/ chunks.
+build_invariance_chunk_weight() {
+    _bib_cw_chunk=$1
+    _bib_cw_weights=${2:-}
+    _bib_cw_root=${3:-.}
+    _bib_cw_tmp_weights=""
+    if [ -z "$_bib_cw_weights" ]; then
+        _bib_cw_tmp_weights="${_bib_cw_chunk}.src-weights.$$"
+        build_invariance_write_src_weights "$_bib_cw_chunk" "$_bib_cw_tmp_weights" "$_bib_cw_root" || {
+            rm -f -- "$_bib_cw_tmp_weights"
+            return 1
+        }
+        _bib_cw_weights=$_bib_cw_tmp_weights
+    fi
+    awk -F'|' -v weights_file="$_bib_cw_weights" -v root="$_bib_cw_root" '
+        BEGIN {
+            if (weights_file != "") {
+                while ((getline wline < weights_file) > 0) {
+                    sep = index(wline, "|")
+                    if (sep > 1) {
+                        src_loc[substr(wline, 1, sep - 1)] = substr(wline, sep + 1) + 0
+                    }
+                }
+                close(weights_file)
+            }
+            total = 0
+        }
+        $1 != "" && !seen_input[$3]++ {
+            if (($2 in src_loc) && src_loc[$2] > 0) {
+                total += src_loc[$2]
+            } else {
+                fp = (root == "" || root == ".") ? $2 : (root "/" $2)
+                n = 0
+                while ((getline _l < fp) > 0) n++
+                close(fp)
+                total += (n > 0 ? n : 1)
+            }
+        }
+        END { print total + 0 }
+    ' "$_bib_cw_chunk"
+    _bib_cw_rc=$?
+    if [ -n "$_bib_cw_tmp_weights" ]; then
+        rm -f -- "$_bib_cw_tmp_weights"
+    fi
+    return "$_bib_cw_rc"
 }

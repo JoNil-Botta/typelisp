@@ -114,6 +114,7 @@
   (Config
     String
     bool
+    bool
     be_state.CompilerBackendTarget
     cli_svec.Vec
     cli_svec.Vec
@@ -337,6 +338,7 @@
         (cli_option.cli-compile-options
           (Linux)
           (opt.compiler-optimize-default-level))]
+      [emit-ir : bool false]
       [prefix-cache-stats : bool false]
       [has-windows-coff-plan : bool false]
       [windows-coff-plan-path : String ""]
@@ -349,9 +351,11 @@
                 (&mut args)
                 "compile: --batch reads output paths from the batch file")]
             [(string.eq args.name "--emit-ir")
-              (cli_option.cli-args-fail!
-                (&mut args)
-                "compile: --batch does not support --emit-ir")]
+              (if emit-ir
+                (cli_option.cli-args-fail!
+                  (&mut args)
+                  "compile: IR output was requested more than once")
+                (set! emit-ir true))]
             [(string.eq args.name "--pic")
               (cli_option.cli-args-fail!
                 (&mut args)
@@ -382,6 +386,11 @@
       (unless args.failed (ir.compiler-debug-info-set-enabled! options.debug))
       (cond
         [args.failed (Err args.error)]
+        [(and compile-cli-no-entry-requested emit-ir)
+          (Err
+            "compile: --no-entry selects assembly output and cannot be combined with --emit-ir or --dump-ir")]
+        [(and has-windows-coff-plan emit-ir)
+          (Err "compile: --windows-coff-plan cannot be combined with --emit-ir")]
         [(and
             has-windows-coff-plan
             (or
@@ -399,6 +408,7 @@
           (Ok
             (CompileCliBatchConfig.Config
               batch-path
+              emit-ir
               options.has-target
               (build_run_core.source-tool-backend-target options.target)
               options.stdlib-roots
@@ -1190,6 +1200,7 @@
   [state : compiler_driver_core.CompilerDriverState]
   [entries : (& entries cli_svec.Vec)]
   [index : i64]
+  [emit-ir : bool]
   [has-target : bool]
   [target : be_state.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
@@ -1229,7 +1240,7 @@
             (owned_view.compiler-owned-shared-view state)
             (owned_view.compiler-owned-shared-view input-path)
             output-path
-            false
+            emit-ir
             false
             has-target
             target
@@ -1314,6 +1325,7 @@
             state
             entries
             (+ index 2)
+            emit-ir
             has-target
             target
             stdlib-roots
@@ -1383,6 +1395,7 @@
 (define (compile-cli-run-batch-entries
   [state : compiler_driver_core.CompilerDriverState]
   [entries : cli_svec.Vec]
+  [emit-ir : bool]
   [has-target : bool]
   [target : be_state.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
@@ -1393,7 +1406,7 @@
     (owned_view.compiler-owned-shared-view state)
     (/ (cli_svec.len (& entries)) 2))
   (when
-    (not (compile-cli-shared-object-requested?))
+    (and (not emit-ir) (not (compile-cli-shared-object-requested?)))
     (with-scratch
       (tli_cli.tli-batch-cache-warm-for-names!
         (compiler_driver_core.compiler-driver-target-cfg-from-backend target)
@@ -1411,6 +1424,7 @@
         state
         (& entries)
         0
+        emit-ir
         has-target
         target
         stdlib-roots
@@ -1666,6 +1680,7 @@
   [text : String]
   [start : i64]
   [line : i64]
+  [emit-ir : bool]
   [has-target : bool]
   [target : be_state.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
@@ -1699,6 +1714,7 @@
           (compile-cli-run-batch-entries
             state
             entries
+            emit-ir
             has-target
             target
             stdlib-roots
@@ -1769,6 +1785,7 @@
     (match config
       [(Config
           batch-path
+          emit-ir
           has-target
           target
           stdlib-roots
@@ -1815,6 +1832,7 @@
                   (byte_buf.to-string (io.read-file batch-path))
                   0
                   1
+                  emit-ir
                   has-target
                   target
                   stdlib-roots

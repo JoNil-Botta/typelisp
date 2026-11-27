@@ -2498,3 +2498,126 @@
             (driver.compiler-driver-reset-file-state!)
             ok))])
     (io.panic "test: --combined duplicate batch path fallback failed")))
+
+(test
+  tltest-prebuilt-stdlib-cfg-and-path-filter
+  (let
+    [cfgs : sym_i64_env.SymI64Env
+      (cfg_core.compiler-cfg-enable
+        (cfg_core.compiler-cfg-enable
+          (cfg_core.compiler-cfg-enable (cfg_core.compiler-cfg-empty) "linux")
+          "test")
+        "custom-user-flag")]
+    [filtered : sym_i64_env.SymI64Env (tltest.tltest-stdlib-tli-cfgs cfgs)]
+    [non-std-paths : cli_svec.Vec (cli_svec.new)]
+    [mixed-paths : cli_svec.Vec (cli_svec.new)]
+    (cli_svec.push-ref! (&mut non-std-paths) "src/test_cli_core.tl")
+    (cli_svec.push-ref! (&mut non-std-paths) "tests/inline/sample.tl")
+    (cli_svec.push-ref! (&mut mixed-paths) "src/test_cli_core.tl")
+    (cli_svec.push-ref! (&mut mixed-paths) "stdlib/hashmap.tl")
+    (when
+      (or
+        (cfg_core.compiler-cfg-enabled? filtered (ci.intern "test"))
+        (not (cfg_core.compiler-cfg-enabled? filtered (ci.intern "linux")))
+        (not
+          (cfg_core.compiler-cfg-enabled?
+            filtered
+            (ci.intern "custom-user-flag")))
+        (not (cfg_core.compiler-cfg-enabled? cfgs (ci.intern "test")))
+        (not (tltest.tltest-stdlib-source-path? "stdlib/io.tl"))
+        (not (tltest.tltest-stdlib-source-path? "./stdlib/net/ip.tl"))
+        (not (tltest.tltest-stdlib-source-path? "/repo/stdlib/hashmap.tl"))
+        (not (tltest.tltest-stdlib-source-path? "C:\\repo\\stdlib\\io.tl"))
+        (tltest.tltest-stdlib-source-path? "src/test_cli_core.tl")
+        (tltest.tltest-stdlib-source-path? "tests/inline/sample.tl")
+        (tltest.tltest-any-stdlib-source-path? (& non-std-paths))
+        (not (tltest.tltest-any-stdlib-source-path? (& mixed-paths))))
+      (io.panic "test: prebuilt stdlib cfg/path filter check failed"))))
+
+(test
+  tltest-tli-hydrated-extern-decl-guards-and-matches
+  (let
+    [sym-id : i64 (ci.intern "c_helper")]
+    [sym-intern-id : ci.InternId (ci.intern-id-from-renderable sym-id)]
+    [std-prov-id : i64 (ci.intern "<tli-stdlib>:io.tl")]
+    [plain-owner-id : i64 (ci.intern "app.plain")]
+    [c-extern : ast.AstDecl
+      (ast.ast-decl-extern-id
+        sym-id
+        (Function)
+        (Metadata
+          (C)
+          sym-intern-id
+          (ast.ast-extern-link-input-list-new)
+          0
+          ast.AstImportedSpmdMetadata.No)
+        (Unit))]
+    [tl-extern : ast.AstDecl
+      (ast.ast-decl-extern-id
+        sym-id
+        (Function)
+        (Metadata
+          (TypeLisp)
+          sym-intern-id
+          (ast.ast-extern-link-input-list-new)
+          0
+          ast.AstImportedSpmdMetadata.No)
+        (Unit))]
+    [unsafe-c-extern : ast.AstDecl
+      (Unsafe
+        (box
+          (ast.ast-decl-extern-id
+            sym-id
+            (Function)
+            (Metadata
+              (C)
+              sym-intern-id
+              (ast.ast-extern-link-input-list-new)
+              0
+              ast.AstImportedSpmdMetadata.No)
+            (Unit))))]
+    [fn-decl : ast.AstDecl
+      (ast.ast-decl-def-fn-id
+        sym-id
+        (ast.ast-param-list-new)
+        (Unit)
+        (ast.ast-node-push (Literal (Unit))))]
+    (when
+      (or
+        (tltest.tltest-tli-hydrated-extern-decl? (& c-extern) "app.tl" -1 -1)
+        (tltest.tltest-tli-hydrated-extern-decl?
+          (& c-extern)
+          "app.tl"
+          plain-owner-id
+          -1)
+        (not
+          (tltest.tltest-tli-hydrated-extern-decl?
+            (& c-extern)
+            "<tli-stdlib>:io.tl"
+            -1
+            -1))
+        (not
+          (tltest.tltest-tli-hydrated-extern-decl?
+            (& c-extern)
+            "app.tl"
+            -1
+            std-prov-id))
+        (not
+          (tltest.tltest-tli-hydrated-extern-decl? (& tl-extern) "app.tl" -1 -1))
+        (tltest.tltest-tli-hydrated-extern-decl?
+          (& unsafe-c-extern)
+          "app.tl"
+          -1
+          -1)
+        (not
+          (tltest.tltest-tli-hydrated-extern-decl?
+            (& unsafe-c-extern)
+            "<tli-stdlib>:io.tl"
+            -1
+            -1))
+        (tltest.tltest-tli-hydrated-extern-decl?
+          (& fn-decl)
+          "<tli-stdlib>:io.tl"
+          -1
+          std-prov-id))
+      (io.panic "test: tltest-tli-hydrated-extern-decl? guard/match failed"))))

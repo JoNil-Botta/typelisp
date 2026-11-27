@@ -102107,26 +102107,40 @@
           diag))
       diag)))
 
+(define (macro-diagnostic-site-span [path : String] [span : ast.AstSourceSpan]) : cdiag.CompilerDiagnosticSpan
+  (cdiag.CompilerDiagnosticSpan
+    path
+    (ast.ast-source-span-start-line span)
+    (ast.ast-source-span-start-col span)
+    (ast.ast-source-span-end-line span)
+    (ast.ast-source-span-end-col span)))
+
+(define (macro-diagnostic-author-error?
+  [diag : (& diag cdiag.CompilerDiagnostic)]) : bool
+  (string.eq
+    (cdiag.compiler-diagnostic-code-or-empty diag)
+    (cdiag.compiler-diagnostic-code-for-macro-kind (ComptimeAuthorError))))
+
 (define (macro-diagnostic-with-expansion-site
   [ctx : TcContext]
   [path : String]
   [call-expr : ast.AstExpr]
   [macro-name : String]
+  [decls-splice? : bool]
   [diag : cdiag.CompilerDiagnostic]) : cdiag.CompilerDiagnostic
   (match (macro-expansion-site-span ctx call-expr)
     [(Some span)
-      (cdiag.compiler-diagnostic-with-secondary-if-new
-        diag
-        (&
-          (cdiag.CompilerDiagnosticSpan
-            path
-            (ast.ast-source-span-start-line span)
-            (ast.ast-source-span-start-col span)
-            (ast.ast-source-span-end-line span)
-            (ast.ast-source-span-end-col span)))
-        (&
-          (CompilerDiagnosticSomeString
-            (tc-macro-expansion-frame-label (ci.intern macro-name)))))]
+      (let
+        [site : cdiag.CompilerDiagnosticSpan
+          (macro-diagnostic-site-span path span)]
+        (if (and decls-splice? (macro-diagnostic-author-error? (& diag)))
+          (cdiag.compiler-diagnostic-with-primary-span (& diag) site)
+          (cdiag.compiler-diagnostic-with-secondary-if-new
+            diag
+            (& site)
+            (&
+              (CompilerDiagnosticSomeString
+                (tc-macro-expansion-frame-label (ci.intern macro-name)))))))]
     [(No) diag]))
 
 (define (macro-active-decl-path-id [ctx : TcContext]) : i64
@@ -102229,6 +102243,7 @@
   [path : String]
   [call-expr : ast.AstExpr]
   [macro-name : String]
+  [decls-splice? : bool]
   [result : ResultMacroDeclExpansion]) : ResultMacroDeclExpansion
   (match result
     [(Ok decls paths) (Ok decls paths)]
@@ -102240,6 +102255,7 @@
             path
             call-expr
             macro-name
+            decls-splice?
             (macro-failed-operand-diagnostic
               ctx
               type-env
@@ -120112,6 +120128,7 @@
             (macro-invocation-path ctx)
             call-expr
             macro-name
+            false
             (macro-failed-operand-diagnostic
               ctx
               type-env
@@ -124925,10 +124942,13 @@
   [module-id : i64]
   [call-id : i64]
   [context : ast.AstMaybeModuleName]
+  [span : ast.AstSourceSpan]
   [cfgs : sym_i64_env.SymI64Env]
   [decl-path : String]) : ResultMacroDeclExpansion
   (let
-    [call-expr : ast.AstExpr (tc-context-expr-get ctx call-id)]
+    ;; Generated placeholders carry the originating call's span on the
+    ;; declaration, while their expression still has the template's span.
+    [call-expr : ast.AstExpr (Spanned call-id span)]
     [pools : ast.AstNodePoolContext (tc-context-pools ctx)]
     (match (ast.ast-expr-unspan-with-pools pools (& call-expr))
       [(Call func-box args)
@@ -124967,12 +124987,28 @@
                         (let
                           [expanded-args
                             (try
-                              (macro-expand-exprs
+                              (match (macro-expand-exprs
                                 call-ctx
                                 global-env
                                 orig-decls
                                 0
-                                args))]
+                                args)
+                                [(Ok expanded)
+                                  (ResultMacroExprList.Ok expanded)]
+                                [(Err boxed)
+                                  ;; A generated declaration can validate
+                                  ;; operands through expression macros before
+                                  ;; its transformer is reached.
+                                  (if (macro-diagnostic-author-error?
+                                    (& (deref boxed)))
+                                    (ResultMacroExprList.Err
+                                      (box
+                                        (cdiag.compiler-diagnostic-with-primary-span
+                                          (& (deref boxed))
+                                          (macro-diagnostic-site-span
+                                            (string.copy (& decl-path))
+                                            span))))
+                                    (ResultMacroExprList.Err boxed))]))]
                           (match (macro-module-identity
                             call-ctx
                             (tc-global-shared-view orig-decls)
@@ -124995,6 +125031,7 @@
                                 (macro-decl-name-display
                                   macro-name
                                   definition-module)
+                                true
                                 (match (macro-eval-transformer-expanded-with-env
                                   call-ctx
                                   (tc-global-shared-view orig-decls)
@@ -125270,6 +125307,7 @@
                                       (macro-decl-name-display
                                         macro-name
                                         definition-module)
+                                      false
                                       (match (macro-eval-transformer-expanded-with-env
                                         call-ctx
                                         (tc-global-shared-view orig-decls)
@@ -125425,6 +125463,7 @@
                 module-id
                 call-id
                 context
+                (__tl-box-place span)
                 cfgs
                 decl-path)]
             [_

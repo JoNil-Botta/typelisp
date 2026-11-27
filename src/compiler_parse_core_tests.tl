@@ -2450,7 +2450,7 @@
       fields
       index
       (ast.ast-field-def-fallback))
-      [(Def _ _ cleanup)
+      [(Def _ _ cleanup _)
         (+
           (compiler-parse-field-cleanup-score cleanup)
           (compiler-parse-field-cleanup-list-score-at fields (+ index 1)))])))
@@ -2927,7 +2927,7 @@
         (if (= (ast.ast-decl-list-len (& decls)) 1)
           (let
             [decl (ast.ast-decl-list-ref decls 0)]
-            (ast.ast-decl-aggregate-markers decl))
+            (ast.ast-decl-markers decl))
           -1))]
     [(Err _) -1]))
 
@@ -3013,8 +3013,14 @@
       "(defenum Bad (Yes) (:opaque))"
       "parse: defenum metadata must appear before variants")
     (compiler-parse-error-ok?
-      "(defstruct Bad (:cleanup close-bad) (x i64 (:opaque)))"
-      "parse: unknown field metadata :opaque")
+      "(defstruct Bad (x i64 (:opaque) (:opaque)))"
+      "parse: duplicate field :opaque metadata")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (x i64 (:opaque 1)))"
+      "parse: field :opaque expects no arguments")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (:cleanup close-bad) (x i64 (:unknown)))"
+      "parse: unknown field metadata :unknown")
     (compiler-parse-error-ok?
       "(define (bad) (:opaque) : i64 1)"
       "parse: unknown define metadata :opaque")))

@@ -9195,6 +9195,18 @@
         (lower-spmd-inline-helper-from-decl ctx handle inner))]
     [_ (Ok (No))]))
 
+(define (lower-spmd-helper-context [ctx : tc_core.TcContext] [handle : i64]) : tc_core.TcContext
+  (let
+    [module-id : i64
+      (csym.compiler-symbols-owner-module-id-at-index-or
+        (tc_core.tc-context-symbols ctx)
+        (csym.compiler-symbol-handle-index handle)
+        (tc_core.tc-context-module-id ctx))]
+    (tc_core.tc-context-with-module-id
+      ctx
+      (tc_core.tc-spmd-inline-helper-module module-id)
+      module-id)))
+
 (define (lower-spmd-inline-helper-lookup
   [ctx : tc_core.TcContext]
   [function-state : CompilerLowerFunctionState]
@@ -10860,7 +10872,7 @@
           fields
           index
           (ast.ast-field-def-fallback))
-          [(Def _ _ cleanup)
+          [(Def _ _ cleanup _)
             (match cleanup
               [(Fn cleanup-name)
                 (let
@@ -12200,7 +12212,7 @@
       fields
       index
       (ast.ast-field-def-fallback))
-      [(Def _ ty _)
+      [(Def _ ty _ _)
         (lower-used-types-add-field-list-at
           session
           pools
@@ -16457,7 +16469,7 @@
         fields
         field-index
         (ast.ast-field-def-fallback))
-        [(Def name ty _)
+        [(Def name ty _ _)
           (let
             [name-id : i64 (ci.intern-syntax-id-value name)]
             [name-str : String (tc_core.tc-env-key-name-text name-id)]
@@ -16763,7 +16775,7 @@
         fields
         field-index
         (ast.ast-field-def-fallback))
-        [(Def name ty _)
+        [(Def name ty _ _)
           (let
             [name-id : i64 (ci.intern-syntax-id-value name)]
             [name-str : String (tc_core.tc-env-key-name-text name-id)]
@@ -18209,7 +18221,7 @@
       fields
       index
       (ast.ast-field-def-fallback))
-      [(Def _ ty _)
+      [(Def _ ty _ _)
         (unless
           (lower-supported-reference-type-with-stack?
             ctx
@@ -19336,7 +19348,7 @@
         fields
         field-index
         (ast.ast-field-def-fallback))
-        [(Def name ty _)
+        [(Def name ty _ _)
           (let
             [name-id : i64 (ci.intern-syntax-id-value name)]
             [name-str : String (tc_core.tc-env-key-name-text name-id)]
@@ -21562,7 +21574,7 @@
       fields
       index
       (ast.ast-field-def-fallback))
-      [(Def name ty _)
+      [(Def name ty _ _)
         (when
           (string.eq
             (tc_core.tc-env-key-name-text (ci.intern-syntax-id-value name))
@@ -38688,7 +38700,7 @@
         (lower-global-shared-view func))
         [(ResultLowerSpmdInlineHelper.Ok helper)
           (match helper
-            [(LowerSpmdInlineHelper.Some _ params ret body)
+            [(LowerSpmdInlineHelper.Some handle params ret body)
               (if (and
                 (lower-spmd-helper-out-of-line?
                   ctx
@@ -38745,24 +38757,31 @@
                                 func
                                 args)
                               0)]
-                          (match (lower-spmd-specialized-helper-function
-                            ctx
-                            type-env
-                            (lower-state-type-cache named-state)
-                            helper-function-state
-                            hidden-name
-                            params
-                            ret
-                            result-varying
-                            body
-                            (ir.CompilerIrSpmdBackend.Scalar)
-                            call-args
-                            1
-                            ""
-                            -1
-                            (lower-state-spans named-state)
-                            (lower-state-names named-state)
-                            (lower-state-mode named-state))
+                          (match (let
+                            [helper-ctx : tc_core.TcContext
+                              (lower-spmd-helper-context ctx handle)]
+                            (lower-spmd-specialized-helper-function
+                              helper-ctx
+                              (tc_core.tc-spmd-inline-helper-env
+                                helper-ctx
+                                type-env
+                                (tc_core.tc-context-module helper-ctx)
+                                (tc_core.tc-context-module-id helper-ctx))
+                              (lower-state-type-cache named-state)
+                              helper-function-state
+                              hidden-name
+                              params
+                              ret
+                              result-varying
+                              body
+                              (ir.CompilerIrSpmdBackend.Scalar)
+                              call-args
+                              1
+                              ""
+                              -1
+                              (lower-state-spans named-state)
+                              (lower-state-names named-state)
+                              (lower-state-mode named-state)))
                             [(ResultLowerFunction.Ok functions helper-spans)
                               (match (lower-spmd-generated-helper-abi
                                 (lower-global-shared-view functions)
@@ -52471,17 +52490,11 @@
           unit)]))
   false)
 
-;; The calls an SPMD body's strategy depends on: a call to an SPMD helper that
-;; stays out of line (an imported callable, or a helper whose body needs its
-;; own frame), or a call that reaches an atomic.
+;; Calls an SPMD strategy depends on: helpers that stay out of line and atomics.
 (defenum LowerSpmdCallProbe
   (OutOfLine)
   (Atomic))
 
-;; Whether `expr` holds a call `probe` looks for. Both probes descend the same
-;; scalar, let, begin and array forms; an atomic call is also looked for in
-;; struct stores and inside the callee expression and the helper bodies it
-;; inlines.
 (define (lower-spmd-expr-has-call?
   [ctx : tc_core.TcContext]
   [function-state : CompilerLowerFunctionState]
@@ -68272,6 +68285,177 @@
                 row?
                 (& empty-proven)))))])))
 
+;; The foreach contract gives lane-independent bodies scalar reference
+;; semantics. A float intrinsic requires preserving ordinary call boundaries.
+;; Before using that route in SIMD modes, look for operations whose result
+;; or calling convention depends on the gang, including in source helpers.
+(defstruct LowerSpmdFloatScan
+  (visited lower_i64_i64_map.Map)
+  (definition-fallback tc_core.TcTypeEnv)
+  (simd bool)
+  (needs-scalar bool)
+  (blocker String))
+
+(define (lower-spmd-float-scan-call!
+  [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [scan : (&mut scan LowerSpmdFloatScan)]
+  [func : ast.AstExpr]
+  [arg-count : i64]) : unit
+  (match (ast.ast-expr-unspan-with-segment-bases
+    (tc_core.tc-context-expr-bases ctx)
+    (& func))
+    [(Var name)
+      (when
+        (or
+          (sym_i64_env.sym-i64-contains-id env name)
+          (tc_core.tc-name-lexically-bound-id? type-env name))
+        (return unit))
+      (when
+        (>= (tc_core.tc-spmd-float-intrinsic-id ctx type-env name arg-count) 0)
+        (set! scan.needs-scalar true)
+        (return unit))]
+    [_ (return unit)])
+  (let
+    [prior-recursion? : bool
+      (compiler-lower-function-state-recursion-detected? function-state)]
+    [helper
+      (lower-spmd-inline-helper-lookup
+        ctx
+        function-state
+        env
+        type-env
+        (lower-id-set-empty)
+        func)]
+    (compiler-lower-function-state-recursion-detected-set!
+      function-state
+      prior-recursion?)
+    (match helper
+      [(Ok (Imported _ _ _ _ _))
+        (set! scan.blocker "the imported SPMD specialization")]
+      [(Ok (Some handle params _ body))
+        (when
+          (= (lower_i64_i64_map.get-value-or (& scan.visited) handle 0) 0)
+          ;; The result is accumulated for the entire loop. Mark on entry so
+          ;; a shared helper or a cycle only contributes its body once.
+          (lower_i64_i64_map.insert-ref! (&mut scan.visited) handle 1)
+          (let
+            [helper-ctx : tc_core.TcContext
+              (lower-spmd-helper-context ctx handle)]
+            [helper-env : tc_core.TcTypeEnv
+              (tc_core.tc-spmd-inline-helper-env
+                helper-ctx
+                (tc_core.TcTypeEnv
+                  scan.definition-fallback.store
+                  scan.definition-fallback.head
+                  scan.definition-fallback.abi-pad)
+                (tc_core.tc-context-module helper-ctx)
+                (tc_core.tc-context-module-id helper-ctx))]
+            (lower-spmd-float-scan-expr!
+              helper-ctx
+              function-state
+              (sym_i64_env.sym-i64-empty)
+              (tc_core.tc-bind-params helper-ctx helper-env params)
+              scan
+              body)))]
+      [_ unit])))
+
+(define (lower-spmd-float-scan-expr!
+  [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [scan : (&mut scan LowerSpmdFloatScan)]
+  [expr : ast.AstExpr]) : unit
+  (when
+    (and
+      scan.needs-scalar
+      (or (not scan.simd) (not (string.eq scan.blocker ""))))
+    (return unit))
+  (match (& expr)
+    [(Call func-box args)
+      (lower-spmd-float-scan-call!
+        ctx
+        function-state
+        env
+        type-env
+        scan
+        (lower-context-expr-get ctx func-box)
+        args.len)]
+    [(or (SpmdProgramIndex) (SpmdProgramCount))
+      (set! scan.blocker "program-index or program-count")]
+    [(or (SpmdBroadcast _ _) (SpmdShuffle _ _))
+      (set! scan.blocker "spmd-broadcast or spmd-shuffle")]
+    [(or (ForeachActive _ _) (LaneValue _))
+      (set! scan.blocker "foreach-active or lane-value")]
+    [_ unit])
+  (match expr
+    [(Let let-box)
+      (match (__tl-box-place let-box)
+        [(Let bindings body)
+          (let
+            [body-env : tc_core.TcTypeEnv type-env]
+            (for [index (iterator.range 0 bindings.len)]
+              (match (ast.ast-let-binding-list-get
+                (& bindings)
+                index
+                (ast.ast-let-binding-fallback))
+                [(Binding name _ init)
+                  (lower-spmd-float-scan-expr!
+                    ctx
+                    function-state
+                    env
+                    body-env
+                    scan
+                    (lower-context-expr-get ctx init))
+                  (set! body-env (tc_core.tc-bind-id body-env name (Unit)))]))
+            (lower-spmd-float-scan-expr!
+              ctx
+              function-state
+              env
+              body-env
+              scan
+              (lower-context-expr-get ctx body)))])]
+    [(Match match-box)
+      (match (__tl-box-place match-box)
+        [(Match scrutinee arms)
+          (lower-spmd-float-scan-expr!
+            ctx
+            function-state
+            env
+            type-env
+            scan
+            (lower-context-expr-get ctx scrutinee))
+          (for [index (iterator.range 0 arms.len)]
+            (match (ast.ast-match-arm-list-get
+              (& arms)
+              index
+              (ast.ast-match-arm-fallback))
+              [(Arm pattern body)
+                (lower-spmd-float-scan-expr!
+                  ctx
+                  function-state
+                  (lower-pattern-bind-local-names env pattern)
+                  type-env
+                  scan
+                  (lower-context-expr-get ctx body))]))])]
+    [(Lambda _) unit]
+    [_
+      (let
+        [children : ast.AstExprList (ast.ast-expr-child-ids expr)]
+        (for [index (iterator.range 0 children.len)]
+          (lower-spmd-float-scan-expr!
+            ctx
+            function-state
+            env
+            type-env
+            scan
+            (lower-context-expr-get
+              ctx
+              (ast.ast-expr-list-get (& children) index 0)))))]))
+
 (define (lower-foreach-lowered
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -68284,6 +68468,46 @@
   [end-value : ir.CompilerIrValue]
   [body : ast.AstExpr]
   [row? : bool]) : ResultLowerExpr
+  (let
+    [scan : LowerSpmdFloatScan
+      (LowerSpmdFloatScan
+        (lower_i64_i64_map.with-capacity 0)
+        (tc_core.tc-hygiene-global-env type-env)
+        (lower-mode-simd? (lower-state-mode state))
+        false
+        "")]
+    (lower-spmd-float-scan-expr!
+      ctx
+      (lower-state-function-state state)
+      env
+      (tc_core.tc-bind-id type-env index-id (ast.clone-ast-type (& index-ty)))
+      (&mut scan)
+      (lower-clone-ast-expr (& body)))
+    (when
+      scan.needs-scalar
+      (when
+        (and scan.simd (not (string.eq scan.blocker "")))
+        (return
+          (Err
+            (box
+              (lower-diagnostic-at-expr
+                ctx
+                (lower-clone-ast-expr (& body))
+                (str_cat.str-cat
+                  "lower: SPMD float intrinsic requires scalar-reference foreach lowering, which cannot preserve "
+                  scan.blocker))))))
+      (return
+        (lower-scalar-foreach-lowered
+          ctx
+          state
+          env
+          type-env
+          index-id
+          index
+          index-ty
+          start-value
+          end-value
+          body))))
   (if (and
     (lower-mode-simd? (lower-state-mode state))
     (lower-type-i64? (lower-global-shared-view index-ty))
@@ -69160,7 +69384,7 @@
           fields
           field-index
           (ast.ast-field-def-fallback))
-          [(Def field-name _ _)
+          [(Def field-name _ _ _)
             (let
               [ty : ast.AstType
                 (tc_core.tc-context-type-get
@@ -69746,7 +69970,7 @@
           fields
           index
           (ast.ast-field-def-fallback))
-          [(Def field-name _ _)
+          [(Def field-name _ _ _)
             (let
               [info
                 (try
@@ -76467,7 +76691,7 @@
   [field : ast.AstFieldDef]
   [acc : ast.AstExprList]) : parser.ResultAstExprList
   (match field
-    [(Def field-name ty cleanup)
+    [(Def field-name ty cleanup _)
       (match cleanup
         [(No) (Ok acc)]
         [(Fn cleanup-name)

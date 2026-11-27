@@ -1,6 +1,7 @@
 ;; build_cli_core_tests.tl - White-box tests for package builds: paths and
 ;; artifact status, direct objects, preflight routes, the package graph and
 ;; scheduler, TLCI callables, rollback and commit, and worker arguments.
+(cfg test (import compiler_object_windows_sections as coff_sections))
 (import compiler_backend_state as be_state)
 (import stdlib.iterator)
 (import compiler_owned_view as owned_view)
@@ -192,12 +193,11 @@
         (cobj.compiler-object-section-builder-finish
           (cobj.compiler-object-section-builder-push
             (cobj.compiler-object-section-builder-with-capacity 1)
-            (Section
-              (Pdata)
+            (coff_sections.metadata-section
+              coff_sections.pdata-id
+              ".pdata"
               (cobj.compiler-object-data-record-builder-finish
-                (cobj.compiler-object-data-record-builder-with-capacity 1))
-              (cobj.compiler-object-instr-builder-finish
-                (cobj.compiler-object-instr-builder-with-capacity 1)))))]
+                (cobj.compiler-object-data-record-builder-with-capacity 1)))))]
       (build.build-package-render-linux-direct-object
         (CompilerPkgKindLib)
         (cobj.CompilerObjectImage sections fixture.symbols fixture.relocations)))))
@@ -212,11 +212,11 @@
           [(Fallback (ObjectEncoding)) true]
           [_ false])
         (match (build-package-linux-direct-object-with-relocation
-          (Relocation (Text) "_tl_empty" (Abs64) "_tl_empty"))
+          (Relocation cobj.text-id "_tl_empty" (Abs64) "_tl_empty"))
           [(Fallback (ObjectRelocation)) true]
           [_ false])
         (match (build-package-linux-direct-object-with-relocation
-          (Relocation (Text) "_tl_no_site" (Call) "_tl_empty"))
+          (Relocation cobj.text-id "_tl_no_site" (Call) "_tl_empty"))
           [(Fallback (ObjectFixup)) true]
           [_ false]))
       (io.panic "Linux package serializer reasons changed"))))

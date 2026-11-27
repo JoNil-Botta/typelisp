@@ -891,7 +891,7 @@
           (<=
             (compiler_object_elf.compiler-object-elf-section-raw-size
               image
-              (Text))
+              cobj.text-id)
             0)]
         [(StaticLib) false])
       (Fallback EmptyTextSection)]

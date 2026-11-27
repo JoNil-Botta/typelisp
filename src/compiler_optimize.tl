@@ -49662,8 +49662,12 @@
       (let
         [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
         [prefix-end : i64 (- count 1)]
-        ;; A base of zero subtracts nothing: the guard reads the value itself,
-        ;; which the backend would otherwise emit as a register move per test.
+        ;; A base of zero subtracts nothing, so emit a same-width `i64 -> u64`
+        ;; cast instead of `sub x, 0`: the guard's unsigned `Le` then sees a
+        ;; `u64` operand (matching `opt-bounds-dom-range-rewrite-low`), which
+        ;; lets the backend's `cmp-fold-walk` fold `gep + load + cast + le`
+        ;; with unsigned condition codes instead of hitting the direct
+        ;; `load-compare-branch` path that reads `load-ty` (`i64`) signedness.
         ;; A mask block still needs the offset, so a masked run keeps the Sub.
         [offset? : bool (or mask? (!= base 0))]
         [builder : ir.CompilerIrInstrBuilder
@@ -49678,8 +49682,7 @@
           (ir.compiler-ir-instr-builder-push!
             (&mut builder)
             (ir.CompilerIrInstr.Mov mask-var (I64 mask) (U64))))
-        (when
-          offset?
+        (if offset?
           (ir.compiler-ir-instr-builder-push!
             (&mut builder)
             (ir.CompilerIrInstr.BinOp
@@ -49687,15 +49690,16 @@
               (Sub)
               (Var value-var)
               (I64 base)
-              (U64))))
+              (U64)))
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (ir.CompilerIrInstr.Cast offset-var (Var value-var) (I64) (U64))))
         (ir.compiler-ir-instr-builder-push!
           (&mut builder)
           (ir.CompilerIrInstr.BinOp
             guard-var
             (Le)
-            (if offset?
-              (Var offset-var)
-              (Var value-var))
+            (Var offset-var)
             (I64 width)
             (U64)))
         (ir.compiler-ir-instr-builder-push!

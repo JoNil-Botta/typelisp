@@ -90848,3 +90848,55 @@ inl.entry.0.cont:
     (test.assert-true
       (not (opt-thread-pass-changed? blocks 4))
       "multi-use UnOp Not over bool phi is refused")))
+
+(test
+  optimizer-bit-test-zero-base-range-pair-casts-to-u64
+  (let
+    [blocks : ir.CompilerIrBlockList
+      (ir.compiler-ir-blocks-with-tail
+        (opt-bit-test-arms)
+        (irt.block
+          "entry:
+             %2 = load %1 : i64
+             %3 = ge %2, 0 : i64
+             branch %3, inner, miss")
+        (irt.block
+          "inner:
+             %4 = le %2, 8160 : i64
+             branch %4, hit, miss"))]
+    (match (opt-bit-test-run blocks)
+      [(Result next changed)
+        (test.assert-true changed "zero-base range pair rewrites")
+        (test.assert-true
+          (opt.opt-verify-ok? (& (opt.opt-verify-function (& next))))
+          "zero-base range pair passes IR verification")
+        (let
+          [out : ir.CompilerIrBlockList
+            (match next
+              [(Function _ _ _ _ out _) out])]
+          [head : ir.CompilerIrBlock
+            (opt-bit-test-block-at (& out) (ir.compiler-ir-label "entry"))]
+          [head-count : i64 (opt-block-instr-count head)]
+          (test.assert-true
+            (>= head-count 4)
+            "head retains load + cast + le + branch")
+          (test.assert-true
+            (match (opt-block-instr-at head (- head-count 3))
+              [(Cast 16 (Var 2) (I64) (U64)) true]
+              [_ false])
+            "zero-base range pair casts loaded i64 to u64 before unsigned compare")
+          (test.assert-true
+            (opt-bit-test-binop-matches?
+              (opt-block-instr-at head (- head-count 2))
+              17
+              Le
+              (Var 16)
+              (I64 8160))
+            "unsigned Le guard reads the u64 cast result")
+          (test.assert-true
+            (opt-bit-test-branch-matches?
+              (opt-block-instr-at head (- head-count 1))
+              17
+              (ir.compiler-ir-label "hit")
+              (ir.compiler-ir-label "miss"))
+            "guard branches to hit/miss"))])))

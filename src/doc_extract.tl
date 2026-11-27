@@ -428,6 +428,18 @@
         (set! i (doc-decl-next-token src next end))))
     false))
 
+(define (doc-field-inline-comment-end
+  [src : (& src str)]
+  [after-field : i64]
+  [end : i64]) : i64
+  (let
+    [i : i64 after-field]
+    (while (and (< i end) (doc-inline-space? (string.string-ref src i)))
+      (+= i 1))
+    (if (and (< i end) (= (string.string-ref src i) ';'))
+      (source_text.line-end src i)
+      after-field)))
+
 (define (doc-public-aggregate-signature
   [signature : String]
   [head : String]
@@ -462,11 +474,13 @@
                 (& signature)
                 copy-start
                 (- previous-end copy-start)))
-            (set! copy-start next)
+            (set!
+              copy-start
+              (doc-field-inline-comment-end (& signature) next n))
+            (set! previous-end copy-start)
             (set! redacted true))
-          unit)
-        (set! previous-end next)
-        (set! i (doc-decl-next-token (& signature) next n))))
+          (set! previous-end next))
+        (set! i (doc-decl-next-token (& signature) previous-end n))))
     (if redacted
       (text_buf.render
         (text_buf.append

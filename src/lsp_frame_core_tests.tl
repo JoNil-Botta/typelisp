@@ -2106,7 +2106,8 @@
       1
       line
       (+ name-length 2)
-      12)))
+      12
+      false)))
 
 (define (lsp-workspace-symbol-test-source
   [uri : String]

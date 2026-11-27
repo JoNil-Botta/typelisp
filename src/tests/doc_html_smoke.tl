@@ -41,7 +41,13 @@
 ;: Opaque state.
 (defenum State (:opaque) (PrivateVariant i64))
 ;: Mixed storage.
-(defstruct Mixed (public-word i64) (private-tag (Ptr i64) (:opaque)))"]
+(defstruct Mixed (public-word i64) (private-tag (Ptr i64) (:opaque)))
+;: Mixed record with a field comment.
+(defstruct Commented
+  (public-slot i64)
+  (private-slot i64 (:opaque)) ; private detail
+  (internal-slot i64 (:opaque))
+  (final-slot i64))"]
     [docs : doc_extract.DocExtraction
       (doc_extract.doc-extract-source (string.copy (& source)))]
     [page : String (doc_html.doc-html-render-module-page "vault.tl" docs)]
@@ -56,16 +62,20 @@
       (string.contains page "private-word")
       (string.contains page "PrivateVariant")
       (string.contains page "private-tag")
+      (string.contains page "private detail")
       (string.contains public-doc "(defstruct Whole (:opaque))")
       (string.contains public-doc "(defenum State (:opaque))")
       (string.contains public-doc "(defstruct Mixed (public-word i64))")
       (not (string.contains public-doc "private-word"))
       (not (string.contains public-doc "PrivateVariant"))
       (not (string.contains public-doc "private-tag"))
+      (not (string.contains public-doc "private detail"))
+      (string.contains public-doc "(final-slot i64)")
       (string.contains search "(defstruct Mixed (public-word i64))")
       (not (string.contains search "private-word"))
       (not (string.contains search "PrivateVariant"))
-      (not (string.contains search "private-tag")))))
+      (not (string.contains search "private-tag"))
+      (not (string.contains search "private detail")))))
 
 (define (doc-html-smoke) : i64
   (let

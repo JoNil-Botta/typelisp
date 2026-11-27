@@ -350,7 +350,7 @@ inline_test_plan_chunks() {
         # non-chunk-imported file to index 1 (the root-module leader) and
         # relocate any importer of that leader to the next unprocessed chunk,
         # or defer it to deff.
-        function plan_contiguous_combined(arr, n, k, bcap, use_leader,    i, j, m, b, nb, tot, target, acc, f, u, best, best_dup, cur_dup, imp, leader, dst, job, defn, deff, cvis, u_lines, f_lines) {
+        function plan_contiguous_combined(arr, n, k, bcap, use_leader, no_prebuilt,    i, j, m, b, nb, tot, target, acc, f, u, best, best_dup, cur_dup, imp, leader, dst, job, defn, deff, cvis, u_lines, f_lines) {
             if (n <= 0) return
             sort_asc_path(arr, n)
             nb = (k > 0 && k < n) ? k : n
@@ -449,13 +449,17 @@ inline_test_plan_chunks() {
                     print "1" > (dir "/" job ".combined")
                     close(dir "/" job ".combined")
                 }
+                if (no_prebuilt) {
+                    print "1" > (dir "/" job ".no-prebuilt-stdlib")
+                    close(dir "/" job ".no-prebuilt-stdlib")
+                }
                 ncomb++
                 comb_job[ncomb] = job
                 comb_cap[ncomb] = bcap
                 comb_w[ncomb] = u_lines + f_lines + bcount[b] * 4000
             }
             if (defn > 0) {
-                plan_contiguous_combined(deff, defn, 1, bcap, use_leader)
+                plan_contiguous_combined(deff, defn, 1, bcap, use_leader, no_prebuilt)
             }
         }
         {
@@ -506,20 +510,20 @@ inline_test_plan_chunks() {
                 delete hfiles
                 hn = extra_hub_cnt[hk]
                 for (i = 1; i <= hn; i++) hfiles[i] = extra_hub_file[hk, i]
-                plan_contiguous_combined(hfiles, hn, combined_hub_chunks(hfiles, hn), cap, 1)
+                plan_contiguous_combined(hfiles, hn, combined_hub_chunks(hfiles, hn), cap, 1, 0)
             }
-            plan_contiguous_combined(heavy_files, nheavy, heavy_chunks, cap, 1)
+            plan_contiguous_combined(heavy_files, nheavy, heavy_chunks, cap, 1, 0)
             sort_asc_path(single_hub_keys, nsingle_hubs)
             for (h = 1; h <= nsingle_hubs; h++) {
                 hk = single_hub_keys[h]
                 delete hfiles
                 hn = single_hub_cnt[hk]
                 for (i = 1; i <= hn; i++) hfiles[i] = single_hub_file[hk, i]
-                plan_contiguous_combined(hfiles, hn, combined_hub_chunks(hfiles, hn), cap, 1)
+                plan_contiguous_combined(hfiles, hn, combined_hub_chunks(hfiles, hn), cap, 1, 0)
             }
-            plan_contiguous_combined(light_files, nlight, light_chunks, light_cap, 1)
-            plan_contiguous_combined(inline_light_files, ninline_light, 1, light_cap, 1)
-            plan_contiguous_combined(std_files, nstd, std_chunks, light_cap, 0)
+            plan_contiguous_combined(light_files, nlight, light_chunks, light_cap, 1, 0)
+            plan_contiguous_combined(inline_light_files, ninline_light, 1, light_cap, 1, 0)
+            plan_contiguous_combined(std_files, nstd, std_chunks, light_cap, 0, 1)
 
             # Emit combined chunks in descending estimated weight order (LPT) so
             # the heaviest chunks start first regardless of group discovery order.
@@ -746,6 +750,9 @@ bounded_pool_run_job() {
         _pool_phase=batch-run-combined
         set -- "$@" --combined
     fi
+    if [ -f "$WORKDIR/$_pool_job.no-prebuilt-stdlib" ]; then
+        set -- "$@" --no-prebuilt-stdlib
+    fi
     _pool_rc=0
     ci_timing_run "$_pool_job" "$_pool_phase" \
         "$ROOT/scripts/run-memory-bounded.sh" \
@@ -798,7 +805,8 @@ inline_test_self_test_chunks() {
     inline_test_plan_chunks "$_tier_dir/discovered.txt" "$_tier_dir" "$_tier_dir/queue"
     INLINE_TEST_CHUNK_FILES=$_tier_saved_size
     INLINE_TEST_CHUNK_TARGET_COUNT=$_tier_saved_target
-    if [ "$(cat "$_tier_dir/queue")" != "chunk-001|$INLINE_TEST_LIGHT_CHUNK_CAP_MIB" ]; then
+    if [ "$(cat "$_tier_dir/queue")" != "chunk-001|$INLINE_TEST_LIGHT_CHUNK_CAP_MIB" ] ||
+        [ -f "$_tier_dir/chunk-001.no-prebuilt-stdlib" ]; then
         echo "inline test chunk self-test: >=3-file light chunk did not get light cap" >&2
         exit 1
     fi
@@ -818,7 +826,9 @@ inline_test_self_test_chunks() {
         inline_test_plan_chunks discovered.txt "$_comb_dir" "$_comb_dir/queue"
     )
     if [ ! -f "$_comb_dir/chunk-001.combined" ] ||
+        [ -f "$_comb_dir/chunk-001.no-prebuilt-stdlib" ] ||
         [ ! -f "$_comb_dir/chunk-002.combined" ] ||
+        [ ! -f "$_comb_dir/chunk-002.no-prebuilt-stdlib" ] ||
         [ -f "$_comb_dir/chunk-003.list" ] ||
         [ "$(cat "$_comb_dir"/chunk-*.list | LC_ALL=C sort)" != "$(printf '%s\n' src/a.tl src/b.tl src/c.tl stdlib/s1.tl stdlib/s2.tl)" ]; then
         echo "inline test chunk self-test: combined chunk planner did not group and partition sources" >&2

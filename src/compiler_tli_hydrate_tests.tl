@@ -5,6 +5,7 @@
 (import compiler_intern as intern)
 (import compiler_tli_extract as extract)
 (import compiler_ast_types as ast)
+(import compiler_cfg_core as cfg_core)
 (import compiler_load as load)
 (import compiler_typecheck_api as api)
 (import compiler_typecheck_core as tc)
@@ -1407,3 +1408,457 @@
     "helper_c$typelisp"
     "non-stdlib :export function uses TypeLisp ABI body symbol")
   (with-arena tli-job (tli-test-multi-bundle-closure)))
+
+;; Minimal S-expression scanner used by the stdlib `(cfg ...)` allowlist
+;; coverage test so every `(cfg predicate ...)` atom under `stdlib/`
+;; (excluding `stdlib/tests/`) is guaranteed to stay in sync with
+;; `tli-hydrate-stdlib-cfg-atom?`.
+(define (tli-test-cfg-space? [c : char]) : bool
+  (or (= c ' ') (= c '\t') (= c '\r') (= c '\n')))
+
+(define (tli-test-cfg-delim? [c : char]) : bool
+  (or
+    (tli-test-cfg-space? c)
+    (= c '(')
+    (= c ')')
+    (= c '[')
+    (= c ']')
+    (= c ';')
+    (= c '"')
+    (= c '\'')))
+
+(define (tli-test-cfg-skip-ws [text : (& str)] [pos : i64] [n : i64]) : i64
+  (let
+    [i : i64 pos]
+    (while (< i n)
+      (let
+        [c : char (string.string-ref text i)]
+        (cond
+          [(tli-test-cfg-space? c) (+= i 1)]
+          [(= c ';')
+            (while (and (< i n) (!= (string.string-ref text i) '\n'))
+              (+= i 1))]
+          [else (return i)])))
+    i))
+
+(define (tli-test-cfg-skip-string [text : (& str)] [pos : i64] [n : i64]) : i64
+  (let
+    [i : i64 (+ pos 1)]
+    (while (< i n)
+      (let
+        [c : char (string.string-ref text i)]
+        (cond
+          [(= c '\\') (+= i 2)]
+          [(= c '"') (return (+ i 1))]
+          [else (+= i 1)])))
+    n))
+
+(define (tli-test-cfg-skip-char [text : (& str)] [pos : i64] [n : i64]) : i64
+  (let
+    [i : i64 (+ pos 1)]
+    (when (and (< i n) (= (string.string-ref text i) '\\')) (+= i 1))
+    (when (< i n) (+= i 1))
+    (when (and (< i n) (= (string.string-ref text i) '\'')) (+= i 1))
+    i))
+
+(define (tli-test-cfg-read-atom-end [text : (& str)] [pos : i64] [n : i64]) : i64
+  (let
+    [i : i64 pos]
+    (while (and (< i n) (not (tli-test-cfg-delim? (string.string-ref text i))))
+      (+= i 1))
+    i))
+
+;; Walk one `(cfg <predicate> ...)` predicate starting at `pos` and verify
+;; every cfg atom is covered by `hydrate.tli-hydrate-stdlib-cfg-atom?`.
+;; Returns the cursor immediately after the predicate.
+(define (tli-test-cfg-check-predicate!
+  [path : (& str)]
+  [text : (& str)]
+  [pos : i64]
+  [n : i64]
+  [atom-count : (&mut i64)]) : i64
+  (let
+    [i : i64 (tli-test-cfg-skip-ws text pos n)]
+    (when (>= i n) (return i))
+    (let
+      [c : char (string.string-ref text i)]
+      (cond
+        [(or (= c '(') (= c '['))
+          (let
+            [close : char
+              (if (= c '(')
+                ')'
+                ']')]
+            [head-start : i64 (tli-test-cfg-skip-ws text (+ i 1) n)]
+            [head-end : i64 (tli-test-cfg-read-atom-end text head-start n)]
+            [head : String
+              (string.substring text head-start (- head-end head-start))]
+            [cur : i64 (tli-test-cfg-skip-ws text head-end n)]
+            (unless
+              (or
+                (string.eq (& head) "all")
+                (string.eq (& head) "any")
+                (string.eq (& head) "not"))
+              (io.panic
+                (str_cat.str-cat
+                  "unexpected cfg predicate head '"
+                  head
+                  "' in "
+                  (string.copy path))))
+            (while (and (< cur n) (!= (string.string-ref text cur) close))
+              (set!
+                cur
+                (tli-test-cfg-check-predicate! path text cur n atom-count))
+              (set! cur (tli-test-cfg-skip-ws text cur n)))
+            (if (< cur n)
+              (+ cur 1)
+              cur))]
+        [else
+          (let
+            [end : i64 (tli-test-cfg-read-atom-end text i n)]
+            [atom : String (string.substring text i (- end i))]
+            (unless
+              (hydrate.tli-hydrate-stdlib-cfg-atom? (& atom))
+              (io.panic
+                (str_cat.str-cat
+                  "stdlib cfg atom '"
+                  atom
+                  "' in "
+                  (string.copy path)
+                  " is missing from tli-hydrate-stdlib-cfg-atom?")))
+            (set! (deref atom-count) (+ (deref atom-count) 1))
+            end)]))))
+
+(define (tli-test-cfg-scan-source!
+  [path : (& str)]
+  [text : (& str)]
+  [atom-count : (&mut i64)]) : unit
+  (let
+    [n : i64 (string.string-length text)]
+    [i : i64 0]
+    (while (< i n)
+      (set! i (tli-test-cfg-skip-ws text i n))
+      (when (>= i n) (return unit))
+      (let
+        [c : char (string.string-ref text i)]
+        (cond
+          [(= c '"') (set! i (tli-test-cfg-skip-string text i n))]
+          [(= c '\'') (set! i (tli-test-cfg-skip-char text i n))]
+          [(or (= c '(') (= c '['))
+            (let
+              [head-start : i64 (tli-test-cfg-skip-ws text (+ i 1) n)]
+              [head-end : i64 (tli-test-cfg-read-atom-end text head-start n)]
+              (if (= (- head-end head-start) 3)
+                (let
+                  [head : String (string.substring text head-start 3)]
+                  (if (string.eq (& head) "cfg")
+                    (set!
+                      i
+                      (tli-test-cfg-check-predicate!
+                        path
+                        text
+                        head-end
+                        n
+                        atom-count))
+                    (set! i (+ i 1))))
+                (set! i (+ i 1))))]
+          [else (+= i 1)])))))
+
+(define (tli-test-cfg-tl-file? [name : (& str)]) : bool
+  (let
+    [n : i64 (string.string-length name)]
+    (and
+      (>= n 3)
+      (= (string.string-ref name (- n 3)) '.')
+      (= (string.string-ref name (- n 2)) 't')
+      (= (string.string-ref name (- n 1)) 'l'))))
+
+(define (tli-test-cfg-walk-stdlib!
+  [dir : (& str)]
+  [file-count : (&mut i64)]
+  [atom-count : (&mut i64)]) : unit
+  (match (fs.try-read-dir dir)
+    [(ErrIoStringVector error)
+      (io.panic
+        (str_cat.str-cat
+          "cannot read stdlib dir "
+          (string.copy dir)
+          ": "
+          (io.error-message error)))]
+    [(OkIoStringVector entries)
+      (let
+        [count : i64 (fs.string-vector-len (& entries))]
+        (for [i (iterator.range 0 count)]
+          (let
+            [name : String (fs.string-vector-get (& entries) i "")]
+            (unless
+              (or
+                (string.eq (& name) ".")
+                (string.eq (& name) "..")
+                (and (string.eq dir "stdlib") (string.eq (& name) "tests")))
+              (let
+                [full : String (fs.path-join dir (& name))]
+                (match (fs.try-file-kind (& full))
+                  [(OkFsFileKind kind)
+                    (cond
+                      [(fs.file-kind-directory? kind)
+                        (tli-test-cfg-walk-stdlib!
+                          (& full)
+                          file-count
+                          atom-count)]
+                      [(and
+                        (fs.file-kind-regular? kind)
+                        (tli-test-cfg-tl-file? (& name)))
+                        (set! (deref file-count) (+ (deref file-count) 1))
+                        (match (io.try-read-file (& full))
+                          [(OkIoBytes data)
+                            (let
+                              [text : String (byte_buf.to-string data)]
+                              (tli-test-cfg-scan-source!
+                                (& full)
+                                (& text)
+                                atom-count))]
+                          [(ErrIoBytes error)
+                            (io.panic (io.error-message error))])]
+                      [else unit])]
+                  [_ unit]))))))]))
+
+(test
+  tli-stdlib-cfg-allowlist-covers-stdlib-sources
+  (let
+    [file-count : i64 0]
+    [atom-count : i64 0]
+    (tli-test-cfg-walk-stdlib! "stdlib" (&mut file-count) (&mut atom-count))
+    (test.assert-true
+      (>= file-count 50)
+      "stdlib cfg allowlist check scanned stdlib sources")
+    (test.assert-true
+      (>= atom-count 20)
+      "stdlib cfg allowlist check scanned stdlib cfg predicates")))
+
+(test
+  tli-stdlib-cfg-digest-scoping
+  (let
+    [linux-base : sym_i64_env.SymI64Env
+      (target_cfg.compiler-target-cfgs
+        (target_cfg.CompilerTargetCfg.Linux)
+        (cfg_core.compiler-cfg-empty))]
+    [linux-with-tooling : sym_i64_env.SymI64Env
+      (cfg_core.compiler-cfg-enable
+        (cfg_core.compiler-cfg-enable linux-base "selfhost-compile-manifest")
+        "compiler-dependency-audit")]
+    [linux-with-test : sym_i64_env.SymI64Env
+      (cfg_core.compiler-cfg-enable linux-base "test")]
+    [linux-with-profile : sym_i64_env.SymI64Env
+      (cfg_core.compiler-cfg-enable linux-base "compile-profile")]
+    [win-base : sym_i64_env.SymI64Env
+      (target_cfg.compiler-target-cfgs
+        (target_cfg.CompilerTargetCfg.Windows)
+        (cfg_core.compiler-cfg-empty))]
+    [win-with-tooling : sym_i64_env.SymI64Env
+      (cfg_core.compiler-cfg-enable win-base "selfhost-compile-manifest")]
+    [d-linux : (Array u8 32) (hydrate.tli-hydrate-stdlib-cfg-digest linux-base)]
+    [d-linux-tooling : (Array u8 32)
+      (hydrate.tli-hydrate-stdlib-cfg-digest linux-with-tooling)]
+    [d-linux-test : (Array u8 32)
+      (hydrate.tli-hydrate-stdlib-cfg-digest linux-with-test)]
+    [d-linux-profile : (Array u8 32)
+      (hydrate.tli-hydrate-stdlib-cfg-digest linux-with-profile)]
+    [d-win : (Array u8 32) (hydrate.tli-hydrate-stdlib-cfg-digest win-base)]
+    [d-win-tooling : (Array u8 32)
+      (hydrate.tli-hydrate-stdlib-cfg-digest win-with-tooling)]
+    [full-linux : (Array u8 32) (hydrate.tli-hydrate-cfg-digest linux-base)]
+    [full-linux-tooling : (Array u8 32)
+      (hydrate.tli-hydrate-cfg-digest linux-with-tooling)]
+    [names-tooling : (__tl_dyn-array String)
+      (__tl_make-array "selfhost-compile-manifest" "compiler-dependency-audit")]
+    [names-test : (__tl_dyn-array String) (__tl_make-array "test")]
+    [d-names-linux : (Array u8 32)
+      (hydrate.tli-hydrate-stdlib-cfg-digest-for-names
+        false
+        (& names-tooling)
+        2)]
+    [d-names-linux-test : (Array u8 32)
+      (hydrate.tli-hydrate-stdlib-cfg-digest-for-names false (& names-test) 1)]
+    [d-names-win : (Array u8 32)
+      (hydrate.tli-hydrate-stdlib-cfg-digest-for-names true (& names-tooling) 2)]
+    (test.assert-true
+      (codec.tli-digest-eq? (& d-linux) (& d-linux-tooling))
+      "non-stdlib cfgs must not change stdlib cfg digest on linux")
+    (test.assert-true
+      (codec.tli-digest-eq? (& d-win) (& d-win-tooling))
+      "non-stdlib cfgs must not change stdlib cfg digest on windows")
+    (test.assert-true
+      (not (codec.tli-digest-eq? (& d-linux) (& d-win)))
+      "linux and windows stdlib cfg digests must differ")
+    (test.assert-true
+      (not (codec.tli-digest-eq? (& d-linux) (& d-linux-test)))
+      "test cfg must change stdlib cfg digest")
+    (test.assert-true
+      (not (codec.tli-digest-eq? (& d-linux) (& d-linux-profile)))
+      "compile-profile cfg must change stdlib cfg digest")
+    (test.assert-true
+      (not (codec.tli-digest-eq? (& full-linux) (& full-linux-tooling)))
+      "package cfg digest still hashes arbitrary user cfgs")
+    (test.assert-true
+      (codec.tli-digest-eq? (& d-linux) (& d-names-linux))
+      "name-based linux stdlib digest matches env-based digest")
+    (test.assert-true
+      (codec.tli-digest-eq? (& d-linux-test) (& d-names-linux-test))
+      "name-based linux+test stdlib digest matches env-based digest")
+    (test.assert-true
+      (codec.tli-digest-eq? (& d-win) (& d-names-win))
+      "name-based windows stdlib digest matches env-based digest")))
+
+(defstruct TliTestBorrowedBundleBox
+  (directory codec.TliDirectory)
+  (records (__tl_dyn-array tli.TliModuleRecord))
+  (decoded (__tl_dyn-array bool))
+  (owned-cell (__tl_dyn-array i64)))
+
+(test
+  tli-batch-cache-override-and-borrowed-bundle-reuse
+  (sysroot.tli-batch-cache-begin!)
+  (let
+    [roots : strings.Vec (strings.new)]
+    (strings.push-ref! (&mut roots) "nonexistent-batch-root-a")
+    (test.assert-true
+      (not (sysroot.tli-sysroot-stdlib-roots-override? (& roots)))
+      "first missing root check returns false")
+    (test.assert-true
+      (not (sysroot.tli-sysroot-stdlib-roots-override? (& roots)))
+      "second identical root check hits batch override cache")
+    (test.assert-i64-eq
+      (sysroot.tli-batch-cache-test-override-misses)
+      1
+      "override check computed once")
+    (test.assert-i64-eq
+      (sysroot.tli-batch-cache-test-override-hits)
+      1
+      "second override check hit cache")
+    (test.assert-true
+      (> (sysroot.tli-batch-cache-arena-handle) 0)
+      "batch cache allocated its own arena")
+    (strings.push-ref! (&mut roots) "nonexistent-batch-root-b")
+    (test.assert-true
+      (not (sysroot.tli-sysroot-stdlib-roots-override? (& roots)))
+      "different roots recompute cleanly")
+    (test.assert-i64-eq
+      (sysroot.tli-batch-cache-test-override-misses)
+      2
+      "changed roots missed cache"))
+  (sysroot.tli-batch-cache-end!)
+  (test.assert-i64-eq
+    (sysroot.tli-batch-cache-arena-handle)
+    0
+    "batch cache arena destroyed cleanly on end")
+  ;; Borrowed stdlib bundle shares decoded records across independent session
+  ;; multi-catalogs and survives session release without destroying its arena.
+  (let
+    [shared-arena : i64 (arena.tl_arena_make)]
+    [enclosing : i64 (arena.tl_arena_current)]
+    [cfg-digest : (Array u8 32) (make-array u8 32)]
+    (unsafe
+      ;; lint-allow: raw-arena-op -- test allocates a shared batch-style arena to verify borrowed reuse.
+      (arena.tl_arena_set shared-arena))
+    (let
+      [wire : (__tl_dyn-array u8)
+        (tli-test-make-simple-bundle
+          "stdlib.batch_probe"
+          "stdlib/batch_probe.tl"
+          cfg-digest
+          (__tl_make-array tli.TliImport 0)
+          true
+          "_tl_stdlib_batch_probe_helper")]
+      [cat : hydrate.TliCatalog
+        (match (hydrate.tli-catalog-open-lazy
+          (& wire)
+          "build"
+          "target"
+          (& cfg-digest))
+          [(Ok c) c]
+          [(Err f) (io.panic f.message)])]
+      [records : (__tl_dyn-array tli.TliModuleRecord)
+        (__tl_make-array tli.TliModuleRecord 1)]
+      [decoded : (__tl_dyn-array bool) (__tl_make-array bool 1)]
+      [owned-cell : (__tl_dyn-array i64) (__tl_make-array cat.owned-bytes)]
+      [box-cell : (__tl_dyn-array TliTestBorrowedBundleBox)
+        (__tl_make-array
+          (TliTestBorrowedBundleBox cat.directory records decoded owned-cell))]
+      [box-addr : i64
+        (unsafe
+          (cast (ptr->int (__tl_array-data box-cell)) : i64))]
+      (unsafe
+        ;; lint-allow: raw-arena-op -- restore caller arena after populating shared test bundle.
+        (arena.tl_arena_set enclosing))
+      ;; Session 1 decodes into shared-arena and releases only its own root-arena.
+      (let
+        [root1 : i64 (arena.tl_arena_make)]
+        [m1 : hydrate.TliMultiCatalog (hydrate.tli-multi-catalog-new root1)]
+        [view1 : TliTestBorrowedBundleBox
+          (unsafe
+            (ptr-read
+              (int->ptr (cast box-addr : u64) : (Ptr TliTestBorrowedBundleBox))))]
+        (match (hydrate.tli-multi-catalog-attach-borrowed-stdlib-bundle!
+          (&mut m1)
+          shared-arena
+          "/sysroot/libstdlib.a"
+          view1.directory
+          (& cfg-digest)
+          (sym_i64_env.sym-i64-empty)
+          view1.records
+          view1.decoded
+          view1.owned-cell)
+          [(Ok _) unit]
+          [(Err m) (io.panic m)])
+        (test.assert-i64-eq
+          (array-ref (hydrate.tli-multi-catalog-arenas (& m1)) 1)
+          0
+          "borrowed bundle arena is excluded from session-owned arenas")
+        (match (hydrate.tli-multi-catalog-hydrate-gid! (&mut m1) 0)
+          [(Ok _) unit]
+          [(Err f) (io.panic f.message)])
+        (test.assert-true
+          (unsafe
+            (array-ref
+              (ptr-read
+                (int->ptr
+                  (cast box-addr : u64)
+                  : (Ptr TliTestBorrowedBundleBox))).decoded
+              0))
+          "session 1 marked shared module record decoded")
+        (hydrate.tli-multi-catalog-release! (& m1)))
+      ;; Session 2 reuses the already-decoded record after session 1 released.
+      (let
+        [root2 : i64 (arena.tl_arena_make)]
+        [m2 : hydrate.TliMultiCatalog (hydrate.tli-multi-catalog-new root2)]
+        [view2 : TliTestBorrowedBundleBox
+          (unsafe
+            (ptr-read
+              (int->ptr (cast box-addr : u64) : (Ptr TliTestBorrowedBundleBox))))]
+        (match (hydrate.tli-multi-catalog-attach-borrowed-stdlib-bundle!
+          (&mut m2)
+          shared-arena
+          "/sysroot/libstdlib.a"
+          view2.directory
+          (& cfg-digest)
+          (sym_i64_env.sym-i64-empty)
+          view2.records
+          view2.decoded
+          view2.owned-cell)
+          [(Ok _) unit]
+          [(Err m) (io.panic m)])
+        (match (hydrate.tli-multi-catalog-hydrate-gid! (&mut m2) 0)
+          [(Ok _) unit]
+          [(Err f) (io.panic f.message)])
+        (let
+          [inits : (__tl_dyn-array String)
+            (hydrate.tli-multi-startup-archive-symbols (& m2))]
+          (test.assert-i64-eq
+            (array-length inits)
+            1
+            "session 2 sees startup init from cached decoded record"))
+        (hydrate.tli-multi-catalog-release! (& m2)))
+      (unsafe
+        ;; lint-allow: raw-arena-op -- destroy shared test bundle arena after both sessions release.
+        (arena.tl_arena_destroy shared-arena)))))

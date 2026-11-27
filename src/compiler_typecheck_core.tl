@@ -95762,18 +95762,41 @@
           (= kind (csym.compiler-symbol-kind-enum-variant)))
         -1]
       [(= kind (csym.compiler-symbol-kind-extern))
-        (match (csym.compiler-symbols-decl-at-index
-          (tc-context-symbols ctx)
-          (csym.compiler-symbol-handle-index handle))
-          [(Ok decl)
-            (match (ast.ast-decl-unwrapped (& decl))
-              [(Extern _ _ _ metadata _)
-                (match (& (deref metadata))
-                  [(ast.AstExternMetadata.Metadata (TypeLisp) _ _ _ _)
-                    (csym.compiler-symbol-handle-index handle)]
-                  [_ -1])]
-              [_ -1])]
-          [_ -1])]
+        (let
+          [extern-index : i64 (csym.compiler-symbol-handle-index handle)]
+          (match (csym.compiler-symbols-decl-at-index
+            (tc-context-symbols ctx)
+            extern-index)
+            [(Ok decl)
+              (match (ast.ast-decl-unwrapped (& decl))
+                [(Extern _ _ extern-kind metadata ty)
+                  (match (& (deref metadata))
+                    [(ast.AstExternMetadata.Metadata (TypeLisp) _ _ _ _)
+                      extern-index]
+                    [_
+                      (if (match extern-kind
+                        [(Function) true]
+                        [_ false])
+                        (let
+                          [mod-id : i64
+                            (csym.compiler-symbols-owner-module-id-at-index-or
+                              (tc-context-symbols ctx)
+                              extern-index
+                              cbi.compiler-builtin-id-fix-empty)]
+                          [owner : TcContext
+                            (tc-context-with-module-id
+                              ctx
+                              (tc-env-key-name-text mod-id)
+                              mod-id)]
+                          (if (tc-global-effect-extern-takes-callback?
+                            owner
+                            (& (deref metadata))
+                            (& ty))
+                            extern-index
+                            -1))
+                        -1)])]
+                [_ -1])]
+            [_ -1]))]
       [else indirect])))
 
 (define (tc-global-effect-callee
@@ -97097,16 +97120,168 @@
         canonical-id
         (tc-context-pools ctx)))))
 
+(define (tc-global-effect-type-contains-callback?
+  [ctx : TcContext]
+  [ty : (& ty ast.AstType)]
+  [depth : i64]) : bool
+  (if (> depth 16)
+    true
+    (match ty
+      [(or (ast.AstType.CFunc _ _) (ast.AstType.Func _ _)) true]
+      [(or (ast.AstType.Region _ inner) (ast.AstType.Invalidate _ inner)
+           (ast.AstType.Ref _ inner) (ast.AstType.MutRef _ inner)
+           (ast.AstType.Ptr inner) (ast.AstType.MutPtr inner)
+           (ast.AstType.Box inner) (ast.AstType.Array inner _)
+           (ast.AstType.DynArray inner) (ast.AstType.Slice inner))
+        (let
+          [resolved : ast.AstType
+            (tc-resolve-type ctx (tc-context-type-get ctx inner))]
+          (tc-global-effect-type-contains-callback?
+            ctx
+            (& resolved)
+            (+ depth 1)))]
+      [(ast.AstType.Tuple items)
+        (let
+          [found : bool false]
+          (for [i (iterator.range 0 items.len)]
+            (when
+              (not found)
+              (let
+                [resolved : ast.AstType
+                  (tc-resolve-type
+                    ctx
+                    (tc-context-type-get
+                      ctx
+                      (ast.ast-type-list-get items i (ast.ast-type-id-fallback))))]
+                (when
+                  (tc-global-effect-type-contains-callback?
+                    ctx
+                    (& resolved)
+                    (+ depth 1))
+                  (set! found true)))))
+          found)]
+      [(or (ast.AstType.Struct name-id) (ast.AstType.StructArgs name-id _))
+        (match (tc-struct-decl-id ctx name-id)
+          [(ResultTcStructDecl.Ok decl)
+            (match decl
+              [(TcStructDecl _ _ fields)
+                (let
+                  [owner-ctx : TcContext
+                    (tc-context-with-owner-name-module ctx name-id)]
+                  [found : bool false]
+                  (for [i (iterator.range 0 fields.len)]
+                    (when
+                      (not found)
+                      (match (ast.ast-field-def-list-get
+                        (& fields)
+                        i
+                        (ast.ast-field-def-fallback))
+                        [(Def _ field-ty _)
+                          (let
+                            [resolved : ast.AstType
+                              (tc-resolve-type owner-ctx field-ty)]
+                            (when
+                              (tc-global-effect-type-contains-callback?
+                                owner-ctx
+                                (& resolved)
+                                (+ depth 1))
+                              (set! found true)))])))
+                  found)])]
+          [(ResultTcStructDecl.Err _) false])]
+      [(or (ast.AstType.Enum name-id) (ast.AstType.EnumArgs name-id _))
+        (match (tc-enum-decl-id ctx name-id)
+          [(ResultTcEnumDecl.Ok decl)
+            (match decl
+              [(TcEnumDecl _ variants)
+                (let
+                  [owner-ctx : TcContext
+                    (tc-context-with-owner-name-module ctx name-id)]
+                  [found : bool false]
+                  (for [i (iterator.range 0 variants.len)]
+                    (when
+                      (not found)
+                      (match (ast.ast-variant-def-list-get
+                        (& variants)
+                        i
+                        (ast.ast-variant-def-fallback))
+                        [(Def _ payloads _)
+                          (for [j (iterator.range 0 payloads.len)]
+                            (when
+                              (not found)
+                              (let
+                                [resolved : ast.AstType
+                                  (tc-resolve-type
+                                    owner-ctx
+                                    (tc-context-type-get
+                                      owner-ctx
+                                      (ast.ast-type-list-get
+                                        (& payloads)
+                                        j
+                                        (ast.ast-type-id-fallback))))]
+                                (when
+                                  (tc-global-effect-type-contains-callback?
+                                    owner-ctx
+                                    (& resolved)
+                                    (+ depth 1))
+                                  (set! found true)))))])))
+                  found)])]
+          [(ResultTcEnumDecl.Err _) false])]
+      [_ false])))
+
+(define (tc-global-effect-extern-takes-callback?
+  [ctx : TcContext]
+  [metadata : (& metadata ast.AstExternMetadata)]
+  [ty : (& ty ast.AstType)]) : bool
+  (let
+    [abi-callback? : bool
+      (match metadata
+        [(ast.AstExternMetadata.Metadata abi _ _ _ _)
+          (match abi
+            [(ast.AstExternAbi.CVarargsOpen) true]
+            [(ast.AstExternAbi.CVarargsTyped vararg-ty)
+              (let
+                [resolved : ast.AstType
+                  (tc-resolve-type ctx (ast.clone-ast-type vararg-ty))]
+                (tc-global-effect-type-contains-callback? ctx (& resolved) 0))]
+            [_ false])])]
+    (if abi-callback?
+      true
+      (match ty
+        [(ast.AstType.Func params _)
+          (let
+            [found : bool false]
+            (for [i (iterator.range 0 params.len)]
+              (when
+                (not found)
+                (let
+                  [resolved : ast.AstType
+                    (tc-resolve-type
+                      ctx
+                      (tc-context-type-get
+                        ctx
+                        (ast.ast-type-list-get
+                          params
+                          i
+                          (ast.ast-type-id-fallback))))]
+                  (when
+                    (tc-global-effect-type-contains-callback?
+                      ctx
+                      (& resolved)
+                      0)
+                    (set! found true)))))
+            found)]
+        [_ false]))))
+
 (define (tc-tli-hydrated-seed-global-effects!
   [owner : TcContext]
   [collector : (&mut collector TcGlobalEffectCollector)]
   [index : i64]
   [module-id : i64]
-  [name : i64]) : unit
+  [name : i64]) : bool
   (let
     [facts-ptr : i64 (tc-job-state-tli-facts-ptr (tc-context-job-state owner))]
-    (when
-      (!= facts-ptr 0)
+    (if (= facts-ptr 0)
+      false
       (let
         [canonical-id : i64
           (if (= module-id cbi.compiler-builtin-id-fix-empty)
@@ -97122,61 +97297,63 @@
           (tli_hydrate.tli-hydrated-facts-fn-summary-slot
             (& facts)
             canonical-id)]
-        (when
-          (>= slot 0)
-          (let
-            [row : (& facts tli_hydrate.TliHydratedFnSummaryRow)
-              (tli_hydrate.tli-hydrated-facts-fn-summary-at (& facts) slot)]
-            (when
-              (!= (bit-and row.effect-flags 32) 0)
-              (tc-global-effect-add-call!
-                collector
-                index
-                collector.graph.indirect))
-            (for [wi (iterator.range 0 (array-length row.global-writes))]
-              (let
-                [w : tli_hydrate.TliHydratedGlobalWrite
-                  (array-ref row.global-writes wi)]
-                [handle : i64 (tc-global-effect-handle owner Nil w.symbol-id)]
-                (when
-                  (csym.compiler-symbols-handle-found? handle)
-                  (let
-                    [kind : i64 (csym.compiler-symbol-handle-kind handle)]
-                    (when
-                      (or
-                        (= kind (csym.compiler-symbol-kind-value-define))
-                        (= kind (csym.compiler-symbol-kind-extern)))
-                      (let
-                        [global : i64
-                          (csym.compiler-symbol-handle-index handle)]
-                        (tc-global-effect-record! collector index 1 global)
-                        (unless
-                          collector.address-only
-                          (global_effects.add-write!
-                            (&mut collector.graph)
-                            index
-                            global))))))))
-            (when
-              collector.arena
+        (if (< slot 0)
+          false
+          (begin
+            (let
+              [row : (& facts tli_hydrate.TliHydratedFnSummaryRow)
+                (tli_hydrate.tli-hydrated-facts-fn-summary-at (& facts) slot)]
               (when
-                (!= (bit-and row.effect-flags 16) 0)
-                (global_effects.add-write!
-                  (&mut collector.graph)
+                (!= (bit-and row.effect-flags 32) 0)
+                (tc-global-effect-add-call!
+                  collector
                   index
-                  (tc-arena-store-global-key collector.graph.indirect)))
+                  collector.graph.indirect))
+              (for [wi (iterator.range 0 (array-length row.global-writes))]
+                (let
+                  [w : tli_hydrate.TliHydratedGlobalWrite
+                    (array-ref row.global-writes wi)]
+                  [handle : i64 (tc-global-effect-handle owner Nil w.symbol-id)]
+                  (when
+                    (csym.compiler-symbols-handle-found? handle)
+                    (let
+                      [kind : i64 (csym.compiler-symbol-handle-kind handle)]
+                      (when
+                        (or
+                          (= kind (csym.compiler-symbol-kind-value-define))
+                          (= kind (csym.compiler-symbol-kind-extern)))
+                        (let
+                          [global : i64
+                            (csym.compiler-symbol-handle-index handle)]
+                          (tc-global-effect-record! collector index 1 global)
+                          (unless
+                            collector.address-only
+                            (global_effects.add-write!
+                              (&mut collector.graph)
+                              index
+                              global))))))))
               (when
-                (!= (bit-and row.effect-flags 256) 0)
-                (global_effects.add-write!
-                  (&mut collector.graph)
-                  index
-                  (tc-arena-store-argument-key collector.graph.indirect)))
-              (for [p (iterator.range 0 63)]
+                collector.arena
                 (when
-                  (tli_hydrate.tli-hydrated-fn-summary-arena-arg-store? row p)
+                  (!= (bit-and row.effect-flags 16) 0)
                   (global_effects.add-write!
                     (&mut collector.graph)
                     index
-                    (tc-arena-store-parameter-key collector.graph.indirect p)))))))))))
+                    (tc-arena-store-global-key collector.graph.indirect)))
+                (when
+                  (!= (bit-and row.effect-flags 256) 0)
+                  (global_effects.add-write!
+                    (&mut collector.graph)
+                    index
+                    (tc-arena-store-argument-key collector.graph.indirect)))
+                (for [p (iterator.range 0 63)]
+                  (when
+                    (tli_hydrate.tli-hydrated-fn-summary-arena-arg-store? row p)
+                    (global_effects.add-write!
+                      (&mut collector.graph)
+                      index
+                      (tc-arena-store-parameter-key collector.graph.indirect p))))))
+            true))))))
 
 (define (tc-global-effect-scan-declaration!
   [ctx : TcContext]
@@ -97272,12 +97449,12 @@
                                   field
                                   (ast.ast-type-id-fallback))))]
                           [_ unit]))])))]
-            [(Extern _ name _ metadata _)
+            [(Extern _ name kind metadata ty)
               (let
                 [meta : ast.AstExternMetadata
                   (ast.ast-extern-metadata-box-shared-view metadata)]
-                (match (ast.ast-extern-metadata-imported-spmd meta)
-                  [(Package _ _ _ _)
+                (match (& meta)
+                  [(ast.AstExternMetadata.Metadata _ _ _ _ (Package _ _ _ _))
                     ;; Dependency interfaces export functions and types,
                     ;; never global places. Their hidden bodies can still
                     ;; invoke a consumer callback, including one retained
@@ -97287,12 +97464,29 @@
                       index
                       collector.graph.indirect)]
                   [_
-                    (tc-tli-hydrated-seed-global-effects!
-                      owner
-                      collector
-                      index
-                      module-id
-                      name)]))]
+                    (unless
+                      (tc-tli-hydrated-seed-global-effects!
+                        owner
+                        collector
+                        index
+                        module-id
+                        name)
+                      ;; A foreign C/FFI function that accepts a callback
+                      ;; pointer (such as Windows `CreateThread`) can invoke
+                      ;; TypeLisp code indirectly via that callback.
+                      (when
+                        (and
+                          (match kind
+                            [(Function) true]
+                            [_ false])
+                          (tc-global-effect-extern-takes-callback?
+                            owner
+                            (& meta)
+                            (& ty)))
+                        (tc-global-effect-add-call!
+                          collector
+                          index
+                          collector.graph.indirect)))]))]
             [(DefDispatch _ _ variants)
               (for [variant (iterator.range 0 variants.len)]
                 (match (ast.ast-dispatch-variant-list-get

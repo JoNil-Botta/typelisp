@@ -41,6 +41,13 @@
     [(or (I64) (U64)) (= lanes 4)]
     [_ false]))
 
+(define (compiler-backend-lane-id-sse2-i64-shape-ok?
+  [elem-ty : (& elem-ty compiler_ast_types.AstType)]
+  [lanes : i64]) : bool
+  (match elem-ty
+    [(or (I64) (U64)) (= lanes 2)]
+    [_ false]))
+
 (define (compiler-backend-avx512-i64-lane-id-data) : String
   "    .quad 0
     .quad 1
@@ -3095,7 +3102,9 @@
   (if (compiler-backend-lane-id-avx512-i64-shape-ok? elem-ty lanes)
     (be_state.compiler-backend-program-collections-mark-avx512-i64-lane-id
       collections)
-    (if (compiler-backend-lane-id-avx2-i64-shape-ok? elem-ty lanes)
+    (if (or
+      (compiler-backend-lane-id-avx2-i64-shape-ok? elem-ty lanes)
+      (compiler-backend-lane-id-sse2-i64-shape-ok? elem-ty lanes))
       (be_state.compiler-backend-program-collections-mark-avx2-i64-lane-id
         collections)
       collections)))

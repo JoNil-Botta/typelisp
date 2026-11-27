@@ -155,7 +155,8 @@
           roots
           cfgs
           (tc.tc-prefix-default-cache-scope))]
-      [cfg-digest : (Array u8 32) (extract.tli-extract-cfg-digest request.cfgs)]
+      [cfg-digest : (Array u8 32)
+        (extract.tli-extract-stdlib-cfg-digest request.cfgs)]
       [records : (__tl_dyn-array extract.TliExtractModule)
         (extract.tli-extract-open-modules (& request) (& sources))]
       [job : tc.TcJobState request.job-state]

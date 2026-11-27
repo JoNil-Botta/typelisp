@@ -167,6 +167,30 @@ test -f "{{dir}}/smoke.ir"
 stdout contains Wrote {{dir}}/smoke.ir
 in file {{dir}}/smoke.ir
 contains typelisp-ir-summary v1
+step emit-ir-batch
+file emit-ir-batch-two.tl
+(define (main) : i64 (+ 20 22))
+end-file
+file -x emit-ir-batch.txt
+{{dir}}/smoke.tl|{{dir}}/smoke-batch.ir
+{{dir}}/emit-ir-batch-two.tl|{{dir}}/emit-ir-batch-two.ir
+end-file
+run compile --batch "{{dir}}/emit-ir-batch.txt" --emit-ir
+stderr empty
+stdout contains Wrote {{dir}}/smoke-batch.ir
+stdout contains Wrote {{dir}}/emit-ir-batch-two.ir
+sh cmp -s "{{dir}}/smoke.ir" "{{dir}}/smoke-batch.ir"
+in file {{dir}}/emit-ir-batch-two.ir
+contains typelisp-ir-summary v1
+run compile --batch "{{dir}}/emit-ir-batch.txt" --emit-ir --emit-ir
+exit nonzero
+stderr contains compile: IR output was requested more than once
+run compile --batch "{{dir}}/emit-ir-batch.txt" --emit-ir --no-entry
+exit nonzero
+stderr contains compile: --no-entry selects assembly output
+run compile --batch "{{dir}}/emit-ir-batch.txt" --emit-ir --target windows-x86_64 --windows-coff-plan "{{dir}}/emit-ir-plan.txt"
+exit nonzero
+stderr contains compile: --windows-coff-plan cannot be combined with --emit-ir
 step missing-source
 run compile
 exit nonzero

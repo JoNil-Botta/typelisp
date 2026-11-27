@@ -2,7 +2,7 @@
 # file	scope	boundary	category	token-regex	count	rationale
 src/compiler_backend.tl	compiler-backend-emit-program-linux	policy	entry	CompilerBackendTarget[.]Linux	1	Named Linux entry point for tools and tests.
 src/compiler_backend.tl	compiler-backend-emit-source	policy	entry	CompilerBackendTarget[.]Linux	1	Named Linux source entry point for tools and tests.
-src/compiler_backend.tl	compiler-backend-lower-mode-for-target	policy	backend-mode	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows|CompilerLowerMode[.]LinuxAvx2|CompilerLowerMode[.]LinuxAvx512|CompilerLowerMode[.]LinuxScalar|CompilerLowerMode[.]WindowsAvx2|CompilerLowerMode[.]WindowsAvx512|CompilerLowerMode[.]WindowsScalar	12	Selects the lowerer mode for a target and backend mode.
+src/compiler_backend.tl	compiler-backend-lower-mode-for-target	policy	backend-mode	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows|CompilerLowerMode[.]LinuxAvx2|CompilerLowerMode[.]LinuxAvx512|CompilerLowerMode[.]LinuxScalar|CompilerLowerMode[.]LinuxSse2|CompilerLowerMode[.]WindowsAvx2|CompilerLowerMode[.]WindowsAvx512|CompilerLowerMode[.]WindowsScalar|CompilerLowerMode[.]WindowsSse2	16	Selects the lowerer mode for a target and backend mode.
 src/compiler_backend.tl	compiler-backend-closure-adapter-outgoing-frame-space	adapter	abi	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Selects the System V or Win64 closure-adapter frame computation.
 src/compiler_backend.tl	compiler-backend-emit-linux-crt-main-argv-capture	adapter	entry	compiler-backend-target-linux[?]	1	Linux CRT entry captures argv for main.
 src/compiler_backend.tl	compiler-backend-emit-windows-main-argv-capture	adapter	entry	compiler-backend-target-windows[?]	1	Windows entry captures argv for main.

@@ -245,6 +245,48 @@
     be_state.compiler-backend-function-i64-home-override1-reg
     compiler_abi.compiler-reg-id-invalid))
 
+(define (compiler-backend-instr-uses-simd?
+  [instr : (& instr compiler_ir_types.CompilerIrInstr)]) : bool
+  (match instr
+    [(or (LaneId _ _ _) (Splat _ _ _ _) (VectorBinOp _) (VectorPrefix _)
+         (VectorReduce _ _ _ _ _) (VectorCompare _) (MaskBinOp _ _ _ _ _)
+         (MaskNot _ _ _) (MaskReduce _ _ _ _) (VectorLoad _ _ _ _ _)
+         (VectorStore _) (PredicatedStore _) (PredicatedLoad _) (GatherLoad _)
+         (VectorShuffle _) (TailMask _ _ _ _) (SpmdCall _))
+      true]
+    [(Select p) (> p.lanes 0)]
+    [_ false]))
+
+(define (compiler-backend-function-uses-simd?
+  [function-abi : (& function-abi compiler_ir_types.CompilerIrFunctionAbi)]
+  [blocks : (& blocks compiler_ir_types.CompilerIrBlockList)]) : bool
+  (if (match function-abi
+    [(SpmdPrivate _) true]
+    [_ false])
+    true
+    (match blocks
+      [(Array seq)
+        (let
+          [bcount : i64 (compiler_ir_types.compiler-ir-block-seq-count seq)]
+          [b : i64 0]
+          [found : bool false]
+          (while (and (< b bcount) (not found))
+            (match (compiler_ir_types.compiler-ir-block-seq-borrow seq b)
+              [(Block _ instrs)
+                (let
+                  [icount : i64 instrs.len]
+                  [i : i64 0]
+                  (while (and (< i icount) (not found))
+                    (when
+                      (compiler-backend-instr-uses-simd?
+                        (compiler_ir_types.compiler-ir-instr-seq-borrow
+                          instrs
+                          i))
+                      (set! found true))
+                    (set! i (+ i 1))))])
+            (set! b (+ b 1)))
+          found)])))
+
 (define (compiler-backend-emit-vector-reduce
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -268,27 +310,40 @@
         elem-ty
         instr-diag
         backend-state)))
-  (if (be_operand.compiler-backend-avx512-shape-ok? elem-ty lanes)
-    (be_operand.compiler-backend-emit-avx512-vector-reduce
-      type-segment-bases
-      assignments
-      dst
-      op
-      src
-      lanes
-      elem-ty
-      instr-diag
-      backend-state)
-    (be_operand.compiler-backend-emit-avx2-vector-reduce
-      type-segment-bases
-      assignments
-      dst
-      op
-      src
-      lanes
-      elem-ty
-      instr-diag
-      backend-state)))
+  (cond
+    [(be_operand.compiler-backend-avx512-shape-ok? elem-ty lanes)
+      (be_operand.compiler-backend-emit-avx512-vector-reduce
+        type-segment-bases
+        assignments
+        dst
+        op
+        src
+        lanes
+        elem-ty
+        instr-diag
+        backend-state)]
+    [(be_operand.compiler-backend-sse2-shape-ok? elem-ty lanes)
+      (be_operand.compiler-backend-emit-sse2-vector-reduce
+        type-segment-bases
+        assignments
+        dst
+        op
+        src
+        lanes
+        elem-ty
+        instr-diag
+        backend-state)]
+    [else
+      (be_operand.compiler-backend-emit-avx2-vector-reduce
+        type-segment-bases
+        assignments
+        dst
+        op
+        src
+        lanes
+        elem-ty
+        instr-diag
+        backend-state)]))
 
 ;; Set by the two helpers below, the only spellings of an %rbp-relative frame
 ;; reference the emitter produces. The frame size is computed after the body and
@@ -11015,6 +11070,7 @@
     [after-cmp : i64 (+ cursor 1)]
     [direct? : bool
       (and
+        (be_state.compiler-backend-current-mode-avx2? ctx.function-state)
         (= bit-index 63)
         (< after-cmp instrs.len)
         (be_simd.compiler-backend-var-single-use? ctx.use-counts cmp-dst)
@@ -11099,7 +11155,9 @@
   [out : (&mut out be_state.CompilerBackendAsmBuf)]) : be_state.ResultCompilerBackend
   (let
     [sign-mode : i64
-      (if (be_state.compiler-backend-current-mode-avx2? ctx.function-state)
+      (if (or
+        (be_state.compiler-backend-current-mode-avx2? ctx.function-state)
+        (be_state.compiler-backend-current-mode-sse2? ctx.function-state))
         (compiler-backend-vector-sign-bit-mode-at
           ctx.backend-state
           (& instrs)
@@ -14304,10 +14362,11 @@
   (or
     (not (= plan-mask 0))
     (not (= const-hoist-sites 0))
-    ;; AVX2 predicated-store lane labels use the instruction point as their
-    ;; identity. Even a stack-only plan therefore needs the exact count so two
-    ;; stores in one block cannot emit the same local labels.
-    (be_state.compiler-backend-mode-avx2? backend-mode)))
+    ;; AVX2 and SSE2 predicated-store lane labels use the instruction point as
+    ;; their identity. Even a stack-only plan therefore needs the exact count so
+    ;; two stores in one block cannot emit the same local labels.
+    (be_state.compiler-backend-mode-avx2? backend-mode)
+    (be_state.compiler-backend-mode-sse2? backend-mode)))
 
 (define (compiler-backend-emit-instrs-loop
   [ctx : be_state.CompilerBackendEmissionContext]
@@ -15359,6 +15418,39 @@
               (Err
                 (box
                   (compiler_diagnostic.compiler-diagnostic-at-start "" message)))]))]
+      [(be_state.compiler-backend-current-mode-sse2?
+          (be_state.compiler-backend-state-function-state backend-state))
+        (let
+          [storage-ty : compiler_ast_types.AstType
+            (if (compiler-backend-spmd-varying-param? name)
+              ty
+              (I8))]
+          (match (be_simd.compiler-backend-vector-dst-reg
+            assignments
+            var-id
+            "private SSE2 SPMD helper parameter"
+            "xmm"
+            "%xmm0"
+            backend-state)
+            [(Ok home)
+              (Ok
+                (str_cat.str-cat
+                  "    movdqu "
+                  (string.int->string (* 16 special-index))
+                  "(%r10), "
+                  home
+                  "\n"
+                  (be_simd.compiler-backend-vector-store-dst
+                    assignments
+                    var-id
+                    "xmm"
+                    storage-ty
+                    home
+                    backend-state)))]
+            [(Err message)
+              (Err
+                (box
+                  (compiler_diagnostic.compiler-diagnostic-at-start "" message)))]))]
       [(compiler-backend-spmd-varying-param? name)
         (let
           [incoming : String
@@ -15578,8 +15670,11 @@
       (compiler-backend-spmd-mask-entry-plan-empty)]
     [opmask? : bool
       (not
-        (be_state.compiler-backend-current-mode-avx2?
-          (be_state.compiler-backend-state-function-state backend-state)))]
+        (or
+          (be_state.compiler-backend-current-mode-avx2?
+            (be_state.compiler-backend-state-function-state backend-state))
+          (be_state.compiler-backend-current-mode-sse2?
+            (be_state.compiler-backend-state-function-state backend-state))))]
     [_
       (try
         (if opmask?
@@ -23466,11 +23561,26 @@
               (& params)
               vars
               raw-blocks))]
+        ;; In SSE2 mode, non-SIMD functions follow the exact scalar pipeline so
+        ;; shrinkwrap, cold-call rewrite, %rbp pool, call-hole/loop splitting,
+        ;; caller-save rewrite, and stack coloring stay identical to scalar.
+        [function-uses-simd? : bool
+          (if (be_state.compiler-backend-mode-sse2? mode)
+            (compiler-backend-function-uses-simd?
+              (& function-abi)
+              (& folded-blocks))
+            (not (be_state.compiler-backend-mode-scalar? mode)))]
+        [scalar-pipeline? : bool
+          (or
+            (be_state.compiler-backend-mode-scalar? mode)
+            (and
+              (be_state.compiler-backend-mode-sse2? mode)
+              (not function-uses-simd?)))]
         ;; Pre-regalloc SIMD algebraic select-add/sub factoring: hoist shared
         ;; `x` out of `select(m, x +- a, x +- b)` so regalloc allocates the
         ;; factored loop (and hoisted negated splats) cleanly.
         [select-factored : be_simd.CompilerBackendSelectFactorResult
-          (if (be_state.compiler-backend-mode-scalar? mode)
+          (if scalar-pipeline?
             (SelectFactorResult vars folded-blocks)
             (compiler-backend-select-add-factor-blocks vars folded-blocks))]
         [factored-vars : i64
@@ -23494,7 +23604,7 @@
                 (be_state.compiler-backend-global-shared-view function-abi))]
             (if (and
               shrinkwrap-enabled
-              (be_state.compiler-backend-mode-scalar? mode)
+              scalar-pipeline?
               scalar-registers-enabled)
               (compiler_regalloc.compiler-reg-early-exit-shrinkwrap-function
                 folded-func)
@@ -23505,9 +23615,7 @@
         ;; rewrite follows the early-exit split and still precedes regalloc, so
         ;; liveness sees both transformations.
         [cold-call-rewrite : compiler_regalloc.CompilerRegColdCallRewrite
-          (if (and
-            (be_state.compiler-backend-mode-scalar? mode)
-            scalar-registers-enabled)
+          (if (and scalar-pipeline? scalar-registers-enabled)
             (compiler_regalloc.compiler-reg-cold-call-rewrite-function-with-representations
               type-segment-bases
               early-exit-func
@@ -23552,7 +23660,7 @@
             (and
               allow-rbp
               (or target-policy.linux target-policy.windows)
-              (be_state.compiler-backend-mode-scalar? mode)
+              scalar-pipeline?
               scalar-registers-enabled))]
         [fn-abi : compiler_abi.CompilerRegTargetAbi target-policy.abi]
         [_fn-abi : unit
@@ -23564,10 +23672,7 @@
         ;; path that takes
         ;; both (the stack-only and SIMD plans do not need it, and the
         ;; rewrites are off when scalar registers are).
-        [scalar-plan? : bool
-          (and
-            (be_state.compiler-backend-mode-scalar? mode)
-            scalar-registers-enabled)]
+        [scalar-plan? : bool (and scalar-pipeline? scalar-registers-enabled)]
         [walk-types : compiler_regalloc.CompilerRegVarTypes
           (if scalar-plan?
             (compiler_regalloc.compiler-reg-function-var-types-with-representations-and-metrics
@@ -23582,7 +23687,7 @@
                 (be_state.compiler-backend-program-index-representations
                   program-index))))]
         [reg-plan : compiler_regalloc.CompilerRegPlan
-          (if (be_state.compiler-backend-mode-scalar? mode)
+          (if scalar-pipeline?
             (if scalar-registers-enabled
               (compiler_regalloc.compiler-reg-plan-function-scalar-cold-with-type-segment-bases-for-abi-with-types-and-advisory-sink
                 type-segment-bases
@@ -23601,7 +23706,9 @@
                   program-index.backend-state)
                 (be_state.compiler-backend-state-advisory-sink
                   program-index.backend-state)))
-            (if (be_state.compiler-backend-mode-avx2? mode)
+            (if (or
+              (be_state.compiler-backend-mode-avx2? mode)
+              (be_state.compiler-backend-mode-sse2? mode))
               (compiler_regalloc.compiler-reg-plan-function-avx2-with-type-segment-bases-for-abi-and-representations-and-metrics-and-advisory-sink
                 type-segment-bases
                 fn-abi
@@ -23742,7 +23849,7 @@
         ;; The caller-save rewrite runs whenever scalar register allocation is
         ;; enabled.
         [call-save-enabled : bool
-          (if (be_state.compiler-backend-mode-scalar? mode)
+          (if scalar-pipeline?
             scalar-registers-enabled
             false)]
         [call-save-rewrite : compiler_regalloc.CompilerRegCallSaveRewrite
@@ -23804,15 +23911,13 @@
             (be_state.compiler-backend-global-shared-view rewritten-blocks)
             (compiler_regalloc.compiler-reg-plan-assignments
               (& rewritten-reg-plan))
-            (and
-              (be_state.compiler-backend-mode-scalar? mode)
-              (not scalar-registers-enabled)))]
+            (and scalar-pipeline? (not scalar-registers-enabled)))]
         ;; SIMD caller lanes and masks, as well as private entry stores, need
         ;; full-width homes under debug info. Scalar debug keeps its raw IDs.
         [color-stack-slots? : bool
           (or
             (not (compiler_ir_types.compiler-debug-info-enabled?))
-            (not (be_state.compiler-backend-mode-scalar? mode))
+            (not scalar-pipeline?)
             (compiler_regalloc.compiler-reg-spmd-wide-params? (& params)))]
         [coloring-spans : compiler_ir_types.CompilerSourceSpans
           (if color-stack-slots?
@@ -23844,7 +23949,9 @@
             (compiler-backend-direct-stack-param-offsets
               type-segment-bases
               target
-              mode
+              (if scalar-pipeline?
+                (be_state.CompilerBackendMode.Scalar)
+                mode)
               scalar-registers-enabled
               name
               (& params)
@@ -23879,9 +23986,7 @@
               rewritten-vars
               (& coloring-pinned-vars)
               (& direct-stack-offsets)
-              (and
-                (be_state.compiler-backend-mode-scalar? mode)
-                (not scalar-registers-enabled))))]
+              (and scalar-pipeline? (not scalar-registers-enabled))))]
         [slot-vars : i64
           (match (be_state.compiler-backend-global-shared-view coloring)
             ;; Synthetic scratch ids are register-only and are not referenced
@@ -25180,7 +25285,7 @@
                           (and
                             shrinkwrap-enabled
                             target-policy.linux
-                            (be_state.compiler-backend-mode-scalar? mode)
+                            scalar-pipeline?
                             scalar-registers-enabled
                             (not
                               (compiler_ir_types.compiler-debug-info-enabled?))
@@ -27861,6 +27966,12 @@ tl_shared_object_init:
   [target : be_state.CompilerBackendTarget]
   [mode : be_state.CompilerBackendMode]) : compiler_lower.CompilerLowerMode
   (match mode
+    [(Sse2)
+      (match target
+        [(be_state.CompilerBackendTarget.Linux)
+          (compiler_lower.CompilerLowerMode.LinuxSse2)]
+        [(be_state.CompilerBackendTarget.Windows)
+          (compiler_lower.CompilerLowerMode.WindowsSse2)])]
     [(Avx2)
       (match target
         [(be_state.CompilerBackendTarget.Linux)

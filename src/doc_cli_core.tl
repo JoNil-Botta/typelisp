@@ -19,6 +19,7 @@
 (import stdlib.vector)
 (import (vector.vector String) as doc_svec)
 (import cli_option_core as cli_option)
+(import compiler_target_cfg_core as target_cfg)
 (import doc_render)
 (import doc_extract)
 (import (vector.vector doc_render.DocModule core) as doc_module_vec)
@@ -655,7 +656,7 @@
 (define (doc-test-config-from [base : i64] [count : i64]) : ResultDocTestCliConfig
   (let
     [options : cli_option.CliCompileOptions
-      (cli_option.cli-compile-options (Linux) 1)]
+      (cli_option.cli-compile-options (target_cfg.compiler-target-cfg-host) 1)]
     [args : cli_option.CliArgs
       (cli_option.cli-args
         "doc"
@@ -806,7 +807,7 @@
 (define (doc-default-config-from [base : i64] [count : i64]) : ResultDocDefaultCliConfig
   (let
     [options : cli_option.CliCompileOptions
-      (cli_option.cli-compile-options (Linux) 1)]
+      (cli_option.cli-compile-options (target_cfg.compiler-target-cfg-host) 1)]
     [args : cli_option.CliArgs
       (cli_option.cli-args
         "doc"
@@ -957,7 +958,7 @@
           (+ base 3)
           (io.arg-count))]
       [options : cli_option.CliCompileOptions
-        (cli_option.cli-compile-options (Linux) 1)]
+        (cli_option.cli-compile-options (target_cfg.compiler-target-cfg-host) 1)]
       (while (cli_option.cli-args-next! (&mut args))
         (unless
           (cli_option.cli-compile-option! (&mut options) (&mut args))

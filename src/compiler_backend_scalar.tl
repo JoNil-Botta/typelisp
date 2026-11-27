@@ -1750,125 +1750,168 @@
           (be_operand.compiler-backend-avx2-masked-move-mnemonic elem-ty)
           ""))]))
 
+(define (compiler-backend-sse2-predicated-staged?
+  [elem-ty : (& elem-ty compiler_ast_types.AstType)]
+  [lanes : i64]
+  [store : bool]) : bool
+  (match elem-ty
+    [(Bool)
+      (and (not store) (be_operand.compiler-backend-sse2-mask-shape-ok? lanes))]
+    [_ (be_operand.compiler-backend-sse2-shape-ok? elem-ty lanes)]))
+
 ;; The bytes INSTR's emitted sequence will stage, following the dispatch in
 ;; `compiler-backend-emit-instr-with-bound`: a vector binop picks its ISA from
 ;; its own shape, the predicated, gather and tail-mask ops from the function's
 ;; mode, and a shuffle from its own shape. 0 for every other instruction.
+(define (compiler-backend-simd-scratch-request-for-mode
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [mode : be_state.CompilerBackendMode]) : i64
+  (let
+    [avx2-function : bool (be_state.compiler-backend-mode-avx2? mode)]
+    [sse2-function : bool (be_state.compiler-backend-mode-sse2? mode)]
+    (match instr
+      [(VectorBinOp payload-box)
+        (let
+          [op (be_state.compiler-backend-box-field-shared-view payload-box op)]
+          [lanes (deref payload-box).lanes]
+          [elem-ty
+            (be_state.compiler-backend-box-field-shared-view payload-box ty)]
+          [vec-mode : be_state.CompilerBackendMode
+            (be_operand.compiler-backend-vector-mode elem-ty lanes)]
+          (cond
+            [(not
+                (be_operand.compiler-backend-mode-shape-ok?
+                  vec-mode
+                  elem-ty
+                  lanes))
+              0]
+            [(be_state.compiler-backend-mode-sse2? vec-mode) 0]
+            [(and
+                (be_state.compiler-backend-mode-avx2? vec-mode)
+                (be_operand.compiler-backend-word-vector-shift? op elem-ty))
+              be_operand.compiler-backend-simd-scratch-word-shift-bytes]
+            [(be_operand.compiler-backend-byte-vector-shift? op elem-ty)
+              (be_operand.compiler-backend-simd-scratch-byte-shift-bytes
+                (match vec-mode
+                  [(Avx512) 64]
+                  [_ 32]))]
+            [else 0]))]
+      [(PredicatedLoad payload-box)
+        (let
+          [lanes (deref payload-box).lanes]
+          [elem-ty
+            (be_state.compiler-backend-box-field-shared-view payload-box ty)]
+          (cond
+            [(and
+                sse2-function
+                (compiler-backend-sse2-predicated-staged? elem-ty lanes false))
+              16]
+            [(and
+                avx2-function
+                (compiler-backend-avx2-predicated-staged? elem-ty lanes false))
+              be_operand.compiler-backend-simd-scratch-lane-staging-bytes]
+            [else 0]))]
+      [(PredicatedStore payload-box)
+        (let
+          [lanes (deref payload-box).lanes]
+          [elem-ty
+            (be_state.compiler-backend-box-field-shared-view payload-box ty)]
+          (cond
+            [(and
+                sse2-function
+                (compiler-backend-sse2-predicated-staged? elem-ty lanes true))
+              16]
+            [(and
+                avx2-function
+                (compiler-backend-avx2-predicated-staged? elem-ty lanes true))
+              be_operand.compiler-backend-simd-scratch-lane-staging-bytes]
+            [else 0]))]
+      [(GatherLoad payload-box)
+        (if sse2-function
+          0
+          (let
+            [lanes (deref payload-box).lanes]
+            [elem-ty
+              (be_state.compiler-backend-box-field-shared-view payload-box ty)]
+            [dword : bool
+              (be_operand.compiler-backend-gather-dword-element?
+                (be_state.compiler-backend-global-shared-view elem-ty))]
+            [mnemonic : String
+              (if avx2-function
+                (be_operand.compiler-backend-avx2-gather-mnemonic elem-ty)
+                (be_operand.compiler-backend-avx512-gather-mnemonic elem-ty))]
+            (if (and
+              (not (string.eq mnemonic ""))
+              (=
+                lanes
+                (*
+                  (if avx2-function
+                    4
+                    8)
+                  (if dword
+                    2
+                    1))))
+              (be_operand.compiler-backend-simd-scratch-gather-bytes
+                avx2-function
+                dword)
+              0)))]
+      [(VectorShuffle payload-box)
+        (let
+          [lanes (deref payload-box).lanes]
+          [elem-ty
+            (be_state.compiler-backend-box-field-shared-view payload-box ty)]
+          [avx512 : bool
+            (be_operand.compiler-backend-avx512-shape-ok? elem-ty lanes)]
+          (if (or
+            avx512
+            (be_operand.compiler-backend-avx2-shape-ok? elem-ty lanes))
+            (be_operand.compiler-backend-simd-scratch-shuffle-bytes
+              (if avx512
+                64
+                32)
+              (if (>
+                lanes
+                (if avx512
+                  8
+                  4))
+                2
+                1))
+            0))]
+      [(TailMask _ _ _ lanes)
+        (cond
+          [(and
+              sse2-function
+              (be_operand.compiler-backend-sse2-mask-shape-ok? lanes))
+            16]
+          [(and
+              avx2-function
+              (be_operand.compiler-backend-avx2-mask-shape-ok? lanes)
+              (not (= lanes 4)))
+            be_operand.compiler-backend-simd-scratch-lane-staging-bytes]
+          [else 0])]
+      [_ 0])))
+
 (define (compiler-backend-simd-scratch-request
   [instr : compiler_ir_types.CompilerIrInstr]
   [avx2-function : bool]) : i64
-  (match instr
-    [(VectorBinOp payload-box)
-      (let
-        [op (be_state.compiler-backend-box-field-shared-view payload-box op)]
-        [lanes (deref payload-box).lanes]
-        [elem-ty
-          (be_state.compiler-backend-box-field-shared-view payload-box ty)]
-        [mode : be_state.CompilerBackendMode
-          (be_operand.compiler-backend-vector-mode elem-ty lanes)]
-        (cond
-          [(not (be_operand.compiler-backend-mode-shape-ok? mode elem-ty lanes))
-            0]
-          [(and
-              (be_state.compiler-backend-mode-avx2? mode)
-              (be_operand.compiler-backend-word-vector-shift? op elem-ty))
-            be_operand.compiler-backend-simd-scratch-word-shift-bytes]
-          [(be_operand.compiler-backend-byte-vector-shift? op elem-ty)
-            (be_operand.compiler-backend-simd-scratch-byte-shift-bytes
-              (match mode
-                [(Avx512) 64]
-                [_ 32]))]
-          [else 0]))]
-    [(PredicatedLoad payload-box)
-      (let
-        [lanes (deref payload-box).lanes]
-        [elem-ty
-          (be_state.compiler-backend-box-field-shared-view payload-box ty)]
-        (if (and
-          avx2-function
-          (compiler-backend-avx2-predicated-staged? elem-ty lanes false))
-          be_operand.compiler-backend-simd-scratch-lane-staging-bytes
-          0))]
-    [(PredicatedStore payload-box)
-      (let
-        [lanes (deref payload-box).lanes]
-        [elem-ty
-          (be_state.compiler-backend-box-field-shared-view payload-box ty)]
-        (if (and
-          avx2-function
-          (compiler-backend-avx2-predicated-staged? elem-ty lanes true))
-          be_operand.compiler-backend-simd-scratch-lane-staging-bytes
-          0))]
-    [(GatherLoad payload-box)
-      (let
-        [lanes (deref payload-box).lanes]
-        [elem-ty
-          (be_state.compiler-backend-box-field-shared-view payload-box ty)]
-        [dword : bool
-          (be_operand.compiler-backend-gather-dword-element?
-            (be_state.compiler-backend-global-shared-view elem-ty))]
-        [mnemonic : String
-          (if avx2-function
-            (be_operand.compiler-backend-avx2-gather-mnemonic elem-ty)
-            (be_operand.compiler-backend-avx512-gather-mnemonic elem-ty))]
-        (if (and
-          (not (string.eq mnemonic ""))
-          (=
-            lanes
-            (*
-              (if avx2-function
-                4
-                8)
-              (if dword
-                2
-                1))))
-          (be_operand.compiler-backend-simd-scratch-gather-bytes
-            avx2-function
-            dword)
-          0))]
-    [(VectorShuffle payload-box)
-      (let
-        [lanes (deref payload-box).lanes]
-        [elem-ty
-          (be_state.compiler-backend-box-field-shared-view payload-box ty)]
-        [avx512 : bool
-          (be_operand.compiler-backend-avx512-shape-ok? elem-ty lanes)]
-        (if (or
-          avx512
-          (be_operand.compiler-backend-avx2-shape-ok? elem-ty lanes))
-          (be_operand.compiler-backend-simd-scratch-shuffle-bytes
-            (if avx512
-              64
-              32)
-            (if (>
-              lanes
-              (if avx512
-                8
-                4))
-              2
-              1))
-          0))]
-    [(TailMask _ _ _ lanes)
-      (if (and
-        avx2-function
-        (be_operand.compiler-backend-avx2-mask-shape-ok? lanes)
-        (not (= lanes 4)))
-        be_operand.compiler-backend-simd-scratch-lane-staging-bytes
-        0)]
-    [_ 0]))
+  (compiler-backend-simd-scratch-request-for-mode
+    instr
+    (if avx2-function
+      (be_state.CompilerBackendMode.Avx2)
+      (be_state.CompilerBackendMode.Avx512))))
 
 (define (compiler-backend-simd-scratch-census-instrs
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
-  [avx2-function : bool]
+  [mode : be_state.CompilerBackendMode]
   [widest : i64]) : i64
   (let
     [acc : i64 widest]
     (for [index (iterator.range 0 instrs.len)]
       (let
         [request : i64
-          (compiler-backend-simd-scratch-request
+          (compiler-backend-simd-scratch-request-for-mode
             (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
-            avx2-function)]
+            mode)]
         (if (> request acc)
           (set! acc request)
           unit)))
@@ -1876,7 +1919,7 @@
 
 (define (compiler-backend-simd-scratch-census-seq
   [blocks : (& blocks compiler_ir_types.CompilerIrBlockSeq)]
-  [avx2-function : bool]
+  [mode : be_state.CompilerBackendMode]
   [widest : i64]) : i64
   (let
     [acc : i64 widest]
@@ -1886,19 +1929,15 @@
         [(Block _ instrs)
           (set!
             acc
-            (compiler-backend-simd-scratch-census-instrs
-              instrs
-              avx2-function
-              acc))]))
+            (compiler-backend-simd-scratch-census-instrs instrs mode acc))]))
     acc))
 
 (define (compiler-backend-simd-scratch-census-list
   [blocks : compiler_ir_types.CompilerIrBlockList]
-  [avx2-function : bool]
+  [mode : be_state.CompilerBackendMode]
   [widest : i64]) : i64
   (match blocks
-    [(Array seq)
-      (compiler-backend-simd-scratch-census-seq seq avx2-function widest)]))
+    [(Array seq) (compiler-backend-simd-scratch-census-seq seq mode widest)]))
 
 ;; The function's staging region size: the largest request over every block
 ;; the body will emit, rounded to the frame's 16-byte granule. 0 when no
@@ -1911,10 +1950,7 @@
   (if (be_state.compiler-backend-mode-scalar? mode)
     0
     (be_operand.compiler-backend-round-up-16
-      (compiler-backend-simd-scratch-census-list
-        blocks
-        (be_state.compiler-backend-mode-avx2? mode)
-        0))))
+      (compiler-backend-simd-scratch-census-list blocks mode 0))))
 
 ;; Plan a region of BYTES directly below FRAME-BASE, the frame offset the
 ;; function's dynamic slots count down from, and clear the body's claims.
@@ -2248,7 +2284,8 @@
     (if (>= (compiler_regalloc.compiler-reg-xmm-family-index reg) 0)
       (match (be_state.compiler-backend-function-state-current-mode
         (be_state.compiler-backend-state-function-state backend-state))
-        [(Scalar) (str_cat.str-cat "    movdqu " reg-name ", " slot "\n")]
+        [(or (Scalar) (Sse2))
+          (str_cat.str-cat "    movdqu " reg-name ", " slot "\n")]
         [(Avx2)
           (str_cat.str-cat
             "    vmovdqu "
@@ -2278,7 +2315,8 @@
     (if (>= (compiler_regalloc.compiler-reg-xmm-family-index reg) 0)
       (match (be_state.compiler-backend-function-state-current-mode
         (be_state.compiler-backend-state-function-state backend-state))
-        [(Scalar) (str_cat.str-cat "    movdqu " slot ", " reg-name "\n")]
+        [(or (Scalar) (Sse2))
+          (str_cat.str-cat "    movdqu " slot ", " reg-name "\n")]
         [(Avx2)
           (str_cat.str-cat
             "    vmovdqu "
@@ -19820,9 +19858,27 @@
   [value : compiler_ir_types.CompilerIrValue]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [ret-ty : compiler_ast_types.AstType]) : be_state.ResultCompilerBackend
-  (if (be_state.compiler-backend-current-mode-avx2?
-    (be_state.compiler-backend-state-function-state backend-state))
+  (if (or
+    (be_state.compiler-backend-current-mode-avx2?
+      (be_state.compiler-backend-state-function-state backend-state))
+    (be_state.compiler-backend-current-mode-sse2?
+      (be_state.compiler-backend-state-function-state backend-state)))
     (let
+      [sse2? : bool
+        (be_state.compiler-backend-current-mode-sse2?
+          (be_state.compiler-backend-state-function-state backend-state))]
+      [width : String
+        (if sse2?
+          "xmm"
+          "ymm")]
+      [move : String
+        (if sse2?
+          "    movdqu "
+          "    vmovdqu ")]
+      [ret-reg : String
+        (if sse2?
+          "%xmm0"
+          "%ymm0")]
       [elem-ty : compiler_ast_types.AstType
         (if (compiler-backend-spmd-mask-return-function?
           backend-state
@@ -19832,10 +19888,14 @@
       (match (be_operand.compiler-backend-vector-register-use
         assignments
         value
-        "private AVX2 SPMD return value"
-        "ymm"
+        (if sse2?
+          "private SSE2 SPMD return value"
+          "private AVX2 SPMD return value")
+        width
         elem-ty
-        "%ymm14"
+        (if sse2?
+          "%xmm0"
+          "%ymm14")
         backend-state)
         [(Ok use)
           (match use
@@ -19843,9 +19903,9 @@
               (Ok
                 (str_cat.str-cat
                   load-asm
-                  (if (string.eq reg "%ymm0")
+                  (if (string.eq reg ret-reg)
                     ""
-                    (str_cat.str-cat "    vmovdqu " reg ", %ymm0\n"))
+                    (str_cat.str-cat move reg ", " ret-reg "\n"))
                   ""))])]
         [(Err message)
           (Err

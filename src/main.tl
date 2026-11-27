@@ -103,7 +103,7 @@ Global Options:
 
 Common Command Options:
     --target <target>              linux-x86_64 or windows-x86_64
-    --backend-mode <mode>          scalar, avx2, or avx512
+    --backend-mode <mode>          scalar, sse2, avx2, or avx512
     --manifest-path <file>         Package manifest path
     --stdlib-root <dir>            Search root for stdlib/... imports
     --opt-level <0|1|2|s>|-Os            Select optimizer level
@@ -134,7 +134,7 @@ Options:
     --profile dev|release          Package build profile (default release)
     --release                      Alias for --profile release
     --target <target>              linux-x86_64 or windows-x86_64
-    --backend-mode <mode>          scalar, avx2, or avx512
+    --backend-mode <mode>          scalar, sse2, avx2, or avx512
     --opt-level <0|1|2|s>|-Os            Optimizer level (source default 1; package release 2, dev 0)
     --debug, -g                    Emit line tables and linker debug information
     --backtrace                    Alias for --debug (includes fatal-backtrace metadata)
@@ -178,7 +178,7 @@ Options:
     --locked                       Require matching typelisp.lock; do not rewrite
     --update-lock                  Refresh remote pins and rewrite typelisp.lock
     --target <target>              linux-x86_64 or windows-x86_64
-    --backend-mode <mode>          scalar, avx2, or avx512
+    --backend-mode <mode>          scalar, sse2, avx2, or avx512
     --opt-level <0|1|2|s>|-Os            Optimizer level (source default 1; package release 2, dev 0)
     --debug, -g                    Emit line tables and linker debug information
     --backtrace                    Alias for --debug (includes fatal-backtrace metadata)
@@ -202,7 +202,7 @@ Options:
     --batch <file>                 Read newline-separated input paths and emit framed per-entry results
     --target <target>              linux-x86_64 or windows-x86_64
     --cfg <name>                   Enable a compile-time cfg predicate name
-    --backend-mode <mode>          Validate scalar, avx2, or avx512; no code is emitted
+    --backend-mode <mode>          Validate scalar, sse2, avx2, or avx512; no code is emitted
     --opt-level <0|1|2|s>|-Os            Validate optimizer selection; no code is emitted
     --debug, -g, --backtrace        Accept debug selection; no code is emitted
     --stdlib-root <dir>            Search root for stdlib/... imports
@@ -241,7 +241,7 @@ Options:
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward
     --target <target>              linux-x86_64 or windows-x86_64
     --cfg <name>                   Enable a compile-time cfg predicate name
-    --backend-mode <mode>          Validate scalar, avx2, or avx512; no code is emitted
+    --backend-mode <mode>          Validate scalar, sse2, avx2, or avx512; no code is emitted
     --opt-level <0|1|2|s>|-Os            Validate optimizer selection; no code is emitted
     --debug, -g, --backtrace        Accept debug selection; no code is emitted
     --stdlib-root <dir>            Search root for stdlib/... imports
@@ -271,7 +271,7 @@ Options:
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward when no file is provided
     --target <target>              linux-x86_64 or windows-x86_64
     --cfg <name>                   Enable a repeatable compile-time cfg predicate name
-    --backend-mode <mode>          scalar, avx2, or avx512
+    --backend-mode <mode>          scalar, sse2, avx2, or avx512
     --opt-level <0|1|2|s>|-Os            Select selfhost test harness optimization
     --debug, -g                    Emit harness debug and fatal-backtrace metadata
     --backtrace                    Alias for --debug
@@ -327,7 +327,7 @@ Options:
     --pic                          Emit runtime-free no-entry PIC assembly and <output>.fixups
     --no-entry                     Emit library assembly with no program entry (for code without main)
     --target <target>              linux-x86_64 or windows-x86_64
-    --backend-mode <mode>          scalar, avx2, or avx512
+    --backend-mode <mode>          scalar, sse2, avx2, or avx512
     --opt-level <0|1|2|s>|-Os            Select optimizer level
     --debug, -g                    Emit source line and unwind debug information
     --backtrace                    Alias for --debug (includes fatal-backtrace metadata)
@@ -354,7 +354,7 @@ Options:
     --max-bytes <n>                Truncate the rendered expansion (default 65536)
     --target <target>              linux-x86_64 or windows-x86_64
     --cfg <name>                   Enable a compile-time cfg predicate name
-    --backend-mode <mode>          Validate scalar, avx2, or avx512; no code is emitted
+    --backend-mode <mode>          Validate scalar, sse2, avx2, or avx512; no code is emitted
     --opt-level <0|1|2|s>|-Os            Validate optimizer selection; no code is emitted
     --debug, -g, --backtrace        Accept debug selection; no code is emitted
     --stdlib-root <dir>            Search root for stdlib/... imports

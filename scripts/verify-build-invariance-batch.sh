@@ -461,10 +461,10 @@ bounded_pool_require_complete "$POOL"
 # A lock that is never released is reported instead of waited on forever.
 : > "$POOL/lock"
 reject bounded_pool_require_complete "$POOL"
-BOUNDED_POOL_LOCK_TRIES=2
+BOUNDED_POOL_LOCK_SECONDS=1
 reject bounded_pool_claim "$POOL"
 reject bounded_pool_finish "$POOL" full-a 0
-BOUNDED_POOL_LOCK_TRIES=600
+BOUNDED_POOL_LOCK_SECONDS=60
 rm -f -- "${POOL:?}/lock"
 
 # Malformed, duplicate, empty and over-budget queues never start a pool.

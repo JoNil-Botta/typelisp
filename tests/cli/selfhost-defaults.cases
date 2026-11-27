@@ -1,0 +1,196 @@
+# SPEC 10 command defaults on Linux and Windows. A successful host probe
+# requires the host aliases and excludes extra user cfgs and compiler-backtrace.
+do none
+target -
+opt -
+
+case host-defaults
+if-host windows
+sh CCV_other=linux CCV_platform="(all windows target-windows os-windows (not unix))"
+else
+sh CCV_other=windows CCV_platform="(all linux unix target-linux os-linux)"
+end-if
+file -x pkg/typelisp.pkg
+(package (name "host_defaults") (version "0.1.0") (kind bin))
+end-file
+file -x pkg/src/main.tl
+(cfg
+  (all {{platform}} (not (any {{other}} compiler-backtrace extra-default)))
+  (define (host-value) : i64 42))
+
+(define (main) : i64 (host-value))
+end-file
+file -x cross.tl
+(cfg target-{{other}} (define (cross-value) : i64 43))
+(define (main) : i64 (cross-value))
+end-file
+
+step compile-defaults
+run compile "{{dir}}/pkg/src/main.tl" -o "{{dir}}/default.s"
+stderr empty
+run compile "{{dir}}/pkg/src/main.tl" --target {{host-target}} --opt-level 1 --backend-mode sse2 -o "{{dir}}/specified.s"
+stderr empty
+sh cmp "{{dir}}/default.s" "{{dir}}/specified.s"
+in file {{dir}}/default.s
+not-match \.(loc|cv_loc|cfi_startproc)
+step default-backend-and-opt-level
+file simd.tl
+(define (fill [a : (__tl_dyn-array i64)] [b : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))
+(define (calc [a : i64] [b : i64]) : i64
+  (let [x : i64 (+ a b)]
+    [y : i64 (* x 2)]
+    (+ y x)))
+(define (main) : i64
+  (let
+    [a : (__tl_dyn-array i64) (__tl_make-array i64 17)]
+    [b : (__tl_dyn-array i64) (__tl_make-array i64 17)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 17)]
+    (fill a b out 17)
+    (calc 10 4)))
+end-file
+run compile "{{dir}}/simd.tl" -o "{{dir}}/simd-default.s"
+stderr empty
+run compile "{{dir}}/simd.tl" --opt-level 1 --backend-mode sse2 -o "{{dir}}/simd-specified.s"
+stderr empty
+sh cmp "{{dir}}/simd-default.s" "{{dir}}/simd-specified.s"
+in file {{dir}}/simd-default.s
+contains paddq
+run compile "{{dir}}/simd.tl" --opt-level 0 --backend-mode sse2 -o "{{dir}}/simd-opt-zero.s"
+stderr empty
+sh ! cmp -s "{{dir}}/simd-default.s" "{{dir}}/simd-opt-zero.s"
+
+step compile-batch-defaults
+file -x batch.txt
+{{dir}}/pkg/src/main.tl|{{dir}}/batch.s
+end-file
+run compile --batch "{{dir}}/batch.txt"
+stderr empty
+in file {{dir}}/batch.s
+contains main:
+step compile-tli-defaults
+run compile "{{dir}}/pkg/src/main.tl" --emit-tli -o "{{dir}}/host.tli"
+stderr empty
+run inspect "{{dir}}/host.tli"
+stderr empty
+stdout contains format: tli
+
+step compile-explicit-cross-target
+run compile "{{dir}}/cross.tl" -o "{{dir}}/cross.s"
+exit nonzero
+stderr contains unbound name cross-value
+run compile "{{dir}}/cross.tl" --target {{other}}-x86_64 -o "{{dir}}/cross.s"
+stderr empty
+in file {{dir}}/cross.s
+contains main:
+
+step check-defaults
+run check "{{dir}}/pkg/src/main.tl"
+stderr empty
+stdout contains Type checking passed!
+run check --manifest-path "{{dir}}/pkg/typelisp.pkg"
+stderr empty
+run check "{{dir}}/cross.tl" --target {{other}}-x86_64
+stderr empty
+
+step build-and-run-source-defaults
+run build "{{dir}}/pkg/src/main.tl" -o "{{dir}}/probe{{exe}}"
+stderr empty
+exec "{{dir}}/probe{{exe}}"
+exit 42
+run run "{{dir}}/pkg/src/main.tl"
+exit 42
+stderr empty
+
+step build-and-run-package-defaults
+run build --manifest-path "{{dir}}/pkg/typelisp.pkg"
+stderr empty
+exec "{{dir}}/pkg/target/release/host_defaults{{exe}}"
+exit 42
+run run --manifest-path "{{dir}}/pkg/typelisp.pkg"
+exit 42
+stderr empty
+
+step lint-and-fmt-defaults
+file -x lint.tl
+(cfg {{host}} (define (ordinary-name) : i64 42))
+(cfg (not {{host}}) (define (bad_name) : i64 43))
+end-file
+run lint "{{dir}}/lint.tl" --name-case --check
+stderr empty
+stdout contains lint: 0 finding(s)
+run lint "{{dir}}/lint.tl" --name-case --check --target {{other}}-x86_64
+exit nonzero
+stdout contains bad_name
+run fmt "{{dir}}/lint.tl"
+stderr empty
+in file {{dir}}/lint.tl
+contains ordinary-name
+contains bad_name
+
+step expand-defaults
+file -x expand.tl
+(cfg {{host}} (defmacro (chosen) : Expr `42))
+(define (main) : i64 (chosen))
+end-file
+run expand "{{dir}}/expand.tl" --at 2:23
+stderr empty
+stdout after ^expansion:$
+next-line ^42$
+
+step test-defaults
+file -x inline.tl
+(import stdlib.test)
+(cfg (all {{host}} test) (define (host-value) : i64 42))
+(test host-default
+  (test.assert-i64-eq (host-value) 42 "host target and test cfg"))
+end-file
+run test "{{dir}}/inline.tl"
+stderr contains TypeLisp tests: 1 passed; 0 failed
+stdout empty
+
+step doc-defaults
+file -x documented.tl
+;: ```typelisp
+;: (cfg {{host}} (define (host-value) : i64 42))
+;: (define (use) : i64 (host-value))
+;: ```
+(define (main) : i64 42)
+end-file
+run doc --test "{{dir}}/documented.tl"
+stderr empty
+stdout contains Doc tests passed: 1
+
+step doc-load-defaults
+file -x docs-main.tl
+(cfg {{host}} (import host_docs))
+(cfg (not {{host}}) (import wrong_docs))
+(define (main) : i64 (host_docs.value))
+end-file
+file host_docs.tl
+;# Loaded host documentation.
+(define (value) : i64 42)
+end-file
+run doc --load "{{dir}}/docs-main.tl" "{{dir}}/loaded.md"
+stderr empty
+in file {{dir}}/loaded.md
+contains Loaded host documentation.
+
+step repl-defaults
+file -x repl.in
+(cfg {{host}} 42 missing-repl-value)
+.exit
+end-file
+run repl < "{{dir}}/repl.in"
+stdout contains 42
+stderr empty
+
+step lsp-defaults
+sh b='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}' && printf 'Content-Length: %s\r\n\r\n%s' "${#b}" "$b" > "{{dir}}/lsp.in"
+sh t=$(awk '{printf "%s\\n", $0}' "{{dir}}/pkg/src/main.tl") && b='{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file://'"{{dir}}"'/pkg/src/main.tl","languageId":"typelisp","version":1,"text":"'"$t"'"}}}' && printf 'Content-Length: %s\r\n\r\n%s' "${#b}" "$b" >> "{{dir}}/lsp.in"
+sh b='{"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}' && printf 'Content-Length: %s\r\n\r\n%s' "${#b}" "$b" >> "{{dir}}/lsp.in"
+run lsp < "{{dir}}/lsp.in"
+stderr empty
+stdout contains textDocument/publishDiagnostics
+stdout contains "diagnostics":[]

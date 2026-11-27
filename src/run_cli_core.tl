@@ -15,7 +15,6 @@
 (import tli_cli_core as tli_cli)
 (import compiler_ir_types as ir)
 (import compiler_load as load)
-(import compiler_optimize as opt)
 (import build_cli_core)
 (import doc_test)
 (import test_cli_core)
@@ -123,10 +122,7 @@
       [link-inputs : build_run_core.SourceToolLinkInputs
         (build_run_core.source-tool-link-inputs-empty)]
       [sysroot : tli_cli.TliSysrootOptions (tli_cli.tli-sysroot-options)]
-      [options : cli_option.CliCompileOptions
-        (cli_option.cli-compile-options
-          (target_cfg.compiler-target-cfg-host)
-          (opt.compiler-optimize-default-level))]
+      [options : cli_option.CliCompileOptions (cli_option.cli-compile-options)]
       (tli_cli.tli-reset-active-sysroot-options!)
       (while (cli_option.cli-args-next! (&mut args))
         (cond

@@ -39,7 +39,6 @@
 (import compiler_dependency_tlci)
 (import compiler_lower as lower)
 (import package_source_core)
-(import compiler_optimize)
 (import compiler_profile_state as profile_state)
 (import compiler_symbols as csym)
 (import compiler_typecheck_api)
@@ -460,10 +459,7 @@
 ;; first argument after any subcommand name). `count` is `(arg-count)`.
 (define (tltest-config-from [start : i64] [count : i64]) : ResultTestConfig
   (let
-    [options : cli_option.CliCompileOptions
-      (cli_option.cli-compile-options
-        (target_cfg.compiler-target-cfg-host)
-        (compiler_optimize.compiler-optimize-default-level))]
+    [options : cli_option.CliCompileOptions (cli_option.cli-compile-options)]
     [args : cli_option.CliArgs
       (cli_option.cli-args
         "test"

@@ -61,8 +61,7 @@
 
 (define (fmt-config-from [start : i64] [count : i64]) : ResultFmtConfig
   (let
-    [options : cli_option.CliCompileOptions
-      (cli_option.cli-compile-options (Linux) 1)]
+    [options : cli_option.CliCompileOptions (cli_option.cli-compile-options)]
     [args : cli_option.CliArgs
       (cli_option.cli-args
         "fmt"

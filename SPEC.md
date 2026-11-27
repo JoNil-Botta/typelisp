@@ -10534,7 +10534,7 @@ Global Options:
 
 Common Command Options:
   --target <target>              linux-x86_64 or windows-x86_64
-  --backend-mode <mode>          scalar, avx2, or avx512
+  --backend-mode <mode>          scalar, sse2, avx2, or avx512
   --manifest-path <file>         Package manifest path
   --stdlib-root <dir>            Search root for stdlib/... imports
   --opt-level <0|1|2|s>|-Os            Select optimizer level
@@ -10563,6 +10563,43 @@ Selected Command Forms:
 
 `typelisp <command> --help` is the source of truth for command-specific usage
 forms. `--version` prints the compiler build git hash and date.
+
+### Command defaults
+
+The host target is `linux-x86_64` for the Linux compiler and
+`windows-x86_64` for the Windows compiler. The target selects the aliases
+listed in §4.4.9. The table gives the effective settings when no override is
+supplied. A dash means that the command does not apply that setting.
+
+| Command | Target | Optimization | Backend | Debug | Active cfgs |
+| --- | --- | --- | --- | --- | --- |
+| `compile` (assembly or IR, including batch) | Host | 1 | SSE2 | Off | Target aliases |
+| `compile --emit-tli` | Host | — | — | — | Target aliases |
+| `build`, `run` (source file) | Host | 1 | SSE2 | Off | Target aliases |
+| `build`, `run` (package) | Host | Release 2, dev 0 | SSE2 | Off | Target aliases |
+| `test` (source file, package or batch) | Host | 1 | SSE2 | Off | Target aliases and `test` while checking or compiling tests |
+| `check` (source file, package or batch) | Host | — | — | — | Target aliases |
+| `lint` (source files or package) | Host | — | — | — | Target aliases |
+| `expand` | Host | — | — | — | Target aliases |
+| `lsp` | Host | — | — | — | Target aliases |
+| `repl` | Host | 1 | Scalar | Off | Target aliases |
+| `doc --test` | Host | 1 for runnable examples | Scalar for runnable examples | Off for runnable examples | Target aliases |
+| `doc --load` | Host | — | — | — | Target aliases |
+| `doc` (rendering), `fmt` | — | — | — | — | — |
+| `inspect sysroot` | Host | — | — | — | — |
+| `clean`, `explain`, `init`, `inspect <file>`, `new` | — | — | — | — | — |
+
+There are no user-supplied cfg names by default. The `compiler-backtrace`
+predicate is enabled by debug selection in commands that emit debug info.
+Package builds and runs select release by default. An explicit optimization
+level overrides the profile's level. Selecting size optimization (`-Os` or
+`--opt-level s`) selects scalar emission unless a backend mode is explicit.
+
+Where supported, `--target` overrides the host and selects the corresponding
+target aliases. For example, `typelisp compile main.tl --target linux-x86_64`
+emits Linux assembly on either host. LSP overrides are sent as `target` and
+`cfg` in `initializationOptions.typelisp` (or directly in
+`initializationOptions`).
 
 Shared compile options use the same value validation and diagnostic wording
 wherever a command accepts them. `--target`, `--backend-mode`, `--opt-level`

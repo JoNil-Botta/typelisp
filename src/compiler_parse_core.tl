@@ -12599,9 +12599,6 @@
         (compiler-parse-origin-rollback! out.origin-storage origin-mark)
         (Err error)])))
 
-(define (parse-ast-program-dispatch) : sym_i64_env.SymI64Env
-  (compiler-parse-dispatch-env))
-
 (define (parse-ast-program-dispatch-with-cfg [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (compiler-parse-dispatch-env-from-cfg cfgs))
 
@@ -12700,6 +12697,7 @@
 
 (define (parse-ast-repl-source-with-pools
   [src : (& str)]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]) : ResultAstReplItem
   (cbi.compiler-builtin-initialize-for-parse!)
   (let
@@ -12708,7 +12706,8 @@
       [(Ok toks)
         (let
           [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-          [dispatch : sym_i64_env.SymI64Env (parse-ast-program-dispatch)]
+          [dispatch : sym_i64_env.SymI64Env
+            (parse-ast-program-dispatch-with-cfg cfgs)]
           (set! (array-ref cur 0) 0)
           (if (= (reader.peek-spanned-tag (& toks) (& cur)) (token.tag-end))
             (begin
@@ -12755,10 +12754,11 @@
         (reader.sp-node-pool-truncate! mark)
         (parse-ast-repl-source-error (& err))])))
 
-(define (parse-ast-repl-source [src : (& str)]) : ResultAstReplItem
+(define (parse-ast-repl-source [src : (& str)] [cfgs : sym_i64_env.SymI64Env]) : ResultAstReplItem
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
-    [result : ResultAstReplItem (parse-ast-repl-source-with-pools src pools)]
+    [result : ResultAstReplItem
+      (parse-ast-repl-source-with-pools src cfgs pools)]
     (ast.ast-node-pool-context-install! pools)
     result))
 

@@ -2904,9 +2904,9 @@ table and the gates; read it before changing CI structure.
 `typelisp <command> --help` shows each command's options.
 
 `cli_option_core.tl` owns common compile-option parsing, singleton presence,
-repeatable root/cfg ordering and diagnostics. Commands supply their existing
-defaults and apply the parsed record; backend conversion never revalidates
-strings. Package workers serialize the same options, including cfg names.
+repeatable root/cfg ordering and diagnostics. Commands start from the shared
+option record and apply their parsed settings. Backend conversion uses the
+parsed enum values directly. Package workers serialize the same options, including cfg names.
 Names cross the package-discovery scratch/interner boundary as strings and are
 interned only after installing the child session; environments containing
 parent-session IDs cannot cross that boundary.
@@ -2922,11 +2922,19 @@ Inspection does not evaluate transformers a second time or run generated code.
 LSP positions use the negotiated encoding and must identify an exact position
 in the document; invalid coordinates are rejected before checking the source.
 
-Common options include `--target linux-x86_64|windows-x86_64` (Linux is the
-default output target; `test` defaults to the host), `--backend-mode
-scalar|avx2|avx512`, `--opt-level 0|1|2|s` (or `-Os` for size),
-`--manifest-path <file>`,
-`--stdlib-root <dir>`, `--locked`, `--update-lock`, and `--cfg <name>`.
+The [SPEC command defaults](../SPEC.md#command-defaults) apply on both
+hosts. `compile`, `build`, `run`, and `test` use the host target, opt level 1,
+SSE2, and debug off for source compilation. Package `build` and `run` select
+release (opt level 2) by default, and `--profile dev` selects level 0.
+`check`, `lint`, `expand`, and the language server select the same host cfg
+aliases as `build`. `repl` and runnable doctests use host compilation at opt
+level 1 with the scalar backend.
+
+Use `--target linux-x86_64` or `--target windows-x86_64` on commands that accept
+a target when you need cross-compilation or cross-target analysis. For
+example, `typelisp compile main.tl --target windows-x86_64` emits Windows
+assembly on Linux. Pass the editor's target and extra cfg names through LSP
+initialization options. Formatting preserves all cfg branches.
 
 Level 0 skips IR optimization. Level 1 uses the cheap stack-only pipeline.
 Levels 2 and s use full register allocation and the full scalar optimization

@@ -85,8 +85,7 @@
 ;; Parse the `lint` config from arguments starting at `start`.
 (define (selfhost-lint-config-from [start : i64] [count : i64]) : ResultSelfhostLintConfig
   (let
-    [options : cli_option.CliCompileOptions
-      (cli_option.cli-compile-options (target_cfg.compiler-target-cfg-host) 1)]
+    [options : cli_option.CliCompileOptions (cli_option.cli-compile-options)]
     [args : cli_option.CliArgs
       (begin
         (selfhost-lint-language-config-reset!)

@@ -30,20 +30,18 @@
 (import stdlib.io)
 (import stdlib.fs)
 (import stdlib.process)
-(import stdlib.vector)
-(import (vector.vector String) as cli_svec)
 (import compiler_typecheck_api)
 (import compiler_ast_types as ast)
 (import compiler_diagnostic as cdiag)
 (import compiler_intern as ci)
 (import compiler_load)
-(import compiler_optimize as opt)
+(import cli_option_core as cli_option)
+(import compiler_check_core)
 (import compiler_parse_core as parser)
 (import compiler_typecheck_core as tc)
 (import build_run_core)
 (import stdlib.string)
 (import source_text_core as source_text)
-(import sym_i64_env)
 
 (defenum ReplTypeCommand
   (No)
@@ -552,7 +550,7 @@
   (match (compiler_load.compiler-load-source
     (& (repl-session-source-path))
     (& session-source)
-    (sym_i64_env.sym-i64-empty))
+    (compiler_check_core.compiler-check-language-cfgs))
     [(Ok decls _) (Ok decls)]
     [(Err diag) (Err diag)]))
 
@@ -609,17 +607,19 @@
               (repl-report-scratch-cleanup-results file-result dir-result))]
           [(Ok)
             (let
+              [options : cli_option.CliCompileOptions
+                (cli_option.cli-compile-options)]
               [status : i64
                 (build_run_core.source-tool-run-source-in-temp
                   (owned_view.compiler-owned-shared-view source-path)
-                  (build_run_core.source-tool-default-target)
-                  (cli_svec.new)
-                  (cli_svec.new)
+                  (build_run_core.source-tool-backend-target options.target)
+                  options.stdlib-roots
+                  options.cfgs
                   (process.args-empty)
-                  (opt.compiler-optimize-default-level)
+                  options.opt-level
                   (Scalar)
                   (build_run_core.source-tool-link-inputs-empty)
-                  false
+                  options.debug
                   (owned_view.compiler-owned-shared-view temp-dir))]
               [file-result : io.ResultIoUnit
                 (repl-try-remove-file-if-exists source-path)]
@@ -660,7 +660,9 @@
   [expr-source : String]) : unit
   (if (string.eq expr-source "")
     (repl-print-error-line "Error: .type expects an expression")
-    (match (parser.parse-ast-repl-source (& expr-source))
+    (match (parser.parse-ast-repl-source
+      (& expr-source)
+      (compiler_check_core.compiler-check-language-cfgs))
       [(Ok item)
         (match item
           [(AstReplDecl _)
@@ -718,7 +720,9 @@
         session-source])))
 
 (define (repl-handle-input [session-source : String] [input : String]) : String
-  (match (parser.parse-ast-repl-source (& input))
+  (match (parser.parse-ast-repl-source
+    (& input)
+    (compiler_check_core.compiler-check-language-cfgs))
     [(Ok item)
       (match item
         [(AstReplDecl _)

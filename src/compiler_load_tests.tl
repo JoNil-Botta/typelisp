@@ -6089,6 +6089,13 @@
       (load.compiler-load-provider-id-for-path "stdlib/vector.tl")]
     [tli-stdlib-path : String
       (tli_hydrate.tli-hydrate-provenance-path true "stdlib/vector.tl")]
+    [tli-stdlib-probe-hard-error : bool
+      (cfg
+        windows
+        (match (io.try-file-exists? (& tli-stdlib-path))
+          [(ErrIoBool (IoSystemCode 123 _)) true]
+          [_ false])
+        true)]
     [unhydrated-tli-stdlib : i64
       (load.compiler-load-provider-id-for-path (& tli-stdlib-path))]
     [_note-tli-stdlib : unit
@@ -6127,6 +6134,7 @@
         (& load.compiler-load-active-session-state))]
     (and
       (not (= unrooted (load.compiler-load-provider-stdlib)))
+      tli-stdlib-probe-hard-error
       (= unhydrated-tli-stdlib (load.compiler-load-provider-unknown))
       (= hydrated-tli-stdlib (load.compiler-load-provider-stdlib))
       (not (= disk-after-tli-stdlib (load.compiler-load-provider-stdlib)))

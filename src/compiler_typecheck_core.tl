@@ -128957,44 +128957,62 @@
               [import-path : String import.module-name]
               [expected : ast.AstMaybeModuleName import.expected-module]
               [alias : ast.AstMaybeImportAlias import.alias]
+              [provided? : bool
+                (macro-materialize-provided-module? load-state expected seen)]
+              ;; Use the same provider as an ordinary import. Loading source
+              ;; here would let a later dependency hydrate the same module
+              ;; from its prebuilt interface and register it twice.
+              [tli-hit : bool
+                (and
+                  (not provided?)
+                  (cload.compiler-load-session-state-tli-has-module?
+                    (& load-state)
+                    (& import-path)))]
               [resolved-path-id : i64
                 (cload.compiler-load-resolved-path-id-for-generated-import-with-state
                   (& load-state)
                   (tc-global-shared-view resolved)
                   expected)]
-              (match (if (macro-materialize-provided-module?
-                load-state
-                expected
-                seen)
-                (cload.ResultCompilerLoadWithPaths.Ok
-                  (ast.ast-decl-list-new)
-                  (ast.ast-decl-path-list-new)
-                  (ast.ast-decl-module-list-new)
-                  seen)
-                (cload.compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-state-and-pools
-                  (tc-global-shared-view load-state)
-                  (& resolved)
-                  resolved-path-id
-                  seen
-                  (& stdlib-roots)
-                  kind
-                  import-path
-                  expected
-                  (& import-root)
-                  cfgs
-                  pools
-                  (tc-global-shared-view module)
-                  module-id))
+              (match (cond
+                [provided?
+                  (cload.ResultCompilerLoadWithPaths.Ok
+                    (ast.ast-decl-list-new)
+                    (ast.ast-decl-path-list-new)
+                    (ast.ast-decl-module-list-new)
+                    seen)]
+                [tli-hit
+                  (cload.compiler-load-session-state-tli-hydrate-module!
+                    (& load-state)
+                    (& import-path)
+                    seen
+                    pools)]
+                [else
+                  (cload.compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-state-and-pools
+                    (tc-global-shared-view load-state)
+                    (& resolved)
+                    resolved-path-id
+                    seen
+                    (& stdlib-roots)
+                    kind
+                    import-path
+                    expected
+                    (& import-root)
+                    cfgs
+                    pools
+                    (tc-global-shared-view module)
+                    module-id)])
                 [(Ok imported-decls imported-paths _ next-seen)
                   (let
                     [after-import-expected : ast.AstMaybeModuleName
-                      (cload.compiler-load-after-import-expected-module
-                        (& load-state)
-                        resolved-path-id
-                        kind
+                      (if tli-hit
                         expected
-                        alias
-                        (& imported-decls))]
+                        (cload.compiler-load-after-import-expected-module
+                          (& load-state)
+                          resolved-path-id
+                          kind
+                          expected
+                          alias
+                          (& imported-decls)))]
                     [after-import-alias : ast.AstMaybeImportAlias
                       (cload.compiler-load-after-import-alias
                         (& load-state)

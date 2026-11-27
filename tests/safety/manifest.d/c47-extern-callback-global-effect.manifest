@@ -1,0 +1,6 @@
+# Safety corpus cases: C47 callback-taking foreign extern global effects
+# (callbacks nested inside C-repr structs and open C varargs externs).
+# Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+
+global_call_c_extern_struct_callback_reject|check-fail|tests/safety/global_call_c_extern_struct_callback_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> run-hooks -> <indirect call/lambda> -> rebind!)
+global_call_c_extern_varargs_reject|check-fail|tests/safety/global_call_c_extern_varargs_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> dispatch -> <indirect call/lambda> -> rebind!)

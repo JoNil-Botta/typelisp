@@ -95733,6 +95733,7 @@
                               mod-id)]
                           (if (tc-global-effect-extern-takes-callback?
                             owner
+                            (& (deref metadata))
                             (& ty))
                             extern-index
                             -1))
@@ -97067,14 +97068,14 @@
   [ty : (& ty ast.AstType)]
   [depth : i64]) : bool
   (if (> depth 16)
-    false
+    true
     (match ty
       [(or (ast.AstType.CFunc _ _) (ast.AstType.Func _ _)) true]
-      [(or (ast.AstType.Region inner _) (ast.AstType.Ref _ inner)
-           (ast.AstType.MutRef _ inner) (ast.AstType.Ptr inner)
-           (ast.AstType.MutPtr inner) (ast.AstType.Box inner)
-           (ast.AstType.Array inner _) (ast.AstType.DynArray inner)
-           (ast.AstType.Slice inner))
+      [(or (ast.AstType.Region _ inner) (ast.AstType.Invalidate _ inner)
+           (ast.AstType.Ref _ inner) (ast.AstType.MutRef _ inner)
+           (ast.AstType.Ptr inner) (ast.AstType.MutPtr inner)
+           (ast.AstType.Box inner) (ast.AstType.Array inner _)
+           (ast.AstType.DynArray inner) (ast.AstType.Slice inner))
         (let
           [resolved : ast.AstType
             (tc-resolve-type ctx (tc-context-type-get ctx inner))]
@@ -97086,42 +97087,133 @@
         (let
           [found : bool false]
           (for [i (iterator.range 0 items.len)]
-            (let
-              [resolved : ast.AstType
-                (tc-resolve-type
-                  ctx
-                  (tc-context-type-get
+            (when
+              (not found)
+              (let
+                [resolved : ast.AstType
+                  (tc-resolve-type
                     ctx
-                    (ast.ast-type-list-get items i (ast.ast-type-id-fallback))))]
-              (when
-                (tc-global-effect-type-contains-callback?
-                  ctx
-                  (& resolved)
-                  (+ depth 1))
-                (set! found true))))
+                    (tc-context-type-get
+                      ctx
+                      (ast.ast-type-list-get items i (ast.ast-type-id-fallback))))]
+                (when
+                  (tc-global-effect-type-contains-callback?
+                    ctx
+                    (& resolved)
+                    (+ depth 1))
+                  (set! found true)))))
           found)]
+      [(or (ast.AstType.Struct name-id) (ast.AstType.StructArgs name-id _))
+        (match (tc-struct-decl-id ctx name-id)
+          [(ResultTcStructDecl.Ok decl)
+            (match decl
+              [(TcStructDecl _ _ fields)
+                (let
+                  [owner-ctx : TcContext
+                    (tc-context-with-owner-name-module ctx name-id)]
+                  [found : bool false]
+                  (for [i (iterator.range 0 fields.len)]
+                    (when
+                      (not found)
+                      (match (ast.ast-field-def-list-get
+                        (& fields)
+                        i
+                        (ast.ast-field-def-fallback))
+                        [(Def _ field-ty _)
+                          (let
+                            [resolved : ast.AstType
+                              (tc-resolve-type owner-ctx field-ty)]
+                            (when
+                              (tc-global-effect-type-contains-callback?
+                                owner-ctx
+                                (& resolved)
+                                (+ depth 1))
+                              (set! found true)))])))
+                  found)])]
+          [(ResultTcStructDecl.Err _) false])]
+      [(or (ast.AstType.Enum name-id) (ast.AstType.EnumArgs name-id _))
+        (match (tc-enum-decl-id ctx name-id)
+          [(ResultTcEnumDecl.Ok decl)
+            (match decl
+              [(TcEnumDecl _ variants)
+                (let
+                  [owner-ctx : TcContext
+                    (tc-context-with-owner-name-module ctx name-id)]
+                  [found : bool false]
+                  (for [i (iterator.range 0 variants.len)]
+                    (when
+                      (not found)
+                      (match (ast.ast-variant-def-list-get
+                        (& variants)
+                        i
+                        (ast.ast-variant-def-fallback))
+                        [(Def _ payloads _)
+                          (for [j (iterator.range 0 payloads.len)]
+                            (when
+                              (not found)
+                              (let
+                                [resolved : ast.AstType
+                                  (tc-resolve-type
+                                    owner-ctx
+                                    (tc-context-type-get
+                                      owner-ctx
+                                      (ast.ast-type-list-get
+                                        (& payloads)
+                                        j
+                                        (ast.ast-type-id-fallback))))]
+                                (when
+                                  (tc-global-effect-type-contains-callback?
+                                    owner-ctx
+                                    (& resolved)
+                                    (+ depth 1))
+                                  (set! found true)))))])))
+                  found)])]
+          [(ResultTcEnumDecl.Err _) false])]
       [_ false])))
 
 (define (tc-global-effect-extern-takes-callback?
   [ctx : TcContext]
+  [metadata : (& metadata ast.AstExternMetadata)]
   [ty : (& ty ast.AstType)]) : bool
-  (match ty
-    [(ast.AstType.Func params _)
-      (let
-        [found : bool false]
-        (for [i (iterator.range 0 params.len)]
+  (let
+    [abi-callback? : bool
+      (match metadata
+        [(ast.AstExternMetadata.Metadata abi _ _ _ _)
+          (match abi
+            [(ast.AstExternAbi.CVarargsOpen) true]
+            [(ast.AstExternAbi.CVarargsTyped vararg-ty)
+              (let
+                [resolved : ast.AstType
+                  (tc-resolve-type ctx (ast.clone-ast-type vararg-ty))]
+                (tc-global-effect-type-contains-callback? ctx (& resolved) 0))]
+            [_ false])])]
+    (if abi-callback?
+      true
+      (match ty
+        [(ast.AstType.Func params _)
           (let
-            [resolved : ast.AstType
-              (tc-resolve-type
-                ctx
-                (tc-context-type-get
-                  ctx
-                  (ast.ast-type-list-get params i (ast.ast-type-id-fallback))))]
-            (when
-              (tc-global-effect-type-contains-callback? ctx (& resolved) 0)
-              (set! found true))))
-        found)]
-    [_ false]))
+            [found : bool false]
+            (for [i (iterator.range 0 params.len)]
+              (when
+                (not found)
+                (let
+                  [resolved : ast.AstType
+                    (tc-resolve-type
+                      ctx
+                      (tc-context-type-get
+                        ctx
+                        (ast.ast-type-list-get
+                          params
+                          i
+                          (ast.ast-type-id-fallback))))]
+                  (when
+                    (tc-global-effect-type-contains-callback?
+                      ctx
+                      (& resolved)
+                      0)
+                    (set! found true)))))
+            found)]
+        [_ false]))))
 
 (define (tc-tli-hydrated-seed-global-effects!
   [owner : TcContext]
@@ -97304,8 +97396,8 @@
               (let
                 [meta : ast.AstExternMetadata
                   (ast.ast-extern-metadata-box-shared-view metadata)]
-                (match (ast.ast-extern-metadata-imported-spmd meta)
-                  [(Package _ _ _ _)
+                (match (& meta)
+                  [(ast.AstExternMetadata.Metadata _ _ _ _ (Package _ _ _ _))
                     ;; Dependency interfaces export functions and types,
                     ;; never global places. Their hidden bodies can still
                     ;; invoke a consumer callback, including one retained
@@ -97330,7 +97422,10 @@
                           (match kind
                             [(Function) true]
                             [_ false])
-                          (tc-global-effect-extern-takes-callback? owner (& ty)))
+                          (tc-global-effect-extern-takes-callback?
+                            owner
+                            (& meta)
+                            (& ty)))
                         (tc-global-effect-add-call!
                           collector
                           index

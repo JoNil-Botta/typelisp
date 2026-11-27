@@ -452,7 +452,10 @@
     (cfg test (+= tli-batch-override-miss-count 1))
     (let
       [result : bool
-        (tli-sysroot-stdlib-roots-override-uncached? roots count env-root)]
+        (if (and (= count 0) (= (string.string-length env-root) 0))
+          false
+          (with-scratch
+            (tli-sysroot-stdlib-roots-override-uncached? roots count env-root)))]
       [enclosing : i64 (arena.tl_arena_current)]
       (unsafe
         ;; lint-allow: raw-arena-op -- store cached override key strings in the batch cache arena.
@@ -508,14 +511,20 @@
   [roots-len : i64]
   [env-stdlib-root : (& str)]
   [cfg-digest : (& (Array u8 32))]
-  [require-archive : bool]) : TliSysrootOpenCatalog
+  [require-archive : bool]
+  [override-checked : bool]) : TliSysrootOpenCatalog
   (cfg (not embedded-stdlib-tlci) (return Inactive))
   (when options.disabled (return Inactive))
   ;; Settle every sysroot-independent fallback before discovery: discovery
   ;; reads the executable path, so its cost depends on where the compiler is
   ;; installed, and a job that keeps the source stdlib must not pay it.
   (when
-    (tli-sysroot-stdlib-roots-override-cached? roots roots-len env-stdlib-root)
+    (and
+      (not override-checked)
+      (tli-sysroot-stdlib-roots-override-cached?
+        roots
+        roots-len
+        env-stdlib-root))
     (return Inactive))
   (match (tli-sysroot-discover options target)
     [(Disabled) Inactive]
@@ -625,7 +634,8 @@
       (svec.len stdlib-roots)
       (& env-stdlib-root)
       (& cfg-digest)
-      require-archive)))
+      require-archive
+      false)))
 
 (define (tli-batch-catalog-entry-matches?
   [entry : (& TliBatchCatalogEntry)]
@@ -652,6 +662,16 @@
       (array-length entry.stdlib-roots)
       roots
       roots-len)))
+
+(cfg
+  embedded-stdlib-tlci
+  (define (tli-embedded-stdlib-tlci-enabled?) : bool
+    true))
+
+(cfg
+  (not embedded-stdlib-tlci)
+  (define (tli-embedded-stdlib-tlci-enabled?) : bool
+    false))
 
 (define (tli-batch-cache-lookup-or-open!
   [options : (& TliSysrootOptions)]
@@ -689,21 +709,35 @@
           holder.catalog-count))]
     (when (>= existing-count tli-batch-cache-max-slots) (return -1))
     (cfg test (+= tli-batch-catalog-miss-count 1))
+    ;; Probe stdlib-root overrides in the caller's scratch arena before
+    ;; switching into `tli-batch-cache-arena`, so temporary file/embedded
+    ;; stdlib reads never pin MiB of scratch bytes in the batch-lifetime arena.
     (let
+      [override? : bool
+        (and
+          (tli-embedded-stdlib-tlci-enabled?)
+          (not options.disabled)
+          (tli-sysroot-stdlib-roots-override-cached?
+            roots
+            roots-len
+            (& env-stdlib-root)))]
       [enclosing : i64 (arena.tl_arena_current)]
       (unsafe
         ;; lint-allow: raw-arena-op -- open cached stdlib catalog inside the batch cache arena.
         (arena.tl_arena_set tli-batch-cache-arena))
       (let
         [opened : TliSysrootOpenCatalog
-          (tli-sysroot-open-catalog-with-digest
-            options
-            target
-            roots
-            roots-len
-            (& env-stdlib-root)
-            cfg-digest
-            require-archive)]
+          (if override?
+            TliSysrootOpenCatalog.Inactive
+            (tli-sysroot-open-catalog-with-digest
+              options
+              target
+              roots
+              roots-len
+              (& env-stdlib-root)
+              cfg-digest
+              require-archive
+              true))]
         [outcome : TliBatchCatalogOutcome
           (match opened
             [(Inactive) TliBatchCatalogOutcome.Inactive]

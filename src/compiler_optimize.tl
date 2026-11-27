@@ -122043,14 +122043,16 @@
   [clean : (& clean opt_i64_i64_map.Map)]
   [known : (& known opt_i64_i64_map.Map)]
   [blocks : (& blocks ir.CompilerIrBlockList)]) : bool
-  (opt-blocks-every?
-    blocks
-    opt-len-eq-instr-clean?
-    set
-    reads?
-    clean
-    known
-    (&mut (ir.compiler-ir-use-list-new))))
+  (let
+    [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
+    (opt-blocks-every?
+      blocks
+      opt-len-eq-instr-clean?
+      set
+      reads?
+      clean
+      known
+      (&mut uses))))
 
 (define (opt-len-eq-clean-map
   [program : (& program OptProgramIndex)]

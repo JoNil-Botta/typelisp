@@ -24,8 +24,23 @@
 ;; The observed consumer runs before checker pools retire. Fact producers
 ;; supply their observer and publication callback; ordinary check imports do
 ;; not depend on their record schema or collector.
+(defstruct CompilerCheckLoadedProgram
+  (decls ast.AstDeclList)
+  (paths ast.AstDeclPathList)
+  (unsafe-excluded-functions sym_i64_env.SymI64Env))
+
+(defenum CompilerCheckPreparation
+  (Unchanged)
+  (Prepare
+    (->
+      (& source str)
+      ast.AstDeclList
+      ast.AstDeclPathList
+      CompilerCheckLoadedProgram)))
+
 (defenum CompilerSemanticCheckInput
   (Source String String)
+  (PreparedSource String String CompilerCheckPreparation)
   (File String)
   (PackageEntry String String compiler_load.CompilerPkgDeps bool))
 
@@ -35,6 +50,7 @@
   (cfgs sym_i64_env.SymI64Env)
   (job-state tc.TcJobState)
   (observer tc.TcSemanticObserver)
+  (binding-origins bool)
   (consumer-context i64)
   (consumer (-> i64 unit)))
 
@@ -235,22 +251,39 @@
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [cache-scope : String]
-  [job-state : tc.TcJobState]) : ResultCompilerCheck
+  [job-state : tc.TcJobState]
+  [preparation : CompilerCheckPreparation]) : ResultCompilerCheck
   (match loaded
     [(Ok entry-decls entry-paths entry-modules _)
-      (begin
-        (cfg compile-profile (compiler-check-profile-finish "load"))
-        (compiler-check-program
-          path
+      (let
+        [_load-finished : unit
+          (cfg compile-profile (compiler-check-profile-finish "load"))]
+        [decls : ast.AstDeclList
           (compiler_load.compiler-load-decl-list-append
             (& prelude-decls)
-            (& entry-decls))
+            (& entry-decls))]
+        [paths : ast.AstDeclPathList
           (compiler_load.compiler-load-decl-path-list-append
             (& prelude-paths)
             (&
               (ast.ast-decl-path-list-with-modules
                 entry-paths
-                (& entry-modules))))
+                (& entry-modules))))]
+        [program : CompilerCheckLoadedProgram
+          (match preparation
+            [(Unchanged)
+              (CompilerCheckLoadedProgram
+                decls
+                paths
+                (sym_i64_env.sym-i64-empty))]
+            [(Prepare prepare) (prepare (& path) decls paths)])]
+        (tc.tc-unused-unsafe-exclude-functions!
+          (tc.tc-job-state-unused-unsafe job-state)
+          program.unsafe-excluded-functions)
+        (compiler-check-program
+          path
+          program.decls
+          program.paths
           stdlib-roots
           cfgs
           cache-scope
@@ -271,7 +304,8 @@
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [cache-scope : String]
-  [job-state : tc.TcJobState]) : ResultCompilerCheck
+  [job-state : tc.TcJobState]
+  [preparation : CompilerCheckPreparation]) : ResultCompilerCheck
   (match (parser.parse-ast-source-recovery-diagnostic-with-cfg
     (owned_view.compiler-owned-shared-view path)
     (& source)
@@ -306,7 +340,8 @@
             stdlib-roots
             cfgs
             cache-scope
-            job-state)))]))
+            job-state
+            preparation)))]))
 
 (define (compiler-check-loaded-cache-with-paths
   [path : String]
@@ -406,7 +441,8 @@
               "typecheck-prefix-check"
               stdlib-roots
               cfgs)
-            (tc.tc-serial-job-state))))]))
+            (tc.tc-serial-job-state)
+            CompilerCheckPreparation.Unchanged)))]))
 
 (define (compiler-check-target-from-cfgs [cfgs : sym_i64_env.SymI64Env]) : target_cfg.CompilerTargetCfg
   (if (cfg_core.compiler-cfg-enabled? cfgs (ci.intern "windows"))
@@ -614,7 +650,9 @@
     [previous-parser-control : i64 (tc.tc-job-state-parser-control job)]
     [parse-state : parser.CompilerParseState (parser.compiler-parse-state-new)]
     [_binding-tokens : unit
-      (parser.compiler-parse-state-set-binding-origins! (&mut parse-state) true)]
+      (parser.compiler-parse-state-set-binding-origins!
+        (&mut parse-state)
+        request.binding-origins)]
     [parse-cfgs : sym_i64_env.SymI64Env
       (parser.compiler-parse-state-cfgs (& parse-state) request.cfgs)]
     [previous : tc.TcSemanticObserver (tc.tc-job-state-semantic-observer job)]
@@ -629,6 +667,14 @@
             request.stdlib-roots
             parse-cfgs
             job)]
+        [(PreparedSource path source prepare)
+          (compiler-check-source-prepared
+            path
+            source
+            request.stdlib-roots
+            parse-cfgs
+            job
+            prepare)]
         [(File path)
           (compiler-check-source-with-roots-and-cfg-and-job-state
             (owned_view.compiler-owned-shared-view path)
@@ -654,12 +700,13 @@
     (tc.tc-job-state-set-parser-control! job previous-parser-control)
     result))
 
-(define (compiler-check-source-with-roots-and-cfg-and-job-state
+(define (compiler-check-source-prepared
   [path : String]
   [source : String]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
-  [job-state : tc.TcJobState]) : ResultCompilerCheck
+  [job-state : tc.TcJobState]
+  [preparation : CompilerCheckPreparation]) : ResultCompilerCheck
   (begin
     (compiler-check-reset-pools!)
     (tc.tc-job-state-reset-advisories! job-state)
@@ -699,7 +746,8 @@
                     "typecheck-prefix-check"
                     stdlib-roots
                     cfgs)
-                  job-state)]
+                  job-state
+                  preparation)]
               [(Err diag)
                 (begin
                   (cfg compile-profile (compiler-check-profile-finish "load"))
@@ -708,6 +756,20 @@
                     (compiler-check-advisories-for-job job-state)))])]
           (compiler_load.compiler-load-tli-release!)
           result)])))
+
+(define (compiler-check-source-with-roots-and-cfg-and-job-state
+  [path : String]
+  [source : String]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
+  [job-state : tc.TcJobState]) : ResultCompilerCheck
+  (compiler-check-source-prepared
+    path
+    source
+    stdlib-roots
+    cfgs
+    job-state
+    CompilerCheckPreparation.Unchanged))
 
 (define (compiler-check-source-with-roots-and-cfg
   [path : String]

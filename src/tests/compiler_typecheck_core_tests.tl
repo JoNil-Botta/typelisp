@@ -18035,6 +18035,7 @@
         [recorder : facts.CompilerSemanticFactRecorder
           (facts.compiler-semantic-fact-recorder-new
             (string.copy (& path))
+            false
             false)]
         (tc_core.tc-job-state-set-parser-control!
           job

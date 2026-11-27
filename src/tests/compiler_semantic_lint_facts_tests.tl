@@ -120,6 +120,13 @@
               : i32)))
         (+= semantic-facts-test-growth-mismatches 1)))))
 
+(define semantic-facts-test-discarded-marked : i64
+  0)
+(define semantic-facts-test-returned-marked : i64
+  0)
+(define semantic-facts-test-discarded-line : i64
+  0)
+
 (define (semantic-facts-test-consumer
   [_context : i64]
   [snapshot : (& snapshot facts.CompilerSemanticFacts)]) : unit
@@ -163,6 +170,9 @@
   (set! semantic-facts-test-captured-uses 0)
   (set! semantic-facts-test-allowed-lane-operands 0)
   (set! semantic-facts-test-forbidden-lane-operands 0)
+  (set! semantic-facts-test-discarded-marked 0)
+  (set! semantic-facts-test-returned-marked 0)
+  (set! semantic-facts-test-discarded-line 0)
   (for [i
     (iterator.range 0 (facts.compiler-semantic-facts-expression-count snapshot))]
     (let
@@ -172,6 +182,21 @@
           [_
             (test.assert-true false "in-range expression")
             (return unit)])]
+      (when
+        (and
+          (= fact.expression fact.report-expression)
+          (> fact.span.start-line 0)
+          (match (& fact.must-use)
+            [(Marked) true]
+            [_ false]))
+        (match (& fact.value-use)
+          [(Discarded)
+            (+= semantic-facts-test-discarded-marked 1)
+            (set!
+              semantic-facts-test-discarded-line
+              (cast fact.span.start-line : i64))]
+          [(Returned) (+= semantic-facts-test-returned-marked 1)]
+          [_ unit]))
       (semantic-facts-test-growth-identity snapshot (& fact))
       (match fact.reliability
         [(facts.CompilerSemanticFactReliability.Unresolved)
@@ -345,6 +370,7 @@
           (unsafe
             (arena.Arena owner.handle))
           false
+          false
           0
           semantic-facts-test-consumer))]
     (arena.destroy-safe! owner)
@@ -503,6 +529,7 @@
           (unsafe
             (arena.Arena owner.handle))
           false
+          false
           0
           semantic-facts-test-consumer))]
     [file-count : i64 semantic-facts-test-expression-count]
@@ -522,6 +549,7 @@
           ;; The request borrows the facts arena destroyed after it.
           (unsafe
             (arena.Arena package-owner.handle))
+          false
           false
           0
           semantic-facts-test-consumer))]
@@ -732,6 +760,7 @@
                   (unsafe
                     (arena.Arena owner.handle))
                   generated
+                  false
                   home.handle
                   semantic-facts-test-consumer-in-owner)))
               [(check.ResultCompilerCheck.Ok _ _) true]
@@ -977,7 +1006,7 @@
       [inner : tc.TcJobState (tc.tc-job-state-new)]
       [observer : tc.TcSemanticObserver
         (facts.compiler-semantic-fact-recorder-observer
-          (facts.compiler-semantic-fact-recorder-new "nested.tl" false))]
+          (facts.compiler-semantic-fact-recorder-new "nested.tl" false false))]
       (tc.tc-job-state-set-semantic-observer! outer observer)
       (tc.tc-job-state-set-semantic-observer! inner (tc.TcSemanticObserver 0))
       (tc.tc-job-state-set-semantic-observer! outer observer)
@@ -997,3 +1026,31 @@
         tc.tc-semantic-observed-jobs
         0
         "all retired jobs restore the disabled path"))))
+
+(test
+  semantic-facts-value-use-and-report-expression
+  (test.assert-true
+    (semantic-facts-test-source
+      "(defstruct Marked (:must-use) (value i64))
+(define (value [flag : bool]) : Marked
+  (ann (ann (if flag (Marked 1) (Marked 2)) : Marked) : Marked)
+  (let [_ignored (Marked 3)] unit)
+  (Marked 4))")
+    "source check")
+  (test.assert-i64-eq
+    semantic-facts-test-discarded-marked
+    1
+    "one canonical discard")
+  (test.assert-i64-eq semantic-facts-test-discarded-line 3 "outer wrapper span")
+  (test.assert-i64-eq semantic-facts-test-returned-marked 1 "function tail")
+  (test.assert-true
+    (semantic-facts-test-source "(define (value) : i64 1)")
+    "next job check")
+  (test.assert-i64-eq
+    semantic-facts-test-discarded-marked
+    0
+    "no cross-job discards")
+  (test.assert-i64-eq
+    semantic-facts-test-returned-marked
+    0
+    "no cross-job returns"))

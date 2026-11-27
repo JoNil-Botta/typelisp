@@ -1284,20 +1284,24 @@
     [raw-field-fallbacks : i64
       (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
     [_direct-error-findings : lint_core.LintFindings
-      (lint_driver.selfhost-lint-typed-unused-unsafe-findings
+      (lint_driver.selfhost-lint-typed-findings
         "target/lint_unsafe_surface/direct_type_error.tl"
         (lint-driver-smoke-unsafe-surface-type-error-source)
         (lint_svec.new)
-        (lint_driver.selfhost-lint-language-cfgs))]
+        (lint_driver.selfhost-lint-language-cfgs)
+        true
+        false)]
     [direct-error : String
       (driver_tests.selfhost-lint-typed-unused-unsafe-error-shared-view)]
     [_direct-parse-error-findings : lint_core.LintFindings
-      (lint_driver.selfhost-lint-typed-unused-unsafe-findings
+      (lint_driver.selfhost-lint-typed-findings
         "target/lint_unsafe_surface/direct_parse_error.tl"
         "(define (main) : i64
   (unsafe (+ 1 2))"
         (lint_svec.new)
-        (lint_driver.selfhost-lint-language-cfgs))]
+        (lint_driver.selfhost-lint-language-cfgs)
+        true
+        false)]
     [direct-parse-error : String
       (driver_tests.selfhost-lint-typed-unused-unsafe-error-shared-view)]
     [file-error-status : i64

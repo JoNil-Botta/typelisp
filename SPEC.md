@@ -809,12 +809,19 @@ Both `defstruct` and `defenum` may carry the type-level declaration marker
 `(:must-use)` before their first field or variant. It takes no arguments and
 may appear only once. It is stored as nominal compile-time metadata: it does
 not alter value layout, ABI classification, construction, copying, ownership,
-or cleanup. It is not a warning or discard rule by itself. The marker may
-compose with valid `:lifetimes`, `:repr c` (structs), and `:cleanup` metadata;
-existing restrictions between those forms still apply. The canonical order
+or cleanup. The marker may compose with valid `:lifetimes`, `:repr c` (structs),
+and `:cleanup` metadata. Existing restrictions between those forms still apply. The canonical order
 for new declarations and emitted source is `:lifetimes`, `:repr`, `:align`,
 `:cleanup`, then zero-argument markers (`:must-use`, then `:opaque`; see
 section 3.5.4). Existing valid metadata orders remain accepted.
+
+The `typelisp lint` correctness rule `unused-must-use-value` warns by default
+when a sequence discards a direct value of a marked type. It reports the
+outer expression that produced the discarded value. Returning a value,
+passing it to another operation, or binding it counts as use. Bind a value
+to an underscore-prefixed name such as `_ignored` to acknowledge a deliberate
+discard. A reference or container is eligible according to its own direct
+type.
 
 ```lisp test=ignore name=must-use-aggregate-metadata reason="declaration metadata only"
 (defstruct Receipt

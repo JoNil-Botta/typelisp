@@ -64,11 +64,16 @@ original owner borrow, so nested children keep that owner live until their last
 use; conservative non-lexical last-use analysis then releases the borrow when
 no child remains.
 
-`(Box T)` is a safe, move-only, arena-owned indirection handle: `(box expr)`
-allocates in the active arena, `(deref b)` projects the value, moving a
-non-Copy projected value consumes the box, and `(set! (deref b) value)`
-mutates boxed storage. A box allocated inside `(with-arena r ...)` cannot
-escape that scope.
+`(Box T)` is an explicit, safe, move-only, arena-owned indirection handle: it
+owns storage for one `T` allocated in the active arena, so it is one supported
+way to cross a recursive aggregate layout edge. It is not hidden boxing and is
+not the defining representation of recursive data: structs and enums keep
+their declared inline native layout, a recursive-by-value cycle is rejected,
+and the other finite-size edges are a raw pointer in a C-compatible `(:repr c)`
+declaration and a checked reference. `(box expr)` allocates in the active
+arena, `(deref b)` projects the value, moving a non-Copy projected value
+consumes the box, and `(set! (deref b) value)` mutates boxed storage. A box
+allocated inside `(with-arena r ...)` cannot escape that scope.
 
 ### Arenas
 

@@ -72,7 +72,7 @@ ByteBuf           ; owned mutable byte buffer
 (__tl_dyn-array t); compiler-private runtime-sized buffer
 (Slice t)          ; unsized borrowed referent (never a bare runtime value)
 (Tuple t1 t2 ...) ; tuple (by-value params/returns supported)
-(Box t)           ; arena-owned indirection for recursive aggregates
+(Box t)           ; explicit arena-owned indirection (one recursive-edge choice)
 (& r t)           ; immutable reference tied to lifetime/arena r
 (& r str)         ; borrowed string view of an owned String
 (& r bytes)       ; immutable borrowed byte slice
@@ -191,11 +191,26 @@ is no `export` form).
 (import stdlib.string)
 ```
 
-Structs and enums have stable inline layout by default: struct fields use
-declaration order with natural alignment; enums use an 8-byte tag plus
+Structs and enums have stable inline native layout by default: struct fields
+use declaration order with natural alignment; enums use an 8-byte tag plus
 max-aligned payload storage. Comptime layout queries (`size-of`, `align-of`,
-`offset-of`) use that layout. Recursive aggregates use explicit `(Box T)`
-fields/payloads at the recursive edge.
+`offset-of`) use that layout. A recursive-by-value cycle has no finite inline
+layout and is rejected; the compiler never inserts a hidden pointer or box.
+Recursive data crosses the cycle through an explicit finite-size edge: a
+`(Box T)` owning field or payload, a checked reference declared with
+`(:lifetimes ...)`, or a raw pointer in a C-compatible `(:repr c)`
+declaration. A raw pointer edge models C recursion and keeps the C layout and
+unsafe access rules; it carries no ownership, lifetime, or nullability
+guarantee.
+
+```lisp
+(defstruct CNode
+  (:repr c)
+  (value i64)
+  (next (Ptr CNode)))
+
+(defenum Tree (Leaf i64) (Node (Box Tree) (Box Tree)))
+```
 
 `extern` defaults to the target C ABI with the linker symbol equal to the
 local name; `(:symbol "...")` binds an exact foreign symbol (without the

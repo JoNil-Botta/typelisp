@@ -128985,6 +128985,8 @@
                     (& load-state)
                     (& import-path)
                     seen
+                    (& stdlib-roots)
+                    cfgs
                     pools)]
                 [else
                   (cload.compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-state-and-pools

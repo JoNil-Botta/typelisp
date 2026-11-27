@@ -253,7 +253,7 @@
     [generation : i64 (arena.tl_arena_make)]
     (in-arena
       (unsafe
-        (arena.Arena generation))
+        (arena.from-raw-handle generation))
       (let
         [slots : (__tl_dyn-array String) (__tl_make-array String capacity)]
         [index : (__tl_dyn-array i64) (__tl_make-array i64 (* 2 capacity))]
@@ -356,7 +356,7 @@
           (array-ref compiler-ir-label-slots id)
           (in-arena
             (unsafe
-              (arena.Arena (compiler-ir-label-arena)))
+              (arena.from-raw-handle (compiler-ir-label-arena)))
             (string.copy name)))
         (set! (array-ref compiler-ir-label-index position) id)
         (set! compiler-ir-label-count (+ id 1))
@@ -6007,35 +6007,39 @@
 ;; activation: a call or syscall argument, a stored, returned or packed value,
 ;; a vector operand. Without such a use, nothing the tail transfer leaves
 ;; behind can reach the reused frame. An invalid sequence answers true.
-(define (compiler-ir-frame-derived?
+(define (compiler-ir-frame-instr-uses?
   [derived : (& derived ir_i64_i64_map.Map)]
-  [value : (& value CompilerIrValue)]) : bool
-  (match value
-    [(CompilerIrValue.Var id) (ir_i64_i64_map.contains? derived id)]
-    [_ false]))
-
-(define (compiler-ir-frame-note-use!
-  [derived : (& derived ir_i64_i64_map.Map)]
-  [hits : (&mut hits (__tl_dyn-array bool))]
-  [role : CompilerIrOperandRole]
-  [value : CompilerIrValue]) : unit
-  (when
-    (compiler-ir-frame-derived? derived (& value))
-    (set! (array-ref hits 0) true)
-    (match role
-      [(or (CompilerIrOperandRole.Address) (CompilerIrOperandRole.Condition))
-        unit]
-      [_ (set! (array-ref hits 1) true)])))
-
-;; One visit of `instr`'s uses: `hits[0]` records a use of a frame address and
-;; `hits[1]` a use that may carry one out of the activation.
-(define (compiler-ir-frame-instr-uses!
-  [derived : (& derived ir_i64_i64_map.Map)]
-  [hits : (&mut hits (__tl_dyn-array bool))]
-  [instr : CompilerIrInstr]) : unit
-  (set! (array-ref hits 0) false)
-  (set! (array-ref hits 1) false)
-  (compiler-ir-instr-visit-uses instr compiler-ir-frame-note-use! derived hits))
+  [instr : (& CompilerIrInstr)]
+  [uses : (&mut uses CompilerIrUseList)]
+  [escape? : bool]) : bool
+  (let
+    [short : CompilerIrShortVarUses (compiler-ir-instr-short-var-uses instr)]
+    (when
+      (compiler-ir-short-var-uses-symbol-free? (& short))
+      (let
+        [derived? : bool
+          (or
+            (and
+              (>= short.first 0)
+              (ir_i64_i64_map.contains? derived short.first))
+            (and
+              (>= short.second 0)
+              (ir_i64_i64_map.contains? derived short.second)))]
+        ;; An escaping use also depends on its role. Consult the full walk
+        ;; only when a short instruction has a derived operand.
+        (when (or (not escape?) (not derived?)) (return derived?))))
+    (set! uses.len 0)
+    (compiler-ir-instr-uses-into! instr uses)
+    (for [use (& uses)]
+      (when
+        (and
+          (= use.kind (VarUse))
+          (or
+            (not escape?)
+            (and (!= use.role (Address)) (!= use.role (Condition))))
+          (ir_i64_i64_map.contains? derived use.id))
+        (return true)))
+    false))
 
 ;; The destination a frame address flows into through this instruction, or -1.
 (define (compiler-ir-frame-propagating-dst [instr : (& instr CompilerIrInstr)]) : i64
@@ -6051,8 +6055,7 @@
   [seq : (& seq CompilerIrBlockSeq)]
   [derived : (&mut derived ir_i64_i64_map.Map)]) : bool
   (let
-    [hits : (__tl_dyn-array bool) (__tl_make-array bool 2)]
-    [escaped : bool false]
+    [uses : CompilerIrUseList (compiler-ir-use-list-new)]
     [changed : bool true]
     (while changed
       (set! changed false)
@@ -6061,32 +6064,34 @@
           [(CompilerIrBlock.Block _ instrs)
             (for [i (iterator.range 0 instrs.len)]
               (let
-                [instr : CompilerIrInstr
-                  (owned_view.compiler-owned-element-view instrs.slots i)]
-                [dst : i64 (compiler-ir-frame-propagating-dst (& instr))]
+                [instr (compiler-ir-instr-seq-borrow instrs i)]
+                [dst : i64 (compiler-ir-frame-propagating-dst instr)]
                 (when
-                  (and (>= dst 0) (not (ir_i64_i64_map.contains? derived dst)))
-                  (compiler-ir-frame-instr-uses! derived (&mut hits) instr)
-                  (when
-                    (array-ref hits 0)
-                    (ir_i64_i64_map.insert-ref! derived dst 1)
-                    (set! changed true)))))])))
+                  (and
+                    (>= dst 0)
+                    (not (ir_i64_i64_map.contains? derived dst))
+                    (compiler-ir-frame-instr-uses?
+                      derived
+                      instr
+                      (&mut uses)
+                      false))
+                  (ir_i64_i64_map.insert-ref! derived dst 1)
+                  (set! changed true))))])))
     (for [b (iterator.range 0 seq.len)]
       (match (& (array-ref seq.slots b))
         [(CompilerIrBlock.Block _ instrs)
           (for [i (iterator.range 0 instrs.len)]
             (let
-              [instr : CompilerIrInstr
-                (owned_view.compiler-owned-element-view instrs.slots i)]
+              [instr (compiler-ir-instr-seq-borrow instrs i)]
               (when
                 (and
-                  (< (compiler-ir-frame-propagating-dst (& instr)) 0)
-                  (match (& instr)
+                  (< (compiler-ir-frame-propagating-dst instr) 0)
+                  (match instr
                     [(CompilerIrInstr.BoundsCheck _ _ _) false]
-                    [_ true]))
-                (compiler-ir-frame-instr-uses! derived (&mut hits) instr)
-                (when (array-ref hits 1) (set! escaped true)))))]))
-    escaped))
+                    [_ true])
+                  (compiler-ir-frame-instr-uses? derived instr (&mut uses) true))
+                (return true))))]))
+    false))
 
 (define (compiler-ir-blocks-capture-frame?
   [blocks : (& blocks CompilerIrBlockList)]) : bool

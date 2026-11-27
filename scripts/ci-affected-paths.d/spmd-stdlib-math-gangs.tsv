@@ -1,0 +1,3 @@
+path	required	advisory	reason
+tests/spmd/stdlib_math_program_count.tl	stage2-spmd-simd-comparison,stage2-sde-fallback-spmd-simd	@corpus	Reject float fallback that would lose the selected SIMD gang identity.
+tests/spmd/stdlib_math_broadcast.tl	stage2-spmd-simd-comparison,stage2-sde-fallback-spmd-simd	@corpus	Reject float fallback that would change the broadcast source-lane contract.

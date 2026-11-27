@@ -162,7 +162,7 @@
       (& fields)
       target
       (ast.ast-field-def-fallback))
-      [(Def name-id _ _) (ci.intern-syntax-id-value name-id)])))
+      [(Def name-id _ _ _) (ci.intern-syntax-id-value name-id)])))
 
 (define (compiler-symbols-field-name-id-at-index
   [symbols : (& symbols csym.CompilerSymbols)]

@@ -345,7 +345,7 @@
         items
         index
         (ast.ast-field-def-fallback))
-        [(Def name ty cleanup)
+        [(Def name ty cleanup _)
           (let
             [offset : i64
               (if (< index (array-length offsets.slots))
@@ -2781,39 +2781,24 @@
     [(ir.CompilerIrValue.GlobalAddr name) (tli-partition-note-ref! refs name)]
     [_ unit]))
 
-(define (tli-partition-fold-value-ref
-  [_role : ir.CompilerIrOperandRole]
-  [refs : i64_map.Map]
-  [value : ir.CompilerIrValue]) : i64_map.Map
-  (let
-    [out : i64_map.Map refs]
-    (tli-partition-collect-value-refs! (&mut out) (& value))
-    out))
-
 (define (tli-partition-collect-instr-refs
-  [pools : ast.AstNodePoolContext]
-  [refs : i64_map.Map]
-  [slots : (& (__tl_dyn-array ir.CompilerIrInstr))]
-  [index : i64]) : i64_map.Map
-  (let
-    [out : i64_map.Map refs]
-    (match (& (array-ref (deref slots) index))
-      [(or (ir.CompilerIrInstr.Call _ name _ _)
-           (ir.CompilerIrInstr.TailCall name _ _))
-        (tli-partition-note-ref! (&mut out) name)]
-      [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
-        (match (& (deref payload-box))
-          [(fields name) (tli-partition-note-ref! (&mut out) name)])]
-      [(ir.CompilerIrInstr.SpmdCall payload-box)
-        (match (& (deref payload-box))
-          [(fields callee) (tli-partition-note-ref! (&mut out) callee)])]
-      [(ir.CompilerIrInstr.Store name _ _)
-        (tli-partition-note-ref! (&mut out) name)]
-      [_ unit])
-    (ir.compiler-ir-instr-fold-uses
-      (ir.compiler-ir-clone-instr-at pools slots index)
-      out
-      tli-partition-fold-value-ref)))
+  [refs : (&mut i64_map.Map)]
+  [instr : (& ir.CompilerIrInstr)]
+  [uses : (&mut uses ir.CompilerIrUseList)]) : unit
+  (match instr
+    [(or (ir.CompilerIrInstr.Call _ name _ _)
+         (ir.CompilerIrInstr.TailCall name _ _))
+      (tli-partition-note-ref! refs name)]
+    [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
+      (tli-partition-note-ref! refs (deref payload-box).name)]
+    [(ir.CompilerIrInstr.SpmdCall payload-box)
+      (tli-partition-note-ref! refs (deref payload-box).callee)]
+    [(ir.CompilerIrInstr.Store name _ _) (tli-partition-note-ref! refs name)]
+    [_ unit])
+  (set! uses.len 0)
+  (ir.compiler-ir-instr-symbol-uses-into! instr uses)
+  (for [use (& uses)]
+    (tli-partition-collect-value-refs! refs (& (ir.compiler-ir-use-value use)))))
 
 (defstruct TliPartitionModuleRefs
   (refs i64_map.Map))
@@ -2841,11 +2826,10 @@
                         [_ unit]))])))
             found)])]))
 
-(define (tli-partition-function-collect-refs
-  [pools : ast.AstNodePoolContext]
-  [func : (& ir.CompilerIrFunction)]) : i64_map.Map
+(define (tli-partition-function-collect-refs [func : (& ir.CompilerIrFunction)]) : i64_map.Map
   (let
     [refs : i64_map.Map (i64_map.with-capacity 32)]
+    [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
     (match func
       [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
         (match blocks
@@ -2854,17 +2838,13 @@
               (match (& (array-ref block-seq.slots bi))
                 [(ir.CompilerIrBlock.Block _ instrs)
                   (for [ii (iterator.range 0 instrs.len)]
-                    (set!
-                      refs
-                      (tli-partition-collect-instr-refs
-                        pools
-                        refs
-                        (& instrs.slots)
-                        ii)))]))])])
+                    (tli-partition-collect-instr-refs
+                      (&mut refs)
+                      (ir.compiler-ir-instr-seq-borrow instrs ii)
+                      (&mut uses)))]))])])
     refs))
 
 (define (tli-partition-windows-syscall-skip-mask
-  [pools : ast.AstNodePoolContext]
   [functions : (& ir.CompilerIrFunctionSeq)]) : (__tl_dyn-array bool)
   (let
     [fn-count : i64 functions.len]
@@ -2879,9 +2859,7 @@
           (set! (array-ref fn-ids i) (ir.compiler-ir-symbol-id fn-name))])
       (set!
         (array-ref fn-refs i)
-        (tli-partition-function-collect-refs
-          pools
-          (& (array-ref functions.slots i))))
+        (tli-partition-function-collect-refs (& (array-ref functions.slots i))))
       (when
         (tli-partition-function-has-syscall? (& (array-ref functions.slots i)))
         (set! (array-ref skip i) true)
@@ -2906,11 +2884,11 @@
     skip))
 
 (define (tli-partition-collect-module-refs
-  [pools : ast.AstNodePoolContext]
   [globals : (& ir.CompilerIrGlobalSeq)]
   [functions : (& ir.CompilerIrFunctionSeq)]) : TliPartitionModuleRefs
   (let
     [refs : i64_map.Map (i64_map.with-capacity 256)]
+    [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
     (for [gi (iterator.range 0 globals.len)]
       (match (& (array-ref globals.slots gi))
         [(ir.CompilerIrGlobal.Global _ _ value _)
@@ -2924,13 +2902,10 @@
                 (match (& (array-ref block-seq.slots bi))
                   [(ir.CompilerIrBlock.Block _ instrs)
                     (for [ii (iterator.range 0 instrs.len)]
-                      (set!
-                        refs
-                        (tli-partition-collect-instr-refs
-                          pools
-                          refs
-                          (& instrs.slots)
-                          ii)))]))])]))
+                      (tli-partition-collect-instr-refs
+                        (&mut refs)
+                        (ir.compiler-ir-instr-seq-borrow instrs ii)
+                        (&mut uses)))]))])]))
     (TliPartitionModuleRefs refs)))
 
 (define (tli-typecheck-for-extract-and-lower [request : api.TypecheckRequest]) : tc.ResultCompilerTypecheckChecked
@@ -3186,9 +3161,7 @@
           [fn-owners : (__tl_dyn-array i64) (__tl_make-array i64 fn-count)]
           [fn-skip : (__tl_dyn-array bool)
             (if (and windows? is-stdlib?)
-              (tli-partition-windows-syscall-skip-mask
-                pools
-                (& whole-functions))
+              (tli-partition-windows-syscall-skip-mask (& whole-functions))
               (__tl_make-array bool fn-count))]
           [gl-owners : (__tl_dyn-array i64) (__tl_make-array i64 gl-count)]
           [gl-private : (__tl_dyn-array bool) (__tl_make-array bool gl-count)]
@@ -3490,7 +3463,6 @@
                       (ir.compiler-ir-function-builder-snapshot (& f-builder))]
                     [init-refs : TliPartitionModuleRefs
                       (tli-partition-collect-module-refs
-                        pools
                         (& init-globals)
                         (& init-functions))]
                     [cross-avail : i64_map.Map (i64_map.with-capacity 64)]
@@ -3537,7 +3509,6 @@
                       (if (= cross-avail.len 0)
                         init-refs
                         (tli-partition-collect-module-refs
-                          pools
                           (& init-globals)
                           (& mod-functions)))]
                     [e-builder : ir.CompilerIrExternBuilder

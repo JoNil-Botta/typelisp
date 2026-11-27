@@ -431,7 +431,7 @@
     i64)
   (in-arena
     (unsafe
-      (arena.Arena owner-arena))
+      (arena.from-raw-handle owner-arena))
     (__tl_make-array i64 count)))
 
 (define (tlci-loader-host-table-storage
@@ -676,7 +676,7 @@
     0
     (in-arena
       (unsafe
-        (arena.Arena owner-arena))
+        (arena.from-raw-handle owner-arena))
       (__tl_make-array true))))
 
 (define (tlci-loader-loaded-image-with-registration
@@ -1348,7 +1348,7 @@
           [result : ResultTlciLoadedImage
             (in-arena
               (unsafe
-                (arena.Arena index-arena))
+                (arena.from-raw-handle index-arena))
               (tlci-loader-build-macro-index loaded index-arena))]
           (match result
             [(Err message)

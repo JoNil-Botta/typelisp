@@ -19259,7 +19259,17 @@ f:
         [table-label : String ".Lf0_entry_switch_table"]
         (and
           (elf.compiler-object-elf-image-supported? image)
-          (coff.compiler-object-coff-image-supported? image)
+          (not (coff.compiler-object-coff-image-supported? image))
+          (match (be_object.compiler-backend-emit-program-object-image-target-with-mode-and-crt
+            (compiler-backend-switch-test-program)
+            (be_state.CompilerBackendTarget.Windows)
+            (Scalar)
+            (ir.compiler-source-spans-empty)
+            true
+            false)
+            [(Ok windows-image)
+              (coff.compiler-object-coff-image-supported? windows-image)]
+            [(Err _) false])
           (cobj.compiler-object-symbol-list-contains?
             symbols
             table-label

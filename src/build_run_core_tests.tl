@@ -5,9 +5,9 @@
 (import stdlib.vector)
 (import (vector.vector String) as cli_svec)
 (import compiler_backend as backend)
-(import compiler_ast_types as ast)
 (import compiler_ir_types as ir)
 (import compiler_object as cobj)
+(import compiler_parse_core as parser)
 (import compiler_windows_coff_core)
 (import stdlib.process)
 (import stdlib.string)
@@ -46,26 +46,16 @@
 
 (define (source-tool-link-inputs-dedupe-smoke-ok?) : bool
   (let
-    [metadata-items : ast.AstExternLinkInputList
-      (ast.ast-extern-link-input-list-new)]
     [metadata-inputs : build_run.SourceToolLinkInputs
-      (begin
-        (ast.ast-extern-link-input-list-push
-          (&mut metadata-items)
-          (ast.AstExternLinkInput.Lib "m"))
-        (ast.ast-extern-link-input-list-push
-          (&mut metadata-items)
-          (ast.AstExternLinkInput.Lib "m"))
-        (ast.ast-extern-link-input-list-push
-          (&mut metadata-items)
-          (ast.AstExternLinkInput.Search "native"))
-        (ast.ast-extern-link-input-list-push
-          (&mut metadata-items)
-          (ast.AstExternLinkInput.Arg "-Wl,a"))
-        (build_run.source-tool-link-inputs-add-ast-list
-          (build_run.source-tool-link-inputs-empty)
-          (& metadata-items)
-          0))]
+      (match (parser.parse-ast-source
+        "(extern (first) : i64 (:link-lib \"m\"))
+         (extern (second) : i64 (:link-lib \"m\") (:link-search \"native\") (:link-arg \"-Wl,a\"))
+         (extern (unannotated) : i64)")
+        [(Ok (Program decls))
+          (build_run.source-tool-link-inputs-from-decls
+            (& (deref decls))
+            (build_run.source-tool-link-inputs-empty))]
+        [_ (return false)])]
     [explicit-inputs : build_run.SourceToolLinkInputs
       (build_run.source-tool-link-inputs-add-raw-arg
         (build_run.source-tool-link-inputs-add-raw-arg

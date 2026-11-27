@@ -42,6 +42,20 @@ in file {{dir}}/source.s
 contains _tl_stdlib_io_stdlib_io_platform_write:
 not-contains .extern _tl_stdlib_io_stdlib_io_
 not-contains _tl___tl_mod_init_stdlib
+step prebuilt-build
+run build "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl" -o "{{dir}}/prebuilt{{exe}}"
+stderr empty
+step prebuilt-built-program
+exec "{{dir}}/prebuilt{{exe}}"
+exit 42
+stdout contains hello prebuilt
+step source-build
+run build "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl" --no-prebuilt-stdlib -o "{{dir}}/source{{exe}}"
+stderr empty
+step source-built-program
+exec "{{dir}}/source{{exe}}"
+exit 42
+stdout contains hello prebuilt
 step prebuilt-run
 run run "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl"
 exit 42

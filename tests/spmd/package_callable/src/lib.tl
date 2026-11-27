@@ -35,19 +35,21 @@
 ;; errors before and after the selected match arms untaken on both native and
 ;; forced-source dependency routes.
 (defmacro (package-first [values : i64 ...]) : i64
-  (if (= (comptime.expr-list-length values) 0)
-    (comptime.comptime-error "package-first expects an operand")
-    (let
-      [value : Expr (comptime.expr-list-nth values 0)]
-      (match value
-        [(comptime.Expr.Var _name)
-          (comptime.comptime-error "package-first rejects identifiers")]
-        [_
-          (match value
-            [(comptime.Expr.Int _number) value]
-            [_
-              (comptime.comptime-error
-                "package-first expects an integer literal")])]))))
+  (cond
+    [(= (comptime.expr-list-length values) 0)
+      (comptime.comptime-error "package-first expects an operand")]
+    [else
+      (let
+        [value : Expr (comptime.expr-list-nth values 0)]
+        (match value
+          [(comptime.Expr.Var _name)
+            (comptime.comptime-error "package-first rejects identifiers")]
+          [_
+            (match value
+              [(comptime.Expr.Int _number) value]
+              [_
+                (comptime.comptime-error
+                  "package-first expects an integer literal")])]))]))
 
 (defmacro (package-first-decls [values : i64 ...]) : Decls
   (if (= (comptime.expr-list-length values) 0)

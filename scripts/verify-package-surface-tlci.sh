@@ -744,6 +744,10 @@ cat >> "$RIGHT/src/lib.tl" <<'EOF'
 
 (defstruct Whole (:opaque) (whole-secret i64))
 (defstruct Mixed (visible i64) (mixed-secret i64 (:opaque)))
+(defstruct BorrowedMixed
+  (:lifetimes a)
+  (visible i64)
+  (borrowed-secret (& a i64) (:opaque)))
 
 (defmacro (opacity-first-name [T : type]) : Expr
   (comptime.expr-string (struct-field-name T 0)))
@@ -757,6 +761,8 @@ cat >> "$RIGHT/src/lib.tl" <<'EOF'
     `0))
 
 (define (make-mixed) : Mixed (Mixed 9 42))
+(define (make-borrowed-mixed [value : (& a i64)]) : (BorrowedMixed a)
+  (BorrowedMixed 7 value))
 (define (read-mixed [value : Mixed]) : i64 value.mixed-secret)
 (define (read-whole [value : (& Whole)]) : i64 value.whole-secret)
 EOF
@@ -767,13 +773,23 @@ for route in native source; do
     else
         unset TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE || true
     fi
-    for opacity_case in public opaque-field opaque-constructor opaque-type opaque-name opaque-count; do
+    for opacity_case in public opaque-field opaque-constructor opaque-pattern \
+        opaque-lifetime-constructor opaque-lifetime-pattern opaque-type opaque-name opaque-count; do
         case "$opacity_case" in
             public) extra='' ;;
             opaque-field)
                 extra='(define (probe [m : right.Mixed]) : i64 (unsafe m.mixed-secret))' ;;
             opaque-constructor)
                 extra='(define (probe) : right.Mixed (unsafe (right.Mixed 1 2)))' ;;
+            opaque-pattern)
+                extra='(define (probe [m : right.Mixed]) : i64
+  (match m [(right.Mixed visible _) visible]))' ;;
+            opaque-lifetime-constructor)
+                extra='(define (probe [value : (& a i64)]) : (right.BorrowedMixed a)
+  (right.BorrowedMixed 1 value))' ;;
+            opaque-lifetime-pattern)
+                extra='(define (probe [m : (right.BorrowedMixed a)]) : i64
+  (match m [(fields visible) visible]))' ;;
             opaque-type)
                 extra='(define (probe [w : (& right.Whole)]) : i64 (unsafe w.whole-secret))' ;;
             opaque-name)
@@ -790,8 +806,12 @@ for route in native source; do
 
 $extra
 (define (main) : i64
-  (let [value : right.Mixed (right.make-mixed)]
+  (let
+    [value : right.Mixed (right.make-mixed)]
+    [number : i64 42]
+    [borrowed (right.make-borrowed-mixed (& number))]
     (if (and
+        (= borrowed.visible 7)
         (string.eq (right.opacity-second-name Local) "local-secret")
         (string.eq (right.opacity-first-name right.Mixed) "visible"))
       (+ (right.adjust value.visible)
@@ -824,6 +844,11 @@ EOF
             [ "$status" -ne 0 ] || fail "$route $opacity_case unexpectedly built"
             grep -F 'error[E0221]:' "$log.err" > "$log.diag" ||
                 fail "$route $opacity_case did not report E0221"
+            case "$opacity_case" in
+                opaque-*constructor | opaque-*pattern)
+                    grep -F 'with an opaque field outside its module family' "$log.diag" >/dev/null ||
+                        fail "$route $opacity_case did not report field opacity" ;;
+            esac
             if [ "$route" = native ]; then
                 case "$opacity_case" in
                     opaque-name)

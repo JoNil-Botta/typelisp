@@ -1477,7 +1477,6 @@
         (!= (bit-and row.flags 4) 0)
         (not (string.eq (& row.module-name) "stdlib.comptime")))]
     [unsafe-decl : bool (!= (bit-and row.flags 8) 0)]
-    [meta : ast.AstDeclMeta (tli-hydrate-decl-meta comptime-only markers)]
     [lifetimes : ast.AstLifetimeList (tli-hydrate-lifetimes (& row.lifetimes))]
     (match (& row.body)
       [(Struct fields)
@@ -1487,20 +1486,27 @@
             (__tl_make-array ast.AstFieldDef fcount)]
           [fnames : (__tl_dyn-array i64) (__tl_make-array i64 fcount)]
           [foffsets : (__tl_dyn-array i64) (__tl_make-array i64 fcount)]
+          [struct-markers : i64 markers]
           (for [i (iterator.range 0 fcount)]
             (let
               [fname-id : i64 (tli-hydrate-name (& (array-ref fields i).name))]
               [fty-id : i64 (tli-hydrate-type-id (& (array-ref fields i).ty))]
-              (set! (array-ref fnames i) fname-id)
-              (set! (array-ref foffsets i) (array-ref fields i).byte-offset)
-              (set!
-                (array-ref fslots i)
+              [field : ast.AstFieldDef
                 (ast.ast-field-def-with-opacity-id
                   (intern.intern-syntax-id-from-raw fname-id)
                   (ast.ty-node-get fty-id)
                   (tli-hydrate-field-cleanup (& (array-ref fields i).cleanup))
-                  (array-ref fields i).opaque?))))
+                  (array-ref fields i).opaque?)]
+              ;; AST bit 3 summarizes the fields. TLI flag bit 3 is unsafe.
+              (set!
+                struct-markers
+                (ast.ast-struct-markers-with-field struct-markers (& field)))
+              (set! (array-ref fnames i) fname-id)
+              (set! (array-ref foffsets i) (array-ref fields i).byte-offset)
+              (set! (array-ref fslots i) field)))
           (let
+            [meta : ast.AstDeclMeta
+              (tli-hydrate-decl-meta comptime-only struct-markers)]
             [repr : ast.AstStructRepr
               (if (= row.repr-kind 1)
                 (ast.AstStructRepr.C
@@ -1566,6 +1572,8 @@
               (array-ref vslots i)
               (tli-hydrate-variant-def (& (array-ref variants i)))))
           (let
+            [meta : ast.AstDeclMeta
+              (tli-hydrate-decl-meta comptime-only markers)]
             [cleanup : ast.AstEnumCleanup
               (tli-hydrate-enum-cleanup (& row.cleanup))]
             [vlist : ast.AstVariantDefList

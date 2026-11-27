@@ -256,6 +256,67 @@
       "negative index")))
 
 (test
+  tli-projects-opaque-field-markers-independently-of-unsafe
+  (let
+    [facts : hydrate.TliHydratedFacts (hydrate.tli-hydrated-facts-new 0)]
+    [decls : ast.AstDeclList (ast.ast-decl-list-new)]
+    [paths : ast.AstDeclPathList (ast.ast-decl-path-list-new)]
+    [modules : ast.AstDeclModuleList (ast.ast-decl-module-list-new)]
+    (for [i (iterator.range 0 3)]
+      (let
+        [unsafe? : bool (= i 2)]
+        [row : tli.TliTypeDecl
+          (tli.TliTypeDecl
+            "Record"
+            ""
+            (if unsafe?
+              8
+              1)
+            0
+            0
+            0
+            0
+            (tli.TliCleanup.No)
+            (if (= i 1)
+              (__tl_make-array "a")
+              (__tl_make-array String 0))
+            (tli.TliTypeBody.Struct
+              (__tl_make-array
+                (tli.TliField
+                  "field"
+                  (tli.TliType.I64)
+                  (tli.TliCleanup.No)
+                  0
+                  0
+                  (not unsafe?)))))]
+        (hydrate.tli-hydrate-project-type!
+          (&mut facts)
+          (&mut decls)
+          (&mut paths)
+          (&mut modules)
+          (& row)
+          ""
+          0
+          0)
+        (let
+          [decl : ast.AstDecl
+            (ast.ast-decl-list-get (& decls) i (ast.ast-decl-fallback))]
+          (test.assert-i64-eq
+            (ast.ast-decl-aggregate-markers (& decl))
+            (if unsafe?
+              0
+              1)
+            "preserved aggregate markers")
+          (test.assert-true
+            (= (ast.ast-decl-has-opaque-field? (& decl)) (not unsafe?))
+            "opaque fields set the AST marker")
+          (test.assert-true
+            (match (& decl)
+              [(Unsafe _) unsafe?]
+              [_ (not unsafe?)])
+            "only the wire unsafe flag sets the unsafe wrapper"))))))
+
+(test
   tli-registers-hydrated-invalidate-types
   (let
     [before : i64 ast.ast-invalidate-type-count]

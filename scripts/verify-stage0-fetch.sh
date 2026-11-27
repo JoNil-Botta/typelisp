@@ -52,8 +52,17 @@ fi
 exec "$FETCH_REAL_JQ" "$@"
 MOCK_JQ
 chmod +x "$work/bin/jq"
+cat > "$work/bin/sleep" <<'MOCK_SLEEP'
+#!/usr/bin/env sh
+printf '%s\n' "$1" >> "$FETCH_FIXTURE/sleeps"
+MOCK_SLEEP
+chmod +x "$work/bin/sleep"
 cat > "$work/fetch.ps1" <<'MOCK_PS'
 param($Fetcher, $Tag, $Destination)
+function Start-Sleep {
+    param([int] $Seconds)
+    Add-Content -LiteralPath (Join-Path $env:FETCH_FIXTURE 'sleeps') -Value $Seconds
+}
 function Invoke-WebRequest {
     param([string] $Uri, [string] $OutFile, [switch] $UseBasicParsing)
     Add-Content -LiteralPath (Join-Path $env:FETCH_FIXTURE 'calls') -Value $Uri
@@ -94,7 +103,10 @@ case "$(uname -s)" in
     *) if command -v pwsh >/dev/null 2>&1; then fetchers='sh ps1'; fi ;;
 esac
 for fetcher in $fetchers; do
-    scenarios='public missing draft pagination full-page dangling-tag no-release bad-checksum fallback-bad-checksum no-sums explicit-tag explicit-no-sums case-variant alias-retry api-failure compare-failure moved-tag empty-asset'
+    scenarios='public missing draft pagination full-page dangling-tag no-release bad-checksum fallback-bad-checksum repeated-bad-checksum repeated-bad-checksum-fallback-bad repeated-bad-checksum-explicit fallback-non-sticky widening-backoff no-sums explicit-tag explicit-no-sums case-variant alias-retry api-failure compare-failure moved-tag empty-asset'
+    case "$(uname -s)" in
+        Linux*) scenarios="$scenarios bundle-404-no-leak bundle-404-retry-ok" ;;
+    esac
     [ "$fetcher" != sh ] || scenarios="$scenarios crlf-candidates crlf-pagination"
     for scenario in $scenarios; do
         out="$work/out-$fetcher-$scenario"
@@ -104,6 +116,7 @@ for fetcher in $fetchers; do
         chmod +x "$out/$output"
         cp "$out/$output" "$work/previous"
         : > "$work/calls"
+        : > "$work/sleeps"
         page=$(printf '%s' "$release" | jq --arg bad "$bad" '[. + {tag_name:$bad,published_at:"2026-10-19T12:00:00Z"}, .]')
         [ "$scenario" != no-release ] || page='[]'
         if [ "$scenario" = full-page ]; then page=$(printf '%s' "$page" | jq '. + [range(98)|{draft:true}]'); fi
@@ -117,7 +130,12 @@ for fetcher in $fetchers; do
         }' > "$work/responses.json"
         for tag in stage0-latest "$good" pinned-public; do
             status=200
-            if [ "$tag" = stage0-latest ] && [ "$scenario" != public ] && [ "$scenario" != bad-checksum ] && [ "$scenario" != alias-retry ]; then status=404; fi
+            if [ "$tag" = stage0-latest ]; then
+                case "$scenario" in
+                    public|bad-checksum|repeated-bad-checksum|repeated-bad-checksum-fallback-bad|fallback-non-sticky|widening-backoff|alias-retry|bundle-404-no-leak|bundle-404-retry-ok) ;;
+                    *) status=404 ;;
+                esac
+            fi
             for asset in typelisp-stage0-linux typelisp-stage0-windows.exe SHA256SUMS; do
                 file=payload
                 [ "$asset" != SHA256SUMS ] || file=SHA256SUMS
@@ -129,6 +147,9 @@ for fetcher in $fetchers; do
             alias-retry)
                 jq --arg api "$api" 'with_entries(if (.key|contains("/stage0-latest/")) and (.key|endswith("/typelisp-stage0-linux") or endswith("/typelisp-stage0-windows.exe")) then .value.firstStatus=404 else . end) | .[$api+"/releases?per_page=100&page=1"]={status:503}' "$work/responses.json" > "$work/next.json"
                 mv "$work/next.json" "$work/responses.json" ;;
+            fallback-non-sticky)
+                jq --arg base "$base" --arg good "$good" 'with_entries(if (.key|contains("/stage0-latest/")) and (.key|endswith("/typelisp-stage0-linux") or endswith("/typelisp-stage0-windows.exe")) then .value.firstStatus=404 elif (.key|startswith($base+"/"+$good+"/")) then .value.status=503 else . end)' "$work/responses.json" > "$work/next.json"
+                mv "$work/next.json" "$work/responses.json" ;;
             pagination|crlf-pagination)
                 jq --arg api "$api" --argjson page "$page" '. + {($api+"/releases?per_page=100&page=1"):{status:200,body:([range(100)|{draft:true}]|tojson)},($api+"/releases?per_page=100&page=2"):{status:200,body:($page|tojson)}}' "$work/responses.json" > "$work/next.json"
                 mv "$work/next.json" "$work/responses.json" ;;
@@ -139,10 +160,20 @@ for fetcher in $fetchers; do
                 [ "$scenario" != dangling-tag ] || response_status=404
                 jq --arg url "$endpoint" --argjson status "$response_status" '.[$url]={status:$status}' "$work/responses.json" > "$work/next.json"
                 mv "$work/next.json" "$work/responses.json" ;;
-            bad-checksum|fallback-bad-checksum|empty-asset)
+            bad-checksum|fallback-bad-checksum|repeated-bad-checksum-fallback-bad|repeated-bad-checksum-explicit|empty-asset)
                 printf 'corrupted\n' > "$work/corrupt"
                 [ "$scenario" != empty-asset ] || : > "$work/corrupt"
                 jq 'with_entries(if (.key|endswith("/typelisp-stage0-linux") or endswith("/typelisp-stage0-windows.exe")) then .value.file="corrupt" else . end)' "$work/responses.json" > "$work/next.json"
+                mv "$work/next.json" "$work/responses.json" ;;
+            repeated-bad-checksum)
+                printf 'corrupted\n' > "$work/corrupt"
+                jq 'with_entries(if (.key|contains("/stage0-latest/")) and (.key|endswith("/typelisp-stage0-linux") or endswith("/typelisp-stage0-windows.exe")) then .value.file="corrupt" else . end)' "$work/responses.json" > "$work/next.json"
+                mv "$work/next.json" "$work/responses.json" ;;
+            bundle-404-no-leak|widening-backoff)
+                jq --arg base "$base" '.[$base+"/stage0-latest/SHA256SUMS"].status=503' "$work/responses.json" > "$work/next.json"
+                mv "$work/next.json" "$work/responses.json" ;;
+            bundle-404-retry-ok)
+                jq --arg base "$base" '.[$base+"/stage0-latest/SHA256SUMS"].firstStatus=503' "$work/responses.json" > "$work/next.json"
                 mv "$work/next.json" "$work/responses.json" ;;
             no-sums|explicit-no-sums)
                 jq 'with_entries(if (.key|endswith("/SHA256SUMS")) then .value.status=404 else . end)' "$work/responses.json" > "$work/next.json"
@@ -151,28 +182,38 @@ for fetcher in $fetchers; do
         tag=stage0-latest
         [ "$scenario" != explicit-tag ] || tag=pinned-missing
         [ "$scenario" != explicit-no-sums ] || tag=pinned-public
+        [ "$scenario" != repeated-bad-checksum-explicit ] || tag=pinned-public
         [ "$scenario" != case-variant ] || tag=STAGE0-LATEST
         attempts=1
-        [ "$scenario" != alias-retry ] || attempts=2
+        retry_delay=0
+        case "$scenario" in
+            alias-retry|fallback-non-sticky|repeated-bad-checksum-fallback-bad|repeated-bad-checksum-explicit|bundle-404-retry-ok) attempts=2 ;;
+            repeated-bad-checksum) attempts=3 ;;
+            widening-backoff) attempts=5; retry_delay=5 ;;
+        esac
+        bundle_asset=
+        case "$scenario" in
+            bundle-404-*) bundle_asset=typelisp-stage0-linux-bundle.tar.gz ;;
+        esac
         force_crlf=0
         case "$scenario" in crlf-*) force_crlf=1 ;; esac
         status=0
         if [ "$fetcher" = sh ]; then
-            PATH="$work/bin:$PATH" FETCH_FIXTURE="$work" FETCH_REAL_JQ="$real_jq" FETCH_CRLF="$force_crlf" TYPELISP_STAGE0_REPO="$repo" TYPELISP_STAGE0_FETCH_ATTEMPTS="$attempts" TYPELISP_STAGE0_FETCH_RETRY_DELAY=0 \
+            PATH="$work/bin:$PATH" FETCH_FIXTURE="$work" FETCH_REAL_JQ="$real_jq" FETCH_CRLF="$force_crlf" TYPELISP_STAGE0_REPO="$repo" TYPELISP_STAGE0_BUNDLE_ASSET="$bundle_asset" TYPELISP_STAGE0_FETCH_ATTEMPTS="$attempts" TYPELISP_STAGE0_FETCH_RETRY_DELAY="$retry_delay" \
                 sh "$ROOT/scripts/fetch-stage0.sh" "$tag" "$out" > "$work/result.log" 2>&1 || status=$?
         else
-            FETCH_FIXTURE="$work" TYPELISP_STAGE0_REPO="$repo" TYPELISP_STAGE0_FETCH_ATTEMPTS="$attempts" TYPELISP_STAGE0_FETCH_RETRY_DELAY=0 \
+            FETCH_FIXTURE="$work" TYPELISP_STAGE0_REPO="$repo" TYPELISP_STAGE0_BUNDLE_ASSET="$bundle_asset" TYPELISP_STAGE0_FETCH_ATTEMPTS="$attempts" TYPELISP_STAGE0_FETCH_RETRY_DELAY="$retry_delay" \
                 pwsh -NoProfile -File "$work/fetch.ps1" "$ROOT/scripts/fetch-stage0.ps1" "$tag" "$out" > "$work/result.log" 2>&1 || status=$?
         fi
         case "$scenario" in
-            public|missing|draft|pagination|full-page|dangling-tag|explicit-no-sums|alias-retry|crlf-candidates|crlf-pagination)
+            public|missing|draft|pagination|full-page|dangling-tag|explicit-no-sums|alias-retry|fallback-non-sticky|repeated-bad-checksum|bundle-404-retry-ok|crlf-candidates|crlf-pagination)
                 if [ "$status" -ne 0 ] || ! cmp -s "$work/payload" "$out/$output"; then
                     cat "$work/result.log" >&2
                     echo "stage0 fetch $fetcher/$scenario failed" >&2
                     exit 1
                 fi
                 case "$scenario" in
-                    public|explicit-no-sums|alias-retry) : ;;
+                    public|explicit-no-sums|alias-retry|fallback-non-sticky|bundle-404-retry-ok) : ;;
                     *) grep -F "falling back to $repo@$good" "$work/result.log" >/dev/null ;;
                 esac
                 ;;
@@ -184,8 +225,33 @@ for fetcher in $fetchers; do
                 fi
                 ;;
         esac
+        if [ "$scenario" = repeated-bad-checksum ]; then
+            case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) check_asset=typelisp-stage0-windows.exe ;; *) check_asset=typelisp-stage0-linux ;; esac
+            latest_calls=$(grep -Fxc "$base/stage0-latest/$check_asset" "$work/calls" || true)
+            if [ "$latest_calls" -ne "$attempts" ]; then
+                cat "$work/calls" >&2
+                echo "stage0 fetch $fetcher/$scenario did not exhaust stage0-latest retries before fallback (got $latest_calls, want $attempts)" >&2
+                exit 1
+            fi
+        fi
         case "$scenario" in
-            public|bad-checksum|explicit-tag|explicit-no-sums|case-variant)
+            bundle-404-*)
+                if ! grep -F "/stage0-latest/$bundle_asset" "$work/calls" >/dev/null; then
+                    cat "$work/calls" >&2
+                    echo "stage0 fetch $fetcher/$scenario did not exercise bundle asset download" >&2
+                    exit 1
+                fi ;;
+        esac
+        if [ "$scenario" = widening-backoff ]; then
+            printf '5\n10\n20\n30\n' > "$work/expected-sleeps"
+            if ! cmp -s "$work/expected-sleeps" "$work/sleeps"; then
+                cat "$work/sleeps" >&2
+                echo "stage0 fetch $fetcher/$scenario backoff schedule mismatch" >&2
+                exit 1
+            fi
+        fi
+        case "$scenario" in
+            public|bad-checksum|repeated-bad-checksum-explicit|widening-backoff|bundle-404-no-leak|bundle-404-retry-ok|explicit-tag|explicit-no-sums|case-variant)
                 if grep -F api.github.com "$work/calls" >/dev/null; then
                     echo "stage0 fetch $fetcher/$scenario unexpectedly selected another release" >&2
                     exit 1

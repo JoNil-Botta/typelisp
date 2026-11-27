@@ -27,10 +27,12 @@ $IsLinuxHost = ((Get-Variable IsLinux -ValueOnly -ErrorAction SilentlyContinue) 
 
 if ($IsWindowsHost) {
     $SingleAsset = "typelisp-stage0-windows.exe"
+    $BundleAsset = $null
     $Output = "typelisp.exe"
     $SysrootTriple = "x86_64-pc-windows-msvc"
 } elseif ($IsLinuxHost) {
     $SingleAsset = "typelisp-stage0-linux"
+    $BundleAsset = if ($env:TYPELISP_STAGE0_BUNDLE_ASSET) { $env:TYPELISP_STAGE0_BUNDLE_ASSET } else { $null }
     $Output = "typelisp"
     $SysrootTriple = "x86_64-unknown-linux-gnu"
 } else {
@@ -46,9 +48,11 @@ $OutputDirPath = if ([System.IO.Path]::IsPathRooted($OutputDir)) {
     Join-Path $Root $OutputDir
 }
 
-# Only a missing mutable alias selects another release. An explicit tag or
-# a checksum mismatch must retain its original failure boundary.
-$RequireSums = ($Tag -eq "stage0-latest")
+# An explicit tag retains its original failure boundary. Only the mutable
+# stage0-latest alias falls back to a permanent release on 404 or after
+# repeated SHA256SUMS mismatches exhaust its retries.
+$RequestedTag = $Tag
+$RequireSums = ($Tag -ceq "stage0-latest")
 
 function Test-Stage0NotFound {
     param($Failure)
@@ -109,26 +113,42 @@ $TempDir = Join-Path $OutputDirFull (".stage0-download." + [Guid]::NewGuid().ToS
 New-Item -ItemType Directory -Path $TempDir -Force -Confirm:$false | Out-Null
 
 try {
-    $BaseUrl = "https://github.com/$Repo/releases/download/$Tag"
+    $script:Tag = $Tag
+    $script:BaseUrl = "https://github.com/$Repo/releases/download/$($script:Tag)"
     $SumsTmp = Join-Path $TempDir "SHA256SUMS"
     $Dest = Join-Path $OutputDirFull $Output
-    $Asset = $null
-    $AssetTmp = $null
-    $SysrootTliTmp = $null
-    $SysrootLibTmp = $null
+    $script:Asset = $null
+    $script:AssetTmp = $null
+    $script:SysrootTliTmp = $null
+    $script:SysrootLibTmp = $null
+    $script:ReleaseUnavailable = $false
+    $script:ChecksumMismatch = $false
+
+    function Clear-Stage0TempFiles {
+        if ($BundleAsset) {
+            Remove-Item -LiteralPath (Join-Path $TempDir $BundleAsset) -Force -ErrorAction SilentlyContinue
+        }
+        Remove-Item -LiteralPath (Join-Path $TempDir $SingleAsset) -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath (Join-Path $TempDir $SysrootTliAsset) -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath (Join-Path $TempDir $SysrootLibAsset) -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $SumsTmp -Force -ErrorAction SilentlyContinue
+    }
 
     function Download-Stage0Asset {
-        param([Parameter(Mandatory = $true)] [string] $AssetName)
+        param(
+            [Parameter(Mandatory = $true)] [string] $AssetName,
+            [bool] $MarkMissing = $true
+        )
 
         $Target = Join-Path $TempDir $AssetName
         try {
-            Invoke-WebRequest -Uri "$BaseUrl/$AssetName" -OutFile $Target -UseBasicParsing
+            Invoke-WebRequest -Uri "$($script:BaseUrl)/$AssetName" -OutFile $Target -UseBasicParsing
             if ((Get-Item -LiteralPath $Target).Length -le 0) {
                 throw "downloaded stage0 asset is empty: $AssetName"
             }
             $Target
         } catch {
-            if (Test-Stage0NotFound $_) { $script:ReleaseUnavailable = $true }
+            if ($MarkMissing -and (Test-Stage0NotFound $_)) { $script:ReleaseUnavailable = $true }
             Remove-Item -LiteralPath $Target -Force -ErrorAction SilentlyContinue
             throw
         }
@@ -139,7 +159,7 @@ try {
 
         $Target = Join-Path $TempDir $AssetName
         try {
-            Invoke-WebRequest -Uri "$BaseUrl/$AssetName" -OutFile $Target -UseBasicParsing
+            Invoke-WebRequest -Uri "$($script:BaseUrl)/$AssetName" -OutFile $Target -UseBasicParsing
             if ((Get-Item -LiteralPath $Target).Length -le 0) {
                 Remove-Item -LiteralPath $Target -Force -ErrorAction SilentlyContinue
                 throw "downloaded optional asset is empty: $AssetName"
@@ -166,120 +186,187 @@ try {
             Select-Object -First 1
         if (-not $Selected) { return }
         if ($Selected -notmatch "^\s*([0-9A-Fa-f]{64})\s+") {
+            $script:ChecksumMismatch = $true
             throw "invalid SHA256SUMS entry for $AssetName"
         }
         $ExpectedHash = $Matches[1].ToLowerInvariant()
         $ActualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $AssetPath).Hash.ToLowerInvariant()
         if ($ActualHash -ne $ExpectedHash) {
+            $script:ChecksumMismatch = $true
             throw "sha256 mismatch for $AssetName`: expected $ExpectedHash, got $ActualHash"
         }
     }
 
-    $FetchSucceeded = $false
-    for ($Attempt = 1; $Attempt -le $FetchAttempts; $Attempt++) {
-        $Asset = $SingleAsset
+    function Invoke-Stage0Fetch {
+        $script:Asset = $null
+        $script:AssetTmp = $null
+        $script:SysrootTliTmp = $null
+        $script:SysrootLibTmp = $null
         $script:ReleaseUnavailable = $false
-        $AssetTmp = $null
-        $SysrootTliTmp = $null
-        $SysrootLibTmp = $null
-        Remove-Item -LiteralPath (Join-Path $TempDir $SingleAsset) -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath (Join-Path $TempDir $SysrootTliAsset) -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath (Join-Path $TempDir $SysrootLibAsset) -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath $SumsTmp -Force -ErrorAction SilentlyContinue
-        try {
-            Write-Host "[stage0] downloading $SingleAsset from $Repo@$Tag"
-            $AssetTmp = Download-Stage0Asset -AssetName $SingleAsset
+        $script:ChecksumMismatch = $false
+        Clear-Stage0TempFiles
 
-            $HaveSums = $false
+        if ($BundleAsset) {
+            Write-Host "[stage0] downloading $BundleAsset from $Repo@$($script:Tag)"
             try {
-                Invoke-WebRequest -Uri "$BaseUrl/SHA256SUMS" -OutFile $SumsTmp -UseBasicParsing
-                $HaveSums = $true
+                $script:AssetTmp = Download-Stage0Asset -AssetName $BundleAsset -MarkMissing $false
+                $script:Asset = $BundleAsset
             } catch {
-                if (Test-Stage0NotFound $_) { $script:ReleaseUnavailable = $true }
-                if ($RequireSums) {
-                    throw "SHA256SUMS is not visible for $Tag yet"
-                }
-                Write-Warning "SHA256SUMS not found for $Tag; verified non-empty asset only"
+                Write-Host "[stage0] bundled Linux stage0 asset not present yet; trying $SingleAsset"
+            }
+        }
+
+        if (-not $script:Asset) {
+            Write-Host "[stage0] downloading $SingleAsset from $Repo@$($script:Tag)"
+            $script:AssetTmp = Download-Stage0Asset -AssetName $SingleAsset -MarkMissing $true
+            $script:Asset = $SingleAsset
+        }
+
+        $HaveSums = $false
+        try {
+            Invoke-WebRequest -Uri "$($script:BaseUrl)/SHA256SUMS" -OutFile $SumsTmp -UseBasicParsing
+            $HaveSums = $true
+        } catch {
+            if (Test-Stage0NotFound $_) { $script:ReleaseUnavailable = $true }
+            if ($RequireSums) {
+                throw "SHA256SUMS is not visible for $($script:Tag) yet"
+            }
+            Write-Warning "SHA256SUMS not found for $($script:Tag); verified non-empty asset only"
+        }
+
+        if ($HaveSums) {
+            $AssetPattern = [regex]::Escape($script:Asset)
+            $Selected = Get-Content -LiteralPath $SumsTmp |
+                Where-Object { $_ -match "^\s*[0-9A-Fa-f]{64}\s+$AssetPattern\s*$" } |
+                Select-Object -First 1
+
+            if (-not $Selected) {
+                $script:ChecksumMismatch = $true
+                throw "SHA256SUMS does not contain $($script:Asset)"
+            }
+            if ($Selected -notmatch "^\s*([0-9A-Fa-f]{64})\s+") {
+                $script:ChecksumMismatch = $true
+                throw "invalid SHA256SUMS entry for $($script:Asset)"
             }
 
+            $ExpectedHash = $Matches[1].ToLowerInvariant()
+            $ActualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $script:AssetTmp).Hash.ToLowerInvariant()
+            if ($ActualHash -ne $ExpectedHash) {
+                $script:ChecksumMismatch = $true
+                throw "sha256 mismatch for $($script:Asset)`: expected $ExpectedHash, got $ActualHash"
+            }
+        }
+
+        $CandidateTli = Try-DownloadOptionalAsset -AssetName $SysrootTliAsset
+        $CandidateLib = Try-DownloadOptionalAsset -AssetName $SysrootLibAsset
+        if ($CandidateTli -and $CandidateLib) {
+            Verify-OptionalAssetSum -AssetName $SysrootTliAsset -AssetPath $CandidateTli -HaveSums $HaveSums
+            Verify-OptionalAssetSum -AssetName $SysrootLibAsset -AssetPath $CandidateLib -HaveSums $HaveSums
+            $script:SysrootTliTmp = $CandidateTli
+            $script:SysrootLibTmp = $CandidateLib
+        } elseif (-not $CandidateTli -and -not $CandidateLib) {
             if ($HaveSums) {
-                $AssetPattern = [regex]::Escape($Asset)
-                $Selected = Get-Content -LiteralPath $SumsTmp |
-                    Where-Object { $_ -match "^\s*[0-9A-Fa-f]{64}\s+$AssetPattern\s*$" } |
+                $TliPat = [regex]::Escape($SysrootTliAsset)
+                $LibPat = [regex]::Escape($SysrootLibAsset)
+                $ExpectedSysroot = Get-Content -LiteralPath $SumsTmp |
+                    Where-Object { $_ -match "^\s*[0-9A-Fa-f]{64}\s+($TliPat|$LibPat)\s*$" } |
                     Select-Object -First 1
-
-                if (-not $Selected) {
-                    throw "SHA256SUMS does not contain $Asset"
-                }
-                if ($Selected -notmatch "^\s*([0-9A-Fa-f]{64})\s+") {
-                    throw "invalid SHA256SUMS entry for $Asset"
-                }
-
-                $ExpectedHash = $Matches[1].ToLowerInvariant()
-                $ActualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $AssetTmp).Hash.ToLowerInvariant()
-                if ($ActualHash -ne $ExpectedHash) {
-                    throw "sha256 mismatch for $Asset`: expected $ExpectedHash, got $ActualHash"
+                if ($ExpectedSysroot) {
+                    $script:ChecksumMismatch = $true
+                    throw "SHA256SUMS lists sysroot assets that are not visible yet"
                 }
             }
+        } else {
+            throw "inconsistent prebuilt stdlib sysroot download"
+        }
+    }
 
-            $CandidateTli = Try-DownloadOptionalAsset -AssetName $SysrootTliAsset
-            $CandidateLib = Try-DownloadOptionalAsset -AssetName $SysrootLibAsset
-            if ($CandidateTli -and $CandidateLib) {
-                Verify-OptionalAssetSum -AssetName $SysrootTliAsset -AssetPath $CandidateTli -HaveSums $HaveSums
-                Verify-OptionalAssetSum -AssetName $SysrootLibAsset -AssetPath $CandidateLib -HaveSums $HaveSums
-                $SysrootTliTmp = $CandidateTli
-                $SysrootLibTmp = $CandidateLib
-            } elseif (-not $CandidateTli -and -not $CandidateLib) {
-                if ($HaveSums) {
-                    $TliPat = [regex]::Escape($SysrootTliAsset)
-                    $LibPat = [regex]::Escape($SysrootLibAsset)
-                    $ExpectedSysroot = Get-Content -LiteralPath $SumsTmp |
-                        Where-Object { $_ -match "^\s*[0-9A-Fa-f]{64}\s+($TliPat|$LibPat)\s*$" } |
-                        Select-Object -First 1
-                    if ($ExpectedSysroot) {
-                        throw "SHA256SUMS lists sysroot assets that are not visible yet"
-                    }
-                }
-            } else {
-                throw "inconsistent prebuilt stdlib sysroot download"
+    function Get-Stage0RetryDelay {
+        param([Parameter(Mandatory = $true)] [int] $Attempt)
+
+        $Delay = $FetchRetryDelay
+        if ($Delay -le 0) { return 0 }
+        if ($script:Tag -ceq 'stage0-latest') {
+            $Cap = [Math]::Max(30, $Delay)
+            for ($i = 1; $i -lt $Attempt -and $Delay -lt $Cap; $i++) {
+                $Delay = $Delay * 2
             }
+            if ($Delay -gt $Cap) { $Delay = $Cap }
+        }
+        return $Delay
+    }
 
+    function Try-PermanentFallback {
+        param([Parameter(Mandatory = $true)] [string] $Reason)
+
+        $FallbackTag = $null
+        try {
+            $FallbackTag = Get-ImmutableMainRelease
+        } catch {
+            Write-Warning ("[stage0] immutable fallback unavailable: {0}" -f $_.Exception.Message)
+            return $false
+        }
+        if (-not $FallbackTag) { return $false }
+        [Console]::Error.WriteLine("[stage0] $RequestedTag $Reason; falling back to $Repo@$FallbackTag")
+        $SavedTag = $script:Tag
+        $SavedBaseUrl = $script:BaseUrl
+        $script:Tag = $FallbackTag
+        $script:BaseUrl = "https://github.com/$Repo/releases/download/$($script:Tag)"
+        try {
+            Invoke-Stage0Fetch
+            return $true
+        } catch {
+            Write-Warning ("[stage0] immutable fallback {0}@{1} failed: {2}" -f $Repo, $FallbackTag, $_.Exception.Message)
+            $script:Tag = $SavedTag
+            $script:BaseUrl = $SavedBaseUrl
+            Clear-Stage0TempFiles
+            return $false
+        }
+    }
+
+    $FetchSucceeded = $false
+    $ChecksumMismatches = 0
+    for ($Attempt = 1; $Attempt -le $FetchAttempts; $Attempt++) {
+        try {
+            Invoke-Stage0Fetch
             $FetchSucceeded = $true
             break
         } catch {
             $FetchError = $_.Exception.Message
-            if ($Tag -ceq 'stage0-latest' -and $script:ReleaseUnavailable) {
-                $FallbackTag = $null
-                try {
-                    $FallbackTag = Get-ImmutableMainRelease
-                } catch {
-                    Write-Warning ("[stage0] immutable fallback unavailable: {0}" -f $_.Exception.Message)
-                }
-                if ($FallbackTag) {
-                    [Console]::Error.WriteLine("[stage0] stage0-latest unavailable; falling back to $Repo@$FallbackTag")
-                    $Tag = $FallbackTag
-                    $BaseUrl = "https://github.com/$Repo/releases/download/$Tag"
-                    $Attempt--
-                    continue
+            if ($script:ChecksumMismatch) {
+                $ChecksumMismatches++
+            }
+            $FallbackTried = $false
+            if ($script:Tag -ceq 'stage0-latest' -and $script:ReleaseUnavailable) {
+                $FallbackTried = $true
+                if (Try-PermanentFallback -Reason 'unavailable') {
+                    $FetchSucceeded = $true
+                    break
                 }
             }
-            Remove-Item -LiteralPath (Join-Path $TempDir $SingleAsset) -Force -ErrorAction SilentlyContinue
-            Remove-Item -LiteralPath $SumsTmp -Force -ErrorAction SilentlyContinue
+            Clear-Stage0TempFiles
             if ($Attempt -ge $FetchAttempts) {
-                throw ("failed to fetch a consistent stage0 from {0}@{1} after {2} attempt(s): {3}" -f $Repo, $Tag, $Attempt, $FetchError)
+                if (-not $FallbackTried -and $script:Tag -ceq 'stage0-latest' -and $ChecksumMismatches -ge 2) {
+                    if (Try-PermanentFallback -Reason 'had repeated SHA256SUMS mismatches') {
+                        $FetchSucceeded = $true
+                        break
+                    }
+                }
+                throw ("failed to fetch a consistent stage0 from {0}@{1} after {2} attempt(s): {3}" -f $Repo, $script:Tag, $Attempt, $FetchError)
             }
-            Write-Warning ("stage0 fetch attempt {0}/{1} was inconsistent ({2}); retrying in {3}s" -f $Attempt, $FetchAttempts, $FetchError, $FetchRetryDelay)
-            if ($FetchRetryDelay -gt 0) {
-                Start-Sleep -Seconds $FetchRetryDelay
+            $RetryDelay = Get-Stage0RetryDelay -Attempt $Attempt
+            Write-Warning ("stage0 fetch attempt {0}/{1} was inconsistent ({2}); retrying in {3}s" -f $Attempt, $FetchAttempts, $FetchError, $RetryDelay)
+            if ($RetryDelay -gt 0) {
+                Start-Sleep -Seconds $RetryDelay
             }
         }
     }
 
-    if (-not $FetchSucceeded -or -not $AssetTmp) {
+    if (-not $FetchSucceeded -or -not $script:AssetTmp) {
         throw "stage0 fetch exhausted without a verified asset"
     }
 
-    Move-Item -LiteralPath $AssetTmp -Destination $Dest -Force -Confirm:$false
+    Move-Item -LiteralPath $script:AssetTmp -Destination $Dest -Force -Confirm:$false
 
     if ($IsWindowsHost) {
         Unblock-File -LiteralPath $Dest -ErrorAction SilentlyContinue
@@ -292,10 +379,10 @@ try {
     }
 
     $SysrootDir = Join-Path (Join-Path $OutputDirFull "lib") $SysrootTriple
-    if ($SysrootTliTmp -and $SysrootLibTmp) {
+    if ($script:SysrootTliTmp -and $script:SysrootLibTmp) {
         New-Item -ItemType Directory -Path $SysrootDir -Force -Confirm:$false | Out-Null
-        Move-Item -LiteralPath $SysrootTliTmp -Destination (Join-Path $SysrootDir "stdlib.tli") -Force -Confirm:$false
-        Move-Item -LiteralPath $SysrootLibTmp -Destination (Join-Path $SysrootDir "libstdlib.a") -Force -Confirm:$false
+        Move-Item -LiteralPath $script:SysrootTliTmp -Destination (Join-Path $SysrootDir "stdlib.tli") -Force -Confirm:$false
+        Move-Item -LiteralPath $script:SysrootLibTmp -Destination (Join-Path $SysrootDir "libstdlib.a") -Force -Confirm:$false
         Write-Host "[stage0] installed sysroot in $SysrootDir"
     } else {
         Remove-Item -LiteralPath (Join-Path $SysrootDir "stdlib.tli") -Force -ErrorAction SilentlyContinue

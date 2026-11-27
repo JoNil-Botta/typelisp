@@ -53,14 +53,14 @@ for limit in "$SPMD_STEP_SECONDS" "$SPMD_BATCH_SECONDS"; do
         "" | 0* | *[!0-9]*) fail "SPMD time limits must be positive integer seconds" ;;
     esac
 done
-command -v timeout >/dev/null 2>&1 || fail "missing coreutils timeout"
-
 if [ "$HOST_OS" = linux ]; then
+    command -v timeout >/dev/null 2>&1 || fail "missing coreutils timeout"
     command -v as >/dev/null 2>&1 || fail "missing assembler: as"
     command -v ld >/dev/null 2>&1 || fail "missing linker: ld"
     TRIPLE=x86_64-unknown-linux-gnu
     BIN_EXT=
 else
+    command -v powershell.exe >/dev/null 2>&1 || fail "missing Windows PowerShell"
     . "$ROOT/scripts/lib-native-link.sh"
     native_link_detect_host
     configure_toolchain
@@ -86,7 +86,6 @@ export TYPELISP_SYSROOT
 stdlib_archive_resolve_triple "$TRIPLE" "$COMPILER"
 
 . "$ROOT/scripts/lib-simd-execution.sh"
-simd_execution_init
 
 spmd_short_tail_shape_fail() {
     echo "[spmd-simd] spmd_short_tail benchmark shape: $*" >&2
@@ -146,22 +145,6 @@ WORKDIR=${TYPELISP_SPMD_SIMD_WORKDIR:-$ROOT/target/spmd-simd-verify}
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 WORKDIR=$(CDPATH= cd -- "$WORKDIR" && pwd)
-
-# A filtered run selects only the modes whose route differs under the forced
-# policy, so its scalar reference is the ordinary run's native receipt.
-NATIVE_WORKDIR=${TYPELISP_SPMD_SIMD_NATIVE_ROOT:-$ROOT/target/spmd-simd-verify}
-if [ -n "${SIMD_MODE_FILTER:-}" ]; then
-    [ -d "$NATIVE_WORKDIR" ] || {
-        echo "spmd-simd: the ordinary run's workdir is missing: $NATIVE_WORKDIR" >&2
-        exit 1
-    }
-    NATIVE_WORKDIR=$(CDPATH= cd -- "$NATIVE_WORKDIR" && pwd)
-    [ "$NATIVE_WORKDIR" != "$WORKDIR" ] || {
-        echo "spmd-simd: the filtered run's workdir must differ from the ordinary run's: $WORKDIR" >&2
-        exit 1
-    }
-fi
-
 
 spmd_mode_expected_compile_diagnostic() {
     _prog=$1
@@ -240,42 +223,93 @@ spmd_invoke() {
     esac
 }
 
-spmd_assemble_link() {
+spmd_assemble_link_linux() {
     _asm=$1.s
     _obj=$1.o
     _bin=$1$BIN_EXT
-    if [ "$HOST_OS" = linux ]; then
-        if ! spmd_invoke "$SPMD_STEP_SECONDS" "$1.assemble" as "$_asm" -o "$_obj" ||
-            [ "$spmd_status" -ne 0 ] || [ -s "$1.assemble.err" ]; then
-            return 1
-        fi
-        _entry=$(linux_entry_symbol_for_asm "$_asm") || exit $?
-        _stdlib_archive=$(linux_stdlib_archive_for_asm "$_asm" "${COMPILER:-}")
-        _link_base=${_asm%.s}
-        if [ -n "$_stdlib_archive" ]; then
-            set -- -z noexecstack --gc-sections -z start-stop-gc --start-group "$_stdlib_archive" --end-group
-        else
-            set --
-        fi
-        if ! spmd_invoke "$SPMD_STEP_SECONDS" "$_link_base.link" ld "$_obj" -o "$_bin" -static "$@" -e "$_entry" ||
-            [ "$spmd_status" -ne 0 ] || [ -s "$_link_base.link.err" ]; then
-            return 1
-        fi
-        return 0
-    else
-        spmd_invoke "$SPMD_STEP_SECONDS" "$1.assemble" "$TYPELISP_WINDOWS_CLANG_POSIX" \
-            --target=x86_64-pc-windows-msvc -c "$_asm" -o "$_obj" || return 1
-        [ "$spmd_status" -eq 0 ] && [ ! -s "$1.assemble.err" ] || return 1
-        _windows_archive=
-        if [ -n "$(windows_stdlib_archive_for_asm "$_asm" "$COMPILER")" ]; then
-            _windows_archive=$WINDOWS_ARCHIVE
-        fi
-        MSYS2_ARG_CONV_EXCL='*' spmd_invoke "$SPMD_STEP_SECONDS" "$1.link" "$TYPELISP_WINDOWS_LINK_POSIX" \
-            /NOLOGO /Brepro /OPT:REF "$(cygpath -aw "$_obj")" ${_windows_archive:+"$_windows_archive"} \
-            "/OUT:$(cygpath -aw "$_bin")" /SUBSYSTEM:CONSOLE /ENTRY:_tl_start /NODEFAULTLIB \
-            /DYNAMICBASE:NO "/STACK:$NL_WINDOWS_STACK_RESERVE" kernel32.lib ntdll.lib || return 1
+    _link_base=$1
+    if ! spmd_invoke "$SPMD_STEP_SECONDS" "$1.assemble" as "$_asm" -o "$_obj" ||
+        [ "$spmd_status" -ne 0 ] || [ -s "$1.assemble.err" ]; then
+        return 1
     fi
-    [ "$spmd_status" -eq 0 ] && [ ! -s "$1.link.err" ]
+    _entry=$(linux_entry_symbol_for_asm "$_asm") || exit $?
+    _stdlib_archive=$(linux_stdlib_archive_for_asm "$_asm" "$COMPILER")
+    if [ -n "$_stdlib_archive" ]; then
+        set -- -z noexecstack --gc-sections -z start-stop-gc --start-group "$_stdlib_archive" --end-group
+    else
+        set --
+    fi
+    spmd_invoke "$SPMD_STEP_SECONDS" "$_link_base.link" ld "$_obj" -o "$_bin" -static "$@" -e "$_entry" &&
+        [ "$spmd_status" -eq 0 ] && [ ! -s "$_link_base.link.err" ]
+}
+
+# Reuse the integration process runner for each Windows phase. The matrix
+# pool supplies concurrency, and the runner retains each child's deadline and
+# unsigned exit code even when the command runs through SDE.
+spmd_windows_queue_init() {
+    windows_queue="$job_dir/$1.queue"
+    windows_queue_native="$BATCH_OUTPUT_ROOT${windows_queue#"$WORKDIR"}"
+    windows_queue_count=0
+    printf 'tlwinq4\000' > "$windows_queue"
+    : > "$windows_queue.stems"
+}
+
+spmd_windows_enqueue() {
+    _swq_limit=$1
+    _swq_stem=$2
+    _swq_native="$BATCH_OUTPUT_ROOT${_swq_stem#"$WORKDIR"}"
+    _swq_exe=$3
+    shift 3
+    windows_queue_count=$((windows_queue_count + 1))
+    printf '%s\n' "$_swq_stem" >> "$windows_queue.stems"
+    printf '%s\000' "row_$windows_queue_count" "$_swq_exe" \
+        "$_swq_native.out" "$_swq_native.err" "$_swq_native.native-exit" \
+        "$_swq_limit" - '' '' - "$#" "$@" >> "$windows_queue"
+}
+
+spmd_windows_dispatch() {
+    [ "$windows_queue_count" -gt 0 ] || return 0
+    if ! MSYS2_ARG_CONV_EXCL='*' powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$WINDOWS_RUNNER" \
+        -RequestPath "$windows_queue_native" -ResultPath "$windows_queue_native.results" \
+        -AssertionPath "$windows_queue_native.assertions" -SummaryPath "$windows_queue_native.summary" \
+        < /dev/null; then
+        fail "spmd-simd: Windows runner failed for $windows_queue"
+    fi
+    _swd_index=0
+    while IFS= read -r _swd_stem; do
+        _swd_index=$((_swd_index + 1))
+        if ! IFS="$SPMD_TAB" read -r _swd_label _swd_status _swd_code _swd_error _swd_ms <&3 ||
+            [ "$_swd_label" != "row_$_swd_index" ]; then
+            fail "spmd-simd: missing or out-of-order Windows result for $_swd_stem"
+        fi
+        case "$_swd_status:$_swd_code" in
+            ok:*)
+                case "$_swd_code" in
+                    '' | *[!0-9]*) fail "spmd-simd: invalid Windows exit code for $_swd_stem" ;;
+                esac
+                printf '%s\n' "$_swd_code" > "$_swd_stem.status"
+                ;;
+            timeout:- | launch-failed:-)
+                printf '%s\n' "$_swd_status" > "$_swd_stem.status"
+                if [ "$_swd_error" != '~' ]; then
+                    printf '%s' "$_swd_error" | base64 --decode >&2
+                    printf '\n' >&2
+                fi
+                ;;
+            *) fail "spmd-simd: invalid Windows result for $_swd_stem" ;;
+        esac
+    done < "$windows_queue.stems" 3< "$windows_queue.results"
+}
+
+spmd_windows_status() {
+    spmd_status=0
+    spmd_watchdog_failure=
+    IFS= read -r _sws_status < "$2.status" || fail "spmd-simd: missing Windows status for $2"
+    case "$_sws_status" in
+        timeout) spmd_watchdog_failure="timeout after ${1}s"; return 1 ;;
+        launch-failed) spmd_watchdog_failure="launch failed"; return 1 ;;
+        *) spmd_status=$_sws_status ;;
+    esac
 }
 
 spmd_row_base() {
@@ -292,12 +326,58 @@ spmd_row_failure() {
 
 spmd_compile_one() {
     compiler_invocations=$((compiler_invocations + 1))
-    spmd_invoke "$SPMD_STEP_SECONDS" "$base.compile" \
-        "$COMPILER" compile "$prog" --target "$TARGET" --backend-mode "$mode" --opt-level "$opt" -o "$base.s"
+    set -- compile "$prog" --target "$TARGET" --sysroot "$TYPELISP_SYSROOT" \
+        --backend-mode "$mode" --opt-level "$opt"
+    if [ "$HOST_OS" = windows ]; then
+        spmd_windows_enqueue "$SPMD_STEP_SECONDS" "$base.compile" \
+            "$WINDOWS_COMPILER" "$@" -o "$BATCH_OUTPUT_ROOT${base#"$WORKDIR"}.s"
+    else
+        spmd_invoke "$SPMD_STEP_SECONDS" "$base.compile" "$COMPILER" "$@" -o "$base.s"
+    fi
 }
 
-spmd_run_row() {
-    if ! spmd_assemble_link "$base"; then
+spmd_compile_one_status() {
+    if [ "$HOST_OS" = windows ]; then
+        spmd_windows_status "$SPMD_STEP_SECONDS" "$base.compile"
+    else
+        spmd_compile_one
+    fi
+}
+
+spmd_compile_batch() {
+    if [ "$HOST_OS" = windows ]; then
+        spmd_windows_queue_init compile
+        if [ -s "$job_dir/batch.list" ]; then
+            spmd_windows_enqueue "$SPMD_BATCH_SECONDS" "$job_dir/batch" "$WINDOWS_COMPILER" \
+                compile --batch "$BATCH_OUTPUT_ROOT${job_dir#"$WORKDIR"}/batch.list" "$@"
+        fi
+        while IFS='|' read -r prog base expected_diag; do
+            [ -z "$expected_diag" ] || spmd_compile_one
+        done < "$job_dir/rows"
+        spmd_windows_dispatch
+        if [ -s "$job_dir/batch.list" ]; then
+            spmd_windows_status "$SPMD_BATCH_SECONDS" "$job_dir/batch"
+        fi
+    elif [ -s "$job_dir/batch.list" ]; then
+        spmd_invoke "$SPMD_BATCH_SECONDS" "$job_dir/batch" \
+            "$COMPILER" compile --batch "$job_dir/batch.list" "$@"
+    fi
+}
+
+spmd_record_run() {
+    if [ -s "$base.err" ]; then
+        spmd_row_failure "runtime stderr"
+        cat "$base.err" >&2
+    else
+        printf '%s\n' "$spmd_status" > "$base.exit"
+        printf '%s\n' "$SIMDEX_MODE" > "$base.execution"
+        echo "[spmd-simd] $prog $mode O$opt -> $spmd_status"
+        runs=$((runs + 1))
+    fi
+}
+
+spmd_run_row_linux() {
+    if ! spmd_assemble_link_linux "$base"; then
         spmd_row_failure "assembly/link failed${spmd_watchdog_failure:+: $spmd_watchdog_failure}"
         for build_stream in "$base.assemble.err" "$base.link.err"; do
             [ ! -s "$build_stream" ] || cat "$build_stream" >&2
@@ -312,14 +392,61 @@ spmd_run_row() {
     fi
     if ! spmd_invoke "$SPMD_STEP_SECONDS" "$base" "$@"; then
         spmd_row_failure "run $spmd_watchdog_failure"
-    elif [ -s "$base.err" ]; then
-        spmd_row_failure "runtime stderr"
-        cat "$base.err" >&2
     else
-        printf '%s\n' "$spmd_status" > "$base.exit"
-        printf '%s\n' "$SIMDEX_MODE" > "$base.execution"
-        echo "[spmd-simd] $prog $mode O$opt -> $spmd_status"
+        spmd_record_run
     fi
+}
+
+spmd_windows_build_and_run() {
+    for phase in assemble link run; do
+        spmd_windows_queue_init "$phase"
+        while IFS='|' read -r prog base; do
+            native_base="$BATCH_OUTPUT_ROOT${base#"$WORKDIR"}"
+            case "$phase" in
+                assemble)
+                    spmd_windows_enqueue "$SPMD_STEP_SECONDS" "$base.assemble" "$WINDOWS_CLANG" \
+                        --target=x86_64-pc-windows-msvc -c "$native_base.s" -o "$native_base.o"
+                    ;;
+                link)
+                    windows_archive=
+                    if [ -n "$(windows_stdlib_archive_for_asm "$base.s" "$COMPILER")" ]; then
+                        windows_archive=$WINDOWS_ARCHIVE
+                    fi
+                    spmd_windows_enqueue "$SPMD_STEP_SECONDS" "$base.link" "$WINDOWS_LINK" \
+                        /NOLOGO /Brepro /OPT:REF "$native_base.o" ${windows_archive:+"$windows_archive"} \
+                        "/OUT:$native_base$BIN_EXT" /SUBSYSTEM:CONSOLE /ENTRY:_tl_start /NODEFAULTLIB \
+                        /DYNAMICBASE:NO "/STACK:$NL_WINDOWS_STACK_RESERVE" kernel32.lib ntdll.lib
+                    ;;
+                run)
+                    simd_execution_record "$prog O$opt" "$mode"
+                    if [ "$SIMDEX_MODE" = sde ]; then
+                        set -- "$WINDOWS_SDE" -spr -- "$native_base$BIN_EXT"
+                    else
+                        set -- "$native_base$BIN_EXT"
+                    fi
+                    spmd_windows_enqueue "$SPMD_STEP_SECONDS" "$base" "$@"
+                    ;;
+            esac
+        done < "$job_dir/ready"
+        spmd_windows_dispatch
+        : > "$job_dir/next"
+        while IFS='|' read -r prog base; do
+            if [ "$phase" = run ]; then
+                if spmd_windows_status "$SPMD_STEP_SECONDS" "$base"; then
+                    spmd_record_run
+                else
+                    spmd_row_failure "run $spmd_watchdog_failure"
+                fi
+            elif ! spmd_windows_status "$SPMD_STEP_SECONDS" "$base.$phase" ||
+                [ "$spmd_status" -ne 0 ] || [ -s "$base.$phase.err" ]; then
+                spmd_row_failure "$phase failed (${spmd_watchdog_failure:-status $spmd_status})"
+                [ ! -s "$base.$phase.err" ] || cat "$base.$phase.err" >&2
+            else
+                printf '%s|%s\n' "$prog" "$base" >> "$job_dir/next"
+            fi
+        done < "$job_dir/ready"
+        mv "$job_dir/next" "$job_dir/ready"
+    done
 }
 
 bounded_pool_run_job() {
@@ -334,6 +461,7 @@ spmd_matrix_job() {
     : > "$job_dir/failures"
     : > "$job_dir/batch.list"
     : > "$job_dir/rows"
+    : > "$job_dir/ready"
     compiler_invocations=0
     diagnostics=0
     compile_only=0
@@ -354,13 +482,12 @@ spmd_matrix_job() {
 
     batch_failed=0
     batch_interrupted=
+    if ! spmd_compile_batch --target "$TARGET" --sysroot "$TYPELISP_SYSROOT" \
+        --backend-mode "$mode" --opt-level "$opt"; then
+        batch_interrupted=$spmd_watchdog_failure
+    fi
     if [ -s "$job_dir/batch.list" ]; then
         compiler_invocations=$((compiler_invocations + 1))
-        if ! spmd_invoke "$SPMD_BATCH_SECONDS" "$job_dir/batch" \
-            "$COMPILER" compile --batch "$job_dir/batch.list" --target "$TARGET" \
-            --backend-mode "$mode" --opt-level "$opt"; then
-            batch_interrupted=$spmd_watchdog_failure
-        fi
         if [ -n "$batch_interrupted" ] || [ "$spmd_status" -ne 0 ] || [ -s "$job_dir/batch.err" ]; then
             batch_failed=1
             batch_failure=${batch_interrupted:-"failed, status $spmd_status"}
@@ -370,12 +497,22 @@ spmd_matrix_job() {
         fi
     fi
 
+    if [ "$HOST_OS" = windows ] && [ -z "$batch_interrupted" ]; then
+        spmd_windows_queue_init fallback
+        while IFS='|' read -r prog base expected_diag; do
+            if [ -z "$expected_diag" ] && [ ! -s "$base.s" ]; then
+                spmd_compile_one
+            fi
+        done < "$job_dir/rows"
+        spmd_windows_dispatch
+    fi
+
     while IFS='|' read -r prog base expected_diag; do
         if [ -n "$expected_diag" ]; then
-            if ! spmd_compile_one; then
+            if ! spmd_compile_one_status; then
                 spmd_row_failure "diagnostic compile $spmd_watchdog_failure"
-            elif [ "$spmd_status" -eq 0 ] || ! grep -Fq -- "$expected_diag" "$base.compile.err"; then
-                spmd_row_failure "expected diagnostic: $expected_diag"
+            elif [ "$spmd_status" -ne 1 ] || ! grep -Fq -- "$expected_diag" "$base.compile.err"; then
+                spmd_row_failure "expected diagnostic with exit 1, got $spmd_status: $expected_diag"
                 cat "$base.compile.err" >&2
             else
                 diagnostics=$((diagnostics + 1))
@@ -383,7 +520,7 @@ spmd_matrix_job() {
             fi
             continue
         fi
-        if [ ! -s "$base.s" ]; then
+        if [ ! -s "$base.s" ] || { [ "$HOST_OS" = windows ] && [ -f "$base.compile.status" ]; }; then
             if [ -n "$batch_interrupted" ]; then
                 spmd_row_failure "no assembly after batch compile $batch_interrupted"
                 continue
@@ -393,7 +530,7 @@ spmd_matrix_job() {
             if [ "$batch_failed" -eq 0 ]; then
                 spmd_row_failure "batch omitted assembly"
             fi
-            if ! spmd_compile_one; then
+            if ! spmd_compile_one_status; then
                 spmd_row_failure "compile $spmd_watchdog_failure"
                 continue
             fi
@@ -410,11 +547,15 @@ spmd_matrix_job() {
             simd_execution_record "$prog O$opt" "$mode"
             compile_only=$((compile_only + 1))
             echo "[spmd-simd] $prog $mode O$opt -> compiled only ($mode unavailable on $HOST_OS)"
+        elif [ "$HOST_OS" = windows ]; then
+            printf '%s|%s\n' "$prog" "$base" >> "$job_dir/ready"
         else
-            spmd_run_row
-            [ ! -f "$base.exit" ] || runs=$((runs + 1))
+            spmd_run_row_linux
         fi
     done < "$job_dir/rows"
+    if [ "$HOST_OS" = windows ]; then
+        spmd_windows_build_and_run
+    fi
     printf '%s %s %s\n' "$SIMDEX_NATIVE" "$SIMDEX_EMULATED" "$SIMDEX_SKIPPED" > "$job_dir/simd"
     printf '%s %s %s %s\n' "$compiler_invocations" "$runs" "$diagnostics" "$compile_only" > "$job_dir/counts"
 }
@@ -422,12 +563,13 @@ spmd_matrix_job() {
 . "$ROOT/scripts/lib-manifest.sh"
 CORPUS="$WORKDIR/corpus.txt"
 manifest_concat_dir "$ROOT/tests/spmd/corpus.d" > "$WORKDIR/corpus.raw"
-awk '
+# Receipt paths must be unique on case-insensitive Windows filesystems.
+LC_ALL=C awk '
     /^[[:space:]]*(#|$)/ {next}
     {
         tag = $0
         gsub(/[\/.]/, "_", tag)
-        if ($0 !~ /^[A-Za-z0-9_\/.\-]+[.]tl$/ || seen[tag]++) {
+        if ($0 !~ /^[A-Za-z0-9_\/.\-]+[.]tl$/ || seen[tolower(tag)]++) {
             print "invalid or duplicate SPMD corpus row: " $0 > "/dev/stderr"
             bad = 1
         }
@@ -440,9 +582,30 @@ while IFS='|' read -r prog tag; do
 done < "$CORPUS"
 corpus_count=$(wc -l < "$CORPUS" | tr -d ' ')
 
+simd_execution_init
+
+# Filtered cells compare against the ordinary run's O1 scalar receipts.
+NATIVE_WORKDIR=${TYPELISP_SPMD_SIMD_NATIVE_ROOT:-$ROOT/target/spmd-simd-verify}
+if [ -n "$SIMD_MODE_FILTER" ]; then
+    [ -d "$NATIVE_WORKDIR" ] ||
+        fail "spmd-simd: the ordinary run's workdir is missing: $NATIVE_WORKDIR"
+    NATIVE_WORKDIR=$(CDPATH= cd -- "$NATIVE_WORKDIR" && pwd)
+    [ "$NATIVE_WORKDIR" != "$WORKDIR" ] ||
+        fail "spmd-simd: the filtered run's workdir must differ from the ordinary run's: $WORKDIR"
+fi
+
 BATCH_OUTPUT_ROOT=$WORKDIR
 if [ "$HOST_OS" = windows ]; then
+    SPMD_TAB=$(printf '\t')
     BATCH_OUTPUT_ROOT=$(cygpath -am "$WORKDIR")
+    WINDOWS_RUNNER=$(cygpath -aw "$ROOT/scripts/windows-integration-runner.ps1")
+    WINDOWS_COMPILER=$(cygpath -aw "$COMPILER")
+    WINDOWS_CLANG=$(cygpath -aw "$TYPELISP_WINDOWS_CLANG_POSIX")
+    WINDOWS_LINK=$(cygpath -aw "$TYPELISP_WINDOWS_LINK_POSIX")
+    WINDOWS_SDE=
+    if [ -n "$SIMDEX_SDE_BIN" ]; then
+        WINDOWS_SDE=$(cygpath -aw "$SIMDEX_SDE_BIN")
+    fi
     WINDOWS_ARCHIVE=$(cygpath -aw "$STDLIB_ARCHIVE_PATH")
 fi
 POOL_DIR="$WORKDIR/pool"

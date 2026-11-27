@@ -189,13 +189,6 @@
     [error (layout.compiler-object-layout-image-error image false)]
     (and (string.eq (& error) "") (compiler-object-elf-fixups-supported? image))))
 
-(define (compiler-object-elf-relocation-section-size
-  [image : (& image cobj.CompilerObjectImage)]
-  [kind : cobj.CompilerObjectSectionId]) : i64
-  (*
-    compiler-object-elf-relocation-size
-    (layout.compiler-object-layout-section-relocation-count image kind)))
-
 (define (compiler-object-elf-symbol-table-size
   [image : (& image cobj.CompilerObjectImage)]) : i64
   (*
@@ -270,16 +263,31 @@
   (headers i64)
   (symtab i64))
 
+;; The physical header plan is shared with the assembler. Only structured
+;; images need to associate their relocation records with those headers.
+(defstruct ElfImageProjection
+  (plan ElfProjection)
+  (groups layout.SectionRelocations))
+
 (defenum ResultElfProjection
-  (Ok ElfProjection)
+  (Ok ElfImageProjection)
   (Err String))
 
 ;; Row zero is the null header. Each declared section gets one RELA row.
 ;; The symbol and string tables and the stack note follow both groups.
 (define (compiler-object-elf-project [image : (& cobj.CompilerObjectImage)]) : ResultElfProjection
   (let
+    [error (layout.compiler-object-layout-image-error image false)]
+    (unless (string.eq (& error) "") (return (Err error))))
+  (unless
+    (compiler-object-elf-fixups-supported? image)
+    (return
+      (Err
+        "elf: object image contains unsupported text instructions or relocation records")))
+  (let
     [count : i64 image.sections.len]
     [symtab : i64 (+ 1 (* count 2))]
+    [groups (layout.compiler-object-layout-group-relocations image)]
     [rows : (__tl_dyn-array ElfSectionHeader)
       (__tl_make-array
         ElfSectionHeader
@@ -301,7 +309,7 @@
                   (array-ref rows (+ i 1))
                   (ElfSectionHeader 0 ty flags at size 0 0 spec.align 0))
                 (when
-                  (and (!= ty compiler-object-elf-sht-nobits) (> size 0))
+                  (!= ty compiler-object-elf-sht-nobits)
                   (when
                     (> size (- layout.compiler-object-max-file-size at))
                     (return
@@ -315,7 +323,8 @@
     (for [i (iterator.range 0 count)]
       (let
         [id (layout.compiler-object-layout-section-at image i)]
-        [size (compiler-object-elf-relocation-section-size image id)]
+        [size
+          (* compiler-object-elf-relocation-size (array-ref groups.counts i))]
         (when
           (> size (- layout.compiler-object-max-file-size offset))
           (return
@@ -400,11 +409,13 @@
         (Err
           "elf: symbol, string or section header table exceeds file size limit")))
     (Ok
-      (ElfProjection
-        rows
-        (layout.compiler-object-layout-bytes-string (& names))
-        offset
-        symtab))))
+      (ElfImageProjection
+        (ElfProjection
+          rows
+          (layout.compiler-object-layout-bytes-string (& names))
+          offset
+          symtab)
+        groups))))
 
 (define (compiler-object-elf-push-header!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
@@ -535,42 +546,36 @@
         unit)]))
 
 (define (compiler-object-elf-render-relocations-for-section!
-  [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [image : (& image cobj.CompilerObjectImage)]
-  [relocs : (& relocs cobj.CompilerObjectRelocationList)]
-  [kind : cobj.CompilerObjectSectionId]) : unit
+  [out : (&mut byte_buf_core.ByteBufBuilder)]
+  [image : (& cobj.CompilerObjectImage)]
+  [groups : (& layout.SectionRelocations)]
+  [index : i64]) : unit
   (let
-    [count : i64 (cobj.compiler-object-relocation-list-count relocs)]
-    (for [index (iterator.range 0 count)]
+    [id (layout.compiler-object-layout-section-at image index)]
+    (if (cobj.compiler-object-section-id-eq? id cobj.text-id)
+      (compiler-object-elf-render-text-relocations! out image)
       (let
-        [reloc : cobj.CompilerObjectRelocation
-          (cobj.compiler-object-relocation-list-ref relocs index)]
-        (match (& reloc)
-          [(Relocation section _ _ _)
-            (if (cobj.compiler-object-section-id-eq? section kind)
-              (compiler-object-elf-render-relocation! out image (& reloc))
-              unit)])))
-    unit))
+        [entry : i64 (array-ref groups.heads index)]
+        (while (> entry 0)
+          (compiler-object-elf-render-relocation!
+            out
+            image
+            (& (array-ref image.relocations.slots (- entry 1))))
+          (set! entry (array-ref groups.next (- entry 1))))))))
 
 (define (compiler-object-elf-render-relocation-sections!
-  [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [image : (& image cobj.CompilerObjectImage)]
-  [plan : (& ElfProjection)]) : unit
+  [out : (&mut byte_buf_core.ByteBufBuilder)]
+  [image : (& cobj.CompilerObjectImage)]
+  [projected : (& ElfImageProjection)]) : unit
   (for [index (iterator.range 0 image.sections.len)]
     (layout.compiler-object-layout-render-padding-to!
       out
-      (array-ref plan.rows (+ image.sections.len (+ index 1))).offset)
-    (let
-      [kind : cobj.CompilerObjectSectionId
-        (layout.compiler-object-layout-section-at image index)]
-      (match kind.value
-        [0 (compiler-object-elf-render-text-relocations! out image)]
-        [_
-          (compiler-object-elf-render-relocations-for-section!
-            out
-            image
-            image.relocations
-            kind)]))))
+      (array-ref projected.plan.rows (+ image.sections.len (+ index 1))).offset)
+    (compiler-object-elf-render-relocations-for-section!
+      out
+      image
+      (& projected.groups)
+      index)))
 
 (define (compiler-object-elf-symbol-string-offset-from
   [symbols : (& symbols cobj.CompilerObjectSymbolList)]
@@ -736,23 +741,19 @@
 
 (define (compiler-object-elf-render [image : (& cobj.CompilerObjectImage)]) : ResultCompilerObjectElf
   (let
-    [error (layout.compiler-object-layout-image-error image false)]
-    (unless (string.eq (& error) "") (return (Err error))))
-  (unless
-    (compiler-object-elf-fixups-supported? image)
-    (return
-      (Err
-        "elf: object image contains unsupported text instructions or relocation records")))
-  (let
-    [plan : ElfProjection (try (compiler-object-elf-project image))]
+    [projected (try (compiler-object-elf-project image))]
+    [plan (& projected.plan)]
     [out
       (byte_buf_core.byte-buf-builder-with-capacity
         (+
           plan.headers
           (* (array-length plan.rows) compiler-object-elf-section-header-size)))]
-    (compiler-object-elf-push-header! (&mut out) (& plan))
-    (compiler-object-elf-render-loadable-sections! (&mut out) image (& plan))
-    (compiler-object-elf-render-relocation-sections! (&mut out) image (& plan))
+    (compiler-object-elf-push-header! (&mut out) plan)
+    (compiler-object-elf-render-loadable-sections! (&mut out) image plan)
+    (compiler-object-elf-render-relocation-sections!
+      (&mut out)
+      image
+      (& projected))
     (layout.compiler-object-layout-render-padding-to!
       (&mut out)
       (array-ref plan.rows plan.symtab).offset)

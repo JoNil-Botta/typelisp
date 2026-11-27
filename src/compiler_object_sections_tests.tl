@@ -5,6 +5,8 @@
 (import compiler_object_coff as coff)
 (import compiler_object_asm as asm)
 (import stdlib.iterator)
+(import stdlib.byte_buf)
+(import linker_elf_object_reader as reader)
 (import stdlib.string)
 (import stdlib.test)
 (import stdlib.io)
@@ -56,7 +58,7 @@
           (obj.compiler-object-data-record-list-empty))
         (section
           38
-          ".extra.metadata"
+          ".extra-meta"
           (if coff?
             (Coff 0x42000040)
             (Elf 1 0))
@@ -109,7 +111,7 @@
     (test.assert-true
       (layout.compiler-object-layout-prefix-at?
         (& bytes)
-        ".extra.metadata"
+        ".extra-meta"
         (+ strings (layout.compiler-object-layout-u32-at (& bytes) first)))
       "ELF sh_name")
     (test.assert-true
@@ -131,7 +133,7 @@
     (match (elf.compiler-object-elf-render-archive (& image))
       [(Ok object)
         (test.assert-true
-          (layout.compiler-object-layout-contains? (& object) ".extra.metadata")
+          (layout.compiler-object-layout-contains? (& object) ".extra-meta")
           "archive retains metadata")]
       [(Err e) (io.panic e)])
     (match (asm.compiler-object-asm-render image)
@@ -139,7 +141,7 @@
         (test.assert-true
           (string.contains
             (& text)
-            ".section .extra.metadata,\"\",@progbits\n    .balign 64")
+            ".section \".extra-meta\",\"\",@progbits\n    .balign 64")
           "ELF assembler attributes")
         (test.assert-true
           (string.contains (& text) ".zero 128")
@@ -167,7 +169,7 @@
     (test.assert-true
       (layout.compiler-object-layout-prefix-at?
         (& bytes)
-        ".extra.metadata"
+        ".extra-meta"
         (+ strings 4))
       "COFF section string table")
     (test.assert-true
@@ -189,7 +191,7 @@
     (match (asm.compiler-object-asm-render image)
       [(Ok text)
         (test.assert-true
-          (string.contains (& text) ".section .extra.metadata,\"drD\"")
+          (string.contains (& text) ".section \".extra-meta\",\"drD\"")
           "COFF assembler characteristics")]
       [(Err e) (io.panic e)])))
 
@@ -246,9 +248,12 @@
 
 ;; Both records use private IDs unrelated to file section numbers. Introducing
 ;; an earlier section changes both numbers without changing either reference.
-(define (fixup-image [coff? : bool]) : obj.CompilerObjectImage
+(define (fixup-field-image
+  [coff? : bool]
+  [field : obj.CompilerObjectDataRecord]
+  [kind : obj.CompilerObjectRelocationKind]) : obj.CompilerObjectImage
   (let
-    [data (obj.compiler-object-data-record-builder-with-capacity 2)]
+    [data (obj.compiler-object-data-record-builder-with-capacity 3)]
     [src
       (section
         99
@@ -260,8 +265,10 @@
         (Initialized)
         (obj.compiler-object-data-record-builder-finish
           (obj.compiler-object-data-record-builder-push
-            (obj.compiler-object-data-record-builder-push data (Label "site"))
-            (SymbolAddress "dst"))))]
+            (obj.compiler-object-data-record-builder-push
+              (obj.compiler-object-data-record-builder-push data (Zero 3))
+              (Label "site"))
+            field)))]
     [dst
       (section
         54
@@ -289,7 +296,10 @@
       (obj.compiler-object-relocation-builder-finish
         (obj.compiler-object-relocation-builder-push
           relocs
-          (Relocation (obj.CompilerObjectSectionId 99) "site" (Abs64) "dst"))))))
+          (Relocation (obj.CompilerObjectSectionId 99) "site" kind "dst"))))))
+
+(define (fixup-image [coff? : bool]) : obj.CompilerObjectImage
+  (fixup-field-image coff? (SymbolAddress "dst") (Abs64)))
 
 (test
   private-section-relocations
@@ -327,3 +337,230 @@
       (layout.compiler-object-layout-u16-at (& elf) (+ elf-sym 30))
       2
       "ELF target symbol section")))
+
+(define (one-section [s : obj.CompilerObjectSection]) : obj.CompilerObjectImage
+  (image-with
+    (obj.compiler-object-section-builder-push
+      (obj.compiler-object-section-builder-with-capacity 1)
+      s)))
+
+(test
+  aligned-empty-progbits-roundtrip
+  (let
+    [image
+      (one-section
+        (section
+          30
+          ".empty"
+          (Elf 1 0)
+          4096
+          (Initialized)
+          (obj.compiler-object-data-record-list-empty)))]
+    [bytes (elf-bytes (& image))]
+    [header (+ 64 (layout.compiler-object-layout-u32-at (& bytes) 40))]
+    [offset (layout.compiler-object-layout-u32-at (& bytes) (+ header 24))]
+    [req
+      (reader.ElfReadRequest
+        (reader.ElfIdentity (cast 0 : u64) (cast 0 : u64))
+        (reader.default-limits))]
+    (test.assert-i64-eq offset 4096 "empty section alignment")
+    (test.assert-true
+      (<= offset (string.string-length (& bytes)))
+      "empty extent is in file")
+    (let
+      [data (byte_buf.from-string bytes)]
+      (match (reader.read-object (& data.slots) (& req))
+        [(ReadObject _) unit]
+        [(ReadFailed _)
+          (io.panic "repo ELF reader rejected aligned empty section")]))))
+
+(test
+  readonly-coff-zerofill
+  (let
+    [image
+      (one-section
+        (section
+          30
+          ".reserve"
+          (Coff 0x40000080)
+          1
+          (ZeroFill 17)
+          (obj.compiler-object-data-record-list-empty)))]
+    [bytes (coff-bytes (& image))]
+    (test.assert-i64-eq
+      (layout.compiler-object-layout-u32-at (& bytes) 36)
+      17
+      "reserve virtual size")
+    (test.assert-i64-eq
+      (layout.compiler-object-layout-u32-at (& bytes) 40)
+      0
+      "reserve raw pointer")
+    (test.assert-i64-eq
+      (layout.compiler-object-layout-u32-at (& bytes) 56)
+      0x40100080
+      "read-only uninitialized section")
+    (match (asm.compiler-object-asm-render image)
+      [(Err e)
+        (test.assert-true
+          (string.contains (& e) "read-only COFF zero-fill section .reserve")
+          "assembly diagnostic")]
+      [(Ok _) (io.panic "assembly accepted read-only COFF zero-fill")])))
+
+(test
+  data-relocation-field-extents
+  (for [target (iterator.range 0 3)]
+    (let
+      [width : i64
+        (if (= target 2)
+          4
+          8)]
+      (for [n (iterator.range 0 (+ width 1))]
+        (let
+          [image
+            (fixup-field-image
+              (!= target 0)
+              (Zero n)
+              (if (= target 2)
+                (Addr32Nb)
+                (Abs64)))]
+          [ok : bool
+            (if (= target 0)
+              (match (elf.compiler-object-elf-render (& image))
+                [(Ok _) true]
+                [(Err e)
+                  (test.assert-true
+                    (string.contains (& e) "relocation field outside")
+                    "ELF field diagnostic")
+                  false])
+              (match (coff.compiler-object-coff-render (& image))
+                [(Ok _) true]
+                [(Err e)
+                  (test.assert-true
+                    (string.contains (& e) "relocation field outside")
+                    "COFF field diagnostic")
+                  false]))]
+          (test.assert-true (= ok (= n width)) "only complete data fields fit"))))))
+
+(test
+  numeric-section-name
+  (for [target (iterator.range 0 2)]
+    (let
+      [image
+        (one-section
+          (section
+            38
+            "123"
+            (if (= target 0)
+              (Elf 1 0)
+              (Coff 0x40000040))
+            1
+            (Initialized)
+            (records (Bytes "N"))))]
+      (match (asm.compiler-object-asm-render image)
+        [(Ok text)
+          (test.assert-true
+            (string.contains (& text) ".section \"123\",")
+            "quoted numeric section name")]
+        [(Err e) (io.panic e)]))))
+
+(define (two-fields [coff? : bool] [id : i64] [name : String]) : obj.CompilerObjectSection
+  (let
+    [data (obj.compiler-object-data-record-builder-with-capacity 4)]
+    (set!
+      data
+      (obj.compiler-object-data-record-builder-push data (Label "first")))
+    (set! data (obj.compiler-object-data-record-builder-push data (Zero 8)))
+    (set!
+      data
+      (obj.compiler-object-data-record-builder-push data (Label "last")))
+    (set! data (obj.compiler-object-data-record-builder-push data (Zero 8)))
+    (section
+      id
+      name
+      (if coff?
+        (Coff 0x40000040)
+        (Elf 1 0))
+      8
+      (Initialized)
+      (obj.compiler-object-data-record-builder-finish data))))
+
+(test
+  interleaved-data-relocations
+  (for [target (iterator.range 0 2)]
+    (let
+      [coff? : bool (= target 1)]
+      [sections (obj.compiler-object-section-builder-with-capacity 2)]
+      [relocs (obj.compiler-object-relocation-builder-with-capacity 4)]
+      [symbols (obj.compiler-object-symbol-builder-with-capacity 1)]
+      (set!
+        sections
+        (obj.compiler-object-section-builder-push
+          sections
+          (two-fields coff? 99 ".b")))
+      (set!
+        sections
+        (obj.compiler-object-section-builder-push
+          sections
+          (two-fields coff? 51 ".a")))
+      (for [i (iterator.range 0 4)]
+        (set!
+          relocs
+          (obj.compiler-object-relocation-builder-push
+            relocs
+            (Relocation
+              (obj.CompilerObjectSectionId
+                (if (= (% i 2) 0)
+                  51
+                  99))
+              (if (or (= i 0) (= i 3))
+                "last"
+                "first")
+              (Abs64)
+              "external"))))
+      (let
+        [image
+          (obj.CompilerObjectImage
+            (obj.compiler-object-section-builder-finish sections)
+            (obj.compiler-object-symbol-builder-finish
+              (obj.compiler-object-symbol-builder-push
+                symbols
+                (Symbol "external" (Extern) (Data) (No))))
+            (obj.compiler-object-relocation-builder-finish relocs))]
+        [bytes
+          (if coff?
+            (coff-bytes (& image))
+            (elf-bytes (& image)))]
+        [stride : i64
+          (if coff?
+            10
+            24)]
+        (for [i (iterator.range 0 2)]
+          (let
+            [header
+              (if coff?
+                (+ 20 (* i 40))
+                (+
+                  (layout.compiler-object-layout-u32-at (& bytes) 40)
+                  (* (+ i 3) 64)))]
+            [at (layout.compiler-object-layout-u32-at (& bytes) (+ header 24))]
+            (if coff?
+              (test.assert-i64-eq
+                (layout.compiler-object-layout-u16-at (& bytes) (+ header 32))
+                2
+                "COFF group count")
+              (test.assert-i64-eq
+                (layout.compiler-object-layout-u32-at (& bytes) (+ header 32))
+                48
+                "ELF group size"))
+            (test.assert-i64-eq
+              (layout.compiler-object-layout-u32-at (& bytes) at)
+              (if (= i 0)
+                8
+                0)
+              "first relocation offset")
+            (test.assert-i64-eq
+              (layout.compiler-object-layout-u32-at (& bytes) (+ at stride))
+              (if (= i 0)
+                0
+                8)
+              "second relocation offset")))))))

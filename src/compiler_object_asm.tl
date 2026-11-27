@@ -7,6 +7,7 @@
 (import stdlib.iterator)
 (import stdlib.byte_buf_core)
 (import stdlib.string)
+(import stdlib.str_cat_runtime as str_cat)
 (import compiler_object as cobj)
 (import compiler_machine_x64 as mx)
 (cfg test (import stdlib.test))
@@ -320,9 +321,9 @@
         (and (= flags 0xc0000080) (string.eq spec.name ".bss")))])
     (compiler-object-asm-append! out (string.copy spec.name))
     (begin
-      (compiler-object-asm-append! out ".section ")
+      (compiler-object-asm-append! out ".section \"")
       (compiler-object-asm-append! out (string.copy spec.name))
-      (compiler-object-asm-append! out ",\"")
+      (compiler-object-asm-append! out "\",\"")
       (match spec.format
         [(Elf ty flags)
           (when (!= (bit-and flags 2) 0) (compiler-object-asm-append! out "a"))
@@ -410,7 +411,22 @@
               [(Coff _) true]
               [_ false])]))]
     [error : String (layout.compiler-object-layout-image-error (& image) coff?)]
-    (unless (string.eq (& error) "") (return (Err error))))
+    (unless (string.eq (& error) "") (return (Err error)))
+    (when
+      coff?
+      (for [i (iterator.range 0 image.sections.len)]
+        (match (& (array-ref image.sections.slots i))
+          [(Section spec _ _)
+            (match spec.format
+              [(Coff flags)
+                (when
+                  (= (bit-and flags 0x80000080) 128)
+                  (return
+                    (Err
+                      (str_cat.str-cat
+                        "assembly cannot represent read-only COFF zero-fill section "
+                        (string.copy spec.name)))))]
+              [_ unit])]))))
   (let
     [out : byte_buf_core.ByteBufBuilder
       (byte_buf_core.byte-buf-builder-with-capacity 65536)]

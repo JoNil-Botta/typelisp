@@ -1,5 +1,10 @@
 ;; compiler_object.tl - Structured object-image records for backend object emitters.
 (import stdlib.iterator)
+(import stdlib.vector)
+(import stdlib.sort)
+(import stdlib.clone)
+(import stdlib.hashmap)
+(import (hashmap.hashmap i64 i64) as section_ids)
 (import compiler_owned_view as owned_view)
 (import compiler_machine_x64 as mx)
 (import stdlib.string)
@@ -182,7 +187,8 @@
 
 (defstruct CompilerObjectSectionList
   (slots (__tl_dyn-array CompilerObjectSection))
-  (len i64))
+  (len i64)
+  (indices section_ids.Map))
 
 (defstruct CompilerObjectImage
   (sections CompilerObjectSectionList)
@@ -426,10 +432,6 @@
     (let
       [slots : (__tl_dyn-array CompilerObjectSection) builder.slots]
       [count : i64 builder.count]
-      (for [i (iterator.range 0 count)]
-        (when
-          (compiler-object-section-less? (& section) (& (array-ref slots i)))
-          (set! section (replace! (array-ref slots i) section))))
       (set! (array-ref slots count) section)
       (CompilerObjectSectionBuilder slots (+ count 1)))
     (compiler-object-section-builder-push
@@ -452,9 +454,75 @@
   [builder : CompilerObjectRelocationBuilder]) : CompilerObjectRelocationList
   (CompilerObjectRelocationList builder.slots builder.count))
 
+;; Sort scalar keys so the merge sort never clones section payloads.
+(defstruct SectionSortKey
+  (order i64)
+  (id i64)
+  (source i64))
+
+(clone.gen-clone SectionSortKey)
+
+(define (eq-section-sort-key [a : (& SectionSortKey)] [b : (& SectionSortKey)]) : bool
+  (and (= a.order b.order) (= a.id b.id) (= a.source b.source)))
+
+(import (stdlib.vector.vector SectionSortKey) as section_keys)
+(import (stdlib.sort.vec SectionSortKey) as section_sort)
+
+(define (section-sort-key-less? [a : SectionSortKey] [b : SectionSortKey]) : bool
+  (or (< a.order b.order) (and (= a.order b.order) (< a.id b.id))))
+
+(define (compiler-object-empty-section [id : CompilerObjectSectionId]) : CompilerObjectSection
+  (Section
+    (CompilerObjectSectionSpec id 0 "" 1 (Initialized) (Elf 0 0))
+    (compiler-object-data-record-list-empty)
+    (compiler-object-instr-list-empty)))
+
 (define (compiler-object-section-builder-finish
   [builder : CompilerObjectSectionBuilder]) : CompilerObjectSectionList
-  (CompilerObjectSectionList builder.slots builder.count))
+  (let
+    [count : i64 builder.count]
+    [slots : (__tl_dyn-array CompilerObjectSection) builder.slots]
+    [indices : section_ids.Map (section_ids.with-capacity count)]
+    [ordered? : bool true]
+    (for [i (iterator.range 1 count)]
+      (when
+        (compiler-object-section-less?
+          (& (array-ref slots i))
+          (& (array-ref slots (- i 1))))
+        (set! ordered? false)
+        (break)))
+    (unless
+      ordered?
+      (let
+        [keys : section_keys.Vec (section_keys.with-capacity count)]
+        [sorted : (__tl_dyn-array CompilerObjectSection)
+          (__tl_make-array CompilerObjectSection count)]
+        (for [i (iterator.range 0 count)]
+          (match (& (array-ref slots i))
+            [(Section spec _ _)
+              (section_keys.push-ref!
+                (&mut keys)
+                (SectionSortKey spec.order spec.id.value i))]))
+        (section_sort.sort! (&mut keys) section-sort-key-less?)
+        (for [i (iterator.range 0 count)]
+          (let
+            [key (section_keys.get (& keys) i (SectionSortKey 0 0 0))]
+            (set!
+              (array-ref sorted i)
+              (replace!
+                (array-ref slots key.source)
+                (compiler-object-empty-section text-id)))))
+        (set! slots sorted)))
+    (for [i (iterator.range 0 count)]
+      (match (& (array-ref slots i))
+        [(Section spec _ _)
+          (section_ids.insert-ref! (&mut indices) spec.id.value i)]))
+    (CompilerObjectSectionList slots count indices)))
+
+(define (compiler-object-section-list-index
+  [sections : (& CompilerObjectSectionList)]
+  [id : CompilerObjectSectionId]) : i64
+  (section_ids.get-value-or (& sections.indices) id.value -1))
 
 ;; Fresh empty lists: each section that has no records or instructions owns
 ;; its own.
@@ -635,16 +703,10 @@
 (define (compiler-object-section-list-find
   [sections : (& CompilerObjectSectionList)]
   [id : CompilerObjectSectionId]) : CompilerObjectSection
-  (for [i (iterator.range 0 sections.len)]
-    (match (& (array-ref sections.slots i))
-      [(Section spec _ _)
-        (when
-          (= spec.id.value id.value)
-          (return (compiler-object-section-list-ref sections i)))]))
-  (Section
-    (CompilerObjectSectionSpec id 0 "" 1 (Initialized) (Elf 0 0))
-    (compiler-object-data-record-list-empty)
-    (compiler-object-instr-list-empty)))
+  (let
+    [i (compiler-object-section-list-index sections id)]
+    (when (>= i 0) (return (compiler-object-section-list-ref sections i))))
+  (compiler-object-empty-section id))
 
 (define (compiler-object-symbol-list-contains?
   [symbols : (& symbols CompilerObjectSymbolList)]

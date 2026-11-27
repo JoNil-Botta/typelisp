@@ -4,6 +4,8 @@
 ;; relocation-list checks both formats apply.
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.iterator)
+(import stdlib.hashmap)
+(import (hashmap.hashmap String i64) as section_names)
 (import stdlib.byte_buf_core)
 (import stdlib.string)
 (import compiler_object as cobj)
@@ -89,13 +91,7 @@
 (define (compiler-object-layout-section-index
   [image : (& cobj.CompilerObjectImage)]
   [id : cobj.CompilerObjectSectionId]) : i64
-  (for [i (iterator.range 0 image.sections.len)]
-    (when
-      (cobj.compiler-object-section-id-eq?
-        (compiler-object-layout-section-at image i)
-        id)
-      (return i)))
-  -1)
+  (cobj.compiler-object-section-list-index (& image.sections) id))
 
 (define (compiler-object-layout-spec
   [image : (& r cobj.CompilerObjectImage)]
@@ -480,13 +476,29 @@
             unit)]))
     total))
 
-(define (compiler-object-layout-section-relocation-count
-  [image : (& image cobj.CompilerObjectImage)]
-  [kind : cobj.CompilerObjectSectionId]) : i64
-  (cond
-    [(cobj.compiler-object-section-id-eq? kind cobj.text-id)
-      (compiler-object-layout-text-instr-relocation-count image)]
-    [else (compiler-object-layout-relocation-count image.relocations kind)]))
+(defstruct SectionRelocations
+  (heads (__tl_dyn-array i64))
+  (counts (__tl_dyn-array i64))
+  (next (__tl_dyn-array i64)))
+
+(define (compiler-object-layout-group-relocations
+  [image : (& cobj.CompilerObjectImage)]) : SectionRelocations
+  (let
+    [heads (__tl_make-array i64 image.sections.len)]
+    [counts (__tl_make-array i64 image.sections.len)]
+    [next (__tl_make-array i64 image.relocations.len)]
+    [i : i64 image.relocations.len]
+    ;; Prepending in reverse keeps each section's original relocation order.
+    (while (> i 0)
+      (-= i 1)
+      (match (& (array-ref image.relocations.slots i))
+        [(Relocation id _ _ _)
+          (let
+            [row (compiler-object-layout-section-index image id)]
+            (set! (array-ref next i) (array-ref heads row))
+            (set! (array-ref heads row) (+ i 1))
+            (+= (array-ref counts row) 1))]))
+    (SectionRelocations heads counts next)))
 
 (define (compiler-object-layout-text-relocation-count-matches?
   [image : (& image cobj.CompilerObjectImage)]) : bool
@@ -691,8 +703,8 @@
       (+= i 1))
     found))
 
-;; The binary and assembly projections accept the same names. This subset of
-;; assembler identifiers also excludes NUL, quotes and directive separators.
+;; Both projections accept the same alphabet. It excludes quotes and backslashes,
+;; so assembly can quote a validated name without additional escaping.
 (define (compiler-object-layout-name-valid? [name : (& str)]) : bool
   (when (= (string.string-length name) 0) (return false))
   (for [i (iterator.range 0 (string.string-length name))]
@@ -849,6 +861,7 @@
       (if coff?
         "coff"
         "elf")]
+    [names : section_names.Map (section_names.new)]
     (when
       (>
         image.sections.len
@@ -864,15 +877,19 @@
               (compiler-object-layout-section-error
                 (& (array-ref image.sections.slots i))
                 coff?)]
-            (for [j (iterator.range 0 i)]
-              (match (& (array-ref image.sections.slots j))
-                [(Section prev _ _)
-                  (when
-                    (= prev.id.value spec.id.value)
-                    (set! error "duplicate identity"))
-                  (when
-                    (string.eq prev.name spec.name)
-                    (set! error "duplicate name"))]))
+            (when
+              (!=
+                i
+                (compiler-object-layout-section-index
+                  image
+                  (cobj.CompilerObjectSectionId spec.id.value)))
+              (set! error "duplicate identity"))
+            (unless
+              (section_names.insert-if-absent-ref!
+                (&mut names)
+                (string.copy spec.name)
+                i)
+              (set! error "duplicate name"))
             (when
               (and
                 (> i 0)
@@ -896,22 +913,17 @@
           [(Section spec _ _)
             (when
               (compiler-object-layout-prefix-at? spec.name ".rela" 0)
-              (for [j (iterator.range 0 image.sections.len)]
-                (match (& (array-ref image.sections.slots j))
-                  [(Section other _ _)
-                    (when
-                      (and
-                        (=
-                          (string.string-length spec.name)
-                          (+ 5 (string.string-length other.name)))
-                        (compiler-object-layout-prefix-at?
-                          spec.name
-                          other.name
-                          5))
-                      (return
-                        (str_cat.str-cat
-                          "elf: section collides with relocation table: "
-                          (string.copy spec.name))))])))])))
+              (when
+                (section_names.contains-borrowed?
+                  (& names)
+                  (string.substring-view
+                    spec.name
+                    5
+                    (- (string.string-length spec.name) 5)))
+                (return
+                  (str_cat.str-cat
+                    "elf: section collides with relocation table: "
+                    (string.copy spec.name)))))])))
     (for [i (iterator.range 0 image.symbols.len)]
       (match (& (array-ref image.symbols.slots i))
         [(Symbol name _ _ section)
@@ -925,22 +937,60 @@
                     ": undeclared section for symbol "
                     (string.copy name))))]
             [_ unit])]))
+    (compiler-object-layout-data-relocation-error image (& target))))
+
+;; Cache the extent once per referenced initialized data section. Zero marks
+;; an unvisited row, so store size + 1 (section sizes have already been bounded).
+(define (compiler-object-layout-data-relocation-error
+  [image : (& cobj.CompilerObjectImage)]
+  [target : (& str)]) : String
+  (let
+    [extents (__tl_make-array i64 image.sections.len)]
     (for [i (iterator.range 0 image.relocations.len)]
       (match (& (array-ref image.relocations.slots i))
-        [(Relocation id site _ _)
-          (when
-            (< (compiler-object-layout-section-index image id) 0)
-            (return
-              (str_cat.str-cat
-                target
-                ": undeclared section for relocation "
-                (string.copy site))))
-          (match (compiler-object-layout-spec image id).storage
-            [(ZeroFill _)
+        [(Relocation id site kind _)
+          (let
+            [row (compiler-object-layout-section-index image id)]
+            (when
+              (< row 0)
               (return
                 (str_cat.str-cat
-                  target
-                  ": relocation in zero-fill section "
-                  (string.copy (compiler-object-layout-spec image id).name)))]
-            [_ unit])]))
+                  (string.copy target)
+                  ": undeclared section for relocation "
+                  (string.copy site))))
+            (match (& (array-ref image.sections.slots row))
+              [(Section spec data _)
+                (match spec.storage
+                  [(ZeroFill _)
+                    (return
+                      (str_cat.str-cat
+                        (string.copy target)
+                        ": relocation in zero-fill section "
+                        (string.copy spec.name)))]
+                  [(Initialized)
+                    (unless
+                      (cobj.compiler-object-section-id-eq? id cobj.text-id)
+                      (when
+                        (= (array-ref extents row) 0)
+                        (set!
+                          (array-ref extents row)
+                          (+ 1 (compiler-object-layout-data-records-size data))))
+                      (let
+                        [width : i64
+                          (match kind
+                            [(Abs64) 8]
+                            [_ 4])]
+                        [at
+                          (compiler-object-layout-data-label-offset-from
+                            data
+                            site
+                            0)]
+                        [size (- (array-ref extents row) 1)]
+                        (when
+                          (or (< at 0) (> at (- size width)))
+                          (return
+                            (str_cat.str-cat
+                              (string.copy target)
+                              ": relocation field outside initialized section at "
+                              (string.copy site))))))])]))]))
     ""))

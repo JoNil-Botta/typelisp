@@ -21,6 +21,7 @@
   (flags i64))
 
 (defstruct CoffProjection
+  (groups layout.SectionRelocations)
   (rows (__tl_dyn-array CoffSectionHeader))
   (symbols i64)
   (string-size i64)
@@ -338,24 +339,6 @@
                   (& false-target))])))
         unit)]))
 
-(define (compiler-object-coff-render-relocations-for-section!
-  [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [image : (& image cobj.CompilerObjectImage)]
-  [relocs : (& relocs cobj.CompilerObjectRelocationList)]
-  [kind : cobj.CompilerObjectSectionId]) : unit
-  (let
-    [count : i64 (cobj.compiler-object-relocation-list-count relocs)]
-    (for [index (iterator.range 0 count)]
-      (let
-        [reloc : cobj.CompilerObjectRelocation
-          (cobj.compiler-object-relocation-list-ref relocs index)]
-        (match (& reloc)
-          [(Relocation section _ _ _)
-            (if (cobj.compiler-object-section-id-eq? section kind)
-              (compiler-object-coff-render-relocation! out image (& reloc))
-              unit)])))
-    unit))
-
 (define (compiler-object-coff-render-relocations!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : (& image cobj.CompilerObjectImage)]
@@ -370,11 +353,14 @@
       (match kind.value
         [0 (compiler-object-coff-render-text-relocations! out image)]
         [_
-          (compiler-object-coff-render-relocations-for-section!
-            out
-            image
-            image.relocations
-            kind)]))))
+          (let
+            [entry : i64 (array-ref plan.groups.heads index)]
+            (while (> entry 0)
+              (compiler-object-coff-render-relocation!
+                out
+                image
+                (& (array-ref image.relocations.slots (- entry 1))))
+              (set! entry (array-ref plan.groups.next (- entry 1)))))]))))
 
 (define (compiler-object-coff-symbol-name-long? [name : (& name str)]) : bool
   (> (layout.compiler-object-layout-string-length name) 8))
@@ -638,6 +624,15 @@
   [image : (& cobj.CompilerObjectImage)]
   [limit : i64]) : ResultCompilerObjectCoffLayout
   (let
+    [error (layout.compiler-object-layout-image-error image true)]
+    (unless (string.eq (& error) "") (return (Err error))))
+  (unless
+    (compiler-object-coff-fixups-supported? image)
+    (return
+      (Err
+        "coff: object image contains unsupported text, f64, or relocation records")))
+  (let
+    [groups (layout.compiler-object-layout-group-relocations image)]
     [rows : (__tl_dyn-array CoffSectionHeader)
       (__tl_make-array CoffSectionHeader image.sections.len)]
     [offset : i64 (compiler-object-coff-header-size image)]
@@ -680,9 +675,7 @@
                   offset
                   0)
                 0
-                (layout.compiler-object-layout-section-relocation-count
-                  image
-                  id)
+                (array-ref groups.counts i)
                 (compiler-object-coff-section-flags-for image id)))
             (when (> len 8) (+= string-size (+ len 1)))
             (+= offset raw))]))
@@ -739,7 +732,13 @@
           (> string-size (- limit offset))
           (return
             (Err "coff: section name string table exceeds file size limit")))
-        (Ok (CoffProjection rows symbols string-size (+ offset string-size)))))))
+        (Ok
+          (CoffProjection
+            groups
+            rows
+            symbols
+            string-size
+            (+ offset string-size)))))))
 
 (define (compiler-object-coff-render-string-table-symbols!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
@@ -772,26 +771,20 @@
 (define (compiler-object-coff-render
   [image : (& image cobj.CompilerObjectImage)]) : ResultCompilerObjectCoff
   (let
-    [error : String (layout.compiler-object-layout-image-error image true)]
-    (unless (string.eq (& error) "") (return (Err error))))
-  (if (compiler-object-coff-fixups-supported? image)
-    (let
-      [plan
-        (try
-          (compiler-object-coff-project
-            image
-            compiler-object-coff-max-output-size))]
-      [out : byte_buf_core.ByteBufBuilder
-        (byte_buf_core.byte-buf-builder-with-capacity plan.size)]
-      (compiler-object-coff-push-file-header! (&mut out) image (& plan))
-      (compiler-object-coff-push-section-headers! (&mut out) image (& plan))
-      (compiler-object-coff-render-sections! (&mut out) image (& plan))
-      (compiler-object-coff-render-relocations! (&mut out) image (& plan))
-      (compiler-object-coff-render-symbols! (&mut out) image image.symbols)
-      (compiler-object-coff-render-string-table! (&mut out) image (& plan))
-      (Ok (layout.compiler-object-layout-bytes-string (& out))))
-    (Err
-      "coff: object image contains unsupported text, f64, or relocation records")))
+    [plan
+      (try
+        (compiler-object-coff-project
+          image
+          compiler-object-coff-max-output-size))]
+    [out : byte_buf_core.ByteBufBuilder
+      (byte_buf_core.byte-buf-builder-with-capacity plan.size)]
+    (compiler-object-coff-push-file-header! (&mut out) image (& plan))
+    (compiler-object-coff-push-section-headers! (&mut out) image (& plan))
+    (compiler-object-coff-render-sections! (&mut out) image (& plan))
+    (compiler-object-coff-render-relocations! (&mut out) image (& plan))
+    (compiler-object-coff-render-symbols! (&mut out) image image.symbols)
+    (compiler-object-coff-render-string-table! (&mut out) image (& plan))
+    (Ok (layout.compiler-object-layout-bytes-string (& out)))))
 
 (define (compiler-object-coff-section-header-offset
   [image : (& cobj.CompilerObjectImage)]
@@ -868,8 +861,11 @@
         (cobj.compiler-object-data-record-builder-push
           rodata0
           (Label "long_rodata_label_name"))]
+      ;; The relocation-overflow fixture places an ADDR64 at this label.
       [rodata2 : cobj.CompilerObjectDataRecordBuilder
-        (cobj.compiler-object-data-record-builder-push rodata1 (String "hello"))]
+        (cobj.compiler-object-data-record-builder-push
+          rodata1
+          (String "example"))]
       [bss0 : cobj.CompilerObjectDataRecordBuilder
         (cobj.compiler-object-data-record-builder-with-capacity 2)]
       [bss1 : cobj.CompilerObjectDataRecordBuilder

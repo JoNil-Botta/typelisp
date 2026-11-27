@@ -303,14 +303,12 @@
       start
       source-len)))
 
-(define (selfhost-lint-span-start-index
-  [source : (& source str)]
-  [span : ast.AstSourceSpan]) : i64
-  (+
-    (selfhost-lint-line-start-index
-      source
-      (ast.ast-source-span-start-line span))
-    (- (ast.ast-source-span-start-col span) 1)))
+(define (selfhost-lint-indexed-line-start
+  [source : (& source cdiag.CompilerDiagnosticSource)]
+  [line : i64]) : i64
+  (if (and (>= line 1) (<= line source.lines))
+    (array-ref source.line-starts (- line 1))
+    (string.string-length (& source.text))))
 
 (define (selfhost-lint-skip-ws-comments
   [source : (& source str)]
@@ -396,9 +394,8 @@
 
 (define (selfhost-lint-begin-source-form-count
   [source : (& source str)]
-  [span : ast.AstSourceSpan]) : i64
+  [start : i64]) : i64
   (let
-    [start : i64 (selfhost-lint-span-start-index source span)]
     [n : i64 (string.string-length source)]
     [needle : String "(begin"]
     [needle-len : i64 (string.string-length needle)]
@@ -423,18 +420,14 @@
         count)
       1)))
 
-;; True when line `line` (1-based) of `source` contains a `lint-allow: <rule-id>`
-;; directive (as in `;; lint-allow: nested-if-ladder`). Scans the single line and
-;; stops at its newline; `and`/`or` are not short-circuiting, so the `string.string-ref`
-;; is guarded by the loop's `stop` flag rather than the bounds test.
+;; Look for a lint-allow directive between line-start and the next newline.
 (define (selfhost-lint-line-allows?
   [source : (& source str)]
-  [line : i64]
+  [line-start : i64]
   [rule-id : String]) : bool
   (let
     [needle : String (str_cat.str-cat "lint-allow: " rule-id)]
     [source-len : i64 (string.string-length source)]
-    [line-start : i64 (selfhost-lint-line-start-index source line)]
     [found : bool false]
     [idx : i64 line-start]
     [stop : bool false]
@@ -460,41 +453,18 @@
     [rule-id : String finding.rule-id]
     (if (<= line 1)
       false
-      (selfhost-lint-line-allows? source (- line 1) rule-id))))
+      (selfhost-lint-line-allows?
+        source
+        (selfhost-lint-line-start-index source (- line 1))
+        rule-id))))
 
 (define (selfhost-lint-form-origin?
   [source : (& source str)]
-  [span : ast.AstSourceSpan]
-  [form-name : String]) : bool
-  (let
-    [line : i64 (ast.ast-source-span-start-line span)]
-    [col : i64 (ast.ast-source-span-start-col span)]
-    (if (or (<= line 0) (<= col 0))
-      false
-      (let
-        [needle : String (str_cat.str-cat "(" form-name)]
-        [line-start : i64 (selfhost-lint-line-start-index source line)]
-        [idx : i64 (+ line-start (- col 1))]
-        (and
-          (string.is-string-prefix-at source needle idx)
-          (selfhost-lint-form-delim?
-            source
-            (+ idx (string.string-length needle))))))))
-
-(define (selfhost-lint-derived-form-origin?
-  [source : (& source str)]
-  [span : ast.AstSourceSpan]) : bool
-  (or
-    (selfhost-lint-form-origin? source span "cond")
-    (selfhost-lint-form-origin? source span "when")
-    (selfhost-lint-form-origin? source span "unless")))
-
-(define (selfhost-lint-source-multiform-single-begin?
-  [source : (& source str)]
-  [finding : lint_core.LintFinding]) : bool
+  [start : i64]
+  [prefix : (& prefix str)]) : bool
   (and
-    (string.eq finding.rule-id (lint_core.lint-rule-single-begin-id))
-    (> (selfhost-lint-begin-source-form-count source finding.span) 1)))
+    (string.is-string-prefix-at source prefix start)
+    (selfhost-lint-form-delim? source (+ start (string.string-length prefix)))))
 
 (define (selfhost-lint-path-suffix-at?
   [path : (& path str)]
@@ -626,36 +596,47 @@
       "tools/embedded-stdlib-tlci/prelude_surface_producer.tl")))
 
 (define (selfhost-lint-filter-derived-origins-from
-  [path : (& path str)]
-  [source : (& source str)]
+  [source : (& source cdiag.CompilerDiagnosticSource)]
   [items : lint_core.LintFindings]
   [index : i64]
   [raw-arena-allowlisted : bool]
   [out : lint_core.LintFindings]) : lint_core.LintFindings
-  (if (>=
-    index
-    (lint_core.lint-findings-count
-      (owned_view.compiler-owned-shared-view items)))
+  (if (>= index items.len)
     out
     (let
       [finding : lint_core.LintFinding
         (lint_core.lint-findings-ref items index)]
+      [line : i64 (ast.ast-source-span-start-line finding.span)]
+      [col : i64 (ast.ast-source-span-start-col finding.span)]
+      [start : i64 (+ (selfhost-lint-indexed-line-start source line) (- col 1))]
       [next : lint_core.LintFindings
         (if (or
-          (selfhost-lint-derived-form-origin? source finding.span)
-          (selfhost-lint-source-multiform-single-begin?
-            source
-            (owned_view.compiler-owned-shared-view finding))
-          (selfhost-lint-suppressed?
-            source
-            (owned_view.compiler-owned-shared-view finding))
           (and
-            (string.eq finding.rule-id (lint_core.lint-rule-raw-arena-op-id))
-            raw-arena-allowlisted))
+            (> line 0)
+            (> col 0)
+            (or
+              (selfhost-lint-form-origin? (& source.text) start "(cond")
+              (selfhost-lint-form-origin? (& source.text) start "(when")
+              (selfhost-lint-form-origin? (& source.text) start "(unless")))
+          (and
+            (string.eq
+              (& finding.rule-id)
+              (lint_core.lint-rule-single-begin-id))
+            (> (selfhost-lint-begin-source-form-count (& source.text) start) 1))
+          (and
+            (> line 1)
+            (selfhost-lint-line-allows?
+              (& source.text)
+              (selfhost-lint-indexed-line-start source (- line 1))
+              (string.copy (& finding.rule-id))))
+          (and
+            raw-arena-allowlisted
+            (string.eq
+              (& finding.rule-id)
+              (lint_core.lint-rule-raw-arena-op-id))))
           out
           (lint_core.lint-findings-add finding out))]
       (selfhost-lint-filter-derived-origins-from
-        path
         source
         items
         (+ index 1)
@@ -679,20 +660,23 @@
   [path : (& path str)]
   [source : String]
   [items : lint_core.LintFindings]) : lint_core.LintFindings
-  (let
-    [raw-arena-allowlisted : bool
-      (and
-        (selfhost-lint-findings-have-rule-from?
-          (owned_view.compiler-owned-shared-view items)
-          (lint_core.lint-rule-raw-arena-op-id))
-        (selfhost-lint-raw-arena-op-allowlisted? path))]
-    (selfhost-lint-filter-derived-origins-from
-      path
-      source
-      items
-      0
-      raw-arena-allowlisted
-      (lint_core.lint-findings-empty))))
+  (if (= items.len 0)
+    items
+    (let
+      [raw-arena-allowlisted : bool
+        (and
+          (selfhost-lint-findings-have-rule-from?
+            (owned_view.compiler-owned-shared-view items)
+            (lint_core.lint-rule-raw-arena-op-id))
+          (selfhost-lint-raw-arena-op-allowlisted? path))]
+      [indexed : cdiag.CompilerDiagnosticSource
+        (cdiag.compiler-diagnostic-source-index source)]
+      (selfhost-lint-filter-derived-origins-from
+        (& indexed)
+        items
+        0
+        raw-arena-allowlisted
+        (lint_core.lint-findings-empty)))))
 
 ;; `(import m.item)` parses like the dotted module path `m.item`; the loader
 ;; tells them apart by resolving it. Selected items are rewritten to the

@@ -697,6 +697,8 @@ file lint_marked_cfg_test_unsafe.tl
     (unsafe (identity unit))
     (Marked 7)
     unit))
+
+(test invalid (:slow) (Marked 9))
 end-file
 run lint "{{dir}}/lint_marked_cfg_test_unsafe.tl" --format flat
 exit 0

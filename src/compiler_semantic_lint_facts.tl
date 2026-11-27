@@ -234,7 +234,7 @@
   (scope i64)
   (forbidden bool)
   (provenance CompilerSemanticFactProvenance)
-  (path String)
+  (expansion-path i64)
   (member-handle i64)
   (reference-key i64)
   (global-reference bool)
@@ -1187,6 +1187,24 @@
                       (tc.tc-try-incompatibility-message reason))])])])]
       [_ CompilerSemanticTryFact.NotTry])))
 
+(define (compiler-semantic-fact-grow-functions!
+  [facts : (&mut facts CompilerSemanticFactStorage)]) : unit
+  (let
+    [next : (__tl_dyn-array CompilerSemanticFactFunction)
+      (__tl_make-array
+        CompilerSemanticFactFunction
+        (* 2 (array-length facts.functions)))]
+    (for [index (iterator.range 0 facts.function-count)]
+      (set!
+        (array-ref next index)
+        (replace!
+          (array-ref facts.functions index)
+          (CompilerSemanticFactFunction
+            (compiler-semantic-fact-identity-empty)
+            -1
+            (compiler-semantic-fact-type-empty)))))
+    (set! facts.functions next)))
+
 (define (compiler-semantic-fact-recorder-function-enter!
   [recorder : CompilerSemanticFactRecorder]
   [ctx : tc.TcContext]
@@ -1229,7 +1247,7 @@
         [(ast.AstMaybeType.No) (compiler-semantic-fact-type-empty)])]
     [_binding-origins : unit
       (when
-        (and (>= existing 0) (> data.frame-count 0))
+        (and (not data.must-use-only) (>= existing 0) (> data.frame-count 0))
         (compiler-semantic-fact-reset-binding-origins!
           recorder
           ctx
@@ -1268,12 +1286,7 @@
         (< existing 0)
         (when
           (>= data.facts.function-count (array-length data.facts.functions))
-          (__tl_array-push!
-            data.facts.functions
-            (CompilerSemanticFactFunction
-              (compiler-semantic-fact-identity-empty)
-              -1
-              (compiler-semantic-fact-type-empty))))
+          (compiler-semantic-fact-grow-functions! (&mut data.facts)))
         (set!
           (array-ref data.facts.functions data.facts.function-count)
           (CompilerSemanticFactFunction
@@ -1561,7 +1574,7 @@
       (compiler-semantic-fact-source-provenance ctx expression fallback)]
     [_binding-origins : unit
       (when
-        (!= scope data.current-scope)
+        (and (not data.must-use-only) (!= scope data.current-scope))
         (compiler-semantic-fact-reset-binding-origins! recorder ctx expression))]
     (in-arena
       data.owner
@@ -1575,7 +1588,7 @@
             -1
             false
             CompilerSemanticFactProvenance.Unknown
-            ""
+            -1
             -1
             -1
             false
@@ -1592,9 +1605,8 @@
           forbidden
           provenance
           (if (> data.expansion-depth 0)
-            (string.copy
-              (& (array-ref data.expansions (- data.expansion-depth 1)).path))
-            (string.copy (& data.current-path)))
+            (array-ref data.expansions (- data.expansion-depth 1)).expansion-path
+            -1)
           -1
           -1
           false
@@ -1752,7 +1764,7 @@
                       -1
                       false
                       CompilerSemanticFactProvenance.Unknown
-                      ""
+                      -1
                       -1
                       -1
                       false
@@ -1772,9 +1784,7 @@
                       (if (and (>= path 0) (> span.start-line 0))
                         CompilerSemanticFactProvenance.MacroArgument
                         CompilerSemanticFactProvenance.Unknown))
-                    (if (>= path 0)
-                      (string.copy (ci.intern-str path))
-                      (string.copy (& data.current-path)))
+                    path
                     -1
                     -1
                     false
@@ -1873,7 +1883,9 @@
   (let
     [data : CompilerSemanticFactRecorderData
       (compiler-semantic-fact-recorder-data recorder)]
-    (compiler-semantic-fact-complete-identities! (&mut data))
+    (unless
+      data.must-use-only
+      (compiler-semantic-fact-complete-identities! (&mut data)))
     (set! data.sealed true)
     ;; Parser identities are only recording scratch. The published records
     ;; contain owned spellings and spans, never these generation-bound ids.
@@ -2102,7 +2114,7 @@
           data.current-scope
           false
           CompilerSemanticFactProvenance.Unknown
-          ""
+          -1
           -1
           -1
           false
@@ -2170,7 +2182,9 @@
             frame.scope
             (if report-argument?
               (string.copy (& (array-ref data.facts.expressions argument).path))
-              (string.copy (& frame.path)))
+              (if (>= frame.expansion-path 0)
+                (string.copy (ci.intern-str frame.expansion-path))
+                (string.copy (& data.current-path))))
             (if report-argument?
               (array-ref data.facts.expressions argument).span
               span)

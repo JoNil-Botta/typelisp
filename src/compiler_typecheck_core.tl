@@ -135340,8 +135340,13 @@
           (match raw
             [(Ok) Ok]
             [(Err message)
-              (Err
-                (stdlib.string.copy (tc-unbound-finalize-located-error message)))])]
+              ;; Lint adds private test bodies to the shared check. The
+              ;; runtime-only unsafe fallback treats those bodies as absent.
+              (if suspended?
+                Ok
+                (Err
+                  (stdlib.string.copy
+                    (tc-unbound-finalize-located-error message))))])]
         [new-enclosing : i64 (arena.tl_arena_current)]
         (unsafe
           (arena.tl_arena_set scratch-head)

@@ -1,0 +1,79 @@
+target -
+opt 0 1 2
+mode scalar sse2 avx2 avx512
+do link-run
+
+case foreach-active-lane-values
+source tests/spmd/foreach_active_{{each}}.tl
+each types masks pressure order
+exit 42
+in stderr
+empty
+if-mode sse2 avx2 avx512
+in asm
+contains bsrq
+contains active_bits
+end-if
+
+case foreach-active-effects
+source tests/integration/foreach_active_effects.tl
+exit 42
+in stderr
+empty
+in stdout
+count = 9 ^[0-9-]
+order 1 2 4 1 || 55 15 || 25 579 || -2 8 2 || 9 5 7
+if-mode scalar
+order 0 0 0 1 || 1 0 0 1 || 2 0 0 1 || 3 0 0 1
+end-if
+if-mode sse2
+order 0 0 0 2 || 1 1 1 2 || 2 0 0 2 || 3 1 1 2
+end-if
+if-mode avx2
+order 0 0 0 4 || 1 1 1 4 || 2 2 2 4 || 3 3 3 4
+end-if
+if-mode avx512
+order 0 0 0 8 || 1 1 1 8 || 2 2 2 8 || 3 3 3 8
+end-if
+
+case foreach-active-first-fault
+source tests/spmd/foreach_active_first_fault.tl
+args --stdlib-root tests/integration
+exit 134
+in stdout
+order 0 || 1 || 2 || 3
+count = 4 ^[0-9]$
+in stderr
+contains array index out of bounds: index=9 length=8
+
+case foreach-active-enum-bounds
+source tests/spmd/foreach_active_enum_bounds.tl
+exit 134
+in stderr
+contains array index out of bounds: index=5 length=5
+
+case foreach-active-set-bit-loop
+source tests/spmd/foreach_active_masks.tl
+mode sse2 avx2 avx512
+do compile
+in fn _tl_foreach_active_masks_count_lanes
+order active_done || active_lane || bsrq || subq $1,
+contains leaq -1(
+match ^[[:space:]]+andq %
+
+case foreach-active-call-liveness
+source tests/spmd/foreach_active_pressure.tl
+mode sse2 avx2 avx512
+do compile
+in fn main
+contains call _tl_foreach_active_pressure_fill_scratch
+in fn _tl_foreach_active_pressure_fill_scratch
+if-mode sse2
+contains %xmm
+end-if
+if-mode avx2
+contains %ymm
+end-if
+if-mode avx512
+contains %zmm
+end-if

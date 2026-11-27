@@ -158,7 +158,7 @@ contains pslld $31,
 contains psrad $31,
 not-match ^[[:space:]]+(v[a-z0-9]+|pmulld|pblend[a-z0-9]*|pcmpeqq|pcmpgtq|pshufb|hadd[a-z0-9]*|pmovsx[a-z0-9]*|pmovzx[a-z0-9]*)([[:space:]]|$)
 
-case sse2-fallback-foreach-active
+case sse2-native-foreach-active
 source tests/spmd/foreach_active_simd_reject.tl
 do link-run
 mode sse2

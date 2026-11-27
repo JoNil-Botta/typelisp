@@ -223,12 +223,18 @@ tests/spmd/varying_match_i64.tl
 tests/spmd/varying_match_enum_payload.tl
 tests/spmd/varying_match_enum_helper_reject.tl
 tests/spmd/foreach_active_simd_reject.tl
+tests/spmd/foreach_active_types.tl
+tests/spmd/foreach_active_masks.tl
+tests/spmd/foreach_active_order.tl
+tests/spmd/foreach_active_pressure.tl
+tests/spmd/foreach_active_histogram.tl
 tests/spmd/bool_lanes.tl
 tests/spmd/map_compare_surface.tl
 tests/spmd/map_fused_reduce_i64.tl
 tests/spmd/fixed_array_sources.tl
 tests/spmd/fixed_array_whole_use_keeps_array.tl
 tests/integration/spmd_foreach.tl
+tests/integration/foreach_active_effects.tl
 tests/integration/spmd_compact_scalar.tl
 tests/integration/spmd_gather_read.tl
 tests/integration/spmd_loop_carried_copy_shape.tl
@@ -257,12 +263,6 @@ spmd_mode_expected_compile_diagnostic() {
             ;;
         tests/spmd/private_helper_uniform_stack_f64_wide.tl:avx512)
             printf '%s\n' "backend: private AVX-512 SPMD call supports at most 8 varying value arguments"
-            ;;
-        tests/spmd/foreach_active_simd_reject.tl:avx2)
-            printf '%s\n' "lower: foreach-active is not yet lowered for AVX2"
-            ;;
-        tests/spmd/foreach_active_simd_reject.tl:avx512)
-            printf '%s\n' "lower: foreach-active is not yet lowered for AVX-512"
             ;;
         tests/spmd/fixed_array_whole_use_keeps_array.tl:avx2 | tests/spmd/fixed_array_whole_use_keeps_array.tl:avx512)
             printf '%s\n' "lower: SPMD foreach does not match a SIMD lowering pattern for this backend mode; use scalar or a contiguous map/zip body with supported array and uniform operands"

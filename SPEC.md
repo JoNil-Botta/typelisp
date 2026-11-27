@@ -6236,7 +6236,8 @@ flattened, and the two coordinate names must differ.
   - A body no gang plan covers, such as one with atomic effects or other
     memory shapes, runs each row as the scalar reference, where
     `program-index` is 0 and `program-count` is 1, rather than being
-    diagnosed. `foreach-active` keeps its own SIMD rule (#8307).
+    diagnosed. A row containing `foreach-active` follows the serialized-lane
+    rules in this section.
 
   Rank-1 `foreach` is unchanged.
 
@@ -6866,10 +6867,14 @@ Serialized lanes:
   nested in the gang.
 - Cost: one scalar iteration of the body per active lane.
 - Scalar backend modes run the body once per logical index with `lane` `0`.
-  AVX2 and AVX-512 modes reject a `foreach` whose body contains
-  `foreach-active` with `foreach-active is not yet lowered for AVX2` (or
-  `AVX-512`) until its SIMD lowering lands (#8307); there is no scalar
-  fallback.
+  SSE2, AVX2 and AVX-512 run native gangs for an `i64` range whose
+  surrounding gang expressions support masked lowering at one element
+  width. Those expressions determine the gang width. A body consisting only
+  of serialized work uses the backend's `i64` gang width (2, 4 or 8).
+  The backend packs the current predicate into one bit per lane and visits
+  its set bits from lowest to highest. Gang-local values are captured before
+  the loop. Checked reads and scalar calls inside the body occur when their
+  lane reaches them, including in the final partial gang.
 
 Runtime-dispatched SIMD variants:
 
@@ -10208,10 +10213,10 @@ ordered or non-canonical execution; it is not an unsupported fallback.
 | `spmd-reduce` | Supported: reference semantics | Supported: native eligible folds; scalar reference for other supported value shapes | Supported: native eligible folds; scalar reference for other supported value shapes | Reduction-matrix and gather-reduce gates; direct byte-product results receive the specified unsupported sum-result type diagnostic |
 | `spmd-scan` | Supported: reference semantics | Supported: native canonical range-wide prefixes; scalar reference for other supported shapes | Supported: native canonical range-wide prefixes; scalar reference for other supported shapes | AVX2 and AVX-512 prefix-shape gates |
 | `spmd-compact` | Supported: ordered scalar reference | Supported: ordered scalar reference | Supported: ordered scalar reference | Cross-mode runtime, overflow-order, and destination-proof gates |
-| Rank-2 `foreach` domains | Supported: ordered scalar reference | Supported: row-local native gangs over row-origin views; scalar reference rows for other bodies | Supported: row-local native gangs over row-origin views; scalar reference rows for other bodies | `tests/integration/spmd_foreach_2d.tl`, `tests/spmd/foreach_2d_native.tl` and the rest of the SPMD same-exit corpus, the `foreach-2d-*` shape and row-range trap cases, `lane-identity-2d`, and the `spmd_foreach2_*` safety rows; `foreach-active` inside the body follows its own row (#8307) |
+| Rank-2 `foreach` domains | Supported: ordered scalar reference | Supported: row-local native gangs over row-origin views; scalar reference rows for other bodies | Supported: row-local native gangs over row-origin views; scalar reference rows for other bodies | `tests/integration/spmd_foreach_2d.tl`, `tests/spmd/foreach_2d_native.tl` and the rest of the SPMD same-exit corpus, the `foreach-2d-*` shape and row-range trap cases, `lane-identity-2d`, and the `spmd_foreach2_*` safety rows; `foreach-active` inside the body follows its own row |
 | `spmd-broadcast` | Supported: one-lane reference | Supported: gang-width semantics | Supported: gang-width semantics | `tests/spmd/gang-width.cases` (broadcast cases) |
 | `spmd-shuffle` | Supported: one-lane reference | Supported: native numeric permutations | Supported: native numeric permutations | Shuffle differential, trap, and shape gates |
-| `foreach-active` / `lane-value` | Supported: one-lane reference | Rejected: not yet lowered (#8307) | Rejected: not yet lowered (#8307) | `tests/integration/spmd_foreach_active.tl`, `tests/spmd/foreach_active_simd_reject.tl` |
+| `foreach-active` / `lane-value` | Supported: one-lane reference | Supported: ordered set-bit iteration | Supported: ordered set-bit iteration | SSE2 also uses native set-bit iteration. See `tests/spmd/simd.d/foreach-active.cases`. |
 | `program-index` / `program-count` | Supported: `0` / `1` | Supported: backend gang identity | Supported: backend gang identity | `tests/spmd/gang-width.cases` (lane-identity cases) |
 | Same-program private out-of-line varying helpers | Supported: scalar ABI | Supported: native AVX2 private ABI | Supported: native AVX-512 private ABI | Private-helper differential/shape gates; imported package helpers retain the separately specified scalar/AVX-512 `spmd-call-v1` catalog ABI |
 | `defdispatch` | Supported: scalar variant | Supported: cached runtime AVX2 selection | Supported: cached runtime AVX-512 selection | Runtime-dispatch gate |

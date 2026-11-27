@@ -3781,16 +3781,22 @@ windows_build_and_assemble_manifest() {
 
     # Build the NUL-delimited clang.exe -c queue for all assembly + C dep
     # compiles in one awk pass (heavy src/tests/* assemblies first for LPT).
+    # Pass native Windows backslash paths via ENVIRON so awk never interprets
+    # \a, \b, \t, \i, etc. as escape sequences.
     _win_asm_counts="$WORKDIR/windows-assemble.prep-counts"
     printf 'tlwinlink1\000' > "$WINDOWS_ASSEMBLE_REQUEST"
     : > "$WINDOWS_ASSEMBLE_CASES"
-    if ! awk -F '|' \
-        -v workdir_win="$WINDOWS_WORKDIR_WIN" \
-        -v clang_win="$WINDOWS_CLANG_WIN" \
+    if ! AWK_WORKDIR_WIN="$WINDOWS_WORKDIR_WIN" \
+        AWK_CLANG_WIN="$WINDOWS_CLANG_WIN" \
+        awk -F '|' \
         -v req_out="$WINDOWS_ASSEMBLE_REQUEST" \
         -v cases_out="$WINDOWS_ASSEMBLE_CASES" \
         -v cdep_out="$_win_cdep_objs" \
         -v counts_out="$_win_asm_counts" '
+        BEGIN {
+            workdir_win = ENVIRON["AWK_WORKDIR_WIN"]
+            clang_win = ENVIRON["AWK_CLANG_WIN"]
+        }
         function emit_req(label, outp, stout, sterr, argc, a1, a2, a3, a4, a5, a6, a7, a8) {
             printf "%s%c%s%c%s%c%s%c%s%c%d%c", label, 0, clang_win, 0, outp, 0, stout, 0, sterr, 0, argc, 0 >> req_out
             if (argc >= 1) printf "%s%c", a1, 0 >> req_out
@@ -3969,6 +3975,7 @@ windows_build_and_assemble_manifest() {
             BEGIN {
                 n = 0
                 while ((getline line < cases_file) > 0) {
+                    sub(/\r$/, "", line)
                     if (line == "") continue
                     split(line, f, "|")
                     n++
@@ -4051,15 +4058,15 @@ windows_build_and_assemble_manifest() {
     _win_link_prep_counts="$WORKDIR/windows-link.prep-counts"
     printf 'tlwinlink1\000' > "$WINDOWS_LINK_REQUEST"
     : > "$WINDOWS_LINK_CASES"
-    if ! awk -F '|' \
+    if ! AWK_WORKDIR_WIN="$WINDOWS_WORKDIR_WIN" \
+        AWK_LLD_WIN="$WINDOWS_LLD_LINK_WIN" \
+        AWK_STDLIB_ARCHIVE_WIN="$WINDOWS_STDLIB_ARCHIVE_WIN" \
+        awk -F '|' \
         -v failed_file="$_win_failed_owners" \
         -v diag_file="$_win_diag_owners" \
         -v cdep_file="$_win_cdep_objs" \
         -v plan_file="$MANIFEST_PLAN" \
         -v ready_file="$_win_ready" \
-        -v workdir_win="$WINDOWS_WORKDIR_WIN" \
-        -v lld_win="$WINDOWS_LLD_LINK_WIN" \
-        -v stdlib_archive_win="$WINDOWS_STDLIB_ARCHIVE_WIN" \
         -v req_out="$WINDOWS_LINK_REQUEST" \
         -v cases_out="$WINDOWS_LINK_CASES" \
         -v counts_out="$_win_link_prep_counts" '
@@ -4069,11 +4076,15 @@ windows_build_and_assemble_manifest() {
             exit 1
         }
         BEGIN {
-            while ((getline line < failed_file) > 0) if (line != "") fail_owner[line] = 1
+            workdir_win = ENVIRON["AWK_WORKDIR_WIN"]
+            lld_win = ENVIRON["AWK_LLD_WIN"]
+            stdlib_archive_win = ENVIRON["AWK_STDLIB_ARCHIVE_WIN"]
+            while ((getline line < failed_file) > 0) { sub(/\r$/, "", line); if (line != "") fail_owner[line] = 1 }
             close(failed_file)
-            while ((getline line < diag_file) > 0) if (line != "") diag_owner[line] = 1
+            while ((getline line < diag_file) > 0) { sub(/\r$/, "", line); if (line != "") diag_owner[line] = 1 }
             close(diag_file)
             while ((getline line < cdep_file) > 0) {
+                sub(/\r$/, "", line)
                 if (line == "") continue
                 split(line, cf, "|")
                 cdep_cnt[cf[1]]++
@@ -4083,6 +4094,7 @@ windows_build_and_assemble_manifest() {
 
             fail_rows = 0; diag_rows = 0
             while ((getline pline < plan_file) > 0) {
+                sub(/\r$/, "", pline)
                 if (pline == "") continue
                 split(pline, pf, "|")
                 ow = pf[1]; nm = pf[2]
@@ -4097,6 +4109,7 @@ windows_build_and_assemble_manifest() {
 
             link_count = 0
             while ((getline rline < ready_file) > 0) {
+                sub(/\r$/, "", rline)
                 if (rline == "") continue
                 split(rline, rf, "|")
                 owner = rf[1]; arch = rf[5]
@@ -4247,13 +4260,13 @@ windows_process_manifest_link_results() {
     # Single-pass awk validates link results in exact order, emits link timing
     # rows, writes expected stdout/stderr streams for simple/empty specs, and
     # queues every manifest row (owners + deduplicated aliases) into tlwinq4.
-    if ! awk \
+    if ! AWK_WORKDIR_WIN="$WINDOWS_WORKDIR_WIN" \
+        awk \
         -v cases_file="$WINDOWS_LINK_CASES" \
         -v results_file="$WINDOWS_LINK_RESULTS" \
         -v plan_file="$MANIFEST_PLAN" \
         -v expected_requests="$WINDOWS_LINK_REQUESTS" \
         -v workdir="$WORKDIR" \
-        -v workdir_win="$WINDOWS_WORKDIR_WIN" \
         -v timeout_sec="$INTEGRATION_CASE_TIMEOUT_SECONDS" \
         -v queue_out="$WINDOWS_QUEUE" \
         -v queued_out="$WINDOWS_QUEUED_CASES" \
@@ -4310,8 +4323,10 @@ windows_process_manifest_link_results() {
             close(out_path)
         }
         BEGIN {
+            workdir_win = ENVIRON["AWK_WORKDIR_WIN"]
             nc = 0
             while ((getline cline < cases_file) > 0) {
+                sub(/\r$/, "", cline)
                 if (cline == "") continue
                 nc++
                 link_case[nc] = cline
@@ -4349,6 +4364,7 @@ windows_process_manifest_link_results() {
             queued = 0
             failed_rows = 0
             while ((getline pline < plan_file) > 0) {
+                sub(/\r$/, "", pline)
                 if (pline == "") continue
                 nf = split(pline, pf, "|")
                 owner = pf[1]
@@ -4393,7 +4409,7 @@ windows_process_manifest_link_results() {
 
                 nargs = 0
                 if (runtime_args != "" && runtime_args != "-") {
-                    nargs = split(runtime_args, argv, /[[:space:]]+/)
+                    nargs = split(runtime_args, argv)
                 }
                 printf "%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%d%c", \
                     name, 0, \
@@ -5415,7 +5431,8 @@ integration_batch_sentinel
 # Create per-case output directories for deduplicated aliases in one batch so
 # neither Linux nor Windows creates them in per-row loops.
 if [ "$INTEGRATION_DEDUP_ALIAS_CASES" -gt 0 ]; then
-    awk -F '|' -v wd="$WORKDIR" '$1 != $2 { print wd "/" $2 }' "$MANIFEST_PLAN" |
+    awk -F '|' -v wr="target/integration-verify/$HOST_OS$INTEGRATION_SHARD_SUFFIX" \
+        '$1 != $2 { print wr "/" $2 }' "$MANIFEST_PLAN" |
         xargs mkdir -p || exit 1
 fi
 

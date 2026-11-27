@@ -447,9 +447,9 @@ stderr empty
 exec "{{compiler}}" build --manifest-path "{{dir}}/assembly/typelisp.pkg" --target linux-x86_64 --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
 stderr empty
 step assembly-result
-sh "{{dir}}/assembly/target/release/compare_matrix" > "{{dir}}/assembly.out"; test "$?" = 42
+sh "{{dir}}/assembly/target/dev/compare_matrix" > "{{dir}}/assembly.out"; test "$?" = 42
 step direct-result
-sh "{{dir}}/direct/target/release/compare_matrix" > "{{dir}}/direct.out"; test "$?" = 42
+sh "{{dir}}/direct/target/dev/compare_matrix" > "{{dir}}/direct.out"; test "$?" = 42
 step routes-agree
 sh cmp "{{dir}}/direct.out" "{{dir}}/assembly.out"
 
@@ -726,15 +726,15 @@ sh mkdir -p "{{dir}}/fallback/src" && cp "{{work}}/semantic-fallback.tl" "{{dir}
 sh chmod +x "{{work}}/no-assembler-bin/as"
 exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --manifest-path "{{dir}}/package/typelisp.pkg" --target linux-x86_64 --opt-level 0 --stdlib-root "{{root}}/stdlib" --no-prebuilt-stdlib
 stderr empty
-stdout contains Built {{dir}}/package/vendor/math/target/release/libdirect_object_math.a
-stdout contains Built {{dir}}/package/target/release/direct_object_pkg
-test -s "{{dir}}/package/vendor/math/target/release/libdirect_object_math.a"
-test -x "{{dir}}/package/target/release/direct_object_pkg"
-exec nm "{{dir}}/package/vendor/math/target/release/libdirect_object_math.a"
+stdout contains Built {{dir}}/package/vendor/math/target/dev/libdirect_object_math.a
+stdout contains Built {{dir}}/package/target/dev/direct_object_pkg
+test -s "{{dir}}/package/vendor/math/target/dev/libdirect_object_math.a"
+test -x "{{dir}}/package/target/dev/direct_object_pkg"
+exec nm "{{dir}}/package/vendor/math/target/dev/libdirect_object_math.a"
 stdout contains unused_archive_fn
-exec nm "{{dir}}/package/target/release/direct_object_pkg"
+exec nm "{{dir}}/package/target/dev/direct_object_pkg"
 stdout not-contains unused_archive_fn
-exec "{{dir}}/package/target/release/direct_object_pkg"
+exec "{{dir}}/package/target/dev/direct_object_pkg"
 exit 42
 step semantic-probe
 exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --manifest-path "{{dir}}/fallback/typelisp.pkg" --target linux-x86_64 --stdlib-root "{{root}}/stdlib"
@@ -743,5 +743,5 @@ stderr contains unexpected assembler fallback
 step semantic
 exec env TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --manifest-path "{{dir}}/fallback/typelisp.pkg" --target linux-x86_64 --stdlib-root "{{root}}/stdlib"
 stderr empty
-exec "{{dir}}/fallback/target/release/semantic_fallback_pkg"
+exec "{{dir}}/fallback/target/dev/semantic_fallback_pkg"
 exit 42

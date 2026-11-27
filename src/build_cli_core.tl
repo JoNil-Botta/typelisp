@@ -1,3 +1,5 @@
+(import package_profile_core as pkg_profile)
+
 ;; build_cli_core.tl - Selfhost build command logic.
 ;;
 ;; Source-file builds assemble and link in-process through stdlib fs/process
@@ -87,7 +89,7 @@
     String
     bool
     String
-    BuildProfile
+    pkg_profile.PackageProfile
     bool
     i64
     BuildPackageLockPolicy
@@ -325,7 +327,7 @@
   (has-manifest bool)
   (target be_state.CompilerBackendTarget)
   (mode be_state.CompilerBackendMode)
-  (profile BuildProfile)
+  (profile pkg_profile.PackageProfile)
   (opt-level i64)
   (lock-policy BuildPackageLockPolicy)
   (stdlib-roots cli_svec.Vec)
@@ -374,12 +376,6 @@
   (Ok build_string_i64_map.Map)
   (Err i64))
 
-(defenum BuildProfile
-  (Dev)
-  (Release))
-
-(clone_gen.gen-clone BuildProfile)
-
 (defenum BuildPackageLockPolicy
   (Default)
   (Locked)
@@ -392,12 +388,6 @@
   (Missing)
   (Stale))
 
-(defenum ResultBuildProfile
-  (Ok BuildProfile)
-  (Err String))
-
-(define build-package-release-opt-level : i64
-  2)
 (define build-package-commit-file-capacity : i64
   6)
 (define build-status-ok : i64
@@ -426,41 +416,12 @@
     "invalid package manifest: "
     (compiler_diagnostic.compiler-diagnostic-render (& diag))))
 
-(define (build-unknown-profile [value : String]) : String
-  (str_cat.str-cat
-    "build: unknown profile '"
-    value
-    "'; expected dev or release"))
-
-(define (build-default-profile) : BuildProfile
-  (Release))
-
-(define (build-profile-name [profile : BuildProfile]) : String
-  (match profile
-    [(Dev) "dev"]
-    [(Release) "release"]))
-
 (define (build-backend-mode-name [mode : be_state.CompilerBackendMode]) : String
   (match mode
     [(Scalar) "scalar"]
     [(Sse2) "sse2"]
     [(Avx2) "avx2"]
     [(Avx512) "avx512"]))
-
-(define (build-profile-default-opt-level [profile : BuildProfile]) : i64
-  (match profile
-    [(Dev) 0]
-    [(Release) build-package-release-opt-level]))
-
-(define (build-package-default-opt-level) : i64
-  (build-profile-default-opt-level (build-default-profile)))
-
-(define (build-parse-profile [value : String]) : ResultBuildProfile
-  (if (string.eq value "dev")
-    (Ok (Dev))
-    (if (string.eq value "release")
-      (Ok (Release))
-      (Err (build-unknown-profile value)))))
 
 (define (build-package-lock-policy-provided? [policy : BuildPackageLockPolicy]) : bool
   (match policy
@@ -493,7 +454,8 @@
   (str_cat.str-cat
     "--cfg <name> --stdlib-root <dir> --target <target> --opt-level <0|1|2|s> -Os
      --debug|-g|--backtrace -o <exe> --manifest-path <file> --backend-mode <mode>
-     --profile <dev|release> --release --locked --update-lock "
+     --locked --update-lock "
+    (cli_option.cli-package-profile-options)
     (tli_cli.tli-sysroot-cli-options)))
 
 (define (build-config-from [idx : i64] [count : i64]) : ResultBuildConfig
@@ -504,15 +466,14 @@
     [has-output : bool false]
     [manifest : String ""]
     [has-manifest : bool false]
-    [profile : BuildProfile (build-default-profile)]
-    [has-profile : bool false]
     [lock-policy : BuildPackageLockPolicy (Default)]
     [sysroot : tli_cli.TliSysrootOptions (tli_cli.tli-sysroot-options)]
     [options : cli_option.CliCompileOptions (cli_option.cli-compile-options)]
-    (set! options.opt-level (build-package-default-opt-level))
     (while (cli_option.cli-args-next! (&mut args))
       (cond
         [(tli_cli.tli-sysroot-option! (&mut sysroot) (&mut args)) unit]
+        [(cli_option.cli-package-profile-option! (&mut options) (&mut args))
+          unit]
         [(cli_option.cli-compile-option! (&mut options) (&mut args)) unit]
         [(string.eq args.name "-o")
           (if has-output
@@ -528,23 +489,6 @@
             (begin
               (set! manifest (cli_option.cli-args-value (& args)))
               (set! has-manifest true)))]
-        [(and
-            has-profile
-            (or
-              (string.eq args.name "--profile")
-              (string.eq args.name "--release")))
-          (cli_option.cli-args-fail!
-            (&mut args)
-            "build: profile was provided more than once")]
-        [(string.eq args.name "--profile")
-          (match (build-parse-profile (cli_option.cli-args-value (& args)))
-            [(Err message) (cli_option.cli-args-fail! (&mut args) message)]
-            [(Ok parsed-profile)
-              (set! profile parsed-profile)
-              (set! has-profile true)])]
-        [(string.eq args.name "--release")
-          (set! profile (Release))
-          (set! has-profile true)]
         [(or
             (string.eq args.name "--locked")
             (string.eq args.name "--update-lock"))
@@ -593,12 +537,10 @@
               (cli_option.cli-compile-options-backend-mode
                 options.backend-mode
                 options.has-backend-mode
-                options.opt-level))
-            profile
+                (cli_option.cli-package-opt-level (& options))))
+            options.profile
             options.has-opt-level
-            (if options.has-opt-level
-              options.opt-level
-              (build-profile-default-opt-level profile))
+            (cli_option.cli-package-opt-level (& options))
             lock-policy
             options.stdlib-roots
             options.cfgs))])))
@@ -612,42 +554,26 @@
         (str_cat.str-cat
           "--cfg <name> --stdlib-root <dir> --target <target> --opt-level <0|1|2|s> -Os
            --debug|-g|--backtrace --manifest-path <file> --backend-mode <mode>
-           --profile <dev|release> --release --locked --update-lock --resolved-dep "
+            --locked --update-lock --resolved-dep "
+          (cli_option.cli-package-profile-options)
           (tli_cli.tli-sysroot-cli-options))
         idx
         count)]
     [manifest-path : String ""]
     [has-manifest : bool false]
-    [profile : BuildProfile (build-default-profile)]
     [lock-policy : BuildPackageLockPolicy (Default)]
     [resolved-deps : load.CompilerPkgDepList (load.compiler-pkg-dep-list-empty)]
     [sysroot : tli_cli.TliSysrootOptions (tli_cli.tli-sysroot-options)]
     [options : cli_option.CliCompileOptions (cli_option.cli-compile-options)]
-    (set! options.opt-level (build-package-default-opt-level))
     (while (cli_option.cli-args-next! (&mut args))
       (cond
         [(tli_cli.tli-sysroot-option! (&mut sysroot) (&mut args)) unit]
+        [(cli_option.cli-package-profile-option! (&mut options) (&mut args))
+          unit]
         [(cli_option.cli-compile-option! (&mut options) (&mut args)) unit]
         [(string.eq args.name "--manifest-path")
           (set! manifest-path (cli_option.cli-args-value (& args)))
           (set! has-manifest true)]
-        ;; A profile also selects its default opt level unless --opt-level
-        ;; already chose one.
-        [(string.eq args.name "--profile")
-          (match (build-parse-profile (cli_option.cli-args-value (& args)))
-            [(Err message) (cli_option.cli-args-fail! (&mut args) message)]
-            [(Ok parsed-profile)
-              (unless
-                options.has-opt-level
-                (set!
-                  options.opt-level
-                  (build-profile-default-opt-level parsed-profile)))
-              (set! profile parsed-profile)])]
-        [(string.eq args.name "--release")
-          (unless
-            options.has-opt-level
-            (set! options.opt-level (build-profile-default-opt-level (Release))))
-          (set! profile (Release))]
         [(or
             (string.eq args.name "--locked")
             (string.eq args.name "--update-lock"))
@@ -699,9 +625,9 @@
               (cli_option.cli-compile-options-backend-mode
                 options.backend-mode
                 options.has-backend-mode
-                options.opt-level))
-            profile
-            options.opt-level
+                (cli_option.cli-package-opt-level (& options))))
+            options.profile
+            (cli_option.cli-package-opt-level (& options))
             lock-policy
             options.stdlib-roots
             options.cfgs
@@ -729,42 +655,26 @@
       [(Err diag) (Err (build-invalid-manifest-message (deref diag)))])
     (Err (str_cat.str-cat "cannot read package manifest '" manifest-path "'"))))
 
-(define (build-package-output-dir [manifest-dir : String] [name : (& name str)]) : String
-  (build-package-output-dir-profile manifest-dir name (build-default-profile)))
-
 (define (build-package-output-dir-profile
   [manifest-dir : String]
   [_name : (& name str)]
-  [profile : BuildProfile]) : String
+  [profile : pkg_profile.PackageProfile]) : String
   (load.compiler-load-join-root-path
     (load.compiler-load-join-root-path manifest-dir "target")
-    (build-profile-name profile)))
-
-(define (build-package-asm-path [manifest-dir : String] [name : String]) : String
-  (build-package-asm-path-profile manifest-dir name (build-default-profile)))
+    (pkg_profile.package-profile-name profile)))
 
 (define (build-package-asm-path-profile
   [manifest-dir : String]
   [name : String]
-  [profile : BuildProfile]) : String
+  [profile : pkg_profile.PackageProfile]) : String
   (load.compiler-load-join-root-path
     (build-package-output-dir-profile manifest-dir "" profile)
     (str_cat.str-cat name ".s")))
 
-(define (build-package-obj-path
-  [manifest-dir : String]
-  [name : String]
-  [target : be_state.CompilerBackendTarget]) : String
-  (build-package-obj-path-profile
-    manifest-dir
-    name
-    (build-default-profile)
-    target))
-
 (define (build-package-obj-path-profile
   [manifest-dir : String]
   [name : String]
-  [profile : BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [target : be_state.CompilerBackendTarget]) : String
   (load.compiler-load-join-root-path
     (build-package-output-dir-profile manifest-dir "" profile)
@@ -773,20 +683,10 @@
       "."
       (build_run_core.source-tool-object-extension target))))
 
-(define (build-package-bin-path
-  [manifest-dir : String]
-  [name : String]
-  [target : be_state.CompilerBackendTarget]) : String
-  (build-package-bin-path-profile
-    manifest-dir
-    name
-    (build-default-profile)
-    target))
-
 (define (build-package-bin-path-profile
   [manifest-dir : String]
   [name : String]
-  [profile : BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [target : be_state.CompilerBackendTarget]) : String
   (load.compiler-load-join-root-path
     (build-package-output-dir-profile manifest-dir "" profile)
@@ -794,20 +694,10 @@
       name
       (build_run_core.source-tool-executable-extension target))))
 
-(define (build-package-lib-path
-  [manifest-dir : String]
-  [name : String]
-  [target : be_state.CompilerBackendTarget]) : String
-  (build-package-lib-path-profile
-    manifest-dir
-    name
-    (build-default-profile)
-    target))
-
 (define (build-package-lib-path-profile
   [manifest-dir : String]
   [name : String]
-  [profile : BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [target : be_state.CompilerBackendTarget]) : String
   (load.compiler-load-join-root-path
     (build-package-output-dir-profile manifest-dir "" profile)
@@ -816,18 +706,15 @@
 (define (build-package-tli-path-profile
   [manifest-dir : String]
   [name : String]
-  [profile : BuildProfile]) : String
+  [profile : pkg_profile.PackageProfile]) : String
   (load.compiler-load-join-root-path
     (build-package-output-dir-profile manifest-dir "" profile)
     (str_cat.str-cat name ".tli")))
 
-(define (build-package-tlci-path [manifest-dir : String] [name : String]) : String
-  (build-package-tlci-path-profile manifest-dir name (build-default-profile)))
-
 (define (build-package-tlci-path-profile
   [manifest-dir : String]
   [name : String]
-  [profile : BuildProfile]) : String
+  [profile : pkg_profile.PackageProfile]) : String
   (load.compiler-load-join-root-path
     (build-package-output-dir-profile manifest-dir "" profile)
     (str_cat.str-cat name ".tlci")))
@@ -836,7 +723,7 @@
   [manifest-dir : String]
   [name : String]
   [kind : load.CompilerPkgKind]
-  [profile : BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [target : be_state.CompilerBackendTarget]) : String
   (match kind
     [(CompilerPkgKindBin)
@@ -848,7 +735,7 @@
   [manifest-dir : String]
   [name : String]
   [kind : load.CompilerPkgKind]
-  [profile : BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [target : be_state.CompilerBackendTarget]) : BuildPackageArtifactPaths
   (BuildPackageArtifactPaths
     (build-package-artifact-path-profile
@@ -2319,14 +2206,14 @@
 (define (build-ensure-package-output-dirs
   [manifest-dir : String]
   [_name : (& _name str)]
-  [profile : BuildProfile]) : bool
+  [profile : pkg_profile.PackageProfile]) : bool
   (let
     [target-dir : String
       (load.compiler-load-join-root-path manifest-dir "target")]
     [profile-dir : String
       (load.compiler-load-join-root-path
         (string.copy target-dir)
-        (build-profile-name profile))]
+        (pkg_profile.package-profile-name profile))]
     (and (build-mkdir-ok? target-dir) (build-mkdir-ok? profile-dir))))
 
 ;: Resolve a manifest `search-paths` value against the manifest directory.
@@ -2787,7 +2674,7 @@
 
 (define (build-package-graph-node-artifact-paths
   [node : BuildPackageGraphNode]
-  [profile : BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [target : be_state.CompilerBackendTarget]) : BuildPackageArtifactPaths
   (let
     [manifest-path : String node.manifest-path]
@@ -2802,7 +2689,7 @@
 
 (define (build-package-graph-node-artifact-path
   [node : BuildPackageGraphNode]
-  [profile : BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [target : be_state.CompilerBackendTarget]) : String
   (build-package-runtime-artifact-path
     (build-package-graph-node-artifact-paths node profile target)))
@@ -2859,7 +2746,7 @@
 ;; each package (source-tool-link-inputs-merge-with).
 (define (build-package-graph-link-inputs
   [nodes : BuildPackageGraphNodeVec]
-  [profile : BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [target : be_state.CompilerBackendTarget]) : build_run_core.ResultSourceToolLinkInputs
   (let
     [index : i64 (- (build-package-graph-node-vec-len nodes) 1)]
@@ -4324,7 +4211,7 @@
 (define (build-package-collect-dep-tli-fields!
   [manifest-dir : (& str)]
   [deps : (& load.CompilerPkgDeps)]
-  [profile : BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [visited : (&mut build_string_i64_map.Map)]
   [out : text_buf.TextBuf]) : text_buf.TextBuf
   (let
@@ -4388,7 +4275,7 @@
   [manifest-path : (& str)]
   [manifest-dir : (& str)]
   [manifest : (& load.CompilerPkgManifest)]
-  [profile : BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [target : be_state.CompilerBackendTarget]
   [cfgs : sym_i64_env.SymI64Env]
   [sources : (& cli_svec.Vec)]) : ResultBuildString
@@ -4474,7 +4361,7 @@
 (define (build-package-runtime-input-transcript
   [kind : load.CompilerPkgKind]
   [target : be_state.CompilerBackendTarget]
-  [profile : BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [mode : be_state.CompilerBackendMode]
   [opt-level : i64]
   [producer-identity : String]
@@ -4492,7 +4379,9 @@
         (build-package-transcript-field
           "target"
           (build_run_core.source-tool-target-name target))
-        (build-package-transcript-field "profile" (build-profile-name profile))
+        (build-package-transcript-field
+          "profile"
+          (pkg_profile.package-profile-name profile))
         (build-package-transcript-field
           "backend"
           (build-backend-mode-name mode))
@@ -4542,7 +4431,7 @@
 
 (define (build-package-lib-input-transcript
   [target : be_state.CompilerBackendTarget]
-  [profile : BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [mode : be_state.CompilerBackendMode]
   [opt-level : i64]
   [producer-identity : String]
@@ -5338,7 +5227,7 @@
   [kind : load.CompilerPkgKind]
   [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
-  [profile : BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [mode : be_state.CompilerBackendMode]
   [producer-identity : String]
   [output-dir : String]
@@ -5465,7 +5354,7 @@
   [kind : load.CompilerPkgKind]
   [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
-  [profile : BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [mode : be_state.CompilerBackendMode]
   [producer-identity : String]
   [output-dir : String]
@@ -5584,7 +5473,7 @@
   [kind : load.CompilerPkgKind]
   [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
-  [profile : BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [mode : be_state.CompilerBackendMode]
   [producer-identity : String]
   [output-dir : String]
@@ -5826,7 +5715,7 @@
     [kind : load.CompilerPkgKind]
     [target : be_state.CompilerBackendTarget]
     [opt-level : i64]
-    [profile : BuildProfile]
+    [profile : pkg_profile.PackageProfile]
     [mode : be_state.CompilerBackendMode]
     [producer-identity : String]
     [entry-path : String]
@@ -6602,12 +6491,13 @@
         (build-package-output-dir-profile
           (string.copy (& request.manifest-dir))
           (string.copy (& request.manifest.name))
-          (clone-build-profile (& request.profile)))]
+          (pkg_profile.clone-package-profile (& request.profile)))]
       [target : be_state.CompilerBackendTarget
         (be_state.clone-compiler-backend-target (& request.target))]
       [mode : be_state.CompilerBackendMode
         (be_state.clone-compiler-backend-mode (& request.mode))]
-      [profile : BuildProfile (clone-build-profile (& request.profile))]
+      [profile : pkg_profile.PackageProfile
+        (pkg_profile.clone-package-profile (& request.profile))]
       [fingerprint-path : String
         (build-package-runtime-fingerprint-path
           (string.copy (& request.artifact-path)))]
@@ -6957,11 +6847,15 @@
   [owner : String]
   [entry-path : String]
   [target : be_state.CompilerBackendTarget]
+  [profile : pkg_profile.PackageProfile]
   [stdlib-roots : cli_svec.Vec]
   [cfg-names : (& cfg-names cli_svec.Vec)]
   [manifest-dir : String]
   [deps : load.CompilerPkgDeps]
   [emit-entry : bool]) : i64
+  (load.compiler-load-session-set-package-profile!
+    (load.compiler-load-serial-test-session-state)
+    profile)
   (match (compiler_driver_core.compiler-driver-load-package-preflight-paths
     entry-path
     target
@@ -6993,7 +6887,7 @@
     (manifest load.CompilerPkgManifest)
     (target be_state.CompilerBackendTarget)
     (opt-level i64)
-    (profile BuildProfile)
+    (profile pkg_profile.PackageProfile)
     (mode be_state.CompilerBackendMode)
     (stdlib-roots cli_svec.Vec)
     (producer-identity String)
@@ -7092,7 +6986,7 @@
                   (string.copy (& request.manifest-path))
                   (be_state.clone-compiler-backend-target (& request.target))
                   request.opt-level
-                  (clone-build-profile (& request.profile))
+                  (pkg_profile.clone-package-profile (& request.profile))
                   (be_state.clone-compiler-backend-mode (& request.mode))
                   (clone-build-package-lock-policy (& request.lock-policy))
                   (load.clone-compiler-pkg-deps (& request.manifest.deps))
@@ -7236,7 +7130,7 @@
                     (load.clone-compiler-pkg-kind (& request.kind))
                     (be_state.clone-compiler-backend-target (& request.target))
                     request.opt-level
-                    (clone-build-profile (& request.profile))
+                    (pkg_profile.clone-package-profile (& request.profile))
                     (be_state.clone-compiler-backend-mode (& request.mode))
                     (string.copy (& request.producer-identity))
                     (string.copy (& request.entry-path))
@@ -7247,7 +7141,7 @@
                     (build-package-output-dir-profile
                       (string.copy (& request.manifest-dir))
                       (string.copy (& request.manifest.name))
-                      (clone-build-profile (& request.profile)))
+                      (pkg_profile.clone-package-profile (& request.profile)))
                     (string.copy (& request.asm-path))
                     (string.copy (& request.obj-path))
                     (string.copy (& request.artifact-path))
@@ -7262,7 +7156,7 @@
     [manifest : load.CompilerPkgManifest]
     [target : be_state.CompilerBackendTarget]
     [opt-level : i64]
-    [profile : BuildProfile]
+    [profile : pkg_profile.PackageProfile]
     [mode : be_state.CompilerBackendMode]
     [lock-policy : BuildPackageLockPolicy]
     [stdlib-roots : cli_svec.Vec]
@@ -7290,9 +7184,6 @@
           (owned_view.compiler-owned-shared-view manifest-dir)
           (owned_view.compiler-owned-shared-view manifest.entry))]
       [name : String (owned_view.compiler-owned-shared-view manifest.name)]
-      [_package-artifact-profile : unit
-        (load.compiler-load-set-package-artifact-profile!
-          (build-profile-name profile))]
       [kind : load.CompilerPkgKind manifest.kind]
       [asm-path : String
         (build-package-asm-path-profile
@@ -7320,6 +7211,10 @@
         (build-package-host-tlci-artifact-path artifact-paths)]
       [_reset-file-state : unit
         (compiler_driver_core.compiler-driver-reset-file-state!)]
+      [_package-artifact-profile : unit
+        (load.compiler-load-session-set-package-profile!
+          (load.compiler-load-serial-test-session-state)
+          profile)]
       [_dependency-catalogs : unit
         (compiler_dependency_tlci.compiler-dependency-tlci-prepare-deps!
           (load.compiler-load-serial-test-session-state)
@@ -7467,7 +7362,7 @@
     [manifest : load.CompilerPkgManifest]
     [target : be_state.CompilerBackendTarget]
     [opt-level : i64]
-    [profile : BuildProfile]
+    [profile : pkg_profile.PackageProfile]
     [mode : be_state.CompilerBackendMode]
     [lock-policy : BuildPackageLockPolicy]
     [stdlib-roots : cli_svec.Vec]
@@ -7500,7 +7395,7 @@
     [_manifest : load.CompilerPkgManifest]
     [_target : be_state.CompilerBackendTarget]
     [_opt-level : i64]
-    [_profile : BuildProfile]
+    [_profile : pkg_profile.PackageProfile]
     [_mode : be_state.CompilerBackendMode]
     [_lock-policy : BuildPackageLockPolicy]
     [_stdlib-roots : cli_svec.Vec]
@@ -7522,7 +7417,7 @@
     [_manifest : load.CompilerPkgManifest]
     [_target : be_state.CompilerBackendTarget]
     [_opt-level : i64]
-    [_profile : BuildProfile]
+    [_profile : pkg_profile.PackageProfile]
     [_mode : be_state.CompilerBackendMode]
     [_lock-policy : BuildPackageLockPolicy]
     [_stdlib-roots : cli_svec.Vec]
@@ -7608,7 +7503,7 @@
   [manifest-path : String]
   [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
-  [profile : BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [mode : be_state.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [resolved-deps : load.CompilerPkgDepList]
@@ -7635,7 +7530,7 @@
       (build-package-worker-append-option
         args4
         "--profile"
-        (build-profile-name profile))]
+        (pkg_profile.package-profile-name profile))]
     [args6 : process.ProcessStringList
       (build-package-worker-append-option
         args5
@@ -7670,7 +7565,7 @@
   [manifest-path : String]
   [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
-  [profile : BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [mode : be_state.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : (& stdlib-roots cli_svec.Vec)]
@@ -7691,7 +7586,7 @@
   [manifest-path : String]
   [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
-  [profile : BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [mode : be_state.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : (& stdlib-roots cli_svec.Vec)]
@@ -7712,7 +7607,7 @@
   [manifest-path : String]
   [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
-  [profile : BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [mode : be_state.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [resolved-deps : load.CompilerPkgDepList]
@@ -7746,7 +7641,7 @@
   [manifest-path : String]
   [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
-  [profile : BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [mode : be_state.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [deps : load.CompilerPkgDeps]
@@ -7781,6 +7676,7 @@
             owner
             entry-path
             target
+            profile
             stdlib-roots
             (& cfg-names)
             manifest-dir
@@ -7904,6 +7800,7 @@
                       resolved-manifest.name
                       entry-path
                       config.target
+                      config.profile
                       config.stdlib-roots
                       (& config.cfgs)
                       manifest-dir
@@ -7971,7 +7868,7 @@
   [node : BuildPackageGraphNode]
   [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
-  [profile : BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [mode : be_state.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : (& stdlib-roots cli_svec.Vec)]
@@ -8018,7 +7915,7 @@
   [built : (& built build_string_i64_map.Map)]
   [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
-  [profile : BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [mode : be_state.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
@@ -8092,7 +7989,7 @@
   [built : build_string_i64_map.Map]
   [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
-  [profile : BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [mode : be_state.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
@@ -8244,7 +8141,7 @@
   [nodes : BuildPackageGraphNodeVec]
   [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
-  [profile : BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [mode : be_state.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
@@ -8296,7 +8193,7 @@
   [nodes : BuildPackageGraphNodeVec]
   [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
-  [profile : BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [mode : be_state.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [announce : bool]
@@ -8319,7 +8216,7 @@
   [nodes : BuildPackageGraphNodeVec]
   [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
-  [profile : BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [mode : be_state.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
@@ -8377,7 +8274,7 @@
   [nodes : BuildPackageGraphNodeVec]
   [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
-  [profile : BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [mode : be_state.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
@@ -8401,7 +8298,7 @@
   [nodes : BuildPackageGraphNodeVec]
   [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
-  [profile : BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [mode : be_state.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
@@ -8484,7 +8381,7 @@
   [target-text : String]
   [_has-target : bool]
   [opt-level : i64]
-  [profile : BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [mode : be_state.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
@@ -8572,7 +8469,7 @@
   [target-text : String]
   [has-target : bool]
   [opt-level : i64]
-  [profile : BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [mode : be_state.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
@@ -8600,7 +8497,7 @@
   [has-target : bool]
   [mode : String]
   [opt-level : i64]
-  [profile : BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
   [cfg-names : (& cfg-names cli_svec.Vec)]
@@ -8637,7 +8534,7 @@
   [has-target : bool]
   [mode : String]
   [opt-level : i64]
-  [profile : BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
   [cfg-names : (& cfg-names cli_svec.Vec)]
@@ -8889,7 +8786,7 @@
   [target-text : String]
   [mode : String]
   [opt-level : i64]
-  [profile : BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
   [cfg-names : (& cfg-names cli_svec.Vec)]

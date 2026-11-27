@@ -1617,6 +1617,7 @@
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]
+  [execute? : bool]
   [advisories-out : (&mut advisories-out doc_svec.Vec)]) : doc_run_failure_vec.Vec
   (let
     [count : i64 (doc-test-example-list-count (& examples))]
@@ -1625,14 +1626,24 @@
       (let
         [example : DocTestExample
           (doc-test-example-list-ref (& examples) index)]
-        (match (doc-test-typecheck-package-example-with-roots-and-cfg
-          (owned_view.compiler-owned-shared-view path)
-          example
-          (owned_view.compiler-owned-shared-view stdlib-roots)
-          (owned_view.compiler-owned-shared-view manifest-dir)
-          (owned_view.compiler-owned-shared-view deps)
-          cfgs
-          advisories-out)
+        (match (if (and
+          execute?
+          (match (& example)
+            [(Example _ _ (Run _ _ _) _) true]
+            [_ false]))
+          (doc-test-run-runnable-example-with-roots
+            (string.copy (& path))
+            example
+            (doc_svec.clone-vec (& stdlib-roots))
+            advisories-out)
+          (doc-test-typecheck-package-example-with-roots-and-cfg
+            (owned_view.compiler-owned-shared-view path)
+            example
+            (owned_view.compiler-owned-shared-view stdlib-roots)
+            (owned_view.compiler-owned-shared-view manifest-dir)
+            (owned_view.compiler-owned-shared-view deps)
+            cfgs
+            advisories-out))
           [(No) unit]
           [(Some failure) (doc_run_failure_vec.push-ref! (&mut out) failure)])))
     out))
@@ -1735,6 +1746,7 @@
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]
+  [execute? : bool]
   [advisories-out : (&mut advisories-out doc_svec.Vec)]) : DocTestRunReport
   (match extraction
     [(Extraction examples errors)
@@ -1753,6 +1765,7 @@
             manifest-dir
             deps
             cfgs
+            execute?
             advisories-out)
           ""))]))
 
@@ -1908,7 +1921,30 @@
     manifest-dir
     deps
     cfgs
+    false
     advisories-out))
+
+(define (doc-test-run-package-file-with-roots
+  [path : String]
+  [stdlib-roots : doc_svec.Vec]
+  [manifest-dir : String]
+  [deps : compiler_load.CompilerPkgDeps]
+  [cfgs : sym_i64_env.SymI64Env]) : DocTestRunReport
+  (let
+    [advisories : doc_svec.Vec (doc_svec.new)]
+    [report : DocTestRunReport
+      (doc-test-typecheck-package-extraction-with-roots-and-cfg
+        (string.copy (& path))
+        (doc-test-extract-package-file-text path)
+        stdlib-roots
+        manifest-dir
+        deps
+        cfgs
+        true
+        (&mut advisories))]
+    (doc-test-run-report-with-advisories
+      report
+      (doc-test-join-advisories (& advisories)))))
 
 (define (doc-test-typecheck-package-paths-with-roots
   [paths : ast.AstDeclPathList]

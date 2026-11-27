@@ -1,3 +1,6 @@
+(import compiler_dependency_tlci)
+(import package_profile_core as pkg_profile)
+
 ;; build_run_core.tl - Shared selfhost source build/run execution helpers.
 (import stdlib.clone as clone_gen)
 (import compiler_backend_program_facts as be_facts)
@@ -2282,13 +2285,18 @@
           (cli_svec.get values i ""))))
     out))
 
-;; Dependencies build at the dev profile's own opt-level, so `check` and `test`
-;; share target/dev artifacts with `build --profile dev` instead of rebuilding them.
 (define (source-tool-build-package-deps-only!
   [manifest-path : (& str)]
+  [profile : pkg_profile.PackageProfile]
   [target : be_state.CompilerBackendTarget]
   [stdlib-roots : (& cli_svec.Vec)]
-  [cfg-names : (& cli_svec.Vec)]) : SourceToolCommandStatus
+  [cfg-names : (& cli_svec.Vec)]
+  [deps : (& load.CompilerPkgDeps)]) : SourceToolCommandStatus
+  (when
+    (or
+      (= (load.compiler-pkg-dep-list-count (& deps.ordered)) 0)
+      (compiler_dependency_tlci.compiler-dependency-tlci-force-source?))
+    (return (Ok)))
   (let
     [exe-raw : String (tli_cli.tli-executable-path)]
     [exe : String
@@ -2302,7 +2310,7 @@
         (source-tool-args-append
           (source-tool-args-append a0 "--deps-only")
           "--profile")
-        "dev")]
+        (pkg_profile.package-profile-name profile))]
     [a2 : process.ProcessStringList
       (source-tool-args-append
         (source-tool-args-append a1 "--manifest-path")

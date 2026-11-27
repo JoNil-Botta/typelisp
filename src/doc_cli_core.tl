@@ -1,3 +1,5 @@
+(import build_run_core)
+
 ;; doc_cli_core.tl - Selfhost doc command logic.
 ;;
 ;; Usage:
@@ -46,7 +48,7 @@
 
 (defenum DocTestCliConfig
   (File doc_svec.Vec doc_svec.Vec)
-  (Package String bool doc_svec.Vec))
+  (Package String bool cli_option.CliCompileOptions))
 
 (defenum ResultDocTestBatchPaths
   (Ok doc_svec.Vec)
@@ -549,9 +551,11 @@
     0))
 
 (define (doc-test-file [input-path : String] [stdlib-roots : doc_svec.Vec]) : i64
+  (doc-test-print-file-report
+    (doc_test.doc-test-run-file-with-roots input-path stdlib-roots)))
+
+(define (doc-test-print-file-report [report : doc_test.DocTestRunReport]) : i64
   (let
-    [report : doc_test.DocTestRunReport
-      (doc_test.doc-test-run-file-with-roots input-path stdlib-roots)]
     [advisories : String (doc_test.doc-test-run-report-advisories (& report))]
     (when
       (> (string.string-length (& advisories)) 0)
@@ -629,7 +633,7 @@
   [input-paths : doc_svec.Vec]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : doc_svec.Vec]
+  [options : cli_option.CliCompileOptions]
   [batch-list : DocMaybeString]) : ResultDocTestCliConfig
   (match batch-list
     [(Some list-path)
@@ -641,17 +645,16 @@
             [paths (try (doc-test-batch-paths list-path))]
             (if (doc_svec.is-empty? (& paths))
               (Err "doc: --batch list is empty")
-              (Ok (File paths stdlib-roots))))))]
+              (Ok (File paths options.stdlib-roots))))))]
     [(No)
       (cond
         [doc-test-prefix-cache-stats
           (Err "doc: --prefix-cache-stats requires --batch")]
         [(doc_svec.is-empty? (& input-paths))
-          (Ok
-            (DocTestCliConfig.Package manifest-path has-manifest stdlib-roots))]
+          (Ok (DocTestCliConfig.Package manifest-path has-manifest options))]
         [has-manifest
           (Err "doc: cannot combine input paths with --manifest-path")]
-        [else (Ok (File input-paths stdlib-roots))])]))
+        [else (Ok (File input-paths options.stdlib-roots))])]))
 
 (define (doc-test-config-from [base : i64] [count : i64]) : ResultDocTestCliConfig
   (let
@@ -659,7 +662,9 @@
     [args : cli_option.CliArgs
       (cli_option.cli-args
         "doc"
-        "--stdlib-root <dir> --manifest-path <file> --batch <file> --prefix-cache-stats"
+        (str_cat.str-cat
+          "--stdlib-root <dir> --manifest-path <file> --batch <file> --prefix-cache-stats"
+          (cli_option.cli-package-profile-options))
         (+ base 1)
         count)]
     [input-paths : doc_svec.Vec (doc_svec.new)]
@@ -669,6 +674,8 @@
     (set! doc-test-prefix-cache-stats false)
     (while (cli_option.cli-args-next! (&mut args))
       (cond
+        [(cli_option.cli-package-profile-option! (&mut options) (&mut args))
+          unit]
         [(cli_option.cli-compile-option! (&mut options) (&mut args)) unit]
         [(string.eq args.name "--manifest-path")
           (if has-manifest
@@ -695,7 +702,7 @@
         input-paths
         manifest-path
         has-manifest
-        options.stdlib-roots
+        options
         batch-list))))
 
 (define (doc-test-files-from
@@ -736,6 +743,8 @@
 (define (doc-test-package-files-from
   [input-paths : doc_svec.Vec]
   [stdlib-roots : doc_svec.Vec]
+  [manifest-dir : (& str)]
+  [deps : (& compiler_load.CompilerPkgDeps)]
   [status : i64]) : i64
   (for [index (iterator.range 0 (doc_svec.len (& input-paths)))]
     (let
@@ -744,13 +753,16 @@
         (begin
           (io.print-format
             "{}"
-            (str_cat.str-cat
-              "--- "
-              (owned_view.compiler-owned-shared-view input-path)
-              "\n"))
-          (doc-test-file
-            input-path
-            (owned_view.compiler-owned-shared-view stdlib-roots)))]
+            (str_cat.str-cat "--- " (string.copy (& input-path)) "\n"))
+          (if (= (compiler_load.compiler-pkg-dep-list-count (& deps.ordered)) 0)
+            (doc-test-file input-path (doc_svec.clone-vec (& stdlib-roots)))
+            (doc-test-print-file-report
+              (doc_test.doc-test-run-package-file-with-roots
+                input-path
+                (doc_svec.clone-vec (& stdlib-roots))
+                (string.copy manifest-dir)
+                (compiler_load.clone-compiler-pkg-deps deps)
+                (compiler_check_core.compiler-check-language-cfgs)))))]
       (set!
         status
         (if (= status 0)
@@ -758,16 +770,10 @@
           status))))
   status)
 
-(define (doc-test-package-files
-  [input-paths : doc_svec.Vec]
-  [stdlib-roots : doc_svec.Vec]
-  [status : i64]) : i64
-  (doc-test-package-files-from input-paths stdlib-roots status))
-
 (define (doc-test-package
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : doc_svec.Vec]) : i64
+  [options : cli_option.CliCompileOptions]) : i64
   (match (package_source_core.package-source-discover-for
     "doc"
     manifest-path
@@ -775,7 +781,27 @@
     [(Err message)
       (io.print-error (str_cat.str-cat message "\n"))
       1]
-    [(Ok source-set) (doc-test-package-files source-set.sources stdlib-roots 0)]))
+    [(Ok source-set)
+      (match (build_run_core.source-tool-build-package-deps-only!
+        (& source-set.manifest-path)
+        options.profile
+        (build_run_core.source-tool-backend-target options.target)
+        (& options.stdlib-roots)
+        (& options.cfgs)
+        (& source-set.manifest.deps))
+        [(Err message)
+          (io.print-error message)
+          1]
+        [(Ok)
+          (compiler_load.compiler-load-session-set-package-profile!
+            (compiler_load.compiler-load-serial-test-session-state)
+            options.profile)
+          (doc-test-package-files-from
+            source-set.sources
+            options.stdlib-roots
+            (& source-set.manifest-dir)
+            (& source-set.manifest.deps)
+            0)])]))
 
 (define (doc-default-config-finish
   [input-paths : doc_svec.Vec]
@@ -809,7 +835,9 @@
     [args : cli_option.CliArgs
       (cli_option.cli-args
         "doc"
-        "--stdlib-root <dir> -o <out.md> --manifest-path <file> --open --no-deps"
+        (str_cat.str-cat
+          "--stdlib-root <dir> -o <out.md> --manifest-path <file> --open --no-deps"
+          (cli_option.cli-package-profile-options))
         base
         count)]
     [input-paths : doc_svec.Vec (doc_svec.new)]
@@ -819,6 +847,8 @@
     [no-deps? : bool false]
     (while (cli_option.cli-args-next! (&mut args))
       (cond
+        [(cli_option.cli-package-profile-option! (&mut options) (&mut args))
+          unit]
         [(cli_option.cli-compile-option! (&mut options) (&mut args)) unit]
         [(string.eq args.name "-o")
           (match output-path
@@ -932,8 +962,8 @@
               (tc.tc-prefix-snapshot-cache-print-stats "doc-test-batch")
               unit)
             status)]
-        [(Package manifest-path has-manifest stdlib-roots)
-          (doc-test-package manifest-path has-manifest stdlib-roots)])]
+        [(Package manifest-path has-manifest options)
+          (doc-test-package manifest-path has-manifest options)])]
     [(Err message)
       (io.print-error message)
       1]))

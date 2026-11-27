@@ -32,7 +32,7 @@ end-file
 run build --manifest-path "{{dir}}/app/typelisp.pkg" --opt-level {{opt}} --backend-mode {{mode}}
 exit 0
 stderr empty
-exec "{{dir}}/app/target/release/dispatch_app{{exe}}"
+exec "{{dir}}/app/target/dev/dispatch_app{{exe}}"
 exit 42
 stdout empty
 stderr empty

@@ -1,3 +1,5 @@
+(import package_profile_core as pkg_profile)
+
 ;; run_cli_core.tl - Selfhost run command logic.
 ;;
 ;; Source-file runs build and execute in-process through stdlib fs/process
@@ -245,7 +247,7 @@
 (define (run-cli-package-artifact-path
   [manifest-path : String]
   [manifest : load.CompilerPkgManifest]
-  [profile : build_cli_core.BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [target : be_state.CompilerBackendTarget]) : String
   (let
     [normalized-path : String
@@ -265,7 +267,7 @@
   [target-text : String]
   [has-target : bool]
   [mode : String]
-  [profile : build_cli_core.BuildProfile]
+  [profile : pkg_profile.PackageProfile]
   [opt-level : i64]
   [lock-policy : build_cli_core.BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]

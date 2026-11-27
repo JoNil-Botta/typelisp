@@ -1,3 +1,5 @@
+(import package_profile_core as pkg_profile)
+
 ;; Sysroot selection for prebuilt stdlib interfaces.
 (import compiler_cfg_core as cfg_core)
 (import compiler_target_cfg_core as target_cfg)
@@ -1329,18 +1331,18 @@
             (ResultTliCatalogOpen.Err owned-message))]))))
 
 (define (tli-package-archive-path
+  [profile : pkg_profile.PackageProfile]
   [manifest-dir : (& str)]
   [package-name : (& str)]
   [target : target_cfg.CompilerTargetCfg]) : String
   (let
-    [profile : String
-      (compiler_load.compiler-load-package-artifact-profile-name)]
     [file : String
       (match target
         [(Linux) (str_cat.str-cat "lib" (string.copy package-name) ".a")]
         [(Windows) (str_cat.str-cat (string.copy package-name) ".lib")])]
     [tdir : String (fs.path-join manifest-dir "target")]
-    [pdir : String (fs.path-join (& tdir) (& profile))]
+    [pdir : String
+      (fs.path-join (& tdir) (& (pkg_profile.package-profile-name profile)))]
     (fs.path-join (& pdir) (& file))))
 
 (defenum ResultTliSpmdCallables
@@ -1476,10 +1478,15 @@
     (let
       [tli-path : String
         (compiler_load.compiler-load-package-tli-path
+          (compiler_load.compiler-load-session-package-profile load-state)
           (string.copy manifest-dir)
           (string.copy package-name))]
       [archive-path : String
-        (tli-package-archive-path manifest-dir package-name target)]
+        (tli-package-archive-path
+          (compiler_load.compiler-load-session-package-profile load-state)
+          manifest-dir
+          package-name
+          target)]
       [triple : String (tli-sysroot-target-triple target)]
       (when
         (and
@@ -1553,6 +1560,8 @@
                               (let
                                 [tlci-path : String
                                   (compiler_load.compiler-load-package-tlci-path
+                                    (compiler_load.compiler-load-session-package-profile
+                                      load-state)
                                     (string.copy manifest-dir)
                                     (string.copy package-name))]
                                 (tli-load-package-spmd-callables
@@ -1704,6 +1713,7 @@
       (&mut visited))))
 
 (define (tli-check-overlay-dep-tlci-walk!
+  [profile : pkg_profile.PackageProfile]
   [manifest-dir : (& str)]
   [deps : (& compiler_load.CompilerPkgDeps)]
   [visited : (&mut svec.Vec)]) : ResultTliCatalogOpen
@@ -1740,6 +1750,7 @@
                   [(Err _) unit]
                   [(Ok manifest)
                     (match (tli-check-overlay-dep-tlci-walk!
+                      profile
                       (& dep-dir)
                       (& manifest.deps)
                       visited)
@@ -1748,6 +1759,7 @@
                         (let
                           [tlci-path : String
                             (compiler_load.compiler-load-package-tlci-path
+                              profile
                               (string.copy (& dep-dir))
                               (string.copy (& manifest.name)))]
                           (when
@@ -1777,11 +1789,12 @@
     ResultTliCatalogOpen.Ok))
 
 (define (tli-check-overlay-package-dep-tlci!
+  [profile : pkg_profile.PackageProfile]
   [manifest-dir : (& str)]
   [deps : (& compiler_load.CompilerPkgDeps)]) : ResultTliCatalogOpen
   (let
     [visited : svec.Vec (svec.new)]
-    (tli-check-overlay-dep-tlci-walk! manifest-dir deps (&mut visited))))
+    (tli-check-overlay-dep-tlci-walk! profile manifest-dir deps (&mut visited))))
 
 (define (tli-sysroot-target-dir [root : (& str)] [target : (& str)]) : String
   (let

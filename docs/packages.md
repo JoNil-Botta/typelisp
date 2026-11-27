@@ -31,14 +31,28 @@ Local packages are described by a std-only S-expression manifest named
 ```
 
 `typelisp build [--manifest-path <typelisp.pkg>]` resolves `entry` relative
-to the manifest directory and writes two separate package interfaces under
-`target/<profile>/` (profiles: `release` default, `--profile dev`; release
-defaults to `--opt-level 2`, dev to `0`). The runtime side is a
+to the manifest directory and writes package artifacts under
+`target/<profile>/`. The runtime side is a
 target-specific executable or static archive. The compile-time side is the
 build-host image `<name>.tlci`, beside the runtime artifact but independent of
 its selected runtime target. `kind "bin"` builds the executable; `kind
 "staticlib"` builds the archive. When both are omitted, `bin` is inferred from
 `src/main.tl` and `staticlib` from `src/lib.tl`.
+
+Package `build`, `run`, `check`, `test`, `lint`, and `doc` accept
+`--profile dev|release`. `--release` is shorthand for `--profile release`.
+
+| Profile | Default optimization | Debug info | Package and dependency artifacts |
+| --- | --- | --- | --- |
+| `dev` (default) | `0` | Off | `target/dev/` |
+| `release` | `2` | Off | `target/release/` |
+
+Use `--opt-level` to override optimization where the command emits code and
+`--debug` to request debug info. Profile selection leaves the target, backend
+mode, and cfg defaults alone. The selected profile follows the package graph
+into dependency builds and artifact lookup, including package doctest
+typechecking. Local HTML documentation goes into `target/doc/`. Package
+`clean` removes the package artifacts for both profiles.
 
 GitHub `rev` pins must be full lowercase hexadecimal object IDs (40 digits for
 SHA-1, or 64 for SHA-256). Use `tag` or `branch` for a named ref. Lock commits
@@ -65,7 +79,7 @@ after building the manifest above in the default profile, inspect its
 compile-time interface with:
 
 ```text
-typelisp inspect target/release/my-app.tlci
+typelisp inspect target/dev/my-app.tlci
 ```
 
 The command validates and renders the image header, sections, package metadata,

@@ -4513,10 +4513,16 @@ Example:
   bodies, macro-import calls, and generated-declaration metadata as roots;
   top-level declarations unreachable from those roots are lint findings unless
   suppressed with `;; lint-allow: dead-code`.
-- Package builds accept `--profile dev|release` and `--release`. The default
-  profile is `release`; `--release` is an alias for `--profile release`.
-  `--opt-level 0|1|2|s` overrides the profile's optimizer level. Without an
-  explicit level, `release` uses level 2 and `dev` uses level 0.
+- Package `build`, `run`, `test`, `check`, `lint`, and `doc` accept
+  `--profile dev|release`. `--release` is an alias for `--profile release`.
+  Profile selection applies through the dependency graph.
+
+  | Profile | Default optimization | Default debug | Package and dependency artifacts |
+  | --- | --- | --- | --- |
+  | `dev` (default) | 0 | Off | `target/dev/` |
+  | `release` | 2 | Off | `target/release/` |
+
+  Where supported, `--opt-level 0|1|2|s` overrides the profile's optimizer level.
 - Package builds accept `--locked` and `--update-lock` as described above.
   These flags are rejected for source-file builds and non-package commands.
 - Build outputs are written under `target/<profile>/` in the package root.
@@ -10612,8 +10618,9 @@ supplied. A dash means that the command does not apply that setting.
 | `compile` (assembly or IR, including batch) | Host | 1 | SSE2 | Off | Target aliases |
 | `compile --emit-tli` | Host | — | — | — | Target aliases |
 | `build`, `run` (source file) | Host | 1 | SSE2 | Off | Target aliases |
-| `build`, `run` (package) | Host | Release 2, dev 0 | SSE2 | Off | Target aliases |
-| `test` (source file, package or batch) | Host | 1 | SSE2 | Off | Target aliases and `test` while checking or compiling tests |
+| `build`, `run` (package) | Host | 0 (dev profile) | SSE2 | Off | Target aliases |
+| `test` (source file or batch) | Host | 1 | SSE2 | Off | Target aliases and `test` while checking or compiling tests |
+| `test` (package) | Host | 0 (dev profile) | SSE2 | Off | Target aliases and `test` while checking or compiling tests |
 | `check` (source file, package or batch) | Host | — | — | — | Target aliases |
 | `lint` (source files or package) | Host | — | — | — | Target aliases |
 | `expand` | Host | — | — | — | Target aliases |
@@ -10627,9 +10634,12 @@ supplied. A dash means that the command does not apply that setting.
 
 There are no user-supplied cfg names by default. The `compiler-backtrace`
 predicate is enabled by debug selection in commands that emit debug info.
-Package builds and runs select release by default. An explicit optimization
-level overrides the profile's level. Selecting size optimization (`-Os` or
-`--opt-level s`) selects scalar emission unless a backend mode is explicit.
+Package commands that select a profile default to dev. The release profile
+selects optimization level 2 for package builds, runs, and tests. Package
+`check`, `lint`, and `doc --test` use the selected profile for dependency
+artifacts. An explicit optimization level overrides the profile's level where
+supported. Selecting size optimization (`-Os` or `--opt-level s`) selects
+scalar emission unless a backend mode is explicit.
 
 Where supported, `--target` overrides the host and selects the corresponding
 target aliases. For example, `typelisp compile main.tl --target linux-x86_64`
@@ -10737,7 +10747,7 @@ surface has been republished. This bounds reset residency to one entry rather
 than retaining every manifest entry in the process arena.
 
 `build --profile dev|release` selects the package build profile (default
-`release`), `--release` aliases `--profile release`, and
+`dev`), `--release` aliases `--profile release`, and
 `--manifest-path <file>` uses an explicit package manifest (default: the
 nearest `typelisp.pkg` upward). `--locked` requires a matching
 `typelisp.lock` and does not rewrite it; `--update-lock` refreshes remote

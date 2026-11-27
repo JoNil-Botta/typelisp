@@ -139,7 +139,8 @@ The compiler front end, IR, optimizer, backends, and all tooling under
 [`../src/`](../src) are written in TypeLisp; compiler self-test conventions are
 documented in [`../src/TESTING.md`](../src/TESTING.md). The repository root is
 itself a package: from a checkout, `typelisp build` builds the unified
-selfhost CLI from `src/main.tl` into `target/release/`.
+selfhost CLI from `src/main.tl` into `target/dev/`. Use `typelisp build --release`
+for the optimized compiler in `target/release/`.
 
 The published stage0 is a single self-hosted binary per OS
 (`typelisp-stage0-linux`, `typelisp-stage0-windows.exe`). The

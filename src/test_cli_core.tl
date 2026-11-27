@@ -1,3 +1,5 @@
+(import package_profile_core as pkg_profile)
+
 ;; test_cli_core.tl - Selfhost test command logic.
 ;;
 ;; Discovers source-owned `(test name body...)` declarations through the
@@ -68,6 +70,7 @@
     be_state.CompilerBackendMode
     cli_svec.Vec
     i64
+    pkg_profile.PackageProfile
     TestMode))
 
 (defenum ResultTestConfig
@@ -391,6 +394,7 @@
   [mode : be_state.CompilerBackendMode]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [profile : pkg_profile.PackageProfile]
   [test-mode : TestMode]
   [batch-list : TestMaybeString]) : ResultTestConfig
   (if (and tltest-seed-set (not tltest-shuffle))
@@ -443,6 +447,7 @@
                     mode
                     roots
                     opt-level
+                    profile
                     test-mode)))]))])))
 
 ;; Testing a module of the implicit prelude reads the prelude from that file
@@ -468,6 +473,7 @@
            --check --list --filter <substring> --exact <name> --include-ignored
            --include-slow --shuffle --seed <u64> --backend-mode <mode>
            --manifest-path <file> --batch <file> --combined --prefix-cache-stats "
+          (cli_option.cli-package-profile-options)
           (tli_cli.tli-sysroot-cli-options))
         start
         count)]
@@ -495,6 +501,8 @@
     (while (cli_option.cli-args-next! (&mut args))
       (cond
         [(tli_cli.tli-sysroot-option! (&mut sysroot) (&mut args)) unit]
+        [(cli_option.cli-package-profile-option! (&mut options) (&mut args))
+          unit]
         [(cli_option.cli-compile-option! (&mut options) (&mut args)) unit]
         [(string.eq args.name "--check")
           (if tltest-list-only
@@ -586,28 +594,38 @@
         [else
           (set! source (string.copy (& args.arg)))
           (set! has-source true)]))
-    (set! tltest-user-cfg-slots options.cfgs)
+    (set! tltest-user-cfg-slots (cli_svec.clone-vec (& options.cfgs)))
     (unless
       args.failed
       (ir.compiler-debug-info-set-enabled! options.debug)
       (tli_cli.tli-set-active-sysroot-options! (& sysroot)))
     (if args.failed
       (Err args.error)
-      (tltest-config-finish
-        source
-        has-source
-        manifest-path
-        has-manifest
-        (cli_option.cli-option-target-name options.target)
-        (build_run_core.source-tool-backend-mode
-          (cli_option.cli-compile-options-backend-mode
-            options.backend-mode
-            options.has-backend-mode
-            options.opt-level))
-        options.stdlib-roots
-        options.opt-level
-        test-mode
-        batch-list))))
+      (let
+        [opt-level : i64
+          (if (or
+            has-source
+            (match batch-list
+              [(Some _) true]
+              [_ false]))
+            options.opt-level
+            (cli_option.cli-package-opt-level (& options)))]
+        (tltest-config-finish
+          source
+          has-source
+          manifest-path
+          has-manifest
+          (cli_option.cli-option-target-name options.target)
+          (build_run_core.source-tool-backend-mode
+            (cli_option.cli-compile-options-backend-mode
+              options.backend-mode
+              options.has-backend-mode
+              opt-level))
+          options.stdlib-roots
+          opt-level
+          options.profile
+          test-mode
+          batch-list)))))
 
 (define (tltest-main-decl? [decl : (& ast.AstDecl)]) : bool
   (match decl
@@ -3534,6 +3552,8 @@
         compiler_load.compiler-load-default-session-state
         0)]
     [parent-job : tc_core.TcJobState (tc_core.tc-serial-job-state)]
+    [profile : pkg_profile.PackageProfile
+      (compiler_load.compiler-load-session-package-profile (& parent-load))]
     [entry-load : compiler_load.CompilerLoadSessionState
       (in-arena
         owner
@@ -3544,6 +3564,9 @@
     (compiler_load.compiler-load-default-session-state-set!
       (owned_view.compiler-owned-shared-view entry-load))
     (compiler_load.compiler-load-session-state-use! entry-load)
+    (compiler_load.compiler-load-session-set-package-profile!
+      (compiler_load.compiler-load-serial-test-session-state)
+      profile)
     (compiler_load.compiler-load-session-cache-enable!)
     (compiler_load.compiler-load-session-program-cache-disable!)
     (tc_core.tc-serial-job-state-set!
@@ -4027,6 +4050,7 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
+  [profile : pkg_profile.PackageProfile]
   [backend-mode : be_state.CompilerBackendMode]
   [test-mode : TestMode]) : i64
   (match (build_run_core.source-tool-parse-target
@@ -4052,24 +4076,18 @@
             [tests-prefix : String
               (tltest-package-tests-prefix
                 (owned_view.compiler-owned-shared-view manifest-dir))]
-            (compiler_load.compiler-load-set-package-artifact-profile! "dev")
-            (when
-              (and
-                (not tltest-list-only)
-                (>
-                  (compiler_load.compiler-pkg-dep-list-count
-                    (&
-                      (compiler_load.compiler-pkg-deps-list
-                        (compiler_load.clone-compiler-pkg-deps
-                          (& manifest.deps)))))
-                  0)
-                (not
-                  (compiler_dependency_tlci.compiler-dependency-tlci-force-source?)))
+            (compiler_load.compiler-load-session-set-package-profile!
+              (compiler_load.compiler-load-serial-test-session-state)
+              profile)
+            (unless
+              tltest-list-only
               (match (build_run_core.source-tool-build-package-deps-only!
                 (& source-set.manifest-path)
+                profile
                 backend-target
                 (& roots)
-                (& tltest-user-cfg-slots))
+                (& tltest-user-cfg-slots)
+                (& manifest.deps))
                 [(Ok) unit]
                 [(Err message)
                   (io.print-error message)
@@ -6049,6 +6067,7 @@
         backend-mode
         roots
         opt-level
+        profile
         test-mode)
       (tltest-run-package
         manifest-path
@@ -6056,6 +6075,7 @@
         target
         roots
         opt-level
+        profile
         backend-mode
         test-mode)]))
 
@@ -6111,7 +6131,7 @@
   (match config
     [(or (File _ _ backend-mode _ _ test-mode)
          (Batch _ _ backend-mode _ _ test-mode)
-         (Package _ _ _ backend-mode _ _ test-mode))
+         (Package _ _ _ backend-mode _ _ _ test-mode))
       (tltest-host-isa-permits? backend-mode test-mode)]))
 
 (define (tltest-run-config [config : TestConfig]) : i64

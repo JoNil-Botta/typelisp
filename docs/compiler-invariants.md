@@ -2924,8 +2924,8 @@ in the document; invalid coordinates are rejected before checking the source.
 
 The [SPEC command defaults](../SPEC.md#command-defaults) apply on both
 hosts. `compile`, `build`, `run`, and `test` use the host target, opt level 1,
-SSE2, and debug off for source compilation. Package `build` and `run` select
-release (opt level 2) by default, and `--profile dev` selects level 0.
+SSE2, and debug off for source compilation. Package `build`, `run`, and
+`test` select dev (opt level 0) by default. `--profile release` selects level 2.
 `check`, `lint`, `expand`, and the language server select the same host cfg
 aliases as `build`. `repl` and runnable doctests use host compilation at opt
 level 1 with the scalar backend.

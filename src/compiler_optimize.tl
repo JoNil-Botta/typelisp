@@ -100354,7 +100354,29 @@
       (set! state.analysis (Cfg ctx))
       state]))
 
-;; Move the function and its context into a pass that consumes both.
+(define (opt-pass-take-context [cache : OptAnalysisCache]) : OptCfgContext
+  (match cache
+    [(Cfg context) context]
+    [(Empty) (opt-cfg-context-empty)]))
+
+(define (opt-pass-moved-result
+  [result : OptFunctionCtxResult]
+  [type-segment-bases : i64]
+  [profile-state : profile_state.CompilerProfileState]
+  [priced? : bool]
+  [changed? : bool]) : OptPassState
+  (match result
+    [(Result func ctx)
+      (OptPassState
+        type-segment-bases
+        profile-state
+        priced?
+        func
+        (Cfg ctx)
+        changed?)]))
+
+;; Move the function and context into the pass. Keep the cache unpacking and
+;; state reconstruction out of each expansion in the pipeline.
 (defmacro (opt-pass-move
   [state : Expr]
   [func : Expr]
@@ -100369,18 +100391,13 @@
             `(__tl-project-field ,state func)
             (comptime.expr-let-scope
               ctx-name
-              `(match (__tl-project-field ,state analysis)
-                [(OptAnalysisCache.Cfg input-ctx) input-ctx]
-                [(OptAnalysisCache.Empty) (opt-cfg-context-empty)])
-              `(match ,step
-                [(OptFunctionCtxResult.Result move-next move-next-ctx)
-                  (OptPassState
-                    (__tl-project-field ,state type-segment-bases)
-                    (__tl-project-field ,state profile-state)
-                    (__tl-project-field ,state priced?)
-                    move-next
-                    (OptAnalysisCache.Cfg move-next-ctx)
-                    (__tl-project-field ,state changed?))])))]
+              `(opt-pass-take-context (__tl-project-field ,state analysis))
+              `(opt-pass-moved-result
+                ,step
+                (__tl-project-field ,state type-segment-bases)
+                (__tl-project-field ,state profile-state)
+                (__tl-project-field ,state priced?)
+                (__tl-project-field ,state changed?))))]
         [_ (comptime-error "opt-pass-move: ctx must be a bare name")])]
     [_ (comptime-error "opt-pass-move: func must be a bare name")]))
 

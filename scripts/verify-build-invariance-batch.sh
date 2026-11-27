@@ -256,10 +256,87 @@ test "$(chunk_class selfhost_main_opt2 src/main.tl opt2-built)" = '6144 1'
 test "$(chunk_class selfhost_main_opt1 src/main.tl opt2-built)" = '4096 4'
 test "$(chunk_class other src/tests/compiler_other_smoke.tl opt1-built)" = '4096 3'
 test "$(chunk_class program tests/integration/a.tl source src/tests/sample_smoke.tl opt2-built)" = '4096 3'
-test "$(chunk_class program tests/integration/a.tl example examples/b.tl opt1-built)" = '2048 5'
+test "$(chunk_class program tests/integration/a.tl example examples/b.tl opt1-built)" = '2048 6'
 # A mixed or aliased chunk never borrows a whole-compiler class.
 test "$(chunk_class smoke src/tests/compiler_codegen_smoke_suite.tl program tests/integration/a.tl opt1-built)" = '4096 3'
 test "$(chunk_class selfhost_main_opt2 src/main.tl selfhost_main_opt2_alias src/main.tl opt1-built)" = '4096 3'
+
+# Transitive-LOC singleton splitting, 3-tier src/ memory caps, and LPT weights.
+WEIGHTS="$WORKDIR/synthetic-weights.txt"
+cat > "$WEIGHTS" <<'EOF'
+src/tests/small_a.tl|12000
+src/tests/small_b.tl|99999
+src/tests/medium_a.tl|100001
+src/tests/medium_b.tl|350000
+src/tests/giant_a.tl|400001
+src/tests/giant_b.tl|721000
+src/tests/missing_src.tl|-1
+EOF
+{
+    record small-a src/tests/small_a.tl "$WORKDIR/left" 2
+    record small-b src/tests/small_b.tl "$WORKDIR/left" 2
+    record giant-a src/tests/giant_a.tl "$WORKDIR/left" 2
+    record giant-a-alias src/tests/giant_a.tl "$WORKDIR/left" 2
+    record medium-a src/tests/medium_a.tl "$WORKDIR/left" 2
+    record giant-b src/tests/giant_b.tl "$WORKDIR/left" 2
+    record small-c src/tests/small_a.tl "$WORKDIR/left" 2
+} > "$CHUNK_ROOT/loc-cases.txt"
+mkdir -p "$CHUNK_ROOT/loc/opt2"
+build_invariance_write_chunks "$CHUNK_ROOT/loc-cases.txt" "$CHUNK_ROOT/loc/opt2/chunks" 64 "$WEIGHTS" "$ROOT"
+# small-a + small-b batch together; giant-a (+ alias), medium-a, giant-b stay singletons; small-c gets its own chunk.
+test "$(find "$CHUNK_ROOT/loc/opt2/chunks" -name 'cases.*.txt' | wc -l)" -eq 5
+test "$(cut -d '|' -f 1 "$CHUNK_ROOT/loc/opt2/chunks/cases.0000.txt" | paste -sd, -)" = small-a,small-b
+test "$(cut -d '|' -f 1 "$CHUNK_ROOT/loc/opt2/chunks/cases.0001.txt" | paste -sd, -)" = giant-a,giant-a-alias
+test "$(cut -d '|' -f 1 "$CHUNK_ROOT/loc/opt2/chunks/cases.0002.txt" | paste -sd, -)" = medium-a
+test "$(cut -d '|' -f 1 "$CHUNK_ROOT/loc/opt2/chunks/cases.0003.txt" | paste -sd, -)" = giant-b
+test "$(cut -d '|' -f 1 "$CHUNK_ROOT/loc/opt2/chunks/cases.0004.txt" | paste -sd, -)" = small-c
+cp "$CHUNK_ROOT/loc-cases.txt" "$CHUNK_ROOT/loc/cases.txt"
+awk -F '|' '{ print $1 "|" $2 "|" $5 }' "$CHUNK_ROOT/loc-cases.txt" > "$CORPUS"
+build_invariance_require_coverage "$CORPUS" "$CHUNK_ROOT/loc"
+
+# 3-tier src/ caps and fail-closed fallback for unmeasured src/ entries.
+test "$(build_invariance_chunk_class "$CHUNK_ROOT/loc/opt2/chunks/cases.0000.txt" opt1-built "$WEIGHTS" "$ROOT")" = '2048 5'
+test "$(build_invariance_chunk_class "$CHUNK_ROOT/loc/opt2/chunks/cases.0001.txt" opt1-built "$WEIGHTS" "$ROOT")" = '4096 3'
+test "$(build_invariance_chunk_class "$CHUNK_ROOT/loc/opt2/chunks/cases.0002.txt" opt1-built "$WEIGHTS" "$ROOT")" = '3072 4'
+test "$(build_invariance_chunk_class "$CHUNK_ROOT/loc/opt2/chunks/cases.0003.txt" opt2-built "$WEIGHTS" "$ROOT")" = '4096 3'
+record missing-case src/tests/missing_src.tl "$WORKDIR/left" 2 > "$WORKDIR/missing-chunk"
+test "$(build_invariance_chunk_class "$WORKDIR/missing-chunk" opt1-built "$WEIGHTS" "$ROOT")" = '4096 3'
+
+# LPT weights sum unique inputs only (aliases do not double-count).
+test "$(build_invariance_chunk_weight "$CHUNK_ROOT/loc/opt2/chunks/cases.0000.txt" "$WEIGHTS" "$ROOT")" -eq 111999
+test "$(build_invariance_chunk_weight "$CHUNK_ROOT/loc/opt2/chunks/cases.0001.txt" "$WEIGHTS" "$ROOT")" -eq 400001
+test "$(build_invariance_chunk_weight "$CHUNK_ROOT/loc/opt2/chunks/cases.0003.txt" "$WEIGHTS" "$ROOT")" -eq 721000
+
+# End-to-end transitive import-closure measurement against a synthetic source tree
+# (keeps this self-test self-contained with zero dependency on repo source files).
+FAKE_ROOT="$WORKDIR/fake-repo"
+FAKE_SRC="src"
+FAKE_TESTS="$FAKE_SRC/tests"
+mkdir -p "$FAKE_ROOT/$FAKE_TESTS"
+awk 'BEGIN { for (i = 0; i < 410000; i++) print ";" }' > "$FAKE_ROOT/$FAKE_SRC/dep_huge.tl"
+awk 'BEGIN { for (i = 0; i < 150000; i++) print ";" }' > "$FAKE_ROOT/$FAKE_SRC/dep_med.tl"
+awk 'BEGIN { for (i = 0; i < 500; i++) print ";" }' > "$FAKE_ROOT/$FAKE_SRC/dep_small.tl"
+printf '(import dep_huge)\n(define (main) : i64 0)\n' > "$FAKE_ROOT/$FAKE_TESTS/non_compiler_giant.tl"
+printf '(import dep_med)\n(define (main) : i64 0)\n' > "$FAKE_ROOT/$FAKE_TESTS/non_compiler_med.tl"
+printf '(import dep_small)\n(define (main) : i64 0)\n' > "$FAKE_ROOT/$FAKE_TESTS/compiler_small_smoke.tl"
+printf '(import dep_small)\n(define (main) : i64 0)\n' > "$FAKE_ROOT/$FAKE_TESTS/non_compiler_small.tl"
+FAKE_WEIGHTS="$WORKDIR/fake-weights.txt"
+{
+    record giant "$FAKE_TESTS/non_compiler_giant.tl" "$WORKDIR/left" 2
+    record med "$FAKE_TESTS/non_compiler_med.tl" "$WORKDIR/left" 2
+    record comp-small "$FAKE_TESTS/compiler_small_smoke.tl" "$WORKDIR/left" 2
+    record plain-small "$FAKE_TESTS/non_compiler_small.tl" "$WORKDIR/left" 2
+} > "$WORKDIR/fake-cases.txt"
+build_invariance_write_src_weights "$WORKDIR/fake-cases.txt" "$FAKE_WEIGHTS" "$FAKE_ROOT"
+build_invariance_write_chunks "$WORKDIR/fake-cases.txt" "$CHUNK_ROOT/fake-chunks" 64 "$FAKE_WEIGHTS" "$FAKE_ROOT"
+test "$(find "$CHUNK_ROOT/fake-chunks" -name 'cases.*.txt' | wc -l)" -eq 4
+test "$(build_invariance_chunk_class "$CHUNK_ROOT/fake-chunks/cases.0000.txt" opt1-built "$FAKE_WEIGHTS" "$FAKE_ROOT")" = '4096 3'
+test "$(build_invariance_chunk_class "$CHUNK_ROOT/fake-chunks/cases.0001.txt" opt1-built "$FAKE_WEIGHTS" "$FAKE_ROOT")" = '3072 4'
+test "$(build_invariance_chunk_class "$CHUNK_ROOT/fake-chunks/cases.0002.txt" opt1-built "$FAKE_WEIGHTS" "$FAKE_ROOT")" = '2048 5'
+test "$(build_invariance_chunk_class "$CHUNK_ROOT/fake-chunks/cases.0003.txt" opt1-built "$FAKE_WEIGHTS" "$FAKE_ROOT")" = '2048 5'
+test "$(build_invariance_chunk_weight "$CHUNK_ROOT/fake-chunks/cases.0000.txt" "$FAKE_WEIGHTS" "$FAKE_ROOT")" -eq 410002
+test "$(build_invariance_chunk_weight "$CHUNK_ROOT/fake-chunks/cases.0001.txt" "$FAKE_WEIGHTS" "$FAKE_ROOT")" -eq 150002
+test "$(build_invariance_chunk_weight "$CHUNK_ROOT/fake-chunks/cases.0002.txt" "$FAKE_WEIGHTS" "$FAKE_ROOT")" -eq 502
 
 # Worker pool: jobs start in queue order, only inside the memory budget, exactly
 # once; a drained pool passes only with one successful result per queued job.

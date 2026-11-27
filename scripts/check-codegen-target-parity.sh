@@ -185,31 +185,22 @@ EOF
     fi
 }
 
-compile_ir() {
+compile_crypto_ir() {
     target=$1
     opt_level=$2
-    name=$3
-    source=$4
-    out_dir=$5
+    out=$3
 
-    out="$out_dir/opt${opt_level}_$name.ir"
-    echo "[$target opt$opt_level] $source -> $out"
-    if [ "$name" = crypto_aes128_gcm ]; then
-        # Compile inside the shadow source tree: the importing source tree has
-        # precedence over explicit stdlib roots, including transitive imports.
-        case "$COMPILER" in /* | [A-Za-z]:*) parity_compiler=$COMPILER ;; *) parity_compiler="$ROOT/$COMPILER" ;; esac
-        case "$out" in /* | [A-Za-z]:*) parity_out=$out ;; *) parity_out="$ROOT/$out" ;; esac
-        (cd "$CRYPTO_PARITY_ROOT" && "$parity_compiler" compile main.tl \
-            --emit-ir --target "$target" --opt-level "$opt_level" \
-            --stdlib-root stdlib -o "$parity_out")
-        if [ "$opt_level" = 0 ] && cmp -s "$out" "$CRYPTO_PARITY_ROOT/$target.ir"; then
-            echo "crypto reclaim test double was not selected for $target" >&2
-            exit 1
-        fi
-    else
-        "$COMPILER" compile "$source" \
-            --emit-ir --target "$target" --opt-level "$opt_level" \
-            --stdlib-root "$ROOT/stdlib" -o "$out"
+    # Compile inside the shadow source tree: the importing source tree has
+    # precedence over explicit stdlib roots, including transitive imports.
+    case "$COMPILER" in /* | [A-Za-z]:*) parity_compiler=$COMPILER ;; *) parity_compiler="$ROOT/$COMPILER" ;; esac
+    case "$out" in /* | [A-Za-z]:*) parity_out=$out ;; *) parity_out="$ROOT/$out" ;; esac
+    echo "[$target opt$opt_level] crypto_aes128_gcm (shadow) -> $out"
+    (cd "$CRYPTO_PARITY_ROOT" && "$parity_compiler" compile main.tl \
+        --emit-ir --target "$target" --opt-level "$opt_level" \
+        --stdlib-root stdlib -o "$parity_out")
+    if [ "$opt_level" = 0 ] && cmp -s "$out" "$CRYPTO_PARITY_ROOT/$target.ir"; then
+        echo "crypto reclaim test double was not selected for $target" >&2
+        exit 1
     fi
 }
 
@@ -218,15 +209,47 @@ compile_all() {
     target=$2
 
     mkdir -p "$out_dir"
-    opt_levels | while read -r opt_level; do
-        corpus | while read -r name source; do
+    for opt_level in $(opt_levels); do
+        batch_list="$WORKDIR/batch_${target}_opt${opt_level}.txt"
+        : > "$batch_list"
+        has_crypto=0
+        crypto_out=""
+        while read -r name source; do
             [ -n "$name" ] || continue
             if [ ! -f "$source" ]; then
                 echo "corpus file not found: $source" >&2
                 exit 1
             fi
-            compile_ir "$target" "$opt_level" "$name" "$source" "$out_dir"
-        done
+            out="$out_dir/opt${opt_level}_$name.ir"
+            if [ "$name" = crypto_aes128_gcm ]; then
+                has_crypto=1
+                crypto_out=$out
+            else
+                printf '%s|%s\n' "$source" "$out" >> "$batch_list"
+            fi
+        done <<EOF
+$(corpus)
+EOF
+        if [ -s "$batch_list" ]; then
+            batch_count=$(wc -l < "$batch_list" | tr -d ' ')
+            echo "[$target opt$opt_level] batch compile $batch_count file(s) -> $out_dir"
+            "$COMPILER" compile --batch "$batch_list" \
+                --emit-ir --target "$target" --opt-level "$opt_level" \
+                --stdlib-root "$ROOT/stdlib"
+        fi
+        if [ "$has_crypto" -eq 1 ]; then
+            compile_crypto_ir "$target" "$opt_level" "$crypto_out"
+        fi
+        while read -r name _source; do
+            [ -n "$name" ] || continue
+            out="$out_dir/opt${opt_level}_$name.ir"
+            if [ ! -s "$out" ]; then
+                echo "missing or empty IR output: $out" >&2
+                exit 1
+            fi
+        done <<EOF
+$(corpus)
+EOF
     done
 }
 

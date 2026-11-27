@@ -873,7 +873,7 @@
       [scratch : i64 (arena.tl_arena_make)]
       (in-arena
         (unsafe
-          (arena.Arena scratch))
+          (arena.from-raw-handle scratch))
         (for [index (iterator.range 0 257)]
           (tc_core.tc-checked-let-binding-fact-record!
             c
@@ -1073,7 +1073,7 @@
         [scratch : i64 (arena.tl_arena_make)]
         (in-arena
           (unsafe
-            (arena.Arena scratch))
+            (arena.from-raw-handle scratch))
           (for [index (iterator.range 0 257)]
             (tc_core.tc-checked-let-binding-facts-set-current-declaration!
               facts
@@ -8312,12 +8312,12 @@
     [job-a : tc_core.TcJobState
       (in-arena
         (unsafe
-          (arena.Arena owner-a))
+          (arena.from-raw-handle owner-a))
         (tc_core.tc-job-state-new))]
     [job-b : tc_core.TcJobState
       (in-arena
         (unsafe
-          (arena.Arena owner-b))
+          (arena.from-raw-handle owner-b))
         (tc_core.tc-job-state-new))]
     [state-a : tc_core.TcMacroState (tc_core.tc-job-state-macro-state job-a)]
     [state-b : tc_core.TcMacroState (tc_core.tc-job-state-macro-state job-b)]
@@ -8361,7 +8361,7 @@
         "typecheck: module index idle job allocated or collision missing"))
     (in-arena
       (unsafe
-        (arena.Arena scratch))
+        (arena.from-raw-handle scratch))
       (tc_core.tc-module-decl-index-ensure! state-a (& decls-a)))
     (unsafe
       (arena.tl_arena_destroy scratch))
@@ -8480,7 +8480,7 @@
               "typecheck: module index used the installed interner stamp"))))
       (in-arena
         (unsafe
-          (arena.Arena owner-b))
+          (arena.from-raw-handle owner-b))
         (tc_core.tc-job-state-retire-owned-storage! job-a)
         (tc_core.tc-module-decl-index-release! state-a))
       (let
@@ -9738,7 +9738,7 @@
     [empty-head : i64
       (in-arena
         (unsafe
-          (arena.Arena
+          (arena.from-raw-handle
             (tc_core.macro-expand-scratch-arena-get
               (tc_core.tc-job-state-macro-state state))))
         (tc_core.macro-program-segment-node-new-current
@@ -13390,7 +13390,7 @@
                   "bound expressions cannot overwrite the body's binding types")]))))
       (in-arena
         (unsafe
-          (arena.Arena (deref state-a).arena))
+          (arena.from-raw-handle (deref state-a).arena))
         (let
           [graph : global_effects.Graph
             (unsafe
@@ -17812,7 +17812,7 @@
     [state-a : tc_core.TcMacroState
       (in-arena
         (unsafe
-          (arena.Arena owner))
+          (arena.from-raw-handle owner))
         (tc_core.tc-job-state-macro-state (tc_core.tc-job-state-new)))]
     [state-b : tc_core.TcMacroState
       (tc_core.tc-job-state-macro-state (tc_core.tc-job-state-new))]
@@ -17850,7 +17850,7 @@
       ;; shortcut would leave these deliberately overwritten live keys intact.
       (in-arena
         (unsafe
-          (arena.Arena owner))
+          (arena.from-raw-handle owner))
         (tc_core.macro-unqualified-import-cache-initialize! state-a))
       (let
         [exact : bool true]
@@ -18560,7 +18560,7 @@
         [_
           (ast.ast-field-def-list-push
             (&mut fields)
-            (ast.AstFieldDef.Def
+            (ast.ast-field-def-id
               (ci.InternSyntaxId (cast (ci.intern "value") : u64))
               ref-x-i64
               ast.AstFieldCleanup.No))]

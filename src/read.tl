@@ -272,7 +272,7 @@
     [slot : i64 sp-node-pool-slot-count]
     (in-arena
       (unsafe
-        (arena.Arena (sp-node-pool-storage-root)))
+        (arena.from-raw-handle (sp-node-pool-storage-root)))
       (sp-node-pool-directory-reserve! (+ slot 1))
       (sp-node-pool-install-slot!
         slot
@@ -294,7 +294,7 @@
         (* old-cap 2))]
     (in-arena
       (unsafe
-        (arena.Arena (sp-node-pool-storage-root)))
+        (arena.from-raw-handle (sp-node-pool-storage-root)))
       (let
         [new-slots : (__tl_dyn-array SpannedSexpr)
           (__tl_make-array SpannedSexpr new-cap)]
@@ -399,7 +399,7 @@
       (+= candidate 1))
     (in-arena
       (unsafe
-        (arena.Arena (sp-node-pool-storage-root)))
+        (arena.from-raw-handle (sp-node-pool-storage-root)))
       (let
         [long : (__tl_dyn-array SpannedSexpr)
           (if (= reuse-slot -1)
@@ -486,7 +486,7 @@
           (ptr-read (ptr-addr-of sp-builder-released-slots)))
         (in-arena
           (unsafe
-            (arena.Arena transfer-arena))
+            (arena.from-raw-handle transfer-arena))
           (__tl_make-array SpannedSexpr builder-capacity)))]
     (set!
       sp-node-pool-segments
@@ -505,7 +505,7 @@
       (> live-slots 0)
       (in-arena
         (unsafe
-          (arena.Arena transfer-arena))
+          (arena.from-raw-handle transfer-arena))
         (let
           [slot : i64 0]
           (sp-node-pool-directory-reserve! live-slots)

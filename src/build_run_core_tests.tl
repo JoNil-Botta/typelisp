@@ -228,18 +228,18 @@
         (cobj.compiler-object-relocation-builder-push
           (cobj.compiler-object-relocation-builder-push
             (cobj.compiler-object-relocation-builder-with-capacity 2)
-            (Relocation (Text) "main" (Call) "GetStdHandle"))
-          (Relocation (Text) "main" (Call) "NtCreateFile")))]
+            (Relocation cobj.text-id "main" (Call) "GetStdHandle"))
+          (Relocation cobj.text-id "main" (Call) "NtCreateFile")))]
     [blocked-win32-relocs : cobj.CompilerObjectRelocationList
       (cobj.compiler-object-relocation-builder-finish
         (cobj.compiler-object-relocation-builder-push
           (cobj.compiler-object-relocation-builder-with-capacity 1)
-          (Relocation (Text) "main" (Call) "GetCurrentProcessId")))]
+          (Relocation cobj.text-id "main" (Call) "GetCurrentProcessId")))]
     [blocked-ntdll-relocs : cobj.CompilerObjectRelocationList
       (cobj.compiler-object-relocation-builder-finish
         (cobj.compiler-object-relocation-builder-push
           (cobj.compiler-object-relocation-builder-with-capacity 1)
-          (Relocation (Text) "main" (Call) "NtOpenFile")))]
+          (Relocation cobj.text-id "main" (Call) "NtOpenFile")))]
     (and
       (source-tool-windows-direct-object-relocations-linkable?
         symbols

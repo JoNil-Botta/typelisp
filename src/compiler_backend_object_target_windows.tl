@@ -1,4 +1,5 @@
 ;; compiler_backend_object_target_windows.tl - Windows direct-object policy leaf.
+(import compiler_object_windows_sections as coff_sections)
 (import stdlib.byte_buf_core)
 (import stdlib.byte_le)
 (import stdlib.string)
@@ -208,6 +209,66 @@
     (byte_buf_core.byte-buf-builder-finish-string (& out))))
 
 ;; The label of an earlier `.xdata` record holding exactly `bytes`, or "".
+(define (compiler-backend-object-take-metadata
+  [parts : (&mut object_target.CompilerBackendObjectTargetParts)]
+  [index : i64]) : cobj.CompilerObjectDataRecordBuilder
+  (if (= (array-length parts.metadata) 0)
+    (cobj.compiler-object-data-record-builder-with-capacity 1)
+    (replace!
+      (array-ref parts.metadata index)
+      (cobj.compiler-object-data-record-builder-with-capacity 1))))
+
+(define (compiler-backend-object-add-metadata
+  [parts : object_target.CompilerBackendObjectTargetParts]
+  [index : i64]
+  [record : cobj.CompilerObjectDataRecord]) : object_target.CompilerBackendObjectTargetParts
+  (when
+    (= (array-length parts.metadata) 0)
+    (set!
+      parts.metadata
+      (__tl_make-array cobj.CompilerObjectDataRecordBuilder 2))
+    (set!
+      (array-ref parts.metadata 0)
+      (cobj.compiler-object-data-record-builder-new))
+    (set!
+      (array-ref parts.metadata 1)
+      (cobj.compiler-object-data-record-builder-new)))
+  (let
+    [builder (&mut (array-ref parts.metadata index))]
+    (when
+      (= builder.count (array-length builder.slots))
+      (set!
+        (array-ref parts.metadata index)
+        (cobj.compiler-object-data-record-builder-grow
+          (compiler-backend-object-take-metadata (&mut parts) index)))))
+  (let
+    [builder (&mut (array-ref parts.metadata index))]
+    (set! (array-ref builder.slots builder.count) record)
+    (+= builder.count 1))
+  parts)
+
+(define (compiler-backend-object-add-pdata
+  [parts : object_target.CompilerBackendObjectTargetParts]
+  [record : cobj.CompilerObjectDataRecord]) : object_target.CompilerBackendObjectTargetParts
+  (compiler-backend-object-add-metadata parts 0 record))
+
+(define (compiler-backend-object-add-xdata
+  [parts : object_target.CompilerBackendObjectTargetParts]
+  [record : cobj.CompilerObjectDataRecord]) : object_target.CompilerBackendObjectTargetParts
+  (compiler-backend-object-add-metadata parts 1 record))
+
+(define (compiler-backend-object-add-pdata-relocation
+  [parts : object_target.CompilerBackendObjectTargetParts]
+  [site : String]
+  [kind : cobj.CompilerObjectRelocationKind]
+  [target : String]) : object_target.CompilerBackendObjectTargetParts
+  (object_target.compiler-backend-object-add-relocation
+    parts
+    coff_sections.pdata-id
+    site
+    kind
+    target))
+
 (define (compiler-backend-object-unwind-record-label
   [xdata : (& xdata cobj.CompilerObjectDataRecordBuilder)]
   [bytes : (& bytes str)]) : String
@@ -266,7 +327,11 @@
           (Text)
           (Function)))]
     [shared : String
-      (compiler-backend-object-unwind-record-label (& with-end.xdata) (& bytes))]
+      (if (= (array-length with-end.metadata) 0)
+        ""
+        (compiler-backend-object-unwind-record-label
+          (& (array-ref with-end.metadata 1))
+          (& bytes)))]
     [new? : bool (= (string.string-length (& shared)) 0)]
     [unwind : String
       (if new?
@@ -274,14 +339,15 @@
         shared)]
     [out : object_target.CompilerBackendObjectTargetParts
       (if new?
-        (object_target.compiler-backend-object-add-xdata
-          (object_target.compiler-backend-object-add-xdata
-            (object_target.compiler-backend-object-add-xdata
-              (object_target.compiler-backend-object-symbol-local-section
+        (compiler-backend-object-add-xdata
+          (compiler-backend-object-add-xdata
+            (compiler-backend-object-add-xdata
+              (object_target.compiler-backend-object-add-symbol
                 with-end
                 (string.copy (& unwind))
-                (Xdata)
-                (Data))
+                (Local)
+                (Data)
+                (Some coff_sections.xdata-id))
               (Align 4))
             (Label (string.copy (& unwind))))
           (Bytes bytes))
@@ -297,9 +363,9 @@
         [target : String (string.copy (& (array-ref targets i)))]
         (set!
           out
-          (object_target.compiler-backend-object-add-pdata
-            (object_target.compiler-backend-object-add-pdata-relocation
-              (object_target.compiler-backend-object-add-pdata
+          (compiler-backend-object-add-pdata
+            (compiler-backend-object-add-pdata-relocation
+              (compiler-backend-object-add-pdata
                 out
                 (Label (string.copy (& site))))
               site
@@ -974,21 +1040,22 @@
   [parts : object_target.CompilerBackendObjectTargetParts]) : object_target.CompilerBackendObjectTargetParts
   (let
     [with-xdata-symbol : object_target.CompilerBackendObjectTargetParts
-      (object_target.compiler-backend-object-symbol-local-section
+      (object_target.compiler-backend-object-add-symbol
         parts
         ".L_tl_start_xdata"
-        (Xdata)
-        (Data))]
+        (Local)
+        (Data)
+        (Some coff_sections.xdata-id))]
     [with-xdata : object_target.CompilerBackendObjectTargetParts
-      (object_target.compiler-backend-object-add-xdata
-        (object_target.compiler-backend-object-add-xdata
+      (compiler-backend-object-add-xdata
+        (compiler-backend-object-add-xdata
           with-xdata-symbol
           (Label ".L_tl_start_xdata"))
         (Bytes (compiler-backend-object-entry-xdata-bytes)))]
     [with-pdata-begin : object_target.CompilerBackendObjectTargetParts
-      (object_target.compiler-backend-object-add-pdata
-        (object_target.compiler-backend-object-add-pdata-relocation
-          (object_target.compiler-backend-object-add-pdata
+      (compiler-backend-object-add-pdata
+        (compiler-backend-object-add-pdata-relocation
+          (compiler-backend-object-add-pdata
             with-xdata
             (Label ".L_tl_start_pdata_begin"))
           ".L_tl_start_pdata_begin"
@@ -996,9 +1063,9 @@
           "_tl_start")
         (SymbolRva32 "_tl_start"))]
     [with-pdata-end : object_target.CompilerBackendObjectTargetParts
-      (object_target.compiler-backend-object-add-pdata
-        (object_target.compiler-backend-object-add-pdata-relocation
-          (object_target.compiler-backend-object-add-pdata
+      (compiler-backend-object-add-pdata
+        (compiler-backend-object-add-pdata-relocation
+          (compiler-backend-object-add-pdata
             with-pdata-begin
             (Label ".L_tl_start_pdata_end"))
           ".L_tl_start_pdata_end"
@@ -1006,9 +1073,9 @@
           ".L_tl_start_end")
         (SymbolRva32 ".L_tl_start_end"))]
     [with-pdata-unwind : object_target.CompilerBackendObjectTargetParts
-      (object_target.compiler-backend-object-add-pdata
-        (object_target.compiler-backend-object-add-pdata-relocation
-          (object_target.compiler-backend-object-add-pdata
+      (compiler-backend-object-add-pdata
+        (compiler-backend-object-add-pdata-relocation
+          (compiler-backend-object-add-pdata
             with-pdata-end
             (Label ".L_tl_start_pdata_unwind"))
           ".L_tl_start_pdata_unwind"
@@ -1016,9 +1083,9 @@
           ".L_tl_start_xdata")
         (SymbolRva32 ".L_tl_start_xdata"))]
     [with-fiber-pdata-begin : object_target.CompilerBackendObjectTargetParts
-      (object_target.compiler-backend-object-add-pdata
-        (object_target.compiler-backend-object-add-pdata-relocation
-          (object_target.compiler-backend-object-add-pdata
+      (compiler-backend-object-add-pdata
+        (compiler-backend-object-add-pdata-relocation
+          (compiler-backend-object-add-pdata
             with-pdata-unwind
             (Label ".L_tl_main_fiber_pdata_begin"))
           ".L_tl_main_fiber_pdata_begin"
@@ -1026,9 +1093,9 @@
           ".L_tl_main_fiber")
         (SymbolRva32 ".L_tl_main_fiber"))]
     [with-fiber-pdata-end : object_target.CompilerBackendObjectTargetParts
-      (object_target.compiler-backend-object-add-pdata
-        (object_target.compiler-backend-object-add-pdata-relocation
-          (object_target.compiler-backend-object-add-pdata
+      (compiler-backend-object-add-pdata
+        (compiler-backend-object-add-pdata-relocation
+          (compiler-backend-object-add-pdata
             with-fiber-pdata-begin
             (Label ".L_tl_main_fiber_pdata_end"))
           ".L_tl_main_fiber_pdata_end"
@@ -1036,9 +1103,9 @@
           ".L_tl_main_fiber_end")
         (SymbolRva32 ".L_tl_main_fiber_end"))]
     [with-fiber-pdata-unwind : object_target.CompilerBackendObjectTargetParts
-      (object_target.compiler-backend-object-add-pdata
-        (object_target.compiler-backend-object-add-pdata-relocation
-          (object_target.compiler-backend-object-add-pdata
+      (compiler-backend-object-add-pdata
+        (compiler-backend-object-add-pdata-relocation
+          (compiler-backend-object-add-pdata
             with-fiber-pdata-end
             (Label ".L_tl_main_fiber_pdata_unwind"))
           ".L_tl_main_fiber_pdata_unwind"
@@ -1046,9 +1113,9 @@
           ".L_tl_start_xdata")
         (SymbolRva32 ".L_tl_start_xdata"))]
     [with-filter-pdata-begin : object_target.CompilerBackendObjectTargetParts
-      (object_target.compiler-backend-object-add-pdata
-        (object_target.compiler-backend-object-add-pdata-relocation
-          (object_target.compiler-backend-object-add-pdata
+      (compiler-backend-object-add-pdata
+        (compiler-backend-object-add-pdata-relocation
+          (compiler-backend-object-add-pdata
             with-fiber-pdata-unwind
             (Label ".L_tl_stack_overflow_filter_pdata_begin"))
           ".L_tl_stack_overflow_filter_pdata_begin"
@@ -1056,18 +1123,18 @@
           ".L_tl_stack_overflow_filter")
         (SymbolRva32 ".L_tl_stack_overflow_filter"))]
     [with-filter-pdata-end : object_target.CompilerBackendObjectTargetParts
-      (object_target.compiler-backend-object-add-pdata
-        (object_target.compiler-backend-object-add-pdata-relocation
-          (object_target.compiler-backend-object-add-pdata
+      (compiler-backend-object-add-pdata
+        (compiler-backend-object-add-pdata-relocation
+          (compiler-backend-object-add-pdata
             with-filter-pdata-begin
             (Label ".L_tl_stack_overflow_filter_pdata_end"))
           ".L_tl_stack_overflow_filter_pdata_end"
           (Addr32Nb)
           ".L_tl_stack_overflow_filter_end")
         (SymbolRva32 ".L_tl_stack_overflow_filter_end"))]
-    (object_target.compiler-backend-object-add-pdata
-      (object_target.compiler-backend-object-add-pdata-relocation
-        (object_target.compiler-backend-object-add-pdata
+    (compiler-backend-object-add-pdata
+      (compiler-backend-object-add-pdata-relocation
+        (compiler-backend-object-add-pdata
           with-filter-pdata-end
           (Label ".L_tl_stack_overflow_filter_pdata_unwind"))
         ".L_tl_stack_overflow_filter_pdata_unwind"
@@ -1097,30 +1164,38 @@
         data
         rodata
         bss
-        7)]
-    [sections5 : cobj.CompilerObjectSectionBuilder
-      (cobj.compiler-object-section-builder-push
+        coff_sections.windows-base-section)]
+    (when
+      (> pdata.count 0)
+      (set!
         sections4
-        (Section
-          (Pdata)
-          (cobj.compiler-object-data-record-builder-finish pdata)
-          (cobj.compiler-object-instr-list-empty)))]
-    [sections6 : cobj.CompilerObjectSectionBuilder
-      (cobj.compiler-object-section-builder-push
-        sections5
-        (Section
-          (Xdata)
-          (cobj.compiler-object-data-record-builder-finish xdata)
-          (cobj.compiler-object-instr-list-empty)))]
-    (cobj.compiler-object-section-builder-finish
-      (cobj.compiler-object-section-builder-push
-        sections6
-        (Section
-          (Rsrc)
-          (if emit-manifest-resource
-            (compiler-backend-object-manifest-resource-records)
-            (cobj.compiler-object-data-record-list-empty))
-          (cobj.compiler-object-instr-list-empty))))))
+        (cobj.compiler-object-section-builder-push
+          sections4
+          (coff_sections.metadata-section
+            coff_sections.pdata-id
+            ".pdata"
+            (cobj.compiler-object-data-record-builder-finish pdata)))))
+    (when
+      (> xdata.count 0)
+      (set!
+        sections4
+        (cobj.compiler-object-section-builder-push
+          sections4
+          (coff_sections.metadata-section
+            coff_sections.xdata-id
+            ".xdata"
+            (cobj.compiler-object-data-record-builder-finish xdata)))))
+    (when
+      emit-manifest-resource
+      (set!
+        sections4
+        (cobj.compiler-object-section-builder-push
+          sections4
+          (coff_sections.metadata-section
+            coff_sections.rsrc-id
+            ".rsrc"
+            (compiler-backend-object-manifest-resource-records)))))
+    (cobj.compiler-object-section-builder-finish sections4)))
 
 (define (compiler-backend-object-image-symbols
   [symbols : cobj.CompilerObjectSymbolBuilder]
@@ -1134,7 +1209,7 @@
             compiler-backend-object-manifest-label)
           (Local)
           (Data)
-          (Some (Rsrc))))
+          (Some coff_sections.rsrc-id)))
       symbols)))
 
 (define (compiler-backend-object-image-relocations
@@ -1145,7 +1220,7 @@
       (cobj.compiler-object-relocation-builder-push
         relocations
         (Relocation
-          (Rsrc)
+          coff_sections.rsrc-id
           (compiler-backend-object-global-shared-view
             compiler-backend-object-rsrc-data-label)
           (Addr32Nb)
@@ -1199,14 +1274,16 @@
         with-macro-unwind)]
     [final-parts : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-bss with-entry (Zero 0))]
+    [pdata (compiler-backend-object-take-metadata (&mut final-parts) 0)]
+    [xdata (compiler-backend-object-take-metadata (&mut final-parts) 1)]
     (cobj.CompilerObjectImage
       (compiler-backend-object-image-sections
         final-parts.text
         final-parts.data
         final-parts.rodata
         final-parts.bss
-        final-parts.pdata
-        final-parts.xdata
+        pdata
+        xdata
         emit-native-entry)
       (compiler-backend-object-image-symbols
         final-parts.symbols

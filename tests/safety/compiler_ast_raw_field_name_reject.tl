@@ -7,5 +7,5 @@
   (let
     [raw : i64 -1]
     [field : ast.AstFieldDef
-      (ast.AstFieldDef.Def raw (ast.AstType.I64) ast.AstFieldCleanup.No)]
+      (ast.AstFieldDef.Def raw (ast.AstType.I64) ast.AstFieldCleanup.No false)]
     0))

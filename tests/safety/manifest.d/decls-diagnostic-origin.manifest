@@ -1,0 +1,2 @@
+decls_author_argument_reject|check-fail|tests/safety/decls_author_argument_reject.tl|tests/safety/decls_author_argument_reject.tl:11:1|error[E0505]: reviewer
+decls_diagnostic_origin|check-fail|tests/safety/decls_diagnostic_origin/caller.tl|tests/safety/decls_diagnostic_origin/provider.tl:2:4|error[E0501]: typecheck: module-scope macro call does not name a macro: no-such

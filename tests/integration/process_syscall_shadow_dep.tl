@@ -10,12 +10,11 @@
         linux
         (unsafe
           (not (ptr-null? (program-envp))))
-        (begin
-          (let
-            [_envp : (Ptr (Ptr u8))
-              (unsafe
-                (program-envp))]
-            true)))]
+        (let
+          [_envp : (Ptr (Ptr u8))
+            (unsafe
+              (program-envp))]
+          true))]
     [syscall-ok : bool
       (cfg
         linux

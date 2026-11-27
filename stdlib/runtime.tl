@@ -200,16 +200,17 @@
 
 ;: Map a stdio fd (0/1/2) to its Windows standard handle, else treat the fd
 ;: value as the handle directly. Matches the former `_write` shim behavior.
+;: Keep this prelude helper free of core macros (such as `cond`) so compiling
+;: a macro-free program against source `stdlib/runtime.tl` takes the
+;: macro-detach fast path.
 (cfg
   windows
   (define (runtime-windows-fd-handle [fd : i64]) : i64
-    (if (= fd 0)
-      (runtime-windows-get-std-handle (cast -10 : i32))
-      (if (= fd 1)
-        (runtime-windows-get-std-handle (cast -11 : i32))
-        (if (= fd 2)
-          (runtime-windows-get-std-handle (cast -12 : i32))
-          fd)))))
+    (match fd
+      [0 (runtime-windows-get-std-handle (cast -10 : i32))]
+      [1 (runtime-windows-get-std-handle (cast -11 : i32))]
+      [2 (runtime-windows-get-std-handle (cast -12 : i32))]
+      [_ fd])))
 
 ;: Write `count` bytes from `buf` to `fd`; returns the bytes written or `-1`.
 ;: The caller must provide a live initialized readable range of at least
@@ -254,13 +255,16 @@
 (define (abort-write [message : (& message str)]) : unit
   (let
     [len : i64 (string-length message)]
-    [data : (Ptr u8)
-      (unsafe
-        (string-data message))]
-    ;; MESSAGE owns exactly LEN initialized bytes for this immediate write.
-    (unsafe
-      (os-write 2 data len))
-    unit))
+    (if (> len 0)
+      (let
+        [data : (Ptr u8)
+          (unsafe
+            (string-data message))]
+        ;; MESSAGE owns exactly LEN initialized bytes for this immediate write.
+        (unsafe
+          (os-write 2 data len))
+        unit)
+      unit)))
 
 ;: Write the first `len` bytes (at most 8) of `word`, least significant byte
 ;: first, to stderr. Short fixed text on the abort paths is spelled this way so
@@ -1116,10 +1120,10 @@
 ;: Exported as the fixed `tl_abort_string` symbol so `(panic …)` call sites and
 ;: the runtime's own error paths reach it unchanged (replaces the former
 ;: hand-written Linux/Windows `tl_abort_string` asm).
-(define (abort-string [message : (& message str)])
+(define (abort-string [message : String])
   (:export-symbol "tl_abort_string") : never
   (begin
-    (abort-write message)
+    (abort-write (& message))
     (cfg compiler-backtrace (abort-exit 134) (os-exit 134))))
 
 ;; `typelisp test` enables this process-local state in its generated harness.
@@ -1279,27 +1283,32 @@
 
 ;: Build a borrowed `str` view record. `start` and `len` must be non-negative,
 ;: their sum must not overflow or exceed `text`, and `text` must outlive every
-;: use of the result. `String` has the same two-word runtime layout as a
-;: borrowed str record; this return value is only an ABI carrier for the
-;: compiler-generated extern typed as `(& text str)`, never an owned String.
+;: use of the result. A borrowed `str` is a pointer to a `{data_ptr, len}`
+;: pair; returning `(Ptr u8)` matches that pointer ABI on both stage0 and stage1+.
 (unsafe
   (define (str-view [text : (& text str)] [start : i64] [len : i64])
-    (:export-symbol "tl_str_view") : String
+    (:export-symbol "tl_str_view") : (Ptr u8)
     (let
       [src : (Ptr u8)
-        (unsafe
-          (ptr-offset (string-data text) start))]
+        (if (= len 0)
+          (unsafe
+            (int->ptr (cast 0 : u64) : (Ptr u8)))
+          (unsafe
+            (ptr-offset (string-data text) start)))]
       [home : i64 (runtime-arena-current)]
       [view-arena : i64 (str-view-arena-get)]
       (unsafe
         (runtime-arena-set view-arena))
       (let
-        [view : String
-          (unsafe
-            (string-from-bytes src len))]
+        [slot : (MutPtr u8) (runtime-alloc 16)]
         (unsafe
           (runtime-arena-set home))
-        view))))
+        (unsafe
+          (ptr-write! (ptr-cast slot : (MutPtr (Ptr u8))) src))
+        (unsafe
+          (ptr-write! (ptr-cast (ptr-offset slot 8) : (MutPtr i64)) len))
+        (unsafe
+          (ptr-cast slot : (Ptr u8)))))))
 
 ;; This is the low-level compatibility primitive used to implement public
 ;; string building and cannot depend on `stdlib.str_cat`.

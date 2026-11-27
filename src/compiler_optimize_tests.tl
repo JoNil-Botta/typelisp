@@ -89,7 +89,7 @@
         (str_cat.str-cat
           (cond
             [(= mode 1) "copy_bytes %3, %0, 8\n"]
-            [(= mode 2) "store_owned %12 -> %3 : String\n"]
+            [(= mode 2) "store_owned %12 -> %3 : (__tl_dyn-array i64)\n"]
             [else "store_ptr %3, 11 : i64\n"])
           (str_cat.str-cat
             "%4 = gep %3, 8 : u8\n"
@@ -182,7 +182,8 @@
 (define (compiler-optimize-ctor-adopt-loop-self-test) : i64
   (let
     [params : ir.CompilerIrParamSeq
-      (irt.params "source=%0:u64, owner=%12:String, cond=%13:bool")]
+      (irt.params
+        "source=%0:u64, owner=%12:(__tl_dyn-array i64), cond=%13:bool")]
     [mode : i64 0]
     (while (< mode 5)
       (let
@@ -217,7 +218,7 @@
 (define (compiler-optimize-ctor-adopt-self-test) : i64
   (let
     [params : ir.CompilerIrParamSeq
-      (irt.params "source=%0:u64, owner=%12:String")]
+      (irt.params "source=%0:u64, owner=%12:(__tl_dyn-array i64)")]
     [mode : i64 0]
     (while (<= mode 20)
       (let
@@ -5654,7 +5655,7 @@
                 (opt-agsplit-gep 2 1 8)
                 (opt-agsplit-store-literal 2 11)
                 (opt-agsplit-load 3 2)
-                (irt.instr "store_owned %3 -> %1 : String")
+                (irt.instr "store_owned %3 -> %1 : (__tl_dyn-array i64)")
                 (irt.instr "return %3"))))
           6)]
       (opt-agsplit-count-function func (opt-agsplit-kind-tl-alloc) 0))
@@ -12039,8 +12040,8 @@
     (ir.CompilerIrInstr.Store symbols.lit (I64 5) (I64))
     ;; neg <- -3
     (ir.CompilerIrInstr.Store symbols.neg (I64 (- 0 3)) (I64))
-    ;; len <- (string-length @text): load (gep @text, 1) : i64
-    (ir.CompilerIrInstr.Gep 1 (Global symbols.text) (I64 1) (I64))
+    ;; len <- (string-length (& text)): load (gep &@text, 1) : i64
+    (ir.CompilerIrInstr.Gep 1 (GlobalAddr symbols.text) (I64 1) (I64))
     (ir.CompilerIrInstr.Load 2 (Var 1) (I64))
     (ir.CompilerIrInstr.Store symbols.len (Var 2) (I64))
     ;; plen <- (array-length p), p the header parameter, through one Mov copy
@@ -18486,7 +18487,9 @@
         (opt.opt-inline-checked-adopt-literals!))]
     [recorded : i64 (opt.opt-inline-checked-literal-count-now)]
     [pinned : i64
-      (match (opt.opt-inline-checked-specialized forwarder)
+      (match (opt.opt-inline-checked-specialized
+        (ast.ast-node-pool-reader-type-segment-bases)
+        forwarder)
         [(Some special)
           (opt-inline-entry-literal-movs (opt.opt-function-blocks special))]
         [(No) (- 0 1)])]
@@ -18496,7 +18499,9 @@
         (opt.opt-inline-checked-record-literals! no-args)
         (opt.opt-inline-checked-adopt-literals!))]
     [unpinned? : bool
-      (match (opt.opt-inline-checked-specialized forwarder)
+      (match (opt.opt-inline-checked-specialized
+        (ast.ast-node-pool-reader-type-segment-bases)
+        forwarder)
         [(No) true]
         [(Some _) false])]
     (cond
@@ -32549,9 +32554,10 @@
 
 (define (opt-ssa-fixed-handle-boundary-ok?) : bool
   (and
-    (let
-      [ty (ast.AstType.String)]
-      (opt.opt-ssa-register-value-type? ty))
+    (not
+      (let
+        [ty (ast.AstType.String)]
+        (opt.opt-ssa-register-value-type? ty)))
     (let
       [ty (ast.AstType.Str)]
       (opt.opt-ssa-register-value-type? ty))
@@ -33158,7 +33164,6 @@
         (& unsupported-dst))]
     (cond
       [(not (opt-ssa-fixed-handle-boundary-ok?)) 1]
-      [(not (opt-ssa-fixed-handle-diamond-ok? (String))) 2]
       [(not (opt-ssa-fixed-handle-diamond-ok? (Str))) 3]
       [(not
           (opt-ssa-fixed-handle-diamond-ok?
@@ -33167,7 +33172,7 @@
       [(not (opt-ssa-fixed-handle-diamond-ok? array-ty)) 5]
       [(not (opt-ssa-fixed-handle-diamond-ok? dyn-array-ty)) 6]
       [(not (opt-ssa-fixed-handle-diamond-ok? box-ty)) 7]
-      [(not (opt-ssa-fixed-handle-loop-ok? (String))) 8]
+      [(not (opt-ssa-fixed-handle-loop-ok? (Str))) 8]
       [(not (opt-ssa-fixed-handle-loop-ok? func-ty)) 9]
       [(not
           (opt.opt-function-eq
@@ -49333,7 +49338,7 @@ exit:
 ;;      bound counts i64 elements, not the stride the address uses
 (define (opt-licm-bound-params) : ir.CompilerIrParamSeq
   (irt.params
-    "cond=%0:bool, array=%1:(__tl_dyn-array i64), k=%2:i64, other=%3:(__tl_dyn-array i64), text=%23:String"))
+    "cond=%0:bool, array=%1:(__tl_dyn-array i64), k=%2:i64, other=%3:(__tl_dyn-array i64), text=%23:str"))
 
 (define (opt-licm-bound-entry [mode : i64]) : ir.CompilerIrInstrSeq
   (let
@@ -63962,7 +63967,7 @@ done:
         (ir.compiler-ir-label "sl_data")
         (opt-test-instrs-with-tail
           (irt.instrs (string.copy (& case.body)))
-          (ir.CompilerIrInstr.Mov 0 (String (string.copy (& case.text))) (Str)))))
+          (ir.CompilerIrInstr.Mov 0 (StrDesc (string.copy (& case.text))) (Str)))))
     (string.copy (& case.params))
     (string.copy (& case.expected))
     (string.copy (& case.label))))
@@ -64305,7 +64310,7 @@ done:
           (opt-test-instrs-with-tail
             (irt.instrs
               "%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n%4 = load %3 : u32\nreturn")
-            (ir.CompilerIrInstr.Gep 1 (String "abcd") (I64 0) (U8)))))
+            (ir.CompilerIrInstr.Gep 1 (StrDesc "abcd") (I64 0) (U8)))))
       ""
       "%4 = mov 1684234849 : u32"
       "direct literal descriptor")
@@ -64317,8 +64322,8 @@ done:
             (irt.instrs "%4 = load %1 : i64\nreturn")
             (ir.CompilerIrInstr.Gep 1 (String "abcdefgh") (I64 0) (U8)))))
       ""
-      "%4 = load %1 : i64"
-      "descriptor word is not literal data")
+      "%4 = mov 7523094288207667809 : i64"
+      "direct literal data word folds to bytes")
     (opt-sl-data-test-blocks!
       (ir.compiler-ir-blocks
         (ir.CompilerIrBlock.Block
@@ -64326,7 +64331,7 @@ done:
           (opt-test-instrs-with-tail
             (irt.instrs
               "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\njump sl_data_next")
-            (ir.CompilerIrInstr.Mov 0 (String "abcd") (Str))))
+            (ir.CompilerIrInstr.Mov 0 (StrDesc "abcd") (Str))))
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "sl_data_next")
           (irt.instrs "%3 = gep %2, 1 : u8\n%4 = load %3 : u16\nreturn")))
@@ -87923,9 +87928,9 @@ return
       (ast.ast-node-pool-context-new-with-capacities 4 16)]
     [interns : ci.InternCompatState (ci.intern-compat-state-capture-active)]
     [owner-id : i64 (ir.compiler-ir-symbol "owner")]
-    [str-id : i64
-      (ast.ast-node-pool-context-type-push pools (ast.AstType.String))]
     [i64-id : i64 (ast.ast-node-pool-context-type-push pools (ast.AstType.I64))]
+    [str-id : i64
+      (ast.ast-node-pool-context-type-push pools (ast.AstType.DynArray i64-id))]
     [reg-str-ty : ast.AstType (ast.AstType.Region owner-id str-id)]
     [reg-str-id : i64
       (ast.ast-node-pool-context-type-push
@@ -90548,6 +90553,297 @@ inl.entry.0.cont:
               [_ false])
             "mask SPMD arg accepts var-to-var copy"))]
       [_ (test.assert-true false "expected SpmdCall instruction")])))
+
+(test
+  load-header-set-earlier-block-addr-of-string-unstable
+  (let
+    [type-segment-bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [params : ir.CompilerIrParamSeq (ir.compiler-ir-param-seq-empty)]
+    [b0-builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity 2)]
+    [b1-builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity 5)]
+    [_init-b0 : unit
+      (begin
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b0-builder)
+          (ir.CompilerIrInstr.AddrOf 1 0 0))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b0-builder)
+          (ir.CompilerIrInstr.Jump 1)))]
+    [_init-b1 : unit
+      (begin
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b1-builder)
+          (ir.CompilerIrInstr.Mov
+            0
+            (ir.CompilerIrValue.String "hello")
+            (ast.AstType.String)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b1-builder)
+          (ir.CompilerIrInstr.Word
+            2
+            (ir.CompilerIrValue.Var 0)
+            1
+            (ast.AstType.I64)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b1-builder)
+          (ir.CompilerIrInstr.StorePtr
+            (ir.CompilerIrValue.Var 1)
+            (ir.CompilerIrValue.I64 99)
+            (ast.AstType.I64)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b1-builder)
+          (ir.CompilerIrInstr.Word
+            3
+            (ir.CompilerIrValue.Var 0)
+            1
+            (ast.AstType.I64)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b1-builder)
+          (ir.CompilerIrInstr.Return
+            (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))))]
+    [bb-builder : ir.CompilerIrBlockBuilder
+      (ir.compiler-ir-block-builder-with-capacity 2)]
+    [_init-bb : unit
+      (begin
+        (ir.compiler-ir-block-builder-push!
+          (&mut bb-builder)
+          (ir.CompilerIrBlock.Block
+            0
+            (ir.compiler-ir-instr-builder-to-seq b0-builder)))
+        (ir.compiler-ir-block-builder-push!
+          (&mut bb-builder)
+          (ir.CompilerIrBlock.Block
+            1
+            (ir.compiler-ir-instr-builder-to-seq b1-builder))))]
+    [blocks : ir.CompilerIrBlockList
+      (ir.compiler-ir-block-builder-to-list bb-builder)]
+    [hs-sparse : opt.OptLoadHeaderSet
+      (opt.opt-load-header-set-from-function
+        type-segment-bases
+        (& params)
+        (& blocks))]
+    [hs-dense : opt.OptLoadHeaderSet
+      (opt.opt-load-header-set-from-function-with-size
+        type-segment-bases
+        (& params)
+        (& blocks)
+        8)]
+    (test.assert-true
+      (not (opt.opt-load-slice-var? (& hs-sparse) 0))
+      "sparse header set poisons String var with earlier-block AddrOf out of slice class")
+    (test.assert-true
+      (not (opt.opt-load-header-var? (& hs-sparse) 0))
+      "sparse header set poisons String var with earlier-block AddrOf out of header class")
+    (test.assert-true
+      (not (opt.opt-load-slice-var? (& hs-dense) 0))
+      "dense header set poisons String var with earlier-block AddrOf out of slice class")
+    (test.assert-true
+      (not (opt.opt-load-header-var? (& hs-dense) 0))
+      "dense header set poisons String var with earlier-block AddrOf out of header class")
+    (let
+      [table : opt.OptExprTable (opt.opt-expr-table-new)]
+      [r0 : opt.OptCseResult
+        (opt.opt-slice-word-cse-instr
+          type-segment-bases
+          (& hs-dense)
+          table
+          (ir.CompilerIrInstr.Mov
+            0
+            (ir.CompilerIrValue.String "hello")
+            (ast.AstType.String)))]
+      [t1 : opt.OptExprTable
+        (match r0
+          [(Result next _) next])]
+      [r1 : opt.OptCseResult
+        (opt.opt-slice-word-cse-instr
+          type-segment-bases
+          (& hs-dense)
+          t1
+          (ir.CompilerIrInstr.Word
+            2
+            (ir.CompilerIrValue.Var 0)
+            1
+            (ast.AstType.I64)))]
+      [t2 : opt.OptExprTable
+        (match r1
+          [(Result next _) next])]
+      [r2 : opt.OptCseResult
+        (opt.opt-slice-word-cse-instr
+          type-segment-bases
+          (& hs-dense)
+          t2
+          (ir.CompilerIrInstr.StorePtr
+            (ir.CompilerIrValue.Var 1)
+            (ir.CompilerIrValue.I64 99)
+            (ast.AstType.I64)))]
+      [t3 : opt.OptExprTable
+        (match r2
+          [(Result next _) next])]
+      [r3 : opt.OptCseResult
+        (opt.opt-slice-word-cse-instr
+          type-segment-bases
+          (& hs-dense)
+          t3
+          (ir.CompilerIrInstr.Word
+            3
+            (ir.CompilerIrValue.Var 0)
+            1
+            (ast.AstType.I64)))]
+      (test.assert-true
+        (match r3
+          [(Result _ (Word 3 (Var 0) 1 _)) true]
+          [_ false])
+        "opt-slice-word-cse-instr does not reuse Word across StorePtr on earlier-block AddrOf String"))))
+
+(test
+  load-header-set-addr-of-dyn-array-keeps-header-both-orders
+  (let
+    [type-segment-bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [params : ir.CompilerIrParamSeq (ir.compiler-ir-param-seq-empty)]
+    [dyn-ty : ast.AstType (ast.ast-ty-dyn-array (& (ast.AstType.I64)))]
+    ;; %0: AddrOf BEFORE DynArray def -> 0 -> 5 -> 1 (header, not slice)
+    ;; %1: DynArray def BEFORE AddrOf -> 0 -> 1 -> 1 (header, not slice)
+    ;; %2: String def BEFORE AddrOf   -> 0 -> 3 -> 2 (poisoned: neither header nor slice)
+    [b0-builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity 4)]
+    [b1-builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity 4)]
+    [_init-b0 : unit
+      (begin
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b0-builder)
+          (ir.CompilerIrInstr.AddrOf 3 0 0))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b0-builder)
+          (ir.CompilerIrInstr.Load
+            1
+            (ir.CompilerIrValue.I64 0)
+            (ast.clone-ast-type (& dyn-ty))))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b0-builder)
+          (ir.CompilerIrInstr.Mov
+            2
+            (ir.CompilerIrValue.String "hi")
+            (ast.AstType.String)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b0-builder)
+          (ir.CompilerIrInstr.Jump 1)))]
+    [_init-b1 : unit
+      (begin
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b1-builder)
+          (ir.CompilerIrInstr.Load 0 (ir.CompilerIrValue.I64 0) dyn-ty))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b1-builder)
+          (ir.CompilerIrInstr.AddrOf 4 1 0))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b1-builder)
+          (ir.CompilerIrInstr.AddrOf 5 2 0))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b1-builder)
+          (ir.CompilerIrInstr.Return
+            (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 0)))))]
+    [bb-builder : ir.CompilerIrBlockBuilder
+      (ir.compiler-ir-block-builder-with-capacity 2)]
+    [_init-bb : unit
+      (begin
+        (ir.compiler-ir-block-builder-push!
+          (&mut bb-builder)
+          (ir.CompilerIrBlock.Block
+            0
+            (ir.compiler-ir-instr-builder-to-seq b0-builder)))
+        (ir.compiler-ir-block-builder-push!
+          (&mut bb-builder)
+          (ir.CompilerIrBlock.Block
+            1
+            (ir.compiler-ir-instr-builder-to-seq b1-builder))))]
+    [blocks : ir.CompilerIrBlockList
+      (ir.compiler-ir-block-builder-to-list bb-builder)]
+    [hs-sparse : opt.OptLoadHeaderSet
+      (opt.opt-load-header-set-from-function
+        type-segment-bases
+        (& params)
+        (& blocks))]
+    [hs-dense : opt.OptLoadHeaderSet
+      (opt.opt-load-header-set-from-function-with-size
+        type-segment-bases
+        (& params)
+        (& blocks)
+        8)]
+    (test.assert-true
+      (opt.opt-load-header-var? (& hs-sparse) 0)
+      "sparse: AddrOf before DynArray def keeps code 1 header")
+    (test.assert-true
+      (not (opt.opt-load-slice-var? (& hs-sparse) 0))
+      "sparse: AddrOf before DynArray def is not slice")
+    (test.assert-true
+      (opt.opt-load-header-var? (& hs-dense) 0)
+      "dense: AddrOf before DynArray def keeps code 1 header")
+    (test.assert-true
+      (not (opt.opt-load-slice-var? (& hs-dense) 0))
+      "dense: AddrOf before DynArray def is not slice")
+    (test.assert-true
+      (opt.opt-load-header-var? (& hs-sparse) 1)
+      "sparse: AddrOf after DynArray def keeps code 1 header")
+    (test.assert-true
+      (not (opt.opt-load-slice-var? (& hs-sparse) 1))
+      "sparse: AddrOf after DynArray def is not slice")
+    (test.assert-true
+      (opt.opt-load-header-var? (& hs-dense) 1)
+      "dense: AddrOf after DynArray def keeps code 1 header")
+    (test.assert-true
+      (not (opt.opt-load-slice-var? (& hs-dense) 1))
+      "dense: AddrOf after DynArray def is not slice")
+    (test.assert-true
+      (not (opt.opt-load-header-var? (& hs-sparse) 2))
+      "sparse: AddrOf after String def poisons out of header class")
+    (test.assert-true
+      (not (opt.opt-load-slice-var? (& hs-sparse) 2))
+      "sparse: AddrOf after String def poisons out of slice class")
+    (test.assert-true
+      (not (opt.opt-load-header-var? (& hs-dense) 2))
+      "dense: AddrOf after String def poisons out of header class")
+    (test.assert-true
+      (not (opt.opt-load-slice-var? (& hs-dense) 2))
+      "dense: AddrOf after String def poisons out of slice class")))
+
+(test
+  inline-checked-literal-movs-borrowed-str-uses-strdesc
+  (let
+    [type-segment-bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [params : ir.CompilerIrParamSeq
+      (ir.compiler-ir-param-seq-prepend
+        (ir.CompilerIrParam.Param
+          "borrowed"
+          (ast.ast-ty-ref 0 (& (ast.AstType.Str)))
+          0)
+        (ir.compiler-ir-param-seq-prepend
+          (ir.CompilerIrParam.Param "owned" (ast.AstType.String) 1)
+          (ir.compiler-ir-param-seq-empty)))]
+    (opt.opt-inline-checked-clear-literals-from! 0)
+    (opt.opt-inline-checked-literal-string-set! 0 "abc")
+    (opt.opt-inline-checked-literal-string-set! 1 "xyz")
+    (opt.opt-inline-checked-adopt-literals!)
+    (let
+      [movs : ir.CompilerIrInstrSeq
+        (opt.opt-inline-checked-literal-movs type-segment-bases (& params) 2)]
+      (opt.opt-inline-checked-unpublish-strings!)
+      (test.assert-i64-eq
+        (ir.compiler-ir-instr-seq-count (& movs))
+        2
+        "two literal specialization movs emitted")
+      (test.assert-true
+        (match (ir.compiler-ir-instr-seq-borrow movs 0)
+          [(Mov 0 (StrDesc text) _) (string.eq (& text) "abc")]
+          [_ false])
+        "borrowed (& str) param specializes with StrDesc literal")
+      (test.assert-true
+        (match (ir.compiler-ir-instr-seq-borrow movs 1)
+          [(Mov 1 (String text) _) (string.eq (& text) "xyz")]
+          [_ false])
+        "owned String param specializes with String literal"))))
 
 (define (opt-flag-exit-rotated-test-fn
   [name : String]

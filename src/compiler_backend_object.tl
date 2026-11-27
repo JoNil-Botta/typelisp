@@ -87,10 +87,18 @@
             (be_state.compiler-backend-global-shared-view symbol))
           (LoadRipAddress symbol)))]
     [(String text)
+      (if (= (string.string-length text) 0)
+        (compiler-backend-object-add-mov-imm32 parts 0 "%rax")
+        (compiler-backend-object-literal-address
+          parts
+          site
+          (be_facts.compiler-backend-string-data-label text)
+          program-index.backend-state))]
+    [(StrDesc text)
       (compiler-backend-object-literal-address
         parts
         site
-        (be_operand.compiler-backend-string-fat-label text)
+        (be_operand.compiler-backend-string-desc-label text)
         program-index.backend-state)]
     [(Bytes text)
       (compiler-backend-object-literal-address
@@ -665,7 +673,8 @@
         (be_state.compiler-backend-char-code c)
         reg)]
     [(Unit) (compiler-backend-object-add-mov-imm32 parts 0 reg)]
-    [(or (Global _) (GlobalAddr _) (String _) (Bytes _) (Function _) (F64 _))
+    [(or (Global _) (GlobalAddr _) (String _) (StrDesc _) (Bytes _) (Function _)
+         (F64 _))
       (compiler-backend-object-add-mov-from-rax
         (compiler-backend-object-value-ref parts site (& value) program-index)
         reg)]
@@ -713,17 +722,23 @@
     (compiler-backend-object-store-slot-bytes dst reg)))
 
 (define (compiler-backend-object-addr-of-to-var
+  [backend-state : be_state.CompilerBackendState]
   [parts : object_target.CompilerBackendObjectTargetParts]
   [dst : i64]
   [src : i64]) : object_target.CompilerBackendObjectTargetParts
-  (compiler-backend-object-store-reg-to-var
-    (compiler-backend-object-add-nonempty-bytes
-      parts
-      (compiler-backend-object-lea-rbp-disp-bytes
-        (compiler-backend-object-slot-disp src)
-        "%rax"))
-    dst
-    "%rax"))
+  (let
+    [slot-var : i64
+      (if (>= (be_operand.compiler-backend-group-rank backend-state src) 0)
+        (compiler-backend-object-group-word-var backend-state src 0)
+        src)]
+    (compiler-backend-object-store-reg-to-var
+      (compiler-backend-object-add-nonempty-bytes
+        parts
+        (compiler-backend-object-lea-rbp-disp-bytes
+          (compiler-backend-object-slot-disp slot-var)
+          "%rax"))
+      dst
+      "%rax")))
 
 (define (compiler-backend-object-move-value-to-var
   [parts : object_target.CompilerBackendObjectTargetParts]
@@ -747,13 +762,19 @@
   [backend-state : be_state.CompilerBackendState]
   [var : i64]
   [word-index : i64]) : i64
-  (if (= word-index 0)
-    var
-    (+
+  (let
+    [slot-vars : i64
       (be_state.compiler-backend-function-state-i64
         (be_state.compiler-backend-state-function-state backend-state)
-        be_state.compiler-backend-function-i64-current-slot-vars)
-      var)))
+        be_state.compiler-backend-function-i64-current-slot-vars)]
+    [rank : i64 (be_operand.compiler-backend-group-rank backend-state var)]
+    (if (>= rank 0)
+      (if (= word-index 0)
+        (+ (+ slot-vars (* 2 rank)) 1)
+        (+ slot-vars (* 2 rank)))
+      (if (= word-index 0)
+        var
+        (+ slot-vars var)))))
 
 (define (compiler-backend-object-load-group-word-to-reg
   [backend-state : be_state.CompilerBackendState]
@@ -2581,7 +2602,11 @@
         index
         program-index)]
     [(compiler_ir_types.CompilerIrInstr.AddrOf dst src _)
-      (compiler-backend-object-addr-of-to-var parts dst src)]
+      (compiler-backend-object-addr-of-to-var
+        program-index.backend-state
+        parts
+        dst
+        src)]
     [(compiler_ir_types.CompilerIrInstr.Switch index base cases default-label)
       (compiler-backend-object-switch
         parts
@@ -2939,9 +2964,9 @@
                 (compiler-backend-object-prologue-bytes
                   target
                   (be_facts.compiler-backend-frame-size
-                    (if (> (compiler_liveness.compiler-live-set-count groups) 0)
-                      (* vars 2)
-                      vars))))
+                    (+
+                      vars
+                      (* 2 (compiler_liveness.compiler-live-set-count groups))))))
               target
               (& params)
               0)
@@ -3286,14 +3311,22 @@
         (be_data.compiler-backend-float-object-data ty bits))]
     [(String text)
       (let
-        [symbol : String (be_operand.compiler-backend-string-fat-label text)]
-        (object_target.compiler-backend-object-add-data
-          (object_target.compiler-backend-object-add-data-relocation
-            parts
-            site
-            (Abs64)
-            (be_state.compiler-backend-global-shared-view symbol))
-          (SymbolAddress symbol)))]
+        [n : i64 (string.string-length text)]
+        (if (= n 0)
+          (object_target.compiler-backend-object-add-data
+            (object_target.compiler-backend-object-add-data parts (I64 0))
+            (I64 0))
+          (let
+            [symbol : String (be_facts.compiler-backend-string-data-label text)]
+            (object_target.compiler-backend-object-add-data
+              (object_target.compiler-backend-object-add-data
+                (object_target.compiler-backend-object-add-data-relocation
+                  parts
+                  site
+                  (Abs64)
+                  (be_state.compiler-backend-global-shared-view symbol))
+                (SymbolAddress symbol))
+              (I64 n)))))]
     [(Bytes text)
       (let
         [symbol : String (be_operand.compiler-backend-bytes-fat-label text)]
@@ -3460,6 +3493,53 @@
             (object_target.compiler-backend-object-add-rodata
               out
               (be_state.compiler-backend-global-shared-view record))))
+        (+= i 1))
+      out)))
+
+(define (compiler-backend-object-string-descs
+  [parts : object_target.CompilerBackendObjectTargetParts]
+  [descs : be_state.BackendStringSeq]
+  [index : i64]) : object_target.CompilerBackendObjectTargetParts
+  (if (>= index descs.len)
+    parts
+    (let
+      [out : object_target.CompilerBackendObjectTargetParts
+        (object_target.compiler-backend-object-add-rodata parts (Align 8))]
+      [i : i64 index]
+      (while (< i descs.len)
+        (let
+          [text : (& descs str) (& (array-ref descs.slots i))]
+          [n : i64 (string.string-length text)]
+          [label : String (be_operand.compiler-backend-string-desc-label text)]
+          (set!
+            out
+            (object_target.compiler-backend-object-add-rodata
+              (object_target.compiler-backend-object-symbol-local-section
+                out
+                (string.copy (& label))
+                (Rodata)
+                (Data))
+              (Label (string.copy (& label)))))
+          (if (= n 0)
+            (set!
+              out
+              (object_target.compiler-backend-object-add-rodata
+                (object_target.compiler-backend-object-add-rodata out (I64 0))
+                (I64 0)))
+            (let
+              [data-label : String
+                (be_facts.compiler-backend-string-data-label text)]
+              (set!
+                out
+                (object_target.compiler-backend-object-add-rodata
+                  (object_target.compiler-backend-object-add-rodata
+                    (object_target.compiler-backend-object-add-rodata-relocation
+                      out
+                      label
+                      (Abs64)
+                      (string.copy (& data-label)))
+                    (SymbolAddress data-label))
+                  (I64 n))))))
         (+= i 1))
       out)))
 
@@ -3941,6 +4021,9 @@
     [strings : be_state.BackendStringSeq
       (be_data.compiler-backend-program-collections-strings
         (be_state.compiler-backend-global-shared-view collections))]
+    [str-descs : be_state.BackendStringSeq
+      (be_data.compiler-backend-program-collections-str-descs
+        (be_state.compiler-backend-global-shared-view collections))]
     [bytes : be_state.BackendStringSeq
       (be_data.compiler-backend-program-collections-bytes
         (be_state.compiler-backend-global-shared-view collections))]
@@ -3960,24 +4043,27 @@
               (compiler-backend-object-sign-bit
                 (compiler-backend-object-floats
                   (compiler-backend-object-bytes
-                    (compiler-backend-object-strings
-                      (compiler-backend-object-closure-descriptors
-                        (compiler-backend-object-globals
-                          type-segment-bases
-                          (compiler-backend-object-functions
+                    (compiler-backend-object-string-descs
+                      (compiler-backend-object-strings
+                        (compiler-backend-object-closure-descriptors
+                          (compiler-backend-object-globals
                             type-segment-bases
-                            (object_target.compiler-backend-object-parts-empty)
+                            (compiler-backend-object-functions
+                              type-segment-bases
+                              (object_target.compiler-backend-object-parts-empty)
+                              target
+                              (& functions)
+                              plan
+                              program-index)
                             target
-                            (& functions)
-                            plan
+                            globals
                             program-index)
-                          target
-                          globals
+                          closure-names
+                          0
                           program-index)
-                        closure-names
-                        0
-                        program-index)
-                      strings
+                        strings
+                        0)
+                      str-descs
                       0)
                     bytes
                     0)

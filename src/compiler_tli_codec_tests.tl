@@ -766,7 +766,7 @@
           [entry (& (array-ref directory.entries 0))]
           (test.assert-owned-string-eq
             (sha256.to-hex (& (sha256.Sha256Digest directory.content-sha256)))
-            "cdd94face3ab4695c18f8ab2ce8400184fdb24f924be3ef1f05ee00e1fd1cd9b"
+            "e7536133d1a5164e54b3fb72548127f0f6e6cf837dc6de4751341cada60a4115"
             "independently computed content digest")
           (let
             [index : (Array u8 32) (make-array u8 32)]
@@ -776,7 +776,7 @@
                 (array-ref wire (+ tli.tli-index-digest-offset byte))))
             (test.assert-owned-string-eq
               (sha256.to-hex (& (sha256.Sha256Digest index)))
-              "38e20bbf88c3d4a2bc549b9e29ffdaa5bcceb153d36aee033a395fbfc8b9c62c"
+              "db63901cfd1e18468408a1d6ec675752725f73e5b05882f96a20a35dfde6fb9d"
               "independently computed index digest"))
           (test.assert-owned-string-eq
             (sha256.to-hex (& (sha256.Sha256Digest entry.module-sha256)))

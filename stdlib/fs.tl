@@ -22,7 +22,7 @@
 ;#     (fs.path-join (& left) (& right))))
 ;# ```
 (cfg test (import stdlib.byte_buf))
-(import stdlib.clone)
+(cfg (not windows) (import stdlib.clone))
 (import stdlib.byte_buf_core)
 (import stdlib.comptime)
 (import stdlib.env)
@@ -84,6 +84,7 @@
 ;: interpreting output.
 ;: Linux `mkdir` via the `mkdir` syscall (number 83).
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-syscall-mkdir [path : (Ptr u8)] [mode : i64]) : i64
     (cfg
       windows
@@ -94,6 +95,7 @@
 
 ;: Linux `unlink` via the `unlink` syscall (number 87).
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-syscall-unlink [path : (Ptr u8)]) : i64
     (cfg
       windows
@@ -104,6 +106,7 @@
 
 ;: Linux `rmdir` via the `rmdir` syscall (number 84).
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-syscall-rmdir [path : (Ptr u8)]) : i64
     (cfg
       windows
@@ -114,6 +117,7 @@
 
 ;: Linux `rename` via the `rename` syscall (number 82).
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-syscall-rename [source : (Ptr u8)] [destination : (Ptr u8)]) : i64
     (cfg
       windows
@@ -124,6 +128,7 @@
 
 ;: Linux advisory whole-file lock via the `flock` syscall (number 73).
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-syscall-flock [fd : i64] [operation : i64]) : i64
     (cfg
       windows
@@ -144,6 +149,7 @@
 ;: Returns the buffer pointer on success or a null pointer on error, matching
 ;: the C `getcwd` contract the callers expect.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-syscall-getcwd [buf : (MutPtr u8)] [size : i64]) : (Ptr u8)
     (cfg
       windows
@@ -166,9 +172,13 @@
 ;: Linux `openat` syscall (number 257), used for directory enumeration.
 (unsafe
   (define (linux-syscall-openat
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [dirfd : i64]
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [path : (Ptr u8)]
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [flags : i64]
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [mode : i64]) : i64
     (cfg
       windows
@@ -180,8 +190,11 @@
 ;: Linux `getdents64` syscall (number 217), returning bytes read or -1.
 (unsafe
   (define (linux-syscall-getdents64
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [fd : i64]
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [buf : (MutPtr u8)]
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [count : i64]) : i64
     (cfg
       windows

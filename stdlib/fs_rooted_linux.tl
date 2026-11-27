@@ -1133,8 +1133,11 @@
 ;: Raw Linux `openat` used only to acquire the caller-selected root prefix.
 (unsafe
   (define (linux-rooted-raw-openat
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [dirfd : i64]
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [path : (Ptr u8)]
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [flags : u64]) : i64
     (let
       [injected : i64
@@ -1155,8 +1158,11 @@
 ;: Raw Linux `mkdirat` for one already-validated child component.
 (unsafe
   (define (linux-rooted-raw-mkdirat
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [dirfd : i64]
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [path : (Ptr u8)]
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [mode : u64]) : i64
     (let
       [injected : i64
@@ -1176,8 +1182,11 @@
 ;: Raw Linux `openat2` with an exact 24-byte `open_how`.
 (unsafe
   (define (linux-rooted-raw-openat2
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [dirfd : i64]
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [path : (Ptr u8)]
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [how : FsLinuxOpenHow]) : i64
     (let
       [injected : i64
@@ -1198,8 +1207,11 @@
 ;: Raw Linux `openat2` dedicated to existing-file reopen fault coverage.
 (unsafe
   (define (linux-rooted-raw-reopenat2
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [dirfd : i64]
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [path : (Ptr u8)]
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [how : FsLinuxOpenHow]) : i64
     (let
       [injected : i64
@@ -1220,8 +1232,11 @@
 ;: Raw Linux `openat2` dedicated to existing-directory reopen fault coverage.
 (unsafe
   (define (linux-rooted-raw-reopen-directory-at2
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [dirfd : i64]
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [path : (Ptr u8)]
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [how : FsLinuxOpenHow]) : i64
     (let
       [injected : i64
@@ -1242,6 +1257,7 @@
 
 ;: Raw Linux `fstat` for kind verification on an acquired descriptor.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-rooted-raw-fstat [fd : i64] [statbuf : (MutPtr u8)]) : i64
     (let
       [injected : i64
@@ -1259,6 +1275,7 @@
 
 ;: Raw Linux `fchmod` used after exclusive creation.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-rooted-raw-fchmod [fd : i64] [mode : u64]) : i64
     (let
       [injected : i64
@@ -1274,6 +1291,7 @@
 ;: Raw Linux `lseek(fd, 0, SEEK_SET)` with the rooted boundary's errno and
 ;: fault-injection contract. The legacy I/O wrapper normalizes away errno.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-rooted-raw-rewind [fd : i64]) : i64
     (let
       [injected : i64
@@ -1289,8 +1307,11 @@
 ;: Raw Linux `openat2` dedicated to guard-sidecar create-or-open faults.
 (unsafe
   (define (linux-rooted-raw-guard-openat2
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [dirfd : i64]
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [path : (Ptr u8)]
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [how : FsLinuxOpenHow]) : i64
     (let
       [injected : i64
@@ -1310,6 +1331,7 @@
 
 ;: Raw Linux `flock(fd, LOCK_EX | LOCK_NB)`.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-rooted-raw-lock [fd : i64]) : i64
     (let
       [injected : i64
@@ -1329,6 +1351,7 @@
 
 ;: Raw Linux `flock(fd, LOCK_UN)`.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-rooted-raw-unlock [fd : i64]) : i64
     (let
       [injected : i64
@@ -1356,6 +1379,7 @@
 
 ;: Raw Linux `read`, optionally bounded by the focused short-read hook.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-rooted-raw-read [fd : i64] [data : (MutPtr u8)] [count : i64]) : i64
     (let
       [injected : i64
@@ -1374,6 +1398,7 @@
 
 ;: Raw Linux `write`, optionally bounded by the focused short-write hook.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-rooted-raw-write [fd : i64] [data : (Ptr u8)] [count : i64]) : i64
     (let
       [injected : i64
@@ -1392,6 +1417,7 @@
 
 ;: Raw Linux `fsync` for an explicitly requested durability boundary.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-rooted-raw-fsync [fd : i64]) : i64
     (let
       [injected : i64
@@ -1406,6 +1432,7 @@
 
 ;: Raw Linux `fsync` dedicated to parent-directory durability fault coverage.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-rooted-raw-directory-fsync [fd : i64]) : i64
     (let
       [injected : i64
@@ -1422,9 +1449,13 @@
 ;: Raw direct `renameat` for atomic replace-existing publication.
 (unsafe
   (define (linux-rooted-raw-renameat
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [source-dirfd : i64]
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [source : (Ptr u8)]
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [destination-dirfd : i64]
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [destination : (Ptr u8)]) : i64
     (let
       [injected : i64
@@ -1445,9 +1476,13 @@
 ;: Raw direct `renameat2(RENAME_NOREPLACE)` with no compatibility fallback.
 (unsafe
   (define (linux-rooted-raw-renameat2-noreplace
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [source-dirfd : i64]
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [source : (Ptr u8)]
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [destination-dirfd : i64]
+    ;; lint-allow: unused-variable -- Linux-only syscall parameter
     [destination : (Ptr u8)]) : i64
     (let
       [injected : i64
@@ -1468,6 +1503,7 @@
 
 ;: Raw direct `unlinkat` for one file or symlink directory entry.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-rooted-raw-unlinkat [dirfd : i64] [path : (Ptr u8)]) : i64
     (let
       [injected : i64
@@ -1486,6 +1522,7 @@
 
 ;: Raw direct `unlinkat(AT_REMOVEDIR)` for one exact empty directory.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-rooted-raw-rmdirat [dirfd : i64] [path : (Ptr u8)]) : i64
     (let
       [injected : i64
@@ -1506,6 +1543,7 @@
 ;: so the fault-injection gate cannot leak descriptors. Production and logical
 ;: test code issue exactly one close attempt and never retry EINTR.
 (unsafe
+  ;; lint-allow: unused-variable -- Linux-only syscall parameter
   (define (linux-rooted-raw-close [fd : i64]) : i64
     (let
       [injected : i64
@@ -1514,7 +1552,7 @@
         (begin
           (cfg
             windows
-            -38
+            unit
             (unsafe
               (syscall fs-linux-rooted-syscall-close fd)))
           injected)

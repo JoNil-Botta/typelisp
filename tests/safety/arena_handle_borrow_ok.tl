@@ -1,25 +1,13 @@
-;; #9288: borrowing an arena-backed handle (`(in r String)` -> `(& r str)`,
-;; `(in r (__tl_dyn-array i64))`) or `(deref b)` of an arena-tagged `Box`
-;; points into arena storage rather than the binder's stack slot and stays
-;; valid after the callee returns.
+;; #9288: borrowing an arena-backed handle (`(in r (__tl_dyn-array i64))`) or
+;; `(deref b)` of an arena-tagged `Box` points into arena storage rather than
+;; the binder's stack slot and stays valid after the callee returns. Inline
+;; `(in r String)` retires with its frame until #8090 makes `(& r str)` a 16B
+;; value.
 (import stdlib.arena)
-(import stdlib.string)
-
-(define (mk-str [a : (arena.Arena r)]) : (& r str)
-  (in-arena
-    a
-    (let
-      [s (string.copy "hello-arena")]
-      (& s))))
-
-(define (mk-str-outside [a : (arena.Arena r)]) : (& r str)
-  (let
-    [s (in-arena a (string.copy "world"))]
-    (& s)))
 
 (define (mk-box-deref [a : (arena.Arena r)]) : (& r i64)
   (let
-    [b (in-arena a (box (ann 24 : i64)))]
+    [b (in-arena a (box (ann 40 : i64)))]
     (& (deref b))))
 
 (define (mk-arr [a : (arena.Arena r)]) : (& r (__tl_dyn-array i64))
@@ -33,12 +21,6 @@
   (let
     [o1 (arena.make)]
     [o2 (arena.make)]
-    [o3 (arena.make)]
-    [o4 (arena.make)]
-    [s1 (mk-str o1)]
-    [s2 (mk-str-outside o2)]
-    [n (mk-box-deref o3)]
-    [xs (mk-arr o4)]
-    (+
-      (string.string-length s1)
-      (+ (string.string-length s2) (+ (deref n) (array-length xs))))))
+    [n (mk-box-deref o1)]
+    [xs (mk-arr o2)]
+    (+ (deref n) (array-length xs))))

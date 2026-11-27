@@ -6,7 +6,7 @@
 (define tli-magic : i64
   0x00494c54)
 (define tli-schema-version : i64
-  3)
+  4)
 (define tli-header-size : i64
   144)
 
@@ -264,6 +264,7 @@
   (Bool bool)
   (Char i64)
   (String String)
+  (StrDesc String)
   (Bytes (__tl_dyn-array u8))
   (Unit)
   (StaticArray (__tl_dyn-array u8)))

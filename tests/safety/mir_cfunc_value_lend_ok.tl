@@ -5,11 +5,13 @@
 ;; the argument a field, tuple or array element, a struct or a cleanup owner;
 ;; the calls also run in match arms and loops. Checked only: the callees are C
 ;; symbols.
-(extern (first) : (CFunc non-null (-> String i64)) (:symbol "tl_callee_first"))
-(extern (direct [s : String]) : i64 (:symbol "tl_direct"))
-(extern data-fn (:symbol "tl_data_fn") : (CFunc non-null (-> String i64)))
+(extern (first) : (CFunc non-null (-> (__tl_dyn-array i64) i64)) (:symbol "tl_callee_first"))
+(extern (direct [s : (__tl_dyn-array i64)]) : i64 (:symbol "tl_direct"))
+(extern data-fn (:symbol "tl_data_fn") : (CFunc
+  non-null
+  (-> (__tl_dyn-array i64) i64)))
 
-(define selected : (CFunc non-null (-> String i64))
+(define selected : (CFunc non-null (-> (__tl_dyn-array i64) i64))
   (first))
 
 (define (close-fd [_fd : i64]) : unit
@@ -20,10 +22,10 @@
   (fd i64 (:cleanup close-fd)))
 
 (defstruct Holder
-  (callback (CFunc non-null (-> String i64))))
+  (callback (CFunc non-null (-> (__tl_dyn-array i64) i64))))
 
 (defstruct Named
-  (name String)
+  (name (__tl_dyn-array i64))
   (id i64))
 
 (defenum Pick
@@ -31,12 +33,12 @@
   (B))
 
 (define (sources
-  [callback : (CFunc non-null (-> String i64))]
+  [callback : (CFunc non-null (-> (__tl_dyn-array i64) i64))]
   [h : Holder]
   [shared : (& Holder)]
-  [s : String]) : i64
+  [s : (__tl_dyn-array i64)]) : i64
   (let
-    [local : (CFunc non-null (-> String i64)) (first)]
+    [local : (CFunc non-null (-> (__tl_dyn-array i64) i64)) (first)]
     (+
       (direct s)
       (direct s)
@@ -56,12 +58,13 @@
       ((first) s))))
 
 (define (arguments
-  [callback : (CFunc non-null (-> String i64))]
+  [callback : (CFunc non-null (-> (__tl_dyn-array i64) i64))]
   [n : Named]
   [record : (CFunc non-null (-> Named i64))]) : i64
   (let
-    [pair : (Tuple String i64) (tuple "x" 1)]
-    [items : (Array String 2) (array "x" "y")]
+    [pair : (Tuple (__tl_dyn-array i64) i64) (tuple (__tl_make-array i64 1) 1)]
+    [items : (Array (__tl_dyn-array i64) 2)
+      (array (__tl_make-array i64 1) (__tl_make-array i64 1))]
     (+
       (callback n.name)
       (callback n.name)
@@ -73,9 +76,9 @@
       (record n))))
 
 (define (control
-  [callback : (CFunc non-null (-> String i64))]
+  [callback : (CFunc non-null (-> (__tl_dyn-array i64) i64))]
   [p : Pick]
-  [s : String]) : i64
+  [s : (__tl_dyn-array i64)]) : i64
   (let
     [n : i64 0]
     [total : i64
@@ -102,8 +105,8 @@
         used))))
 
 (define (unchecked
-  [callback : (CFunc unsafe-non-null (-> String i64))]
-  [s : String]) : i64
+  [callback : (CFunc unsafe-non-null (-> (__tl_dyn-array i64) i64))]
+  [s : (__tl_dyn-array i64)]) : i64
   (unsafe
     (+ (callback s) (callback s))))
 

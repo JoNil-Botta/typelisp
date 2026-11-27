@@ -29,9 +29,12 @@ cat > "$FIXTURE" <<'EOF'
 (import stdlib.string)
 
 (define greeting : String "hi")
+(define farewell : String "bye")
 (define answer : i64 42)
+(define (str-len [s : (& r str)]) : i64
+  (string.string-length s))
 (define (len-fn) : i64
-  (string.string-length greeting))
+  (+ (string.string-length greeting) (+ (string.string-length farewell) (str-len "world"))))
 (define fn-value : (-> i64) len-fn)
 (define (main) : i64
   (+ answer (len-fn)))

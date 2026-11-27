@@ -935,6 +935,9 @@
     [(tli.TliCompactValue.String s)
       (tli-write-u8! ctx 8)
       (tli-write-name! ctx s)]
+    [(tli.TliCompactValue.StrDesc s)
+      (tli-write-u8! ctx 12)
+      (tli-write-name! ctx s)]
     [(tli.TliCompactValue.Bytes raw)
       (tli-write-u8! ctx 9)
       (tli-write-u32! ctx (array-length raw))
@@ -3415,6 +3418,7 @@
       [9 (tli.TliCompactValue.Bytes (tli-read-blob! rd))]
       [10 (tli.TliCompactValue.Unit)]
       [11 (tli.TliCompactValue.StaticArray (tli-read-blob! rd))]
+      [12 (tli.TliCompactValue.StrDesc (tli-read-name! rd pool))]
       [_ (tli.TliCompactValue.Unit)])))
 
 (define (tli-read-compact-values!

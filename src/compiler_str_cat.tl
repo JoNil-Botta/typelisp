@@ -30,7 +30,10 @@
 ;; The String a name operand holds or borrows, read in place.
 (defmacro (str-cat-name [name : Expr]) : String
   (if (string.eq (type-kind (comptime.expr-type name)) "ref")
-    `(unsafe
-      (ptr-read (ptr-cast (__tl_array-data (array ,name)) : (Ptr String))))
+    (if (= (size-of (type String)) 16)
+      `(unsafe
+        (string-from-bytes (string-data ,name) (__tl_string_length ,name)))
+      `(unsafe
+        (ptr-read (ptr-cast (__tl_array-data (array ,name)) : (Ptr String)))))
     `(unsafe
       (ptr-read (ptr-addr-of ,name)))))

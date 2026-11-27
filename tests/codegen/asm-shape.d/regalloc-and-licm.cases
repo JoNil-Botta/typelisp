@@ -108,10 +108,11 @@ contains cmpq $2, (%rax)
 count = 1 ^[[:space:]]+movq %r[a-z0-9]+, 16\(%rax\)$
 not-match ^[[:space:]]+movq %r[a-z0-9]+, (8|24)?\(%rax\)$
 in fn _tl_hashmap_slot_update_shape_stdlib_hashmap_generated_String_i64_set_occupied_value_bang
-contains shlq $5
+count = 1 ^[[:space:]]+leaq \(%r[a-z0-9]+,%r[a-z0-9]+,4\), %r[a-z0-9]+$
+count = 1 ^[[:space:]]+leaq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
 contains cmpq $2, (%rax)
-count = 1 ^[[:space:]]+movq %r[a-z0-9]+, 16\(%rax\)$
-not-match ^[[:space:]]+movq %r[a-z0-9]+, (8|24)?\(%rax\)$
+count = 1 ^[[:space:]]+movq %r[a-z0-9]+, 24\(%rax\)$
+not-match ^[[:space:]]+movq %r[a-z0-9]+, (8|16|32)?\(%rax\)$
 not-contains string_copy
 
 # Parameter pin intervals end at the last use, so neither function spills.

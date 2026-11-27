@@ -57,8 +57,8 @@
     ok))
 
 (define (debug-expected-runtime-bytes [rendered : (& rendered str)]) : i64
-  ;; One aligned backing-byte allocation plus the normal 16-byte String handle.
-  (+ 16 (* 8 (/ (+ (string.string-length rendered) 7) 8))))
+  ;; Inline 16-byte String (#7962): only the aligned backing-byte allocation.
+  (* 8 (/ (+ (string.string-length rendered) 7) 8)))
 
 (define (debug-exhaustive-byte-table-ok?) : bool
   (let

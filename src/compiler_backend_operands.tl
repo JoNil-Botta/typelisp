@@ -2163,10 +2163,10 @@
               type-segment-bases
               inner)]
           (compiler-backend-type-size type-segment-bases ty))]
+      [(String) 16]
       [(or (I64) (U64) (F64) (CFunc _ _) (Func _ _) (Tuple _) (Array _ _)
            (DynArray _) (Box _) (Ptr _) (MutPtr _) (Enum _) (EnumArgs _ _)
-           (Struct _) (StructArgs _ _) (String) (Str) (Bytes) (Var _)
-           (VarArgs _ _))
+           (Struct _) (StructArgs _ _) (Str) (Bytes) (Var _) (VarArgs _ _))
         8])))
 
 (define (compiler-backend-intlike-scalar-type?
@@ -2213,8 +2213,17 @@
         (-= i 1)))
     hash))
 
-(define (compiler-backend-string-fat-label [text : (& text str)]) : String
-  (str_cat.str-cat ".L_tl_str_" (compiler-backend-string-label-suffix text)))
+(define (compiler-backend-string-data-label [text : (& text str)]) : String
+  (str_cat.str-cat
+    ".L_tl_str_data_"
+    (compiler-backend-string-label-suffix text)))
+
+(define (compiler-backend-string-desc-label [text : (& text str)]) : String
+  (if (= (string.string-length text) 0)
+    ".L_tl_str_empty"
+    (str_cat.str-cat
+      ".L_tl_str_desc_"
+      (compiler-backend-string-label-suffix text))))
 
 (define (compiler-backend-bytes-fat-label [text : (& text str)]) : String
   (str_cat.str-cat ".L_tl_bin_" (compiler-backend-string-label-suffix text)))
@@ -2412,9 +2421,18 @@
             ""
             "backend: f64 values are not supported yet")))]
     [(String text)
+      (if (= (string.string-length text) 0)
+        (compiler-backend-emit-load-i64-immediate-into out 0 reg)
+        (compiler-backend-emit-literal-address-into
+          out
+          (compiler-backend-string-data-label text)
+          reg
+          backend-state))
+      (Ok "")]
+    [(StrDesc text)
       (compiler-backend-emit-literal-address-into
         out
-        (compiler-backend-string-fat-label text)
+        (compiler-backend-string-desc-label text)
         reg
         backend-state)
       (Ok "")]

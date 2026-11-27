@@ -38,8 +38,7 @@
     (ptr-read (ptr-addr-of ,place))))
 
 (define (chooser-string-shared-view [value : (& value str)]) : String
-  (unsafe
-    (ptr-read (ptr-cast (__tl_array-data (array value)) : (Ptr String)))))
+  (string.copy value))
 
 ;: Kind tags: 0 = PR (review), 1 = ready-for-implementation issue (implement),
 ;: 2 = research/triage issue.

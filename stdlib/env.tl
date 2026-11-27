@@ -355,9 +355,7 @@
   (unsafe
     (define (env-getenv-ptr-windows [name : (& name str)]) : (Ptr u8)
       (let
-        [p : (Ptr u8)
-          (unsafe
-            (env-win-get-environment-strings))]
+        [p : (Ptr u8) (env-win-get-environment-strings)]
         [result : (Ptr u8) (ptr-null : (Ptr u8))]
         [stop : bool false]
         (while (not stop)

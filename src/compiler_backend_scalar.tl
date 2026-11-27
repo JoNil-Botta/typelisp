@@ -4788,94 +4788,96 @@
   [program-index : be_state.CompilerBackendProgramIndex]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
-  (if (= words.len 2)
-    (let
-      [w0 (compiler_ir_types.compiler-ir-value-seq-borrow words 0)]
-      [w1 (compiler_ir_types.compiler-ir-value-seq-borrow words 1)]
-      [w0-sse : bool
-        (be_facts.compiler-backend-group-word-sse?
-          type-segment-bases
-          program-index
-          ty
-          0)]
-      [w1-sse : bool
-        (be_facts.compiler-backend-group-word-sse?
-          type-segment-bases
-          program-index
-          ty
-          1)]
-      (match (be_operand.compiler-backend-emit-assignment-lookup
-        backend-state
-        assignments
-        dst)
-        [(Some location)
-          (match location
-            [(RegisterPair reg-a reg-b)
+  (if (be_facts.compiler-backend-const-pack-var? backend-state dst)
+    (Ok "")
+    (if (= words.len 2)
+      (let
+        [w0 (compiler_ir_types.compiler-ir-value-seq-borrow words 0)]
+        [w1 (compiler_ir_types.compiler-ir-value-seq-borrow words 1)]
+        [w0-sse : bool
+          (be_facts.compiler-backend-group-word-sse?
+            type-segment-bases
+            program-index
+            ty
+            0)]
+        [w1-sse : bool
+          (be_facts.compiler-backend-group-word-sse?
+            type-segment-bases
+            program-index
+            ty
+            1)]
+        (match (be_operand.compiler-backend-emit-assignment-lookup
+          backend-state
+          assignments
+          dst)
+          [(Some location)
+            (match location
+              [(RegisterPair reg-a reg-b)
+                (compiler-backend-emit-pack-words
+                  type-segment-bases
+                  assignments
+                  w0
+                  w1
+                  (compiler_abi.compiler-abi-register-spelling reg-a)
+                  (compiler_abi.compiler-abi-register-spelling reg-b)
+                  w0-sse
+                  w1-sse
+                  instr-diag
+                  backend-state)]
+              [(Spill offset)
+                ;; spilled group: words at [offset] and [offset-8].
+                (compiler-backend-emit-pack-words
+                  type-segment-bases
+                  assignments
+                  w0
+                  w1
+                  (be_operand.compiler-backend-frame-offset-with-backend-state
+                    backend-state
+                    offset)
+                  (be_operand.compiler-backend-frame-offset-with-backend-state
+                    backend-state
+                    (- offset 8))
+                  w0-sse
+                  w1-sse
+                  instr-diag
+                  backend-state)]
+              [_
+                (be_state.compiler-backend-instr-error
+                  instr-diag
+                  "backend: CompilerIrInstr.Pack dst is not a register-group location")])]
+          [(No)
+            ;; stack-only: the group var lives in two stack slots.
+            (let
+              [dst0
+                (try
+                  (compiler-backend-group-word-operand-with-backend-state
+                    assignments
+                    dst
+                    0
+                    vars
+                    backend-state))]
+              [dst1
+                (try
+                  (compiler-backend-group-word-operand-with-backend-state
+                    assignments
+                    dst
+                    1
+                    vars
+                    backend-state))]
               (compiler-backend-emit-pack-words
                 type-segment-bases
                 assignments
                 w0
                 w1
-                (compiler_abi.compiler-abi-register-spelling reg-a)
-                (compiler_abi.compiler-abi-register-spelling reg-b)
+                dst0
+                dst1
                 w0-sse
                 w1-sse
                 instr-diag
-                backend-state)]
-            [(Spill offset)
-              ;; spilled group: words at [offset] and [offset-8].
-              (compiler-backend-emit-pack-words
-                type-segment-bases
-                assignments
-                w0
-                w1
-                (be_operand.compiler-backend-frame-offset-with-backend-state
-                  backend-state
-                  offset)
-                (be_operand.compiler-backend-frame-offset-with-backend-state
-                  backend-state
-                  (- offset 8))
-                w0-sse
-                w1-sse
-                instr-diag
-                backend-state)]
-            [_
-              (be_state.compiler-backend-instr-error
-                instr-diag
-                "backend: CompilerIrInstr.Pack dst is not a register-group location")])]
-        [(No)
-          ;; stack-only: the group var lives in two stack slots.
-          (let
-            [dst0
-              (try
-                (compiler-backend-group-word-operand-with-backend-state
-                  assignments
-                  dst
-                  0
-                  vars
-                  backend-state))]
-            [dst1
-              (try
-                (compiler-backend-group-word-operand-with-backend-state
-                  assignments
-                  dst
-                  1
-                  vars
-                  backend-state))]
-            (compiler-backend-emit-pack-words
-              type-segment-bases
-              assignments
-              w0
-              w1
-              dst0
-              dst1
-              w0-sse
-              w1-sse
-              instr-diag
-              backend-state))]))
-    (be_state.compiler-backend-instr-error
-      instr-diag
-      "backend: CompilerIrInstr.Pack requires exactly two words")))
+                backend-state))]))
+      (be_state.compiler-backend-instr-error
+        instr-diag
+        "backend: CompilerIrInstr.Pack requires exactly two words"))))
 
 ;; Extract word `index` of a register-group value into `dst`'s home.
 (define (compiler-backend-emit-word
@@ -5080,41 +5082,68 @@
   [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
   (match value
     [(Var v)
-      (let
-        [word0
-          (try
-            (compiler-backend-group-word-operand-with-backend-state
-              assignments
-              v
-              0
-              vars
-              backend-state))]
-        [word1
-          (try
-            (compiler-backend-group-word-operand-with-backend-state
-              assignments
-              v
-              1
-              vars
-              backend-state))]
-        (Ok
-          (str_cat.str-cat
-            (compiler-backend-emit-group-word-move
-              word0
-              reg0
-              (be_facts.compiler-backend-group-word-sse?
-                type-segment-bases
-                program-index
-                ty
-                0))
-            (compiler-backend-emit-group-word-move
-              word1
-              reg1
-              (be_facts.compiler-backend-group-word-sse?
-                type-segment-bases
-                program-index
-                ty
-                1)))))]
+      (match (be_facts.compiler-backend-const-pack-word backend-state v 0)
+        [(Some w0)
+          (match (be_facts.compiler-backend-const-pack-word backend-state v 1)
+            [(Some w1)
+              (let
+                [a0
+                  (try
+                    (be_operand.compiler-backend-emit-load-value
+                      assignments
+                      (& w0)
+                      (string.copy reg0)
+                      backend-state))]
+                [a1
+                  (try
+                    (be_operand.compiler-backend-emit-load-value
+                      assignments
+                      (& w1)
+                      (string.copy reg1)
+                      backend-state))]
+                (Ok (str_cat.str-cat a0 a1)))]
+            [(No)
+              (Err
+                (box
+                  (compiler_diagnostic.compiler-diagnostic-at-start
+                    ""
+                    "backend: const-pack missing word 1")))])]
+        [(No)
+          (let
+            [word0
+              (try
+                (compiler-backend-group-word-operand-with-backend-state
+                  assignments
+                  v
+                  0
+                  vars
+                  backend-state))]
+            [word1
+              (try
+                (compiler-backend-group-word-operand-with-backend-state
+                  assignments
+                  v
+                  1
+                  vars
+                  backend-state))]
+            (Ok
+              (str_cat.str-cat
+                (compiler-backend-emit-group-word-move
+                  word0
+                  reg0
+                  (be_facts.compiler-backend-group-word-sse?
+                    type-segment-bases
+                    program-index
+                    ty
+                    0))
+                (compiler-backend-emit-group-word-move
+                  word1
+                  reg1
+                  (be_facts.compiler-backend-group-word-sse?
+                    type-segment-bases
+                    program-index
+                    ty
+                    1)))))])]
     [_
       (Err
         (box
@@ -5419,6 +5448,37 @@
 ;; Push a group call-arg's two words to the outgoing stack frame at
 ;; consecutive slots (word0 -> stack-idx, word1 -> stack-idx+1), bit-copying
 ;; each eightbyte through a scavenged GP register so no in-flight arg is clobbered.
+(define (compiler-backend-emit-const-pack-stack-word
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [word : (& compiler_ir_types.CompilerIrValue)]
+  [scratch : String]
+  [slot : String]
+  [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
+  (match word
+    [(I64 k)
+      (match (be_operand.compiler-backend-immediate-i64 backend-state k)
+        [(Some imm) (Ok (str_cat.str-cat "    movq " imm ", " slot "\n"))]
+        [(No)
+          (let
+            [load
+              (try
+                (be_operand.compiler-backend-emit-load-value
+                  assignments
+                  word
+                  (string.copy (& scratch))
+                  backend-state))]
+            (Ok (str_cat.str-cat load "    movq " scratch ", " slot "\n")))])]
+    [_
+      (let
+        [load
+          (try
+            (be_operand.compiler-backend-emit-load-value
+              assignments
+              word
+              (string.copy (& scratch))
+              backend-state))]
+        (Ok (str_cat.str-cat load "    movq " scratch ", " slot "\n")))]))
+
 (define (compiler-backend-emit-group-stack-arg
   [target : be_state.CompilerBackendTarget]
   [convention : compiler_abi.CompilerCallConvention]
@@ -5431,46 +5491,83 @@
   [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
   (match value
     [(Var v)
-      (let
-        [word0
-          (try
-            (compiler-backend-group-word-operand-with-backend-state
-              assignments
-              v
-              0
-              vars
-              backend-state))]
-        [word1
-          (try
-            (compiler-backend-group-word-operand-with-backend-state
-              assignments
-              v
-              1
-              vars
-              backend-state))]
-        [scratch : String
-          (be_operand.compiler-backend-scavenge-reg-here
-            (compiler-backend-group-stack-exclude
-              (be_state.compiler-backend-global-shared-view word1))
-            (compiler-backend-group-stack-exclude-count word1)
-            "%r10"
-            backend-state)]
-        (Ok
-          (str_cat.str-cat
-            (compiler-backend-emit-group-stack-word-copy
-              word0
-              scratch
-              (compiler-backend-outgoing-stack-arg-slot
-                target
-                convention
-                stack-idx))
-            (compiler-backend-emit-group-stack-word-copy
-              word1
-              scratch
-              (compiler-backend-outgoing-stack-arg-slot
-                target
-                convention
-                (+ stack-idx 1))))))]
+      (match (be_facts.compiler-backend-const-pack-word backend-state v 0)
+        [(Some w0)
+          (match (be_facts.compiler-backend-const-pack-word backend-state v 1)
+            [(Some w1)
+              (let
+                [scratch : String
+                  (compiler-backend-stack-call-arg-stage backend-state)]
+                [s0
+                  (try
+                    (compiler-backend-emit-const-pack-stack-word
+                      assignments
+                      (& w0)
+                      (string.copy (& scratch))
+                      (compiler-backend-outgoing-stack-arg-slot
+                        target
+                        convention
+                        stack-idx)
+                      backend-state))]
+                [s1
+                  (try
+                    (compiler-backend-emit-const-pack-stack-word
+                      assignments
+                      (& w1)
+                      scratch
+                      (compiler-backend-outgoing-stack-arg-slot
+                        target
+                        convention
+                        (+ stack-idx 1))
+                      backend-state))]
+                (Ok (str_cat.str-cat s0 s1)))]
+            [(No)
+              (Err
+                (box
+                  (compiler_diagnostic.compiler-diagnostic-at-start
+                    ""
+                    "backend: const-pack missing word 1")))])]
+        [(No)
+          (let
+            [word0
+              (try
+                (compiler-backend-group-word-operand-with-backend-state
+                  assignments
+                  v
+                  0
+                  vars
+                  backend-state))]
+            [word1
+              (try
+                (compiler-backend-group-word-operand-with-backend-state
+                  assignments
+                  v
+                  1
+                  vars
+                  backend-state))]
+            [scratch : String
+              (be_operand.compiler-backend-scavenge-reg-here
+                (compiler-backend-group-stack-exclude
+                  (be_state.compiler-backend-global-shared-view word1))
+                (compiler-backend-group-stack-exclude-count word1)
+                "%r10"
+                backend-state)]
+            (Ok
+              (str_cat.str-cat
+                (compiler-backend-emit-group-stack-word-copy
+                  word0
+                  scratch
+                  (compiler-backend-outgoing-stack-arg-slot
+                    target
+                    convention
+                    stack-idx))
+                (compiler-backend-emit-group-stack-word-copy
+                  word1
+                  scratch
+                  (compiler-backend-outgoing-stack-arg-slot
+                    target
+                    convention
+                    (+ stack-idx 1))))))])]
     [_
       (Err
         (box
@@ -5525,22 +5622,38 @@
     [(Var v)
       (let
         [scratch : String (compiler-backend-stack-call-arg-stage backend-state)]
-        [operand
-          (try
-            (compiler-backend-group-word-operand-with-backend-state
+        (match (be_facts.compiler-backend-const-pack-word
+          backend-state
+          v
+          word-index)
+          [(Some word)
+            (compiler-backend-emit-const-pack-stack-word
               assignments
-              v
-              word-index
-              vars
-              backend-state))]
-        (Ok
-          (compiler-backend-emit-group-stack-word-copy
-            operand
-            scratch
-            (compiler-backend-outgoing-stack-arg-slot
-              target
-              convention
-              stack-idx))))]
+              (& word)
+              scratch
+              (compiler-backend-outgoing-stack-arg-slot
+                target
+                convention
+                stack-idx)
+              backend-state)]
+          [(No)
+            (let
+              [operand
+                (try
+                  (compiler-backend-group-word-operand-with-backend-state
+                    assignments
+                    v
+                    word-index
+                    vars
+                    backend-state))]
+              (Ok
+                (compiler-backend-emit-group-stack-word-copy
+                  operand
+                  scratch
+                  (compiler-backend-outgoing-stack-arg-slot
+                    target
+                    convention
+                    stack-idx))))]))]
     [_
       (Err
         (box
@@ -5599,16 +5712,28 @@
         [(Ok reg)
           (match value
             [(Var v)
-              (let
-                [operand
-                  (try
-                    (compiler-backend-group-word-operand-with-backend-state
-                      assignments
-                      v
-                      word-index
-                      vars
-                      backend-state))]
-                (Ok (compiler-backend-emit-group-word-move operand reg sse?)))]
+              (match (be_facts.compiler-backend-const-pack-word
+                backend-state
+                v
+                word-index)
+                [(Some word)
+                  (be_operand.compiler-backend-emit-load-value
+                    assignments
+                    (& word)
+                    reg
+                    backend-state)]
+                [(No)
+                  (let
+                    [operand
+                      (try
+                        (compiler-backend-group-word-operand-with-backend-state
+                          assignments
+                          v
+                          word-index
+                          vars
+                          backend-state))]
+                    (Ok
+                      (compiler-backend-emit-group-word-move operand reg sse?)))])]
             [_
               (be_state.compiler-backend-instr-error
                 func-diag

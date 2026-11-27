@@ -266,7 +266,9 @@
                 (<=
                   (allocation_profile.compiler-allocation-profile-arena-bump-bytes
                     (lex.spanned-token-buffer-arena-handle-value))
-                  (* 160 1024))))])]
+                  (+
+                    (* 4096 (comptime (size-of (type token.SpannedToken))))
+                    (* 32 1024)))))])]
       (lex.spanned-token-buffer-release!)
       (and
         valid
@@ -350,7 +352,8 @@
   lexer-growth-preserves-records-with-bounded-storage
   (unless
     (scan-lexer-growth-ok?)
-    (io.panic "scan storage: lexer growth changed records or exceeded 160 KiB")))
+    (io.panic
+      "scan storage: lexer growth changed records or exceeded bounded storage")))
 
 (test
   reader-growth-preserves-nested-builders-and-error-reuse

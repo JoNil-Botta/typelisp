@@ -2142,8 +2142,11 @@
 (define (status-expected-absence? [code : i64]) : bool
   (if (= code stdlib.io.io-status-not-found)
     true
-    (if (cfg windows (= code 3) false)
-      true
+    (cfg
+      windows
+      (if (= code 3)
+        true
+        (= code stdlib.io.io-status-not-directory))
       (= code stdlib.io.io-status-not-directory))))
 
 ;: Construct an invalid-path diagnostic from a borrowed path.

@@ -14079,7 +14079,7 @@
         (arena.tl_arena_set enclosing))]
     [captured-stdout : String (lsp-frame-memory-copy-stdout)]
     [captured-stderr : String (string.copy (& lsp-frame-memory-state.stderr))]
-    [transport-head : i64 lsp-frame-memory-state.owner.handle]
+    [transport-head : i64 (arena.raw-handle lsp-frame-memory-state.owner)]
     [_fresh-after : unit (lsp-frame-fresh-session-reset!)]
     [_destroy-session : unit
       (unsafe

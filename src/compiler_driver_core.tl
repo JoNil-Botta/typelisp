@@ -5764,7 +5764,7 @@
       (begin
         (set!
           compiler-driver-pending-frontend-return-arena
-          (__tl-project-field scope.home handle))
+          (arena.raw-handle scope.home))
         (unsafe
           (arena.tl_arena_set (array-ref scope.frontend-arena 0))))]
     [handoff : CompilerDriverCheckedLowerHandoff

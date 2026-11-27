@@ -277,37 +277,35 @@
   [checked-generated-source : bool]) : CompilerSemanticFactRecorder
   (let
     [cell : (__tl_dyn-array CompilerSemanticFactRecorderData)
-      (__tl_make-array CompilerSemanticFactRecorderData 1)]
-    (set!
-      (array-ref cell 0)
-      (CompilerSemanticFactRecorderData
-        (arena.current)
-        (compiler-semantic-facts-new)
-        path
-        (if checked-generated-source
-          CompilerSemanticFactProvenance.CheckedGenerated
-          CompilerSemanticFactProvenance.Source)
-        false
-        ""
-        -1
-        -1
-        (__tl_make-array CompilerSemanticFactFrame 0)
-        0
-        (__tl_make-array CompilerSemanticFactFrame 0)
-        0
-        (__tl_make-array i64 0)
-        0
-        (__tl_make-array i64 0)
-        0
-        (fact_index.with-capacity 32)
-        (slot_index.with-capacity 32)
-        (binding_index.with-capacity 32)
-        (__tl_make-array parser.CompilerParseSemanticOrigin 0)
-        (__tl_make-array bool 0)
-        (__tl_make-array CompilerSemanticFactIdentity 0)
-        (fact_index.with-capacity 32)
-        false
-        false))
+      (__tl_make-array
+        (CompilerSemanticFactRecorderData
+          (arena.current)
+          (compiler-semantic-facts-new)
+          path
+          (if checked-generated-source
+            CompilerSemanticFactProvenance.CheckedGenerated
+            CompilerSemanticFactProvenance.Source)
+          false
+          ""
+          -1
+          -1
+          (__tl_make-array CompilerSemanticFactFrame 0)
+          0
+          (__tl_make-array CompilerSemanticFactFrame 0)
+          0
+          (__tl_make-array i64 0)
+          0
+          (__tl_make-array i64 0)
+          0
+          (fact_index.with-capacity 32)
+          (slot_index.with-capacity 32)
+          (binding_index.with-capacity 32)
+          (__tl_make-array parser.CompilerParseSemanticOrigin 0)
+          (__tl_make-array bool 0)
+          (__tl_make-array CompilerSemanticFactIdentity 0)
+          (fact_index.with-capacity 32)
+          false
+          false))]
     (CompilerSemanticFactRecorder
       (cast
         (unsafe

@@ -72,12 +72,22 @@ if grep -v '^stdlib/.*\.tl$' "$FILES" >/dev/null 2>&1; then
     exit 1
 fi
 
-awk -v outdir="$CHUNK_DIR" -v size="$BATCH_SIZE" '
+awk -v outdir="$CHUNK_DIR" -v size="$BATCH_SIZE" -v test_files="$GATE_STDLIB_TEST_CFG_FILES" '
+    BEGIN {
+        n = split(test_files, paths, " ")
+        for (i = 1; i <= n; i++) test_cfg_files[paths[i]] = 1
+    }
     {
-        chunk = int((NR - 1) / size) + 1
-        path = sprintf("%s/lint.%04d.txt", outdir, chunk)
+        test_cfg = ($0 in test_cfg_files)
+        if (count == 0 || count == size || test_cfg != previous_test_cfg) {
+            if (count != 0) close(path)
+            chunk++
+            count = 0
+            path = sprintf("%s/lint.%04d.txt", outdir, chunk)
+        }
         print $0 >> path
-        if (NR % size == 0) close(path)
+        count++
+        previous_test_cfg = test_cfg
     }
 ' "$FILES"
 
@@ -96,11 +106,18 @@ echo "[stdlib-concat-lint] checking $file_count tracked source(s) in batches of 
 for chunk in "$CHUNK_DIR"/lint.*.txt; do
     [ -f "$chunk" ] || continue
     set --
+    test_cfg=0
     while IFS= read -r source; do
         [ -n "$source" ] || continue
         set -- "$@" "$source"
+        if gate_stdlib_needs_test_cfg "$source"; then
+            test_cfg=1
+        fi
     done < "$chunk"
     [ "$#" -gt 0 ] || continue
+    if [ "$test_cfg" -eq 1 ]; then
+        set -- --cfg test "$@"
+    fi
     batch_count=$((batch_count + 1))
     echo "[stdlib-concat-lint] batch $batch_count"
     run_concat_lint "$@"

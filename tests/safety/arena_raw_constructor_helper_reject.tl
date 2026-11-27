@@ -4,4 +4,4 @@
   (arena.Arena handle))
 
 (define (main) : i64
-  (forge 12345).handle)
+  (arena.raw-handle (forge 0)))

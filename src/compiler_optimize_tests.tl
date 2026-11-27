@@ -31849,20 +31849,21 @@
     (let
       [home : i64 (arena.tl_arena_current)]
       [scratch : arena.Arena (arena.make)]
+      [scratch-id : i64 (arena.raw-handle scratch)]
       [_enter : unit
         (unsafe
-          (arena.tl_arena_set scratch.handle))]
+          (arena.tl_arena_set scratch-id))]
       [blocks : ir.CompilerIrBlockList
         (opt-thread-many-round-merge-blocks preds)]
       [start : i64
         (allocation_profile.compiler-allocation-profile-arena-bump-bytes
-          scratch.handle)]
+          scratch-id)]
       [_result : opt.OptBlockListPassResult
         (opt-thread-pass-result blocks fuel)]
       [bytes : i64
         (-
           (allocation_profile.compiler-allocation-profile-arena-bump-bytes
-            scratch.handle)
+            scratch-id)
           start)]
       (unsafe
         (arena.tl_arena_set home))
@@ -53866,9 +53867,10 @@ done:
     (let
       [home : i64 (arena.tl_arena_current)]
       [scratch : arena.Arena (arena.make)]
+      [scratch-id : i64 (arena.raw-handle scratch)]
       [_enter : unit
         (unsafe
-          (arena.tl_arena_set scratch.handle))]
+          (arena.tl_arena_set scratch-id))]
       [func : ir.CompilerIrFunction
         (opt-rotate-ssa-many-siblings-function loops)]
       [context : opt.OptCfgContext
@@ -53879,14 +53881,14 @@ done:
           (& (opt.opt-function-blocks func)))]
       [start : i64
         (allocation_profile.compiler-allocation-profile-arena-bump-bytes
-          scratch.handle)]
+          scratch-id)]
       [_result : opt.OptFunctionCtxResult
         (opt.opt-rotate-ssa-rounds func context fuel)]
-      [returned? : bool (= (arena.tl_arena_current) scratch.handle)]
+      [returned? : bool (= (arena.tl_arena_current) scratch-id)]
       [bytes : i64
         (-
           (allocation_profile.compiler-allocation-profile-arena-bump-bytes
-            scratch.handle)
+            scratch-id)
           start)]
       (unsafe
         (arena.tl_arena_set home))

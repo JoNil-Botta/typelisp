@@ -855,9 +855,7 @@
 
 (defstruct SelfhostLintUnsafeSurfaceName
   (name String)
-  (requires-unsafe bool)
-  (struct-constructor bool)
-  (declaration-module String))
+  (requires-unsafe bool))
 
 ;; Append-only and read front to back: contiguous slots with a doubling push.
 (defstruct SelfhostLintUnsafeSurfaceNames
@@ -1022,11 +1020,7 @@
             (selfhost-lint-unsafe-surface-names-add
               (SelfhostLintUnsafeSurfaceName
                 (string.copy (ci.intern-str decl.name))
-                decl.was-unsafe
-                (selfhost-lint-unsafe-surface-struct? decl.kind)
-                (if (= root-module 0)
-                  ""
-                  (string.copy (ci.intern-str root-module))))
+                decl.was-unsafe)
               result))
           unit)))
     result))
@@ -1138,42 +1132,27 @@
 
 (define (selfhost-lint-unsafe-surface-add-names!
   [alias : String]
-  [source-module : String]
   [names : SelfhostLintUnsafeSurfaceNames]) : unit
   (let
     [n : i64 names.len]
-    [source-module-id : i64 (ci.intern source-module)]
     (for [index (iterator.range 0 n)]
       (let
         [fact : SelfhostLintUnsafeSurfaceName
           (owned_view.compiler-owned-array-element-shared-view
             names.slots
             index)]
-        [canonical-module-id : i64
-          (if (string.eq fact.declaration-module "")
-            source-module-id
-            (ci.intern fact.declaration-module))]
-        [requires-unsafe : bool
-          (or
-            fact.requires-unsafe
-            (and
-              fact.struct-constructor
-              (tc.tc-struct-constructor-unsafe?
-                (tc.tc-module-name-id-by-id
-                  canonical-module-id
-                  (ci.intern (owned_view.compiler-owned-shared-view fact.name))))))]
         (lint_core.lint-unused-unsafe-classifier-add-exact-name!
           (str_cat.str-cat
             (owned_view.compiler-owned-shared-view alias)
             "."
             (owned_view.compiler-owned-shared-view fact.name))
-          requires-unsafe)
+          fact.requires-unsafe)
         (lint_core.lint-unused-unsafe-classifier-add-exact-name!
           (str_cat.str-cat
             (owned_view.compiler-owned-shared-view alias)
             "/"
             fact.name)
-          requires-unsafe)))))
+          fact.requires-unsafe)))))
 
 (define (selfhost-lint-unsafe-surface-add-local-decls!
   [decls : compiler_load.CompilerLoadSurfaceDeclList]
@@ -1198,12 +1177,7 @@
           (not (= root-module 0))))
         (lint_core.lint-unused-unsafe-classifier-add-exact-name!
           (string.copy (ci.intern-str decl.name))
-          (or
-            decl.was-unsafe
-            (and
-              (selfhost-lint-unsafe-surface-struct? decl.kind)
-              (tc.tc-struct-constructor-unsafe?
-                (tc.tc-module-name-id-by-id root-module decl.name)))))
+          decl.was-unsafe)
         unit)
       ;; A top-level declaration can shadow an import alias. Only qualified
       ;; references consult this root blocker, so unqualified local facts
@@ -1251,10 +1225,7 @@
               [(Miss) unit]
               [(Hit valid names)
                 (if valid
-                  (selfhost-lint-unsafe-surface-add-names!
-                    alias
-                    import-edge.import-path
-                    names)
+                  (selfhost-lint-unsafe-surface-add-names! alias names)
                   unit)])])))))
 
 (define (selfhost-lint-unsafe-surface-prepare!

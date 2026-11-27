@@ -1744,7 +1744,7 @@
 
 ;: Host handle for a crash-released advisory file lock.
 (defstruct FsFileLock
-  (handle i64))
+  (handle i64 (:opaque)))
 
 ;: Result of acquiring an advisory file lock.
 (defenum ResultFsFileLock

@@ -42,3 +42,13 @@ gate_require_compiler() {
         exit 1
     fi
 }
+
+# These fixtures exercise SHA-256's cfg test state fault-injection helpers.
+GATE_STDLIB_TEST_CFG_FILES='stdlib/tests/crypto_hmac_sha256_api.tl stdlib/tests/net_tls_transcript_api.tl'
+
+gate_stdlib_needs_test_cfg() {
+    case " $GATE_STDLIB_TEST_CFG_FILES " in
+        *" $1 "*) return 0 ;;
+        *) return 1 ;;
+    esac
+}

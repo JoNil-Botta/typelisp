@@ -200,14 +200,17 @@
 
 ;: Map a stdio fd (0/1/2) to its Windows standard handle, else treat the fd
 ;: value as the handle directly. Matches the former `_write` shim behavior.
+;: Keep this prelude helper free of core macros (such as `cond`) so compiling
+;: a macro-free program against source `stdlib/runtime.tl` takes the
+;: macro-detach fast path.
 (cfg
   windows
   (define (runtime-windows-fd-handle [fd : i64]) : i64
-    (cond
-      [(= fd 0) (runtime-windows-get-std-handle (cast -10 : i32))]
-      [(= fd 1) (runtime-windows-get-std-handle (cast -11 : i32))]
-      [(= fd 2) (runtime-windows-get-std-handle (cast -12 : i32))]
-      [else fd])))
+    (match fd
+      [0 (runtime-windows-get-std-handle (cast -10 : i32))]
+      [1 (runtime-windows-get-std-handle (cast -11 : i32))]
+      [2 (runtime-windows-get-std-handle (cast -12 : i32))]
+      [_ fd])))
 
 ;: Write `count` bytes from `buf` to `fd`; returns the bytes written or `-1`.
 ;: The caller must provide a live initialized readable range of at least

@@ -3750,6 +3750,7 @@
     false))
 
 (define (compiler-backend-rest-starts-load-compare-branch?
+  [type-segment-bases : i64]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]
   [load-dst : i64]
@@ -3763,6 +3764,7 @@
       (match maybe-cmp
         [(BinOp cmp-dst op lhs rhs cmp-ty)
           (if (and
+            (compiler-backend-load-compare-type? type-segment-bases cmp-ty)
             (be_facts.compiler-backend-compare-op? op)
             (be_operand.compiler-backend-branch-uses-var? lhs load-dst)
             (be_simd.compiler-backend-var-single-use? use-counts cmp-dst)
@@ -4383,7 +4385,7 @@
   [_cmp-dst : i64]
   [op : (& compiler_ir_types.CompilerIrBinOp)]
   [rhs : (& compiler_ir_types.CompilerIrValue)]
-  [_cmp-ty : (& compiler_ast_types.AstType)]
+  [cmp-ty : (& compiler_ast_types.AstType)]
   [true-label : i64]
   [false-label : i64]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
@@ -4398,7 +4400,7 @@
     (be_state.compiler-backend-global-shared-view ptr)
     op
     rhs
-    (be_state.compiler-backend-global-shared-view load-ty)
+    cmp-ty
     true-label
     false-label
     (compiler-backend-fused-compare-fallthrough instrs index fallthrough)
@@ -4471,11 +4473,10 @@
   [offset : compiler_ir_types.CompilerIrValue]
   [elem-ty : compiler_ast_types.AstType]
   [_load-dst : i64]
-  [load-ty : (& compiler_ast_types.AstType)]
   [_cmp-dst : i64]
   [op : (& compiler_ir_types.CompilerIrBinOp)]
   [rhs : (& compiler_ir_types.CompilerIrValue)]
-  [_cmp-ty : (& compiler_ast_types.AstType)]
+  [cmp-ty : (& compiler_ast_types.AstType)]
   [true-label : i64]
   [false-label : i64]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
@@ -4492,7 +4493,7 @@
     (be_state.compiler-backend-global-shared-view elem-ty)
     op
     rhs
-    load-ty
+    cmp-ty
     true-label
     false-label
     (compiler-backend-fused-compare-fallthrough instrs index fallthrough)
@@ -8078,6 +8079,7 @@
                                     load-dst2)
                                   (or
                                     (compiler-backend-rest-starts-load-compare-branch?
+                                      ctx.type-segment-bases
                                       (be_state.compiler-backend-global-shared-view
                                         instrs)
                                       after-load2
@@ -10807,6 +10809,9 @@
                 out))]
           [(BinOp cmp-dst op lhs rhs cmp-ty)
             (if (and
+              (compiler-backend-load-compare-type?
+                ctx.type-segment-bases
+                cmp-ty)
               (be_facts.compiler-backend-compare-op? op)
               (be_operand.compiler-backend-branch-uses-var? lhs load-dst)
               (be_simd.compiler-backend-var-single-use? ctx.use-counts cmp-dst)
@@ -12151,6 +12156,9 @@
                       (match maybe-cmp
                         [(BinOp cmp-dst op lhs rhs cmp-ty)
                           (if (and
+                            (compiler-backend-load-compare-type?
+                              ctx.type-segment-bases
+                              cmp-ty)
                             (be_facts.compiler-backend-compare-op? op)
                             (be_operand.compiler-backend-branch-uses-var?
                               lhs
@@ -12193,7 +12201,6 @@
                                         offset
                                         elem-ty
                                         load-dst
-                                        load-ty
                                         cmp-dst
                                         op
                                         rhs

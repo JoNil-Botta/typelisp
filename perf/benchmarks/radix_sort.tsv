@@ -1,0 +1,2 @@
+suites	instruction-main,realistic-kernel
+benchmark/c-scalar/radix_sort	301541156

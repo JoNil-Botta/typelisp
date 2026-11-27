@@ -1,0 +1,2 @@
+path	required	advisory	reason
+tests/integration/foreach_active_effects.tl	stage2-spmd-simd-comparison,stage2-sde-fallback-spmd-simd	@corpus	Direct fixture input in verify-spmd-simd.sh.

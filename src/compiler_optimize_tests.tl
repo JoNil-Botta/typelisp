@@ -90757,6 +90757,53 @@ inl.entry.0.cont:
       "rotated loop with store on skipped path is refused")))
 
 (test
+  optimizer-flag-exit-rotated-refuses-dead-reader-of-gate-extra
+  (let
+    [func : ir.CompilerIrFunction
+      (opt-flag-exit-rotated-test-fn
+        "flag_exit_rot_dead_extra_reader"
+        "p=%0:(Ptr u8)"
+        (I64)
+        16
+        "entry:
+           jump land
+         land:
+           jump body
+         body:
+           %1 = phi [0, land], [%8, latch] : i64
+           %2 = phi [false, land], [%9, latch] : bool
+           %3 = gep %0, %1 : u8
+           %4 = load %3 : u8
+           %5 = cast %4 : u8 to i64
+           %6 = eq %5, 0 : i64
+           branch %6, latch, step
+         step:
+           %7 = add %1, 1 : i64
+           jump latch
+         latch:
+           %8 = phi [%1, body], [%7, step] : i64
+           %9 = phi [true, body], [%2, step] : bool
+           %11 = not %9 : bool
+           %12 = mov %11 : bool
+           branch %11, body, exit
+         exit:
+           return %8")]
+    [out : ir.CompilerIrFunction (opt.opt-flag-exit-function (& func))]
+    [blocks : ir.CompilerIrBlockList (opt.opt-function-blocks (& out))]
+    (test.assert-true
+      (opt.opt-verify-ok? (& (opt.opt-verify-function (& out))))
+      "rotated latch with dead reader of gate helper passes IR verification")
+    (test.assert-true
+      (match (opt-flag-exit-test-last-instr (& blocks) "latch")
+        [(Some (Branch _ _ _)) true]
+        [_ false])
+      "rotated latch whose gate helper has a dead reader is refused")
+    (test.assert-i64-eq
+      (opt-flag-exit-test-instr-count (& blocks) "latch")
+      5
+      "gate helper %11 is not dropped while dead reader %12 remains")))
+
+(test
   optimizer-thread-not-bool-phi-swaps-targets
   (let
     [blocks : ir.CompilerIrBlockList

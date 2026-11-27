@@ -33854,6 +33854,10 @@
           [else (No)]))]
     [_ (No)]))
 
+;; `raw-uses` is the plain use count, matching `opt-flag-exit-spacer-dead-instr?`.
+;; `opt-flag-exit-drop-instr?` deletes `gate-extra` from `gate`, while dead pure
+;; instructions remain in the IR until DCE; effective use counting discounts
+;; dead readers and would let `gate-extra` be dropped out from under them.
 (define (opt-flag-exit-gate-cond
   [blocks : (& ir.CompilerIrBlockList)]
   [def-label : (& def-label (__tl_dyn-array i64))]
@@ -33863,7 +33867,7 @@
   [condition : (& ir.CompilerIrValue)]
   [closure : (& closure (__tl_dyn-array i64))]
   [seed : (& ir.CompilerIrValue)]
-  [uses : (& uses (__tl_dyn-array i64))]) : OptFlagExitGateCond
+  [raw-uses : (& raw-uses (__tl_dyn-array i64))]) : OptFlagExitGateCond
   (if (opt-flag-exit-closure-var? condition closure)
     (match condition
       [(Var gate-var)
@@ -33875,8 +33879,8 @@
       [(Var dst)
         (if (or
           (< dst 0)
-          (>= dst (array-length uses))
-          (> (array-ref uses dst) 1))
+          (>= dst (array-length raw-uses))
+          (> (array-ref raw-uses dst) 1))
           (No)
           (match (opt-flag-exit-instr-at-scan instrs dst)
             [(No) (No)]
@@ -33901,7 +33905,7 @@
   [index : (& index OptCfgIndex)]
   [closure : (& closure (__tl_dyn-array i64))]
   [seed : (& ir.CompilerIrValue)]
-  [uses : (& uses (__tl_dyn-array i64))]) : OptFlagExitGate
+  [raw-uses : (& raw-uses (__tl_dyn-array i64))]) : OptFlagExitGate
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     (if (= count 0)
@@ -33917,7 +33921,7 @@
             (& condition)
             closure
             seed
-            uses)
+            raw-uses)
             [(No) (No)]
             [(Some selects extra gate-var)
               (let
@@ -33944,7 +33948,7 @@
   [index : (& index OptCfgIndex)]
   [closure : (& closure (__tl_dyn-array i64))]
   [seed : (& ir.CompilerIrValue)]
-  [uses : (& uses (__tl_dyn-array i64))]) : OptFlagExitGate
+  [raw-uses : (& raw-uses (__tl_dyn-array i64))]) : OptFlagExitGate
   (match body-blocks
     [(slice) (No)]
     [(slice block & rest)
@@ -33961,7 +33965,7 @@
                 index
                 closure
                 seed
-                uses)])]
+                raw-uses)])]
         (match here
           [(Some gate continue-label exit-label extra gate-var)
             (Some gate continue-label exit-label extra gate-var)]
@@ -33974,7 +33978,7 @@
               index
               closure
               seed
-              uses)]))]))
+              raw-uses)]))]))
 
 ;; --- C6: the skipped path -----------------------------------------------------
 ;; The redirect skips these instructions on a cleared path, so an instruction
@@ -36884,7 +36888,7 @@
               index
               closure
               seed
-              uses))
+              raw-uses))
             [(No) (No)]
             [(Some gate continue-label exit-label gate-extra gate-var)
               (opt-flag-exit-plan-arm

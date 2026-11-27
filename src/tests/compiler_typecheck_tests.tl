@@ -1664,10 +1664,7 @@
                   (compiler-typecheck-zii-probe-ok? ctx (U8) "zii")
                   (compiler-typecheck-zii-probe-ok? ctx (F64) "zii")
                   (compiler-typecheck-zii-probe-ok? ctx (Char) "zii")
-                  (compiler-typecheck-zii-probe-ok?
-                    ctx
-                    (String)
-                    "string-handle")
+                  (compiler-typecheck-zii-probe-ok? ctx (String) "zii")
                   (compiler-typecheck-zii-probe-ok? ctx (Never) "never")
                   (compiler-typecheck-zii-probe-ok? ctx (Expr) "syntax-value")
                   (compiler-typecheck-zii-probe-ok?
@@ -1697,7 +1694,7 @@
                     ctx
                     (& program)
                     "HStr"
-                    "string-handle")
+                    "zii")
                   (compiler-typecheck-zii-struct-probe-ok?
                     ctx
                     (& program)
@@ -1732,12 +1729,12 @@
                     ctx
                     (& program)
                     "HArrStr"
-                    "string-handle")
+                    "zii")
                   (compiler-typecheck-zii-struct-probe-ok?
                     ctx
                     (& program)
                     "HNamed"
-                    "string-handle")
+                    "zii")
                   (compiler-typecheck-zii-struct-probe-ok?
                     ctx
                     (& program)
@@ -11268,14 +11265,14 @@
     ;; A call through a C function pointer value lends its operands (SPEC
     ;; 4.3), as a direct extern call does, wherever the pointer comes from.
     (compiler-typecheck-ok?
-      "(extern (make-callback) : (CFunc non-null (-> String i64)) (:symbol \"tl_make_callback\"))
-(defstruct CallbackHolder (callback (CFunc non-null (-> String i64))))
-(define global-callback : (CFunc non-null (-> String i64)) (make-callback))
-(define (lend-twice [callback : (CFunc non-null (-> String i64))] [holder : CallbackHolder] [s : String]) : i64
+      "(extern (make-callback) : (CFunc non-null (-> (__tl_dyn-array i64) i64)) (:symbol \"tl_make_callback\"))
+(defstruct CallbackHolder (callback (CFunc non-null (-> (__tl_dyn-array i64) i64))))
+(define global-callback : (CFunc non-null (-> (__tl_dyn-array i64) i64)) (make-callback))
+(define (lend-twice [callback : (CFunc non-null (-> (__tl_dyn-array i64) i64))] [holder : CallbackHolder] [s : (__tl_dyn-array i64)]) : i64
   (+ (callback s) (global-callback s) (holder.callback s) ((make-callback) s)))")
     (compiler-typecheck-error-ok?
-      "(defstruct Packet (text String))
-(define (lend-moved [callback : (CFunc non-null (-> String i64))] [s : String]) : i64
+      "(defstruct Packet (text (__tl_dyn-array i64)))
+(define (lend-moved [callback : (CFunc non-null (-> (__tl_dyn-array i64) i64))] [s : (__tl_dyn-array i64)]) : i64
   (let [p : Packet (Packet s)] (callback s)))"
       "typecheck: use of moved value `s`")
     (compiler-typecheck-ok?

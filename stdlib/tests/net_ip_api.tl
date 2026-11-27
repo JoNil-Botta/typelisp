@@ -292,7 +292,8 @@
         (set! seed (+ seed 1))))))
 
 (define (expected-string-allocation [length : i64]) : i64
-  (+ 16 (* 8 (/ (+ length 7) 8))))
+  ;; Inline 16-byte String (#7962): only the aligned backing-byte allocation.
+  (* 8 (/ (+ length 7) 8)))
 
 (define (assert-allocation-contract) : unit
   (let

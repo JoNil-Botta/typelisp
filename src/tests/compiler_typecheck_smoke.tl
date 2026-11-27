@@ -4815,7 +4815,9 @@
             (ci.intern-structural-kind-macro-local))
           4)
         (= (ci.intern-compat-state-structural-count intern-a) 10)
-        (= (ci.intern-structural-record-slot-bytes) 37))]
+        (=
+          (ci.intern-structural-record-slot-bytes)
+          (+ 29 (comptime (size-of (type String))))))]
     (ci.intern-compat-state-reset-to! (&mut intern-a) 0)
     (let
       [next-session-a : cis.InternStructuralSessionHandle
@@ -5277,7 +5279,9 @@
                 (array-ref intern-a.structural-table-cell 0)
                 kinds))
             2048)
-          (= (ci.intern-structural-record-slot-bytes) 37)
+          (=
+            (ci.intern-structural-record-slot-bytes)
+            (+ 29 (comptime (size-of (type String)))))
           (=
             (array-length
               (__tl-project-field

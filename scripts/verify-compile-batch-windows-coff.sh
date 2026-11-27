@@ -232,11 +232,6 @@ write_differential_expected() {
     printf '%s|assembly|%s/%s.forced.s|forced-assembly|none\n' \
         "$_source" "$WORKDIR" "$_name" >> "$DIFFERENTIAL_EXPECTED"
 }
-write_differential_expected ordinary tests/integration/hello.tl
-write_differential_expected string_data tests/integration/string_length.tl
-write_differential_expected string_record_extent tests/integration/string_record_extent.tl
-write_differential_expected allowed_external "$ALLOWED_EXTERN_SOURCE"
-write_differential_expected nt_create_file "$NT_CREATE_FILE_SOURCE"
 write_fallback_differential_expected() {
     _name=$1
     _source=$2
@@ -245,6 +240,11 @@ write_fallback_differential_expected() {
     printf '%s|assembly|%s/%s.forced.s|forced-assembly|none\n' \
         "$_source" "$WORKDIR" "$_name" >> "$DIFFERENTIAL_EXPECTED"
 }
+write_differential_expected ordinary tests/integration/hello.tl
+write_differential_expected string_data tests/integration/string_length.tl
+write_differential_expected string_record_extent tests/integration/string_record_extent.tl
+write_differential_expected allowed_external "$ALLOWED_EXTERN_SOURCE"
+write_differential_expected nt_create_file "$NT_CREATE_FILE_SOURCE"
 printf '%s|assembly|%s/%s.direct.s|unsupported-external-relocation|none\n' \
     "$NT_OPEN_FILE_SOURCE" "$WORKDIR" nt_open_file >> "$DIFFERENTIAL_EXPECTED"
 printf '%s|assembly|%s/%s.forced.s|forced-assembly|none\n' \

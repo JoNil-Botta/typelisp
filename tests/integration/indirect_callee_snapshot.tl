@@ -1,5 +1,5 @@
-(extern (first) : (CFunc non-null (-> String i64)) (:symbol "tl_callee_first"))
-(extern (second) : (CFunc non-null (-> String i64)) (:symbol "tl_callee_second"))
+(extern (first) : (CFunc non-null (-> (Ptr u8) i64)) (:symbol "tl_callee_first"))
+(extern (second) : (CFunc non-null (-> (Ptr u8) i64)) (:symbol "tl_callee_second"))
 (extern (calls) : i64 (:symbol "tl_callee_calls"))
 (extern (gets) : i64 (:symbol "tl_callee_gets"))
 
@@ -22,18 +22,19 @@
   (set! selected dec)
   41)
 
-(define c-selected : (CFunc non-null (-> String i64))
+(define c-selected : (CFunc non-null (-> (Ptr u8) i64))
   (first))
 
-(define (change-c-global!) : String
+(define (change-c-global!) : (Ptr u8)
   (set! c-selected (second))
-  "answer")
+  (unsafe
+    (string-data "answer")))
 
 (defstruct Language
   (callback (-> i64 i64)))
 
 (defstruct Foreign
-  (callback (CFunc non-null (-> String i64))))
+  (callback (CFunc non-null (-> (Ptr u8) i64))))
 
 (define (parameter [callback : (-> i64 i64)]) : i64
   (callback
@@ -41,11 +42,12 @@
       (set! callback dec)
       41)))
 
-(define (c-parameter [callback : (CFunc non-null (-> String i64))]) : i64
+(define (c-parameter [callback : (CFunc non-null (-> (Ptr u8) i64))]) : i64
   (callback
     (begin
       (set! callback (second))
-      "answer")))
+      (unsafe
+        (string-data "answer")))))
 
 (define (main) : i64
   (let
@@ -116,7 +118,8 @@
         (f
           (begin
             (set! f (second))
-            "answer")))]
+            (unsafe
+              (string-data "answer")))))]
     [c-raw : i64
       (let
         [f (first)]
@@ -124,7 +127,8 @@
           (begin
             (unsafe
               (ptr-write! (ptr-addr-of f) (second)))
-            "answer")))]
+            (unsafe
+              (string-data "answer")))))]
     [c-param : i64 (c-parameter (first))]
     [c-global : i64 (c-selected (change-c-global!))]
     [c-field : i64
@@ -133,12 +137,18 @@
         (holder.callback
           (begin
             (set! holder.callback (second))
-            "answer")))]
-    [c-made : i64 ((first) "answer")]
+            (unsafe
+              (string-data "answer")))))]
+    [c-made : i64
+      ((first)
+        (unsafe
+          (string-data "answer")))]
     [c-stable : i64
       (let
         [f (first)]
-        (f "answer"))]
+        (f
+          (unsafe
+            (string-data "answer"))))]
     (if (and
       (= local 42)
       (= raw 42)

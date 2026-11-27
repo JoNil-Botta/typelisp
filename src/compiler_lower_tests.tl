@@ -3985,7 +3985,7 @@
 (define (foreign-direct) : NeverOutput (fail \"foreign direct\\n\"))
 (define (internal-direct) : NeverOutput (die \"internal direct\\n\"))
 (define (internal-indirect [f : (-> String never)]) : NeverOutput (f \"internal indirect\\n\"))
-(define (foreign-indirect [f : (CFunc non-null (-> String never))]) : NeverOutput (f \"foreign indirect\\n\"))
+(define (foreign-indirect [f : (CFunc non-null (-> i64 never))]) : NeverOutput (f 1))
 (define (foreign-tuple) : (Tuple i64 i64 i64) (fail \"foreign tuple\\n\"))
 (define (main) : i64 0)")
 
@@ -5139,6 +5139,7 @@
   (VectorLoad)
   (VectorReduce)
   (VectorStore)
+  (Word)
   (Xgetbv))
 
 (define (lower-test-instr-count
@@ -5180,6 +5181,10 @@
     [(VectorLoad) (lower-test-instr-vector-load-count instr)]
     [(VectorReduce) (lower-test-instr-vector-reduce-count instr)]
     [(VectorStore) (lower-test-instr-vector-store-count instr)]
+    [(Word)
+      (match instr
+        [(Word _ _ _ _) 1]
+        [_ 0])]
     [(Xgetbv) (lower-test-instr-xgetbv-count instr)]))
 
 (define (lower-test-instr-seq-count
@@ -6854,11 +6859,11 @@
   (outer-float-box-use (OuterFloatBox (InnerFloatBox 1.5))))")
 
 (define (compiler-lower-c-abi-windows-unsupported-aggregate-source) : String
-  "(defstruct InnerText (value String))
+  "(defstruct InnerText (value (__tl_dyn-array u8)))
 (defstruct OuterText (inner InnerText))
 (extern (outer-text-use [arg0 : OuterText]) : i64 (:symbol \"tl_cabi_outer_text_use\"))
 (define (main) : i64
-  (outer-text-use (OuterText (InnerText \"not-c-scalar\"))))")
+  (outer-text-use (OuterText (InnerText (__tl_make-array u8 0)))))")
 
 (define (compiler-lower-c-abi-windows-small-float-aggregate-source) : String
   "(defstruct FloatPair
@@ -8412,7 +8417,8 @@
   (match (lower-test-functions (lower.lower-compiler-source src))
     [(Some functions)
       (and
-        (= (lower-test-function-call-count functions "main" "tl_array_fill8") 1)
+        (= (lower-test-function-call-count functions "main" "tl_array_zero") 1)
+        (= (lower-test-function-call-count functions "main" "tl_array_fill8") 0)
         (>= (lower-test-count functions "main" (StorePtr)) 2)
         (> (lower-test-functions-call-count functions "tl_alloc") 0))]
     [_ false]))
@@ -12785,7 +12791,7 @@
       (match (lower-test-functions (lower-compiler-program program))
         [(Some functions)
           (and
-            (> (lower-test-count functions "core-str-len" (GepOffset 1)) 0)
+            (> (lower-test-count functions "core-str-len" (Word)) 0)
             (>
               (lower-test-count functions "core-str-len-borrow" (GepOffset 1))
               0)
@@ -14741,7 +14747,11 @@
         (unless
           (= (ci.intern-compat-state-structural-count intern-a) 730)
           (set! ok false))
-        (unless (= (ci.intern-structural-record-slot-bytes) 37) (set! ok false)))
+        (unless
+          (=
+            (ci.intern-structural-record-slot-bytes)
+            (+ 29 (comptime (size-of (type String)))))
+          (set! ok false)))
       (let
         [reset-to-state : ci.InternCompatState (ci.intern-compat-state-new)]
         [reset-to-session : cis.InternStructuralSessionHandle
@@ -15871,8 +15881,8 @@
         (= (lower.lower-type-align ctx array-nested) 8)
         (= (lower.lower-type-size ctx tuple-array) 16)
         (= (lower.lower-type-align ctx tuple-array) 8)
-        (= (lower.lower-type-size ctx tuple-string) 8)
-        (= (lower.lower-type-size ctx array-string) 16)
+        (= (lower.lower-type-size ctx tuple-string) 16)
+        (= (lower.lower-type-size ctx array-string) 32)
         (= (lower.lower-type-size ctx slice-ref-tuple) 16)
         (lower.lower-type-inline-storage? ctx u8-u64)
         (not (lower.lower-type-register-resident? ctx u8-u64))
@@ -15917,23 +15927,18 @@
           (ast.ast-global-shared-view tuple-string))
           [(Register slots size)
             (and
-              (= size 8)
-              (= (lower.lower-c-abi-slot-list-count slots) 1)
-              (match (lower.lower-c-abi-slot-list-ref slots 0)
-                [(Slot ty _) (tc_core.tc-type-eq ty (U64))]))]
-          [_ false])
-        (match (lower.lower-internal-aggregate-class
-          ctx
-          (lower.CompilerLowerMode.LinuxScalar)
-          array-string)
-          [(Register slots size)
-            (and
               (= size 16)
               (= (lower.lower-c-abi-slot-list-count slots) 2)
               (match (lower.lower-c-abi-slot-list-ref slots 0)
                 [(Slot ty _) (tc_core.tc-type-eq ty (U64))])
               (match (lower.lower-c-abi-slot-list-ref slots 1)
                 [(Slot ty _) (tc_core.tc-type-eq ty (U64))]))]
+          [_ false])
+        (match (lower.lower-internal-aggregate-class
+          ctx
+          (lower.CompilerLowerMode.LinuxScalar)
+          array-string)
+          [(Memory size) (= size 32)]
           [_ false])
         (match (lower.lower-internal-aggregate-class
           ctx
@@ -15963,7 +15968,7 @@
           ctx
           (lower.CompilerLowerMode.WindowsScalar)
           tuple-string)
-          [(Integer ty size) (and (= size 8) (tc_core.tc-type-eq ty (U64)))]
+          [(ByRef size) (= size 16)]
           [_ false])
         (match (lower.lower-internal-aggregate-class
           ctx

@@ -293,8 +293,11 @@
   `(owned_view.compiler-owned-shared-view ,place))
 
 (define (compiler-backend-string-shared-view [value : (& value str)]) : String
-  (unsafe
-    (ptr-read (ptr-cast (__tl_array-data (array value)) : (Ptr String)))))
+  (if (= (comptime (size-of (type String))) 16)
+    (unsafe
+      (string-from-bytes (string-data value) (__tl_string_length value)))
+    (unsafe
+      (ptr-read (ptr-cast (__tl_array-data (array value)) : (Ptr String))))))
 
 (defmacro (compiler-backend-global-array-element-shared-view
   [items : Expr]
@@ -2955,8 +2958,12 @@
 ;; per var, 0 for a normal full mask, else polarity*256 + lhs_is_splat*64 + k.
 (define compiler-backend-function-i64-array-avx2-sign-bit-masks : i64
   11)
-(define compiler-backend-function-i64-array-count : i64
+
+;; Per var: dense index into the function's constant-Pack seq, or -1.
+(define compiler-backend-function-i64-array-const-pack-index : i64
   12)
+(define compiler-backend-function-i64-array-count : i64
+  13)
 (define compiler-backend-function-live-set-group-vars : i64
   0)
 (define compiler-backend-function-live-set-addressable-group-vars : i64
@@ -3364,7 +3371,7 @@
     [emit-modes : (__tl_dyn-array CompilerBackendEmitInstrsMode)
       (__tl_make-array CompilerBackendEmitInstrsMode 1)]
     [instr-seqs : (__tl_dyn-array compiler_ir_types.CompilerIrInstrSeq)
-      (__tl_make-array compiler_ir_types.CompilerIrInstrSeq 1)]
+      (__tl_make-array compiler_ir_types.CompilerIrInstrSeq 2)]
     [phi-targets : (__tl_dyn-array BackendSymbolSeq)
       (__tl_make-array BackendSymbolSeq 1)]
     [abort-targets : (__tl_dyn-array CompilerBackendTarget)
@@ -3481,6 +3488,11 @@
     (set!
       (array-ref
         i64-arrays
+        compiler-backend-function-i64-array-const-pack-index)
+      (__tl_make-array i64 0))
+    (set!
+      (array-ref
+        i64-arrays
         compiler-backend-function-i64-array-shift-count-bounds)
       (compiler-backend-global-shared-view empty-i64-array))
     (set!
@@ -3495,6 +3507,9 @@
     (set!
       (array-ref instr-seqs 0)
       (compiler-backend-global-shared-view empty-instr-seq))
+    (set!
+      (array-ref instr-seqs 1)
+      (compiler_ir_types.compiler-ir-instr-seq-empty))
     (set!
       (array-ref phi-targets 0)
       (compiler-backend-global-shared-view empty-symbol-seq))
@@ -3757,6 +3772,19 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : unit
   (set! (array-ref (compiler-backend-function-state-instr-seqs state) 0) instrs))
 
+(define (compiler-backend-function-state-const-packs-borrow
+  [state : CompilerBackendFunctionState]
+  [index : i64]) : compiler_ir_types.CompilerIrInstr
+  (let
+    [seqs : (__tl_dyn-array compiler_ir_types.CompilerIrInstrSeq)
+      (compiler-backend-function-state-instr-seqs state)]
+    (compiler_ir_types.compiler-ir-instr-seq-ref (& (array-ref seqs 1)) index)))
+
+(define (compiler-backend-function-state-set-const-packs!
+  [state : CompilerBackendFunctionState]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : unit
+  (set! (array-ref (compiler-backend-function-state-instr-seqs state) 1) instrs))
+
 (define (compiler-backend-function-state-phi-targets
   [state : CompilerBackendFunctionState]) : BackendSymbolSeq
   (owned_view.compiler-owned-element-view
@@ -3935,6 +3963,11 @@
     (set!
       (array-ref
         data.i64-arrays
+        compiler-backend-function-i64-array-const-pack-index)
+      (__tl_make-array i64 0))
+    (set!
+      (array-ref
+        data.i64-arrays
         compiler-backend-function-i64-array-avx2-sign-bit-masks)
       (__tl_make-array i64 0))
     (set!
@@ -3952,6 +3985,9 @@
     (set!
       (array-ref data.instr-seqs 0)
       (compiler-backend-global-shared-view data.empty-instr-seq))
+    (set!
+      (array-ref data.instr-seqs 1)
+      (compiler_ir_types.compiler-ir-instr-seq-empty))
     (set!
       (array-ref data.phi-targets 0)
       (compiler-backend-global-shared-view data.empty-symbol-seq))
@@ -4474,6 +4510,7 @@
   (functions BackendSymbolSet)
   (references BackendSymbolSet)
   (strings BackendStringSet)
+  (str-descs BackendStringSet)
   (floats BackendFloatSet)
   (bytes BackendStringSet)
   (uses-avx2-i64-lane-id bool)
@@ -4584,6 +4621,7 @@
     (compiler-backend-symbol-set-new 256)
     (compiler-backend-symbol-set-new 256)
     (compiler-backend-string-set-new 256)
+    (compiler-backend-string-set-new 64)
     (compiler-backend-float-set-new 256)
     (compiler-backend-string-set-new 64)
     false
@@ -4598,6 +4636,7 @@
     (compiler-backend-symbol-set-add collections.functions name)
     (compiler-backend-symbol-set-add collections.references name)
     collections.strings
+    collections.str-descs
     collections.floats
     collections.bytes
     collections.uses-avx2-i64-lane-id
@@ -4612,6 +4651,7 @@
     collections.functions
     (compiler-backend-symbol-set-add collections.references name)
     collections.strings
+    collections.str-descs
     collections.floats
     collections.bytes
     collections.uses-avx2-i64-lane-id
@@ -4626,12 +4666,35 @@
     collections.functions
     collections.references
     (compiler-backend-string-set-add collections.strings text)
+    collections.str-descs
     collections.floats
     collections.bytes
     collections.uses-avx2-i64-lane-id
     collections.uses-avx512-i64-lane-id
     collections.uses-f64-neg
     collections.uses-f32-neg))
+
+(define (compiler-backend-program-collections-add-str-desc
+  [collections : CompilerBackendProgramCollections]
+  [text : String]) : CompilerBackendProgramCollections
+  (let
+    [strings : BackendStringSet
+      (if (= (string.string-length (& text)) 0)
+        collections.strings
+        (compiler-backend-string-set-add
+          collections.strings
+          (string.copy (& text))))]
+    (CompilerBackendProgramCollections
+      collections.functions
+      collections.references
+      strings
+      (compiler-backend-string-set-add collections.str-descs text)
+      collections.floats
+      collections.bytes
+      collections.uses-avx2-i64-lane-id
+      collections.uses-avx512-i64-lane-id
+      collections.uses-f64-neg
+      collections.uses-f32-neg)))
 
 (define (compiler-backend-program-collections-add-float
   [collections : CompilerBackendProgramCollections]
@@ -4641,6 +4704,7 @@
     collections.functions
     collections.references
     collections.strings
+    collections.str-descs
     (compiler-backend-float-set-add collections.floats ty bits)
     collections.bytes
     collections.uses-avx2-i64-lane-id
@@ -4655,6 +4719,7 @@
     collections.functions
     collections.references
     collections.strings
+    collections.str-descs
     collections.floats
     (compiler-backend-string-set-add collections.bytes text)
     collections.uses-avx2-i64-lane-id
@@ -4668,6 +4733,7 @@
     collections.functions
     collections.references
     collections.strings
+    collections.str-descs
     collections.floats
     collections.bytes
     true
@@ -4681,6 +4747,7 @@
     collections.functions
     collections.references
     collections.strings
+    collections.str-descs
     collections.floats
     collections.bytes
     collections.uses-avx2-i64-lane-id

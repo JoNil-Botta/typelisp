@@ -1603,7 +1603,9 @@
     [status : i64 (stdlib.io.write-file-status path contents)]
     (if (= status 0)
       unit
-      (panic (stdlib.io.write-file-failure-message path status)))))
+      (begin
+        (print-error (stdlib.io.write-file-failure-message path status))
+        (platform-exit 134)))))
 
 ;: Return the host status code for appending borrowed bytes to `path`.
 (define (append-file-status

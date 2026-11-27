@@ -1327,11 +1327,12 @@
 ;; AstType.Expr/AstType.ExprList are excluded.
 (define (compiler-reg-handle-type? [ty : (& ty ast.AstType)]) : bool
   (match ty
-    [(or (String) (Str) (Box _) (Array _ _) (DynArray _) (Enum _) (EnumArgs _ _)
+    [(or (Str) (Box _) (Array _ _) (DynArray _) (Enum _) (EnumArgs _ _)
          (Struct _) (StructArgs _ _) (Var _) (VarArgs _ _))
       true]
-    ;; Bare Slice has no runtime by-value representation.
-    [(Slice _) false]
+    ;; Bare Slice has no runtime by-value representation; String is a 2-word
+    ;; register group.
+    [(or (Slice _) (String)) false]
     [_ false]))
 
 (define (compiler-reg-register-eligible-type? [ty : (& ty ast.AstType)]) : bool
@@ -10872,7 +10873,7 @@
 (define (compiler-reg-remat-value? [value : (& ir.CompilerIrValue)]) : bool
   (match value
     [(or (I64 _) (Bool _) (Char _) (F64 _) (GlobalAddr _) (Function _)
-         (String _) (Bytes _))
+         (String _) (StrDesc _) (Bytes _))
       true]
     [_ false]))
 
@@ -10992,7 +10993,7 @@
   [ty : (& ast.AstType)]
   [cells-clean : bool]) : bool
   (match value
-    [(or (GlobalAddr _) (Function _) (String _) (Bytes _)) true]
+    [(or (GlobalAddr _) (Function _) (String _) (StrDesc _) (Bytes _)) true]
     ;; W3 step (c). A read of a FROZEN global cell recomputes as
     ;; `movq g(%rip), %r` -- one instruction, the same one the reload replaced,
     ;; and one a compare can fold outright (compiler-backend-compare-memory-
@@ -11307,11 +11308,11 @@
     [(Var var) (= (compiler-reg-invariant-array-at facts.stable var) 1)]
     [_ true]))
 
-;; A descriptor HANDLE: the pointer word a `(__tl_dyn-array T)` / `String` value
-;; is, whose target is the {data, len} pair. `OptLoadLocField`'s `header?`.
+;; A descriptor HANDLE: the pointer word a `(__tl_dyn-array T)` value is,
+;; whose target is the {data, len} pair. `OptLoadLocField`'s `header?`.
 (define (compiler-reg-invariant-handle-type? [ty : (& ty ast.AstType)]) : bool
   (match ty
-    [(or (DynArray _) (String)) true]
+    [(DynArray _) true]
     [_ false]))
 
 ;; A `&`/`&mut` reference parameter or local: dereferenceable, and its target is
@@ -11339,7 +11340,7 @@
     [(or (I16) (U16)) 3]
     [(F64) 4]
     [(F32) 5]
-    [(or (DynArray _) (String) (Box _) (Ptr _) (MutPtr _) (Func _ _)) 6]
+    [(or (DynArray _) (Box _) (Ptr _) (MutPtr _) (Func _ _)) 6]
     [_ 0]))
 
 (define (compiler-reg-invariant-var-type
@@ -21683,6 +21684,7 @@
   [representations : (& ir.CompilerIrRepresentationIndex)]
   [ty : (& ast.AstType)]) : bool
   (match ty
+    [(String) true]
     [(or (Ref _ inner) (MutRef _ inner))
       (ast.ast-type-segment-bases-fat-referent? type-segment-bases inner)]
     [(Region _ inner)
@@ -21703,7 +21705,7 @@
   [representations : (& ir.CompilerIrRepresentationIndex)]
   [ty : (& ast.AstType)]) : bool
   (match ty
-    [(or (Ref _ _) (MutRef _ _)) false]
+    [(or (String) (Ref _ _) (MutRef _ _)) false]
     [(Region _ inner)
       (compiler-reg-type-register-group-has-sse?
         type-segment-bases

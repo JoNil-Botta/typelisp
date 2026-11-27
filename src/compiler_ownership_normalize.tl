@@ -5800,11 +5800,12 @@
         (normalize-box-ast-type? (& inner-ty)))]
     [_ false]))
 
-;; A heap/arena-backed handle (`String` or dynamic array) whose direct borrow
-;; points into the backing storage rather than the binder's stack slot.
+;; A heap/arena-backed handle (dynamic array) whose direct borrow points into
+;; the backing storage rather than the binder's stack slot. Inline `String`
+;; values keep a 16-byte stack descriptor until `(& r str)` is a 16B value
+;; (#8090), so `(in r String)` retires with its frame like an inline struct.
 (define (normalize-arena-handle-ast-type? [ty : (& ty ast.AstType)]) : bool
   (match ty
-    [(ast.AstType.String) true]
     [(ast.AstType.DynArray _) true]
     [(ast.AstType.Region _ inner)
       (let

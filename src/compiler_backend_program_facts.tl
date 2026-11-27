@@ -457,6 +457,7 @@
     [(Char _) (Some (Char))]
     [(F64 _) (Some (F64))]
     [(String _) (Some (String))]
+    [(StrDesc _) (Some (Str))]
     [(Bytes _) (Some (compiler_ast_types.ast-ty-dyn-array (& (U8))))]
     [_ (No)]))
 
@@ -1242,6 +1243,7 @@
   [index : be_state.CompilerBackendProgramIndex]
   [ty : compiler_ast_types.AstType]) : i64
   (match (& ty)
+    [(String) 2]
     [(or (Ref _ inner) (MutRef _ inner))
       (if (compiler_ast_types.ast-type-segment-bases-fat-referent?
         type-segment-bases
@@ -1339,6 +1341,313 @@
       be_state.compiler-backend-function-bool-group-vars-enabled
       true)))
 
+(define (compiler-backend-const-pack-word-ok?
+  [value : (& compiler_ir_types.CompilerIrValue)]) : bool
+  (match value
+    [(or (I64 _) (Bool _) (Char _) (String _) (StrDesc _) (Bytes _)
+         (GlobalAddr _) (Function _) (Unit))
+      true]
+    [_ false]))
+
+(define (compiler-backend-const-pack-reject-value!
+  [ok : (&mut ok (__tl_dyn-array i64))]
+  [value : (& compiler_ir_types.CompilerIrValue)]) : unit
+  (match value
+    [(Var v)
+      (when (and (>= v 0) (< v (array-length ok))) (set! (array-ref ok v) 0))]
+    [_ unit]))
+
+;; Identify pure-constant non-SSE 2-word `Pack` vars (such as `String` literals)
+;; whose ONLY uses are direct/indirect `Call`/`TailCall` arguments or `Return`
+;; values. Eliding their `Pack` stores and materializing their constant words
+;; directly at each call/return site avoids 16-byte stack slots and store/reload
+;; churn for every literal String argument or return.
+(define (compiler-backend-const-pack-install!
+  [type-segment-bases : i64]
+  [program-index : be_state.CompilerBackendProgramIndex]
+  [params : (& compiler_ir_types.CompilerIrParamSeq)]
+  [blocks : (& compiler_ir_types.CompilerIrBlockList)]
+  [group-vars : compiler_liveness.CompilerLiveI64Set]
+  [addressable : (& compiler_liveness.CompilerLiveI64Set)]
+  [emit-vars : i64]) : compiler_liveness.CompilerLiveI64Set
+  (let
+    [function-state : be_state.CompilerBackendFunctionState
+      (be_state.compiler-backend-state-function-state
+        program-index.backend-state)]
+    (if (or
+      (<= emit-vars 0)
+      (= (compiler_liveness.compiler-live-set-count group-vars) 0))
+      (begin
+        (be_state.compiler-backend-function-state-set-i64-array!
+          function-state
+          be_state.compiler-backend-function-i64-array-const-pack-index
+          (__tl_make-array i64 0))
+        (be_state.compiler-backend-function-state-set-const-packs!
+          function-state
+          (compiler_ir_types.compiler-ir-instr-seq-empty))
+        group-vars)
+      (let
+        [defs : (__tl_dyn-array i64) (__tl_make-array i64 emit-vars)]
+        [ok : (__tl_dyn-array i64) (__tl_make-array i64 emit-vars)]
+        [pack-count : i64 0]
+        ;; Mark params and addressable group vars ineligible.
+        (for [pi
+          (iterator.range
+            0
+            (compiler_ir_types.compiler-ir-param-seq-count params))]
+          (match (compiler_ir_types.compiler-ir-param-seq-borrow params pi)
+            [(Param _ _ pvar)
+              (when
+                (and (>= pvar 0) (< pvar emit-vars))
+                (set! (array-ref defs pvar) 2))]))
+        ;; Pass 1: find candidate constant Packs and count all defs.
+        (match blocks
+          [(Array seq)
+            (for [bi
+              (iterator.range
+                0
+                (compiler_ir_types.compiler-ir-block-seq-count seq))]
+              (match (compiler_ir_types.compiler-ir-block-seq-borrow seq bi)
+                [(Block _ instrs)
+                  (for [ii
+                    (iterator.range
+                      0
+                      (compiler_ir_types.compiler-ir-instr-seq-count instrs))]
+                    (let
+                      [dst : i64
+                        (compiler_ir_types.compiler-ir-instr-dst-or
+                          (compiler_ir_types.compiler-ir-instr-seq-borrow
+                            instrs
+                            ii)
+                          -1)]
+                      (when
+                        (and (>= dst 0) (< dst emit-vars))
+                        (+= (array-ref defs dst) 1))
+                      (match (compiler_ir_types.compiler-ir-instr-seq-borrow
+                        instrs
+                        ii)
+                        [(Pack pdst words ty)
+                          (when
+                            (and
+                              (>= pdst 0)
+                              (< pdst emit-vars)
+                              (compiler_liveness.compiler-live-set-contains?
+                                group-vars
+                                pdst)
+                              (not
+                                (compiler_liveness.compiler-live-set-contains?
+                                  addressable
+                                  pdst))
+                              (=
+                                (compiler_ir_types.compiler-ir-value-seq-count
+                                  (& words))
+                                2)
+                              (compiler-backend-const-pack-word-ok?
+                                (compiler_ir_types.compiler-ir-value-seq-borrow
+                                  (& words)
+                                  0))
+                              (compiler-backend-const-pack-word-ok?
+                                (compiler_ir_types.compiler-ir-value-seq-borrow
+                                  (& words)
+                                  1))
+                              (not
+                                (compiler-backend-group-word-sse?
+                                  type-segment-bases
+                                  program-index
+                                  (& ty)
+                                  0))
+                              (not
+                                (compiler-backend-group-word-sse?
+                                  type-segment-bases
+                                  program-index
+                                  (& ty)
+                                  1)))
+                            (set! (array-ref ok pdst) 1)
+                            (+= pack-count 1))]
+                        [_ unit])))]))])
+        (if (= pack-count 0)
+          (begin
+            (be_state.compiler-backend-function-state-set-i64-array!
+              function-state
+              be_state.compiler-backend-function-i64-array-const-pack-index
+              (__tl_make-array i64 0))
+            (be_state.compiler-backend-function-state-set-const-packs!
+              function-state
+              (compiler_ir_types.compiler-ir-instr-seq-empty))
+            group-vars)
+          (begin
+            ;; Reject multi-def vars.
+            (for [v (iterator.range 0 emit-vars)]
+              (when
+                (and (= (array-ref ok v) 1) (!= (array-ref defs v) 1))
+                (set! (array-ref ok v) 0)))
+            ;; Pass 2: reject any candidate used outside Call/TailCall/CallIndirect/TailCallIndirect args or Return.
+            (let
+              [uses : compiler_ir_types.CompilerIrIdList
+                (compiler_ir_types.compiler-ir-id-list-new)]
+              (match blocks
+                [(Array seq)
+                  (for [bi
+                    (iterator.range
+                      0
+                      (compiler_ir_types.compiler-ir-block-seq-count seq))]
+                    (match (compiler_ir_types.compiler-ir-block-seq-borrow
+                      seq
+                      bi)
+                      [(Block _ instrs)
+                        (for [ii
+                          (iterator.range
+                            0
+                            (compiler_ir_types.compiler-ir-instr-seq-count
+                              instrs))]
+                          (match (compiler_ir_types.compiler-ir-instr-seq-borrow
+                            instrs
+                            ii)
+                            [(or (Call _ _ _ _) (TailCall _ _ _) (Return _))
+                              unit]
+                            [(CallIndirect _ target _ _)
+                              (compiler-backend-const-pack-reject-value!
+                                (&mut ok)
+                                (& target))]
+                            [(TailCallIndirect target _ _)
+                              (compiler-backend-const-pack-reject-value!
+                                (&mut ok)
+                                (& target))]
+                            [(AddrOf _ src _)
+                              (when
+                                (and (>= src 0) (< src emit-vars))
+                                (set! (array-ref ok src) 0))]
+                            [_
+                              (set! uses.len 0)
+                              (compiler_ir_types.compiler-ir-instr-use-var-ids-into!
+                                (compiler_ir_types.compiler-ir-instr-seq-borrow
+                                  instrs
+                                  ii)
+                                (&mut uses))
+                              (for [u (& uses)]
+                                (let
+                                  [vid : i64 (deref u)]
+                                  (when
+                                    (and (>= vid 0) (< vid emit-vars))
+                                    (set! (array-ref ok vid) 0))))]))]))]))
+            ;; Build dense index and filtered group-vars set.
+            (let
+              [kept : i64 0]
+              [index-arr : (__tl_dyn-array i64) (__tl_make-array i64 emit-vars)]
+              [builder : compiler_ir_types.CompilerIrInstrBuilder
+                (compiler_ir_types.compiler-ir-instr-builder-with-capacity
+                  pack-count)]
+              [elided : compiler_liveness.CompilerLiveI64Set
+                (compiler_liveness.compiler-live-set-empty)]
+              (for [v (iterator.range 0 emit-vars)]
+                (set! (array-ref index-arr v) (- 0 1)))
+              (match blocks
+                [(Array seq)
+                  (for [bi
+                    (iterator.range
+                      0
+                      (compiler_ir_types.compiler-ir-block-seq-count seq))]
+                    (match (compiler_ir_types.compiler-ir-block-seq-borrow
+                      seq
+                      bi)
+                      [(Block _ instrs)
+                        (for [ii
+                          (iterator.range
+                            0
+                            (compiler_ir_types.compiler-ir-instr-seq-count
+                              instrs))]
+                          (match (compiler_ir_types.compiler-ir-instr-seq-borrow
+                            instrs
+                            ii)
+                            [(Pack pdst words _)
+                              (when
+                                (and
+                                  (>= pdst 0)
+                                  (< pdst emit-vars)
+                                  (= (array-ref ok pdst) 1))
+                                (set! (array-ref index-arr pdst) kept)
+                                (+= kept 1)
+                                (compiler_ir_types.compiler-ir-instr-builder-push!
+                                  (&mut builder)
+                                  (compiler_ir_types.CompilerIrInstr.Pack
+                                    pdst
+                                    (compiler_ir_types.compiler-ir-value-seq2
+                                      (compiler_ir_types.compiler-ir-clone-value
+                                        (compiler_ir_types.compiler-ir-value-seq-borrow
+                                          (& words)
+                                          0))
+                                      (compiler_ir_types.compiler-ir-clone-value
+                                        (compiler_ir_types.compiler-ir-value-seq-borrow
+                                          (& words)
+                                          1)))
+                                    (compiler_ast_types.AstType.I64)))
+                                (set!
+                                  elided
+                                  (compiler_liveness.compiler-live-set-insert
+                                    elided
+                                    pdst)))]
+                            [_ unit]))]))])
+              (if (= kept 0)
+                (begin
+                  (be_state.compiler-backend-function-state-set-i64-array!
+                    function-state
+                    be_state.compiler-backend-function-i64-array-const-pack-index
+                    (__tl_make-array i64 0))
+                  (be_state.compiler-backend-function-state-set-const-packs!
+                    function-state
+                    (compiler_ir_types.compiler-ir-instr-seq-empty))
+                  group-vars)
+                (begin
+                  (be_state.compiler-backend-function-state-set-i64-array!
+                    function-state
+                    be_state.compiler-backend-function-i64-array-const-pack-index
+                    index-arr)
+                  (be_state.compiler-backend-function-state-set-const-packs!
+                    function-state
+                    (compiler_ir_types.compiler-ir-instr-builder-to-seq builder))
+                  (compiler_liveness.compiler-live-set-minus group-vars elided))))))))))
+
+(define (compiler-backend-const-pack-var?
+  [backend-state : be_state.CompilerBackendState]
+  [var : i64]) : bool
+  (let
+    [idx-arr : (__tl_dyn-array i64)
+      (be_state.compiler-backend-function-state-i64-array
+        (be_state.compiler-backend-state-function-state backend-state)
+        be_state.compiler-backend-function-i64-array-const-pack-index)]
+    (and
+      (>= var 0)
+      (< var (array-length idx-arr))
+      (>= (array-ref idx-arr var) 0))))
+
+(define (compiler-backend-const-pack-word
+  [backend-state : be_state.CompilerBackendState]
+  [var : i64]
+  [word-index : i64]) : compiler_ir_types.CompilerIrMaybeValue
+  (let
+    [function-state : be_state.CompilerBackendFunctionState
+      (be_state.compiler-backend-state-function-state backend-state)]
+    [idx-arr : (__tl_dyn-array i64)
+      (be_state.compiler-backend-function-state-i64-array
+        function-state
+        be_state.compiler-backend-function-i64-array-const-pack-index)]
+    (if (and (>= var 0) (< var (array-length idx-arr)))
+      (let
+        [entry : i64 (array-ref idx-arr var)]
+        (if (>= entry 0)
+          (match (be_state.compiler-backend-function-state-const-packs-borrow
+            function-state
+            entry)
+            [(Pack _ words _)
+              (Some
+                (compiler_ir_types.compiler-ir-clone-value
+                  (compiler_ir_types.compiler-ir-value-seq-borrow
+                    (& words)
+                    word-index)))]
+            [_ (No)])
+          (No)))
+      (No))))
+
 (define (compiler-backend-group-vars-disable!
   [backend-state : be_state.CompilerBackendState]) : unit
   (let
@@ -1351,7 +1660,14 @@
     (be_state.compiler-backend-function-state-set-i64!
       function-state
       be_state.compiler-backend-function-i64-current-slot-vars
-      0)))
+      0)
+    (be_state.compiler-backend-function-state-set-i64-array!
+      function-state
+      be_state.compiler-backend-function-i64-array-const-pack-index
+      (__tl_make-array i64 0))
+    (be_state.compiler-backend-function-state-set-const-packs!
+      function-state
+      (compiler_ir_types.compiler-ir-instr-seq-empty))))
 
 (define (compiler-backend-current-slot-vars-set!
   [backend-state : be_state.CompilerBackendState]
@@ -2846,7 +3162,13 @@
         collections
         name)]
     [(String text)
-      (be_state.compiler-backend-program-collections-add-string
+      (if (= (string.string-length (& text)) 0)
+        collections
+        (be_state.compiler-backend-program-collections-add-string
+          collections
+          text))]
+    [(StrDesc text)
+      (be_state.compiler-backend-program-collections-add-str-desc
         collections
         text)]
     [(F64 bits)

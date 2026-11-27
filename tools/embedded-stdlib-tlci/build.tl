@@ -238,12 +238,7 @@
     [index : i64 0]
     (while (< index (array-length names))
       (let
-        [identity : String
-          (unsafe
-            (ptr-read
-              (ptr-cast
-                (__tl_array-data (array (& (array-ref names index))))
-                : (Ptr String))))]
+        [identity : String (string.copy (& (array-ref names index)))]
         [slot : i64
           (compiler_tlci_native_producer.tlci-native-macro-capture-slot
             captures

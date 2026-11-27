@@ -317,8 +317,8 @@
       "record columns grow to retain collision-probed insertions")
     (test.assert-i64-eq
       (ci.intern-structural-record-slot-bytes)
-      37
-      "each reserved structural record slot uses 37 payload bytes")
+      (+ 29 (comptime (size-of (type String))))
+      "each reserved structural record slot accounts for 29 scalar bytes plus inline String")
     (test.assert-true
       (>=
         (intern-structural-session-record-reserved-bytes session)

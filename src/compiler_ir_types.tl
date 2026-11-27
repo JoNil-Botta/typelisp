@@ -562,6 +562,9 @@
   (Bool bool)
   (Char char)
   (String String)
+  ;; Static 16-byte `{data_ptr, len}` descriptor emitted in `.rodata` (or
+  ;; `.data.rel.ro` under PIC) ONLY for borrowed string literals `(& "lit")`.
+  (StrDesc String)
   (Bytes String)
   ;; Runtime-initialized globals name their hidden initializer explicitly.
   (RuntimeGlobal i64)
@@ -6808,6 +6811,7 @@
     [(Bool b) (Bool b)]
     [(Char c) (Char c)]
     [(String s) (String (string.copy s))]
+    [(StrDesc s) (StrDesc (string.copy s))]
     [(Bytes s) (Bytes (string.copy s))]
     [(StaticArray s) (StaticArray (string.copy s))]
     [(RuntimeGlobal init) (RuntimeGlobal (compiler-ir-symbol-clone init))]
@@ -8218,6 +8222,7 @@
         "false")]
     [(Char value) (string.int->string (cast value : i64))]
     [(String value) (string.copy value)]
+    [(StrDesc value) (str_cat.str-cat "&\"" (string.copy value) "\"")]
     [(Bytes value)
       (str_cat.str-cat
         "<bytes:"

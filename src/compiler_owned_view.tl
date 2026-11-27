@@ -37,7 +37,9 @@
                   (__tl_array-data (array ,reference))
                   : (Ptr ,value-ty))))]
           [(comptime.TypeInfo.Builtin kind)
-            (if (string.eq kind "string")
+            (if (if (string.eq kind "string")
+              (= (size-of (type String)) 8)
+              false)
               `(unsafe
                 (ptr-read
                   (ptr-cast
@@ -83,10 +85,18 @@
     (set! (deref owned-box) ,value)))
 
 (defmacro (compiler-owned-string-place-shared-view [place : Expr]) : Expr
-  `(let
-    [shared-ref (& ,place)]
-    (unsafe
-      (ptr-read (ptr-cast (__tl_array-data (array shared-ref)) : (Ptr String))))))
+  (if (= (size-of (type String)) 16)
+    `(let
+      [shared-ref (& ,place)]
+      (unsafe
+        (string-from-bytes
+          (string-data shared-ref)
+          (__tl_string_length shared-ref))))
+    `(let
+      [shared-ref (& ,place)]
+      (unsafe
+        (ptr-read
+          (ptr-cast (__tl_array-data (array shared-ref)) : (Ptr String)))))))
 
 ;; Global and ordinary local places keep the direct shallow load used by the
 ;; bootstrap. A projected place rooted in an explicit reference is lifetime-

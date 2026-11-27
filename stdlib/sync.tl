@@ -1621,7 +1621,7 @@
       (channel-string-create-err-result
         "sync: channel capacity exceeds maximum")
       (let
-        [slots-bytes : i64 (* capacity 8)]
+        [slots-bytes : i64 (* capacity (comptime (size-of (type String))))]
         [slots-addr : i64
           (unsafe
             (runtime-alloc slots-bytes))]
@@ -2094,7 +2094,7 @@
   (if (not (channel-string-create-capacity-ok? capacity))
     fallback
     (let
-      [slots-bytes : i64 (* capacity 8)]
+      [slots-bytes : i64 (* capacity (comptime (size-of (type String))))]
       [slots-addr : i64
         (unsafe
           (runtime-alloc slots-bytes))]

@@ -89,7 +89,7 @@
         (str_cat.str-cat
           (cond
             [(= mode 1) "copy_bytes %3, %0, 8\n"]
-            [(= mode 2) "store_owned %12 -> %3 : String\n"]
+            [(= mode 2) "store_owned %12 -> %3 : (__tl_dyn-array i64)\n"]
             [else "store_ptr %3, 11 : i64\n"])
           (str_cat.str-cat
             "%4 = gep %3, 8 : u8\n"
@@ -182,7 +182,8 @@
 (define (compiler-optimize-ctor-adopt-loop-self-test) : i64
   (let
     [params : ir.CompilerIrParamSeq
-      (irt.params "source=%0:u64, owner=%12:String, cond=%13:bool")]
+      (irt.params
+        "source=%0:u64, owner=%12:(__tl_dyn-array i64), cond=%13:bool")]
     [mode : i64 0]
     (while (< mode 5)
       (let
@@ -217,7 +218,7 @@
 (define (compiler-optimize-ctor-adopt-self-test) : i64
   (let
     [params : ir.CompilerIrParamSeq
-      (irt.params "source=%0:u64, owner=%12:String")]
+      (irt.params "source=%0:u64, owner=%12:(__tl_dyn-array i64)")]
     [mode : i64 0]
     (while (<= mode 20)
       (let
@@ -5654,7 +5655,7 @@
                 (opt-agsplit-gep 2 1 8)
                 (opt-agsplit-store-literal 2 11)
                 (opt-agsplit-load 3 2)
-                (irt.instr "store_owned %3 -> %1 : String")
+                (irt.instr "store_owned %3 -> %1 : (__tl_dyn-array i64)")
                 (irt.instr "return %3"))))
           6)]
       (opt-agsplit-count-function func (opt-agsplit-kind-tl-alloc) 0))
@@ -12039,8 +12040,8 @@
     (ir.CompilerIrInstr.Store symbols.lit (I64 5) (I64))
     ;; neg <- -3
     (ir.CompilerIrInstr.Store symbols.neg (I64 (- 0 3)) (I64))
-    ;; len <- (string-length @text): load (gep @text, 1) : i64
-    (ir.CompilerIrInstr.Gep 1 (Global symbols.text) (I64 1) (I64))
+    ;; len <- (string-length (& text)): load (gep &@text, 1) : i64
+    (ir.CompilerIrInstr.Gep 1 (GlobalAddr symbols.text) (I64 1) (I64))
     (ir.CompilerIrInstr.Load 2 (Var 1) (I64))
     (ir.CompilerIrInstr.Store symbols.len (Var 2) (I64))
     ;; plen <- (array-length p), p the header parameter, through one Mov copy
@@ -32549,9 +32550,10 @@
 
 (define (opt-ssa-fixed-handle-boundary-ok?) : bool
   (and
-    (let
-      [ty (ast.AstType.String)]
-      (opt.opt-ssa-register-value-type? ty))
+    (not
+      (let
+        [ty (ast.AstType.String)]
+        (opt.opt-ssa-register-value-type? ty)))
     (let
       [ty (ast.AstType.Str)]
       (opt.opt-ssa-register-value-type? ty))
@@ -33158,7 +33160,6 @@
         (& unsupported-dst))]
     (cond
       [(not (opt-ssa-fixed-handle-boundary-ok?)) 1]
-      [(not (opt-ssa-fixed-handle-diamond-ok? (String))) 2]
       [(not (opt-ssa-fixed-handle-diamond-ok? (Str))) 3]
       [(not
           (opt-ssa-fixed-handle-diamond-ok?
@@ -33167,7 +33168,7 @@
       [(not (opt-ssa-fixed-handle-diamond-ok? array-ty)) 5]
       [(not (opt-ssa-fixed-handle-diamond-ok? dyn-array-ty)) 6]
       [(not (opt-ssa-fixed-handle-diamond-ok? box-ty)) 7]
-      [(not (opt-ssa-fixed-handle-loop-ok? (String))) 8]
+      [(not (opt-ssa-fixed-handle-loop-ok? (Str))) 8]
       [(not (opt-ssa-fixed-handle-loop-ok? func-ty)) 9]
       [(not
           (opt.opt-function-eq
@@ -49333,7 +49334,7 @@ exit:
 ;;      bound counts i64 elements, not the stride the address uses
 (define (opt-licm-bound-params) : ir.CompilerIrParamSeq
   (irt.params
-    "cond=%0:bool, array=%1:(__tl_dyn-array i64), k=%2:i64, other=%3:(__tl_dyn-array i64), text=%23:String"))
+    "cond=%0:bool, array=%1:(__tl_dyn-array i64), k=%2:i64, other=%3:(__tl_dyn-array i64), text=%23:str"))
 
 (define (opt-licm-bound-entry [mode : i64]) : ir.CompilerIrInstrSeq
   (let
@@ -64317,8 +64318,8 @@ done:
             (irt.instrs "%4 = load %1 : i64\nreturn")
             (ir.CompilerIrInstr.Gep 1 (String "abcdefgh") (I64 0) (U8)))))
       ""
-      "%4 = load %1 : i64"
-      "descriptor word is not literal data")
+      "%4 = mov 7523094288207667809 : i64"
+      "direct literal data word folds to bytes")
     (opt-sl-data-test-blocks!
       (ir.compiler-ir-blocks
         (ir.CompilerIrBlock.Block
@@ -87923,9 +87924,9 @@ return
       (ast.ast-node-pool-context-new-with-capacities 4 16)]
     [interns : ci.InternCompatState (ci.intern-compat-state-capture-active)]
     [owner-id : i64 (ir.compiler-ir-symbol "owner")]
-    [str-id : i64
-      (ast.ast-node-pool-context-type-push pools (ast.AstType.String))]
     [i64-id : i64 (ast.ast-node-pool-context-type-push pools (ast.AstType.I64))]
+    [str-id : i64
+      (ast.ast-node-pool-context-type-push pools (ast.AstType.DynArray i64-id))]
     [reg-str-ty : ast.AstType (ast.AstType.Region owner-id str-id)]
     [reg-str-id : i64
       (ast.ast-node-pool-context-type-push

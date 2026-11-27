@@ -1235,6 +1235,7 @@
   [index : be_state.CompilerBackendProgramIndex]
   [ty : compiler_ast_types.AstType]) : i64
   (match (& ty)
+    [(String) 2]
     [(or (Ref _ inner) (MutRef _ inner))
       (if (compiler_ast_types.ast-type-segment-bases-fat-referent?
         type-segment-bases
@@ -2617,9 +2618,11 @@
         collections
         name)]
     [(String text)
-      (be_state.compiler-backend-program-collections-add-string
+      (if (= (string.string-length (& text)) 0)
         collections
-        text)]
+        (be_state.compiler-backend-program-collections-add-string
+          collections
+          text))]
     [(F64 bits)
       (compiler-backend-collect-float-both-collections collections bits)]
     [(Bytes text)

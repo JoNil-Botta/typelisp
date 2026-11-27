@@ -3839,6 +3839,11 @@
               m))
           (or
             include-aborts?
+            (compiler-backend-peephole-range-contains-substr?
+              data
+              i
+              end
+              "tl_panic_at")
             (not (compiler-backend-peephole-line-noreturn-abort? data i end))))
           (set! found true)
           unit)

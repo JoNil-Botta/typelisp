@@ -1,0 +1,4 @@
+# Native integration cases: inline 16-byte String representation and ZII (#7962).
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+inline_string_zii|all|0,1,2|tests/integration/inline_string_zii.tl|42|-|-|stdlib/string.tl stdlib/io.tl stdlib/iterator.tl|-

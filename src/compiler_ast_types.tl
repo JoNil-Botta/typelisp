@@ -1907,7 +1907,12 @@
 ;; A zero-arg function inlines and folds to the same immediate the literal
 ;; produced.
 (define (ast-expr-node-bytes) : i64
-  32)
+  (if (= (comptime (size-of (type String))) 16)
+    40
+    32))
+
+(define (ast-expr-node-words) : i64
+  (/ (ast-expr-node-bytes) 8))
 
 (define (ast-type-node-bytes) : i64
   24)
@@ -2189,7 +2194,7 @@
 ;; resets the pool to that floor: each check sees its cached programs exactly as
 ;; parsed. A floor of 0 protects nothing and drops the journal.
 (define ast-node-protected-journal-stride : i64
-  8)
+  (+ (ast-expr-node-words) 4))
 (define ast-node-protected-floor : i64
   0)
 (define ast-node-protected-journal : (__tl_dyn-array i64)
@@ -2248,36 +2253,43 @@
       [source : (Ptr i64)
         (unsafe
           (int->ptr dest : (Ptr i64)))]
+      [words : i64 (ast-expr-node-words)]
       (set! (array-ref ast-node-protected-journal at) dest)
-      (for [word (iterator.range 0 4)]
+      (for [word (iterator.range 0 words)]
         (set!
           (array-ref ast-node-protected-journal (+ at (+ word 1)))
           (unsafe
             (ptr-read (ptr-offset source word)))))
-      (set! (array-ref ast-node-protected-journal (+ at 5)) slot-bases)
-      (set! (array-ref ast-node-protected-journal (+ at 6)) id)
-      (set! (array-ref ast-node-protected-journal (+ at 7)) prior-slot)
+      (set!
+        (array-ref ast-node-protected-journal (+ at (+ words 1)))
+        slot-bases)
+      (set! (array-ref ast-node-protected-journal (+ at (+ words 2))) id)
+      (set!
+        (array-ref ast-node-protected-journal (+ at (+ words 3)))
+        prior-slot)
       (+= ast-node-protected-journal-len 1))))
 
 ;: Undo every recorded in-place write, newest first, and empty the journal.
 (define (ast-node-protected-restore!) : unit
-  (while (> ast-node-protected-journal-len 0)
-    (-= ast-node-protected-journal-len 1)
-    (let
-      [at : i64
-        (* ast-node-protected-journal-len ast-node-protected-journal-stride)]
-      [dest : (MutPtr i64)
-        (unsafe
-          (int->ptr (array-ref ast-node-protected-journal at) : (MutPtr i64)))]
-      (for [word (iterator.range 0 4)]
-        (unsafe
-          (ptr-write!
-            (ptr-offset dest word)
-            (array-ref ast-node-protected-journal (+ at (+ word 1))))))
-      (ast-expr-span-slot-set-in-bases!
-        (array-ref ast-node-protected-journal (+ at 5))
-        (array-ref ast-node-protected-journal (+ at 6))
-        (array-ref ast-node-protected-journal (+ at 7))))))
+  (let
+    [words : i64 (ast-expr-node-words)]
+    (while (> ast-node-protected-journal-len 0)
+      (-= ast-node-protected-journal-len 1)
+      (let
+        [at : i64
+          (* ast-node-protected-journal-len ast-node-protected-journal-stride)]
+        [dest : (MutPtr i64)
+          (unsafe
+            (int->ptr (array-ref ast-node-protected-journal at) : (MutPtr i64)))]
+        (for [word (iterator.range 0 words)]
+          (unsafe
+            (ptr-write!
+              (ptr-offset dest word)
+              (array-ref ast-node-protected-journal (+ at (+ word 1))))))
+        (ast-expr-span-slot-set-in-bases!
+          (array-ref ast-node-protected-journal (+ at (+ words 1)))
+          (array-ref ast-node-protected-journal (+ at (+ words 2)))
+          (array-ref ast-node-protected-journal (+ at (+ words 3))))))))
 
 (define (ast-node-respan-records-grow!) : unit
   (ast-expr-span-table-ensure!
@@ -2479,7 +2491,10 @@
         (ptr-write! dest (ptr-read source))
         (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
         (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2)))
-        (ptr-write! (ptr-offset dest 3) (ptr-read (ptr-offset source 3))))
+        (ptr-write! (ptr-offset dest 3) (ptr-read (ptr-offset source 3)))
+        (when
+          (= (comptime (size-of (type String))) 16)
+          (ptr-write! (ptr-offset dest 4) (ptr-read (ptr-offset source 4)))))
       (set! ast-node-pool-count (+ id 1))
       ;; A truncated slot can still contain its prior generation's index.
       (ast-expr-span-slot-set-in-bases! ast-node-span-slot-segment-bases id 0)
@@ -2554,7 +2569,10 @@
         (ptr-write! dest (ptr-read source))
         (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
         (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2)))
-        (ptr-write! (ptr-offset dest 3) (ptr-read (ptr-offset source 3))))
+        (ptr-write! (ptr-offset dest 3) (ptr-read (ptr-offset source 3)))
+        (when
+          (= (comptime (size-of (type String))) 16)
+          (ptr-write! (ptr-offset dest 4) (ptr-read (ptr-offset source 4)))))
       ;; In-place semantic rewrites retain the identity's canonical slot.  A
       ;; copied wrapper additionally establishes its per-use view immediately;
       ;; prefix rollback later rebuilds records in id order.
@@ -3224,7 +3242,10 @@
         (ptr-write! dest storage-tag)
         (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
         (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2)))
-        (ptr-write! (ptr-offset dest 3) (ptr-read (ptr-offset source 3))))
+        (ptr-write! (ptr-offset dest 3) (ptr-read (ptr-offset source 3)))
+        (when
+          (= (comptime (size-of (type String))) 16)
+          (ptr-write! (ptr-offset dest 4) (ptr-read (ptr-offset source 4)))))
       (set! pool.count (+ id 1))
       (ast-expr-span-slot-set-in-bases! pool.span-slot-segment-bases id 0)
       (if (or
@@ -3426,7 +3447,10 @@
       (ptr-write! dest (ptr-read source))
       (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
       (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2)))
-      (ptr-write! (ptr-offset dest 3) (ptr-read (ptr-offset source 3))))
+      (ptr-write! (ptr-offset dest 3) (ptr-read (ptr-offset source 3)))
+      (when
+        (= (comptime (size-of (type String))) 16)
+        (ptr-write! (ptr-offset dest 4) (ptr-read (ptr-offset source 4)))))
     prior-slot))
 
 (define (ast-expr-node-pool-state-set!

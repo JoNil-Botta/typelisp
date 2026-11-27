@@ -1349,7 +1349,8 @@
     (lower-clone-tc-job-state (& ctx.job-state))
     ctx.module-id
     ctx.type-module-id
-    ctx.module
+    ctx.module-data
+    ctx.module-len
     ctx.program-decls))
 
 (define (lower-clone-state [state : (& LowerState)]) : LowerState
@@ -14379,6 +14380,21 @@
                 env
                 type-env
                 (lower-context-expr-get ctx place)))]
+          [(Borrow false _ place)
+            (when
+              (and
+                scan.loop?
+                (match (tc_core.tc-type-strip-region
+                  (tc_core.tc-resolve-type
+                    ctx
+                    (lower-exposure-type scan env type-env place)))
+                  [(ast.AstType.String) true]
+                  [_ false]))
+              (lower-exposure-place!
+                scan
+                env
+                type-env
+                (lower-context-expr-get ctx place)))]
           [_ unit])
         (let
           [children : ast.AstExprList (ast.ast-expr-child-ids unwrapped)]
@@ -14408,6 +14424,14 @@
   (set! (deref budget) (- (deref budget) 1))
   (match (& expr)
     [(PtrAddrOf place)
+      (or
+        loop?
+        (lower-exposure-has-address?
+          ctx
+          (lower-context-expr-get ctx place)
+          false
+          budget))]
+    [(Borrow false _ place)
       (or
         loop?
         (lower-exposure-has-address?
@@ -15092,19 +15116,29 @@
     (__tl-project-set-field (__tl-box-place data) spans (box new-spans))
     state))
 
+(define (lower-materialize-string-words [text : (& text str)]) : ir.CompilerIrValueSeq
+  (let
+    [len : i64 (string.string-length text)]
+    (if (= len 0)
+      (ir.compiler-ir-value-seq2 (I64 0) (I64 0))
+      (ir.compiler-ir-value-seq2 (String (string.copy text)) (I64 len)))))
+
 (define (lower-materialize
   [state : LowerState]
   [value : ir.CompilerIrValue]
   [ty : ast.AstType]) : ResultLowerExpr
   (match (lower-state-alloc-var state)
     [(Alloc allocated var-id)
-      (Ok
-        (Expr
-          (lower-state-emit
-            allocated
-            (Mov var-id value (lower-global-shared-view ty)))
-          (Var var-id)
-          ty))]))
+      (let
+        [instr : ir.CompilerIrInstr
+          (match (& value)
+            [(ir.CompilerIrValue.String text)
+              (Pack
+                var-id
+                (lower-materialize-string-words (& text))
+                (ast.clone-ast-type (& ty)))]
+            [_ (Mov var-id value (ast.clone-ast-type (& ty)))])]
+        (Ok (Expr (lower-state-emit allocated instr) (Var var-id) ty)))]))
 
 ;; A call uses the callable its callee expression produced (SPEC 5.3). The
 ;; value is copied before `args` are lowered only when they can write the
@@ -15146,7 +15180,13 @@
     [(Alloc allocated var-id)
       (let
         [instr : ir.CompilerIrInstr
-          (Mov var-id value (lower-global-shared-view ty))]
+          (match (& value)
+            [(ir.CompilerIrValue.String text)
+              (Pack
+                var-id
+                (lower-materialize-string-words (& text))
+                (ast.clone-ast-type (& ty)))]
+            [_ (Mov var-id value (ast.clone-ast-type (& ty)))])]
         (Ok
           (Expr
             (lower-state-emit-at-expr ctx allocated instr expr)
@@ -15279,8 +15319,9 @@
       [(Struct name) (lower-inline-layout-size-or ctx (Struct name) 8)]
       [(StructArgs name lifetimes)
         (lower-inline-layout-size-or ctx (StructArgs name lifetimes) 8)]
+      [(String) 16]
       [(or (I64) (U64) (F64) (CFunc _ _) (Func _ _) (DynArray _) (Box _) (Ptr _)
-           (MutPtr _) (String) (Str) (Bytes) (Var _) (VarArgs _ _))
+           (MutPtr _) (Str) (Bytes) (Var _) (VarArgs _ _))
         8])))
 
 ;; Snapshot the completed, resolved layouts before the driver retires their
@@ -15332,7 +15373,8 @@
               3
               1)]
           [(or (Unit) (Never)) 0]
-          [(or (DynArray _) (String) (Str) (Box _) (Ptr _) (MutPtr _) (Func _ _)
+          [(String) 3]
+          [(or (DynArray _) (Str) (Box _) (Ptr _) (MutPtr _) (Func _ _)
                (CFunc _ _))
             1]
           [_
@@ -16022,6 +16064,7 @@
     (lower-resolve-type-head
       ctx
       (owned_view.compiler-owned-reference-shared-view ty)))
+    [(String) true]
     [(or (Ref _ inner) (MutRef _ inner)) (lower-fat-reference? ctx inner)]
     [(or (Struct name) (StructArgs name _) (Enum name) (EnumArgs name _))
       (> (tc_core.tc-inline-aggregate-regwords-cached ctx name) 0)]
@@ -16052,6 +16095,7 @@
 ;; into a second chunk whose rewind leaks into later lowering.
 (define (lower-type-register-words [ctx : tc_core.TcContext] [ty : ast.AstType]) : i64
   (match (tc_core.tc-type-strip-region (lower-resolve-type-head ctx ty))
+    [(String) 2]
     [(or (Ref _ inner) (MutRef _ inner))
       (if (lower-fat-reference? ctx inner)
         2
@@ -16181,6 +16225,10 @@
   (let
     [ty : ast.AstType (owned_view.compiler-owned-reference-shared-view ty)]
     (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
+      [(String)
+        (if (= word-index 0)
+          (ast.AstType.Ptr (ast.ty-node-push (& (ast.AstType.U8))))
+          (I64))]
       [(or (Ref _ inner) (MutRef _ inner))
         (if (lower-fat-reference? ctx inner)
           (if (= word-index 0)
@@ -17466,6 +17514,33 @@
       (match (lower-load-at-offset ptr-state value 8 (I64))
         [(Expr len-state len _) (Fields len-state ptr len)])]))
 
+(define (lower-string-fields-for-type
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [value : ir.CompilerIrValue]
+  [ty : (& ty ast.AstType)]) : LowerStringFields
+  (match (& value)
+    [(ir.CompilerIrValue.String text)
+      (let
+        [len : i64 (string.string-length (& text))]
+        (Fields
+          state
+          (if (= len 0)
+            (I64 0)
+            (String (string.copy (& text))))
+          (I64 len)))]
+    [_
+      (if (lower-type-register-group? ctx ty)
+        (match (lower-emit-word
+          state
+          (ir.compiler-ir-clone-value (& value))
+          0
+          (U64))
+          [(Expr ptr-state ptr _)
+            (match (lower-emit-word ptr-state value 1 (I64))
+              [(Expr len-state len _) (Fields len-state ptr len)])])
+        (lower-string-fields state value))]))
+
 (define (lower-str-ref-type? [ctx : tc_core.TcContext] [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-strip-region (lower-resolve-type-head ctx ty))
     [(Ref _ inner)
@@ -17719,8 +17794,12 @@
           (lower-expr ctx state env type-env (lower-global-shared-view expr)))]
       (match lowered
         [(Expr expr-state value expr-ty)
-          (if (lower-string-handle-type? ctx expr-ty)
-            (match (lower-string-fields expr-state value)
+          (if (lower-string-handle-type? ctx (ast.clone-ast-type (& expr-ty)))
+            (match (lower-string-fields-for-type
+              ctx
+              expr-state
+              value
+              (& expr-ty))
               [(Fields field-state ptr len)
                 (ir.compiler-ir-value-builder-push! builder ptr)
                 (ir.compiler-ir-value-builder-push! builder len)
@@ -17839,7 +17918,7 @@
               (ir.compiler-ir-value-seq-empty)
               0))]
         [(Some value)
-          (match (lower-string-fields state value)
+          (match (lower-string-fields-for-type ctx state value (& (String)))
             [(Fields carry-state ptr len)
               (let
                 [take : i64
@@ -18263,6 +18342,13 @@
   [ty : ast.AstType]) : bool
   (lower-supported-reference-type-with-stack? ctx ty (lower-id-set-empty)))
 
+(define (lower-borrowable-place-expr? [expr : (& ast.AstExpr)]) : bool
+  (match expr
+    [(or (Var _) (StructGet _ _) (TupleRef _ _) (ArrayRef _ _) (BoxGet _)
+         (BoxTake _))
+      true]
+    [_ false]))
+
 (define (lower-borrowed-str-expr
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -18271,11 +18357,46 @@
   [inner : ast.AstExpr]
   [origin : ast.AstExpr]
   [expr-ty : ast.AstType]) : ResultLowerExpr
-  (if (lower-str-ref-type? ctx (lower-global-shared-view expr-ty))
-    (let
-      [lowered (try (lower-expr ctx state env type-env inner))]
-      (match lowered
-        [(Expr inner-state value _) (Ok (Expr inner-state value expr-ty))]))
+  (if (lower-str-ref-type? ctx (ast.clone-ast-type (& expr-ty)))
+    (match (lower-expr-result-type-or-check
+      ctx
+      env
+      type-env
+      (lower-state-type-cache state)
+      (lower-state-function-state state)
+      (& inner))
+      [(Err message) (Err (box (lower-diagnostic-at-expr ctx origin message)))]
+      [(Ok inner-ty)
+        (let
+          [unwrapped : ast.AstExpr (ast.ast-expr-unspan (& inner))]
+          (cond
+            [(lower-str-ref-type? ctx (ast.clone-ast-type (& inner-ty)))
+              (let
+                [lowered (try (lower-expr ctx state env type-env inner))]
+                (match lowered
+                  [(Expr inner-state value _)
+                    (Ok (Expr inner-state value expr-ty))]))]
+            [(lower-borrowable-place-expr? (& unwrapped))
+              (lower-borrow-place-address
+                ctx
+                state
+                env
+                type-env
+                inner
+                origin
+                expr-ty)]
+            [else
+              (let
+                [lowered (try (lower-expr ctx state env type-env inner))]
+                (match lowered
+                  [(Expr inner-state value value-ty)
+                    (Ok
+                      (lower-borrow-copy-to-inline-storage
+                        ctx
+                        inner-state
+                        value
+                        value-ty
+                        expr-ty))]))]))])
     (Err
       (box
         (lower-diagnostic-at-expr ctx origin (lower-reference-support-message))))))
@@ -18287,9 +18408,13 @@
   [referent-ty : ast.AstType]
   [result-ty : ast.AstType]) : LowerExpr
   (let
-    [resolved : ast.AstType
+    [resolved-raw : ast.AstType
       (tc_core.tc-type-without-regions
         (tc_core.tc-resolve-type ctx referent-ty))]
+    [resolved : ast.AstType
+      (match (& resolved-raw)
+        [(Str) (ast.AstType.String)]
+        [_ resolved-raw])]
     [size : i64 (lower-type-size ctx resolved)]
     (match (lower-reserve-inline-storage
       state
@@ -18377,6 +18502,7 @@
   [origin : ast.AstExpr]
   [result-ty : ast.AstType]) : ResultLowerExpr
   (let
+    [value-ty : ast.AstType (ast.clone-ast-type (& place-ty))]
     [referent-ty : ast.AstType (tc_core.tc-borrow-referent-type place-ty)]
     [id : i64
       (sym_i64_env.sym-i64-lookup-id-or
@@ -18401,13 +18527,75 @@
                   "lower: mutable borrow of by-value place requires writeback support")))]
           [_
             (if (not (> (lower-state-pattern-place state id) 0))
-              (ResultLowerExpr.Ok
-                (lower-borrow-copy-to-inline-storage
-                  ctx
-                  state
-                  (Var id)
-                  referent-ty
-                  result-ty))
+              (let
+                [resolved-raw : ast.AstType
+                  (tc_core.tc-resolve-type
+                    ctx
+                    (ast.clone-ast-type (& value-ty)))]
+                [arena-string? : bool
+                  (match (& resolved-raw)
+                    [(Region _ inner)
+                      (match (tc_core.tc-type-strip-region
+                        (tc_core.tc-resolve-type ctx (ast.ty-node-get inner)))
+                        [(String) true]
+                        [_ false])]
+                    [_ false])]
+                [plain-string? : bool
+                  (match (tc_core.tc-type-strip-region resolved-raw)
+                    [(String) true]
+                    [_ false])]
+                (if arena-string?
+                  ;; An arena-branded `(in r String)` borrowed as `(& r str)`
+                  ;; may outlive this function's stack frame (#9288). Allocate
+                  ;; its 16-byte `{data_ptr, len}` descriptor in the active
+                  ;; arena so it outlives this frame and still frees with its
+                  ;; enclosing `with-arena` / `in-arena`.
+                  (match (lower-state-alloc-var state)
+                    [(Alloc s0 slot-id)
+                      (let
+                        [s1 : LowerState
+                          (lower-state-emit-at-expr
+                            ctx
+                            s0
+                            (Call
+                              slot-id
+                              cbi.compiler-builtin-id-tl-alloc
+                              (ir.CompilerIrCallArgs.One (I64 16))
+                              (lower-global-shared-view result-ty))
+                            origin)]
+                        [s2 : LowerState
+                          (lower-store-inline-value-at-offset
+                            ctx
+                            s1
+                            (& (ir.CompilerIrValue.Var slot-id))
+                            0
+                            (ir.CompilerIrValue.Var id)
+                            (ast.AstType.String)
+                            16)]
+                        (Ok (Expr s2 (Var slot-id) result-ty)))])
+                  (if plain-string?
+                    ;; A borrowed local `String` keeps a stable addressable 16-byte
+                    ;; home in the function frame so `(& s str)` never points at a
+                    ;; reusable temporary slot across loops.
+                    (match (lower-state-alloc-var state)
+                      [(Alloc allocated var-id)
+                        (let
+                          [addr-state : LowerState
+                            (lower-state-emit-at-expr
+                              ctx
+                              allocated
+                              (AddrOf var-id id 0)
+                              origin)]
+                          [marked-state : LowerState
+                            (lower-state-address-taken-mark addr-state id)]
+                          (Ok (Expr marked-state (Var var-id) result-ty)))])
+                    (ResultLowerExpr.Ok
+                      (lower-borrow-copy-to-inline-storage
+                        ctx
+                        state
+                        (Var id)
+                        value-ty
+                        result-ty)))))
               ;; An auto-borrowed deferred Copy binding copies its value as
               ;; read here, not its address.
               (match (lower-load-inline-value-at-offset
@@ -18415,14 +18603,14 @@
                 state
                 (ir.CompilerIrValue.Var id)
                 0
-                (lower-global-shared-view referent-ty))
+                (lower-global-shared-view value-ty))
                 [(LowerExpr.Expr read-state value _)
                   (ResultLowerExpr.Ok
                     (lower-borrow-copy-to-inline-storage
                       ctx
                       read-state
                       value
-                      referent-ty
+                      value-ty
                       result-ty))]))]))
       (Ok
         (Expr
@@ -19478,12 +19666,15 @@
     (lower-align-up cursor (lower-type-align ctx resolved))))
 
 (define (lower-string-payload-literal-eq
+  [ctx : tc_core.TcContext]
   [state : LowerState]
   [field-value : ir.CompilerIrValue]
-  [lit-value : ir.CompilerIrValue]) : ResultLowerExpr
-  (match (lower-string-fields state field-value)
+  [field-ty : (& field-ty ast.AstType)]
+  [lit-value : ir.CompilerIrValue]
+  [lit-ty : (& lit-ty ast.AstType)]) : ResultLowerExpr
+  (match (lower-string-fields-for-type ctx state field-value field-ty)
     [(Fields field-state field-ptr field-len)
-      (match (lower-string-fields field-state lit-value)
+      (match (lower-string-fields-for-type ctx field-state lit-value lit-ty)
         [(Fields done-state lit-ptr lit-len)
           (Ok
             (lower-inline-string-eq-fields
@@ -19502,14 +19693,17 @@
   [resolved : ast.AstType]) : ResultLowerExpr
   (match (& lit)
     [(String _)
-      (if (lower-string-handle-type? ctx (lower-global-shared-view resolved))
+      (if (lower-string-handle-type? ctx (ast.clone-ast-type (& resolved)))
         (lower-string-payload-literal-eq
+          ctx
           state
           field-value
+          (& resolved)
           (lower-literal-value-with-type
             (tc_core.tc-context-source-names ctx)
             lit
-            resolved))
+            (ast.clone-ast-type (& resolved)))
+          (& (String)))
         (Err
           (box
             (lower-diagnostic
@@ -20472,9 +20666,10 @@
                       (Enum enum-id)
                       offset
                       (lower-global-shared-view resolved))
-                    (lower-load-at-offset
+                    (lower-load-inline-value-at-offset
+                      ctx
                       state
-                      base
+                      (ir.compiler-ir-clone-value (& base))
                       offset
                       (lower-global-shared-view resolved)))
                     [(Expr load-state field-value _)
@@ -21070,7 +21265,7 @@
   [field-ty : ast.AstType]
   [ref-ty : ast.AstType]) : LowerExpr
   (if (or
-    (lower-str-ref-type? ctx (lower-global-shared-view ref-ty))
+    (lower-str-ref-type? ctx (lower-global-shared-view field-ty))
     (and
       (not (lower-type-inline-storage? ctx field-ty))
       (lower-borrow-place-value-reference?
@@ -21851,7 +22046,7 @@
 (define (lower-capture-slot-type [ty : ast.AstType]) : ast.AstType
   (match (tc_core.tc-type-strip-region (lower-global-shared-view ty))
     [(or (Func _ _) (Tuple _) (Array _ _) (Enum _) (EnumArgs _ _) (Struct _)
-         (StructArgs _ _) (String) (DynArray _))
+         (StructArgs _ _) (DynArray _))
       (U64)]
     [_ ty]))
 
@@ -21876,7 +22071,7 @@
   [value : ir.CompilerIrValue]
   [ty : ast.AstType]) : ResultLowerExpr
   (match (tc_core.tc-resolve-type ctx (lower-global-shared-view ty))
-    [(String) (lower-capture-snapshot-string-value state value)]
+    [(String) (lower-capture-snapshot-string-value ctx state value)]
     [(DynArray elem-ty)
       (lower-capture-snapshot-dynarray-value
         ctx
@@ -21926,9 +22121,10 @@
     [_ (Ok (Expr state value ty))]))
 
 (define (lower-capture-snapshot-string-value
+  [ctx : tc_core.TcContext]
   [state : LowerState]
   [value : ir.CompilerIrValue]) : ResultLowerExpr
-  (match (lower-string-fields state value)
+  (match (lower-string-fields-for-type ctx state value (& (String)))
     [(Fields fields-state ptr len)
       (lower-substring-call-runtime fields-state ptr (I64 0) len)]))
 
@@ -26039,7 +26235,7 @@
           (tc_core.tc-borrow-referent-type (lower-global-shared-view place-ty))]
         [referent-ir-ty : ast.AstType
           (tc_core.tc-type-without-regions
-            (tc_core.tc-resolve-type ctx (lower-global-shared-view referent-ty)))]
+            (tc_core.tc-resolve-type ctx (lower-global-shared-view place-ty)))]
         ;; Exactly the places `lower-borrow-var-address` cannot borrow
         ;; mutably take the writeback: a reference variable is reborrowed, a
         ;; memory-class value lends its storage, and an unsupported reference
@@ -26172,7 +26368,7 @@
           [copied : bool
             (not
               (or
-                (lower-str-ref-type? ctx (lower-global-shared-view arg-ty))
+                (lower-str-ref-type? ctx (ast.clone-ast-type (& resolved-ty)))
                 (lower-borrow-place-value-reference?
                   ctx
                   (lower-global-shared-view resolved-ty))))]
@@ -30191,9 +30387,12 @@
                                               (ast.clone-ast-type (& left-ty))))
                                           (return
                                             (match (lower-string-payload-literal-eq
+                                              ctx
                                               right-state
                                               snapshot-value
-                                              right-value)
+                                              (& left-ty)
+                                              right-value
+                                              (& right-ty))
                                               [(Ok (Expr eq-state eq-value _))
                                                 (match op
                                                   [(Eq)
@@ -31578,7 +31777,18 @@
       (try (lower-expr-with-type ctx state env type-env expr origin expr-ty))]
     (match lowered
       [(Expr next-state value actual-ty)
-        (Ok (lower-coerce-value next-state value actual-ty expected-ty))])))
+        (if (and
+          (not (tc_core.tc-never-type? (lower-global-shared-view actual-ty)))
+          (lower-str-ref-type? ctx (ast.clone-ast-type (& expected-ty)))
+          (not (lower-str-ref-type? ctx (ast.clone-ast-type (& actual-ty)))))
+          (Ok
+            (lower-borrow-copy-to-inline-storage
+              ctx
+              next-state
+              value
+              actual-ty
+              expected-ty))
+          (Ok (lower-coerce-value next-state value actual-ty expected-ty)))])))
 
 (define (lower-expr-and-coerce
   [ctx : tc_core.TcContext]
@@ -31627,15 +31837,33 @@
         expected-ty
         origin)]
     [(Literal lit)
-      (lower-materialize-at-expr
-        ctx
-        state
-        (lower-literal-value-with-type
-          (tc_core.tc-context-source-names ctx)
-          lit
-          (lower-global-shared-view expected-ty))
-        expected-ty
-        origin)]
+      (let
+        [lit-val : ir.CompilerIrValue
+          (lower-literal-value-with-type
+            (tc_core.tc-context-source-names ctx)
+            lit
+            (lower-global-shared-view expected-ty))]
+        (if (and
+          (lower-str-ref-type? ctx (ast.clone-ast-type (& expected-ty)))
+          (match (& lit-val)
+            [(ir.CompilerIrValue.String _) true]
+            [_ false]))
+          (match (try
+            (lower-materialize-at-expr
+              ctx
+              state
+              lit-val
+              (ast.AstType.String)
+              origin))
+            [(Expr mat-state mat-val _)
+              (Ok
+                (lower-borrow-copy-to-inline-storage
+                  ctx
+                  mat-state
+                  mat-val
+                  (ast.AstType.String)
+                  expected-ty))])
+          (lower-materialize-at-expr ctx state lit-val expected-ty origin)))]
     ;; These forms were checked with this expected type. Recurse into their
     ;; lowering instead of checking scoped stores again in a reconstructed env.
     [(or (Unary _ _) (Binary _ _ _) (Let _) (Begin _) (Unsafe _)
@@ -31753,7 +31981,7 @@
 
 (define (lower-owned-handle-type? [ctx : tc_core.TcContext] [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
-    [(or (DynArray _) (String)) true]
+    [(DynArray _) true]
     [_ false]))
 
 (define (lower-struct-get-named
@@ -32985,10 +33213,12 @@
                 (Char)))]))]))
 
 (define (lower-string-ref-load
+  [ctx : tc_core.TcContext]
   [state : LowerState]
   [str-value : ir.CompilerIrValue]
+  [str-ty : (& str-ty ast.AstType)]
   [index-value : ir.CompilerIrValue]) : ResultLowerExpr
-  (match (lower-string-fields state str-value)
+  (match (lower-string-fields-for-type ctx state str-value str-ty)
     [(Fields fields-state data-ptr str-len)
       (match (lower-cast-value
         fields-state
@@ -33020,7 +33250,7 @@
       (try (lower-expr ctx state env type-env (lower-global-shared-view str)))]
     (match lowered-str
       [(Expr str-state str-value str-ty)
-        (if (lower-string-handle-type? ctx str-ty)
+        (if (lower-string-handle-type? ctx (ast.clone-ast-type (& str-ty)))
           (let
             [lowered-index : LowerExpr
               (try
@@ -33040,8 +33270,10 @@
                       [loaded : LowerExpr
                         (try
                           (lower-string-ref-load
+                            ctx
                             index-i-state
                             str-value
+                            (& str-ty)
                             index-value))]
                       (match loaded
                         [(Expr loaded-state value ty)
@@ -33782,8 +34014,12 @@
       (try (lower-expr ctx state env type-env (lower-global-shared-view str)))]
     (match lowered-str
       [(Expr str-state str-value str-ty)
-        (if (lower-string-handle-type? ctx str-ty)
-          (match (lower-string-fields str-state str-value)
+        (if (lower-string-handle-type? ctx (ast.clone-ast-type (& str-ty)))
+          (match (lower-string-fields-for-type
+            ctx
+            str-state
+            str-value
+            (& str-ty))
             [(Fields fields-state src-ptr src-len)
               (let
                 [lowered-start : LowerExpr
@@ -37346,8 +37582,12 @@
         (try (lower-expr ctx state env type-env (lower-global-shared-view arg)))]
       (match lowered
         [(Expr arg-state arg-value arg-ty)
-          (if (lower-string-handle-type? ctx arg-ty)
-            (match (lower-string-fields arg-state arg-value)
+          (if (lower-string-handle-type? ctx (ast.clone-ast-type (& arg-ty)))
+            (match (lower-string-fields-for-type
+              ctx
+              arg-state
+              arg-value
+              (& arg-ty))
               [(Fields fields-state ptr len)
                 (Ok
                   (lower-inline-string-to-int-fields
@@ -37388,14 +37628,22 @@
         (lower-context-expr-get ctx (ast.ast-expr-list-get (& args) 1 0))]
       [lowered-left (try (lower-expr ctx state env type-env left))]
       (match lowered-left
-        [(Expr left-state left-value _)
+        [(Expr left-state left-value left-ty)
           (let
             [lowered-right (try (lower-expr ctx left-state env type-env right))]
             (match lowered-right
-              [(Expr right-state right-value _)
-                (match (lower-string-fields right-state left-value)
+              [(Expr right-state right-value right-ty)
+                (match (lower-string-fields-for-type
+                  ctx
+                  right-state
+                  left-value
+                  (& left-ty))
                   [(Fields left-fields-state left-ptr left-len)
-                    (match (lower-string-fields left-fields-state right-value)
+                    (match (lower-string-fields-for-type
+                      ctx
+                      left-fields-state
+                      right-value
+                      (& right-ty))
                       [(Fields done-fields-state right-ptr right-len)
                         (Ok
                           (lower-inline-string-eq-fields
@@ -39371,6 +39619,10 @@
           (if (>= fixed-count 0)
             (Ok (Expr arr-state (I64 fixed-count) (I64)))
             (match resolved
+              [(String)
+                (match (lower-emit-word arr-state arr-value 1 (I64))
+                  [(Expr length-state length-value _)
+                    (Ok (Expr length-state length-value (I64)))])]
               [(or (Ref _ inner) (MutRef _ inner))
                 (if (lower-fat-reference? ctx inner)
                   (match (lower-emit-word
@@ -39481,30 +39733,11 @@
             [(Expr len-state len-value len-ty)
               (match (lower-cast-value len-state len-value len-ty (I64))
                 [(Expr len-i-state len-i-value _)
-                  (match (let
-                    [ty (ast.AstType.String)]
-                    (lower-reserve-heap-storage
+                  (Ok
+                    (lower-emit-pack
                       len-i-state
-                      16
-                      ty
-                      (lower-tl-alloc-symbol)))
-                    [(Expr base-state base-value _)
-                      (let
-                        [with-ptr : LowerState
-                          (lower-store-at-offset
-                            base-state
-                            base-value
-                            0
-                            ptr-value
-                            (lower-raw-pointer-ir-type ptr-ty))]
-                        [with-len : LowerState
-                          (lower-store-at-offset
-                            with-ptr
-                            base-value
-                            8
-                            len-i-value
-                            (I64))]
-                        (Ok (Expr with-len base-value (String))))])])]))])))
+                      (ir.compiler-ir-value-seq2 ptr-value len-i-value)
+                      (String)))])]))])))
 
 (define (lower-entry-load
   [state : LowerState]
@@ -41070,7 +41303,6 @@
   [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-zii-class ctx ty)
     [(Zii) true]
-    [(NotZii (StringHandle)) true]
     [(NotZii _) false]))
 
 (define (lower-make-array-fill8-supported?
@@ -72794,10 +73026,11 @@
             type-env
             (& place)
             outgoing-stack-args?)
-          ;; A shared borrow of a plain dynamic-array variable, or of a String
-          ;; variable lent as `str`, is the variable's heap handle. A borrow of
-          ;; any other plain variable names this frame: its own storage or a
-          ;; copy in a frame slot (`lower-borrow-var-address-by-value`).
+          ;; A shared borrow of a plain dynamic-array variable is the
+          ;; variable's heap handle. A borrow of any other plain variable
+          ;; (including an inline `String` lent as `str`) names this frame: its
+          ;; own storage or a copy in a frame slot
+          ;; (`lower-borrow-var-address-by-value`).
           (and
             (not mutable)
             (match (ast.ast-expr-unspan (& place))
@@ -72811,7 +73044,7 @@
                         (tc_core.tc-resolve-type
                           ctx
                           (tc_core.tc-borrow-referent-type ty)))
-                        [(or (Str) (DynArray _)) true]
+                        [(DynArray _) true]
                         [_ false])]
                     [(Err _) false]))]
               [_ false]))))]

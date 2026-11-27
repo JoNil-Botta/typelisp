@@ -305,8 +305,11 @@
       (ptr-cast (__tl_array-data (array items)) : (Ptr (__tl_dyn-array String))))))
 
 (define (compiler-backend-string-shared-view [value : (& value str)]) : String
-  (unsafe
-    (ptr-read (ptr-cast (__tl_array-data (array value)) : (Ptr String)))))
+  (if (= (comptime (size-of (type String))) 16)
+    (unsafe
+      (string-from-bytes (string-data value) (__tl_string_length value)))
+    (unsafe
+      (ptr-read (ptr-cast (__tl_array-data (array value)) : (Ptr String))))))
 
 (defmacro (compiler-backend-global-array-element-shared-view
   [items : Expr]

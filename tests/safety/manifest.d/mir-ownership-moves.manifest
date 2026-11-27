@@ -97,7 +97,7 @@ mir_with_arena_borrow_conflict_reject|check-fail|tests/safety/mir_with_arena_bor
 mir_cfunc_value_call_ok|check-ok|tests/safety/mir_cfunc_value_call_ok.tl|-|-
 mir_cfunc_unsafe_call_reject|check-fail|tests/safety/mir_cfunc_unsafe_call_reject.tl|tests/safety/mir_cfunc_unsafe_call_reject.tl:7:3|C function pointer requires unsafe context
 mir_cfunc_value_lend_ok|check-ok|tests/safety/mir_cfunc_value_lend_ok.tl|-|-
-mir_cfunc_value_lend_moved_reject|check-fail|tests/safety/mir_cfunc_value_lend_moved_reject.tl|tests/safety/mir_cfunc_value_lend_moved_reject.tl:10:23|use of moved value `s`
+mir_cfunc_value_lend_moved_reject|check-fail|tests/safety/mir_cfunc_value_lend_moved_reject.tl|tests/safety/mir_cfunc_value_lend_moved_reject.tl:12:23|use of moved value `s`
 mir_cfunc_value_lend_obligation_reject|check-fail|tests/safety/mir_cfunc_value_lend_obligation_reject.tl|tests/safety/mir_cfunc_value_lend_obligation_reject.tl:11:3|cleanup obligation of `h` is not discharged at the end of its let scope
 mir_array_literal_move_ok|run-exit|tests/safety/mir_array_literal_move_ok.tl|42|-
 mir_array_literal_move_twice_reject|check-fail|tests/safety/mir_array_literal_move_twice_reject.tl|tests/safety/mir_array_literal_move_twice_reject.tl:9:21|use of moved value `items[0]`

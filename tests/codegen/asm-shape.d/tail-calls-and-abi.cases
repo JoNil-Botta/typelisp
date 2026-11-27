@@ -133,8 +133,10 @@ in fn _tl_tail_call_frame_provenance_handle_borrow
 match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_handle$
 not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_handle$
 in fn _tl_tail_call_frame_provenance_string_borrow
-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_str$
-not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_str$
+# Inline 16-byte String (#7962) lives in the caller's frame, so (& s str)
+# borrows this frame and cannot tail-call until #8090 passes (& r str) by value.
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_str$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_str$
 in fn _tl_tail_call_frame_provenance_heap_projected_field
 match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
 not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$

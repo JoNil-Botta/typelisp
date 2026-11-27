@@ -10,7 +10,7 @@
   (unsafe
     (runtime.substring src start len)))
 
-(define (raw-view [text : (& text str)] [start : i64] [len : i64]) : String
+(define (raw-view [text : (& text str)] [start : i64] [len : i64]) : (Ptr u8)
   (unsafe
     (runtime.str-view text start len)))
 

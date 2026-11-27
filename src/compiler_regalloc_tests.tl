@@ -9447,7 +9447,10 @@
         (compiler-reg-test-instr-seq-prepend
           (Mov 1 (F64 0x3ff8000000000000) (F64))
           (compiler-reg-test-instr-seq-prepend
-            (Mov 2 (String "heap") (String))
+            (Mov
+              2
+              (String "heap")
+              (ast.AstType.Ptr (ast.ty-node-push (& (ast.AstType.U8)))))
             (compiler-reg-test-instr-seq-prepend
               (Mov 3 (Var 0) (compiler-reg-i64-ty))
               (compiler-reg-test-instr-seq-prepend

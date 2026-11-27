@@ -3426,7 +3426,8 @@
   (job-state TcJobState)
   (module-id i64)
   (type-module-id i64)
-  (module u64)
+  (module-data u64)
+  (module-len i64)
   (program-decls u64))
 
 ;; Observations borrow the exact checked context and environment only for the
@@ -3497,7 +3498,7 @@
         (TcSemanticObserverData
           context
           callback
-          (TcContext 0 (TcJobState 0) 0 0 0 0))))
+          (TcContext 0 (TcJobState 0) 0 0 0 0 0))))
     (TcSemanticObserver
       (cast
         (unsafe
@@ -3748,7 +3749,7 @@
 
 (define (tc-context-module [ctx : TcContext]) : String
   (unsafe
-    (ptr-read (ptr-cast (ptr-addr-of ctx.module) : (Ptr String)))))
+    (string-from-bytes (int->ptr ctx.module-data : (Ptr u8)) ctx.module-len)))
 
 (define (tc-context-module-id [ctx : TcContext]) : i64
   ctx.module-id)
@@ -3774,9 +3775,12 @@
 (define (tc-context-job-state [ctx : TcContext]) : TcJobState
   ctx.job-state)
 
-(define (tc-context-string-bits [text : (& str)]) : u64
+(define (tc-context-string-data-bits [text : (& str)]) : u64
   (unsafe
-    (ptr-read (ptr-cast (ptr-addr-of text) : (Ptr u64)))))
+    (ptr->int (string-data text))))
+
+(define (tc-context-string-len [text : (& str)]) : i64
+  (string.string-length text))
 
 (define (tc-context-program-bits [program : (& ast.AstProgram)]) : u64
   (match program
@@ -3926,7 +3930,8 @@
     job-state
     module-id
     module-id
-    (tc-context-string-bits module)
+    (tc-context-string-data-bits (& module))
+    (tc-context-string-len (& module))
     (tc-context-program-bits program)))
 
 (define (tc-context-new-with-source-names
@@ -3979,7 +3984,8 @@
       job-state
       module-id
       module-id
-      (tc-context-string-bits module)
+      (tc-context-string-data-bits (& module))
+      (tc-context-string-len (& module))
       (tc-context-program-bits program))))
 
 (define (tc-context-new
@@ -26346,7 +26352,8 @@
     ctx.job-state
     module-id
     module-id
-    (tc-context-string-bits module)
+    (tc-context-string-data-bits module)
+    (tc-context-string-len module)
     ctx.program-decls))
 
 (define (tc-context-provider-id [ctx : TcContext]) : i64
@@ -26419,7 +26426,8 @@
         ctx.job-state
         type-module-id
         type-module-id
-        (tc-context-string-bits type-module)
+        (tc-context-string-data-bits (& type-module))
+        (tc-context-string-len (& type-module))
         ctx.program-decls))))
 
 (define (tc-context-dotted-module-id-or-suffix
@@ -78433,9 +78441,10 @@
     [(or (I8) (U8) (Bool) (Char)) (Ok (tc-inline-aggregate-layout-info 1 1))]
     [(or (Unit) (Never) (Expr) (ExprList))
       (Ok (tc-inline-aggregate-zero-layout-info))]
-    [(or (Func _ _) (DynArray _) (Box _) (CFunc _ _) (Ptr _) (MutPtr _) (String)
-         (Str) (Var _) (VarArgs _ _))
+    [(or (Func _ _) (DynArray _) (Box _) (CFunc _ _) (Ptr _) (MutPtr _) (Str)
+         (Var _) (VarArgs _ _))
       (Ok (tc-inline-aggregate-pointer-layout-info))]
+    [(String) (Ok (tc-inline-aggregate-layout-info 16 8))]
     [(Slice _)
       (Err
         "typecheck: slice has no by-value layout; use a borrowed slice reference")]
@@ -87578,7 +87587,6 @@
 ;; Why a storage shape has no zero value, as the ZII classifier below reports
 ;; it. The tokens are stable: diagnostics and fixtures name them.
 (defenum TcNotZiiReason
-  (StringHandle)
   (DynBuffer)
   (Box)
   (Function)
@@ -87593,7 +87601,6 @@
 ;; The stable reason token diagnostics and tests name.
 (define (tc-not-zii-reason-text [reason : TcNotZiiReason]) : String
   (match reason
-    [(StringHandle) "string-handle"]
     [(DynBuffer) "dynamic-buffer"]
     [(Box) "box"]
     [(Function) "function"]
@@ -87865,12 +87872,10 @@
   (Zii)
   (NotZii TcNotZiiReason))
 
-;; An aggregate reports its highest-ranked reason. 0: the element still has a
-;; shared, allocation-free value fill (the empty string); 1: its value fill
-;; allocates (a box, a dynamic buffer); 2: make-array cannot initialize it.
+;; An aggregate reports its highest-ranked reason. 1: its value fill allocates
+;; (a box, a dynamic buffer); 2: make-array cannot initialize it.
 (define (tc-not-zii-reason-rank [reason : TcNotZiiReason]) : i64
   (match reason
-    [(StringHandle) 0]
     [(or (DynBuffer) (Box)) 1]
     [_ 2]))
 
@@ -87922,13 +87927,12 @@
               (Zii)
               (NotZii (Unsupported)))]
           [(or (I64) (I32) (I16) (I8) (U64) (U32) (U16) (U8) (F64) (F32) (Bool)
-               (Char) (Unit) (Ptr _) (MutPtr _))
+               (Char) (Unit) (Ptr _) (MutPtr _) (String))
             (Zii)]
           [(CFunc _ mode)
             (if (ast.ast-c-function-mode-nullable? mode)
               (Zii)
               (NotZii (NonNullCFunc)))]
-          [(String) (NotZii (StringHandle))]
           [(DynArray _) (NotZii (DynBuffer))]
           [(Box _) (NotZii (Box))]
           [(Func _ _) (NotZii (Function))]
@@ -90455,8 +90459,8 @@
 (define (tc-extern-abi-value-type-ok? [ctx : TcContext] [ty : ast.AstType]) : bool
   (match (tc-type-without-regions (tc-global-shared-view ty))
     [(or (I64) (I32) (I16) (I8) (U64) (U32) (U16) (U8) (F64) (F32) (Bool) (Char)
-         (Unit) (Never) (Func _ _) (Ptr _) (MutPtr _) (String) (DynArray _)
-         (Struct _) (StructArgs _ _))
+         (Unit) (Never) (Func _ _) (Ptr _) (MutPtr _) (DynArray _) (Struct _)
+         (StructArgs _ _))
       true]
     [(CFunc signature _)
       (match (tc-check-extern-c-abi ctx (tc-context-type-get ctx signature))
@@ -130227,7 +130231,7 @@
 (define tc-selected-holds-memo-header : i64
   12)
 (define tc-selected-holds-memo-stride : i64
-  9)
+  10)
 
 ;; The job's memo, rebound to the current stamp: the address of its header,
 ;; whose word 0 is the live generation (entries follow the header).
@@ -130349,9 +130353,10 @@
         (= (ptr-read (ptr-offset entry 3)) (cast ctx.shared : i64))
         (= (ptr-read (ptr-offset entry 4)) ctx.module-id)
         (= (ptr-read (ptr-offset entry 5)) ctx.type-module-id)
-        (= (ptr-read (ptr-offset entry 6)) (cast ctx.module : i64))
-        (= (ptr-read (ptr-offset entry 7)) (cast ctx.program-decls : i64)))
-        (ptr-read (ptr-offset entry 8))
+        (= (ptr-read (ptr-offset entry 6)) (cast ctx.module-data : i64))
+        (= (ptr-read (ptr-offset entry 7)) ctx.module-len)
+        (= (ptr-read (ptr-offset entry 8)) (cast ctx.program-decls : i64)))
+        (ptr-read (ptr-offset entry 9))
         -1))))
 
 (define (tc-selected-holds-memo-put!
@@ -130376,10 +130381,11 @@
       (ptr-write! (ptr-offset entry 3) (cast ctx.shared : i64))
       (ptr-write! (ptr-offset entry 4) ctx.module-id)
       (ptr-write! (ptr-offset entry 5) ctx.type-module-id)
-      (ptr-write! (ptr-offset entry 6) (cast ctx.module : i64))
-      (ptr-write! (ptr-offset entry 7) (cast ctx.program-decls : i64))
+      (ptr-write! (ptr-offset entry 6) (cast ctx.module-data : i64))
+      (ptr-write! (ptr-offset entry 7) ctx.module-len)
+      (ptr-write! (ptr-offset entry 8) (cast ctx.program-decls : i64))
       (ptr-write!
-        (ptr-offset entry 8)
+        (ptr-offset entry 9)
         (if found
           1
           0)))))

@@ -1408,6 +1408,9 @@
 ;; arriving as caller bytes, and 5 is `(Slice T)`. The lifetime name is
 ;; interned through the same source-slice path template variable names use.
 ;; Refs #5605.
+(define (compiler-comptime-host-bad-bytes? [ptr : i64] [len : i64]) : bool
+  (or (< len 0) (< ptr 0) (and (> len 0) (= ptr 0))))
+
 (define (compiler-comptime-host-type-wrap-step!
   [kind : i64]
   [flag : i64]
@@ -1418,7 +1421,7 @@
     (if (or
       (< kind 0)
       (> kind 5)
-      (and (= kind 4) (or (<= name-ptr 0) (< name-len 0))))
+      (and (= kind 4) (compiler-comptime-host-bad-bytes? name-ptr name-len)))
       tlci.tlci-host-callback-status-bad-request
       (let
         [type-value : ctfe_support.CompilerCtfeValue
@@ -1653,7 +1656,7 @@
   [arg-c : i64]) : i64
   (compiler-comptime-host-status-callback
     session
-    (if (or (<= arg-a 0) (< arg-b 0))
+    (if (compiler-comptime-host-bad-bytes? arg-a arg-b)
       tlci.tlci-host-callback-status-bad-request
       (let
         [name : String
@@ -2197,8 +2200,7 @@
     (if (or
       (< arg-a 0)
       (>= arg-a compiler-comptime-host-operand-count)
-      (<= arg-b 0)
-      (< _arg-c 0))
+      (compiler-comptime-host-bad-bytes? arg-b _arg-c))
       -3
       (match (compiler-comptime-host-array-element-shared-view
         compiler-comptime-host-operands
@@ -2235,8 +2237,7 @@
     (if (or
       (< arg-a 0)
       (>= arg-a compiler-comptime-host-operand-count)
-      (<= arg-b 0)
-      (< _arg-c 0))
+      (compiler-comptime-host-bad-bytes? arg-b _arg-c))
       -3
       (match (compiler-comptime-host-array-element-shared-view
         compiler-comptime-host-operands
@@ -2281,8 +2282,7 @@
     (if (or
       (< arg-a 0)
       (>= arg-a compiler-comptime-host-operand-count)
-      (<= arg-b 0)
-      (< _arg-c 0))
+      (compiler-comptime-host-bad-bytes? arg-b _arg-c))
       -3
       (match (compiler-comptime-host-array-element-shared-view
         compiler-comptime-host-operands
@@ -2441,7 +2441,7 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-status-callback
     session
-    (if (or (<= arg-a 0) (< arg-b 0))
+    (if (compiler-comptime-host-bad-bytes? arg-a arg-b)
       tlci.tlci-host-callback-status-bad-request
       (let
         [text : String
@@ -3262,8 +3262,7 @@
   (compiler-comptime-host-status-callback
     session
     (if (or
-      (<= arg-a 0)
-      (< arg-b 0)
+      (compiler-comptime-host-bad-bytes? arg-a arg-b)
       (< _arg-c 0)
       (< compiler-comptime-host-stack-len (+ _arg-c 1)))
       tlci.tlci-host-callback-status-bad-request
@@ -3513,7 +3512,7 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-status-callback
     session
-    (if (or (<= arg-a 0) (< arg-b 0))
+    (if (compiler-comptime-host-bad-bytes? arg-a arg-b)
       tlci.tlci-host-callback-status-bad-request
       (let
         [text : String
@@ -3553,7 +3552,7 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-status-callback
     session
-    (if (or (<= arg-a 0) (< arg-b 0))
+    (if (compiler-comptime-host-bad-bytes? arg-a arg-b)
       tlci.tlci-host-callback-status-bad-request
       (let
         [name : String
@@ -3626,7 +3625,9 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-status-callback
     session
-    (if (or (<= arg-a 0) (< arg-b 0) (< compiler-comptime-host-stack-len 1))
+    (if (or
+      (compiler-comptime-host-bad-bytes? arg-a arg-b)
+      (< compiler-comptime-host-stack-len 1))
       tlci.tlci-host-callback-status-bad-request
       (let
         [target-node : i64 (compiler-comptime-host-stack-node 1)]
@@ -3788,7 +3789,9 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-status-callback
     session
-    (if (or (<= arg-a 0) (< arg-b 0) (< compiler-comptime-host-stack-len 2))
+    (if (or
+      (compiler-comptime-host-bad-bytes? arg-a arg-b)
+      (< compiler-comptime-host-stack-len 2))
       tlci.tlci-host-callback-status-bad-request
       (let
         [value-node : i64 (compiler-comptime-host-stack-node 1)]
@@ -3976,7 +3979,7 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-status-callback
     session
-    (if (or (<= arg-a 0) (< arg-b 0))
+    (if (compiler-comptime-host-bad-bytes? arg-a arg-b)
       tlci.tlci-host-callback-status-bad-request
       (let
         [text : String
@@ -3999,7 +4002,9 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-status-callback
     session
-    (if (or (<= arg-a 0) (< arg-b 0) (< compiler-comptime-host-stack-len 1))
+    (if (or
+      (compiler-comptime-host-bad-bytes? arg-a arg-b)
+      (< compiler-comptime-host-stack-len 1))
       tlci.tlci-host-callback-status-bad-request
       (let
         [init-node : i64 (compiler-comptime-host-stack-node 1)]
@@ -4180,7 +4185,7 @@
   [arg-c : i64]) : i64
   (compiler-comptime-host-status-callback
     session
-    (if (or (<= arg-a 0) (< arg-b 0) (< arg-c 0))
+    (if (or (compiler-comptime-host-bad-bytes? arg-a arg-b) (< arg-c 0))
       tlci.tlci-host-callback-status-bad-request
       (let
         [param-count : i64 (/ arg-c 2)]
@@ -4235,7 +4240,7 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-status-callback
     session
-    (if (or (<= arg-a 0) (< arg-b 0))
+    (if (compiler-comptime-host-bad-bytes? arg-a arg-b)
       tlci.tlci-host-callback-status-bad-request
       (let
         [name : String
@@ -5471,7 +5476,9 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-status-callback
     session
-    (if (or (<= arg-a 0) (< arg-b 0) (< compiler-comptime-host-stack-len 2))
+    (if (or
+      (compiler-comptime-host-bad-bytes? arg-a arg-b)
+      (< compiler-comptime-host-stack-len 2))
       tlci.tlci-host-callback-status-bad-request
       (let
         [type-value : ctfe_support.CompilerCtfeValue

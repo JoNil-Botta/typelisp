@@ -2065,17 +2065,14 @@
               [kind (cobj.CompilerObjectSectionKind.Rodata)]
               [label (be_facts.compiler-backend-string-data-label "hi")]
               (cobj.compiler-object-section-contains-label? sections kind label))
-            (let
-              [kind (cobj.CompilerObjectSectionKind.Rodata)]
-              [label (be_operand.compiler-backend-string-fat-label "hi")]
-              (cobj.compiler-object-section-contains-label? sections kind label))
             (compiler-object-section-contains-string? sections (Rodata) "hi")
-            (compiler-object-section-contains-align? sections (Rodata) 8)
-            (compiler-object-section-contains-i64? sections (Rodata) 2)
             (compiler-object-section-contains-f64?
               sections
               (Rodata)
               (compiler-backend-test-f64-bits "4.0"))
+            true
+            true
+            true
             true)
           (compiler-object-section-contains-f32?
             sections
@@ -2281,7 +2278,6 @@
         [asm : String output.asm]
         [fixups : String output.fixups]
         [data-label : String (be_facts.compiler-backend-string-data-label "hi")]
-        [fat-label : String (be_operand.compiler-backend-string-fat-label "hi")]
         [base-label : String
           (string.copy (& backend.compiler-backend-pic-image-base-label))]
         (and
@@ -2289,7 +2285,7 @@
             (let
               [needle (str_cat.str-cat base-label ":\n" "")]
               (asm-has? asm needle))
-            (>= (backend.compiler-backend-string-count asm "    .quad 0\n") 2)
+            (>= (backend.compiler-backend-string-count asm "    .quad 0\n") 1)
             (not
               (let
                 [needle (str_cat.str-cat " - " base-label "\n")]
@@ -2298,14 +2294,10 @@
               (let
                 [needle (backend.compiler-backend-pic-quad-pattern data-label)]
                 (asm-has? asm needle)))
-            (not
-              (let
-                [needle (backend.compiler-backend-pic-quad-pattern fat-label)]
-                (asm-has? asm needle)))
             (asm-has? fixups "typelisp-pic-fixups v1\n")
             (asm-has? fixups "data ")
-            (asm-has? fixups "rodata "))
-          (asm-has? fixups data-label fat-label)))]
+            (asm-has? fixups data-label)
+            true)))]
     [(Err _) false]))
 
 (define (compiler-backend-pic-extern-reject-ok?) : bool
@@ -3463,10 +3455,11 @@
 
 (define (compiler-backend-windows-object-load-stores-dst-ok?) : bool
   (match (backend.compiler-backend-emit-source-object-image-for-target
-    "(define (string_data_ptr [s : String]) : (Ptr u8)
-  (unsafe (string-data s)))
+    "(define (read_ref [r : (& r i64)]) : i64
+  (deref r))
 (define (main) : i64
-  (unsafe (cast (ptr->int (string_data_ptr \"hi\")) : i64)))"
+  (let [x : i64 7]
+    (read_ref (& x))))"
     (be_state.CompilerBackendTarget.Windows))
     [(Ok image)
       (let
@@ -3559,12 +3552,9 @@
     (backend.compiler-backend-emit-source (compiler-backend-string-source))
     (has
       ".L_tl_str_data_l2_13861_13991:"
-      ".L_tl_str_l2_13861_13991:"
       "    .ascii \"hi\"\n"
-      "    .quad .L_tl_str_data_l2_13861_13991\n"
-      "    .quad 2\n"
-      "_tl_greeting:\n    .quad .L_tl_str_l2_13861_13991\n"
-      "    leaq .L_tl_str_l2_13861_13991(%rip), %rax\n")))
+      "_tl_greeting:\n    .quad .L_tl_str_data_l2_13861_13991\n    .quad 2\n"
+      "    leaq .L_tl_str_data_l2_13861_13991(%rip),")))
 
 ;; Backend-owned replacement for the string runtime helper emission tests:
 ;; non-allocating string parsing/equality still use backend
@@ -4882,7 +4872,7 @@
       (and
         (be_state.backend-and8
           (asm-has? asm ".L_tl_str_data_l2_12961_16211:")
-          (asm-has? asm ".L_tl_str_l2_12961_16211:")
+          (asm-lacks? asm ".L_tl_str_l2_12961_16211:")
           (asm-has? asm "    .ascii \"az\"\n")
           (asm-has? asm "    .quad .L_tl_str_data_l2_12961_16211\n")
           (asm-lacks? asm "    cmpq %r11, %rax\n")
@@ -4894,10 +4884,10 @@
           (asm-has? asm "    call .L_tl_abort_tl_oob_abort_at\n")
           (asm-lacks? asm "tl_oob_abort:\n"))
         (be_state.backend-and4
-          (asm-has? asm "    movq 8(%r10), %r8\n")
-          (asm-has? asm "(%r10)")
+          (asm-has? asm "    .quad 2\n")
           (asm-has? asm "movzbl")
-          (asm-lacks? asm "movsbq (%r10)"))
+          (asm-lacks? asm "movsbq (%r10)")
+          true)
         (asm-lacks? asm "    movq 8(%r10), %rax\n" "    jge .Lf0_str_bounds_ok")
         (not
           (let
@@ -5041,7 +5031,7 @@
           (asm-has? asm "movq $1,")
           (asm-has? asm "movq $2,")
           (asm-has? asm ".L_tl_str_data_l2_13861_13991:")
-          (asm-has? asm "    .quad 2\n")
+          true
           true)
         (not
           (let
@@ -5089,6 +5079,9 @@
             (asm-has? asm needle))
           (let
             [needle (str_cat.str-cat "    .comm " symbol ", 24, 8\n")]
+            (asm-has? asm needle))
+          (let
+            [needle (str_cat.str-cat "    .comm " symbol ", 32, 8\n")]
             (asm-has? asm needle)))
         (let
           [needle (str_cat.str-cat "    call " init-symbol "\n")]
@@ -9547,17 +9540,15 @@ high:
       (Param "handle" (String) 0)
       (ir.compiler-ir-param-seq-empty))
     (I64)
-    3
+    2
     (ir.compiler-ir-blocks
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
         (compiler-backend-test-instr-seq-prepend
-          (Gep 1 (Var 0) (I64 8) (U8))
+          (ir.ir-instr-descriptor-pair-length 1 (Var 0))
           (compiler-backend-test-instr-seq-prepend
-            (Load 2 (Var 1) (I64))
-            (compiler-backend-test-instr-seq-prepend
-              (Return (Some (Var 2)))
-              (ir.compiler-ir-instr-seq-empty))))))
+            (Return (Some (Var 1)))
+            (ir.compiler-ir-instr-seq-empty)))))
     Ordinary))
 
 (define (compiler-backend-descriptor-pair-main) : ir.CompilerIrFunction
@@ -9567,7 +9558,7 @@ high:
       (ci.intern "main")
       (ir.compiler-ir-param-seq-empty)
       (I64)
-      18
+      14
       (ir.compiler-ir-blocks
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
@@ -9584,7 +9575,7 @@ high:
                     (compiler-backend-test-instr-seq-prepend
                       (irt.instr "store_ptr %3, 42 : i64")
                       (compiler-backend-test-instr-seq-prepend
-                        (irt.instr "%4 = mov %2 : String")
+                        (irt.instr "%4 = mov %2 : (Ptr u8)")
                         (compiler-backend-test-instr-seq-prepend
                           (irt.instr "%5 = load %4 : u64")
                           (compiler-backend-test-instr-seq-prepend
@@ -9608,32 +9599,21 @@ high:
                                         11
                                         (Var 9))
                                       (compiler-backend-test-instr-seq-prepend
-                                        (Alloc 12 (U64))
+                                        (ir.ir-instr-descriptor-pair-pack
+                                          12
+                                          (& (Var 10))
+                                          (& (Var 11))
+                                          kind)
                                         (compiler-backend-test-instr-seq-prepend
-                                          (Alloc 13 (I64))
+                                          (Call
+                                            13
+                                            (ci.intern
+                                              "descriptor_pair_consume")
+                                            (One (Var 12))
+                                            (I64))
                                           (compiler-backend-test-instr-seq-prepend
-                                            (AddrOf 14 13 0)
-                                            (compiler-backend-test-instr-seq-prepend
-                                              (StorePtr (Var 14) (Var 10) (U64))
-                                              (compiler-backend-test-instr-seq-prepend
-                                                (Gep 15 (Var 14) (I64 8) (U8))
-                                                (compiler-backend-test-instr-seq-prepend
-                                                  (StorePtr
-                                                    (Var 15)
-                                                    (Var 11)
-                                                    (I64))
-                                                  (compiler-backend-test-instr-seq-prepend
-                                                    (Mov 16 (Var 14) (String))
-                                                    (compiler-backend-test-instr-seq-prepend
-                                                      (Call
-                                                        17
-                                                        (ci.intern
-                                                          "descriptor_pair_consume")
-                                                        (One (Var 16))
-                                                        (I64))
-                                                      (compiler-backend-test-instr-seq-prepend
-                                                        (Return (Some (Var 17)))
-                                                        (ir.compiler-ir-instr-seq-empty))))))))))))))))))))))))))
+                                            (Return (Some (Var 13)))
+                                            (ir.compiler-ir-instr-seq-empty))))))))))))))))))))
       Ordinary)))
 
 (define (compiler-backend-descriptor-pair-program) : ir.CompilerIrProgram
@@ -9849,14 +9829,14 @@ high:
                 [(Err _) false])])]
         (and
           renders
-          ;; Four scalar vars plus a four-slot word1 region.
+          ;; Four scalar vars plus two 2-word register-group vars (%0, %1).
           (cobj.compiler-object-section-contains-bytes?
             sections
             (&
               (be_object.compiler-backend-object-prologue-bytes
                 (be_state.CompilerBackendTarget.Linux)
                 (be_facts.compiler-backend-frame-size 8))))
-          ;; Pack word1, copy it to the next pair, then extract it.
+          ;; Pack %0 word1 (slot 4), copy it to %1 word1 (slot 6), then extract it.
           (cobj.compiler-object-section-contains-bytes?
             sections
             (& (be_object.compiler-backend-object-store-slot-bytes 4 "%rdx")))
@@ -9868,12 +9848,12 @@ high:
                 "%rdx")))
           (cobj.compiler-object-section-contains-bytes?
             sections
-            (& (be_object.compiler-backend-object-store-slot-bytes 5 "%rdx")))
+            (& (be_object.compiler-backend-object-store-slot-bytes 6 "%rdx")))
           (cobj.compiler-object-section-contains-bytes?
             sections
             (&
               (be_object.compiler-backend-object-load-rbp-disp-bytes
-                (be_object.compiler-backend-object-slot-disp 5)
+                (be_object.compiler-backend-object-slot-disp 6)
                 "%rax")))))]
     [(Err _) false]))
 
@@ -9889,21 +9869,20 @@ high:
             functions
             externs)])]
     (and
-      ;; The materialized String still consumes one ordinary ABI slot.
+      ;; Owned String is an inline 2-word register-group descriptor pair.
       (=
         (be_facts.compiler-backend-group-word-count
           (ast.ast-node-pool-reader-type-segment-bases)
           program-index
           (String))
-        1)
-      (not
-        (let
-          [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
-          [ty (ast.AstType.String)]
-          (be_facts.compiler-backend-group-type?
-            type-segment-bases
-            program-index
-            ty)))
+        2)
+      (let
+        [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
+        [ty (ast.AstType.String)]
+        (be_facts.compiler-backend-group-type?
+          type-segment-bases
+          program-index
+          ty))
       (asm-ok?
         (backend.compiler-backend-emit-program-for-target
           (owned_view.compiler-owned-shared-view program)
@@ -10697,7 +10676,7 @@ high:
     (and
       (let
         [kind (cobj.CompilerObjectRelocationKind.RipAddress)]
-        [target (be_operand.compiler-backend-string-fat-label "object-walked")]
+        [target (be_operand.compiler-backend-string-data-label "object-walked")]
         (cobj.compiler-object-relocation-list-contains? relocs kind target))
       (let
         [kind (cobj.CompilerObjectRelocationKind.RipValue)]
@@ -46244,9 +46223,12 @@ user_fn:
 
 (define label : String (string.int->string 4200))
 
+(define (apply [f : (-> i64 String)] [n : i64]) : String
+  (f n))
+
 (define (main) : i64
   (let
-    [text : String (string.int->string 17)]
+    [text : String (apply string.int->string 17)]
     (+ (string.string-length (& text)) (string.string-length (& label)))))")
 
 (define (compiler-backend-shared-object-program-asm
@@ -47378,67 +47360,26 @@ user_fn:
       (or
         (> size maximum-bytes)
         (not (= size out.len))
-        (not (= relocs.len (array-length values)))
-        (not (= symbols.len (* 2 (array-length values)))))
+        (not (= relocs.len 0))
+        (not (= symbols.len (array-length values))))
       (return false))
     (for [i (iterator.range 0 (array-length values))]
       (let
         [value : (& values str) (& (array-ref values i))]
         [length : i64 (string.string-length value)]
         [data : String (be_facts.compiler-backend-string-data-label value)]
-        [header : String (be_operand.compiler-backend-string-fat-label value)]
         [offset : i64
           (layout.compiler-object-layout-data-label-offset-from
             (& records)
             (& data)
             0)]
-        [fat : i64
-          (layout.compiler-object-layout-data-label-offset-from
-            (& records)
-            (& header)
-            0)]
-        [pointer-ok : bool false]
-        [relocation-ok : bool false]
-        (when
-          (or
-            (< offset 0)
-            (>= (+ offset length) size)
-            (< fat 0)
-            (not (= (% fat 8) 0))
-            (> (+ fat 16) size))
-          (return false))
+        (when (or (< offset 0) (> (+ offset length) size)) (return false))
         (for [j (iterator.range 0 length)]
           (unless
             (=
               (array-ref out.slots (+ offset j))
               (cast (string.string-ref value j) : u8))
-            (return false)))
-        (for [j (iterator.range 0 8)]
-          (unless
-            (=
-              (array-ref out.slots (+ fat (+ 8 j)))
-              (cast (bit-and (shr length (* j 8)) 255) : u8))
-            (return false)))
-        (for [j (iterator.range 0 (- records.len 1))]
-          (match (cobj.compiler-object-data-record-list-ref (& records) j)
-            [(Label label)
-              (when
-                (string.eq label header)
-                (match (cobj.compiler-object-data-record-list-ref
-                  (& records)
-                  (+ j 1))
-                  [(SymbolAddress target)
-                    (set! pointer-ok (string.eq target data))]
-                  [_ unit]))]
-            [_ unit]))
-        (for [j (iterator.range 0 relocs.len)]
-          (match (cobj.compiler-object-relocation-list-ref (& relocs) j)
-            [(Relocation (Rodata) site (Abs64) target)
-              (when
-                (and (string.eq site header) (string.eq target data))
-                (set! relocation-ok true))]
-            [_ unit]))
-        (unless (and pointer-ok relocation-ok) (return false))))
+            (return false)))))
     true))
 
 (define (compiler-backend-literal-pool-nul) : String
@@ -47524,7 +47465,6 @@ user_fn:
     [head : String (be_facts.compiler-backend-string-data-label "head-tail")]
     [tail : String (be_facts.compiler-backend-string-data-label "tail-end")]
     [zz : String (be_facts.compiler-backend-string-data-label "zz")]
-    [header : String (be_operand.compiler-backend-string-fat-label "tail-end")]
     [sectioned : String
       (text_buf.render
         (be_data.compiler-backend-emit-string-rodata-into
@@ -47563,19 +47503,10 @@ user_fn:
       (string.contains
         (& sectioned)
         (& (str_cat.str-cat ".section \".rodata." zz "\",\"a\",@progbits\n")))
-      (string.contains
-        (& sectioned)
-        (&
-          (str_cat.str-cat
-            ".section \".rodata."
-            header
-            "\",\"a\",@progbits\n    .balign 8\n"
-            header
-            ":\n")))
       (= (backend.compiler-backend-string-count sectioned unit-end) 3)
       (= (backend.compiler-backend-string-count plain unit-end) 2)
       (= (backend.compiler-backend-string-count plain ".section \".rodata.") 0)
-      (= (backend.compiler-backend-string-count plain "    .balign 8\n") 1)
+      (= (backend.compiler-backend-string-count plain "    .balign 8\n") 0)
       (not (string.contains (& plain) ".string")))))
 
 (test

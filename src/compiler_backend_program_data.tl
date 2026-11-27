@@ -702,23 +702,6 @@
               (set! cover text)
               (set! cover-offset entry.offset)
               (set! cover-end end))))))
-    (set!
-      records
-      (cobj.compiler-object-data-record-builder-push records (Align 8)))
-    (for [i (iterator.range 0 ordered.len)]
-      (let
-        [text : String
-          (compiler-backend-literal-text
-            (array-ref ordered.slots i).slot-address)]
-        (set!
-          records
-          (cobj.compiler-object-data-record-builder-push
-            (cobj.compiler-object-data-record-builder-push
-              (cobj.compiler-object-data-record-builder-push
-                records
-                (Label (be_operand.compiler-backend-string-fat-label text)))
-              (SymbolAddress (be_facts.compiler-backend-string-data-label text)))
-            (I64 (string.string-length text))))))
     (cobj.compiler-object-data-record-builder-finish records)))
 
 (define (compiler-backend-emit-quoted-literal!
@@ -802,7 +785,6 @@
         (byte_buf_core.byte-buf-builder-with-capacity 4096)]
       [i : i64 0]
       [unit-open : bool false]
-      [headers : bool false]
       (byte_buf_core.byte-buf-builder-append-string
         (&mut out)
         "    .section .rodata\n")
@@ -818,49 +800,28 @@
                 (&mut out)
                 (runtime_prune.literal-unit-end))
               (set! unit-open false))
-            (if (= alignment 1)
-              (begin
-                (when
-                  sectioned
-                  (match (cobj.compiler-object-data-record-list-ref
+            (when
+              (= alignment 1)
+              (when
+                sectioned
+                (match (cobj.compiler-object-data-record-list-ref
+                  (& records)
+                  (+ i 1))
+                  [(Label label)
+                    (byte_buf_core.byte-buf-builder-append-string
+                      (&mut out)
+                      (compiler-backend-literal-section (& label)))]
+                  [_ unit]))
+              (set! unit-open true)
+              (set!
+                i
+                (-
+                  (compiler-backend-emit-literal-unit!
+                    (&mut out)
                     (& records)
                     (+ i 1))
-                    [(Label label)
-                      (byte_buf_core.byte-buf-builder-append-string
-                        (&mut out)
-                        (compiler-backend-literal-section (& label)))]
-                    [_ unit]))
-                (set! unit-open true)
-                (set!
-                  i
-                  (-
-                    (compiler-backend-emit-literal-unit!
-                      (&mut out)
-                      (& records)
-                      (+ i 1))
-                    1)))
-              (begin
-                (set! headers true)
-                (byte_buf_core.byte-buf-builder-append-string
-                  (&mut out)
-                  (runtime_prune.literal-end))
-                (unless
-                  sectioned
-                  (object_asm.compiler-object-asm-render-data-record!
-                    (&mut out)
-                    (Align alignment)))
-                (byte_buf_core.byte-buf-builder-append-string
-                  (&mut out)
-                  (runtime_prune.literal-begin))))]
+                  1)))]
           [(Label label)
-            (when
-              (and headers sectioned)
-              (byte_buf_core.byte-buf-builder-append-string
-                (&mut out)
-                (compiler-backend-literal-section (& label)))
-              (byte_buf_core.byte-buf-builder-append-string
-                (&mut out)
-                "    .balign 8\n"))
             (object_asm.compiler-object-asm-render-data-record!
               (&mut out)
               (Label label))]
@@ -871,6 +832,11 @@
                 records.slots
                 i))])
         (+= i 1))
+      (when
+        unit-open
+        (byte_buf_core.byte-buf-builder-append-string
+          (&mut out)
+          (runtime_prune.literal-unit-end)))
       (byte_buf_core.byte-buf-builder-append-string
         (&mut out)
         (runtime_prune.literal-end))
@@ -1198,11 +1164,17 @@
             (be_state.compiler-backend-symbol-text-index program-index name))
           "\n"))]
     [(String text)
-      (Ok
-        (str_cat.str-cat
-          "    .quad "
-          (be_operand.compiler-backend-string-fat-label text)
-          "\n"))]
+      (let
+        [n : i64 (string.string-length (& text))]
+        (if (= n 0)
+          (Ok "    .quad 0\n    .quad 0\n")
+          (Ok
+            (str_cat.str-cat
+              "    .quad "
+              (be_facts.compiler-backend-string-data-label (& text))
+              "\n    .quad "
+              (string.int->string n)
+              "\n"))))]
     [(Bytes text)
       (Ok
         (str_cat.str-cat
@@ -1795,7 +1767,9 @@
       [(Extern name-id source-name-id _ _ _ link-symbol _ _ _ _ _)
         (compiler-backend-runtime-index-arena-debug-call-link-seq
           (if (and
-            (cbi.compiler-builtin-backend-runtime-arena-debug-id? link-symbol)
+            (or
+              (cbi.compiler-builtin-backend-runtime-arena-debug-id? link-symbol)
+              (cbi.compiler-builtin-backend-tl-alloc-id? link-symbol))
             (or
               (compiler-backend-runtime-index-calls? index name-id)
               (compiler-backend-runtime-index-calls? index source-name-id)))

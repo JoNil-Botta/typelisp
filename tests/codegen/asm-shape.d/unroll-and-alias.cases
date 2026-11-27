@@ -260,7 +260,7 @@ case raw-pointer-field-place-rmw
 source tests/integration/raw_pointer_field_place.tl
 in fn _tl_raw_pointer_field_place_record_bang
 not-match ^[[:space:]]+subq \$[0-9]+, %rsp$
-match ^[[:space:]]+addq 88\(%r[a-z0-9]+\), %r[a-z0-9]+$
-match ^[[:space:]]+movq %r[a-z0-9]+, 88\(%r[a-z0-9]+\)$
-match ^[[:space:]]+movl %[a-z0-9]+, 80\(%r[a-z0-9]+\)$
-match ^[[:space:]]+movb %[a-z0-9]+, 84\(%r[a-z0-9]+\)$
+match ^[[:space:]]+addq 96\(%r[a-z0-9]+\), %r[a-z0-9]+$
+match ^[[:space:]]+movq %r[a-z0-9]+, 96\(%r[a-z0-9]+\)$
+match ^[[:space:]]+movl %[a-z0-9]+, 88\(%r[a-z0-9]+\)$
+match ^[[:space:]]+movb %[a-z0-9]+, 92\(%r[a-z0-9]+\)$

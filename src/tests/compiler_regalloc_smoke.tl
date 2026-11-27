@@ -94,7 +94,7 @@
 (define (compiler-reg-smoke-descriptor-pair-function) : ir.CompilerIrFunction
   (Function
     (ci.intern-generated-canonical-name "descriptor_pair")
-    (irt.params "handle=%0:String")
+    (irt.params "handle=%0:str")
     (I64)
     8
     (ir.compiler-ir-blocks
@@ -129,13 +129,12 @@
         (& func)
         types)]
     (and
-      ;; Source handles remain scalar even though structurally-created pair
-      ;; vars with the same provenance type occupy two homes.
-      (not
-        (reg.compiler-reg-type-register-group?
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (& representations)
-          (& (String))))
+      ;; Inline 16-byte String is a 2-word register group (#7962); dynamic arrays
+      ;; remain scalar 1-word handles until #7963.
+      (reg.compiler-reg-type-register-group?
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& representations)
+        (& (String)))
       (not
         (reg.compiler-reg-type-register-group?
           (ast.ast-node-pool-reader-type-segment-bases)

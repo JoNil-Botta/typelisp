@@ -380,20 +380,21 @@ there is no public unsized `Array` alias.
   `(& lifetime (Slice i64))`.
 
 **Owned string:** `String`
-- `String` is an owned, immutable byte-string handle. The handle is a
-  pointer-sized aggregate value whose pointed-to inline storage is a
-  `{data_ptr, length}` pair.
-- String literals have type `String`. Their bytes live in static read-only
-  data, but the source value is still an owned `String` handle, not a
-  borrowed `str`.
+- `String` is an owned, immutable byte-string value represented inline as a
+  16-byte, 8-byte-aligned `{data_ptr, length}` descriptor (`Ptr u8` and `i64`).
+  The all-zero descriptor `{null, 0}` is the empty string `""`, making `String`
+  zero-initializable (§5.12.1).
+- String literals have type `String`. Non-empty literal bytes live in static
+  read-only data, while `""` carries `{null, 0}` with no static storage; in
+  either case the source value is an owned `String`, not a borrowed `str`.
 - Source literals are validated as UTF-8 after unescaping (§2.3). Safe byte
   construction remains capable of producing arbitrary-byte strings.
 - Runtime-created strings from `str-cat`/the low-level concat primitives,
   `substring`, `read-file`, `arg`, `int->string`, stdin/file reads, and
-  stdlib helpers allocate fresh `String` storage in the active arena.
-- `String` is move-only under the aggregate handle rules in section 4.7.2.
+  stdlib helpers allocate fresh byte storage in the active arena.
+- `String` is move-only under the aggregate ownership rules in section 4.7.2.
   Non-consuming string operations borrow the string through
-  `(& lifetime str)` views rather than consuming the owned handle.
+  `(& lifetime str)` views rather than consuming the owned value.
 
 **Borrowed string referent:** `str`
 - `str` is an immutable borrowed byte-string referent. It is not a
@@ -5753,7 +5754,7 @@ a stable reason, and make-array typechecking and lowering share it.
 | `(Array T N)` | every element zero | when `T` is ZII |
 | Default-layout `defstruct` without cleanup | every field zero | when every field type is ZII |
 | `defenum` without cleanup | tag 0, which is the first declared variant, with its payload fields zero; payload bytes past those fields are don't-care | when every payload field type of the first variant is ZII; a fieldless first variant always is |
-| `String` | none | no: `string-handle` (until strings use inline descriptors, #7962) |
+| `String` | `""` (`{null, 0}`) | yes |
 | `(__tl_dyn-array T)` | none | no: `dynamic-buffer` (until dynamic buffers use inline descriptors, #7963) |
 | `(Box T)` | none | no: `box` |
 | function and closure values | none | no: `function` |
@@ -5765,16 +5766,15 @@ a stable reason, and make-array typechecking and lowering share it.
 | any other shape, including opaque aggregates outside their module family and layouts that fail finite-layout analysis | none | no: `unsupported` |
 
 An aggregate that is not ZII reports the reason of one of its parts. A part
-make-array rejects (any reason but `string-handle`, `dynamic-buffer` or `box`)
-takes precedence over `box` and `dynamic-buffer`, and those take precedence
-over `string-handle`. `make-array` and `__tl_make-array` reject an element type
-with any other reason, and the diagnostic names it:
+make-array rejects (any reason but `dynamic-buffer` or `box`) takes precedence
+over `box` and `dynamic-buffer`. `make-array` and `__tl_make-array` reject an
+element type with any other reason, and the diagnostic names it:
 `make-array element type T is not zero-initializable (reason: function)`.
-Until #7962 and #7963, element types whose only reasons are `string-handle`,
-`dynamic-buffer` or `box` are still accepted: in each element, a `String` part
-starts as the empty string, a dynamic-buffer part as an empty buffer, a box
-part as its own allocation holding contents initialized the same way, and
-every other part as zero.
+Until #7963, element types whose only reasons are `dynamic-buffer` or `box` are
+still accepted: in each element, a dynamic-buffer part starts as an empty
+buffer, a box part as its own allocation holding contents initialized the same
+way, and every other part (including `String`, which is ZII as `{null, 0}`) as
+zero.
 
 ### 5.13 `(match scrutinee [pattern body...] ...)` — pattern matching
 
@@ -8441,7 +8441,7 @@ borrowed Slice reference forms described in section 3.2:
 
 | Builtin | Signature | Description |
 |---------|-----------|-------------|
-| `make-array` | `type comptime-i64 → (Array T N)` | Construct a fixed array whose non-negative compile-time length is `N` as zeroed storage of the ZII element type `T` (§5.12.1, "Zero value of each type"); an element type that is not ZII is rejected with the classifier's reason, except the `string-handle`, `dynamic-buffer` and `box` cases that §5.12.1 still admits |
+| `make-array` | `type comptime-i64 → (Array T N)` | Construct a fixed array whose non-negative compile-time length is `N` as zeroed storage of the ZII element type `T` (§5.12.1, "Zero value of each type"); an element type that is not ZII is rejected with the classifier's reason, except the `dynamic-buffer` and `box` cases that §5.12.1 still admits |
 | `length` | `(Array T N) → i64` / `(& r (Array T N)) → i64` / `(&mut r (Array T N)) → i64` / `(__tl_dyn-array T) → i64` (private) / `(& r (Slice T)) → i64` / `(&mut r (Slice T)) → i64` / `String → i64` | Evaluate the receiver once; fixed arrays return constant `N`, while private dynamic buffers, borrowed Slices, and strings use their respective length representations |
 | `array-length` | `(Array T N) → i64` / `(& r (Array T N)) → i64` / `(&mut r (Array T N)) → i64` / `(__tl_dyn-array T) → i64` (private) / `(& r (Slice T)) → i64` / `(&mut r (Slice T)) → i64` | Array-only alias for `length`; fixed arrays return constant `N` |
 | `array-ref` | `(Array T N) i64 → T` / `(& r (Array T N)) i64 → T` / `(&mut r (Array T N)) i64 → T` / `(& r (Slice T)) i64 → T` / `(&mut r (Slice T)) i64 → T` | Bounds-checked read/place projection through an owned fixed array, a supported reference, or a borrowed Slice receiver |

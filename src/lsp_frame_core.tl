@@ -497,7 +497,7 @@
   (LspFrameMemoryState
     false
     (unsafe
-      (arena.Arena 0))
+      (arena.from-raw-handle 0))
     ""
     0
     false
@@ -510,7 +510,7 @@
     (LspFrameMemoryState
       false
       (unsafe
-        (arena.Arena 0))
+        (arena.from-raw-handle 0))
       ""
       0
       false
@@ -524,11 +524,11 @@
     lsp-frame-memory-state
     (in-arena
       (unsafe
-        (arena.Arena transport-arena))
+        (arena.from-raw-handle transport-arena))
       (LspFrameMemoryState
         true
         (unsafe
-          (arena.Arena transport-arena))
+          (arena.from-raw-handle transport-arena))
         (string.copy input)
         0
         false
@@ -1473,7 +1473,7 @@
         [snapshot : lsp_vector_families.LspSemanticSnapshot
           (in-arena
             (unsafe
-              (arena.Arena semantic-index.owner-arena))
+              (arena.from-raw-handle semantic-index.owner-arena))
             (lsp_vector_families.LspSemanticSnapshot
               semantic-index
               version
@@ -10462,7 +10462,7 @@
       (if (> lsp-document-cache-arena 0)
         (in-arena
           (unsafe
-            (arena.Arena lsp-document-cache-arena))
+            (arena.from-raw-handle lsp-document-cache-arena))
           (lsp-document-decls-cache-on-current-arena doc docs))
         (lsp-document-decls-cache-on-current-arena doc docs)))))
 
@@ -11153,7 +11153,7 @@
   (if (> lsp-document-cache-arena 0)
     (in-arena
       (unsafe
-        (arena.Arena lsp-document-cache-arena))
+        (arena.from-raw-handle lsp-document-cache-arena))
       (string.copy (& text)))
     (string.copy (& text))))
 
@@ -11173,7 +11173,7 @@
   (if (> lsp-document-cache-arena 0)
     (in-arena
       (unsafe
-        (arena.Arena lsp-document-cache-arena))
+        (arena.from-raw-handle lsp-document-cache-arena))
       (lsp-diagnostic-uris-copy uris))
     (lsp-diagnostic-uris-copy uris)))
 

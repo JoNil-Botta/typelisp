@@ -1245,6 +1245,7 @@
         (i64_map.with-capacity (* (+ fn-count gl-count 1) 2))]
       [edge-starts : (__tl_dyn-array i64) (__tl_make-array i64 (+ fn-count 1))]
       [edge-targets : i64_vec.Vec (i64_vec.new)]
+      [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
       (for [i (iterator.range 0 fn-count)]
         (set! (array-ref fn-needs-init i) false)
         (match (ir.compiler-ir-function-seq-borrow whole-functions i)
@@ -1264,9 +1265,10 @@
                             0
                             (ir.compiler-ir-instr-seq-count iseq))]
                           (tli-compact-scan-ir-all-syms-instr!
-                            (ir.compiler-ir-instr-seq-ref iseq ii)
+                            (ir.compiler-ir-instr-seq-borrow iseq ii)
                             (&mut frefs)
-                            (&mut edge-targets)))]))])
+                            (&mut edge-targets)
+                            (&mut uses)))]))])
               unit)]))
       (set! (array-ref edge-starts fn-count) (i64_vec.len (& edge-targets)))
       ;; Seed with every runtime-initialized global (`RuntimeGlobal`), matching
@@ -2448,25 +2450,18 @@
       (str_map.insert-ref! gl-syms (ir.compiler-ir-symbol-text sym) 1)]
     [_ unit]))
 
-(define (tli-compact-scan-ir-use!
+(define (tli-compact-scan-ir-instr!
+  [ins : (& ir.CompilerIrInstr)]
   [fn-syms : (&mut i64_vec.Vec)]
   [fn-seen : (&mut i64_map.Map)]
   [gl-syms : (&mut str_map.Map)]
-  [_role : ir.CompilerIrOperandRole]
-  [v : ir.CompilerIrValue]) : unit
-  (tli-compact-scan-ir-value! (& v) fn-syms fn-seen gl-syms))
-
-(define (tli-compact-scan-ir-instr!
-  [ins : ir.CompilerIrInstr]
-  [fn-syms : (&mut i64_vec.Vec)]
-  [fn-seen : (&mut i64_map.Map)]
-  [gl-syms : (&mut str_map.Map)]) : unit
-  (match (& ins)
+  [uses : (&mut uses ir.CompilerIrUseList)]) : unit
+  (match ins
     [(ir.CompilerIrInstr.Store g _ _)
       (str_map.insert-ref! gl-syms (ir.compiler-ir-symbol-text g) 1)]
     [_
       (let
-        [named : i64 (tli-compact-ir-instr-named-symbol (& ins))]
+        [named : i64 (tli-compact-ir-instr-named-symbol ins)]
         (when
           (>= named 0)
           (let
@@ -2475,12 +2470,14 @@
               (i64_map.contains? fn-seen sid)
               (i64_map.insert-ref! fn-seen sid 1)
               (i64_vec.push-ref! fn-syms sid)))))])
-  (ir.compiler-ir-instr-visit-uses
-    ins
-    tli-compact-scan-ir-use!
-    fn-syms
-    fn-seen
-    gl-syms))
+  (set! uses.len 0)
+  (ir.compiler-ir-instr-symbol-uses-into! ins uses)
+  (for [use (& uses)]
+    (tli-compact-scan-ir-value!
+      (& (ir.compiler-ir-use-value use))
+      fn-syms
+      fn-seen
+      gl-syms)))
 
 (define (tli-compact-scan-wire-value!
   [v : (& tli.TliCompactValue)]
@@ -2573,13 +2570,6 @@
         out)]
     [_ unit]))
 
-(define (tli-compact-scan-ir-all-syms-use!
-  [syms : (&mut i64_map.Map)]
-  [out : (&mut i64_vec.Vec)]
-  [_role : ir.CompilerIrOperandRole]
-  [v : ir.CompilerIrValue]) : unit
-  (tli-compact-scan-ir-all-syms-value! (& v) syms out))
-
 ;; The symbol an instruction names outside its value operands (a direct callee
 ;; or a stored global), or -1.
 (define (tli-compact-ir-instr-named-symbol [ins : (& ir.CompilerIrInstr)]) : i64
@@ -2596,22 +2586,25 @@
 ;; Every function/global symbol `ins` references, through the IR's canonical
 ;; use walk so no instruction kind is missed.
 (define (tli-compact-scan-ir-all-syms-instr!
-  [ins : ir.CompilerIrInstr]
+  [ins : (& ir.CompilerIrInstr)]
   [syms : (&mut i64_map.Map)]
-  [out : (&mut i64_vec.Vec)]) : unit
+  [out : (&mut i64_vec.Vec)]
+  [uses : (&mut uses ir.CompilerIrUseList)]) : unit
   (let
-    [named : i64 (tli-compact-ir-instr-named-symbol (& ins))]
+    [named : i64 (tli-compact-ir-instr-named-symbol ins)]
     (when
       (>= named 0)
       (tli-compact-scan-ir-all-syms-add!
         (ir.compiler-ir-symbol-id named)
         syms
         out))
-    (ir.compiler-ir-instr-visit-uses
-      ins
-      tli-compact-scan-ir-all-syms-use!
-      syms
-      out)))
+    (set! uses.len 0)
+    (ir.compiler-ir-instr-symbol-uses-into! ins uses)
+    (for [use (& uses)]
+      (tli-compact-scan-ir-all-syms-value!
+        (& (ir.compiler-ir-use-value use))
+        syms
+        out))))
 
 (define (tli-compact-scan-program-syms
   [functions : (& ir.CompilerIrFunctionSeq)]
@@ -2619,6 +2612,7 @@
   (let
     [syms : i64_map.Map (i64_map.with-capacity 128)]
     [unused : i64_vec.Vec (i64_vec.new)]
+    [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
     (for [fi (iterator.range 0 functions.len)]
       (match (ir.compiler-ir-function-seq-borrow functions fi)
         [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
@@ -2630,9 +2624,10 @@
                     (for [ii
                       (iterator.range 0 (ir.compiler-ir-instr-seq-count iseq))]
                       (tli-compact-scan-ir-all-syms-instr!
-                        (ir.compiler-ir-instr-seq-ref iseq ii)
+                        (ir.compiler-ir-instr-seq-borrow iseq ii)
                         (&mut syms)
-                        (&mut unused)))]))])]))
+                        (&mut unused)
+                        (&mut uses)))]))])]))
     (for [gi (iterator.range 0 globals.len)]
       (match (ir.compiler-ir-global-seq-borrow globals gi)
         [(ir.CompilerIrGlobal.Global _ _ ginit _)
@@ -3206,6 +3201,7 @@
               [init-fn-syms : i64_vec.Vec (i64_vec.new)]
               [init-fn-seen : i64_map.Map (i64_map.with-capacity 128)]
               [ref-globals : str_map.Map (str_map.with-capacity 64)]
+              [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
               (for [i (iterator.range 0 functions.len)]
                 (match (ir.compiler-ir-function-seq-borrow (& functions) i)
                   [(ir.CompilerIrFunction.Function fname _ _ _ blocks _)
@@ -3226,10 +3222,11 @@
                                   0
                                   (ir.compiler-ir-instr-seq-count iseq))]
                                 (tli-compact-scan-ir-instr!
-                                  (ir.compiler-ir-instr-seq-ref iseq ii)
+                                  (ir.compiler-ir-instr-seq-borrow iseq ii)
                                   (&mut init-fn-syms)
                                   (&mut init-fn-seen)
-                                  (&mut ref-globals)))]))])]))
+                                  (&mut ref-globals)
+                                  (&mut uses)))]))])]))
               (for [i (iterator.range 0 globals.len)]
                 (match (ir.compiler-ir-global-seq-borrow (& globals) i)
                   [(ir.CompilerIrGlobal.Global gname _ ginit _)

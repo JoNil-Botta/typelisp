@@ -320,7 +320,7 @@
         -1
         (with-escape
           (unsafe
-            (arena.Arena scratch))
+            (arena.from-raw-handle scratch))
           (compiler-graph-query-shape (& transcript) limits)))]
     (if (< shape 0)
       (Err
@@ -331,7 +331,7 @@
           "query identity does not decode with an admitted compiler-build identity"))
       (match (with-escape
         (unsafe
-          (arena.Arena scratch))
+          (arena.from-raw-handle scratch))
         (identity.compiler-incremental-digest-array (& transcript)))
         [(Sha256FinalizeErr _)
           (Err
@@ -1214,7 +1214,7 @@
       [else
         (match (with-escape
           (unsafe
-            (arena.Arena scratch))
+            (arena.from-raw-handle scratch))
           (compiler-graph-transcript-digest (& transcript)))
           [(Sha256FinalizeErr _)
             (Err
@@ -1244,7 +1244,7 @@
                 [(not
                     (with-escape
                       (unsafe
-                        (arena.Arena scratch))
+                        (arena.from-raw-handle scratch))
                       (compiler-graph-trace-valid? (& value) limits)))
                   (Err
                     (compiler-graph-error

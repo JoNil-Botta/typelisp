@@ -18278,8 +18278,9 @@
   [remap : (& remap (__tl_dyn-array i64))]
   [index : i64]
   [mask : i64]
-  [instr : (& instr ir.CompilerIrInstr)]) : ir.CompilerIrInstr
-  (match instr
+  [instr : ir.CompilerIrInstr]
+  [rw : (&mut ir.CompilerIrInstrRewrite)]) : ir.CompilerIrInstr
+  (match (& instr)
     [(Phi dst inputs ty)
       (let
         [count : i64 inputs.len]
@@ -18305,7 +18306,7 @@
           (compiler-reg-remap-id remap dst)
           (ir.compiler-ir-phi-input-seq-of out 0 count)
           (ast.clone-ast-type ty)))]
-    [_ (compiler-reg-remap-instr remap instr)]))
+    [_ (compiler-reg-remap-instr remap instr rw)]))
 
 ;; Rename every S3 slot of this block to its piece. The remap is the identity
 ;; outside the slots in this block's mask and is restored before returning.
@@ -18329,8 +18330,9 @@
         (match block
           [(Block label instrs)
             (let
-              [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
               [count : i64 instrs.len]
+              [rw : ir.CompilerIrInstrRewrite
+                (ir.compiler-ir-instr-rewrite-new)]
               [builder : ir.CompilerIrInstrBuilder
                 (ir.compiler-ir-instr-builder-with-capacity count)]
               (for [i (iterator.range 0 count)]
@@ -18342,7 +18344,8 @@
                     remap
                     index
                     mask
-                    (& (array-ref slots i)))))
+                    (ir.compiler-ir-instr-seq-ref instrs i)
+                    (&mut rw))))
               (Block label (ir.compiler-ir-instr-builder-to-seq builder)))])]
       (for [slot (iterator.range 0 parked)]
         (let
@@ -21569,7 +21572,7 @@
     [retired : i64 compiler-reg-call-facts-arena]
     [owner : arena.Arena
       (unsafe
-        (arena.Arena (arena.tl_arena_make_small)))]
+        (arena.from-raw-handle (arena.tl_arena_make_small)))]
     (set!
       compiler-reg-c-memory-call-names
       (in-arena owner (reg_i64_i64_map.with-capacity 8)))
@@ -21644,7 +21647,7 @@
       (reg_i64_i64_map.get-value-or (& compiler-reg-c-memory-call-names) name 0)]
     (in-arena
       (unsafe
-        (arena.Arena compiler-reg-call-facts-arena))
+        (arena.from-raw-handle compiler-reg-call-facts-arena))
       (reg_i64_i64_map.insert-ref!
         (&mut compiler-reg-c-memory-call-names)
         name
@@ -27517,7 +27520,7 @@
   (let
     [scratch : arena.Arena
       (unsafe
-        (arena.Arena (arena.tl_arena_make_small)))]
+        (arena.from-raw-handle (arena.tl_arena_make_small)))]
     [raw : CompilerRegPlan
       (in-arena
         scratch
@@ -28421,15 +28424,19 @@
                   count))]))
         count)]))
 
+(define (compiler-reg-color-var-root
+  [roots : (& (__tl_dyn-array i64))]
+  [var : i64]) : i64
+  (if (and (>= var 0) (< var (array-length roots)))
+    (array-ref roots var)
+    -1))
+
 (define (compiler-reg-color-value-root
-  [roots : (& roots (__tl_dyn-array i64))]
+  [roots : (& (__tl_dyn-array i64))]
   [value : (& ir.CompilerIrValue)]) : i64
   (match value
-    [(Var var)
-      (if (and (>= var 0) (< var (array-length roots)))
-        (array-ref roots var)
-        (- 0 1))]
-    [_ (- 0 1)]))
+    [(Var var) (compiler-reg-color-var-root roots var)]
+    [_ -1]))
 
 (define (compiler-reg-color-merge-root [acc : i64] [root : i64]) : i64
   (cond
@@ -28836,17 +28843,11 @@
           unit)
         (compiler-reg-color-invalidate-phi! roots invalid dst-root rest)))))
 
-(define (compiler-reg-color-invalidate-use!
-  [roots : (& (__tl_dyn-array i64))]
-  [invalid : (__tl_dyn-array bool)]
-  [_role : ir.CompilerIrOperandRole]
-  [value : ir.CompilerIrValue]) : unit
-  (compiler-reg-color-invalidate-value! roots invalid value))
-
 (define (compiler-reg-color-invalidate-instr!
   [instr : (& ir.CompilerIrInstr)]
   [roots : (& (__tl_dyn-array i64))]
-  [invalid : (__tl_dyn-array bool)]) : unit
+  [invalid : (__tl_dyn-array bool)]
+  [uses : (&mut uses ir.CompilerIrUseList)]) : unit
   (match (owned_view.compiler-owned-reference-shared-view instr)
     [(or (Mov dst value _) (Gep dst value _ _))
       (let
@@ -28968,16 +28969,32 @@
          (TotalEnumSwitch _ _ _ _ _))
       unit]
     [_
-      (ir.compiler-ir-instr-visit-uses
-        (owned_view.compiler-owned-reference-shared-view instr)
-        compiler-reg-color-invalidate-use!
-        roots
-        (compiler-reg-global-shared-view invalid))]))
+      (let
+        [short : ir.CompilerIrShortVarUses
+          (ir.compiler-ir-instr-short-var-uses instr)]
+        (if short.fits?
+          (begin
+            (compiler-reg-color-invalidate-root!
+              (&mut invalid)
+              (compiler-reg-color-var-root roots short.first))
+            (compiler-reg-color-invalidate-root!
+              (&mut invalid)
+              (compiler-reg-color-var-root roots short.second)))
+          (begin
+            (set! uses.len 0)
+            (ir.compiler-ir-instr-uses-into! instr uses)
+            (for [use (& uses)]
+              (when
+                (= use.kind (ir.CompilerIrUseKind.VarUse))
+                (compiler-reg-color-invalidate-root!
+                  (&mut invalid)
+                  (compiler-reg-color-var-root roots use.id)))))))]))
 
 (define (compiler-reg-color-invalidate-seq!
   [instrs : (& ir.CompilerIrInstrSeq)]
   [roots : (& (__tl_dyn-array i64))]
-  [invalid : (& (__tl_dyn-array bool))]) : unit
+  [invalid : (& (__tl_dyn-array bool))]
+  [uses : (&mut ir.CompilerIrUseList)]) : unit
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
       (owned_view.compiler-owned-reference-shared-view (& instrs.slots))]
@@ -28986,7 +29003,8 @@
       (compiler-reg-color-invalidate-instr!
         (& (array-ref slots i))
         roots
-        (owned_view.compiler-owned-reference-shared-view invalid)))))
+        (owned_view.compiler-owned-reference-shared-view invalid)
+        uses))))
 
 (define (compiler-reg-color-invalidate-blocks!
   [blocks : (& ir.CompilerIrBlockList)]
@@ -28994,10 +29012,16 @@
   [invalid : (& (__tl_dyn-array bool))]) : unit
   (match blocks
     [(Array seq)
-      (for [i (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
-        (match (ir.compiler-ir-block-seq-borrow seq i)
-          [(Block _ instrs)
-            (compiler-reg-color-invalidate-seq! (& instrs) roots invalid)]))]))
+      (let
+        [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
+        (for [i (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+          (match (ir.compiler-ir-block-seq-borrow seq i)
+            [(Block _ instrs)
+              (compiler-reg-color-invalidate-seq!
+                (& instrs)
+                roots
+                invalid
+                (&mut uses))])))]))
 
 ;; The ordinary escape scan above handles every alias, including uses after
 ;; the call. Its Sret exemption is conditional on this separate proof scan:
@@ -31450,7 +31474,7 @@
 (define (compiler-reg-remap-value
   [remap : (& (__tl_dyn-array i64))]
   [value : ir.CompilerIrValue]) : ir.CompilerIrValue
-  (match (compiler-reg-global-shared-view value)
+  (match (& value)
     [(Var id) (Var (compiler-reg-remap-id remap id))]
     [_ value]))
 
@@ -31468,55 +31492,99 @@
             (ir.CompilerIrParam.Param name ty (compiler-reg-remap-id remap var)))]))
     (ir.CompilerIrParamSeq slots params.len)))
 
-(define (compiler-reg-remap-use
-  [remap : (& (__tl_dyn-array i64))]
-  [_role : ir.CompilerIrOperandRole]
-  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
-  (compiler-reg-remap-value remap value))
-
 (define (compiler-reg-remap-instr
   [remap : (& (__tl_dyn-array i64))]
-  [instr : (& ir.CompilerIrInstr)]) : ir.CompilerIrInstr
-  (match (owned_view.compiler-owned-reference-shared-view instr)
-    ;; The ownership edge has served its purpose once optimization is
-    ;; complete. Erase it at the SSA-to-home boundary.
-    [(StoreOwned ptr value ty)
+  [instr : ir.CompilerIrInstr]
+  [rw : (&mut ir.CompilerIrInstrRewrite)]) : ir.CompilerIrInstr
+  (match instr
+    ;; Common scalar shapes can rewrite their inline operands directly.
+    [(Mov dst src ty)
+      (Mov
+        (compiler-reg-remap-id remap dst)
+        (compiler-reg-remap-value remap src)
+        ty)]
+    [(Gep dst base offset ty)
+      (Gep
+        (compiler-reg-remap-id remap dst)
+        (compiler-reg-remap-value remap base)
+        (compiler-reg-remap-value remap offset)
+        ty)]
+    [(Load dst src ty)
+      (Load
+        (compiler-reg-remap-id remap dst)
+        (compiler-reg-remap-value remap src)
+        ty)]
+    [(or (StorePtr ptr value ty)
+         ;; The ownership edge has served its purpose at the SSA-to-home boundary.
+         (StoreOwned ptr value ty))
       (StorePtr
         (compiler-reg-remap-value remap ptr)
         (compiler-reg-remap-value remap value)
         ty)]
+    [(BinOp dst op lhs rhs ty)
+      (BinOp
+        (compiler-reg-remap-id remap dst)
+        op
+        (compiler-reg-remap-value remap lhs)
+        (compiler-reg-remap-value remap rhs)
+        ty)]
+    [(Alloc dst ty) (Alloc (compiler-reg-remap-id remap dst) ty)]
+    [(Branch condition true-label false-label)
+      (Branch (compiler-reg-remap-value remap condition) true-label false-label)]
     ;; AddrOf's storage var is remapped with its dst.
-    [(AddrOf dst src _storage-words)
+    [(AddrOf dst src storage-words)
       (AddrOf
         (compiler-reg-remap-id remap dst)
         (compiler-reg-remap-id remap src)
-        _storage-words)]
+        storage-words)]
+    ;; Only the selector can change. Keep the existing case storage, as the
+    ;; var remap leaves labels alone.
+    [(Switch index base cases default-label)
+      (Switch (compiler-reg-remap-value remap index) base cases default-label)]
+    [(TotalEnumSwitch index base cases default-label trap-label)
+      (TotalEnumSwitch
+        (compiler-reg-remap-value remap index)
+        base
+        cases
+        default-label
+        trap-label)]
     [_
-      (ir.compiler-ir-instr-map
-        (owned_view.compiler-owned-reference-shared-view instr)
-        compiler-reg-remap-use
-        compiler-reg-remap-id
-        _
-        _
-        remap)]))
+      (ir.compiler-ir-instr-rewrite-begin! rw (& instr))
+      (let
+        [dst : i64 (ir.compiler-ir-instr-dst (& instr))]
+        [mapped : i64 (compiler-reg-remap-id remap dst)]
+        (when (!= dst mapped) (ir.compiler-ir-instr-rewrite-def! rw mapped)))
+      (for [index (iterator.range 0 rw.uses.len)]
+        (let
+          [use : ir.CompilerIrUse
+            (ir.compiler-ir-instr-rewrite-use-at rw index)]
+          (when
+            (= use.kind (ir.CompilerIrUseKind.VarUse))
+            (let
+              [mapped : i64 (compiler-reg-remap-id remap use.id)]
+              (when
+                (!= mapped use.id)
+                (ir.compiler-ir-instr-rewrite-use! rw index (Var mapped)))))))
+      (ir.compiler-ir-instr-rewrite-finish rw instr)]))
 
-;; A 1:1 var remap: the output is exactly as long as the input, so it is
-;; written straight into a right-sized dense sequence instead of through a
-;; cons spine. The output is FRESH and the input is never written through, so
-;; the aliasing graph is unchanged and no unique-ownership argument is needed.
+;; A 1:1 var remap writes a fresh dense instruction sequence. An unchanged
+;; instruction retains its read-only payload, and changed operands are rebuilt
+;; without writing through the input sequence.
 (define (compiler-reg-remap-instr-seq
   [remap : (& (__tl_dyn-array i64))]
-  [instrs : (& ir.CompilerIrInstrSeq)]) : ir.CompilerIrInstrSeq
+  [instrs : (& ir.CompilerIrInstrSeq)]
+  [rw : (&mut ir.CompilerIrInstrRewrite)]) : ir.CompilerIrInstrSeq
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (owned_view.compiler-owned-reference-shared-view (& instrs.slots))]
     [count : i64 instrs.len]
     [out : (__tl_dyn-array ir.CompilerIrInstr)
       (__tl_make-array ir.CompilerIrInstr count)]
     (for [index (iterator.range 0 count)]
       (set!
         (array-ref out index)
-        (compiler-reg-remap-instr remap (& (array-ref slots index)))))
+        (compiler-reg-remap-instr
+          remap
+          (ir.compiler-ir-instr-seq-ref instrs index)
+          rw)))
     (ir.CompilerIrInstrSeq out count)))
 
 (define (compiler-reg-remap-blocks
@@ -31528,6 +31596,7 @@
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [slots : (__tl_dyn-array ir.CompilerIrBlock)
           (__tl_make-array ir.CompilerIrBlock count)]
+        [rw : ir.CompilerIrInstrRewrite (ir.compiler-ir-instr-rewrite-new)]
         (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-borrow seq i)
             [(Block label instrs)
@@ -31535,7 +31604,7 @@
                 (array-ref slots i)
                 (ir.CompilerIrBlock.Block
                   label
-                  (compiler-reg-remap-instr-seq remap (& instrs))))]))
+                  (compiler-reg-remap-instr-seq remap (& instrs) (&mut rw))))]))
         (Array (ir.CompilerIrBlockSeq slots count)))]))
 
 (define (compiler-reg-plan-assignments [plan : (& CompilerRegPlan)]) : CompilerRegAssignmentTable
@@ -32838,6 +32907,7 @@
         [r-entry : (__tl_dyn-array i64) (__tl_make-array i64 count)]
         [r-exit : (__tl_dyn-array i64) (__tl_make-array i64 count)]
         [remap : (__tl_dyn-array i64) (compiler-reg-caller-save-remap vars)]
+        [rw : ir.CompilerIrInstrRewrite (ir.compiler-ir-instr-rewrite-new)]
         [act-w : (__tl_dyn-array i64)
           (__tl_make-array
             i64
@@ -33058,17 +33128,20 @@
                               (+= active-n 1))
                             (+= cursor 1)))
                         (let
-                          [out-instr : ir.CompilerIrInstr
-                            (if (> active-n 0)
-                              (match (& instr)
-                                [(Phi _ _ _)
-                                  (owned_view.compiler-owned-shared-view instr)]
-                                [_
-                                  (compiler-reg-remap-instr (& remap) (& instr))])
-                              (owned_view.compiler-owned-shared-view instr))]
                           [cf : bool
                             (compiler-reg-call-region-control-flow-instr?
                               (& instr))]
+                          [out-instr : ir.CompilerIrInstr
+                            (if (and
+                              (> active-n 0)
+                              (match (& instr)
+                                [(Phi _ _ _) false]
+                                [_ true]))
+                              (compiler-reg-remap-instr
+                                (& remap)
+                                instr
+                                (&mut rw))
+                              instr)]
                           (if cf
                             (begin
                               (compiler-reg-call-region-exit-stores

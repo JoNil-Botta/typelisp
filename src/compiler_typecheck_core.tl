@@ -1214,7 +1214,7 @@
         [owner : i64 (tc-macro-state-owner-arena ,state)]
         (in-arena
           (unsafe
-            (arena.Arena owner))
+            (arena.from-raw-handle owner))
           (let
             [cell : (__tl_dyn-array ,_payload) (__tl_make-array ,_payload 1)]
             [_init : unit (set! (array-ref cell 0) ,initial)]
@@ -1450,7 +1450,7 @@
     [address : i64 0]
     (in-arena
       (unsafe
-        (arena.Arena owner))
+        (arena.from-raw-handle owner))
       (let
         [cell : (__tl_dyn-array TcTypeWalkTable)
           (__tl_make-array TcTypeWalkTable 1)]
@@ -1575,7 +1575,7 @@
     [grown : (__tl_dyn-array i64)
       (in-arena
         (unsafe
-          (arena.Arena owner))
+          (arena.from-raw-handle owner))
         (__tl_make-array i64 capacity))]
     (for [at (iterator.range 0 used)]
       (set! (array-ref grown at) (array-ref items at)))
@@ -1824,7 +1824,7 @@
 (define (tc-type-handle-cache-state-new [owner : i64]) : TcTypeHandleCacheState
   (in-arena
     (unsafe
-      (arena.Arena owner))
+      (arena.from-raw-handle owner))
     (let
       [cell : (__tl_dyn-array TcTypeHandleCacheStateData)
         (__tl_make-array TcTypeHandleCacheStateData 1)]
@@ -1841,7 +1841,7 @@
 (define (tc-nominal-cache-state-new [owner : i64]) : TcNominalCacheState
   (in-arena
     (unsafe
-      (arena.Arena owner))
+      (arena.from-raw-handle owner))
     (let
       [cell : (__tl_dyn-array TcNominalCacheStateData)
         (__tl_make-array TcNominalCacheStateData 1)]
@@ -1965,7 +1965,7 @@
 (define (tc-type-env-scoped-state-new [owner : i64]) : TcTypeEnvScopedState
   (in-arena
     (unsafe
-      (arena.Arena owner))
+      (arena.from-raw-handle owner))
     (let
       [data-cell : (__tl_dyn-array TcTypeEnvScopedStateData)
         (__tl_make-array TcTypeEnvScopedStateData 1)]
@@ -2302,7 +2302,7 @@
             unit)
           ;; Detach every carrier before destroying its backing arena.
           (in-arena
-            (arena.Arena (deref data).owner-arena)
+            (arena.from-raw-handle (deref data).owner-arena)
             (set!
               (deref data).facts
               (__tl_make-array TcCheckedLetBindingFact 0))
@@ -2349,7 +2349,7 @@
     [payload : i64 (arena.tl_arena_make)]
     (in-arena
       (unsafe
-        (arena.Arena payload))
+        (arena.from-raw-handle payload))
       (let
         [data : (MutPtr TcCheckedLetBindingFactStateData)
           (tc-checked-let-binding-fact-state-ptr state)]
@@ -2403,7 +2403,7 @@
         [compacted : TcCheckedLetBindingFactStateData
           (in-arena
             (unsafe
-              (arena.Arena fresh))
+              (arena.from-raw-handle fresh))
             (let
               [count : i64 data.len]
               [facts : (__tl_dyn-array TcCheckedLetBindingFact)
@@ -2509,7 +2509,7 @@
                 [(LookupMissing) ordinal])]
             (in-arena
               (unsafe
-                (arena.Arena data.payload-arena))
+                (arena.from-raw-handle data.payload-arena))
               (tc_i64_i64_map.insert-ref!
                 (&mut data.declaration-ordinals)
                 key
@@ -2554,7 +2554,7 @@
           (* (deref data).capacity 2))]
       (in-arena
         (unsafe
-          (arena.Arena (deref data).payload-arena))
+          (arena.from-raw-handle (deref data).payload-arena))
         (let
           [next : (__tl_dyn-array TcCheckedLetBindingFact)
             (__tl_make-array TcCheckedLetBindingFact next-capacity)]
@@ -2624,7 +2624,7 @@
           [persisted : ast.AstType
             (in-arena
               (unsafe
-                (arena.Arena ready.payload-arena))
+                (arena.from-raw-handle ready.payload-arena))
               (ast.ty-node-persist (& binding-ty)))]
           (set!
             (array-ref ready.facts slot)
@@ -2643,7 +2643,7 @@
           ;; happened to check this binding.
           (in-arena
             (unsafe
-              (arena.Arena ready.payload-arena))
+              (arena.from-raw-handle ready.payload-arena))
             (tc_i64_i64_map.insert-ref! (&mut ready.by-hash) key-hash slot))
           (set! ready.len (+ slot 1))
           (tc-checked-let-binding-fact-state-data-set! state ready)))
@@ -2810,7 +2810,7 @@
           (* old-capacity 2))]
       (in-arena
         (unsafe
-          (arena.Arena (deref data).fixed-storage-arena))
+          (arena.from-raw-handle (deref data).fixed-storage-arena))
         (let
           [new-records : (__tl_dyn-array i64)
             (__tl_make-array
@@ -2933,7 +2933,7 @@
       [(LookupMissing)
         (in-arena
           (unsafe
-            (arena.Arena data.fixed-storage-arena))
+            (arena.from-raw-handle data.fixed-storage-arena))
           (tc_i64_i64_map.insert-ref!
             (&mut data.seen-sites)
             site-hash
@@ -3266,7 +3266,7 @@
 (define tc-serial-job-state-cell : (__tl_dyn-array TcJobState)
   (in-arena
     (unsafe
-      (arena.Arena tc-serial-job-state-arena))
+      (arena.from-raw-handle tc-serial-job-state-arena))
     (let
       [cell : (__tl_dyn-array TcJobState) (__tl_make-array TcJobState 1)]
       [state : TcJobState (tc-job-state-new)]
@@ -24463,7 +24463,7 @@
           (set! store.arena storage)
           (in-arena
             (unsafe
-              (arena.Arena storage))
+              (arena.from-raw-handle storage))
             (set!
               store.certificates
               (__tl_make-array
@@ -24562,7 +24562,7 @@
         (if (> storage 0)
           (in-arena
             (unsafe
-              (arena.Arena storage))
+              (arena.from-raw-handle storage))
             (__tl_make-array TcSelectedCertificate next))
           (__tl_make-array TcSelectedCertificate next))]
       [index : i64 0]
@@ -24644,7 +24644,7 @@
         (if (> storage 0)
           (in-arena
             (unsafe
-              (arena.Arena storage))
+              (arena.from-raw-handle storage))
             (tc_i64_i64_map.insert-ref!
               (&mut data.selected-certificate-index)
               key
@@ -24943,7 +24943,7 @@
       (and (!= arena-id 0) (>= body-id 0))
       (in-arena
         (unsafe
-          (arena.Arena arena-id))
+          (arena.from-raw-handle arena-id))
         (let
           [facts : tc_i64_i64_map.Map
             (unsafe
@@ -25033,7 +25033,7 @@
         1)]
     (in-arena
       (unsafe
-        (arena.Arena storage))
+        (arena.from-raw-handle storage))
       (let
         [data : (MutPtr TcBodyStateData) (tc-body-state-ptr state)]
         (unsafe
@@ -25077,7 +25077,7 @@
           (* old-cap 2))]
       (in-arena
         (unsafe
-          (arena.Arena (deref data).type-fact-storage-arena))
+          (arena.from-raw-handle (deref data).type-fact-storage-arena))
         (let
           [next-types : (__tl_dyn-array ast.AstType)
             (__tl_make-array ast.AstType new-cap)]
@@ -25714,7 +25714,7 @@
   (let
     [owner : arena.Arena
       (unsafe
-        (arena.Arena (tc-job-state-field job-state owner-arena i64)))]
+        (arena.from-raw-handle (tc-job-state-field job-state owner-arena i64)))]
     [cell : (__tl_dyn-array TcAggLayoutCacheStateData)
       (in-arena owner (__tl_make-array TcAggLayoutCacheStateData 1))]
     [address : i64
@@ -25728,7 +25728,7 @@
       (TcAggLayoutCacheStateData
         (arena.raw-handle owner)
         (unsafe
-          (arena.Arena 0))
+          (arena.from-raw-handle 0))
         (__tl_make-array TcAggLayoutCacheSlot 0)
         (__tl_make-array i64 0)
         -1
@@ -25773,7 +25773,7 @@
         (let
           [fresh : arena.Arena
             (unsafe
-              (arena.Arena (arena.tl_arena_make_small)))]
+              (arena.from-raw-handle (arena.tl_arena_make_small)))]
           (set! (deref data).agg-layout-storage-owner fresh)
           fresh)
         storage))))
@@ -25812,7 +25812,7 @@
       (if (> (array-length filled) 0)
         (set! (array-ref filled 0) 0)
         unit)
-      (set! (deref data).agg-layout-storage-owner (arena.Arena 0))
+      (set! (deref data).agg-layout-storage-owner (arena.from-raw-handle 0))
       (if (= (arena.raw-handle storage) 0)
         unit
         (arena.destroy storage)))))
@@ -26289,7 +26289,8 @@
   (tc-prefix-snapshot-cache-ensure-for-state! state)
   (in-arena
     (unsafe
-      (arena.Arena (tc-prefix-snapshot-cache-arena-handle-for-state state)))
+      (arena.from-raw-handle
+        (tc-prefix-snapshot-cache-arena-handle-for-state state)))
     (let
       [persistent-key : String (string.copy (& key))]
       [persistent-module : String (string.copy (& module))]
@@ -28158,7 +28159,7 @@
         elapsed-ms)
       (in-arena
         (unsafe
-          (arena.Arena (macro-expand-scratch-arena-get state)))
+          (arena.from-raw-handle (macro-expand-scratch-arena-get state)))
         (compiler-tc-macro-profile-record-in!
           (&mut compiler-tc-macro-profile-entries)
           macro-id
@@ -29642,7 +29643,7 @@
     (set! tc-type-env-store-epoch (+ tc-type-env-store-epoch 1))
     (in-arena
       (unsafe
-        (arena.Arena owner))
+        (arena.from-raw-handle owner))
       (let
         [bigger : (__tl_dyn-array TcTypeEnvBinding)
           (__tl_make-array TcTypeEnvBinding next-capacity)]
@@ -29662,7 +29663,7 @@
     (set! tc-type-env-store-epoch (+ tc-type-env-store-epoch 1))
     (in-arena
       (unsafe
-        (arena.Arena owner))
+        (arena.from-raw-handle owner))
       (let
         [bigger : (__tl_dyn-array TcTypeEnvCache)
           (__tl_make-array TcTypeEnvCache next-capacity)]
@@ -29997,7 +29998,7 @@
   (if (tc-topenv-membership-map-needs-grow? (& map))
     (in-arena
       (unsafe
-        (arena.Arena owner))
+        (arena.from-raw-handle owner))
       (tc_i64_i64_map.grow! map))
     unit))
 
@@ -32580,7 +32581,7 @@
         [cell : i64
           (in-arena
             (unsafe
-              (arena.Arena owner))
+              (arena.from-raw-handle owner))
             (let
               [slots : (__tl_dyn-array TcChainIndex)
                 (__tl_make-array TcChainIndex 1)]
@@ -32782,7 +32783,7 @@
         ;; them in the store's owner arena, not the ambient one.
         (in-arena
           (unsafe
-            (arena.Arena owner))
+            (arena.from-raw-handle owner))
           (let
             [jumps : (__tl_dyn-array i64)
               (if (= levels 0)
@@ -33154,7 +33155,7 @@
       (arena.tl_arena_destroy tc-entry-hidden-arena))
     (set! tc-entry-hidden-arena (arena.tl_arena_make))
     (in-arena
-      (arena.Arena tc-entry-hidden-arena)
+      (arena.from-raw-handle tc-entry-hidden-arena)
       (set! tc-entry-hidden-names (tc_i64_i64_map.with-capacity 64))))
   (tc-entry-hidden-filter-reset!))
 
@@ -33172,7 +33173,7 @@
   (when (= tc-entry-hidden-arena 0) (tc-entry-hidden-names-reset!))
   (unsafe
     (in-arena
-      (arena.Arena tc-entry-hidden-arena)
+      (arena.from-raw-handle tc-entry-hidden-arena)
       (tc_i64_i64_map.insert-ref! (&mut tc-entry-hidden-names) key-id 1)))
   (tc-entry-hidden-filter-note! key-id))
 
@@ -33719,7 +33720,7 @@
       (set! (deref data).hygiene-cache-arena root)
       (in-arena
         (unsafe
-          (arena.Arena root))
+          (arena.from-raw-handle root))
         (set! (deref data).hygiene-cache-arena-mark (arena.tl_region_mark))))))
 
 (define (tc-hygiene-module-env-cache-arena-handle [state : TcMacroState]) : i64
@@ -33751,7 +33752,7 @@
         ;; Growth appends segments behind the stable root, so the original mark
         ;; can reset the complete chain without recapturing or replacing a head.
         (in-arena
-          (arena.Arena (deref data).hygiene-cache-arena-root)
+          (arena.from-raw-handle (deref data).hygiene-cache-arena-root)
           (arena.tl_region_reset (deref data).hygiene-cache-arena-mark))))))
 
 (define (tc-macro-module-env-cache-clear! [state : TcMacroState]) : unit
@@ -34137,7 +34138,7 @@
       (if (> (array-length (deref data).block-spans) 0)
         unit
         (in-arena
-          (arena.Arena (deref data).fixed-storage-arena)
+          (arena.from-raw-handle (deref data).fixed-storage-arena)
           (set!
             (deref data).block-spans
             (__tl_make-array ast.AstSourceSpan 128))
@@ -34285,7 +34286,7 @@
     ;; all replacement arrays into state before the lexical extent restores.
     [owner : arena.Arena
       (unsafe
-        (arena.Arena data.fixed-storage-arena))]
+        (arena.from-raw-handle data.fixed-storage-arena))]
     (in-arena
       owner
       (let
@@ -34460,7 +34461,8 @@
               (if (<= old-cap 0)
                 16
                 (* old-cap 2))]
-            [owner : arena.Arena (arena.Arena (deref data).fixed-storage-arena)]
+            [owner : arena.Arena
+              (arena.from-raw-handle (deref data).fixed-storage-arena)]
             (in-arena
               owner
               (let
@@ -34492,7 +34494,8 @@
               (if (<= old-cap 0)
                 64
                 (* old-cap 2))]
-            [owner : arena.Arena (arena.Arena (deref data).fixed-storage-arena)]
+            [owner : arena.Arena
+              (arena.from-raw-handle (deref data).fixed-storage-arena)]
             (while (<= new-cap slot)
               (set! new-cap (* new-cap 2)))
             (in-arena
@@ -39329,7 +39332,7 @@
             (tc-hygiene-module-env-cache-owned-data state)]
           (in-arena
             (unsafe
-              (arena.Arena current.hygiene-cache-arena))
+              (arena.from-raw-handle current.hygiene-cache-arena))
             (match (tc-module-local-env-cached-id
               ctx
               current.hygiene-active-top-env
@@ -39526,7 +39529,7 @@
       (let
         [owner : arena.Arena
           (unsafe
-            (arena.Arena data.owner-arena))]
+            (arena.from-raw-handle data.owner-arena))]
         [next : (__tl_dyn-array TcStringListNode)
           (in-arena owner (__tl_make-array TcStringListNode next-capacity))]
         [index : i64 0]
@@ -39553,7 +39556,7 @@
     (let
       [owner : arena.Arena
         (unsafe
-          (arena.Arena data.owner-arena))]
+          (arena.from-raw-handle data.owner-arena))]
       [owned : String (in-arena owner (string.copy (& value)))]
       (set! (array-ref data.nodes index) (TcStringListNode owned parent)))
     (set! data.len (+ index 1))
@@ -39687,7 +39690,7 @@
         (set! next-capacity (* next-capacity 2)))
       (in-arena
         (unsafe
-          (arena.Arena data.owner-arena))
+          (arena.from-raw-handle data.owner-arena))
         (let
           [next : (__tl_dyn-array TcNameIdListNode)
             (__tl_make-array TcNameIdListNode next-capacity)]
@@ -40509,7 +40512,7 @@
         (set! next-capacity (* next-capacity 2)))
       (in-arena
         (unsafe
-          (arena.Arena data.owner-arena))
+          (arena.from-raw-handle data.owner-arena))
         (let
           [next : (__tl_dyn-array TcLifetimeSubstNode)
             (__tl_make-array TcLifetimeSubstNode next-capacity)]
@@ -41200,7 +41203,7 @@
       (when
         (= (array-length (deref data).outlives-slots) 0)
         (in-arena
-          (arena.Arena (deref data).owner-arena)
+          (arena.from-raw-handle (deref data).owner-arena)
           (set!
             (deref data).outlives-slots
             (__tl_make-array
@@ -43198,7 +43201,7 @@
         tc-type-resolution-cache-capacity)
         unit
         (in-arena
-          (arena.Arena (deref data).owner-arena)
+          (arena.from-raw-handle (deref data).owner-arena)
           (set!
             (deref data).slots
             (__tl_make-array i64 tc-type-resolution-cache-capacity)))))))
@@ -44123,7 +44126,7 @@
         (* old-capacity 2))]
     (in-arena
       (unsafe
-        (arena.Arena (tc-macro-state-owner-arena state)))
+        (arena.from-raw-handle (tc-macro-state-owner-arena state)))
       (let
         [next-pools : (__tl_dyn-array ast.AstNodePoolContext)
           (__tl_make-array ast.AstNodePoolContext next-capacity)]
@@ -44922,7 +44925,7 @@
           (> storage 0)
           (in-arena
             (unsafe
-              (arena.Arena (tc-macro-state-owner-arena state)))
+              (arena.from-raw-handle (tc-macro-state-owner-arena state)))
             (tc-state-cell-write!
               address
               TcModuleDeclIndexStateData
@@ -45600,7 +45603,7 @@
         [owner : i64 (tc-macro-state-owner-arena state)]
         (in-arena
           (unsafe
-            (arena.Arena owner))
+            (arena.from-raw-handle owner))
           (let
             [cell : (__tl_dyn-array TcLazyImportStateData)
               (__tl_make-array TcLazyImportStateData 1)]
@@ -45655,7 +45658,7 @@
           [owner : i64 (deref data).owner-arena]
           (in-arena
             (unsafe
-              (arena.Arena owner))
+              (arena.from-raw-handle owner))
             (set!
               (deref data).module-ids
               (__tl_make-array i64 tc-lazy-import-stub-capacity))
@@ -47253,7 +47256,7 @@
       (when
         (= (deref data).keys-address 0)
         (in-arena
-          (arena.Arena (deref data).owner-arena)
+          (arena.from-raw-handle (deref data).owner-arena)
           (let
             [keys : (__tl_dyn-array i64)
               (__tl_make-array i64 tc-type-handle-cache-capacity)]
@@ -48191,7 +48194,7 @@
       [old (deref data).nominal-facts]
       [capacity (* 2 (array-length old))]
       (in-arena
-        (arena.Arena fresh)
+        (arena.from-raw-handle fresh)
         (set!
           (deref data).nominal-facts
           (tc-checked-nominal-facts-rehash capacity old)))
@@ -48214,7 +48217,7 @@
             (> session.address 0))
           (set! (deref data).nominal-fact-arena (arena.tl_arena_make))
           (in-arena
-            (arena.Arena (deref data).nominal-fact-arena)
+            (arena.from-raw-handle (deref data).nominal-fact-arena)
             (set!
               (deref data).nominal-facts
               (__tl_make-array TcCheckedNominalFact 256)))
@@ -48391,7 +48394,7 @@
       (when
         (= (array-length (deref data).leaf-slots) 0)
         (in-arena
-          (arena.Arena (deref data).owner-arena)
+          (arena.from-raw-handle (deref data).owner-arena)
           (set!
             (deref data).leaf-slots
             (__tl_make-array
@@ -50687,7 +50690,7 @@
         (let
           [grown : (__tl_dyn-array i64)
             (in-arena
-              (arena.Arena (deref table).owner)
+              (arena.from-raw-handle (deref table).owner)
               (__tl_make-array
                 i64
                 (+ id (+ 1024 (array-length (deref table).canon)))))]
@@ -51095,7 +51098,7 @@
                 (/ (comptime (size-of (type TcVarianceCache))) 8)))
             (in-arena
               (unsafe
-                (arena.Arena owner))
+                (arena.from-raw-handle owner))
               (let
                 [cell : (__tl_dyn-array TcVarianceCache)
                   (__tl_make-array TcVarianceCache 1)]
@@ -51178,7 +51181,7 @@
           (ptr-read writer))]
       (in-arena
         (unsafe
-          (arena.Arena cache.owner))
+          (arena.from-raw-handle cache.owner))
         (for [at (iterator.range 0 table.len)]
           (tc-variance-reserve! (&mut cache.owners) cache.len)
           (tc-variance-reserve! (&mut cache.indices) cache.len)
@@ -56664,7 +56667,7 @@
   (when (= tc-entry-hidden-arena 0) (tc-entry-hidden-names-reset!))
   (unsafe
     (in-arena
-      (arena.Arena tc-entry-hidden-arena)
+      (arena.from-raw-handle tc-entry-hidden-arena)
       (tc-module-local-root-shadow-decl-note!
         (tc-context-structural-session ctx)
         (&mut tc-entry-hidden-names)
@@ -57874,7 +57877,7 @@
       [old (deref data).binary-facts]
       [capacity (* 2 (array-length old))]
       (in-arena
-        (arena.Arena fresh)
+        (arena.from-raw-handle fresh)
         (set!
           (deref data).binary-facts
           (tc-checked-binary-facts-rehash capacity old)))
@@ -57932,7 +57935,7 @@
                   (= (deref data).binary-pool-cell 0)
                   (set! (deref data).binary-fact-arena (arena.tl_arena_make))
                   (in-arena
-                    (arena.Arena (deref data).binary-fact-arena)
+                    (arena.from-raw-handle (deref data).binary-fact-arena)
                     (set!
                       (deref data).binary-facts
                       (__tl_make-array TcCheckedBinaryFact 1024)))
@@ -68388,7 +68391,7 @@
       (if (= (array-length (deref data).lines) tc-inlay-hint-capacity)
         unit
         (in-arena
-          (arena.Arena (deref data).fixed-storage-arena)
+          (arena.from-raw-handle (deref data).fixed-storage-arena)
           (set! (deref data).lines (__tl_make-array i64 tc-inlay-hint-capacity))
           (set! (deref data).cols (__tl_make-array i64 tc-inlay-hint-capacity))
           (set!
@@ -68485,7 +68488,7 @@
     [owner : i64 (tc-inlay-hint-string-arena-ensure-for-state! state)]
     (in-arena
       (unsafe
-        (arena.Arena owner))
+        (arena.from-raw-handle owner))
       (set! (array-ref data.lines slot) line)
       (set! (array-ref data.cols slot) col)
       (set! (array-ref data.types slot) (string.copy (& ty))))
@@ -71050,7 +71053,7 @@
     [next : TcNameIdList
       (in-arena
         (unsafe
-          (arena.Arena owner))
+          (arena.from-raw-handle owner))
         (tc-name-id-list-add previous name-id))]
     (tc-spmd-inline-helper-stack-restore-for-state! state next)
     previous))
@@ -78269,7 +78272,7 @@
         unit
         (in-arena
           (unsafe
-            (arena.Arena (deref data).owner-arena))
+            (arena.from-raw-handle (deref data).owner-arena))
           (set!
             (deref data).agg-layout-cache
             (__tl_make-array TcAggLayoutCacheSlot tc-agg-layout-cache-capacity))
@@ -78699,7 +78702,7 @@
       (deref slots)
       (in-arena
         (unsafe
-          (arena.Arena owner-arena))
+          (arena.from-raw-handle owner-arena))
         (tc-agg-scalar-cache-new)))))
 
 ;; Empty SLOTS and key it for SOURCE-NAMES' structural records.
@@ -79305,7 +79308,7 @@
         [synced-env : ctfe_support.CtfeEnv
           (in-arena
             (unsafe
-              (arena.Arena owner))
+              (arena.from-raw-handle owner))
             (let
               [reflections : ctfe_support.CtfeReflectInfoList
                 (ctfe_support.ctfe-env-reflections (& env))]
@@ -79375,7 +79378,7 @@
           [built : ctfe_support.CtfeEnv
             (in-arena
               (unsafe
-                (arena.Arena owner))
+                (arena.from-raw-handle owner))
               (ctfe_support.ctfe-env-with-metadata-and-pools-and-source-names-and-macro-state
                 (& (tc-ctfe-layouts ctx))
                 (&
@@ -92249,7 +92252,7 @@
     [owner : i64 (tc-macro-state-owner-arena state)]
     (in-arena
       (unsafe
-        (arena.Arena owner))
+        (arena.from-raw-handle owner))
       (string.copy (& text)))))
 
 (define (tc-macro-identity-reset-for-state! [state : TcMacroState]) : unit
@@ -92278,7 +92281,7 @@
           [owner : i64 (tc-macro-state-owner-arena state)]
           (in-arena
             (unsafe
-              (arena.Arena owner))
+              (arena.from-raw-handle owner))
             (let
               [_allocate : unit
                 (unless
@@ -92325,7 +92328,7 @@
     [owner : i64 (tc-macro-state-owner-arena state)]
     (in-arena
       (unsafe
-        (arena.Arena owner))
+        (arena.from-raw-handle owner))
       (let
         [next-keys : (__tl_dyn-array String)
           (__tl_make-array String next-capacity)]
@@ -93515,7 +93518,7 @@
                 (!= arena-id 0)
                 (in-arena
                   (unsafe
-                    (arena.Arena arena-id))
+                    (arena.from-raw-handle arena-id))
                   (let
                     [grown : tc_i64_i64_map.Map
                       (unsafe
@@ -93966,7 +93969,7 @@
                 (if (tc_i64_i64_map.needs-grow? (&mut modules))
                   (in-arena
                     (unsafe
-                      (arena.Arena (tc-macro-state-owner-arena state)))
+                      (arena.from-raw-handle (tc-macro-state-owner-arena state)))
                     (tc_i64_i64_map.grow! (&mut modules)))
                   unit)
                 (tc_i64_i64_map.insert-ref!
@@ -100163,7 +100166,7 @@
         [owner : i64 (tc-macro-state-owner-arena state)]
         (in-arena
           (unsafe
-            (arena.Arena owner))
+            (arena.from-raw-handle owner))
           (let
             [cell : (__tl_dyn-array ci.InternSourceNameSession)
               (__tl_make-array ci.InternSourceNameSession 1)]
@@ -100476,7 +100479,7 @@
                   (> required-reflections (array-length reflections.slots)))]
               (in-arena
                 (unsafe
-                  (arena.Arena
+                  (arena.from-raw-handle
                     (tc-macro-walk-field
                       state
                       macro-expand-ctfe-env-owner-arena)))
@@ -100578,7 +100581,7 @@
             (tc-macro-walk-field state macro-expand-ctfe-env-owner-arena))]
         (in-arena
           (unsafe
-            (arena.Arena owner-arena))
+            (arena.from-raw-handle owner-arena))
           (begin
             (tc-macro-walk-set! state macro-expand-ctfe-env-ready false)
             (tc-macro-walk-set!
@@ -101005,7 +101008,7 @@
       [scratch : i64 (macro-expand-scratch-arena-get state)]
       (in-arena
         (unsafe
-          (arena.Arena scratch))
+          (arena.from-raw-handle scratch))
         (macro-live-prescan-ensure-current! state decls)))
     (macro-live-prescan-ensure-current! state decls)))
 
@@ -102224,7 +102227,7 @@
       [display : String (macro-decl-name-display macro-name-id module-id)]
       [owner : arena.Arena
         (unsafe
-          (arena.Arena data.fixed-storage-arena))]
+          (arena.from-raw-handle data.fixed-storage-arena))]
       (in-arena
         owner
         (tc_i64_i64_map.insert-ref!
@@ -102969,7 +102972,7 @@
     [address : i64
       (in-arena
         (unsafe
-          (arena.Arena storage))
+          (arena.from-raw-handle storage))
         (macro-segmented-program-view-new-current
           prefix-rev
           prefix-paths-rev
@@ -103246,7 +103249,7 @@
     [storage : i64 (macro-expand-scratch-arena-get macro-state)]
     (in-arena
       (unsafe
-        (arena.Arena storage))
+        (arena.from-raw-handle storage))
       (macro-segmented-program-splice-current-in-scratch!
         state
         middle
@@ -103550,7 +103553,7 @@
       data
       (in-arena
         (unsafe
-          (arena.Arena data.storage))
+          (arena.from-raw-handle data.storage))
         (let
           [restart? : bool (< len data.prefix-scanned)]
           [events : (__tl_dyn-array i64) data.prefix-events]
@@ -103816,7 +103819,7 @@
   (if (tc-macro-walk-field state macro-expand-scratch-enabled)
     (in-arena
       (unsafe
-        (arena.Arena (macro-expand-scratch-arena-get state)))
+        (arena.from-raw-handle (macro-expand-scratch-arena-get state)))
       (ast.ast-program decls))
     (ast.ast-program decls)))
 
@@ -104871,7 +104874,7 @@
           [owner : i64 (tc-macro-state-owner-arena state)]
           (in-arena
             (unsafe
-              (arena.Arena owner))
+              (arena.from-raw-handle owner))
             (let
               [_allocate : unit
                 (unless
@@ -105154,7 +105157,7 @@
           [owner : i64 (tc-macro-state-owner-arena state)]
           (in-arena
             (unsafe
-              (arena.Arena owner))
+              (arena.from-raw-handle owner))
             (let
               [_allocate : unit
                 (unless
@@ -108278,7 +108281,7 @@
       (if (tc_i64_i64_map.needs-grow? set)
         (in-arena
           (unsafe
-            (arena.Arena (tc-macro-state-owner-arena state)))
+            (arena.from-raw-handle (tc-macro-state-owner-arena state)))
           (tc_i64_i64_map.grow! set))
         unit)
       (tc_i64_i64_map.insert-ref! set (tc-name-id-list-head cursor) 1)
@@ -108513,7 +108516,7 @@
           [owner : i64 (tc-macro-state-owner-arena state)]
           (in-arena
             (unsafe
-              (arena.Arena owner))
+              (arena.from-raw-handle owner))
             (let
               [i : i64 0]
               (when
@@ -108812,7 +108815,7 @@
                       (+= slot 1)))
                   (in-arena
                     (unsafe
-                      (arena.Arena (tc-macro-state-owner-arena state)))
+                      (arena.from-raw-handle (tc-macro-state-owner-arena state)))
                     (set!
                       (deref cache).index-modules
                       (__tl_make-array i64 capacity))
@@ -108946,7 +108949,7 @@
           base-id)
         (in-arena
           (unsafe
-            (arena.Arena (macro-expand-scratch-arena-get state)))
+            (arena.from-raw-handle (macro-expand-scratch-arena-get state)))
           (macro-surface-call-decl-fill-in-module
             expr-bases
             state
@@ -109426,7 +109429,7 @@
         ;; The stable storage root remains valid across physical chain growth.
         (in-arena
           (unsafe
-            (arena.Arena storage))
+            (arena.from-raw-handle storage))
           (let
             [next-kinds : (__tl_dyn-array i64)
               (__tl_make-array i64 next-capacity)]
@@ -110818,7 +110821,7 @@
             (set! capacity (* capacity 2)))
           (in-arena
             (unsafe
-              (arena.Arena (tc-macro-state-owner-arena state)))
+              (arena.from-raw-handle (tc-macro-state-owner-arena state)))
             (set! (deref produced).refcounts (__tl_make-array i64 capacity))))))))
 
 (define (macro-hygiene-produced-note-id!
@@ -111969,7 +111972,7 @@
         (if (= before (macro-walk-child-ids-address (& ids)))
           ids
           (in-arena
-            (arena.Arena (tc-macro-state-owner-arena state))
+            (arena.from-raw-handle (tc-macro-state-owner-arena state))
             (let
               [owned : ast.AstExprList
                 (ast.ast-expr-list-with-capacity (array-length ids.slots))]
@@ -112856,7 +112859,7 @@
           [owner : i64 (tc-macro-state-owner-arena state)]
           (in-arena
             (unsafe
-              (arena.Arena owner))
+              (arena.from-raw-handle owner))
             (set!
               (deref data).unqualified-module-keys
               (__tl_make-array i64 65536))
@@ -113065,7 +113068,7 @@
           [i : i64 0]
           (in-arena
             (unsafe
-              (arena.Arena owner))
+              (arena.from-raw-handle owner))
             (when
               (= (array-length (deref data).flat-module-keys) 0)
               (set! (deref data).flat-module-keys (__tl_make-array i64 1024))
@@ -113369,7 +113372,7 @@
     (macro-flat-import-targets-into-current state decls current-module-id)
     (in-arena
       (unsafe
-        (arena.Arena (macro-expand-scratch-arena-get state)))
+        (arena.from-raw-handle (macro-expand-scratch-arena-get state)))
       (macro-flat-import-targets-into-current state decls current-module-id))))
 
 (define (macro-flat-import-targets-into-current
@@ -113411,7 +113414,7 @@
       (when
         (= (array-length (deref data).alias-module-keys) 0)
         (in-arena
-          (arena.Arena (tc-macro-state-owner-arena state))
+          (arena.from-raw-handle (tc-macro-state-owner-arena state))
           (set! (deref data).alias-module-keys (__tl_make-array i64 16384))
           (set! (deref data).alias-qualifier-keys (__tl_make-array i64 16384))
           (set! (deref data).alias-values (__tl_make-array i64 16384)))))))
@@ -116918,7 +116921,7 @@
     (if (tc_i64_i64_map.needs-grow? (&mut cache))
       (in-arena
         (unsafe
-          (arena.Arena (tc-macro-state-owner-arena state)))
+          (arena.from-raw-handle (tc-macro-state-owner-arena state)))
         (tc_i64_i64_map.grow! (&mut cache)))
       unit)
     (tc_i64_i64_map.insert-ref! (&mut cache) provenance-id slot)
@@ -117006,7 +117009,7 @@
             (if (tc_i64_i64_map.needs-grow? (&mut providers))
               (in-arena
                 (unsafe
-                  (arena.Arena (tc-macro-state-owner-arena state)))
+                  (arena.from-raw-handle (tc-macro-state-owner-arena state)))
                 (tc_i64_i64_map.grow! (&mut providers)))
               unit)
             (tc_i64_i64_map.insert-ref! (&mut providers) provenance-id provider)
@@ -123934,7 +123937,7 @@
           [owner : i64 (tc-macro-state-owner-arena state)]
           (in-arena
             (unsafe
-              (arena.Arena owner))
+              (arena.from-raw-handle owner))
             (set!
               (deref data).macro-cache-module-ids
               (__tl_make-array i64 (deref data).macro-cache-capacity))
@@ -124049,7 +124052,7 @@
 (define (tc-macro-module-env-empty-seen [env : TcTypeEnv]) : tc_i64_i64_map.Map
   (in-arena
     (unsafe
-      (arena.Arena (tc-chain-store-owner env.store)))
+      (arena.from-raw-handle (tc-chain-store-owner env.store)))
     (tc_i64_i64_map.with-capacity 1)))
 
 ;; The walk allocates in a macro-generation arena. Its continued name map
@@ -124059,7 +124062,7 @@
   [seen : (& seen tc_i64_i64_map.Map)]) : tc_i64_i64_map.Map
   (in-arena
     (unsafe
-      (arena.Arena (tc-chain-store-owner env.store)))
+      (arena.from-raw-handle (tc-chain-store-owner env.store)))
     (if (= (tc_i64_i64_map.len seen) 0)
       (tc_i64_i64_map.with-capacity 64)
       (tc-clone-id-map seen))))
@@ -125582,7 +125585,8 @@
         (let
           [base-arena : arena.Arena
             (unsafe
-              (arena.Arena (ast.ast-node-pool-context-base-arena pools)))]
+              (arena.from-raw-handle
+                (ast.ast-node-pool-context-base-arena pools)))]
           (in-arena
             base-arena
             (match expanded
@@ -125611,7 +125615,7 @@
       (let
         [base-arena : arena.Arena
           (unsafe
-            (arena.Arena (ast.ast-node-pool-context-base-arena pools)))]
+            (arena.from-raw-handle (ast.ast-node-pool-context-base-arena pools)))]
         (in-arena
           base-arena
           (Err
@@ -128809,7 +128813,7 @@
     [result : ResultMacroExpand
       (in-arena
         (unsafe
-          (arena.Arena scratch))
+          (arena.from-raw-handle scratch))
         (macro-expand-program-pass-in-scratch-with-paths-and-pools
           load-state
           program
@@ -129009,44 +129013,62 @@
               [import-path : String import.module-name]
               [expected : ast.AstMaybeModuleName import.expected-module]
               [alias : ast.AstMaybeImportAlias import.alias]
+              [provided? : bool
+                (macro-materialize-provided-module? load-state expected seen)]
+              ;; Use the same provider as an ordinary import. Loading source
+              ;; here would let a later dependency hydrate the same module
+              ;; from its prebuilt interface and register it twice.
+              [tli-hit : bool
+                (and
+                  (not provided?)
+                  (cload.compiler-load-session-state-tli-has-module?
+                    (& load-state)
+                    (& import-path)))]
               [resolved-path-id : i64
                 (cload.compiler-load-resolved-path-id-for-generated-import-with-state
                   (& load-state)
                   (tc-global-shared-view resolved)
                   expected)]
-              (match (if (macro-materialize-provided-module?
-                load-state
-                expected
-                seen)
-                (cload.ResultCompilerLoadWithPaths.Ok
-                  (ast.ast-decl-list-new)
-                  (ast.ast-decl-path-list-new)
-                  (ast.ast-decl-module-list-new)
-                  seen)
-                (cload.compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-state-and-pools
-                  (tc-global-shared-view load-state)
-                  (& resolved)
-                  resolved-path-id
-                  seen
-                  (& stdlib-roots)
-                  kind
-                  import-path
-                  expected
-                  (& import-root)
-                  cfgs
-                  pools
-                  (tc-global-shared-view module)
-                  module-id))
+              (match (cond
+                [provided?
+                  (cload.ResultCompilerLoadWithPaths.Ok
+                    (ast.ast-decl-list-new)
+                    (ast.ast-decl-path-list-new)
+                    (ast.ast-decl-module-list-new)
+                    seen)]
+                [tli-hit
+                  (cload.compiler-load-session-state-tli-hydrate-module!
+                    (& load-state)
+                    (& import-path)
+                    seen
+                    pools)]
+                [else
+                  (cload.compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-state-and-pools
+                    (tc-global-shared-view load-state)
+                    (& resolved)
+                    resolved-path-id
+                    seen
+                    (& stdlib-roots)
+                    kind
+                    import-path
+                    expected
+                    (& import-root)
+                    cfgs
+                    pools
+                    (tc-global-shared-view module)
+                    module-id)])
                 [(Ok imported-decls imported-paths _ next-seen)
                   (let
                     [after-import-expected : ast.AstMaybeModuleName
-                      (cload.compiler-load-after-import-expected-module
-                        (& load-state)
-                        resolved-path-id
-                        kind
+                      (if tli-hit
                         expected
-                        alias
-                        (& imported-decls))]
+                        (cload.compiler-load-after-import-expected-module
+                          (& load-state)
+                          resolved-path-id
+                          kind
+                          expected
+                          alias
+                          (& imported-decls)))]
                     [after-import-alias : ast.AstMaybeImportAlias
                       (cload.compiler-load-after-import-alias
                         (& load-state)
@@ -130326,7 +130348,7 @@
   (if (tc-selected-lowering? (tc-context-body-state ctx))
     (in-arena
       (unsafe
-        (arena.Arena
+        (arena.from-raw-handle
           (tc-job-state-field (tc-context-job-state ctx) owner-arena i64)))
       (tc-selected-certificate-publish!
         ctx
@@ -130714,7 +130736,7 @@
           (= (deref data).holds-memo-address 0)
           (set! (deref data).holds-memo-arena (arena.tl_arena_make_small))
           (in-arena
-            (arena.Arena (deref data).holds-memo-arena)
+            (arena.from-raw-handle (deref data).holds-memo-arena)
             (let
               [lanes : (__tl_dyn-array i64)
                 (__tl_make-array
@@ -132061,11 +132083,11 @@
             [new-mask : i64 (- new-cap 1)]
             [new-keys : (__tl_dyn-array i64)
               (in-arena
-                (arena.Arena (deref table).owner)
+                (arena.from-raw-handle (deref table).owner)
                 (__tl_make-array i64 (* new-cap 2)))]
             [new-vals : (__tl_dyn-array i64)
               (in-arena
-                (arena.Arena (deref table).owner)
+                (arena.from-raw-handle (deref table).owner)
                 (__tl_make-array i64 new-cap))]
             (for [at (iterator.range 0 cap)]
               (let
@@ -133792,7 +133814,7 @@
           ;; Lowering reads them after this body's scratch arena is gone.
           (in-arena
             (unsafe
-              (arena.Arena
+              (arena.from-raw-handle
                 (tc-job-state-field (tc-context-job-state ctx) owner-arena i64)))
             (let
               [data : TcBodyStateData

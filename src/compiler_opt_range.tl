@@ -3540,7 +3540,7 @@
       (let
         [outer : arena.Arena
           (unsafe
-            (arena.Arena (arena.raw-handle (arena.current))))]
+            (arena.from-raw-handle (arena.raw-handle (arena.current))))]
         [scratch : arena.Arena (arena.make)]
         [out-blocks : (__tl_dyn-array ir.CompilerIrBlock)
           (__tl_make-array ir.CompilerIrBlock block-count)]
@@ -3548,7 +3548,7 @@
         [any-changed : bool
           (in-arena
             (unsafe
-              (arena.Arena (arena.raw-handle scratch)))
+              (arena.from-raw-handle (arena.raw-handle scratch)))
             (let
               [vals-arr : (__tl_dyn-array OptRangeVal)
                 (opt-range-val-arr frame)]

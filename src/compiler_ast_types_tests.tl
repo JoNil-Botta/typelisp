@@ -42,7 +42,8 @@
       (&mut fixture-interns))
     (unsafe
       (arena.destroy
-        (arena.Arena (ci.intern-compat-state-persistent-arena fixture-interns))))))
+        (arena.from-raw-handle
+          (ci.intern-compat-state-persistent-arena fixture-interns))))))
 
 (define (ast-lit-string-text [string-id : i64]) : String
   (ci.intern-str string-id))
@@ -92,7 +93,7 @@
     [persistent : ast.AstType
       (in-arena
         (unsafe
-          (arena.Arena base-arena))
+          (arena.from-raw-handle base-arena))
         (ast.ty-node-persist (& node)))]
     [biased-base : i64
       (unsafe

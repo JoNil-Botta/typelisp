@@ -15093,7 +15093,7 @@
   [ptr : compiler_ir_types.CompilerIrValue]
   [op : (& compiler_ir_types.CompilerIrBinOp)]
   [rhs : (& compiler_ir_types.CompilerIrValue)]
-  [ty : compiler_ast_types.AstType]
+  [ty : (& compiler_ast_types.AstType)]
   [true-label : i64]
   [false-label : i64]
   [fallthrough : be_state.CompilerBackendMaybeLabel]

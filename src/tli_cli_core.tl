@@ -1368,7 +1368,7 @@
       (in-arena
         (unsafe
           ;; lint-allow: raw-arena-op -- companion metadata lives in the bundle arena.
-          (arena.Arena target-arena))
+          (arena.from-raw-handle target-arena))
         (with-scratch
           ;; Metadata parsing interns names; the scratch arena owns the image.
           (unsafe

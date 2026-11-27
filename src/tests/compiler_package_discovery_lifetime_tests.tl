@@ -286,7 +286,7 @@
   [owner : i64]) : bool
   (in-arena
     (unsafe
-      (arena.Arena owner))
+      (arena.from-raw-handle owner))
     (match (tlci_loader_tests.tlci-loader-test-emit-with-real-fixup)
       [(Err _) false]
       [(Ok bytes)

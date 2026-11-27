@@ -467,10 +467,10 @@
           "disabled Windows allocator debug emits no arena-debug hooks"))
       (test.assert-true
         (and
-          (= (string.string-length (& linux-ordinary-alloc)) 8156)
-          (= (hash.string-key (& linux-ordinary-alloc)) 2102350846)
-          (= (string.string-length (& linux-profile-ordinary-alloc)) 14789)
-          (= (hash.string-key (& linux-profile-ordinary-alloc)) 2008108109)
+          (= (string.string-length (& linux-ordinary-alloc)) 7782)
+          (= (hash.string-key (& linux-ordinary-alloc)) 550952186)
+          (= (string.string-length (& linux-profile-ordinary-alloc)) 14415)
+          (= (hash.string-key (& linux-profile-ordinary-alloc)) 1053816219)
           (= (string.string-length (& windows-ordinary-alloc)) 13900)
           (= (hash.string-key (& windows-ordinary-alloc)) 1070032323)
           (= (string.string-length (& windows-profile-ordinary-alloc)) 20573)

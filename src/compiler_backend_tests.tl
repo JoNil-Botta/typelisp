@@ -25646,18 +25646,26 @@ entry:
           (backend.compiler-backend-string-count
             asm
             "    movq $9, %rax\n    syscall\n")
-          7)
+          4)
         (=
           (backend.compiler-backend-string-count
             asm
             "    movq $11, %rax\n    syscall\n")
           5)
-        (= (backend.compiler-backend-string-count asm "    syscall\n") 16)
+        (= (backend.compiler-backend-string-count asm "    syscall\n") 14)
         (=
           (backend.compiler-backend-string-count
             asm
             "    movq $60, %rax\n    movq $134, %rdi\n    syscall\n")
           3))
+      (=
+        (backend.compiler-backend-string-count
+          asm
+          "    call .L_tl_arena_map_chunk\n")
+        4)
+      (asm-has?
+        asm
+        "    cmpq $0x200000, %rsi\n    jb .L_tl_arena_map_done\n    movq %rax, %rdi\n    movl $15, %edx\n    movl $28, %eax\n    syscall\n    movq %rdi, %rax\n")
       (asm-has? asm "    movq $158, %rax\n    syscall\n")
       (asm-lacks? asm "VirtualAlloc" "VirtualFree"))))
 
@@ -25820,7 +25828,9 @@ entry:
         (be_state.CompilerBackendTarget.Linux))]
     (asm-has?
       asm
-      "tl_arena_make_small:\n    movq $0x1000000, %rsi\n.L_tl_arena_make_sized:\n"
+      "tl_arena_make:\n    movq $0x40000, %rsi\n"
+      "tl_arena_make_small:\n    movq $0x40000, %rsi\n.L_tl_arena_make_sized:\n"
+      "tl_arena_make_atomic:\n    movq $0x40000, %rsi\n"
       "    movq $0, 48(%rax)\n    movq %rax, 56(%rax)\n"
       "    movq %rax, %rcx\n    addq %rsi, %rcx\n    movq %rcx, 24(%rax)\n")))
 
@@ -44787,7 +44797,8 @@ b_keep:
       "tl_arena_make_atomic:\n"
       "    movq %fs:tl_current_arena@tpoff, %r8\n"
       ".L_tl_alloc_new_arena:\n"
-      "    movq $0x4000000, %rdx\n"
+      "    movq 24(%rdi), %rcx\n    subq %rdi, %rcx\n    movl $0x4000000, %eax\n    cmpq $0x2000000, %rcx\n    jae .L_tl_arena_map_len\n    leaq (%rcx,%rcx), %rax\n"
+      "    cmpq %rax, %rsi\n    cmovbq %rax, %rsi\n    addq $4095, %rsi\n    jc .L_tl_arena_map_overflow\n    andq $-4096, %rsi\n"
       "    addq $64, %rcx\n"
       "    movq $0, 32(%rax)\n"
       "    movq %r10, 0(%rax)\n"

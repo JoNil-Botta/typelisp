@@ -10210,18 +10210,26 @@ high:
 (define (compiler-backend-ir-walker-call-use-counts-ok?) : bool
   (let
     [counts : (__tl_dyn-array i64) (__tl_make-array i64 12)]
+    [ids : ir.CompilerIrIdList (ir.compiler-ir-id-list-new)]
     (backend.compiler-backend-count-instr-uses
       (&mut counts)
-      (irt.instr "%0 = call* %1(%2, %3) : i64"))
+      (& (irt.instr "%0 = call* %1(%2, %3) : i64"))
+      (&mut ids))
     (backend.compiler-backend-count-instr-uses
       (&mut counts)
-      (irt.instr "%4 = call_c* %4(%5) : i64"))
+      (& (irt.instr "%4 = call_c* %4(%5) : i64"))
+      (&mut ids))
     (backend.compiler-backend-count-instr-uses
       (&mut counts)
-      (TailCall (ci.intern "tail") (Two (Var 6) (Var 7)) (I64)))
+      (&
+        (ann
+          (TailCall (ci.intern "tail") (Two (Var 6) (Var 7)) (I64))
+          : ir.CompilerIrInstr))
+      (&mut ids))
     (backend.compiler-backend-count-instr-uses
       (&mut counts)
-      (irt.instr "tailcall* %8(%9, %10) : i64"))
+      (& (irt.instr "tailcall* %8(%9, %10) : i64"))
+      (&mut ids))
     (and
       (be_state.backend-and8
         (= (array-ref counts 1) 1)
@@ -45060,19 +45068,19 @@ b_keep:
           false)
         (be_state.compiler-backend-function-state-set-bool!
           function-a
-          be_state.compiler-backend-function-bool-use-home-mask-active
+          be_state.compiler-backend-function-bool-identity-tail-forwarder-active
           true)
         (be_state.compiler-backend-function-state-set-bool!
           function-b
-          be_state.compiler-backend-function-bool-use-home-mask-active
+          be_state.compiler-backend-function-bool-identity-tail-forwarder-active
           false)
         (be_state.compiler-backend-function-state-set-i64!
           function-a
-          be_state.compiler-backend-function-i64-use-home-mask-value
+          be_state.compiler-backend-function-i64-red-zone-guard
           85)
         (be_state.compiler-backend-function-state-set-i64!
           function-b
-          be_state.compiler-backend-function-i64-use-home-mask-value
+          be_state.compiler-backend-function-i64-red-zone-guard
           170)
         (be_scalar.compiler-backend-set-emit-plan-reg-mask!
           state-a
@@ -45239,20 +45247,20 @@ b_keep:
           be_state.compiler-backend-function-bool-fpo-bare-frame))
       (be_state.compiler-backend-function-state-bool?
         function-a
-        be_state.compiler-backend-function-bool-use-home-mask-active)
+        be_state.compiler-backend-function-bool-identity-tail-forwarder-active)
       (not
         (be_state.compiler-backend-function-state-bool?
           function-b
-          be_state.compiler-backend-function-bool-use-home-mask-active))
+          be_state.compiler-backend-function-bool-identity-tail-forwarder-active))
       (=
         (be_state.compiler-backend-function-state-i64
           function-a
-          be_state.compiler-backend-function-i64-use-home-mask-value)
+          be_state.compiler-backend-function-i64-red-zone-guard)
         85)
       (=
         (be_state.compiler-backend-function-state-i64
           function-b
-          be_state.compiler-backend-function-i64-use-home-mask-value)
+          be_state.compiler-backend-function-i64-red-zone-guard)
         170)
       (be_operand.compiler-backend-plan-uses-reg?
         state-a
@@ -45364,20 +45372,20 @@ b_keep:
       (not
         (be_state.compiler-backend-function-state-bool?
           function-a
-          be_state.compiler-backend-function-bool-use-home-mask-active))
+          be_state.compiler-backend-function-bool-identity-tail-forwarder-active))
       (not
         (be_state.compiler-backend-function-state-bool?
           function-b
-          be_state.compiler-backend-function-bool-use-home-mask-active))
+          be_state.compiler-backend-function-bool-identity-tail-forwarder-active))
       (=
         (be_state.compiler-backend-function-state-i64
           function-a
-          be_state.compiler-backend-function-i64-use-home-mask-value)
+          be_state.compiler-backend-function-i64-red-zone-guard)
         0)
       (=
         (be_state.compiler-backend-function-state-i64
           function-b
-          be_state.compiler-backend-function-i64-use-home-mask-value)
+          be_state.compiler-backend-function-i64-red-zone-guard)
         170)
       (not
         (be_state.compiler-backend-function-state-bool?

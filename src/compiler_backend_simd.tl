@@ -8201,185 +8201,143 @@
   [lanes : i64]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
-  (if (not (be_operand.compiler-backend-avx2-mask-shape-ok? lanes))
-    (be_operand.compiler-backend-avx2-shape-diagnostic
-      type-segment-bases
-      instr-diag
-      (Bool)
-      lanes)
-    (match (let
-      [elem-ty (compiler_ast_types.AstType.I8)]
-      (be_operand.compiler-backend-vector-register-use
-        assignments
-        lhs
-        "mask lhs"
-        "ymm"
-        elem-ty
-        "%ymm14"
-        backend-state))
-      [(Ok lhs-use)
-        (match lhs-use
-          [(Use lhs-asm lhs-reg)
-            (match (let
-              [elem-ty (compiler_ast_types.AstType.I8)]
-              (be_operand.compiler-backend-vector-register-use
-                assignments
-                rhs
-                "mask rhs"
-                "ymm"
-                elem-ty
-                "%ymm15"
-                backend-state))
-              [(Ok rhs-use)
-                (match rhs-use
-                  [(Use rhs-asm rhs-reg)
-                    (match (compiler-backend-vector-dst-reg
-                      assignments
-                      dst
-                      "mask binop dst"
-                      "ymm"
-                      "%ymm14"
-                      backend-state)
-                      [(Ok dst-reg)
-                        (Ok
-                          (str_cat.str-cat
-                            lhs-asm
-                            rhs-asm
-                            "    "
-                            (compiler-backend-avx2-mask-binop-mnemonic op)
-                            " "
-                            rhs-reg
-                            ", "
-                            lhs-reg
-                            ", "
-                            dst-reg
-                            "\n"
-                            (compiler-backend-vector-store-dst
-                              assignments
-                              dst
-                              "ymm"
-                              (I8)
-                              dst-reg
-                              backend-state)))]
-                      [(Err message)
-                        (be_state.compiler-backend-instr-error
-                          instr-diag
-                          message)])])]
-              [(Err message)
-                (be_state.compiler-backend-instr-error instr-diag message)])])]
-      [(Err message) (be_state.compiler-backend-instr-error instr-diag message)])))
-
-(define (compiler-backend-sse2-mask-binop-mnemonic
-  [op : compiler_ir_types.CompilerIrMaskBinOp]) : String
-  (match op
-    [(And) "pand"]
-    [(Or) "por"]))
-
-(define (compiler-backend-emit-sse2-mask-binop
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [op : compiler_ir_types.CompilerIrMaskBinOp]
-  [lhs : compiler_ir_types.CompilerIrValue]
-  [rhs : compiler_ir_types.CompilerIrValue]
-  [lanes : i64]
-  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
-  [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
-  (if (not (be_operand.compiler-backend-sse2-mask-shape-ok? lanes))
-    (be_operand.compiler-backend-sse2-shape-diagnostic
-      type-segment-bases
-      instr-diag
-      (Bool)
-      lanes)
-    (match (let
-      [elem-ty (compiler_ast_types.AstType.I8)]
-      (be_operand.compiler-backend-vector-register-use
-        assignments
-        lhs
-        "mask lhs"
-        "xmm"
-        elem-ty
-        "%xmm14"
-        backend-state))
-      [(Ok lhs-use)
-        (match lhs-use
-          [(Use lhs-asm lhs-reg)
-            (match (let
-              [elem-ty (compiler_ast_types.AstType.I8)]
-              (be_operand.compiler-backend-vector-register-use
-                assignments
-                rhs
-                "mask rhs"
-                "xmm"
-                elem-ty
-                "%xmm15"
-                backend-state))
-              [(Ok rhs-use)
-                (match rhs-use
-                  [(Use rhs-asm rhs-reg)
-                    (match (compiler-backend-vector-dst-reg
-                      assignments
-                      dst
-                      "mask binop dst"
-                      "xmm"
-                      "%xmm14"
-                      backend-state)
-                      [(Ok dst-reg)
-                        (let
-                          [mnemonic : String
-                            (compiler-backend-sse2-mask-binop-mnemonic op)]
-                          [op-asm : String
-                            (cond
-                              [(string.eq dst-reg lhs-reg)
+  (let
+    [sse2? : bool
+      (be_state.compiler-backend-current-mode-sse2?
+        (be_state.compiler-backend-state-function-state backend-state))]
+    (if (not
+      (if sse2?
+        (be_operand.compiler-backend-sse2-mask-shape-ok? lanes)
+        (be_operand.compiler-backend-avx2-mask-shape-ok? lanes)))
+      (if sse2?
+        (be_operand.compiler-backend-sse2-shape-diagnostic
+          type-segment-bases
+          instr-diag
+          (Bool)
+          lanes)
+        (be_operand.compiler-backend-avx2-shape-diagnostic
+          type-segment-bases
+          instr-diag
+          (Bool)
+          lanes))
+      (match (let
+        [elem-ty (compiler_ast_types.AstType.I8)]
+        (be_operand.compiler-backend-vector-register-use
+          assignments
+          lhs
+          "mask lhs"
+          (if sse2?
+            "xmm"
+            "ymm")
+          elem-ty
+          (if sse2?
+            "%xmm14"
+            "%ymm14")
+          backend-state))
+        [(Ok lhs-use)
+          (match lhs-use
+            [(Use lhs-asm lhs-reg)
+              (match (let
+                [elem-ty (compiler_ast_types.AstType.I8)]
+                (be_operand.compiler-backend-vector-register-use
+                  assignments
+                  rhs
+                  "mask rhs"
+                  (if sse2?
+                    "xmm"
+                    "ymm")
+                  elem-ty
+                  (if sse2?
+                    "%xmm15"
+                    "%ymm15")
+                  backend-state))
+                [(Ok rhs-use)
+                  (match rhs-use
+                    [(Use rhs-asm rhs-reg)
+                      (match (compiler-backend-vector-dst-reg
+                        assignments
+                        dst
+                        "mask binop dst"
+                        (if sse2?
+                          "xmm"
+                          "ymm")
+                        (if sse2?
+                          "%xmm14"
+                          "%ymm14")
+                        backend-state)
+                        [(Ok dst-reg)
+                          (let
+                            [op-asm : String
+                              (if sse2?
+                                (let
+                                  [mnemonic : String
+                                    (match op
+                                      [(And) "pand"]
+                                      [(Or) "por"])]
+                                  (cond
+                                    [(string.eq dst-reg lhs-reg)
+                                      (str_cat.str-cat
+                                        "    "
+                                        mnemonic
+                                        " "
+                                        rhs-reg
+                                        ", "
+                                        dst-reg
+                                        "\n")]
+                                    [(string.eq dst-reg rhs-reg)
+                                      (str_cat.str-cat
+                                        "    "
+                                        mnemonic
+                                        " "
+                                        lhs-reg
+                                        ", "
+                                        dst-reg
+                                        "\n")]
+                                    [else
+                                      (str_cat.str-cat
+                                        "    movdqa "
+                                        lhs-reg
+                                        ", "
+                                        dst-reg
+                                        "\n    "
+                                        mnemonic
+                                        " "
+                                        rhs-reg
+                                        ", "
+                                        dst-reg
+                                        "\n")]))
                                 (str_cat.str-cat
                                   "    "
-                                  mnemonic
+                                  (compiler-backend-avx2-mask-binop-mnemonic op)
                                   " "
                                   rhs-reg
                                   ", "
-                                  dst-reg
-                                  "\n")]
-                              [(string.eq dst-reg rhs-reg)
-                                (str_cat.str-cat
-                                  "    "
-                                  mnemonic
-                                  " "
                                   lhs-reg
                                   ", "
                                   dst-reg
-                                  "\n")]
-                              [else
-                                (str_cat.str-cat
-                                  "    movdqa "
-                                  lhs-reg
-                                  ", "
+                                  "\n"))]
+                            (Ok
+                              (str_cat.str-cat
+                                lhs-asm
+                                rhs-asm
+                                op-asm
+                                (compiler-backend-vector-store-dst
+                                  assignments
+                                  dst
+                                  (if sse2?
+                                    "xmm"
+                                    "ymm")
+                                  (I8)
                                   dst-reg
-                                  "\n    "
-                                  mnemonic
-                                  " "
-                                  rhs-reg
-                                  ", "
-                                  dst-reg
-                                  "\n")])]
-                          (Ok
-                            (str_cat.str-cat
-                              lhs-asm
-                              rhs-asm
-                              op-asm
-                              (compiler-backend-vector-store-dst
-                                assignments
-                                dst
-                                "xmm"
-                                (I8)
-                                dst-reg
-                                backend-state))))]
-                      [(Err message)
-                        (be_state.compiler-backend-instr-error
-                          instr-diag
-                          message)])])]
-              [(Err message)
-                (be_state.compiler-backend-instr-error instr-diag message)])])]
-      [(Err message) (be_state.compiler-backend-instr-error instr-diag message)])))
+                                  backend-state))))]
+                        [(Err message)
+                          (be_state.compiler-backend-instr-error
+                            instr-diag
+                            message)])])]
+                [(Err message)
+                  (be_state.compiler-backend-instr-error instr-diag message)])])]
+        [(Err message)
+          (be_state.compiler-backend-instr-error instr-diag message)]))))
 
 (define (compiler-backend-emit-mask-binop
   [type-segment-bases : i64]
@@ -8391,105 +8349,31 @@
   [lanes : i64]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
-  (cond
-    [(be_state.compiler-backend-current-mode-avx2?
-        (be_state.compiler-backend-state-function-state backend-state))
-      (compiler-backend-emit-avx2-mask-binop
-        type-segment-bases
-        assignments
-        dst
-        op
-        lhs
-        rhs
-        lanes
-        instr-diag
-        backend-state)]
-    [(be_state.compiler-backend-current-mode-sse2?
-        (be_state.compiler-backend-state-function-state backend-state))
-      (compiler-backend-emit-sse2-mask-binop
-        type-segment-bases
-        assignments
-        dst
-        op
-        lhs
-        rhs
-        lanes
-        instr-diag
-        backend-state)]
-    [else
-      (compiler-backend-emit-avx512-mask-binop
-        type-segment-bases
-        assignments
-        dst
-        op
-        lhs
-        rhs
-        lanes
-        instr-diag
-        backend-state)]))
-
-(define (compiler-backend-emit-sse2-mask-not
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [src : compiler_ir_types.CompilerIrValue]
-  [lanes : i64]
-  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
-  [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
-  (if (not (be_operand.compiler-backend-sse2-mask-shape-ok? lanes))
-    (be_operand.compiler-backend-sse2-shape-diagnostic
+  (if (or
+    (be_state.compiler-backend-current-mode-avx2?
+      (be_state.compiler-backend-state-function-state backend-state))
+    (be_state.compiler-backend-current-mode-sse2?
+      (be_state.compiler-backend-state-function-state backend-state)))
+    (compiler-backend-emit-avx2-mask-binop
       type-segment-bases
+      assignments
+      dst
+      op
+      lhs
+      rhs
+      lanes
       instr-diag
-      (Bool)
-      lanes)
-    (match (let
-      [elem-ty (compiler_ast_types.AstType.I8)]
-      (be_operand.compiler-backend-vector-register-use
-        assignments
-        src
-        "mask not source"
-        "xmm"
-        elem-ty
-        "%xmm14"
-        backend-state))
-      [(Ok src-use)
-        (match src-use
-          [(Use src-asm src-reg)
-            (match (compiler-backend-vector-dst-reg
-              assignments
-              dst
-              "mask not dst"
-              "xmm"
-              "%xmm14"
-              backend-state)
-              [(Ok dst-reg)
-                (let
-                  [not-asm : String
-                    (if (string.eq dst-reg src-reg)
-                      (str_cat.str-cat
-                        "    pcmpeqd %xmm0, %xmm0\n    pxor %xmm0, "
-                        dst-reg
-                        "\n")
-                      (str_cat.str-cat
-                        "    pcmpeqd %xmm0, %xmm0\n    pxor "
-                        src-reg
-                        ", %xmm0\n    movdqa %xmm0, "
-                        dst-reg
-                        "\n"))]
-                  (Ok
-                    (str_cat.str-cat
-                      src-asm
-                      not-asm
-                      (compiler-backend-vector-store-dst
-                        assignments
-                        dst
-                        "xmm"
-                        (I8)
-                        dst-reg
-                        backend-state))))]
-              [(Err message)
-                (be_state.compiler-backend-instr-error instr-diag message)])])]
-      [(Err message) (be_state.compiler-backend-instr-error instr-diag message)])))
+      backend-state)
+    (compiler-backend-emit-avx512-mask-binop
+      type-segment-bases
+      assignments
+      dst
+      op
+      lhs
+      rhs
+      lanes
+      instr-diag
+      backend-state)))
 
 (define (compiler-backend-emit-avx2-mask-not
   [type-segment-bases : i64]
@@ -8499,51 +8383,91 @@
   [lanes : i64]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
-  (if (not (be_operand.compiler-backend-avx2-mask-shape-ok? lanes))
-    (be_operand.compiler-backend-avx2-shape-diagnostic
-      type-segment-bases
-      instr-diag
-      (Bool)
-      lanes)
-    (match (let
-      [elem-ty (compiler_ast_types.AstType.I8)]
-      (be_operand.compiler-backend-vector-register-use
-        assignments
-        src
-        "mask not source"
-        "ymm"
-        elem-ty
-        "%ymm14"
-        backend-state))
-      [(Ok src-use)
-        (match src-use
-          [(Use src-asm src-reg)
-            (match (compiler-backend-vector-dst-reg
-              assignments
-              dst
-              "mask not dst"
-              "ymm"
-              "%ymm14"
-              backend-state)
-              [(Ok dst-reg)
-                (Ok
-                  (str_cat.str-cat
-                    src-asm
-                    "    vpcmpeqd %ymm0, %ymm0, %ymm0\n    vpxor "
-                    src-reg
-                    ", %ymm0, "
-                    dst-reg
-                    "\n"
-                    (compiler-backend-vector-store-dst
-                      assignments
-                      dst
-                      "ymm"
-                      (I8)
-                      dst-reg
-                      backend-state)))]
-              [(Err message)
-                (be_state.compiler-backend-instr-error instr-diag message)])])]
-      [(Err message) (be_state.compiler-backend-instr-error instr-diag message)])))
+  (let
+    [sse2? : bool
+      (be_state.compiler-backend-current-mode-sse2?
+        (be_state.compiler-backend-state-function-state backend-state))]
+    (if (not
+      (if sse2?
+        (be_operand.compiler-backend-sse2-mask-shape-ok? lanes)
+        (be_operand.compiler-backend-avx2-mask-shape-ok? lanes)))
+      (if sse2?
+        (be_operand.compiler-backend-sse2-shape-diagnostic
+          type-segment-bases
+          instr-diag
+          (Bool)
+          lanes)
+        (be_operand.compiler-backend-avx2-shape-diagnostic
+          type-segment-bases
+          instr-diag
+          (Bool)
+          lanes))
+      (match (let
+        [elem-ty (compiler_ast_types.AstType.I8)]
+        (be_operand.compiler-backend-vector-register-use
+          assignments
+          src
+          "mask not source"
+          (if sse2?
+            "xmm"
+            "ymm")
+          elem-ty
+          (if sse2?
+            "%xmm14"
+            "%ymm14")
+          backend-state))
+        [(Ok src-use)
+          (match src-use
+            [(Use src-asm src-reg)
+              (match (compiler-backend-vector-dst-reg
+                assignments
+                dst
+                "mask not dst"
+                (if sse2?
+                  "xmm"
+                  "ymm")
+                (if sse2?
+                  "%xmm14"
+                  "%ymm14")
+                backend-state)
+                [(Ok dst-reg)
+                  (let
+                    [not-asm : String
+                      (if sse2?
+                        (if (string.eq dst-reg src-reg)
+                          (str_cat.str-cat
+                            "    pcmpeqd %xmm0, %xmm0\n    pxor %xmm0, "
+                            dst-reg
+                            "\n")
+                          (str_cat.str-cat
+                            "    pcmpeqd %xmm0, %xmm0\n    pxor "
+                            src-reg
+                            ", %xmm0\n    movdqa %xmm0, "
+                            dst-reg
+                            "\n"))
+                        (str_cat.str-cat
+                          "    vpcmpeqd %ymm0, %ymm0, %ymm0\n    vpxor "
+                          src-reg
+                          ", %ymm0, "
+                          dst-reg
+                          "\n"))]
+                    (Ok
+                      (str_cat.str-cat
+                        src-asm
+                        not-asm
+                        (compiler-backend-vector-store-dst
+                          assignments
+                          dst
+                          (if sse2?
+                            "xmm"
+                            "ymm")
+                          (I8)
+                          dst-reg
+                          backend-state))))]
+                [(Err message)
+                  (be_state.compiler-backend-instr-error instr-diag message)])])]
+        [(Err message)
+          (be_state.compiler-backend-instr-error instr-diag message)]))))
 
 (define (compiler-backend-emit-mask-not
   [type-segment-bases : i64]
@@ -8553,128 +8477,27 @@
   [lanes : i64]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
-  (cond
-    [(be_state.compiler-backend-current-mode-avx2?
-        (be_state.compiler-backend-state-function-state backend-state))
-      (compiler-backend-emit-avx2-mask-not
-        type-segment-bases
-        assignments
-        dst
-        src
-        lanes
-        instr-diag
-        backend-state)]
-    [(be_state.compiler-backend-current-mode-sse2?
-        (be_state.compiler-backend-state-function-state backend-state))
-      (compiler-backend-emit-sse2-mask-not
-        type-segment-bases
-        assignments
-        dst
-        src
-        lanes
-        instr-diag
-        backend-state)]
-    [else
-      (compiler-backend-emit-avx512-mask-not
-        type-segment-bases
-        assignments
-        dst
-        src
-        lanes
-        instr-diag
-        backend-state)]))
-
-(define (compiler-backend-emit-sse2-mask-reduce
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [op : compiler_ir_types.CompilerIrMaskReduceOp]
-  [src : compiler_ir_types.CompilerIrValue]
-  [lanes : i64]
-  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
-  [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
-  (if (not (be_operand.compiler-backend-sse2-mask-shape-ok? lanes))
-    (be_operand.compiler-backend-sse2-shape-diagnostic
+  (if (or
+    (be_state.compiler-backend-current-mode-avx2?
+      (be_state.compiler-backend-state-function-state backend-state))
+    (be_state.compiler-backend-current-mode-sse2?
+      (be_state.compiler-backend-state-function-state backend-state)))
+    (compiler-backend-emit-avx2-mask-not
       type-segment-bases
+      assignments
+      dst
+      src
+      lanes
       instr-diag
-      (Bool)
-      lanes)
-    (match (let
-      [elem-ty (compiler_ast_types.AstType.I8)]
-      (be_operand.compiler-backend-vector-register-use
-        assignments
-        src
-        "mask reduce source"
-        "xmm"
-        elem-ty
-        "%xmm14"
-        backend-state))
-      [(Ok src-use)
-        (match src-use
-          [(Use src-asm src-reg)
-            (let
-              [dst-home : String
-                (be_operand.compiler-backend-value-scalar-register-home
-                  backend-state
-                  assignments
-                  (& (Var dst)))]
-              [res-reg : String
-                (if (string.eq dst-home "")
-                  (be_operand.compiler-backend-scavenge-reg
-                    dst
-                    (__tl_make-array String 0)
-                    0
-                    "%rax"
-                    backend-state)
-                  dst-home)]
-              [res32 : String
-                (be_operand.compiler-backend-reg-part
-                  (string.copy (& res-reg))
-                  4)]
-              [res8 : String
-                (be_operand.compiler-backend-reg-part
-                  (string.copy (& res-reg))
-                  1)]
-              [reduce-asm : String
-                (match op
-                  [(Any)
-                    (str_cat.str-cat
-                      "    pmovmskb "
-                      src-reg
-                      ", "
-                      res32
-                      "\n    testl "
-                      res32
-                      ", "
-                      res32
-                      "\n    setne "
-                      res8
-                      "\n")]
-                  [(All)
-                    (str_cat.str-cat
-                      "    pmovmskb "
-                      src-reg
-                      ", "
-                      res32
-                      "\n    cmpl $65535, "
-                      res32
-                      "\n    sete "
-                      res8
-                      "\n")])]
-              [store-asm : String
-                (str_cat.str-cat
-                  "    movzbl "
-                  res8
-                  ", "
-                  res32
-                  "\n"
-                  (be_operand.compiler-backend-emit-store-var
-                    assignments
-                    dst
-                    res-reg
-                    backend-state))]
-              (Ok (str_cat.str-cat src-asm reduce-asm store-asm)))])]
-      [(Err message) (be_state.compiler-backend-instr-error instr-diag message)])))
+      backend-state)
+    (compiler-backend-emit-avx512-mask-not
+      type-segment-bases
+      assignments
+      dst
+      src
+      lanes
+      instr-diag
+      backend-state)))
 
 (define (compiler-backend-emit-avx2-mask-reduce
   [type-segment-bases : i64]
@@ -8685,88 +8508,114 @@
   [lanes : i64]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
-  (if (not (be_operand.compiler-backend-avx2-mask-shape-ok? lanes))
-    (be_operand.compiler-backend-avx2-shape-diagnostic
-      type-segment-bases
-      instr-diag
-      (Bool)
-      lanes)
-    (match (let
-      [elem-ty (compiler_ast_types.AstType.I8)]
-      (be_operand.compiler-backend-vector-register-use
-        assignments
-        src
-        "mask reduce source"
-        "ymm"
-        elem-ty
-        "%ymm14"
-        backend-state))
-      [(Ok src-use)
-        (match src-use
-          [(Use src-asm src-reg)
-            (let
-              [dst-home : String
-                (be_operand.compiler-backend-value-scalar-register-home
-                  backend-state
-                  assignments
-                  (& (Var dst)))]
-              [res-reg : String
-                (if (string.eq dst-home "")
-                  (be_operand.compiler-backend-scavenge-reg
-                    dst
-                    (__tl_make-array String 0)
-                    0
-                    "%rax"
-                    backend-state)
-                  dst-home)]
-              [res32 : String
-                (be_operand.compiler-backend-reg-part
-                  (string.copy (& res-reg))
-                  4)]
-              [res8 : String
-                (be_operand.compiler-backend-reg-part
-                  (string.copy (& res-reg))
-                  1)]
-              [reduce-asm : String
-                (match op
-                  [(Any)
-                    (str_cat.str-cat
-                      "    vpmovmskb "
-                      src-reg
-                      ", "
-                      res32
-                      "\n    testl "
-                      res32
-                      ", "
-                      res32
-                      "\n    setne "
-                      res8
-                      "\n")]
-                  [(All)
-                    (str_cat.str-cat
-                      "    vpmovmskb "
-                      src-reg
-                      ", "
-                      res32
-                      "\n    cmpl $-1, "
-                      res32
-                      "\n    sete "
-                      res8
-                      "\n")])]
-              [store-asm : String
-                (str_cat.str-cat
-                  "    movzbl "
-                  res8
-                  ", "
-                  res32
-                  "\n"
-                  (be_operand.compiler-backend-emit-store-var
+  (let
+    [sse2? : bool
+      (be_state.compiler-backend-current-mode-sse2?
+        (be_state.compiler-backend-state-function-state backend-state))]
+    (if (not
+      (if sse2?
+        (be_operand.compiler-backend-sse2-mask-shape-ok? lanes)
+        (be_operand.compiler-backend-avx2-mask-shape-ok? lanes)))
+      (if sse2?
+        (be_operand.compiler-backend-sse2-shape-diagnostic
+          type-segment-bases
+          instr-diag
+          (Bool)
+          lanes)
+        (be_operand.compiler-backend-avx2-shape-diagnostic
+          type-segment-bases
+          instr-diag
+          (Bool)
+          lanes))
+      (match (let
+        [elem-ty (compiler_ast_types.AstType.I8)]
+        (be_operand.compiler-backend-vector-register-use
+          assignments
+          src
+          "mask reduce source"
+          (if sse2?
+            "xmm"
+            "ymm")
+          elem-ty
+          (if sse2?
+            "%xmm14"
+            "%ymm14")
+          backend-state))
+        [(Ok src-use)
+          (match src-use
+            [(Use src-asm src-reg)
+              (let
+                [dst-home : String
+                  (be_operand.compiler-backend-value-scalar-register-home
+                    backend-state
                     assignments
-                    dst
-                    res-reg
-                    backend-state))]
-              (Ok (str_cat.str-cat src-asm reduce-asm store-asm)))])]
-      [(Err message) (be_state.compiler-backend-instr-error instr-diag message)])))
+                    (& (Var dst)))]
+                [res-reg : String
+                  (if (string.eq dst-home "")
+                    (be_operand.compiler-backend-scavenge-reg
+                      dst
+                      (__tl_make-array String 0)
+                      0
+                      "%rax"
+                      backend-state)
+                    dst-home)]
+                [res32 : String
+                  (be_operand.compiler-backend-reg-part
+                    (string.copy (& res-reg))
+                    4)]
+                [res8 : String
+                  (be_operand.compiler-backend-reg-part
+                    (string.copy (& res-reg))
+                    1)]
+                [pmov : String
+                  (if sse2?
+                    "    pmovmskb "
+                    "    vpmovmskb ")]
+                [reduce-asm : String
+                  (match op
+                    [(Any)
+                      (str_cat.str-cat
+                        pmov
+                        src-reg
+                        ", "
+                        res32
+                        "\n    testl "
+                        res32
+                        ", "
+                        res32
+                        "\n    setne "
+                        res8
+                        "\n")]
+                    [(All)
+                      (str_cat.str-cat
+                        pmov
+                        src-reg
+                        ", "
+                        res32
+                        "\n    cmpl "
+                        (if sse2?
+                          "$65535"
+                          "$-1")
+                        ", "
+                        res32
+                        "\n    sete "
+                        res8
+                        "\n")])]
+                [store-asm : String
+                  (str_cat.str-cat
+                    "    movzbl "
+                    res8
+                    ", "
+                    res32
+                    "\n"
+                    (be_operand.compiler-backend-emit-store-var
+                      assignments
+                      dst
+                      res-reg
+                      backend-state))]
+                (Ok (str_cat.str-cat src-asm reduce-asm store-asm)))])]
+        [(Err message)
+          (be_state.compiler-backend-instr-error instr-diag message)]))))
 
 (define (compiler-backend-emit-mask-reduce
   [type-segment-bases : i64]
@@ -8777,39 +8626,29 @@
   [lanes : i64]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
-  (cond
-    [(be_state.compiler-backend-current-mode-avx2?
-        (be_state.compiler-backend-state-function-state backend-state))
-      (compiler-backend-emit-avx2-mask-reduce
-        type-segment-bases
-        assignments
-        dst
-        op
-        src
-        lanes
-        instr-diag
-        backend-state)]
-    [(be_state.compiler-backend-current-mode-sse2?
-        (be_state.compiler-backend-state-function-state backend-state))
-      (compiler-backend-emit-sse2-mask-reduce
-        type-segment-bases
-        assignments
-        dst
-        op
-        src
-        lanes
-        instr-diag
-        backend-state)]
-    [else
-      (compiler-backend-emit-avx512-mask-reduce
-        type-segment-bases
-        assignments
-        dst
-        op
-        src
-        lanes
-        instr-diag
-        backend-state)]))
+  (if (or
+    (be_state.compiler-backend-current-mode-avx2?
+      (be_state.compiler-backend-state-function-state backend-state))
+    (be_state.compiler-backend-current-mode-sse2?
+      (be_state.compiler-backend-state-function-state backend-state)))
+    (compiler-backend-emit-avx2-mask-reduce
+      type-segment-bases
+      assignments
+      dst
+      op
+      src
+      lanes
+      instr-diag
+      backend-state)
+    (compiler-backend-emit-avx512-mask-reduce
+      type-segment-bases
+      assignments
+      dst
+      op
+      src
+      lanes
+      instr-diag
+      backend-state)))
 
 (defenum CompilerBackendSelectFactorResult
   (SelectFactorResult i64 compiler_ir_types.CompilerIrBlockList))
@@ -9736,318 +9575,121 @@
   [elem-ty : compiler_ast_types.AstType]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
-  (if (be_operand.compiler-backend-avx2-shape-ok? elem-ty lanes)
-    (match (be_operand.compiler-backend-vector-register-use
-      assignments
-      src
-      "sign-bit mask src"
-      "ymm"
-      elem-ty
-      "%ymm14"
-      backend-state)
-      [(Ok src-use)
-        (match src-use
-          [(Use src-asm src-reg)
-            (match (compiler-backend-vector-dst-reg
-              assignments
-              dst
-              "sign-bit mask dst"
-              "ymm"
-              "%ymm14"
-              backend-state)
-              [(Ok dst-reg)
-                (let
-                  [shift : i64 (- 63 bit-index)]
-                  [body-asm : String
-                    (if (> shift 0)
-                      (str_cat.str-cat
-                        "    vpsllq $"
-                        (string.int->string shift)
-                        ", "
-                        src-reg
-                        ", "
-                        dst-reg
-                        "\n")
-                      (if (string.eq src-reg dst-reg)
-                        ""
-                        (str_cat.str-cat
-                          "    vmovdqa "
-                          src-reg
-                          ", "
-                          dst-reg
-                          "\n")))]
-                  (Ok
-                    (str_cat.str-cat
-                      src-asm
-                      body-asm
-                      (compiler-backend-vector-store-dst
-                        assignments
-                        dst
-                        "ymm"
-                        (I8)
-                        dst-reg
-                        backend-state))))]
-              [(Err message)
-                (be_state.compiler-backend-instr-error instr-diag message)])])]
-      [(Err message) (be_state.compiler-backend-instr-error instr-diag message)])
-    (be_operand.compiler-backend-avx2-shape-diagnostic
-      type-segment-bases
-      instr-diag
-      elem-ty
-      lanes)))
-
-(define (compiler-backend-emit-sse2-sign-bit-mask
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [src : compiler_ir_types.CompilerIrValue]
-  [bit-index : i64]
-  [lanes : i64]
-  [elem-ty : compiler_ast_types.AstType]
-  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
-  [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
-  (if (be_operand.compiler-backend-sse2-shape-ok? elem-ty lanes)
-    (match (be_operand.compiler-backend-vector-register-use
-      assignments
-      src
-      "sign-bit mask src"
-      "xmm"
-      elem-ty
-      "%xmm14"
-      backend-state)
-      [(Ok src-use)
-        (match src-use
-          [(Use src-asm src-reg)
-            (match (compiler-backend-vector-dst-reg
-              assignments
-              dst
-              "sign-bit mask dst"
-              "xmm"
-              "%xmm14"
-              backend-state)
-              [(Ok dst-reg)
-                (let
-                  [hi? : bool (>= bit-index 32)]
-                  [shuf-imm : String
-                    (if hi?
-                      "$245"
-                      "$160")]
-                  [shift : i64
-                    (if hi?
-                      (- 63 bit-index)
-                      (- 31 bit-index))]
-                  [shift-asm : String
-                    (if (> shift 0)
-                      (str_cat.str-cat
-                        "    pslld $"
-                        (string.int->string shift)
-                        ", "
-                        dst-reg
-                        "\n")
-                      "")]
-                  (Ok
-                    (str_cat.str-cat
-                      src-asm
-                      "    pshufd "
-                      shuf-imm
-                      ", "
-                      src-reg
-                      ", "
-                      dst-reg
-                      "\n"
-                      shift-asm
-                      "    psrad $31, "
-                      dst-reg
-                      "\n"
-                      (compiler-backend-vector-store-dst
-                        assignments
-                        dst
-                        "xmm"
-                        (I8)
-                        dst-reg
-                        backend-state))))]
-              [(Err message)
-                (be_state.compiler-backend-instr-error instr-diag message)])])]
-      [(Err message) (be_state.compiler-backend-instr-error instr-diag message)])
-    (be_operand.compiler-backend-sse2-shape-diagnostic
-      type-segment-bases
-      instr-diag
-      elem-ty
-      lanes)))
-
-(define (compiler-backend-emit-sse2-select
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [mask : compiler_ir_types.CompilerIrValue]
-  [on-true : compiler_ir_types.CompilerIrValue]
-  [on-false : compiler_ir_types.CompilerIrValue]
-  [lanes : i64]
-  [elem-ty : compiler_ast_types.AstType]
-  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
-  [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
-  (if (be_operand.compiler-backend-sse2-shape-ok? elem-ty lanes)
-    (let
-      [polarity : i64
-        (/
-          (compiler-backend-avx2-sign-bit-mask-mode backend-state (& mask))
-          256)]
-      (match (let
-        [mask-ty (compiler_ast_types.AstType.I8)]
-        (be_operand.compiler-backend-vector-register-use
-          assignments
-          mask
-          "select mask"
+  (let
+    [sse2? : bool
+      (be_state.compiler-backend-current-mode-sse2?
+        (be_state.compiler-backend-state-function-state backend-state))]
+    (if (if sse2?
+      (be_operand.compiler-backend-sse2-shape-ok? elem-ty lanes)
+      (be_operand.compiler-backend-avx2-shape-ok? elem-ty lanes))
+      (match (be_operand.compiler-backend-vector-register-use
+        assignments
+        src
+        "sign-bit mask src"
+        (if sse2?
           "xmm"
-          mask-ty
-          "%xmm0"
-          backend-state))
-        [(Ok mask-use)
-          (match mask-use
-            [(Use mask-asm mask-reg)
-              (match (be_operand.compiler-backend-vector-register-use
+          "ymm")
+        elem-ty
+        (if sse2?
+          "%xmm14"
+          "%ymm14")
+        backend-state)
+        [(Ok src-use)
+          (match src-use
+            [(Use src-asm src-reg)
+              (match (compiler-backend-vector-dst-reg
                 assignments
-                on-false
-                "select false"
-                "xmm"
-                elem-ty
-                "%xmm14"
+                dst
+                "sign-bit mask dst"
+                (if sse2?
+                  "xmm"
+                  "ymm")
+                (if sse2?
+                  "%xmm14"
+                  "%ymm14")
                 backend-state)
-                [(Ok false-use)
-                  (match false-use
-                    [(Use false-asm false-reg)
-                      (match (be_operand.compiler-backend-vector-register-use
-                        assignments
-                        on-true
-                        "select true"
-                        "xmm"
-                        elem-ty
-                        "%xmm15"
-                        backend-state)
-                        [(Ok true-use)
-                          (match true-use
-                            [(Use true-asm true-reg)
-                              (match (compiler-backend-vector-dst-reg
-                                assignments
-                                dst
-                                "select dst"
-                                "xmm"
-                                "%xmm14"
-                                backend-state)
-                                [(Ok dst-reg)
-                                  (let
-                                    [sel-true : String
-                                      (if (= polarity 2)
-                                        (string.copy (& false-reg))
-                                        (string.copy (& true-reg)))]
-                                    [sel-false : String
-                                      (if (= polarity 2)
-                                        (string.copy (& true-reg))
-                                        (string.copy (& false-reg)))]
-                                    [prep-mask : String
-                                      (if (string.eq mask-reg "%xmm0")
-                                        ""
-                                        (str_cat.str-cat
-                                          "    movdqa "
-                                          mask-reg
-                                          ", %xmm0\n"))]
-                                    [blend-asm : String
-                                      (cond
-                                        [(and
-                                            (string.eq mask-reg "%xmm0")
-                                            (not
-                                              (string.eq dst-reg (& sel-false))))
-                                          (str_cat.str-cat
-                                            "    movdqa %xmm0, "
-                                            dst-reg
-                                            "\n    pand "
-                                            sel-true
-                                            ", %xmm0\n    pandn "
-                                            sel-false
-                                            ", "
-                                            dst-reg
-                                            "\n    por %xmm0, "
-                                            dst-reg
-                                            "\n")]
-                                        [(string.eq mask-reg "%xmm0")
-                                          (str_cat.str-cat
-                                            "    movdqa %xmm0, %xmm1\n    pand "
-                                            sel-true
-                                            ", %xmm0\n    pandn "
-                                            sel-false
-                                            ", %xmm1\n    por %xmm1, %xmm0\n    movdqa %xmm0, "
-                                            dst-reg
-                                            "\n")]
-                                        [(string.eq dst-reg mask-reg)
-                                          (str_cat.str-cat
-                                            prep-mask
-                                            "    pand "
-                                            sel-true
-                                            ", %xmm0\n    pandn "
-                                            sel-false
-                                            ", "
-                                            dst-reg
-                                            "\n    por %xmm0, "
-                                            dst-reg
-                                            "\n")]
-                                        [(not (string.eq dst-reg (& sel-false)))
-                                          (str_cat.str-cat
-                                            prep-mask
-                                            "    pand "
-                                            sel-true
-                                            ", %xmm0\n    movdqa "
-                                            mask-reg
-                                            ", "
-                                            dst-reg
-                                            "\n    pandn "
-                                            sel-false
-                                            ", "
-                                            dst-reg
-                                            "\n    por %xmm0, "
-                                            dst-reg
-                                            "\n")]
-                                        [else
-                                          (str_cat.str-cat
-                                            prep-mask
-                                            "    pand "
-                                            sel-true
-                                            ", %xmm0\n    movdqa "
-                                            mask-reg
-                                            ", %xmm1\n    pandn "
-                                            sel-false
-                                            ", %xmm1\n    por %xmm1, %xmm0\n    movdqa %xmm0, "
-                                            dst-reg
-                                            "\n")])]
-                                    (Ok
-                                      (str_cat.str-cat
-                                        mask-asm
-                                        false-asm
-                                        true-asm
-                                        blend-asm
-                                        (compiler-backend-vector-store-dst
-                                          assignments
-                                          dst
-                                          "xmm"
-                                          elem-ty
-                                          dst-reg
-                                          backend-state))))]
-                                [(Err message)
-                                  (be_state.compiler-backend-instr-error
-                                    instr-diag
-                                    message)])])]
-                        [(Err message)
-                          (be_state.compiler-backend-instr-error
-                            instr-diag
-                            message)])])]
+                [(Ok dst-reg)
+                  (let
+                    [body-asm : String
+                      (if sse2?
+                        (let
+                          [hi? : bool (>= bit-index 32)]
+                          [shuf-imm : String
+                            (if hi?
+                              "$245"
+                              "$160")]
+                          [shift : i64
+                            (if hi?
+                              (- 63 bit-index)
+                              (- 31 bit-index))]
+                          [shift-asm : String
+                            (if (> shift 0)
+                              (str_cat.str-cat
+                                "    pslld $"
+                                (string.int->string shift)
+                                ", "
+                                dst-reg
+                                "\n")
+                              "")]
+                          (str_cat.str-cat
+                            "    pshufd "
+                            shuf-imm
+                            ", "
+                            src-reg
+                            ", "
+                            dst-reg
+                            "\n"
+                            shift-asm
+                            "    psrad $31, "
+                            dst-reg
+                            "\n"))
+                        (let
+                          [shift : i64 (- 63 bit-index)]
+                          (if (> shift 0)
+                            (str_cat.str-cat
+                              "    vpsllq $"
+                              (string.int->string shift)
+                              ", "
+                              src-reg
+                              ", "
+                              dst-reg
+                              "\n")
+                            (if (string.eq src-reg dst-reg)
+                              ""
+                              (str_cat.str-cat
+                                "    vmovdqa "
+                                src-reg
+                                ", "
+                                dst-reg
+                                "\n")))))]
+                    (Ok
+                      (str_cat.str-cat
+                        src-asm
+                        body-asm
+                        (compiler-backend-vector-store-dst
+                          assignments
+                          dst
+                          (if sse2?
+                            "xmm"
+                            "ymm")
+                          (I8)
+                          dst-reg
+                          backend-state))))]
                 [(Err message)
                   (be_state.compiler-backend-instr-error instr-diag message)])])]
         [(Err message)
-          (be_state.compiler-backend-instr-error instr-diag message)]))
-    (be_operand.compiler-backend-sse2-shape-diagnostic
-      type-segment-bases
-      instr-diag
-      elem-ty
-      lanes)))
+          (be_state.compiler-backend-instr-error instr-diag message)])
+      (if sse2?
+        (be_operand.compiler-backend-sse2-shape-diagnostic
+          type-segment-bases
+          instr-diag
+          elem-ty
+          lanes)
+        (be_operand.compiler-backend-avx2-shape-diagnostic
+          type-segment-bases
+          instr-diag
+          elem-ty
+          lanes)))))
 
 (define (compiler-backend-emit-avx2-select
   [type-segment-bases : i64]
@@ -10074,8 +9716,8 @@
     instr-diag
     backend-state))
 
-;; An AVX2 Select. POLARITY 0 blends bytes on a full-lane mask; otherwise the
-;; mask's sign bits pick (swapped when 2) with `vblendvpd`. DIRECT? reads MASK
+;; An AVX2 or SSE2 Select. POLARITY 0 blends bytes on a full-lane mask;
+;; otherwise the mask's sign bits pick (swapped when 2). DIRECT? reads MASK
 ;; as the 64-bit sign-bit source itself instead of a byte mask.
 (define (compiler-backend-emit-avx2-blend
   [type-segment-bases : i64]
@@ -10090,98 +9732,231 @@
   [elem-ty : compiler_ast_types.AstType]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
-  (if (be_operand.compiler-backend-avx2-shape-ok? elem-ty lanes)
-    (match (if direct?
-      (be_operand.compiler-backend-vector-register-use
-        assignments
-        mask
-        "sign-bit select src"
-        "ymm"
-        elem-ty
-        "%ymm0"
-        backend-state)
-      (let
-        [elem-ty (compiler_ast_types.AstType.I8)]
+  (let
+    [sse2? : bool
+      (be_state.compiler-backend-current-mode-sse2?
+        (be_state.compiler-backend-state-function-state backend-state))]
+    (if (if sse2?
+      (be_operand.compiler-backend-sse2-shape-ok? elem-ty lanes)
+      (be_operand.compiler-backend-avx2-shape-ok? elem-ty lanes))
+      (match (if direct?
         (be_operand.compiler-backend-vector-register-use
           assignments
           mask
-          "select mask"
-          "ymm"
+          "sign-bit select src"
+          (if sse2?
+            "xmm"
+            "ymm")
           elem-ty
-          "%ymm0"
-          backend-state)))
-      [(Ok mask-use)
-        (match mask-use
-          [(Use mask-asm mask-reg)
-            (match (be_operand.compiler-backend-vector-register-use
-              assignments
-              on-false
-              "select false"
-              "ymm"
-              elem-ty
-              "%ymm14"
-              backend-state)
-              [(Ok false-use)
-                (match false-use
-                  [(Use false-asm false-reg)
-                    (match (be_operand.compiler-backend-vector-register-use
-                      assignments
-                      on-true
-                      "select true"
-                      "ymm"
-                      elem-ty
-                      "%ymm15"
-                      backend-state)
-                      [(Ok true-use)
-                        (match true-use
-                          [(Use true-asm true-reg)
-                            (match (compiler-backend-vector-dst-reg
-                              assignments
-                              dst
-                              "select dst"
-                              "ymm"
-                              "%ymm14"
-                              backend-state)
-                              [(Ok dst-reg)
-                                (Ok
-                                  (str_cat.str-cat
-                                    mask-asm
-                                    false-asm
-                                    true-asm
-                                    (if (> polarity 0)
-                                      "    vblendvpd "
-                                      "    vpblendvb ")
-                                    mask-reg
-                                    ", "
-                                    (if (= polarity 2)
-                                      (str_cat.str-cat false-reg ", " true-reg)
-                                      (str_cat.str-cat true-reg ", " false-reg))
-                                    ", "
-                                    dst-reg
-                                    "\n"
-                                    (compiler-backend-vector-store-dst
-                                      assignments
-                                      dst
-                                      "ymm"
-                                      elem-ty
-                                      dst-reg
-                                      backend-state)))]
-                              [(Err message)
-                                (be_state.compiler-backend-instr-error
-                                  instr-diag
-                                  message)])])]
-                      [(Err message)
-                        (be_state.compiler-backend-instr-error
-                          instr-diag
-                          message)])])]
-              [(Err message)
-                (be_state.compiler-backend-instr-error instr-diag message)])])]
-      [(Err message) (be_state.compiler-backend-instr-error instr-diag message)])
-    (be_operand.compiler-backend-avx2-shape-diagnostic
-      type-segment-bases
-      instr-diag
-      elem-ty
-      lanes)))
+          (if sse2?
+            "%xmm0"
+            "%ymm0")
+          backend-state)
+        (let
+          [elem-ty (compiler_ast_types.AstType.I8)]
+          (be_operand.compiler-backend-vector-register-use
+            assignments
+            mask
+            "select mask"
+            (if sse2?
+              "xmm"
+              "ymm")
+            elem-ty
+            (if sse2?
+              "%xmm0"
+              "%ymm0")
+            backend-state)))
+        [(Ok mask-use)
+          (match mask-use
+            [(Use mask-asm mask-reg)
+              (match (be_operand.compiler-backend-vector-register-use
+                assignments
+                on-false
+                "select false"
+                (if sse2?
+                  "xmm"
+                  "ymm")
+                elem-ty
+                (if sse2?
+                  "%xmm14"
+                  "%ymm14")
+                backend-state)
+                [(Ok false-use)
+                  (match false-use
+                    [(Use false-asm false-reg)
+                      (match (be_operand.compiler-backend-vector-register-use
+                        assignments
+                        on-true
+                        "select true"
+                        (if sse2?
+                          "xmm"
+                          "ymm")
+                        elem-ty
+                        (if sse2?
+                          "%xmm15"
+                          "%ymm15")
+                        backend-state)
+                        [(Ok true-use)
+                          (match true-use
+                            [(Use true-asm true-reg)
+                              (match (compiler-backend-vector-dst-reg
+                                assignments
+                                dst
+                                "select dst"
+                                (if sse2?
+                                  "xmm"
+                                  "ymm")
+                                (if sse2?
+                                  "%xmm14"
+                                  "%ymm14")
+                                backend-state)
+                                [(Ok dst-reg)
+                                  (let
+                                    [blend-asm : String
+                                      (if sse2?
+                                        (let
+                                          [sel-true : String
+                                            (if (= polarity 2)
+                                              (string.copy (& false-reg))
+                                              (string.copy (& true-reg)))]
+                                          [sel-false : String
+                                            (if (= polarity 2)
+                                              (string.copy (& true-reg))
+                                              (string.copy (& false-reg)))]
+                                          [prep-mask : String
+                                            (if (string.eq mask-reg "%xmm0")
+                                              ""
+                                              (str_cat.str-cat
+                                                "    movdqa "
+                                                mask-reg
+                                                ", %xmm0\n"))]
+                                          (cond
+                                            [(and
+                                                (string.eq mask-reg "%xmm0")
+                                                (not
+                                                  (string.eq
+                                                    dst-reg
+                                                    (& sel-false))))
+                                              (str_cat.str-cat
+                                                "    movdqa %xmm0, "
+                                                dst-reg
+                                                "\n    pand "
+                                                sel-true
+                                                ", %xmm0\n    pandn "
+                                                sel-false
+                                                ", "
+                                                dst-reg
+                                                "\n    por %xmm0, "
+                                                dst-reg
+                                                "\n")]
+                                            [(string.eq mask-reg "%xmm0")
+                                              (str_cat.str-cat
+                                                "    movdqa %xmm0, %xmm1\n    pand "
+                                                sel-true
+                                                ", %xmm0\n    pandn "
+                                                sel-false
+                                                ", %xmm1\n    por %xmm1, %xmm0\n    movdqa %xmm0, "
+                                                dst-reg
+                                                "\n")]
+                                            [(string.eq dst-reg mask-reg)
+                                              (str_cat.str-cat
+                                                prep-mask
+                                                "    pand "
+                                                sel-true
+                                                ", %xmm0\n    pandn "
+                                                sel-false
+                                                ", "
+                                                dst-reg
+                                                "\n    por %xmm0, "
+                                                dst-reg
+                                                "\n")]
+                                            [(not
+                                                (string.eq
+                                                  dst-reg
+                                                  (& sel-false)))
+                                              (str_cat.str-cat
+                                                prep-mask
+                                                "    pand "
+                                                sel-true
+                                                ", %xmm0\n    movdqa "
+                                                mask-reg
+                                                ", "
+                                                dst-reg
+                                                "\n    pandn "
+                                                sel-false
+                                                ", "
+                                                dst-reg
+                                                "\n    por %xmm0, "
+                                                dst-reg
+                                                "\n")]
+                                            [else
+                                              (str_cat.str-cat
+                                                prep-mask
+                                                "    pand "
+                                                sel-true
+                                                ", %xmm0\n    movdqa "
+                                                mask-reg
+                                                ", %xmm1\n    pandn "
+                                                sel-false
+                                                ", %xmm1\n    por %xmm1, %xmm0\n    movdqa %xmm0, "
+                                                dst-reg
+                                                "\n")]))
+                                        (str_cat.str-cat
+                                          (if (> polarity 0)
+                                            "    vblendvpd "
+                                            "    vpblendvb ")
+                                          mask-reg
+                                          ", "
+                                          (if (= polarity 2)
+                                            (str_cat.str-cat
+                                              false-reg
+                                              ", "
+                                              true-reg)
+                                            (str_cat.str-cat
+                                              true-reg
+                                              ", "
+                                              false-reg))
+                                          ", "
+                                          dst-reg
+                                          "\n"))]
+                                    (Ok
+                                      (str_cat.str-cat
+                                        mask-asm
+                                        false-asm
+                                        true-asm
+                                        blend-asm
+                                        (compiler-backend-vector-store-dst
+                                          assignments
+                                          dst
+                                          (if sse2?
+                                            "xmm"
+                                            "ymm")
+                                          elem-ty
+                                          dst-reg
+                                          backend-state))))]
+                                [(Err message)
+                                  (be_state.compiler-backend-instr-error
+                                    instr-diag
+                                    message)])])]
+                        [(Err message)
+                          (be_state.compiler-backend-instr-error
+                            instr-diag
+                            message)])])]
+                [(Err message)
+                  (be_state.compiler-backend-instr-error instr-diag message)])])]
+        [(Err message)
+          (be_state.compiler-backend-instr-error instr-diag message)])
+      (if sse2?
+        (be_operand.compiler-backend-sse2-shape-diagnostic
+          type-segment-bases
+          instr-diag
+          elem-ty
+          lanes)
+        (be_operand.compiler-backend-avx2-shape-diagnostic
+          type-segment-bases
+          instr-diag
+          elem-ty
+          lanes)))))
 
 (define (compiler-backend-emit-scalar-select
   [type-segment-bases : i64]
@@ -10710,45 +10485,33 @@
       elem-ty
       instr-diag
       backend-state)
-    (cond
-      [(be_state.compiler-backend-current-mode-avx2?
-          (be_state.compiler-backend-state-function-state backend-state))
-        (compiler-backend-emit-avx2-select
-          type-segment-bases
-          assignments
-          dst
-          mask
-          on-true
-          on-false
-          lanes
-          elem-ty
-          instr-diag
-          backend-state)]
-      [(be_state.compiler-backend-current-mode-sse2?
-          (be_state.compiler-backend-state-function-state backend-state))
-        (compiler-backend-emit-sse2-select
-          type-segment-bases
-          assignments
-          dst
-          mask
-          on-true
-          on-false
-          lanes
-          elem-ty
-          instr-diag
-          backend-state)]
-      [else
-        (compiler-backend-emit-avx512-select
-          type-segment-bases
-          assignments
-          dst
-          mask
-          on-true
-          on-false
-          lanes
-          elem-ty
-          instr-diag
-          backend-state)])))
+    (if (or
+      (be_state.compiler-backend-current-mode-avx2?
+        (be_state.compiler-backend-state-function-state backend-state))
+      (be_state.compiler-backend-current-mode-sse2?
+        (be_state.compiler-backend-state-function-state backend-state)))
+      (compiler-backend-emit-avx2-select
+        type-segment-bases
+        assignments
+        dst
+        mask
+        on-true
+        on-false
+        lanes
+        elem-ty
+        instr-diag
+        backend-state)
+      (compiler-backend-emit-avx512-select
+        type-segment-bases
+        assignments
+        dst
+        mask
+        on-true
+        on-false
+        lanes
+        elem-ty
+        instr-diag
+        backend-state))))
 
 (define (compiler-backend-avx2-mask-label
   [function : String]
@@ -10833,13 +10596,13 @@
   [tmp-reg : (& str)]
   [lane : i64]
   [lanes : i64]
+  [lane-bytes : i64]
   [elem-ty : compiler_ast_types.AstType]
   [acc : String]
   [backend-state : be_state.CompilerBackendState]) : String
   (if (>= lane lanes)
     acc
     (let
-      [lane-bytes : i64 (compiler-backend-avx2-lane-bytes lanes)]
       [bit : i64 (compiler-backend-avx2-mask-test-bit lane lane-bytes)]
       [skip-label : String
         (compiler-backend-avx2-mask-label
@@ -10913,6 +10676,7 @@
         tmp-reg
         (+ lane 1)
         lanes
+        lane-bytes
         elem-ty
         (str_cat.str-cat acc lane-asm)
         backend-state))))
@@ -10926,13 +10690,13 @@
   [tmp-reg : (& str)]
   [lane : i64]
   [lanes : i64]
+  [lane-bytes : i64]
   [elem-ty : compiler_ast_types.AstType]
   [acc : String]
   [backend-state : be_state.CompilerBackendState]) : String
   (if (>= lane lanes)
     acc
     (let
-      [lane-bytes : i64 (compiler-backend-avx2-lane-bytes lanes)]
       [bit : i64 (compiler-backend-avx2-mask-test-bit lane lane-bytes)]
       [skip-label : String
         (compiler-backend-avx2-mask-label
@@ -10981,6 +10745,7 @@
         tmp-reg
         (+ lane 1)
         lanes
+        lane-bytes
         elem-ty
         (str_cat.str-cat acc lane-asm)
         backend-state))))
@@ -10995,11 +10760,11 @@
   [bool-reg8 : (& str)]
   [lane : i64]
   [lanes : i64]
+  [lane-bytes : i64]
   [acc : String]) : String
   (if (>= lane lanes)
     acc
     (let
-      [lane-bytes : i64 (compiler-backend-avx2-lane-bytes lanes)]
       [bit : i64 (compiler-backend-avx2-mask-test-bit lane lane-bytes)]
       [skip-label : String
         (compiler-backend-avx2-mask-label
@@ -11045,6 +10810,7 @@
         bool-reg8
         (+ lane 1)
         lanes
+        lane-bytes
         (str_cat.str-cat acc lane-asm)))))
 
 (define (compiler-backend-emit-avx2-predicated-load
@@ -11060,149 +10826,191 @@
   [elem-ty : compiler_ast_types.AstType]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
-  (if (if (match (& elem-ty)
-    [(Bool) true]
-    [_ false])
-    (be_operand.compiler-backend-avx2-mask-shape-ok? lanes)
-    (be_operand.compiler-backend-avx2-shape-ok? elem-ty lanes))
-    (match (let
-      [elem-ty (compiler_ast_types.AstType.I8)]
-      (be_operand.compiler-backend-vector-register-use
-        assignments
-        mask
-        "load mask"
-        "ymm"
-        elem-ty
-        "%ymm15"
-        backend-state))
-      [(Ok mask-use)
-        (match mask-use
-          [(Use mask-asm mask-reg)
-            (match (compiler-backend-vector-dst-reg
-              assignments
-              dst
-              "predicated load dst"
-              "ymm"
-              "%ymm14"
-              backend-state)
-              [(Ok dst-reg)
-                (match (compiler-backend-emit-simd-indexed-address
-                  type-segment-bases
-                  assignments
-                  base
-                  index
-                  (be_state.compiler-backend-global-shared-view elem-ty)
-                  backend-state)
-                  [(Ok addr-plan)
-                    (let
-                      [addr-asm : String addr-plan.asm]
-                      [addr : String addr-plan.addr]
-                      [masked-move : String
-                        (be_operand.compiler-backend-avx2-masked-move-mnemonic
-                          elem-ty)]
-                      (if (string.eq masked-move "")
-                        (let
-                          [mask-gp : String
-                            (be_operand.compiler-backend-scavenge-reg-here
-                              (compiler-backend-simd-addr-exclude
-                                (& addr)
-                                ""
-                                ""
-                                "")
-                              5
-                              "%r11"
-                              backend-state)]
-                          [tmp-gp : String
-                            (be_operand.compiler-backend-scavenge-reg-here
-                              (compiler-backend-simd-addr-exclude
-                                (& addr)
-                                (& mask-gp)
-                                ""
-                                "")
-                              5
-                              "%r10"
-                              backend-state)]
-                          [mask-gp32 : String
-                            (be_operand.compiler-backend-reg-part
-                              (string.copy (& mask-gp))
-                              4)]
-                          [lanes-asm : String
-                            (compiler-backend-avx2-predicated-load-lanes
-                              function
-                              current-label
-                              dst
-                              addr
-                              (& mask-gp32)
-                              (& tmp-gp)
-                              0
-                              lanes
-                              elem-ty
-                              ""
-                              backend-state)]
-                          (be_operand.compiler-backend-simd-scratch-checked
-                            backend-state
-                            instr-diag
-                            be_operand.compiler-backend-simd-scratch-lane-staging-bytes
-                            (Ok
-                              (str_cat.str-cat
-                                mask-asm
-                                addr-asm
-                                "    vpxor %ymm0, %ymm0, %ymm0\n    vmovdqu %ymm0, "
-                                (be_operand.compiler-backend-simd-scratch-address
-                                  backend-state
+  (let
+    [sse2? : bool
+      (be_state.compiler-backend-current-mode-sse2?
+        (be_state.compiler-backend-state-function-state backend-state))]
+    (if (if (match (& elem-ty)
+      [(Bool) true]
+      [_ false])
+      (if sse2?
+        (be_operand.compiler-backend-sse2-mask-shape-ok? lanes)
+        (be_operand.compiler-backend-avx2-mask-shape-ok? lanes))
+      (if sse2?
+        (be_operand.compiler-backend-sse2-shape-ok? elem-ty lanes)
+        (be_operand.compiler-backend-avx2-shape-ok? elem-ty lanes)))
+      (match (let
+        [elem-ty (compiler_ast_types.AstType.I8)]
+        (be_operand.compiler-backend-vector-register-use
+          assignments
+          mask
+          "load mask"
+          (if sse2?
+            "xmm"
+            "ymm")
+          elem-ty
+          (if sse2?
+            "%xmm15"
+            "%ymm15")
+          backend-state))
+        [(Ok mask-use)
+          (match mask-use
+            [(Use mask-asm mask-reg)
+              (match (compiler-backend-vector-dst-reg
+                assignments
+                dst
+                "predicated load dst"
+                (if sse2?
+                  "xmm"
+                  "ymm")
+                (if sse2?
+                  "%xmm14"
+                  "%ymm14")
+                backend-state)
+                [(Ok dst-reg)
+                  (match (compiler-backend-emit-simd-indexed-address
+                    type-segment-bases
+                    assignments
+                    base
+                    index
+                    (be_state.compiler-backend-global-shared-view elem-ty)
+                    backend-state)
+                    [(Ok addr-plan)
+                      (let
+                        [addr-asm : String addr-plan.asm]
+                        [addr : String addr-plan.addr]
+                        [masked-move : String
+                          (if sse2?
+                            ""
+                            (be_operand.compiler-backend-avx2-masked-move-mnemonic
+                              elem-ty))]
+                        (if (string.eq masked-move "")
+                          (let
+                            [mask-gp : String
+                              (be_operand.compiler-backend-scavenge-reg-here
+                                (compiler-backend-simd-addr-exclude
+                                  (& addr)
+                                  ""
+                                  ""
+                                  "")
+                                5
+                                "%r11"
+                                backend-state)]
+                            [tmp-gp : String
+                              (be_operand.compiler-backend-scavenge-reg-here
+                                (compiler-backend-simd-addr-exclude
+                                  (& addr)
+                                  (& mask-gp)
+                                  ""
+                                  "")
+                                5
+                                "%r10"
+                                backend-state)]
+                            [mask-gp32 : String
+                              (be_operand.compiler-backend-reg-part
+                                (string.copy (& mask-gp))
+                                4)]
+                            [lane-bytes : i64
+                              (if sse2?
+                                (if (> lanes 0)
+                                  (/ 16 lanes)
                                   0)
-                                "\n    vpmovmskb "
-                                mask-reg
-                                ", "
-                                mask-gp32
-                                "\n"
-                                lanes-asm
-                                "    vmovdqu "
-                                (be_operand.compiler-backend-simd-scratch-address
-                                  backend-state
-                                  0)
-                                ", "
-                                dst-reg
-                                "\n"
-                                (compiler-backend-vector-store-dst
-                                  assignments
-                                  dst
-                                  "ymm"
-                                  (I8)
+                                (compiler-backend-avx2-lane-bytes lanes))]
+                            [lanes-asm : String
+                              (compiler-backend-avx2-predicated-load-lanes
+                                function
+                                current-label
+                                dst
+                                addr
+                                (& mask-gp32)
+                                (& tmp-gp)
+                                0
+                                lanes
+                                lane-bytes
+                                elem-ty
+                                ""
+                                backend-state)]
+                            (be_operand.compiler-backend-simd-scratch-checked
+                              backend-state
+                              instr-diag
+                              (if sse2?
+                                16
+                                be_operand.compiler-backend-simd-scratch-lane-staging-bytes)
+                              (Ok
+                                (str_cat.str-cat
+                                  mask-asm
+                                  addr-asm
+                                  (if sse2?
+                                    "    pxor %xmm0, %xmm0\n    movdqu %xmm0, "
+                                    "    vpxor %ymm0, %ymm0, %ymm0\n    vmovdqu %ymm0, ")
+                                  (be_operand.compiler-backend-simd-scratch-address
+                                    backend-state
+                                    0)
+                                  (if sse2?
+                                    "\n    pmovmskb "
+                                    "\n    vpmovmskb ")
+                                  mask-reg
+                                  ", "
+                                  mask-gp32
+                                  "\n"
+                                  lanes-asm
+                                  (if sse2?
+                                    "    movdqu "
+                                    "    vmovdqu ")
+                                  (be_operand.compiler-backend-simd-scratch-address
+                                    backend-state
+                                    0)
+                                  ", "
                                   dst-reg
-                                  backend-state)))))
-                        (Ok
-                          (str_cat.str-cat
-                            mask-asm
-                            addr-asm
-                            "    "
-                            masked-move
-                            " "
-                            addr
-                            ", "
-                            mask-reg
-                            ", "
-                            dst-reg
-                            "\n"
-                            (compiler-backend-vector-store-dst
-                              assignments
-                              dst
-                              "ymm"
-                              elem-ty
+                                  "\n"
+                                  (compiler-backend-vector-store-dst
+                                    assignments
+                                    dst
+                                    (if sse2?
+                                      "xmm"
+                                      "ymm")
+                                    (I8)
+                                    dst-reg
+                                    backend-state)))))
+                          (Ok
+                            (str_cat.str-cat
+                              mask-asm
+                              addr-asm
+                              "    "
+                              masked-move
+                              " "
+                              addr
+                              ", "
+                              mask-reg
+                              ", "
                               dst-reg
-                              backend-state)))))]
-                  [(Err message)
-                    (be_state.compiler-backend-instr-error-from
-                      instr-diag
-                      message)])]
-              [(Err message)
-                (be_state.compiler-backend-instr-error instr-diag message)])])]
-      [(Err message) (be_state.compiler-backend-instr-error instr-diag message)])
-    (be_operand.compiler-backend-avx2-shape-diagnostic
-      type-segment-bases
-      instr-diag
-      elem-ty
-      lanes)))
+                              "\n"
+                              (compiler-backend-vector-store-dst
+                                assignments
+                                dst
+                                "ymm"
+                                elem-ty
+                                dst-reg
+                                backend-state)))))]
+                    [(Err message)
+                      (be_state.compiler-backend-instr-error-from
+                        instr-diag
+                        message)])]
+                [(Err message)
+                  (be_state.compiler-backend-instr-error instr-diag message)])])]
+        [(Err message)
+          (be_state.compiler-backend-instr-error instr-diag message)])
+      (if sse2?
+        (be_operand.compiler-backend-sse2-shape-diagnostic
+          type-segment-bases
+          instr-diag
+          elem-ty
+          lanes)
+        (be_operand.compiler-backend-avx2-shape-diagnostic
+          type-segment-bases
+          instr-diag
+          elem-ty
+          lanes)))))
 
 (define (compiler-backend-emit-avx2-predicated-store
   [type-segment-bases : i64]
@@ -11217,782 +11025,138 @@
   [elem-ty : compiler_ast_types.AstType]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
-  (if (if (match (& elem-ty)
-    [(Bool) true]
-    [_ false])
-    (be_operand.compiler-backend-avx2-mask-shape-ok? lanes)
-    (be_operand.compiler-backend-avx2-shape-ok? elem-ty lanes))
-    (match (let
-      [elem-ty (compiler_ast_types.AstType.I8)]
-      (be_operand.compiler-backend-vector-register-use
-        assignments
-        mask
-        "store mask"
-        "ymm"
-        elem-ty
-        "%ymm15"
-        backend-state))
-      [(Ok mask-use)
-        (match mask-use
-          [(Use mask-asm mask-reg)
-            (match (compiler-backend-emit-simd-indexed-address
-              type-segment-bases
-              assignments
-              base
-              index
-              (be_state.compiler-backend-global-shared-view elem-ty)
-              backend-state)
-              [(Ok addr-plan)
-                (let
-                  [addr-asm : String addr-plan.asm]
-                  [addr : String addr-plan.addr]
-                  [bool-store? : bool
-                    (match (& elem-ty)
-                      [(Bool) true]
-                      [_ false])]
-                  (if bool-store?
-                    (match (let
-                      [elem-ty (compiler_ast_types.AstType.I8)]
-                      (be_operand.compiler-backend-vector-register-use
-                        assignments
-                        value
-                        "bool store value"
-                        "ymm"
-                        elem-ty
-                        "%ymm14"
-                        backend-state))
-                      [(Ok value-use)
-                        (match value-use
-                          [(Use value-asm value-reg)
-                            (let
-                              [mask-gp : String
-                                (be_operand.compiler-backend-scavenge-reg-here
-                                  (compiler-backend-simd-addr-exclude
-                                    (& addr)
-                                    ""
-                                    ""
-                                    "")
-                                  5
-                                  "%r11"
-                                  backend-state)]
-                              [val-gp : String
-                                (be_operand.compiler-backend-scavenge-reg-here
-                                  (compiler-backend-simd-addr-exclude
-                                    (& addr)
-                                    (& mask-gp)
-                                    ""
-                                    "")
-                                  5
-                                  "%r10"
-                                  backend-state)]
-                              [bool-gp : String
-                                (be_operand.compiler-backend-scavenge-reg-here
-                                  (compiler-backend-simd-addr-exclude
-                                    (& addr)
-                                    (& mask-gp)
-                                    (& val-gp)
-                                    "")
-                                  5
-                                  "%rax"
-                                  backend-state)]
-                              [mask-gp32 : String
-                                (be_operand.compiler-backend-reg-part
-                                  (string.copy (& mask-gp))
-                                  4)]
-                              [val-gp32 : String
-                                (be_operand.compiler-backend-reg-part
-                                  (string.copy (& val-gp))
-                                  4)]
-                              [bool-gp8 : String
-                                (be_operand.compiler-backend-reg-part
-                                  (string.copy (& bool-gp))
-                                  1)]
-                              (Ok
-                                (str_cat.str-cat
-                                  value-asm
-                                  mask-asm
-                                  addr-asm
-                                  "    vpmovmskb "
-                                  mask-reg
-                                  ", "
-                                  mask-gp32
-                                  "\n    vpmovmskb "
-                                  value-reg
-                                  ", "
-                                  val-gp32
-                                  "\n"
-                                  (compiler-backend-avx2-predicated-bool-store-lanes
-                                    function
-                                    current-label
-                                    (/
-                                      (be_state.compiler-backend-function-state-emission-point
-                                        (be_state.compiler-backend-state-function-state
-                                          backend-state))
-                                      2)
-                                    addr
-                                    (& mask-gp32)
-                                    (& val-gp32)
-                                    (& bool-gp8)
-                                    0
-                                    lanes
-                                    ""))))])]
-                      [(Err message)
-                        (be_state.compiler-backend-instr-error
-                          instr-diag
-                          message)])
-                    (match (be_operand.compiler-backend-vector-register-use
-                      assignments
-                      value
-                      "store value"
-                      "ymm"
-                      elem-ty
-                      "%ymm14"
-                      backend-state)
-                      [(Ok value-use)
-                        (match value-use
-                          [(Use value-asm value-reg)
-                            (let
-                              [masked-move : String
-                                (be_operand.compiler-backend-avx2-masked-move-mnemonic
-                                  elem-ty)]
-                              (if (string.eq masked-move "")
-                                (let
-                                  [mask-gp : String
-                                    (be_operand.compiler-backend-scavenge-reg-here
-                                      (compiler-backend-simd-addr-exclude
-                                        (& addr)
-                                        ""
-                                        ""
-                                        "")
-                                      5
-                                      "%r11"
-                                      backend-state)]
-                                  [tmp-gp : String
-                                    (be_operand.compiler-backend-scavenge-reg-here
-                                      (compiler-backend-simd-addr-exclude
-                                        (& addr)
-                                        (& mask-gp)
-                                        ""
-                                        "")
-                                      5
-                                      "%r10"
-                                      backend-state)]
-                                  [mask-gp32 : String
-                                    (be_operand.compiler-backend-reg-part
-                                      (string.copy (& mask-gp))
-                                      4)]
-                                  (be_operand.compiler-backend-simd-scratch-checked
-                                    backend-state
-                                    instr-diag
-                                    be_operand.compiler-backend-simd-scratch-lane-staging-bytes
-                                    (Ok
-                                      (str_cat.str-cat
-                                        value-asm
-                                        mask-asm
-                                        addr-asm
-                                        "    vmovdqu "
-                                        value-reg
-                                        ", "
-                                        (be_operand.compiler-backend-simd-scratch-address
-                                          backend-state
-                                          0)
-                                        "\n    vpmovmskb "
-                                        mask-reg
-                                        ", "
-                                        mask-gp32
-                                        "\n"
-                                        (compiler-backend-avx2-predicated-store-lanes
-                                          function
-                                          current-label
-                                          (/
-                                            (be_state.compiler-backend-function-state-emission-point
-                                              (be_state.compiler-backend-state-function-state
-                                                backend-state))
-                                            2)
-                                          addr
-                                          (& mask-gp32)
-                                          (& tmp-gp)
-                                          0
-                                          lanes
-                                          elem-ty
-                                          ""
-                                          backend-state)))))
-                                (Ok
-                                  (str_cat.str-cat
-                                    value-asm
-                                    mask-asm
-                                    addr-asm
-                                    "    "
-                                    masked-move
-                                    " "
-                                    value-reg
-                                    ", "
-                                    mask-reg
-                                    ", "
-                                    addr
-                                    "\n"))))])]
-                      [(Err message)
-                        (be_state.compiler-backend-instr-error
-                          instr-diag
-                          message)])))]
-              [(Err message)
-                (be_state.compiler-backend-instr-error-from instr-diag message)])])]
-      [(Err message) (be_state.compiler-backend-instr-error instr-diag message)])
-    (be_operand.compiler-backend-avx2-shape-diagnostic
-      type-segment-bases
-      instr-diag
-      elem-ty
-      lanes)))
-
-(define (compiler-backend-sse2-lane-bytes [lanes : i64]) : i64
-  (if (> lanes 0)
-    (/ 16 lanes)
-    0))
-
-(define (compiler-backend-sse2-predicated-load-lanes
-  [function : String]
-  [current-label : i64]
-  [dst : i64]
-  [addr : String]
-  [mask-reg32 : (& str)]
-  [tmp-reg : (& str)]
-  [lane : i64]
-  [lanes : i64]
-  [elem-ty : compiler_ast_types.AstType]
-  [acc : String]
-  [backend-state : be_state.CompilerBackendState]) : String
-  (if (>= lane lanes)
-    acc
-    (let
-      [lane-bytes : i64 (compiler-backend-sse2-lane-bytes lanes)]
-      [bit : i64 (compiler-backend-avx2-mask-test-bit lane lane-bytes)]
-      [skip-label : String
-        (compiler-backend-avx2-mask-label
-          (string.copy (& function))
-          current-label
-          dst
-          (str_cat.str-cat "_load_skip_" (string.int->string lane)))]
-      [move : String (compiler-backend-avx2-scalar-move-mnemonic elem-ty)]
-      [tmp : String (compiler-backend-avx2-scalar-temp-reg tmp-reg (& elem-ty))]
-      [mem : String
-        (compiler-backend-avx2-lane-memory-address
-          (string.copy (& addr))
-          lane
-          (if (match (& elem-ty)
-            [(Bool) true]
-            [_ false])
-            1
-            lane-bytes))]
-      [slot : String
-        (compiler-backend-avx2-lane-stack-address backend-state lane lane-bytes)]
-      [lane-asm : String
-        (if (match (& elem-ty)
-          [(Bool) true]
-          [_ false])
-          (str_cat.str-cat
-            "    testl $"
-            (string.int->string bit)
-            ", "
-            mask-reg32
-            "\n    je "
-            skip-label
-            "\n    cmpb $0, "
-            mem
-            "\n    je "
-            skip-label
-            "\n    "
-            (compiler-backend-avx2-lane-fill-mnemonic lane-bytes)
-            " $-1, "
-            slot
-            "\n"
-            skip-label
-            ":\n")
-          (str_cat.str-cat
-            "    testl $"
-            (string.int->string bit)
-            ", "
-            mask-reg32
-            "\n    je "
-            skip-label
-            "\n    "
-            move
-            " "
-            mem
-            ", "
-            tmp
-            "\n    "
-            move
-            " "
-            tmp
-            ", "
-            slot
-            "\n"
-            skip-label
-            ":\n"))]
-      (compiler-backend-sse2-predicated-load-lanes
-        function
-        current-label
-        dst
-        addr
-        mask-reg32
-        tmp-reg
-        (+ lane 1)
-        lanes
-        elem-ty
-        (str_cat.str-cat acc lane-asm)
-        backend-state))))
-
-(define (compiler-backend-sse2-predicated-store-lanes
-  [function : String]
-  [current-label : i64]
-  [dst-tag : i64]
-  [addr : String]
-  [mask-reg32 : (& str)]
-  [tmp-reg : (& str)]
-  [lane : i64]
-  [lanes : i64]
-  [elem-ty : compiler_ast_types.AstType]
-  [acc : String]
-  [backend-state : be_state.CompilerBackendState]) : String
-  (if (>= lane lanes)
-    acc
-    (let
-      [lane-bytes : i64 (compiler-backend-sse2-lane-bytes lanes)]
-      [bit : i64 (compiler-backend-avx2-mask-test-bit lane lane-bytes)]
-      [skip-label : String
-        (compiler-backend-avx2-mask-label
-          (string.copy (& function))
-          current-label
-          dst-tag
-          (str_cat.str-cat "_store_skip_" (string.int->string lane)))]
-      [move : String (compiler-backend-avx2-scalar-move-mnemonic elem-ty)]
-      [tmp : String (compiler-backend-avx2-scalar-temp-reg tmp-reg (& elem-ty))]
-      [mem : String
-        (compiler-backend-avx2-lane-memory-address
-          (string.copy (& addr))
-          lane
-          lane-bytes)]
-      [slot : String
-        (compiler-backend-avx2-lane-stack-address backend-state lane lane-bytes)]
-      [lane-asm : String
-        (str_cat.str-cat
-          "    testl $"
-          (string.int->string bit)
-          ", "
-          mask-reg32
-          "\n    je "
-          skip-label
-          "\n    "
-          move
-          " "
-          slot
-          ", "
-          tmp
-          "\n    "
-          move
-          " "
-          tmp
-          ", "
-          mem
-          "\n"
-          skip-label
-          ":\n")]
-      (compiler-backend-sse2-predicated-store-lanes
-        function
-        current-label
-        dst-tag
-        addr
-        mask-reg32
-        tmp-reg
-        (+ lane 1)
-        lanes
-        elem-ty
-        (str_cat.str-cat acc lane-asm)
-        backend-state))))
-
-(define (compiler-backend-sse2-predicated-bool-store-lanes
-  [function : String]
-  [current-label : i64]
-  [dst-tag : i64]
-  [addr : String]
-  [mask-reg32 : (& str)]
-  [val-reg32 : (& str)]
-  [bool-reg8 : (& str)]
-  [lane : i64]
-  [lanes : i64]
-  [acc : String]) : String
-  (if (>= lane lanes)
-    acc
-    (let
-      [lane-bytes : i64 (compiler-backend-sse2-lane-bytes lanes)]
-      [bit : i64 (compiler-backend-avx2-mask-test-bit lane lane-bytes)]
-      [skip-label : String
-        (compiler-backend-avx2-mask-label
-          (string.copy (& function))
-          current-label
-          dst-tag
-          (str_cat.str-cat "_bool_store_skip_" (string.int->string lane)))]
-      [mem : String
-        (compiler-backend-avx2-lane-memory-address
-          (string.copy (& addr))
-          lane
-          1)]
-      [lane-asm : String
-        (str_cat.str-cat
-          "    testl $"
-          (string.int->string bit)
-          ", "
-          mask-reg32
-          "\n    je "
-          skip-label
-          "\n    movb $0, "
-          bool-reg8
-          "\n    testl $"
-          (string.int->string bit)
-          ", "
-          val-reg32
-          "\n    setne "
-          bool-reg8
-          "\n    movb "
-          bool-reg8
-          ", "
-          mem
-          "\n"
-          skip-label
-          ":\n")]
-      (compiler-backend-sse2-predicated-bool-store-lanes
-        function
-        current-label
-        dst-tag
-        addr
-        mask-reg32
-        val-reg32
-        bool-reg8
-        (+ lane 1)
-        lanes
-        (str_cat.str-cat acc lane-asm)))))
-
-(define (compiler-backend-emit-sse2-predicated-load
-  [type-segment-bases : i64]
-  [function : String]
-  [current-label : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [base : compiler_ir_types.CompilerIrValue]
-  [index : compiler_ir_types.CompilerIrValue]
-  [mask : compiler_ir_types.CompilerIrValue]
-  [lanes : i64]
-  [elem-ty : compiler_ast_types.AstType]
-  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
-  [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
-  (if (if (match (& elem-ty)
-    [(Bool) true]
-    [_ false])
-    (be_operand.compiler-backend-sse2-mask-shape-ok? lanes)
-    (be_operand.compiler-backend-sse2-shape-ok? elem-ty lanes))
-    (match (let
-      [mask-ty (compiler_ast_types.AstType.I8)]
-      (be_operand.compiler-backend-vector-register-use
-        assignments
-        mask
-        "load mask"
-        "xmm"
-        mask-ty
-        "%xmm15"
-        backend-state))
-      [(Ok mask-use)
-        (match mask-use
-          [(Use mask-asm mask-reg)
-            (match (compiler-backend-vector-dst-reg
-              assignments
-              dst
-              "predicated load dst"
-              "xmm"
-              "%xmm14"
-              backend-state)
-              [(Ok dst-reg)
-                (match (compiler-backend-emit-simd-indexed-address
-                  type-segment-bases
-                  assignments
-                  base
-                  index
-                  (compiler-backend-copy-prim-ast-type (& elem-ty))
-                  backend-state)
-                  [(Ok addr-plan)
-                    (let
-                      [addr-asm : String addr-plan.asm]
-                      [addr : String addr-plan.addr]
-                      [mask-gp : String
-                        (be_operand.compiler-backend-scavenge-reg-here
-                          (compiler-backend-simd-addr-exclude (& addr) "" "" "")
-                          5
-                          "%r11"
-                          backend-state)]
-                      [tmp-gp : String
-                        (be_operand.compiler-backend-scavenge-reg-here
-                          (compiler-backend-simd-addr-exclude
-                            (& addr)
-                            (& mask-gp)
-                            ""
-                            "")
-                          5
-                          "%r10"
-                          backend-state)]
-                      [mask-gp32 : String
-                        (be_operand.compiler-backend-reg-part
-                          (string.copy (& mask-gp))
-                          4)]
-                      [lanes-asm : String
-                        (compiler-backend-sse2-predicated-load-lanes
-                          function
-                          current-label
-                          dst
-                          addr
-                          (& mask-gp32)
-                          (& tmp-gp)
-                          0
-                          lanes
+  (let
+    [sse2? : bool
+      (be_state.compiler-backend-current-mode-sse2?
+        (be_state.compiler-backend-state-function-state backend-state))]
+    (if (if (match (& elem-ty)
+      [(Bool) true]
+      [_ false])
+      (if sse2?
+        (be_operand.compiler-backend-sse2-mask-shape-ok? lanes)
+        (be_operand.compiler-backend-avx2-mask-shape-ok? lanes))
+      (if sse2?
+        (be_operand.compiler-backend-sse2-shape-ok? elem-ty lanes)
+        (be_operand.compiler-backend-avx2-shape-ok? elem-ty lanes)))
+      (match (let
+        [elem-ty (compiler_ast_types.AstType.I8)]
+        (be_operand.compiler-backend-vector-register-use
+          assignments
+          mask
+          "store mask"
+          (if sse2?
+            "xmm"
+            "ymm")
+          elem-ty
+          (if sse2?
+            "%xmm15"
+            "%ymm15")
+          backend-state))
+        [(Ok mask-use)
+          (match mask-use
+            [(Use mask-asm mask-reg)
+              (match (compiler-backend-emit-simd-indexed-address
+                type-segment-bases
+                assignments
+                base
+                index
+                (be_state.compiler-backend-global-shared-view elem-ty)
+                backend-state)
+                [(Ok addr-plan)
+                  (let
+                    [addr-asm : String addr-plan.asm]
+                    [addr : String addr-plan.addr]
+                    [lane-bytes : i64
+                      (if sse2?
+                        (if (> lanes 0)
+                          (/ 16 lanes)
+                          0)
+                        (compiler-backend-avx2-lane-bytes lanes))]
+                    [pmov : String
+                      (if sse2?
+                        "    pmovmskb "
+                        "    vpmovmskb ")]
+                    [bool-store? : bool
+                      (match (& elem-ty)
+                        [(Bool) true]
+                        [_ false])]
+                    (if bool-store?
+                      (match (let
+                        [elem-ty (compiler_ast_types.AstType.I8)]
+                        (be_operand.compiler-backend-vector-register-use
+                          assignments
+                          value
+                          "bool store value"
+                          (if sse2?
+                            "xmm"
+                            "ymm")
                           elem-ty
-                          ""
-                          backend-state)]
-                      (be_operand.compiler-backend-simd-scratch-checked
-                        backend-state
-                        instr-diag
-                        16
-                        (Ok
-                          (str_cat.str-cat
-                            mask-asm
-                            addr-asm
-                            "    pxor %xmm0, %xmm0\n    movdqu %xmm0, "
-                            (be_operand.compiler-backend-simd-scratch-address
-                              backend-state
-                              0)
-                            "\n    pmovmskb "
-                            mask-reg
-                            ", "
-                            mask-gp32
-                            "\n"
-                            lanes-asm
-                            "    movdqu "
-                            (be_operand.compiler-backend-simd-scratch-address
-                              backend-state
-                              0)
-                            ", "
-                            dst-reg
-                            "\n"
-                            (compiler-backend-vector-store-dst
-                              assignments
-                              dst
-                              "xmm"
-                              (I8)
-                              dst-reg
-                              backend-state)))))]
-                  [(Err message)
-                    (be_state.compiler-backend-instr-error-from
-                      instr-diag
-                      message)])]
-              [(Err message)
-                (be_state.compiler-backend-instr-error instr-diag message)])])]
-      [(Err message) (be_state.compiler-backend-instr-error instr-diag message)])
-    (be_operand.compiler-backend-sse2-shape-diagnostic
-      type-segment-bases
-      instr-diag
-      elem-ty
-      lanes)))
-
-(define (compiler-backend-emit-sse2-predicated-store
-  [type-segment-bases : i64]
-  [function : String]
-  [current-label : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [base : compiler_ir_types.CompilerIrValue]
-  [index : compiler_ir_types.CompilerIrValue]
-  [value : compiler_ir_types.CompilerIrValue]
-  [mask : compiler_ir_types.CompilerIrValue]
-  [lanes : i64]
-  [elem-ty : compiler_ast_types.AstType]
-  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
-  [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
-  (if (if (match (& elem-ty)
-    [(Bool) true]
-    [_ false])
-    (be_operand.compiler-backend-sse2-mask-shape-ok? lanes)
-    (be_operand.compiler-backend-sse2-shape-ok? elem-ty lanes))
-    (match (let
-      [mask-ty (compiler_ast_types.AstType.I8)]
-      (be_operand.compiler-backend-vector-register-use
-        assignments
-        mask
-        "store mask"
-        "xmm"
-        mask-ty
-        "%xmm15"
-        backend-state))
-      [(Ok mask-use)
-        (match mask-use
-          [(Use mask-asm mask-reg)
-            (match (compiler-backend-emit-simd-indexed-address
-              type-segment-bases
-              assignments
-              base
-              index
-              (compiler-backend-copy-prim-ast-type (& elem-ty))
-              backend-state)
-              [(Ok addr-plan)
-                (let
-                  [addr-asm : String addr-plan.asm]
-                  [addr : String addr-plan.addr]
-                  [bool-store? : bool
-                    (match (& elem-ty)
-                      [(Bool) true]
-                      [_ false])]
-                  (if bool-store?
-                    (match (let
-                      [val-ty (compiler_ast_types.AstType.I8)]
-                      (be_operand.compiler-backend-vector-register-use
-                        assignments
-                        value
-                        "bool store value"
-                        "xmm"
-                        val-ty
-                        "%xmm14"
-                        backend-state))
-                      [(Ok value-use)
-                        (match value-use
-                          [(Use value-asm value-reg)
-                            (let
-                              [mask-gp : String
-                                (be_operand.compiler-backend-scavenge-reg-here
-                                  (compiler-backend-simd-addr-exclude
-                                    (& addr)
-                                    ""
-                                    ""
-                                    "")
-                                  5
-                                  "%r11"
-                                  backend-state)]
-                              [val-gp : String
-                                (be_operand.compiler-backend-scavenge-reg-here
-                                  (compiler-backend-simd-addr-exclude
-                                    (& addr)
-                                    (& mask-gp)
-                                    ""
-                                    "")
-                                  5
-                                  "%r10"
-                                  backend-state)]
-                              [bool-gp : String
-                                (be_operand.compiler-backend-scavenge-reg-here
-                                  (compiler-backend-simd-addr-exclude
-                                    (& addr)
-                                    (& mask-gp)
-                                    (& val-gp)
-                                    "")
-                                  5
-                                  "%rax"
-                                  backend-state)]
-                              [mask-gp32 : String
-                                (be_operand.compiler-backend-reg-part
-                                  (string.copy (& mask-gp))
-                                  4)]
-                              [val-gp32 : String
-                                (be_operand.compiler-backend-reg-part
-                                  (string.copy (& val-gp))
-                                  4)]
-                              [bool-gp8 : String
-                                (be_operand.compiler-backend-reg-part
-                                  (string.copy (& bool-gp))
-                                  1)]
-                              (Ok
-                                (str_cat.str-cat
-                                  value-asm
-                                  mask-asm
-                                  addr-asm
-                                  "    pmovmskb "
-                                  mask-reg
-                                  ", "
-                                  mask-gp32
-                                  "\n    pmovmskb "
-                                  value-reg
-                                  ", "
-                                  val-gp32
-                                  "\n"
-                                  (compiler-backend-sse2-predicated-bool-store-lanes
-                                    function
-                                    current-label
-                                    (/
-                                      (be_state.compiler-backend-function-state-emission-point
-                                        (be_state.compiler-backend-state-function-state
-                                          backend-state))
-                                      2)
-                                    addr
-                                    (& mask-gp32)
-                                    (& val-gp32)
-                                    (& bool-gp8)
-                                    0
-                                    lanes
-                                    ""))))])]
-                      [(Err message)
-                        (be_state.compiler-backend-instr-error
-                          instr-diag
-                          message)])
-                    (match (be_operand.compiler-backend-vector-register-use
-                      assignments
-                      value
-                      "store value"
-                      "xmm"
-                      elem-ty
-                      "%xmm14"
-                      backend-state)
-                      [(Ok value-use)
-                        (match value-use
-                          [(Use value-asm value-reg)
-                            (let
-                              [mask-gp : String
-                                (be_operand.compiler-backend-scavenge-reg-here
-                                  (compiler-backend-simd-addr-exclude
-                                    (& addr)
-                                    ""
-                                    ""
-                                    "")
-                                  5
-                                  "%r11"
-                                  backend-state)]
-                              [tmp-gp : String
-                                (be_operand.compiler-backend-scavenge-reg-here
-                                  (compiler-backend-simd-addr-exclude
-                                    (& addr)
-                                    (& mask-gp)
-                                    ""
-                                    "")
-                                  5
-                                  "%r10"
-                                  backend-state)]
-                              [mask-gp32 : String
-                                (be_operand.compiler-backend-reg-part
-                                  (string.copy (& mask-gp))
-                                  4)]
-                              (be_operand.compiler-backend-simd-scratch-checked
-                                backend-state
-                                instr-diag
-                                16
+                          (if sse2?
+                            "%xmm14"
+                            "%ymm14")
+                          backend-state))
+                        [(Ok value-use)
+                          (match value-use
+                            [(Use value-asm value-reg)
+                              (let
+                                [mask-gp : String
+                                  (be_operand.compiler-backend-scavenge-reg-here
+                                    (compiler-backend-simd-addr-exclude
+                                      (& addr)
+                                      ""
+                                      ""
+                                      "")
+                                    5
+                                    "%r11"
+                                    backend-state)]
+                                [val-gp : String
+                                  (be_operand.compiler-backend-scavenge-reg-here
+                                    (compiler-backend-simd-addr-exclude
+                                      (& addr)
+                                      (& mask-gp)
+                                      ""
+                                      "")
+                                    5
+                                    "%r10"
+                                    backend-state)]
+                                [bool-gp : String
+                                  (be_operand.compiler-backend-scavenge-reg-here
+                                    (compiler-backend-simd-addr-exclude
+                                      (& addr)
+                                      (& mask-gp)
+                                      (& val-gp)
+                                      "")
+                                    5
+                                    "%rax"
+                                    backend-state)]
+                                [mask-gp32 : String
+                                  (be_operand.compiler-backend-reg-part
+                                    (string.copy (& mask-gp))
+                                    4)]
+                                [val-gp32 : String
+                                  (be_operand.compiler-backend-reg-part
+                                    (string.copy (& val-gp))
+                                    4)]
+                                [bool-gp8 : String
+                                  (be_operand.compiler-backend-reg-part
+                                    (string.copy (& bool-gp))
+                                    1)]
                                 (Ok
                                   (str_cat.str-cat
                                     value-asm
                                     mask-asm
                                     addr-asm
-                                    "    movdqu "
-                                    value-reg
-                                    ", "
-                                    (be_operand.compiler-backend-simd-scratch-address
-                                      backend-state
-                                      0)
-                                    "\n    pmovmskb "
+                                    pmov
                                     mask-reg
                                     ", "
                                     mask-gp32
                                     "\n"
-                                    (compiler-backend-sse2-predicated-store-lanes
+                                    pmov
+                                    value-reg
+                                    ", "
+                                    val-gp32
+                                    "\n"
+                                    (compiler-backend-avx2-predicated-bool-store-lanes
                                       function
                                       current-label
                                       (/
@@ -12002,24 +11166,140 @@
                                         2)
                                       addr
                                       (& mask-gp32)
-                                      (& tmp-gp)
+                                      (& val-gp32)
+                                      (& bool-gp8)
                                       0
                                       lanes
-                                      elem-ty
-                                      ""
-                                      backend-state)))))])]
-                      [(Err message)
-                        (be_state.compiler-backend-instr-error
-                          instr-diag
-                          message)])))]
-              [(Err message)
-                (be_state.compiler-backend-instr-error-from instr-diag message)])])]
-      [(Err message) (be_state.compiler-backend-instr-error instr-diag message)])
-    (be_operand.compiler-backend-sse2-shape-diagnostic
-      type-segment-bases
-      instr-diag
-      elem-ty
-      lanes)))
+                                      lane-bytes
+                                      ""))))])]
+                        [(Err message)
+                          (be_state.compiler-backend-instr-error
+                            instr-diag
+                            message)])
+                      (match (be_operand.compiler-backend-vector-register-use
+                        assignments
+                        value
+                        "store value"
+                        (if sse2?
+                          "xmm"
+                          "ymm")
+                        elem-ty
+                        (if sse2?
+                          "%xmm14"
+                          "%ymm14")
+                        backend-state)
+                        [(Ok value-use)
+                          (match value-use
+                            [(Use value-asm value-reg)
+                              (let
+                                [masked-move : String
+                                  (if sse2?
+                                    ""
+                                    (be_operand.compiler-backend-avx2-masked-move-mnemonic
+                                      elem-ty))]
+                                (if (string.eq masked-move "")
+                                  (let
+                                    [mask-gp : String
+                                      (be_operand.compiler-backend-scavenge-reg-here
+                                        (compiler-backend-simd-addr-exclude
+                                          (& addr)
+                                          ""
+                                          ""
+                                          "")
+                                        5
+                                        "%r11"
+                                        backend-state)]
+                                    [tmp-gp : String
+                                      (be_operand.compiler-backend-scavenge-reg-here
+                                        (compiler-backend-simd-addr-exclude
+                                          (& addr)
+                                          (& mask-gp)
+                                          ""
+                                          "")
+                                        5
+                                        "%r10"
+                                        backend-state)]
+                                    [mask-gp32 : String
+                                      (be_operand.compiler-backend-reg-part
+                                        (string.copy (& mask-gp))
+                                        4)]
+                                    (be_operand.compiler-backend-simd-scratch-checked
+                                      backend-state
+                                      instr-diag
+                                      (if sse2?
+                                        16
+                                        be_operand.compiler-backend-simd-scratch-lane-staging-bytes)
+                                      (Ok
+                                        (str_cat.str-cat
+                                          value-asm
+                                          mask-asm
+                                          addr-asm
+                                          (if sse2?
+                                            "    movdqu "
+                                            "    vmovdqu ")
+                                          value-reg
+                                          ", "
+                                          (be_operand.compiler-backend-simd-scratch-address
+                                            backend-state
+                                            0)
+                                          "\n"
+                                          pmov
+                                          mask-reg
+                                          ", "
+                                          mask-gp32
+                                          "\n"
+                                          (compiler-backend-avx2-predicated-store-lanes
+                                            function
+                                            current-label
+                                            (/
+                                              (be_state.compiler-backend-function-state-emission-point
+                                                (be_state.compiler-backend-state-function-state
+                                                  backend-state))
+                                              2)
+                                            addr
+                                            (& mask-gp32)
+                                            (& tmp-gp)
+                                            0
+                                            lanes
+                                            lane-bytes
+                                            elem-ty
+                                            ""
+                                            backend-state)))))
+                                  (Ok
+                                    (str_cat.str-cat
+                                      value-asm
+                                      mask-asm
+                                      addr-asm
+                                      "    "
+                                      masked-move
+                                      " "
+                                      value-reg
+                                      ", "
+                                      mask-reg
+                                      ", "
+                                      addr
+                                      "\n"))))])]
+                        [(Err message)
+                          (be_state.compiler-backend-instr-error
+                            instr-diag
+                            message)])))]
+                [(Err message)
+                  (be_state.compiler-backend-instr-error-from
+                    instr-diag
+                    message)])])]
+        [(Err message)
+          (be_state.compiler-backend-instr-error instr-diag message)])
+      (if sse2?
+        (be_operand.compiler-backend-sse2-shape-diagnostic
+          type-segment-bases
+          instr-diag
+          elem-ty
+          lanes)
+        (be_operand.compiler-backend-avx2-shape-diagnostic
+          type-segment-bases
+          instr-diag
+          elem-ty
+          lanes)))))
 
 (define (compiler-backend-emit-predicated-load
   [type-segment-bases : i64]
@@ -12034,49 +11314,35 @@
   [elem-ty : compiler_ast_types.AstType]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
-  (cond
-    [(be_state.compiler-backend-current-mode-avx2?
-        (be_state.compiler-backend-state-function-state backend-state))
-      (compiler-backend-emit-avx2-predicated-load
-        type-segment-bases
-        function
-        current-label
-        assignments
-        dst
-        base
-        index
-        mask
-        lanes
-        elem-ty
-        instr-diag
-        backend-state)]
-    [(be_state.compiler-backend-current-mode-sse2?
-        (be_state.compiler-backend-state-function-state backend-state))
-      (compiler-backend-emit-sse2-predicated-load
-        type-segment-bases
-        function
-        current-label
-        assignments
-        dst
-        base
-        index
-        mask
-        lanes
-        elem-ty
-        instr-diag
-        backend-state)]
-    [else
-      (compiler-backend-emit-avx512-predicated-load
-        type-segment-bases
-        assignments
-        dst
-        base
-        index
-        mask
-        lanes
-        elem-ty
-        instr-diag
-        backend-state)]))
+  (if (or
+    (be_state.compiler-backend-current-mode-avx2?
+      (be_state.compiler-backend-state-function-state backend-state))
+    (be_state.compiler-backend-current-mode-sse2?
+      (be_state.compiler-backend-state-function-state backend-state)))
+    (compiler-backend-emit-avx2-predicated-load
+      type-segment-bases
+      function
+      current-label
+      assignments
+      dst
+      base
+      index
+      mask
+      lanes
+      elem-ty
+      instr-diag
+      backend-state)
+    (compiler-backend-emit-avx512-predicated-load
+      type-segment-bases
+      assignments
+      dst
+      base
+      index
+      mask
+      lanes
+      elem-ty
+      instr-diag
+      backend-state)))
 
 (define (compiler-backend-emit-predicated-store
   [type-segment-bases : i64]
@@ -12091,49 +11357,35 @@
   [elem-ty : compiler_ast_types.AstType]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
-  (cond
-    [(be_state.compiler-backend-current-mode-avx2?
-        (be_state.compiler-backend-state-function-state backend-state))
-      (compiler-backend-emit-avx2-predicated-store
-        type-segment-bases
-        function
-        current-label
-        assignments
-        base
-        index
-        value
-        mask
-        lanes
-        elem-ty
-        instr-diag
-        backend-state)]
-    [(be_state.compiler-backend-current-mode-sse2?
-        (be_state.compiler-backend-state-function-state backend-state))
-      (compiler-backend-emit-sse2-predicated-store
-        type-segment-bases
-        function
-        current-label
-        assignments
-        base
-        index
-        value
-        mask
-        lanes
-        elem-ty
-        instr-diag
-        backend-state)]
-    [else
-      (compiler-backend-emit-avx512-predicated-store
-        type-segment-bases
-        assignments
-        base
-        index
-        value
-        mask
-        lanes
-        elem-ty
-        instr-diag
-        backend-state)]))
+  (if (or
+    (be_state.compiler-backend-current-mode-avx2?
+      (be_state.compiler-backend-state-function-state backend-state))
+    (be_state.compiler-backend-current-mode-sse2?
+      (be_state.compiler-backend-state-function-state backend-state)))
+    (compiler-backend-emit-avx2-predicated-store
+      type-segment-bases
+      function
+      current-label
+      assignments
+      base
+      index
+      value
+      mask
+      lanes
+      elem-ty
+      instr-diag
+      backend-state)
+    (compiler-backend-emit-avx512-predicated-store
+      type-segment-bases
+      assignments
+      base
+      index
+      value
+      mask
+      lanes
+      elem-ty
+      instr-diag
+      backend-state)))
 
 (define (compiler-backend-avx2-tail-mask-fill-lanes
   [function : String]
@@ -12144,12 +11396,12 @@
   [lane-reg : (& str)]
   [lane : i64]
   [lanes : i64]
+  [lane-bytes : i64]
   [acc : String]
   [backend-state : be_state.CompilerBackendState]) : String
   (if (>= lane lanes)
     acc
     (let
-      [lane-bytes : i64 (compiler-backend-avx2-lane-bytes lanes)]
       [skip-label : String
         (compiler-backend-avx2-mask-label
           (be_state.compiler-backend-global-shared-view function)
@@ -12194,6 +11446,7 @@
         lane-reg
         (+ lane 1)
         lanes
+        lane-bytes
         (str_cat.str-cat acc lane-asm)
         backend-state))))
 
@@ -12223,316 +11476,163 @@
   [lanes : i64]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
-  (if (not (be_operand.compiler-backend-avx2-mask-shape-ok? lanes))
-    (be_operand.compiler-backend-avx2-shape-diagnostic
-      type-segment-bases
-      instr-diag
-      (Bool)
-      lanes)
-    (match (compiler-backend-vector-dst-reg
-      assignments
-      dst
-      "tail mask dst"
-      "ymm"
-      "%ymm14"
-      backend-state)
-      [(Ok dst-reg)
-        (let
-          [index-home : String
-            (be_operand.compiler-backend-value-scalar-register-home
-              backend-state
-              assignments
-              (& index))]
-          [end-home : String
-            (be_operand.compiler-backend-value-scalar-register-home
-              backend-state
-              assignments
-              (& end-value))]
-          [index-reg : String
-            (if (string.eq index-home "")
-              (be_operand.compiler-backend-scavenge-reg-here
-                (be_operand.compiler-backend-one-exclude
-                  (string.copy (& end-home)))
-                1
-                "%r8"
-                backend-state)
-              (string.copy (& index-home)))]
-          [end-reg : String
-            (if (string.eq end-home "")
-              (be_operand.compiler-backend-scavenge-reg-here
-                (be_operand.compiler-backend-two-exclude
-                  (string.copy (& index-home))
-                  (string.copy (& index-reg)))
-                2
-                "%r9"
-                backend-state)
-              (string.copy (& end-home)))]
-          [lane-reg : String
-            (if (= lanes 4)
-              ""
-              (be_operand.compiler-backend-scavenge-reg-here
-                (be_operand.compiler-backend-two-exclude
-                  (string.copy (& index-reg))
-                  (string.copy (& end-reg)))
-                2
-                "%r10"
-                backend-state))]
-          (match (if (string.eq index-home "")
-            (be_operand.compiler-backend-emit-load-value
-              assignments
-              index
-              (string.copy (& index-reg))
-              backend-state)
-            (be_state.ResultCompilerBackend.Ok ""))
-            [(Ok index-asm)
-              (match (if (string.eq end-home "")
-                (be_operand.compiler-backend-emit-load-value
-                  assignments
-                  end-value
-                  (string.copy (& end-reg))
+  (let
+    [sse2? : bool
+      (be_state.compiler-backend-current-mode-sse2?
+        (be_state.compiler-backend-state-function-state backend-state))]
+    (if (not
+      (if sse2?
+        (be_operand.compiler-backend-sse2-mask-shape-ok? lanes)
+        (be_operand.compiler-backend-avx2-mask-shape-ok? lanes)))
+      (if sse2?
+        (be_operand.compiler-backend-sse2-shape-diagnostic
+          type-segment-bases
+          instr-diag
+          (Bool)
+          lanes)
+        (be_operand.compiler-backend-avx2-shape-diagnostic
+          type-segment-bases
+          instr-diag
+          (Bool)
+          lanes))
+      (match (compiler-backend-vector-dst-reg
+        assignments
+        dst
+        "tail mask dst"
+        (if sse2?
+          "xmm"
+          "ymm")
+        (if sse2?
+          "%xmm14"
+          "%ymm14")
+        backend-state)
+        [(Ok dst-reg)
+          (let
+            [qword-fast? : bool (and (not sse2?) (= lanes 4))]
+            [index-home : String
+              (be_operand.compiler-backend-value-scalar-register-home
+                backend-state
+                assignments
+                (& index))]
+            [end-home : String
+              (be_operand.compiler-backend-value-scalar-register-home
+                backend-state
+                assignments
+                (& end-value))]
+            [index-reg : String
+              (if (string.eq index-home "")
+                (be_operand.compiler-backend-scavenge-reg-here
+                  (be_operand.compiler-backend-one-exclude
+                    (string.copy (& end-home)))
+                  1
+                  "%r8"
                   backend-state)
-                (be_state.ResultCompilerBackend.Ok ""))
-                [(Ok end-asm)
-                  (be_operand.compiler-backend-simd-scratch-checked
-                    backend-state
-                    instr-diag
-                    (if (= lanes 4)
-                      0
-                      be_operand.compiler-backend-simd-scratch-lane-staging-bytes)
-                    (Ok
-                      (str_cat.str-cat
-                        index-asm
-                        end-asm
-                        (if (= lanes 4)
-                          (compiler-backend-avx2-qword-tail-mask-asm
-                            (& index-reg)
-                            (& end-reg)
-                            dst-reg)
-                          (str_cat.str-cat
-                            "    vpxor %ymm0, %ymm0, %ymm0\n    vmovdqu %ymm0, "
-                            (be_operand.compiler-backend-simd-scratch-address
-                              backend-state
-                              0)
-                            "\n"
-                            (compiler-backend-avx2-tail-mask-fill-lanes
-                              function
-                              current-label
-                              dst
+                (string.copy (& index-home)))]
+            [end-reg : String
+              (if (string.eq end-home "")
+                (be_operand.compiler-backend-scavenge-reg-here
+                  (be_operand.compiler-backend-two-exclude
+                    (string.copy (& index-home))
+                    (string.copy (& index-reg)))
+                  2
+                  "%r9"
+                  backend-state)
+                (string.copy (& end-home)))]
+            [lane-reg : String
+              (if qword-fast?
+                ""
+                (be_operand.compiler-backend-scavenge-reg-here
+                  (be_operand.compiler-backend-two-exclude
+                    (string.copy (& index-reg))
+                    (string.copy (& end-reg)))
+                  2
+                  "%r10"
+                  backend-state))]
+            [lane-bytes : i64
+              (if sse2?
+                (if (> lanes 0)
+                  (/ 16 lanes)
+                  0)
+                (compiler-backend-avx2-lane-bytes lanes))]
+            (match (if (string.eq index-home "")
+              (be_operand.compiler-backend-emit-load-value
+                assignments
+                index
+                (string.copy (& index-reg))
+                backend-state)
+              (be_state.ResultCompilerBackend.Ok ""))
+              [(Ok index-asm)
+                (match (if (string.eq end-home "")
+                  (be_operand.compiler-backend-emit-load-value
+                    assignments
+                    end-value
+                    (string.copy (& end-reg))
+                    backend-state)
+                  (be_state.ResultCompilerBackend.Ok ""))
+                  [(Ok end-asm)
+                    (be_operand.compiler-backend-simd-scratch-checked
+                      backend-state
+                      instr-diag
+                      (if qword-fast?
+                        0
+                        (if sse2?
+                          16
+                          be_operand.compiler-backend-simd-scratch-lane-staging-bytes))
+                      (Ok
+                        (str_cat.str-cat
+                          index-asm
+                          end-asm
+                          (if qword-fast?
+                            (compiler-backend-avx2-qword-tail-mask-asm
                               (& index-reg)
                               (& end-reg)
-                              (& lane-reg)
-                              0
-                              lanes
-                              ""
-                              backend-state)
-                            "    vmovdqu "
-                            (be_operand.compiler-backend-simd-scratch-address
-                              backend-state
-                              0)
-                            ", "
+                              dst-reg)
+                            (str_cat.str-cat
+                              (if sse2?
+                                "    pxor %xmm0, %xmm0\n    movdqu %xmm0, "
+                                "    vpxor %ymm0, %ymm0, %ymm0\n    vmovdqu %ymm0, ")
+                              (be_operand.compiler-backend-simd-scratch-address
+                                backend-state
+                                0)
+                              "\n"
+                              (compiler-backend-avx2-tail-mask-fill-lanes
+                                function
+                                current-label
+                                dst
+                                (& index-reg)
+                                (& end-reg)
+                                (& lane-reg)
+                                0
+                                lanes
+                                lane-bytes
+                                ""
+                                backend-state)
+                              (if sse2?
+                                "    movdqu "
+                                "    vmovdqu ")
+                              (be_operand.compiler-backend-simd-scratch-address
+                                backend-state
+                                0)
+                              ", "
+                              dst-reg
+                              "\n"))
+                          (compiler-backend-vector-store-dst
+                            assignments
+                            dst
+                            (if sse2?
+                              "xmm"
+                              "ymm")
+                            (I8)
                             dst-reg
-                            "\n"))
-                        (compiler-backend-vector-store-dst
-                          assignments
-                          dst
-                          "ymm"
-                          (I8)
-                          dst-reg
-                          backend-state))))]
-                [(Err message)
-                  (be_state.compiler-backend-instr-error-from
-                    instr-diag
-                    message)])]
-            [(Err message)
-              (be_state.compiler-backend-instr-error-from instr-diag message)]))]
-      [(Err message) (be_state.compiler-backend-instr-error instr-diag message)])))
-
-(define (compiler-backend-sse2-tail-mask-fill-lanes
-  [function : String]
-  [current-label : i64]
-  [dst : i64]
-  [index-reg : (& str)]
-  [end-reg : (& str)]
-  [lane-reg : (& str)]
-  [lane : i64]
-  [lanes : i64]
-  [acc : String]
-  [backend-state : be_state.CompilerBackendState]) : String
-  (if (>= lane lanes)
-    acc
-    (let
-      [lane-bytes : i64 (compiler-backend-sse2-lane-bytes lanes)]
-      [skip-label : String
-        (compiler-backend-avx2-mask-label
-          (string.copy (& function))
-          current-label
-          dst
-          (str_cat.str-cat "_tail_skip_" (string.int->string lane)))]
-      [move : String
-        (cond
-          [(= lane-bytes 8) "movq"]
-          [(= lane-bytes 4) "movl"]
-          [(= lane-bytes 2) "movw"]
-          [else "movb"])]
-      [slot : String
-        (compiler-backend-avx2-lane-stack-address backend-state lane lane-bytes)]
-      [lane-asm : String
-        (str_cat.str-cat
-          "    leaq "
-          (string.int->string lane)
-          "("
-          index-reg
-          "), "
-          lane-reg
-          "\n    cmpq "
-          end-reg
-          ", "
-          lane-reg
-          "\n    jge "
-          skip-label
-          "\n    "
-          move
-          " $-1, "
-          slot
-          "\n"
-          skip-label
-          ":\n")]
-      (compiler-backend-sse2-tail-mask-fill-lanes
-        function
-        current-label
-        dst
-        index-reg
-        end-reg
-        lane-reg
-        (+ lane 1)
-        lanes
-        (str_cat.str-cat acc lane-asm)
-        backend-state))))
-
-(define (compiler-backend-emit-sse2-tail-mask
-  [type-segment-bases : i64]
-  [function : String]
-  [current-label : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [index : compiler_ir_types.CompilerIrValue]
-  [end-value : compiler_ir_types.CompilerIrValue]
-  [lanes : i64]
-  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
-  [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
-  (if (not (be_operand.compiler-backend-sse2-mask-shape-ok? lanes))
-    (be_operand.compiler-backend-sse2-shape-diagnostic
-      type-segment-bases
-      instr-diag
-      (Bool)
-      lanes)
-    (match (compiler-backend-vector-dst-reg
-      assignments
-      dst
-      "tail mask dst"
-      "xmm"
-      "%xmm14"
-      backend-state)
-      [(Ok dst-reg)
-        (let
-          [index-home : String
-            (be_operand.compiler-backend-value-scalar-register-home
-              backend-state
-              assignments
-              (& index))]
-          [end-home : String
-            (be_operand.compiler-backend-value-scalar-register-home
-              backend-state
-              assignments
-              (& end-value))]
-          [index-reg : String
-            (if (string.eq index-home "")
-              (be_operand.compiler-backend-scavenge-reg-here
-                (be_operand.compiler-backend-one-exclude
-                  (string.copy (& end-home)))
-                1
-                "%r8"
-                backend-state)
-              (string.copy (& index-home)))]
-          [end-reg : String
-            (if (string.eq end-home "")
-              (be_operand.compiler-backend-scavenge-reg-here
-                (be_operand.compiler-backend-two-exclude
-                  (string.copy (& index-home))
-                  (string.copy (& index-reg)))
-                2
-                "%r9"
-                backend-state)
-              (string.copy (& end-home)))]
-          [lane-reg : String
-            (be_operand.compiler-backend-scavenge-reg-here
-              (be_operand.compiler-backend-two-exclude
-                (string.copy (& index-reg))
-                (string.copy (& end-reg)))
-              2
-              "%r10"
-              backend-state)]
-          (match (if (string.eq index-home "")
-            (be_operand.compiler-backend-emit-load-value
-              assignments
-              index
-              (string.copy (& index-reg))
-              backend-state)
-            (be_state.ResultCompilerBackend.Ok ""))
-            [(Ok index-asm)
-              (match (if (string.eq end-home "")
-                (be_operand.compiler-backend-emit-load-value
-                  assignments
-                  end-value
-                  (string.copy (& end-reg))
-                  backend-state)
-                (be_state.ResultCompilerBackend.Ok ""))
-                [(Ok end-asm)
-                  (be_operand.compiler-backend-simd-scratch-checked
-                    backend-state
-                    instr-diag
-                    16
-                    (Ok
-                      (str_cat.str-cat
-                        index-asm
-                        end-asm
-                        "    pxor %xmm0, %xmm0\n    movdqu %xmm0, "
-                        (be_operand.compiler-backend-simd-scratch-address
-                          backend-state
-                          0)
-                        "\n"
-                        (compiler-backend-sse2-tail-mask-fill-lanes
-                          function
-                          current-label
-                          dst
-                          (& index-reg)
-                          (& end-reg)
-                          (& lane-reg)
-                          0
-                          lanes
-                          ""
-                          backend-state)
-                        "    movdqu "
-                        (be_operand.compiler-backend-simd-scratch-address
-                          backend-state
-                          0)
-                        ", "
-                        dst-reg
-                        "\n"
-                        (compiler-backend-vector-store-dst
-                          assignments
-                          dst
-                          "xmm"
-                          (I8)
-                          dst-reg
-                          backend-state))))]
-                [(Err message)
-                  (be_state.compiler-backend-instr-error-from
-                    instr-diag
-                    message)])]
-            [(Err message)
-              (be_state.compiler-backend-instr-error-from instr-diag message)]))]
-      [(Err message) (be_state.compiler-backend-instr-error instr-diag message)])))
+                            backend-state))))]
+                  [(Err message)
+                    (be_state.compiler-backend-instr-error-from
+                      instr-diag
+                      message)])]
+              [(Err message)
+                (be_state.compiler-backend-instr-error-from instr-diag message)]))]
+        [(Err message)
+          (be_state.compiler-backend-instr-error instr-diag message)]))))
 
 (define (compiler-backend-emit-tail-mask
   [type-segment-bases : i64]
@@ -12545,45 +11645,33 @@
   [lanes : i64]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
-  (cond
-    [(be_state.compiler-backend-current-mode-avx2?
-        (be_state.compiler-backend-state-function-state backend-state))
-      (compiler-backend-emit-avx2-tail-mask
-        type-segment-bases
-        function
-        current-label
-        assignments
-        dst
-        index
-        end-value
-        lanes
-        instr-diag
-        backend-state)]
-    [(be_state.compiler-backend-current-mode-sse2?
-        (be_state.compiler-backend-state-function-state backend-state))
-      (compiler-backend-emit-sse2-tail-mask
-        type-segment-bases
-        function
-        current-label
-        assignments
-        dst
-        index
-        end-value
-        lanes
-        instr-diag
-        backend-state)]
-    [else
-      (compiler-backend-emit-avx512-tail-mask
-        type-segment-bases
-        function
-        current-label
-        assignments
-        dst
-        index
-        end-value
-        lanes
-        instr-diag
-        backend-state)]))
+  (if (or
+    (be_state.compiler-backend-current-mode-avx2?
+      (be_state.compiler-backend-state-function-state backend-state))
+    (be_state.compiler-backend-current-mode-sse2?
+      (be_state.compiler-backend-state-function-state backend-state)))
+    (compiler-backend-emit-avx2-tail-mask
+      type-segment-bases
+      function
+      current-label
+      assignments
+      dst
+      index
+      end-value
+      lanes
+      instr-diag
+      backend-state)
+    (compiler-backend-emit-avx512-tail-mask
+      type-segment-bases
+      function
+      current-label
+      assignments
+      dst
+      index
+      end-value
+      lanes
+      instr-diag
+      backend-state)))
 
 (define (compiler-backend-var-single-use?
   [counts : (& counts (__tl_dyn-array i64))]

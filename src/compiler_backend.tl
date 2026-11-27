@@ -11023,33 +11023,19 @@
   [out : (&mut out be_state.CompilerBackendAsmBuf)]) : be_state.ResultCompilerBackend
   (let
     [fused : be_state.ResultCompilerBackend
-      (if (be_state.compiler-backend-current-mode-sse2? ctx.function-state)
-        (be_simd.compiler-backend-emit-sse2-sign-bit-mask
-          ctx.type-segment-bases
-          ctx.assignments
-          cmp-dst
-          src-val
-          bit-index
-          and-lanes
-          and-ty
-          (be_state.compiler-backend-instr-diagnostic-ref
-            (& ctx.spans)
-            ctx.source-function
-            (compiler_ir_types.compiler-ir-instr-seq-borrow instrs cursor))
-          ctx.backend-state)
-        (be_simd.compiler-backend-emit-avx2-sign-bit-mask
-          ctx.type-segment-bases
-          ctx.assignments
-          cmp-dst
-          src-val
-          bit-index
-          and-lanes
-          and-ty
-          (be_state.compiler-backend-instr-diagnostic-ref
-            (& ctx.spans)
-            ctx.source-function
-            (compiler_ir_types.compiler-ir-instr-seq-borrow instrs cursor))
-          ctx.backend-state))]
+      (be_simd.compiler-backend-emit-avx2-sign-bit-mask
+        ctx.type-segment-bases
+        ctx.assignments
+        cmp-dst
+        src-val
+        bit-index
+        and-lanes
+        and-ty
+        (be_state.compiler-backend-instr-diagnostic-ref
+          (& ctx.spans)
+          ctx.source-function
+          (compiler_ir_types.compiler-ir-instr-seq-borrow instrs cursor))
+        ctx.backend-state)]
     (compiler-backend-emit-fused-result-rest
       ctx
       fallthrough

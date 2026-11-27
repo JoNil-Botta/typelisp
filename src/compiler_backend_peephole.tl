@@ -4219,12 +4219,11 @@
         (compiler-backend-peephole-token-reg-index-range data ts te)
         -1))))
 
-;; Vector instructions (VEX `v*` or legacy SSE2 with an `%xmm` register
-;; destination) do not change any GP register or memory slot tracked by the
-;; reload-elision owner map. Preserve those owners across the instruction so
-;; one spilled scalar address index can be loaded once and reused by an
-;; adjacent vector load/binop sequence. A GP destination (for example
-;; `vpmovmskb ..., %r8` or `pmovmskb ..., %r8`) or a memory destination stays
+;; AVX instructions with a vector-register destination do not change any GP
+;; register or memory slot tracked by the reload-elision owner map. Preserve
+;; those owners across the instruction so one spilled scalar address index can
+;; be loaded once and reused by an adjacent vector load/binop sequence. A GP
+;; destination (for example `vpmovmskb ..., %r8`) or a memory destination stays
 ;; on the conservative clobber path.
 (define (compiler-backend-peephole-vector-preserves-gp-owners?
   [data : (Ptr u8)]
@@ -4232,11 +4231,12 @@
   [mnemonic-len : i64]
   [start : i64]
   [end : i64]) : bool
-  (if (= mnemonic-len 0)
+  (if (or
+    (= mnemonic-len 0)
+    (not
+      (= (be_state.compiler-backend-peephole-byte-at data mnemonic-start) 118)))
     false
     (let
-      [is-vex? : bool
-        (= (be_state.compiler-backend-peephole-byte-at data mnemonic-start) 118)]
       [last-comma : i64 -1]
       [paren-depth : i64 0]
       (for [index (iterator.range start end)]
@@ -4259,34 +4259,70 @@
             (set! memory-dest true)
             unit)
           (+= cursor 1))
-        (if memory-dest
+        (and
+          (not memory-dest)
+          (<
+            (compiler-backend-peephole-last-operand-reg-index data start end)
+            0))))))
+
+;; Legacy SSE2 instructions with an `%xmm0`..`%xmm15` register destination do
+;; not modify any GP register or memory slot tracked by the reload-elision
+;; owner map. Check from the end of `[operands-start, end)` in O(1) so
+;; non-SIMD lines never scan the full instruction text.
+(define (compiler-backend-peephole-xmm-dest-preserves-gp-owners?
+  [data : (Ptr u8)]
+  [operands-start : i64]
+  [end : i64]) : bool
+  (let
+    [e : i64 end]
+    (while (and
+      (> e operands-start)
+      (let
+        [b : i64 (be_state.compiler-backend-peephole-byte-at data (- e 1))]
+        (or (= b 32) (= b 9))))
+      (-= e 1))
+    (if (< (- e operands-start) 6)
+      false
+      (let
+        [b1 : i64 (be_state.compiler-backend-peephole-byte-at data (- e 1))]
+        (if (or (< b1 48) (> b1 57))
           false
-          (if is-vex?
-            (<
-              (compiler-backend-peephole-last-operand-reg-index data start end)
-              0)
-            ;; For legacy SSE2, require the destination operand to literally
-            ;; begin with `%xmm` (after skipping spaces/tabs).
-            (let
-              [ws : i64 dest-start]
-              (while (and
-                (< ws end)
-                (or
-                  (= (be_state.compiler-backend-peephole-byte-at data ws) 32)
-                  (= (be_state.compiler-backend-peephole-byte-at data ws) 9)))
-                (+= ws 1))
-              (and
-                (<= (+ ws 4) end)
-                (= (be_state.compiler-backend-peephole-byte-at data ws) 37)
-                (=
-                  (be_state.compiler-backend-peephole-byte-at data (+ ws 1))
-                  120)
-                (=
-                  (be_state.compiler-backend-peephole-byte-at data (+ ws 2))
-                  109)
-                (=
-                  (be_state.compiler-backend-peephole-byte-at data (+ ws 3))
-                  109)))))))))
+          (let
+            [b2 : i64 (be_state.compiler-backend-peephole-byte-at data (- e 2))]
+            (if (= b2 109)
+              (let
+                [prev : i64
+                  (be_state.compiler-backend-peephole-byte-at data (- e 6))]
+                (and
+                  (or (= prev 32) (= prev 44) (= prev 9))
+                  (=
+                    (be_state.compiler-backend-peephole-byte-at data (- e 5))
+                    37)
+                  (=
+                    (be_state.compiler-backend-peephole-byte-at data (- e 4))
+                    120)
+                  (=
+                    (be_state.compiler-backend-peephole-byte-at data (- e 3))
+                    109)))
+              (if (and (= b2 49) (<= b1 53) (>= (- e operands-start) 7))
+                (let
+                  [prev : i64
+                    (be_state.compiler-backend-peephole-byte-at data (- e 7))]
+                  (and
+                    (or (= prev 32) (= prev 44) (= prev 9))
+                    (=
+                      (be_state.compiler-backend-peephole-byte-at data (- e 6))
+                      37)
+                    (=
+                      (be_state.compiler-backend-peephole-byte-at data (- e 5))
+                      120)
+                    (=
+                      (be_state.compiler-backend-peephole-byte-at data (- e 4))
+                      109)
+                    (=
+                      (be_state.compiler-backend-peephole-byte-at data (- e 3))
+                      109)))
+                false))))))))
 
 ;; True iff the mnemonic token [i,i+mlen) is an instruction whose ONLY written GP
 ;; register is its last operand (so invalidating just that register is sound):
@@ -4792,10 +4828,11 @@
             (+ comma 2)
             end)]
         [op-dst-end : i64 end]
-        [is-label : bool
-          (and
-            (< ms end)
-            (= (be_state.compiler-backend-peephole-byte-at data (- end 1)) 58))]
+        [last-byte : i64
+          (if (< ms end)
+            (be_state.compiler-backend-peephole-byte-at data (- end 1))
+            0)]
+        [is-label : bool (= last-byte 58)]
         [cmp-or-test? : bool
           (and
             (or (= mnemonic-first 99) (= mnemonic-first 116))
@@ -4810,12 +4847,24 @@
             ;; vector-preserves ('m' is not 'v'), so it clears.
             [movq-prefix? true]
             [cmp-or-test? false]
-            [(compiler-backend-peephole-vector-preserves-gp-owners?
-                data
-                ms
-                mlen
-                start
-                end)
+            [(and
+                (= mnemonic-first 118)
+                (compiler-backend-peephole-vector-preserves-gp-owners?
+                  data
+                  ms
+                  mlen
+                  start
+                  end))
+              false]
+            [(and
+                (or
+                  (and (>= last-byte 48) (<= last-byte 57))
+                  (= last-byte 32)
+                  (= last-byte 9))
+                (compiler-backend-peephole-xmm-dest-preserves-gp-owners?
+                  data
+                  (+ ms mlen)
+                  end))
               false]
             [else true])]
         [call? : bool

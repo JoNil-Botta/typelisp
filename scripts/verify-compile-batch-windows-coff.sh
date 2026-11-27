@@ -67,8 +67,9 @@ printf '%s|%s|%s|force-assembly\n' \
 printf '%s|%s|%s\n' \
     "$FALLBACK_SOURCE" "$FALLBACK_OBJECT" "$FALLBACK_ASSEMBLY" >> "$BATCH_LIST"
 
-# Prebuilt-stdlib programs always fall back to assembly (they call into the
-# sysroot archive), so the object contract is checked on the source stdlib.
+# The source-stdlib contract checks direct COFF vs assembly without a sysroot
+# archive; when a Windows prebuilt sysroot is installed beside the compiler,
+# the prebuilt-stdlib contract below also checks direct COFF with `archive-runtime?`.
 echo "[compile-batch-windows-coff] object, fallback, and forced assembly"
 if ! TYPELISP_WINDOWS_CLANG=__typelisp_unexpected_batch_assembler__.exe \
     "$COMPILER" compile --batch "$BATCH_LIST" \
@@ -493,6 +494,96 @@ if [ "$HOST_OS" = windows ]; then
                 ;;
         esac
     done
+fi
+
+# When a Windows prebuilt stdlib sysroot is present (e.g. Windows CI or an
+# explicit TYPELISP_SYSROOT), verify that prebuilt-stdlib programs without
+# archive symbol references still emit direct COFF `.obj` artifacts instead of
+# falling back to assembly, while archive-referencing programs still fall back.
+PREBUILT_WIN_SYSROOT=
+if [ -n "${TYPELISP_SYSROOT:-}" ] &&
+    [ "$TYPELISP_SYSROOT" != none ] &&
+    [ -f "$TYPELISP_SYSROOT/lib/x86_64-pc-windows-msvc/stdlib.tli" ] &&
+    [ -f "$TYPELISP_SYSROOT/lib/x86_64-pc-windows-msvc/libstdlib.a" ]; then
+    PREBUILT_WIN_SYSROOT=$TYPELISP_SYSROOT
+else
+    _compiler_dir=$(dirname -- "$COMPILER")
+    if [ -f "$_compiler_dir/lib/x86_64-pc-windows-msvc/stdlib.tli" ] &&
+        [ -f "$_compiler_dir/lib/x86_64-pc-windows-msvc/libstdlib.a" ]; then
+        PREBUILT_WIN_SYSROOT=$_compiler_dir
+    fi
+fi
+
+if [ -n "$PREBUILT_WIN_SYSROOT" ]; then
+    echo "[compile-batch-windows-coff] prebuilt-stdlib direct COFF emission"
+    PREBUILT_LIST="$WORKDIR/prebuilt.list"
+    PREBUILT_PLAN="$WORKDIR/prebuilt.plan"
+    PREBUILT_EXPECTED="$WORKDIR/prebuilt.expected.plan"
+    PREBUILT_DIRECT_OBJ="$WORKDIR/prebuilt_hello.obj"
+    PREBUILT_DIRECT_ASM="$WORKDIR/prebuilt_hello.s"
+    PREBUILT_EXTENT_OBJ="$WORKDIR/prebuilt_extent.obj"
+    PREBUILT_EXTENT_ASM="$WORKDIR/prebuilt_extent.s"
+    PREBUILT_EXTERN_OBJ="$WORKDIR/prebuilt_extern.obj"
+    PREBUILT_EXTERN_ASM="$WORKDIR/prebuilt_extern.s"
+    PREBUILT_FALLBACK_OBJ="$WORKDIR/prebuilt_fallback.obj"
+    PREBUILT_FALLBACK_ASM="$WORKDIR/prebuilt_fallback.s"
+    printf '%s|%s|%s\n' \
+        "$DIRECT_SOURCE" "$PREBUILT_DIRECT_OBJ" "$PREBUILT_DIRECT_ASM" > "$PREBUILT_LIST"
+    printf '%s|%s|%s\n' \
+        tests/integration/string_record_extent.tl "$PREBUILT_EXTENT_OBJ" "$PREBUILT_EXTENT_ASM" >> "$PREBUILT_LIST"
+    printf '%s|%s|%s\n' \
+        "$ALLOWED_EXTERN_SOURCE" "$PREBUILT_EXTERN_OBJ" "$PREBUILT_EXTERN_ASM" >> "$PREBUILT_LIST"
+    printf '%s|%s|%s\n' \
+        "$FALLBACK_SOURCE" "$PREBUILT_FALLBACK_OBJ" "$PREBUILT_FALLBACK_ASM" >> "$PREBUILT_LIST"
+    if ! TYPELISP_WINDOWS_CLANG=__typelisp_unexpected_batch_assembler__.exe \
+        "$COMPILER" compile --batch "$PREBUILT_LIST" \
+        --windows-coff-plan "$PREBUILT_PLAN" \
+        --target windows-x86_64 \
+        --sysroot "$PREBUILT_WIN_SYSROOT" \
+        > "$WORKDIR/prebuilt.stdout" 2> "$WORKDIR/prebuilt.stderr"; then
+        sed 's/^/  /' "$WORKDIR/prebuilt.stdout" >&2 || true
+        sed 's/^/  /' "$WORKDIR/prebuilt.stderr" >&2 || true
+        fail "Windows COFF prebuilt-stdlib batch compile failed"
+    fi
+    assert_empty "$WORKDIR/prebuilt.stderr"
+    printf '%s|coff-object|%s|none|stdlib-archive\n' \
+        "$DIRECT_SOURCE" "$PREBUILT_DIRECT_OBJ" > "$PREBUILT_EXPECTED"
+    printf '%s|coff-object|%s|none|stdlib-archive\n' \
+        tests/integration/string_record_extent.tl "$PREBUILT_EXTENT_OBJ" >> "$PREBUILT_EXPECTED"
+    printf '%s|coff-object|%s|none|stdlib-archive\n' \
+        "$ALLOWED_EXTERN_SOURCE" "$PREBUILT_EXTERN_OBJ" >> "$PREBUILT_EXPECTED"
+    printf '%s|assembly|%s|unsupported-object-semantics|stdlib-archive\n' \
+        "$FALLBACK_SOURCE" "$PREBUILT_FALLBACK_ASM" >> "$PREBUILT_EXPECTED"
+    cmp "$PREBUILT_EXPECTED" "$PREBUILT_PLAN" ||
+        fail "Windows COFF prebuilt-stdlib batch plan did not match expected direct/fallback split"
+    [ -s "$PREBUILT_DIRECT_OBJ" ] || fail "prebuilt direct COFF object missing"
+    [ ! -e "$PREBUILT_DIRECT_ASM" ] || fail "prebuilt direct row unexpectedly wrote assembly"
+    [ -s "$PREBUILT_EXTENT_OBJ" ] || fail "prebuilt extent direct COFF object missing"
+    [ -s "$PREBUILT_EXTERN_OBJ" ] || fail "prebuilt extern direct COFF object missing"
+    [ -s "$PREBUILT_FALLBACK_ASM" ] || fail "prebuilt fallback assembly missing"
+    [ ! -e "$PREBUILT_FALLBACK_OBJ" ] || fail "prebuilt fallback unexpectedly wrote an object"
+    if [ "$HOST_OS" = windows ]; then
+        PREBUILT_EXE="$WORKDIR/prebuilt_hello.exe"
+        PREBUILT_OBJ_WIN=$(cygpath -aw "$PREBUILT_DIRECT_OBJ")
+        PREBUILT_EXE_WIN=$(cygpath -aw "$PREBUILT_EXE")
+        PREBUILT_ARCHIVE_WIN=$(cygpath -aw "$PREBUILT_WIN_SYSROOT/lib/x86_64-pc-windows-msvc/libstdlib.a")
+        MSYS2_ARG_CONV_EXCL='*' "$LINKER" \
+            /NOLOGO \
+            "$PREBUILT_OBJ_WIN" \
+            /OPT:REF \
+            "$PREBUILT_ARCHIVE_WIN" \
+            "/OUT:$PREBUILT_EXE_WIN" \
+            /SUBSYSTEM:CONSOLE \
+            /ENTRY:_tl_start \
+            /NODEFAULTLIB \
+            /DYNAMICBASE:NO \
+            /STACK:268435456 \
+            kernel32.lib \
+            ntdll.lib
+        run_differential_executable prebuilt_hello "$PREBUILT_EXE"
+        [ "$DIFFERENTIAL_EXIT" = 42 ] ||
+            fail "prebuilt direct COFF executable expected exit 42, got $DIFFERENTIAL_EXIT"
+    fi
 fi
 
 echo "Windows COFF batch verifier passed"

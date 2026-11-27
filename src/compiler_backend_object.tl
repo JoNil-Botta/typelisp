@@ -4672,6 +4672,169 @@
       [(Unsupported category) (return (Unsupported category))]))
   Eligible)
 
+;; Whether `name` refers to a non-provided archive/stdlib external symbol
+;; (a TypeLisp-ABI extern or a compiler/stdlib runtime helper) rather than a
+;; locally defined symbol or a C-ABI foreign binding.
+(define (compiler-backend-object-archive-extern-symbol?
+  [program-index : be_state.CompilerBackendProgramIndex]
+  [name : i64]) : bool
+  (and
+    (not
+      (be_operand.compiler-backend-index-function-defines? program-index name))
+    (let
+      [tables : (& program-index be_state.CompilerBackendProgramTables)
+        (be_state.compiler-backend-program-tables program-index)]
+      (match (be_operand.compiler-backend-index-extern-reference-slot
+        program-index
+        name)
+        [(LookupFound slot)
+          (and
+            (not (array-ref tables.extern-provided slot))
+            (or
+              (not
+                (be_operand.compiler-backend-extern-call-info-c-abi?
+                  (array-ref tables.extern-call-infos slot)))
+              (let
+                [text : String
+                  (be_state.compiler-backend-symbol-text-index
+                    program-index
+                    name)]
+                (or
+                  (be_operand.compiler-backend-stdlib-runtime-function-name?
+                    (& text))
+                  (be_operand.compiler-backend-string-prefix-at?
+                    (& text)
+                    "tl_"
+                    0)))))]
+        [(LookupMissing) false]))))
+
+(define (compiler-backend-object-value-references-archive-extern?
+  [program-index : be_state.CompilerBackendProgramIndex]
+  [value : (& compiler_ir_types.CompilerIrValue)]) : bool
+  (match value
+    [(or (Global name) (GlobalAddr name) (Function name))
+      (compiler-backend-object-archive-extern-symbol? program-index name)]
+    [_ false]))
+
+(define (compiler-backend-object-call-args-reference-archive-extern?
+  [program-index : be_state.CompilerBackendProgramIndex]
+  [args : (& compiler_ir_types.CompilerIrCallArgs)]) : bool
+  (match args
+    [(Nil) false]
+    [(One value)
+      (compiler-backend-object-value-references-archive-extern?
+        program-index
+        value)]
+    [(Two lhs rhs)
+      (or
+        (compiler-backend-object-value-references-archive-extern?
+          program-index
+          lhs)
+        (compiler-backend-object-value-references-archive-extern?
+          program-index
+          rhs))]
+    [(or (Array values) (Sret values _))
+      (let
+        [count : i64 (array-length values)]
+        (for [index (iterator.range 0 count)]
+          (when
+            (compiler-backend-object-value-references-archive-extern?
+              program-index
+              (& (array-ref values index)))
+            (return true)))
+        false)]))
+
+(define (compiler-backend-object-instr-references-archive-extern?
+  [program-index : be_state.CompilerBackendProgramIndex]
+  [instr : (& compiler_ir_types.CompilerIrInstr)]) : bool
+  (match instr
+    [(or (Mov _ src _) (Load _ src _) (UnOp _ _ src _))
+      (compiler-backend-object-value-references-archive-extern?
+        program-index
+        src)]
+    [(Store name src _)
+      (or
+        (compiler-backend-object-archive-extern-symbol? program-index name)
+        (compiler-backend-object-value-references-archive-extern?
+          program-index
+          src))]
+    [(or (BinOp _ _ lhs rhs _) (Gep _ lhs rhs _))
+      (or
+        (compiler-backend-object-value-references-archive-extern?
+          program-index
+          lhs)
+        (compiler-backend-object-value-references-archive-extern?
+          program-index
+          rhs))]
+    [(Call _ name args _)
+      (or
+        (compiler-backend-object-archive-extern-symbol? program-index name)
+        (compiler-backend-object-call-args-reference-archive-extern?
+          program-index
+          args))]
+    [(CallIndirectC _ callee args _)
+      (or
+        (compiler-backend-object-value-references-archive-extern?
+          program-index
+          callee)
+        (compiler-backend-object-call-args-reference-archive-extern?
+          program-index
+          args))]
+    [(Return maybe)
+      (match maybe
+        [(No) false]
+        [(Some value)
+          (compiler-backend-object-value-references-archive-extern?
+            program-index
+            value)])]
+    [_ false]))
+
+;; Direct object targets emit only the minimal entry/boot runtime, not the full
+;; archive runtime (`tl_alloc8..64`, `tl_arena_*`, `tl_memcpy`, ...). When a
+;; prebuilt stdlib/package archive is hydrated, a program stays eligible for
+;; direct object emission as long as it references no archive symbol (and has
+;; no startup-init calls into an archive).
+(define (compiler-backend-object-program-references-archive-extern?
+  [program-index : be_state.CompilerBackendProgramIndex]
+  [globals : (& compiler_ir_types.CompilerIrGlobalSeq)]
+  [functions : (& compiler_ir_types.CompilerIrFunctionSeq)]) : bool
+  (for [index (iterator.range 0 globals.len)]
+    (match (compiler_ir_types.compiler-ir-global-seq-borrow globals index)
+      [(Global _ _ value _)
+        (when
+          (compiler-backend-object-value-references-archive-extern?
+            program-index
+            value)
+          (return true))]))
+  (for [index (iterator.range 0 functions.len)]
+    (match (compiler_ir_types.compiler-ir-function-seq-borrow functions index)
+      [(Function name _ _ _ blocks _)
+        (unless
+          (be_operand.compiler-backend-stdlib-runtime-function-name?
+            (& (be_state.compiler-backend-symbol-text-index program-index name)))
+          (match blocks
+            [(Array block-seq)
+              (let
+                [block-count : i64
+                  (compiler_ir_types.compiler-ir-block-seq-count block-seq)]
+                (for [bi (iterator.range 0 block-count)]
+                  (match (compiler_ir_types.compiler-ir-block-seq-borrow
+                    block-seq
+                    bi)
+                    [(Block _ instrs)
+                      (let
+                        [instr-count : i64
+                          (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
+                        (for [ii (iterator.range 0 instr-count)]
+                          (when
+                            (compiler-backend-object-instr-references-archive-extern?
+                              program-index
+                              (compiler_ir_types.compiler-ir-instr-seq-borrow
+                                instrs
+                                ii))
+                            (return true))))])))]))]))
+  false)
+
 (define (compiler-backend-object-program-eligibility
   [backend-state : be_state.CompilerBackendState]
   [target : be_state.CompilerBackendTarget]
@@ -4683,13 +4846,11 @@
         [(be_state.compiler-backend-state-shared-object-code-model?
             backend-state)
           (Unsupported (SharedObjectCodeModel))]
-        [(or
-            (be_state.compiler-backend-state-archive-runtime? backend-state)
-            (>
-              (array-length
-                (be_state.compiler-backend-state-startup-init-symbols
-                  backend-state))
-              0))
+        [(>
+            (array-length
+              (be_state.compiler-backend-state-startup-init-symbols
+                backend-state))
+            0)
           (Unsupported
             (be_state.compiler-backend-object-unsupported-semantics-category))]
         [(not
@@ -4699,6 +4860,14 @@
               (compiler-backend-object-functions-semantically-supported?
                 backend-state
                 (be_state.compiler-backend-global-shared-view functions))))
+          (Unsupported
+            (be_state.compiler-backend-object-unsupported-semantics-category))]
+        [(and
+            (be_state.compiler-backend-state-archive-runtime? backend-state)
+            (compiler-backend-object-program-references-archive-extern?
+              program-index
+              (& globals)
+              (& functions)))
           (Unsupported
             (be_state.compiler-backend-object-unsupported-semantics-category))]
         [else

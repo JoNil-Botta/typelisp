@@ -2275,7 +2275,7 @@
 ;; in which case a fresh block array with those loops replaced.
 (define (opt-bit-length-idiom-blocks
   [frame : i64]
-  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  [blocks : ir.CompilerIrBlockList]) : OptBlockListPassResult
   (let
     [seq : ir.CompilerIrBlockSeq
       (match (compiler-opt-global-shared-view blocks)
@@ -2288,7 +2288,7 @@
         (set! any true))
       (+= b 1))
     (if (not any)
-      blocks
+      (Result blocks false)
       (let
         [uses : (__tl_dyn-array i64)
           (opt-collect-blocks-uses-array frame blocks)]
@@ -2309,8 +2309,8 @@
                 [(No) (ir.compiler-ir-block-seq-ref seq i)])
               (ir.compiler-ir-block-seq-ref seq i))))
         (if changed
-          (Array (ir.CompilerIrBlockSeq out seq.len))
-          blocks)))))
+          (Result (Array (ir.CompilerIrBlockSeq out seq.len)) true)
+          (Result blocks false))))))
 
 ;; BitLength is defined for the two 64-bit integer types only.
 (define (opt-bit-length-type? [ty : (& ty ast.AstType)]) : bool
@@ -99094,10 +99094,12 @@
       (set! state.analysis (Cfg ctx))
       state]))
 
-(define (opt-pass-take-context [cache : OptAnalysisCache]) : OptCfgContext
+(define (opt-pass-take-context
+  [cache : OptAnalysisCache]
+  [func : (& ir.CompilerIrFunction)]) : OptCfgContext
   (match cache
     [(Cfg context) context]
-    [(Empty) (opt-cfg-context-empty)]))
+    [(Empty) (opt-cfg-context-build (opt-function-blocks func))]))
 
 (define (opt-pass-moved-result
   [result : OptFunctionCtxResult]
@@ -99131,7 +99133,9 @@
             `(__tl-project-field ,state func)
             (comptime.expr-let-scope
               ctx-name
-              `(opt-pass-take-context (__tl-project-field ,state analysis))
+              `(opt-pass-take-context
+                (__tl-project-field ,state analysis)
+                (& ,func))
               `(opt-pass-moved-result
                 ,step
                 (__tl-project-field ,state type-segment-bases)
@@ -100059,9 +100063,13 @@
     [s
       (opt-stage
         "bit_length"
-        (opt-pass-with-blocks
-          (opt-bit-length-idiom-blocks (opt-pass-frame s) (opt-pass-blocks s))
-          s))]
+        (match (opt-bit-length-idiom-blocks
+          (opt-pass-frame s)
+          (opt-pass-blocks s))
+          [(Result blocks changed?)
+            ;; The closed form replaces the backedge branch with an exit jump.
+            (when changed? (set! s.analysis (Empty)))
+            (opt-pass-with-blocks blocks s)]))]
     ;; Split multi-use Geps into per-use single-use Geps so the backend's
     ;; indexed-memory fusion fires on every Load/StorePtr (the quicksort swap
     ;; shape). DCE then drops the now-unused original Gep defs.

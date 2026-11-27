@@ -22976,20 +22976,20 @@
     [_ 0]))
 
 (define (opt-licm-gep-byte-offset
-  [type-segment-bases : i64]
+  [_type-segment-bases : i64]
   [offset : (& offset ir.CompilerIrValue)]
   [gep-ty : (& gep-ty ast.AstType)]) : i64
   (match offset
     [(I64 k)
-      (if (or (< k 0) (not (opt-licm-offset-small? k)))
-        (- 0 1)
-        (if (= k 0)
-          0
+      (cond
+        [(or (< k 0) (not (opt-licm-offset-small? k))) (- 0 1)]
+        [(= k 0) 0]
+        [else
           (let
             [scale : i64 (opt-licm-gep-scale gep-ty)]
             (if (> scale 0)
               (* k scale)
-              (- 0 1)))))]
+              (- 0 1)))])]
     [_ (- 0 1)]))
 
 (define (opt-licm-mask-has-byte-offset? [mask : i64] [byte-off : i64]) : bool
@@ -23472,37 +23472,39 @@
                 (DataSlot base-var)
                 (opt-licm-local-slot-kind base-kind offset)))]
           [_
-            (if (opt-licm-array-header-var? type-segment-bases types base-var)
-              (if (opt-bounds-object-length-slot? type-segment-bases offset ty)
-                (HeaderSlot base-var)
-                (if (opt-licm-data-slot? offset ty)
-                  (DataSlot base-var)
-                  (Unknown)))
-              (if (opt-licm-var-header-at-offset?
-                type-segment-bases
-                types
-                base-var
-                offset
-                ty)
-                (match base-kind
-                  [(or (LocalObject object) (LocalSlot object))
-                    (LocalHeader object)]
-                  [(or (GlobalSlot global) (GlobalDataSlot global))
-                    (GlobalDataSlot global)]
-                  [_ (InlineHeader base-var)])
-                (if (opt-licm-var-header-length-at-offset?
+            (cond
+              [(opt-licm-array-header-var? type-segment-bases types base-var)
+                (cond
+                  [(opt-bounds-object-length-slot? type-segment-bases offset ty)
+                    (HeaderSlot base-var)]
+                  [(opt-licm-data-slot? offset ty) (DataSlot base-var)]
+                  [else (Unknown)])]
+              [(opt-licm-var-header-at-offset?
                   type-segment-bases
                   types
                   base-var
                   offset
                   ty)
-                  (HeaderSlot base-var)
-                  ;; Not a descriptor handle. It may still be the address of a
-                  ;; frame object of this function, in which case a LITERAL offset
-                  ;; picks out a fixed word of it. The descriptor classification
-                  ;; above wins wherever it applies, so the established
-                  ;; HeaderSlot/DataSlot chain is untouched.
-                  (opt-licm-local-slot-kind base-kind offset))))]))]
+                (match base-kind
+                  [(or (LocalObject object) (LocalSlot object))
+                    (LocalHeader object)]
+                  [(or (GlobalSlot global) (GlobalDataSlot global))
+                    (GlobalDataSlot global)]
+                  [_ (InlineHeader base-var)])]
+              [(opt-licm-var-header-length-at-offset?
+                  type-segment-bases
+                  types
+                  base-var
+                  offset
+                  ty)
+                (HeaderSlot base-var)]
+              [else
+                ;; Not a descriptor handle. It may still be the address of a
+                ;; frame object of this function, in which case a LITERAL offset
+                ;; picks out a fixed word of it. The descriptor classification
+                ;; above wins wherever it applies, so the established
+                ;; HeaderSlot/DataSlot chain is untouched.
+                (opt-licm-local-slot-kind base-kind offset)])]))]
     ;; `Gep <global operand>, <literal>` addresses a fixed word of the object
     ;; that global's cell designates -- the descriptor handle a `Vec`/array
     ;; global holds, or the handle's own header words. A variable offset is

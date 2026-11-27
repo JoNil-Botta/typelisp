@@ -6,7 +6,7 @@
 (define tli-magic : i64
   0x00494c54)
 (define tli-schema-version : i64
-  4)
+  5)
 (define tli-header-size : i64
   144)
 
@@ -98,7 +98,8 @@
   (ty TliType)
   (cleanup TliCleanup)
   (byte-offset i64)
-  (explicit-align i64))
+  (explicit-align i64)
+  (opaque? bool))
 
 (defstruct TliPayload
   (ty TliType)

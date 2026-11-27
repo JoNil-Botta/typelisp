@@ -462,7 +462,8 @@
   (type-id i64)
   (cleanup TliHydratedCleanup)
   (byte-offset i64)
-  (explicit-align i64))
+  (explicit-align i64)
+  (opaque? bool))
 
 (define (tli-hydrate-field [row : (& tli.TliField)]) : TliHydratedField
   (TliHydratedField
@@ -470,7 +471,8 @@
     (tli-hydrate-type-id (& row.ty))
     (tli-hydrate-cleanup (& row.cleanup))
     row.byte-offset
-    row.explicit-align))
+    row.explicit-align
+    row.opaque?))
 
 (defstruct TliHydratedPayload
   (type-id i64)
@@ -1493,10 +1495,11 @@
               (set! (array-ref foffsets i) (array-ref fields i).byte-offset)
               (set!
                 (array-ref fslots i)
-                (ast.ast-field-def-id
+                (ast.ast-field-def-with-opacity-id
                   (intern.intern-syntax-id-from-raw fname-id)
                   (ast.ty-node-get fty-id)
-                  (tli-hydrate-field-cleanup (& (array-ref fields i).cleanup))))))
+                  (tli-hydrate-field-cleanup (& (array-ref fields i).cleanup))
+                  (array-ref fields i).opaque?))))
           (let
             [repr : ast.AstStructRepr
               (if (= row.repr-kind 1)

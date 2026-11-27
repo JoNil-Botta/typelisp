@@ -83,7 +83,7 @@
       (__tl_make-array tli.TliVariant 1)]
     (set!
       (array-ref fields 0)
-      (tli.TliField "high" (tli.TliType.I64) (tli.TliCleanup.Owned) 0 16))
+      (tli.TliField "high" (tli.TliType.I64) (tli.TliCleanup.Owned) 0 16 true))
     (set!
       (array-ref fields 1)
       (tli.TliField
@@ -91,7 +91,8 @@
         (tli.TliType.Ref "z-life" (box (tli.TliType.Str)))
         (tli.TliCleanup.Fn "cleanup.field")
         16
-        0))
+        0
+        false))
     (set!
       (array-ref payloads 0)
       (tli.TliPayload (tli.TliType.I32) (tli.TliCleanup.Owned)))
@@ -484,6 +485,8 @@
         "dispatch tie-break")
       (match (& (array-ref module.types 1).body)
         [(tli.TliTypeBody.Struct fields)
+          (test.assert-true (array-ref fields 0).opaque? "opaque field")
+          (test.assert-true (not (array-ref fields 1).opaque?) "public field")
           (test.assert-i64-eq
             (array-ref fields 0).explicit-align
             16

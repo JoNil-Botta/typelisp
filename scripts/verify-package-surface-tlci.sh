@@ -739,4 +739,67 @@ for pair in "v7:$V7_NC" "v11:$V11_NC"; do
     [ "$run_status" -eq 9 ] || fail "#9755 $tag run exited $run_status, expected 9"
 done
 
-echo "[package-surface-tlci] direct TLI hydration, parity, and #9755 passed"
+echo "[package-surface-tlci] opaque aggregate source and image visibility"
+cat >> "$RIGHT/src/lib.tl" <<'EOF'
+
+(defstruct Whole (:opaque) (whole-secret i64))
+(defstruct Mixed (visible i64) (mixed-secret i64 (:opaque)))
+
+(define (make-mixed) : Mixed (Mixed 9 42))
+(define (read-mixed [value : Mixed]) : i64 value.mixed-secret)
+(define (read-whole [value : (& Whole)]) : i64 value.whole-secret)
+EOF
+for route in native source; do
+    if [ "$route" = source ]; then
+        TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE=1
+        export TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE
+    else
+        unset TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE || true
+    fi
+    for opacity_case in public opaque-field opaque-constructor opaque-type; do
+        case "$opacity_case" in
+            public) extra='' ;;
+            opaque-field)
+                extra='(define (probe [m : right.Mixed]) : i64 (unsafe m.mixed-secret))' ;;
+            opaque-constructor)
+                extra='(define (probe) : right.Mixed (unsafe (right.Mixed 1 2)))' ;;
+            opaque-type)
+                extra='(define (probe [w : (& right.Whole)]) : i64 (unsafe w.whole-secret))' ;;
+        esac
+        cat > "$CONSUMER/src/main.tl" <<EOF
+(module right.src.lib.consumer)
+(import right.src.lib as right)
+
+$extra
+(define (main) : i64
+  (let [value : right.Mixed (right.make-mixed)]
+    (+ (right.adjust value.visible) (right.read-mixed value))))
+EOF
+        rm -rf "$CONSUMER/target"
+        log="$WORKDIR/opacity-$opacity_case-$route"
+        status=0
+        "$COMPILER" build --manifest-path "$CONSUMER/typelisp.pkg" \
+            --target "$NL_BOOTSTRAP_TARGET" --opt-level 0 \
+            > "$log.out" 2> "$log.err" || status=$?
+        if [ "$opacity_case" = public ]; then
+            [ "$status" -eq 0 ] || fail "$route public opaque aggregate members failed"
+            if [ "$route" = native ]; then
+                assert_tli_route opacity-native "$log.err" 1 3 3 3 0
+                assert_macro_row opacity-native right.src.lib/adjust 1 1 "$log.err"
+                assert_profile_eq dependency_tlci_native_dispatches 1 "$log.err"
+            else
+                assert_tli_route opacity-source "$log.err" 0 0 0 0 1
+            fi
+            status=0
+            "$CONSUMER_BIN" > "$log.program.out" 2> "$log.program.err" || status=$?
+            [ "$status" -eq 56 ] || fail "$route opacity control exited $status, expected 56"
+        else
+            [ "$status" -ne 0 ] || fail "$route $opacity_case unexpectedly built"
+            grep -F 'error[E0221]:' "$log.err" >/dev/null ||
+                fail "$route $opacity_case did not report E0221"
+        fi
+    done
+done
+unset TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE || true
+
+echo "[package-surface-tlci] direct TLI hydration, opacity parity, and #9755 passed"

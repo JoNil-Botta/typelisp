@@ -2342,6 +2342,19 @@
 ;; the module family that owns DEF-MODULE's (:opaque) representations (#6999).
 ;; Files without a `(module ...)` declaration share the entry module, which
 ;; a negative id or the empty name denotes.
+(define (ctfe-module-name-in-family?
+  [use-name : (& use-name str)]
+  [def-name : (& def-name str)]) : bool
+  (let
+    [def-length : i64 (string.string-length def-name)]
+    (or
+      (string.eq use-name def-name)
+      (and
+        (> def-length 0)
+        (> (string.string-length use-name) def-length)
+        (string.is-string-prefix-at use-name def-name 0)
+        (= (string.string-ref use-name def-length) '.')))))
+
 (define (ctfe-module-in-family? [use-module : i64] [def-module : i64]) : bool
   (let
     [use-root : bool (or (< use-module 0) (ctfe-root-module-id? use-module))]
@@ -2353,12 +2366,7 @@
         (let
           [def-text : String (ci.intern-syntax-name-text-or def-module "")]
           [use-text : String (ci.intern-syntax-name-text-or use-module "")]
-          [def-length : i64 (string.string-length def-text)]
-          (and
-            (> def-length 0)
-            (> (string.string-length use-text) def-length)
-            (string.is-string-prefix-at use-text def-text 0)
-            (= (string.string-ref use-text def-length) '.')))])))
+          (ctfe-module-name-in-family? (& use-text) (& def-text)))])))
 
 ;; The type a TypeLiteral with type id `id` denotes: the caller's resolution
 ;; when it recorded one, otherwise the written type.

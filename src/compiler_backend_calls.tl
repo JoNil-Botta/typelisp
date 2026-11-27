@@ -6970,6 +6970,24 @@
 ;; (`compiler-backend-cold-plan`) moves it at render time and inverts the jump,
 ;; and refuses whenever the text no longer has the shape above. Full-speed
 ;; builds only: -O1 and -Os never name a cold edge and stay byte-identical.
+(define (compiler-backend-guard-block-label? [label : i64]) : bool
+  (let
+    [text : String (compiler_ir_types.compiler-ir-label-text label)]
+    (or
+      (string.contains (& text) "__bce_guard")
+      (string.contains (& text) "__unroll_guard")
+      (string.contains (& text) "__unroll2_guard"))))
+
+(define (compiler-backend-guard-fast-target-label? [label : i64]) : bool
+  (let
+    [text : String (compiler_ir_types.compiler-ir-label-text label)]
+    (or
+      (string.contains (& text) "__bool_and.")
+      (string.contains (& text) "__bce_fast")
+      (string.contains (& text) "__unroll_body")
+      (string.contains (& text) "__unroll2_0")
+      (string.contains (& text) "__bce_guard_phi"))))
+
 (define (compiler-backend-branch-cold-edge-side
   [backend-state : be_state.CompilerBackendState]
   [current-label : i64]
@@ -6978,49 +6996,83 @@
   [true-copies : (& true-copies str)]
   [false-copies : (& false-copies str)]
   [fallthrough : be_state.CompilerBackendMaybeLabel]) : i64
-  (let
-    [true-cold? : bool (string.eq false-copies "")]
-    [cold-label : i64
-      (if true-cold?
-        true-label
-        false-label)]
-    [hot-label : i64
-      (if true-cold?
-        false-label
-        true-label)]
-    [function-state : be_state.CompilerBackendFunctionState
-      (be_state.compiler-backend-state-function-state backend-state)]
-    (if (and
+  (if (not
+    (and
       (be_state.compiler-backend-state-scalar-registers-enabled? backend-state)
-      (not (be_state.compiler-backend-state-optimize-for-size? backend-state))
-      (if true-cold?
-        (not (string.eq true-copies ""))
-        (string.eq true-copies ""))
-      (be_scalar.compiler-backend-jump-target-is-fallthrough?
-        (be_scalar.compiler-backend-jump-resolve-target
-          backend-state
-          hot-label
-          fallthrough)
-        fallthrough)
-      (not
+      (not (be_state.compiler-backend-state-optimize-for-size? backend-state))))
+    0
+    (let
+      [true-cold? : bool (string.eq false-copies "")]
+      [cold-label : i64
+        (if true-cold?
+          true-label
+          false-label)]
+      [hot-label : i64
+        (if true-cold?
+          false-label
+          true-label)]
+      [function-state : be_state.CompilerBackendFunctionState
+        (be_state.compiler-backend-state-function-state backend-state)]
+      (if (and
+        (if true-cold?
+          (not (string.eq true-copies ""))
+          (string.eq true-copies ""))
         (be_scalar.compiler-backend-jump-target-is-fallthrough?
           (be_scalar.compiler-backend-jump-resolve-target
             backend-state
-            cold-label
+            hot-label
             fallthrough)
-          fallthrough))
-      (be_state.compiler-backend-function-loop-block?
-        function-state
-        current-label)
-      (be_state.compiler-backend-function-loop-block? function-state hot-label)
-      (not
+          fallthrough)
+        (not
+          (be_scalar.compiler-backend-jump-target-is-fallthrough?
+            (be_scalar.compiler-backend-jump-resolve-target
+              backend-state
+              cold-label
+              fallthrough)
+            fallthrough))
         (be_state.compiler-backend-function-loop-block?
           function-state
-          cold-label)))
-      (if true-cold?
-        1
-        2)
-      0)))
+          current-label)
+        (be_state.compiler-backend-function-loop-block?
+          function-state
+          hot-label)
+        (not
+          (be_state.compiler-backend-function-loop-block?
+            function-state
+            cold-label)))
+        (if true-cold?
+          1
+          2)
+        ;; Speculative guard blocks (`__bce_guard`, `__unroll_guard`,
+        ;; `__unroll2_guard`, plus their `__bool_and.*` chain): the false arm
+        ;; targets the fallback loop while the true arm falls through into the
+        ;; next conjunct or fast loop. Both Shape 1 (`true-copies == ""`) and
+        ;; Shape 2 (both non-empty) name the false edge `_branch_cold_false` so
+        ;; COLD-1 moves it out of line.
+        (let
+          [resolved-true : i64
+            (be_scalar.compiler-backend-jump-resolve-target
+              backend-state
+              true-label
+              fallthrough)]
+          (if (and
+            (not (string.eq false-copies ""))
+            (be_scalar.compiler-backend-jump-target-is-fallthrough?
+              resolved-true
+              fallthrough)
+            (not
+              (be_scalar.compiler-backend-jump-target-is-fallthrough?
+                (be_scalar.compiler-backend-jump-resolve-target
+                  backend-state
+                  false-label
+                  fallthrough)
+                fallthrough))
+            (compiler-backend-guard-block-label? current-label)
+            (or
+              (compiler-backend-guard-fast-target-label? true-label)
+              (compiler-backend-guard-fast-target-label? resolved-true)))
+            2
+            0))))))
 
 ;; `edge-next` is what physically follows this edge block: the other edge block
 ;; when one is still to come, else the next IR block. It lets an edge block

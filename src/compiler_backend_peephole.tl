@@ -6425,7 +6425,7 @@
       (compiler-backend-peephole-desc-op-dst-end line))))
 
 (define (compiler-backend-peephole-redundant-zext-next-desc?
-  [next : be_state.CompilerBackendPeepholeLine]
+  [next : (& next be_state.CompilerBackendPeepholeLine)]
   [reg : i64]) : bool
   (if (or
     (not (compiler-backend-peephole-desc-has-operands? next))
@@ -6452,14 +6452,114 @@
                 src-end)
               reg)))))))
 
-(define (compiler-backend-peephole-redundant-zext-pair-desc?
-  [pending : be_state.CompilerBackendPeepholeLine]
-  [next : be_state.CompilerBackendPeepholeLine]) : bool
+(define (compiler-backend-peephole-reg32-token-index-range
+  [data : (Ptr u8)]
+  [ts : i64]
+  [te : i64]) : i64
   (let
-    [dst : i64 (compiler-backend-peephole-desc-zext-dst pending)]
-    (if (< dst 0)
+    [n : i64 (- te ts)]
+    (if (and
+      (>= n 4)
+      (<= n 5)
+      (= (be_state.compiler-backend-peephole-byte-at data ts) 37)
+      (or
+        (= (be_state.compiler-backend-peephole-byte-at data (+ ts 1)) 101)
+        (= (be_state.compiler-backend-peephole-byte-at data (- te 1)) 100)))
+      (compiler-backend-peephole-token-reg-index-range data ts te)
+      -1)))
+
+(define (compiler-backend-peephole-u8-imm-range?
+  [data : (Ptr u8)]
+  [ts : i64]
+  [te : i64]) : bool
+  (if (or
+    (<= (- te ts) 1)
+    (not (= (be_state.compiler-backend-peephole-byte-at data ts) 36)))
+    false
+    (let
+      [i : i64 (+ ts 1)]
+      [val : i64 0]
+      [ok : bool true]
+      (while (and ok (< i te))
+        (let
+          [ch : i64 (be_state.compiler-backend-peephole-byte-at data i)]
+          (if (and (>= ch 48) (<= ch 57))
+            (begin
+              (set! val (+ (* val 10) (- ch 48)))
+              (when (> val 255) (set! ok false)))
+            (set! ok false)))
+        (+= i 1))
+      ok)))
+
+;; True when `pending` is `xorl %<R32>, %<R32>` or `movl $K, %<R32>` (0 <= K <= 255)
+;; on tracked register `reg`: writing the 32-bit register clears bits 32..63 and
+;; the produced value fits in bits 0..7, so bits 8..63 are already 0 and a
+;; following `movzb{l,q} %<R8>, %<R32/64>` is a flag-preserving no-op.
+(define (compiler-backend-peephole-zero-u8-producer-desc?
+  [pending : (& pending be_state.CompilerBackendPeepholeLine)]
+  [reg : i64]) : bool
+  (let
+    [pd : (Ptr u8) pending.data]
+    [pms : i64 (compiler-backend-peephole-desc-mnemonic-start pending)]
+    [pmlen : i64 (compiler-backend-peephole-desc-mnemonic-len pending)]
+    (if (not (= pmlen 4))
       false
-      (compiler-backend-peephole-redundant-zext-next-desc? next dst))))
+      (let
+        [xorl? : bool
+          (be_operand.compiler-backend-peephole-range-eq?
+            pd
+            pms
+            (+ pms 4)
+            "xorl")]
+        [movl? : bool
+          (if xorl?
+            false
+            (be_operand.compiler-backend-peephole-range-eq?
+              pd
+              pms
+              (+ pms 4)
+              "movl"))]
+        (if (not (or xorl? movl?))
+          false
+          (let
+            [pend : i64 (compiler-backend-peephole-desc-end pending)]
+            [pops : i64
+              (compiler-backend-peephole-operand-start-range pd (+ pms 4) pend)]
+            [pcomma : i64
+              (compiler-backend-peephole-find-comma-space-range pd pops pend)]
+            [dst-start : i64 (+ pcomma 2)]
+            (if (or
+              (<= pcomma pops)
+              (>= dst-start pend)
+              (!=
+                (compiler-backend-peephole-reg32-token-index-range
+                  pd
+                  dst-start
+                  pend)
+                reg))
+              false
+              (if xorl?
+                (be_operand.compiler-backend-peephole-ranges-eq?
+                  pd
+                  pops
+                  pcomma
+                  pd
+                  dst-start
+                  pend)
+                (compiler-backend-peephole-u8-imm-range? pd pops pcomma)))))))))
+
+(define (compiler-backend-peephole-redundant-zext-pair-desc?
+  [pending : (& pending be_state.CompilerBackendPeepholeLine)]
+  [next : (& next be_state.CompilerBackendPeepholeLine)]) : bool
+  (let
+    [next-dst : i64 (compiler-backend-peephole-desc-zext-dst next)]
+    (if (or
+      (< next-dst 0)
+      (not (compiler-backend-peephole-redundant-zext-next-desc? next next-dst)))
+      false
+      (or
+        (= (compiler-backend-peephole-desc-zext-dst pending) next-dst)
+        (compiler-backend-peephole-zero-u8-producer-desc? pending next-dst)))))
 
 ;; First non-space byte at or after `start`, i.e. where a line's operands begin
 ;; once the mnemonic has been stepped over.
@@ -6679,9 +6779,7 @@
   [next : be_state.CompilerBackendPeepholeLine]) : i64
   ;; lint-allow: nested-if-ladder
   (if (or
-    (compiler-backend-peephole-redundant-zext-pair-desc?
-      (be_state.compiler-backend-global-shared-view pending)
-      (be_state.compiler-backend-global-shared-view next))
+    (compiler-backend-peephole-redundant-zext-pair-desc? pending next)
     (compiler-backend-peephole-dead-test-after-and-desc? pending next))
     2
     (if (compiler-backend-peephole-flags-branch-desc?
@@ -7869,17 +7967,24 @@
 
 ;; COLD-EDGE: index of the live record that opens the label run the cold edge
 ;; block labelled at record `l` jumps over, or -1 unless the live records read
-;; exactly
+;; either Shape 1:
 ;;
-;;       j<cc> O          <- record `j`
+;;       j<cc> O          <- record `j` (inverted to `j!<cc> <cold_edge>`)
 ;;     <block>_branch_cold_<side>:   <- record `l`
 ;;       <copies>         no jump, call, ret, push, pop, leave or %rsp write
 ;;       jmp T            a direct jump
 ;;     L1: ... O: ...     a run of labels holding O; L1 is the result
 ;;
-;; which is the shape the emitter produced. Anything a later rewrite changed
-;; (a directive, a comment or a `.loc` line inside, a second jump, a tail
-;; merge) refuses and the block stays where it is.
+;; or Shape 2 (both edge blocks non-empty on a guard branch):
+;;
+;;       jmp O            <- record `j` (deleted: now falls through into O)
+;;     <block>_branch_cold_<side>:   <- record `l`
+;;       <copies>         no jump, call, ret, push, pop, leave or %rsp write
+;;       jmp T            a direct jump
+;;     L1: ... O: ...     a run of labels holding O; L1 is the result
+;;
+;; Anything a later rewrite changed (a directive, a comment or a `.loc` line
+;; inside, a second jump, a tail merge) refuses and the block stays where it is.
 (define (compiler-backend-cold-edge-scan
   [v : (& v be_state.CompilerBackendPeepholeLineVec)]
   [j : i64]
@@ -7904,12 +8009,22 @@
       (= jfirst jstart)
       (>= jfirst jlast)
       (not (= (be_state.compiler-backend-peephole-byte-at jdata jfirst) 106))
-      (=
-        (string.string-length
-          (compiler-backend-cold-jcc-inverse jdata jfirst mend))
-        0)
       (>= tfirst jlast)
-      (not (= (compiler-backend-cold-token-end jdata tfirst jlast) jlast)))
+      (not (= (compiler-backend-cold-token-end jdata tfirst jlast) jlast))
+      (and
+        (=
+          (string.string-length
+            (compiler-backend-cold-jcc-inverse jdata jfirst mend))
+          0)
+        (not
+          (and
+            (be_operand.compiler-backend-peephole-range-eq?
+              jdata
+              jfirst
+              mend
+              "jmp")
+            (not
+              (= (be_state.compiler-backend-peephole-byte-at jdata tfirst) 42))))))
       (- 0 1)
       (let
         [k : i64 (+ l 1)]
@@ -8626,12 +8741,19 @@
                       (if edge?
                         name
                         (str_cat.str-cat name ".cold"))]
+                    [jcc-inv : String
+                      (compiler-backend-cold-jcc-inverse data first mend)]
+                    ;; Shape 2 cold edge: record `j` is `jmp O`, which falls
+                    ;; straight into O once the edge block moves out of line,
+                    ;; so `inverse` is empty and record `j` is dropped.
                     [inverse : String
-                      (str_cat.str-cat
-                        "    "
-                        (compiler-backend-cold-jcc-inverse data first mend)
-                        " "
-                        cold-label)]
+                      (if (= (string.string-length (& jcc-inv)) 0)
+                        ""
+                        (str_cat.str-cat "    " jcc-inv " " cold-label))]
+                    [inverse-bytes : i64
+                      (if (= (string.string-length (& inverse)) 0)
+                        0
+                        (+ (string.string-length (& inverse)) 1))]
                     ;; An edge block's own label travels with it.
                     [head : String
                       (if edge?
@@ -8649,7 +8771,7 @@
                     [added : i64
                       (+
                         (-
-                          (+ (string.string-length inverse) 1)
+                          inverse-bytes
                           (compiler-backend-cold-record-bytes rec))
                         (if edge?
                           loc-bytes
@@ -8894,14 +9016,16 @@
         (set!
           pos
           (compiler-backend-peephole-records-blit-range! v cursor jcc dst pos))
-        (set!
-          pos
-          (compiler-backend-cold-write-line!
-            dst
+        (unless
+          (= (string.string-length (& (array-ref plan.inverse k))) 0)
+          (set!
             pos
-            (be_state.compiler-backend-global-array-element-shared-view
-              plan.inverse
-              k)))
+            (compiler-backend-cold-write-line!
+              dst
+              pos
+              (be_state.compiler-backend-global-array-element-shared-view
+                plan.inverse
+                k))))
         (set! cursor t)))
     (while (< f plan.flushes)
       (let

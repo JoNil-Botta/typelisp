@@ -1,0 +1,2 @@
+path	required	advisory	reason
+tests/integration/c49_guard_cold_edge.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Guard-block COLD-EDGE out-of-line stubs and redundant movzbl elimination are pinned through opt2 assembly-shape cases.

@@ -1,0 +1,4 @@
+# Native integration cases: guard-block COLD-EDGE stubs and redundant movzbl elimination.
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+c49_guard_cold_edge|all|0,1,2|tests/integration/c49_guard_cold_edge.tl|42|-|-|stdlib/iterator.tl|-

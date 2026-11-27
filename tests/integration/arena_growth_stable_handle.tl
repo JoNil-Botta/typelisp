@@ -29,7 +29,7 @@
           (return 1))
         ; Passing the physical child to set! must canonicalize to root.
         (unsafe
-          (arena.set! (arena.Arena grown-head)))
+          (arena.set! (arena.from-raw-handle grown-head)))
         (unless
           (= (arena.raw-handle (arena.current)) (arena.raw-handle owner))
           (return 1))

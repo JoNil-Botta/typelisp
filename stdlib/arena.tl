@@ -180,6 +180,21 @@
 (define (mark) : ArenaMark
   (ArenaMark (tl_region_mark)))
 
+;: Wrap a raw runtime arena handle for low-level interop. The caller must
+;: ensure the arena remains live for every use. Zero identifies the default
+;: arena. The returned handle carries no checker brand.
+(unsafe
+  (define (from-raw-handle [handle : i64]) : Arena
+    (unsafe
+      (Arena handle))))
+
+;: Wrap a saved runtime mark for low-level interop. Before rewinding, the
+;: caller must restore the arena that issued the mark and ensure it remains
+;: valid there. Zero may be used as an inactive sentinel.
+(unsafe
+  (define (mark-from-raw-handle [handle : i64]) : ArenaMark
+    (ArenaMark handle)))
+
 ;: Start a safe phase for a direct-local arena owner.
 ;:
 ;: The compiler recognizes this call when the argument is a direct local

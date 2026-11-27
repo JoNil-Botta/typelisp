@@ -253,7 +253,7 @@
     [generation : i64 (arena.tl_arena_make)]
     (in-arena
       (unsafe
-        (arena.Arena generation))
+        (arena.from-raw-handle generation))
       (let
         [slots : (__tl_dyn-array String) (__tl_make-array String capacity)]
         [index : (__tl_dyn-array i64) (__tl_make-array i64 (* 2 capacity))]
@@ -356,7 +356,7 @@
           (array-ref compiler-ir-label-slots id)
           (in-arena
             (unsafe
-              (arena.Arena (compiler-ir-label-arena)))
+              (arena.from-raw-handle (compiler-ir-label-arena)))
             (string.copy name)))
         (set! (array-ref compiler-ir-label-index position) id)
         (set! compiler-ir-label-count (+ id 1))

@@ -5129,7 +5129,7 @@
       (& fields)
       index
       (ast.ast-field-def-fallback))
-      [(Def field-name-id ty _)
+      [(Def field-name-id ty _ _)
         (compiler-semantic-record-field-definition!
           (owned_view.compiler-owned-shared-view state)
           struct-name-id

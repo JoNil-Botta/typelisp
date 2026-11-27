@@ -2380,12 +2380,13 @@
 
 (define (gen-field-def-eq? [a : (& ast.AstFieldDef)] [b : (& ast.AstFieldDef)]) : bool
   (match a
-    [(Def a-name a-ty a-cleanup)
+    [(Def a-name a-ty a-cleanup a-opaque)
       (match b
-        [(Def b-name b-ty b-cleanup)
+        [(Def b-name b-ty b-cleanup b-opaque)
           (and
             (spec_ci.intern-syntax-id-eq? a-name b-name)
             (ctfe.ctfe-type-eq (& a-ty) (& b-ty))
+            (= a-opaque b-opaque)
             (gen-field-cleanup-eq? a-cleanup b-cleanup))])]))
 
 (define (gen-field-list-eq?
@@ -3007,12 +3008,13 @@
   [a : (& ast.AstFieldDef)]
   [b : (& ast.AstFieldDef)]) : bool
   (match a
-    [(Def a-name a-ty a-cleanup)
+    [(Def a-name a-ty a-cleanup a-opaque)
       (match b
-        [(Def b-name b-ty b-cleanup)
+        [(Def b-name b-ty b-cleanup b-opaque)
           (and
             (spec_ci.intern-syntax-id-eq? a-name b-name)
             (ctfe.ctfe-type-eq-in-env env a-ty b-ty)
+            (= a-opaque b-opaque)
             (gen-field-cleanup-eq? a-cleanup b-cleanup))])]))
 
 (define (gen-field-list-eq-at-with-owner

@@ -1294,11 +1294,12 @@
 ;; CTFE-owned type reflection metadata. Typecheck and specialization build this
 ;; from `AstProgram` and pass it into CTFE without making CTFE import either pass.
 (defenum CtfeReflectField
-  (Field i64 ast.AstType))
+  (Field i64 ast.AstType bool))
 
 (defstruct CtfeReflectFieldList
   (slots (__tl_dyn-array CtfeReflectField))
-  (len i64))
+  (len i64)
+  (foreign? bool))
 
 (defenum CtfeReflectVariant
   (Variant i64 ast.AstTypeList))
@@ -1343,10 +1344,12 @@
       (__tl_make-array CtfeReflectField (array-length items.slots))]
     (for [index (iterator.range 0 items.len)]
       (match (& (array-ref items.slots index))
-        [(Field name ty)
-          (set! (array-ref slots index) (Field name (ast.clone-ast-type ty)))
+        [(Field name ty opaque?)
+          (set!
+            (array-ref slots index)
+            (Field name (ast.clone-ast-type ty) opaque?))
           unit]))
-    (CtfeReflectFieldList slots items.len)))
+    (CtfeReflectFieldList slots items.len items.foreign?)))
 
 (define (clone-ctfe-reflect-variant-list [items : (& CtfeReflectVariantList)]) : CtfeReflectVariantList
   (let
@@ -1863,7 +1866,7 @@
     (CtfeLayoutInfoList slots index (+ n 1))))
 
 (define (ctfe-reflect-field-list-with-capacity [capacity : i64]) : CtfeReflectFieldList
-  (CtfeReflectFieldList (__tl_make-array CtfeReflectField capacity) 0))
+  (CtfeReflectFieldList (__tl_make-array CtfeReflectField capacity) 0 false))
 
 (define (ctfe-reflect-field-list-ref
   [items : CtfeReflectFieldList]
@@ -1877,7 +1880,7 @@
     [n : i64 items.len]
     [slots : (__tl_dyn-array CtfeReflectField) items.slots]
     (set! (array-ref slots n) value)
-    (CtfeReflectFieldList slots (+ n 1))))
+    (CtfeReflectFieldList slots (+ n 1) items.foreign?)))
 
 (define (ctfe-reflect-variant-list-with-capacity [capacity : i64]) : CtfeReflectVariantList
   (CtfeReflectVariantList (__tl_make-array CtfeReflectVariant capacity) 0))
@@ -2892,13 +2895,13 @@
       fields
       index
       (ast.ast-field-def-fallback))
-      [(Def name ty _)
+      [(Def name ty _ opaque?)
         (ctfe-reflect-field-list-from-fields-into
           fields
           (+ index 1)
           (ctfe-reflect-field-list-push
             out
-            (Field (ci.intern-syntax-id-value name) ty)))])))
+            (Field (ci.intern-syntax-id-value name) ty opaque?)))])))
 
 (define (ctfe-reflect-field-list-from-fields [fields : (& ast.AstFieldDefList)]) : CtfeReflectFieldList
   (ctfe-reflect-field-list-from-fields-into
@@ -4932,7 +4935,7 @@
     (match (ctfe-reflect-field-list-ref
       (owned_view.compiler-owned-reference-shared-view fields)
       index)
-      [(Field name _) (Ok name)])))
+      [(Field name _ _) (Ok name)])))
 
 (define (ctfe-reflect-field-type-at
   [fields : (& CtfeReflectFieldList)]
@@ -4946,7 +4949,8 @@
     (match (ctfe-reflect-field-list-ref
       (owned_view.compiler-owned-reference-shared-view fields)
       index)
-      [(Field _ ty) (Ok (ctfe-reflect-resolve-type-with-pools pools infos ty))])))
+      [(Field _ ty _)
+        (Ok (ctfe-reflect-resolve-type-with-pools pools infos ty))])))
 
 (define (ctfe-reflect-variant-list-count
   [variants : (& variants CtfeReflectVariantList)]) : i64
@@ -5049,37 +5053,44 @@
     (match (ctfe-reflect-info-for-type-with-pools (ctfe-env-pools env) infos ty)
       ;; A foreign opaque aggregate has no reflected representation (#8735).
       [(Some info)
-        (if (ctfe-opaque-foreign-info? (& env) (& info))
-          (ctfe-match-type-info-opaque variant args ty env)
-          (match info
-            [(Struct _ _ _ _ _ fields _)
-              (if want-struct
-                (if (ctfe-pattern-variant-name? (& env) variant "Struct")
-                  (ctfe-match-pattern-list
-                    args
-                    (&
-                      (ctfe-value-list2
-                        (&
-                          (ctfe-generated-string-value
-                            (ctfe-type-info-key-in-env env ty)))
-                        (& (TypeFieldList fields))))
-                    env)
-                  (No))
-                (No))]
-            [(Enum _ _ _ _ _ variants _)
-              (if want-struct
-                (No)
-                (if (ctfe-pattern-variant-name? (& env) variant "Enum")
-                  (ctfe-match-pattern-list
-                    args
-                    (&
-                      (ctfe-value-list2
-                        (&
-                          (ctfe-generated-string-value
-                            (ctfe-type-info-key-in-env env ty)))
-                        (& (TypeVariantList variants))))
-                    env)
-                  (No)))]))]
+        (let
+          [foreign? : bool (ctfe-foreign-info? (& env) (& info))]
+          (if (ctfe-opaque-foreign-info? (& env) (& info))
+            (ctfe-match-type-info-opaque variant args ty env)
+            (match info
+              [(Struct _ _ _ _ _ fields _)
+                (if want-struct
+                  (if (ctfe-pattern-variant-name? (& env) variant "Struct")
+                    (ctfe-match-pattern-list
+                      args
+                      (&
+                        (ctfe-value-list2
+                          (&
+                            (ctfe-generated-string-value
+                              (ctfe-type-info-key-in-env env ty)))
+                          (&
+                            (TypeFieldList
+                              (CtfeReflectFieldList
+                                fields.slots
+                                fields.len
+                                foreign?)))))
+                      env)
+                    (No))
+                  (No))]
+              [(Enum _ _ _ _ _ variants _)
+                (if want-struct
+                  (No)
+                  (if (ctfe-pattern-variant-name? (& env) variant "Enum")
+                    (ctfe-match-pattern-list
+                      args
+                      (&
+                        (ctfe-value-list2
+                          (&
+                            (ctfe-generated-string-value
+                              (ctfe-type-info-key-in-env env ty)))
+                          (& (TypeVariantList variants))))
+                      env)
+                    (No)))])))]
       [(None) (ctfe-match-type-info-opaque variant args ty env)])))
 
 (define (ctfe-match-type-info-variant
@@ -5408,13 +5419,19 @@
 (define (ctfe-opaque-foreign-info?
   [env : (& env CtfeEnv)]
   [info : (& CtfeReflectInfo)]) : bool
+  (and
+    (match info
+      [(or (Struct _ _ _ _ _ _ markers) (Enum _ _ _ _ _ _ markers))
+        (!= (bit-and markers 2) 0)])
+    (ctfe-foreign-info? env info)))
+
+(define (ctfe-foreign-info?
+  [env : (& env CtfeEnv)]
+  [info : (& CtfeReflectInfo)]) : bool
   (let
     [view : CtfeEnv (deref env)]
     [authority : CtfeRepresentation
       (__tl-project-field (ctfe-env-metadata-read view.metadata) representation)]
-    [markers : i64
-      (match info
-        [(or (Struct _ _ _ _ _ _ markers) (Enum _ _ _ _ _ _ markers)) markers])]
     [nominal-module : i64 (ctfe-reflect-info-nominal-module-id info)]
     [def-module : i64
       (if (< nominal-module 0)
@@ -5422,7 +5439,6 @@
         nominal-module)]
     (and
       (not (= authority.module (ctfe-representation-unchecked)))
-      (not (= (bit-and markers 2) 0))
       (or
         (not (ctfe-module-in-family? authority.module def-module))
         (and
@@ -5631,6 +5647,45 @@
               expr
               "offset-of requires struct layout type"))))]))
 
+(define (ctfe-opaque-field-diagnostic [expr : (& ast.AstExpr)]) : cdiag.CompilerDiagnostic
+  (ctfe-diagnostic-at-expr
+    (ComptimeEvaluation)
+    expr
+    (cdiag.compiler-diagnostic-typecheck-tagged
+      (OpaqueRepresentation)
+      "typecheck: cannot reflect an opaque field outside its module family")))
+
+;; An indexed query selects a declaration slot. offset-of selects it by name.
+(define (ctfe-field-reflection-ok
+  [env : (& CtfeEnv)]
+  [ty : (& ast.AstType)]
+  [index : i64]
+  [name-id : i64]
+  [expr : (& ast.AstExpr)]) : ResultCtfeUnit
+  (match (ctfe-reflect-info-for-type-with-pools
+    (ctfe-env-pools env)
+    (& (ctfe-env-reflections env))
+    ty)
+    [(Some info)
+      (match (& info)
+        [(Struct _ _ _ _ _ fields _)
+          (let
+            [hidden? : bool
+              (if (>= name-id 0)
+                (any? [i (iterator.range 0 fields.len)]
+                  (match (& (array-ref fields.slots i))
+                    [(Field name _ opaque?) (and opaque? (= name name-id))]))
+                (and
+                  (>= index 0)
+                  (< index fields.len)
+                  (match (& (array-ref fields.slots index))
+                    [(Field _ _ opaque?) opaque?])))]
+            (if (and hidden? (ctfe-foreign-info? env (& info)))
+              (Err (box (ctfe-opaque-field-diagnostic expr)))
+              Ok))]
+        [_ Ok])]
+    [(None) Ok]))
+
 (define (ctfe-eval-offset-from-type
   [ty : (& ast.AstType)]
   [field-name-id : i64]
@@ -5640,6 +5695,7 @@
   [fuel : i64]) : ResultCtfe
   (let
     [_ (try (ctfe-opaque-representation-ok (& env) "offset-of" ty type-arg))]
+    [_ (try (ctfe-field-reflection-ok (& env) ty -1 field-name-id type-arg))]
     (ctfe-eval-offset-from-layout-type ty field-name-id type-arg expr env fuel)))
 
 (define (ctfe-eval-offset-from-layout-type
@@ -5993,6 +6049,12 @@
         (if (ctfe-representation-reflection? name)
           (ctfe-opaque-representation-ok (& env) (string.copy name) ty expr)
           ResultCtfeUnit.Ok))]
+    [_
+      (when
+        (and
+          (ctfe-struct-field-reflection? name)
+          (not (string.eq name "struct-field-count")))
+        (try (ctfe-field-reflection-ok (& env) ty index -1 expr)))]
     (ctfe-eval-type-reflection-built name ty index second-index expr env fuel)))
 
 (define (ctfe-eval-type-reflection-built
@@ -11094,18 +11156,23 @@
     [(TypeFieldList fields)
       (if (or (< index 0) (>= index (ctfe-reflect-field-list-count fields)))
         (ctfe-comptime-array-index-error expr)
-        (match (ctfe-reflect-field-list-ref fields index)
-          [(Field name ty)
-            (let
-              [reflections : CtfeReflectInfoList (ctfe-env-reflections env)]
-              (Ok
-                (TypeField
-                  (ci.intern-str name)
-                  (ctfe-reflect-resolve-type-with-pools
-                    (ctfe-env-pools env)
-                    reflections
-                    ty))
-                fuel))]))]
+        (let
+          [foreign? : bool fields.foreign?]
+          (match (ctfe-reflect-field-list-ref fields index)
+            [(Field name ty opaque?)
+              (when
+                (and foreign? opaque?)
+                (return (Err (box (ctfe-opaque-field-diagnostic expr)))))
+              (let
+                [reflections : CtfeReflectInfoList (ctfe-env-reflections env)]
+                (Ok
+                  (TypeField
+                    (ci.intern-str name)
+                    (ctfe-reflect-resolve-type-with-pools
+                      (ctfe-env-pools env)
+                      reflections
+                      ty))
+                  fuel))])))]
     [(TypeVariantPayloadList payloads)
       (match (ctfe-type-list-ref-with-pools
         (& payloads)

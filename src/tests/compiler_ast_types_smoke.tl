@@ -2488,8 +2488,8 @@
 
 (define (compiler-ast-field-syntax-id-round-trip?
   [expected : ci.InternSyntaxId]) : bool
-  (match (ast.AstFieldDef.Def expected (I64) No)
-    [(Def name _ _) (ci.intern-syntax-id-eq? name expected)]))
+  (match (ast.AstFieldDef.Def expected (I64) No false)
+    [(Def name _ _ _) (ci.intern-syntax-id-eq? name expected)]))
 
 (define (compiler-ast-field-syntax-identity-smoke?) : bool
   (let

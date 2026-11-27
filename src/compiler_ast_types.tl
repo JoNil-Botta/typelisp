@@ -637,7 +637,7 @@
   (Owned))
 
 (defenum AstFieldDef
-  (Def ci.InternSyntaxId AstType AstFieldCleanup))
+  (Def ci.InternSyntaxId AstType AstFieldCleanup bool))
 
 (defstruct AstFieldDefList
   (slots (__tl_dyn-array AstFieldDef))
@@ -6335,8 +6335,8 @@
 
 (define (clone-ast-field-def [item : (& AstFieldDef)]) : AstFieldDef
   (match item
-    [(AstFieldDef.Def name ty cleanup)
-      (AstFieldDef.Def name (clone-ast-type ty) cleanup)]))
+    [(AstFieldDef.Def name ty cleanup opaque?)
+      (AstFieldDef.Def name (clone-ast-type ty) cleanup opaque?)]))
 
 (define (clone-ast-field-def-list [items : (& AstFieldDefList)]) : AstFieldDefList
   (let
@@ -7108,10 +7108,33 @@
   [name : ci.InternSyntaxId]
   [ty : AstType]
   [cleanup : AstFieldCleanup]) : AstFieldDef
-  (Def name ty cleanup))
+  (Def name ty cleanup false))
+
+(define (ast-field-def-with-opacity-id
+  [name : ci.InternSyntaxId]
+  [ty : AstType]
+  [cleanup : AstFieldCleanup]
+  [opaque? : bool]) : AstFieldDef
+  (Def name ty cleanup opaque?))
+
+(define (ast-field-def-opaque? [field : (& AstFieldDef)]) : bool
+  (match field
+    [(Def _ _ _ opaque?) opaque?]))
+
+;; A negative index asks about construction or a pattern, which uses all fields.
+(define (ast-decl-opaque-field? [decl : (& AstDecl)] [index : i64]) : bool
+  (match decl
+    [(or (DefStruct _ _ _ _ fields) (DefStructLifetimes _ _ _ _ _ fields))
+      (if (< index 0)
+        (any? [i (iterator.range 0 fields.len)]
+          (ast-field-def-opaque? (& (array-ref fields.slots i))))
+        (and
+          (< index fields.len)
+          (ast-field-def-opaque? (& (array-ref fields.slots index)))))]
+    [_ false]))
 
 (define (ast-field-def-fallback) : AstFieldDef
-  (Def (ci.intern-syntax-id-from-raw 0) (Unit) No))
+  (Def (ci.intern-syntax-id-from-raw 0) (Unit) No false))
 
 (dense_list.compiler-dense-list-operations
   AstFieldDef
@@ -12248,11 +12271,12 @@
   [remap : (& remap AstProgramCompactionRemap)]
   [field : (& AstFieldDef)]) : AstFieldDef
   (match (owned_view.compiler-owned-reference-shared-view field)
-    [(Def name ty cleanup)
+    [(Def name ty cleanup opaque?)
       (Def
         name
         (ast-compaction-remap-type remap ty)
-        (ast-compaction-remap-field-cleanup cleanup))]))
+        (ast-compaction-remap-field-cleanup cleanup)
+        opaque?)]))
 
 (define (ast-compaction-remap-field-cleanup [cleanup : AstFieldCleanup]) : AstFieldCleanup
   (match cleanup

@@ -724,7 +724,7 @@
   ;; a segmented declaration/path view. Zero outside that structural scope, so
   ;; idle compiler jobs retain no segment table or maximum-capacity storage.
   (macro-program-view-address i64)
-  ;; 1 while the program declares an `(:opaque)` aggregate (#6999), else 0.
+  ;; Job-wide fast paths. Bit 0 enables whole-type checks, bit 1 field checks.
   (opaque-program i64)
   ;; One job-owned non-fatal channel is shared with lowering and codegen by
   ;; the compiler driver. Its payload arena remains lazy for ordinary jobs.
@@ -2139,9 +2139,12 @@
       address)))
 
 (define (tc-job-state-opaque-program? [state : TcJobState]) : bool
-  (= (tc-job-state-field state opaque-program i64) 1))
+  (!= (bit-and (tc-job-state-field state opaque-program i64) 1) 0))
 
-(define (tc-job-state-set-opaque-program! [state : TcJobState] [present : bool]) : unit
+(define (tc-job-state-opaque-fields? [state : TcJobState]) : bool
+  (!= (bit-and (tc-job-state-field state opaque-program i64) 2) 0))
+
+(define (tc-job-state-set-opaque-program! [state : TcJobState] [flags : i64]) : unit
   (unsafe
     (ptr-write!
       (ptr-cast
@@ -2149,9 +2152,7 @@
           (int->ptr (cast state.address : u64) : (Ptr u8))
           (comptime (offset-of (type TcJobStateData) opaque-program)))
         : (MutPtr i64))
-      (if present
-        1
-        0))))
+      flags)))
 
 (define (tc-job-state-macro-program-view-address [state : TcJobState]) : i64
   (tc-job-state-field state macro-program-view-address i64))
@@ -8632,7 +8633,7 @@
             (& fields)
             index
             (ast.ast-field-def-fallback))
-            [(ast.AstFieldDef.Def field-name _ _)
+            [(ast.AstFieldDef.Def field-name _ _ _)
               (ci.intern-syntax-id-value field-name)])]
         [selected : TcResolvedField
           (match (tc-struct-field-selected-with-args-id
@@ -21609,7 +21610,10 @@
               (tc-resolve-type ctx (tc-global-shared-view container))))
             ;; A syntax type's fields are its declaration's.
             [(ast.AstMaybeType.Some (ast.AstType.Struct name))
-              (tc-struct-field-selected-id ctx name field)]
+              (tc-field-access-ok
+                ctx
+                name
+                (tc-struct-field-selected-id ctx name field))]
             [_
               (tc-struct-get-selected-id
                 ctx
@@ -37398,7 +37402,7 @@
                 (& fields)
                 index
                 (ast.ast-field-def-fallback))
-                [(Def actual-name actual-ty _)
+                [(Def actual-name actual-ty _ _)
                   (cond
                     [(not
                         (=
@@ -49360,7 +49364,7 @@
       fields
       index
       (ast.ast-field-def-fallback))
-      [(Def _ ty _)
+      [(Def _ ty _ _)
         (let
           [_ (try (tc-source-type-policy-ok ctx ty))]
           (tc-source-field-list-policy-ok-at ctx fields (+ index 1)))])))
@@ -49442,7 +49446,7 @@
       fields
       index
       (ast.ast-field-def-fallback))
-      [(Def _ ty _)
+      [(Def _ ty _ _)
         (let
           [_ (try (tc-source-type-policy-ok ctx (tc-global-shared-view ty)))]
           (let
@@ -49639,7 +49643,7 @@
       fields
       index
       (ast.ast-field-def-fallback))
-      [(Def name ty _)
+      [(Def name ty _ _)
         (let
           [declared : i64 (ast.ast-struct-repr-field-declared-align repr index)]
           (if (and (= declared 0) (not need-all))
@@ -50387,7 +50391,7 @@
         [prev-prov-id : i64 (tc-context-provider-provenance-id ctx)]
         (tc-job-state-set-opaque-program!
           (tc-context-job-state ctx)
-          (tc-opaque-decls-declare? (& decls)))
+          (tc-opaque-decl-flags (& decls)))
         (let
           [result : ResultTcSourcePolicyDiagnostic
             (tc-source-decl-list-policy-diagnostic-in-module
@@ -50832,7 +50836,7 @@
       fields
       index
       (ast.ast-field-def-fallback))
-      [(Def _ ty _)
+      [(Def _ ty _ _)
         (tc-variance-merge
           (tc-type-lifetime-variance
             ctx
@@ -55290,7 +55294,7 @@
       fields
       index
       (ast.ast-field-def-fallback))
-      [(Def _ ty _)
+      [(Def _ ty _ _)
         (ast.ast-type-cons
           (& (tc-resolve-type ctx ty))
           (& (tc-field-type-list-at ctx fields (+ index 1))))])))
@@ -61018,7 +61022,7 @@
       fields
       index
       (ast.ast-field-def-fallback))
-      [(Def name _ _) (Some (ci.intern-syntax-id-value name))])))
+      [(Def name _ _ _) (Some (ci.intern-syntax-id-value name))])))
 
 (define (tc-call-decl-param-name-at [decl : ast.AstDecl] [index : i64]) : TcMaybeNameId
   (match decl
@@ -64969,7 +64973,7 @@
       fields
       index
       (ast.ast-field-def-fallback))
-      [(Def _ ty _)
+      [(Def _ ty _ _)
         (tc-thread-transfer-class-merge
           (tc-thread-transfer-type-class
             ctx
@@ -77557,7 +77561,7 @@
       fields
       index
       (ast.ast-field-def-fallback))
-      [(Def _ ty _)
+      [(Def _ ty _ _)
         (let
           [_
             (try
@@ -77835,7 +77839,7 @@
       fields
       index
       (ast.ast-field-def-fallback))
-      [(Def name ty _)
+      [(Def name ty _ _)
         (let
           [resolved : ast.AstType (tc-resolve-type ctx ty)]
           [info
@@ -78039,7 +78043,7 @@
                                   (& fields)
                                   i
                                   (ast.ast-field-def-fallback))
-                                  [(Def _ field-ty _)
+                                  [(Def _ field-ty _ _)
                                     (tc-resolve-type ctx field-ty)])]
                               (set!
                                 (array-ref field-list.slots i)
@@ -80182,11 +80186,34 @@
       (ResultTcField.Err
         (tc-unknown-struct-field-message ctx struct-name-id field-id)))))
 
+(define (tc-field-access-ok
+  [ctx : TcContext]
+  [name : i64]
+  [selection : ResultTcField]) : ResultTcField
+  (match (& selection)
+    [(ResultTcField.Ok field)
+      (match (& field.identity)
+        [(TcFieldIdentity.Nominal owner child)
+          (when
+            (tc-foreign-opaque-field? ctx owner child)
+            (return
+              (ResultTcField.Err
+                (tc-field-opacity-message
+                  name
+                  "cannot access a private field of"))))]
+        [_ unit])]
+    [_ unit])
+  selection)
+
 (define (tc-struct-field-type-id
   [ctx : TcContext]
   [struct-name-id : i64]
   [field-id : i64]) : ResultTcType
-  (tc-field-type-only (tc-struct-field-selected-id ctx struct-name-id field-id)))
+  (tc-field-type-only
+    (tc-field-access-ok
+      ctx
+      struct-name-id
+      (tc-struct-field-selected-id ctx struct-name-id field-id))))
 
 (define (tc-lifetime-subst-from-nominal-args-id
   [ctx : TcContext]
@@ -80256,11 +80283,14 @@
   [lifetimes : ast.AstLifetimeList]
   [field-id : i64]) : ResultTcType
   (tc-field-type-only
-    (tc-struct-field-selected-with-args-id
+    (tc-field-access-ok
       ctx
       struct-name-id
-      lifetimes
-      field-id)))
+      (tc-struct-field-selected-with-args-id
+        ctx
+        struct-name-id
+        lifetimes
+        field-id))))
 
 (define (tc-comptime-unknown-field-id [owner : String] [field-id : i64]) : ResultTcType
   (Err
@@ -80308,7 +80338,10 @@
   (match (tc-type-strip-region
     (tc-resolve-type ctx (tc-global-shared-view receiver-ty)))
     [(ast.AstType.Struct struct-name)
-      (match (tc-struct-field-selected-id ctx struct-name field-id)
+      (match (tc-field-access-ok
+        ctx
+        struct-name
+        (tc-struct-field-selected-id ctx struct-name field-id))
         [(ResultTcField.Ok field)
           (ResultTcField.Ok
             (TcResolvedField
@@ -80316,11 +80349,14 @@
               field.identity))]
         [(ResultTcField.Err message) (ResultTcField.Err message)])]
     [(ast.AstType.StructArgs struct-name lifetimes)
-      (match (tc-struct-field-selected-with-args-id
+      (match (tc-field-access-ok
         ctx
         struct-name
-        (ast.ast-lifetime-list-box-shared-view lifetimes)
-        field-id)
+        (tc-struct-field-selected-with-args-id
+          ctx
+          struct-name
+          (ast.ast-lifetime-list-box-shared-view lifetimes)
+          field-id))
         [(ResultTcField.Ok field)
           (ResultTcField.Ok
             (TcResolvedField
@@ -80875,7 +80911,7 @@
             (match (if mutable
               (match (tc-global-shared-view place)
                 [(TcBorrowPlace _ receiver-ty _ _)
-                  (tc-struct-field-mutation-admission ctx env receiver-ty)])
+                  (tc-struct-field-mutation-admission ctx env receiver-ty field)])
               ResultTcUnit.Ok)
               [(ResultTcUnit.Ok)
                 (tc-borrow-place-struct-field-id ctx place field)]
@@ -82094,7 +82130,7 @@
       fields
       index
       (ast.ast-field-def-fallback))
-      [(ast.AstFieldDef.Def field-name _ _)
+      [(ast.AstFieldDef.Def field-name _ _ _)
         (when
           (string.eq
             (tc-env-key-name-text (ci.intern-syntax-id-value field-name))
@@ -82181,10 +82217,7 @@
       (ResultTcFieldsPattern.Err (tc-fields-pattern-requires-struct-message))
       ;; Like a positional struct pattern, a by-name one reads the
       ;; representation, so a foreign opaque struct rejects it (#6999).
-      (match (tc-opaque-name-representation-ok
-        ctx
-        struct-name-id
-        "cannot match the")
+      (match (tc-struct-pattern-opacity-ok ctx struct-name-id)
         [(ResultTcUnit.Err message) (ResultTcFieldsPattern.Err message)]
         [(ResultTcUnit.Ok)
           (tc-fields-pattern-resolve-struct ctx ty entries struct-name-id)]))))
@@ -82910,9 +82943,7 @@
   [pattern-name-id : i64]
   [args : ast.AstPatternList]) : ResultTcEnv
   (let
-    [_
-      (try
-        (tc-opaque-name-representation-ok ctx struct-name-id "cannot match the"))]
+    [_ (try (tc-struct-pattern-opacity-ok ctx struct-name-id))]
     [lookup-name
       (try
         (tc-source-struct-name-for-pattern
@@ -83147,9 +83178,7 @@
   [pattern-name-id : i64]
   [args : ast.AstPatternList]) : ResultTcEnv
   (let
-    [_
-      (try
-        (tc-opaque-name-representation-ok ctx struct-name-id "cannot match the"))]
+    [_ (try (tc-struct-pattern-opacity-ok ctx struct-name-id))]
     [lookup-name
       (try
         (tc-source-struct-name-for-pattern
@@ -87670,12 +87699,14 @@
 (define (tc-init-type-list-supported
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [construct? : bool]
   [types : ast.AstTypeList]) : ResultTcUnit
-  (tc-init-type-list-supported-at ctx env (& types) 0))
+  (tc-init-type-list-supported-at ctx env construct? (& types) 0))
 
 (define (tc-init-type-list-supported-at
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [construct? : bool]
   [types : (& types ast.AstTypeList)]
   [index : i64]) : ResultTcUnit
   (if (>= index (ast.ast-type-list-len types))
@@ -87686,9 +87717,10 @@
           (tc-init-type-supported
             ctx
             env
+            construct?
             (ast.ty-node-get
               (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))))]
-      (tc-init-type-list-supported-at ctx env types (+ index 1)))))
+      (tc-init-type-list-supported-at ctx env construct? types (+ index 1)))))
 
 (define (tc-init-struct-field-types-for-result
   [ctx : TcContext]
@@ -87779,10 +87811,15 @@
 (define (tc-init-struct-supported
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [construct? : bool]
   [struct-name-id : i64]
   [struct-ty : ast.AstType]) : ResultTcUnit
   (let
     [decl (try (tc-struct-decl-id ctx struct-name-id))]
+    (when
+      (and construct? (tc-foreign-field-construction? ctx struct-name-id))
+      (return
+        (Err (tc-field-opacity-message struct-name-id "cannot initialize"))))
     (match decl
       [(TcStructDecl repr cleanup fields)
         (let
@@ -87799,8 +87836,9 @@
                       field-ctx
                       (tc-global-shared-view struct-ty)))]
                 (tc-init-type-list-supported
-                  field-ctx
+                  ctx
                   env
+                  construct?
                   (tc-init-struct-field-types-for-result
                     field-ctx
                     struct-name-id
@@ -87810,6 +87848,7 @@
 (define (tc-init-enum-supported
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [construct? : bool]
   [enum-name-id : i64]
   [enum-ty : ast.AstType]) : ResultTcUnit
   (let
@@ -87833,8 +87872,9 @@
                 (ast.ast-variant-def-fallback))
                 [(Def _ fields _)
                   (tc-init-type-list-supported
-                    field-ctx
+                    ctx
                     env
+                    construct?
                     (tc-init-enum-fields-for-result
                       field-ctx
                       enum-name-id
@@ -87844,6 +87884,7 @@
 (define (tc-init-type-supported
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [construct? : bool]
   [ty : ast.AstType]) : ResultTcUnit
   (let
     [resolved : ast.AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
@@ -87870,24 +87911,30 @@
                     (tc-type-render
                       (tc-type-without-regions (tc-resolve-type ctx resolved)))
                     " holds an unsupported dynamic array element type")))))]
-        [(Box elem) (tc-init-type-supported ctx env (ast.ty-node-get elem))]
+        [(Box elem)
+          (tc-init-type-supported ctx env construct? (ast.ty-node-get elem))]
         [(Tuple elems)
           (let
             [_ (try (tc-init-aggregate-layout-ok ctx resolved))]
             (tc-init-type-list-supported
               ctx
               env
+              construct?
               (ast.ast-type-list-box-shared-view elems)))]
         [(Array elem count)
           (if (< count 0)
             (Err (tc-make-array-not-zii-message ctx resolved (Unsupported)))
             (let
               [_ (try (tc-init-aggregate-layout-ok ctx resolved))]
-              (tc-init-type-supported ctx env (ast.ty-node-get elem))))]
+              (tc-init-type-supported
+                ctx
+                env
+                (and construct? (> count 0))
+                (ast.ty-node-get elem))))]
         [(or (Struct name) (StructArgs name _))
-          (tc-init-struct-supported ctx env name resolved)]
+          (tc-init-struct-supported ctx env construct? name resolved)]
         [(or (Enum name) (EnumArgs name _))
-          (tc-init-enum-supported ctx env name resolved)]
+          (tc-init-enum-supported ctx env construct? name resolved)]
         [_ (Err (tc-make-array-not-zii-message ctx resolved (Unsupported)))]))))
 
 (define (tc-init-expr [ctx : TcContext] [env : TcTypeEnv] [ty : ast.AstType]) : ResultTcType
@@ -87896,7 +87943,9 @@
     [_
       (try
         (tc-opaque-representation-ok ctx (& resolved) "cannot initialize the"))]
-    [_ (try (tc-init-type-supported ctx env (tc-global-shared-view resolved)))]
+    [_
+      (try
+        (tc-init-type-supported ctx env true (tc-global-shared-view resolved)))]
     (Ok (tc-tag-active-region env resolved))))
 
 ;; Zero Is Initialization classifier (SPEC 5.12.1, "Zero value of each type"):
@@ -88078,9 +88127,19 @@
 (define (tc-make-array-element-ok
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [construct? : bool]
   [elem : ast.AstType]) : ResultTcUnit
   (let
     [_ (try (tc-opaque-representation-ok ctx (& elem) "cannot initialize the"))]
+    [_
+      (when
+        construct?
+        (match (& elem)
+          [(or (Struct name) (StructArgs name _))
+            (when
+              (tc-foreign-field-construction? ctx name)
+              (return (Err (tc-field-opacity-message name "cannot initialize"))))]
+          [_ unit]))]
     [sealed : i64 (tc-sealed-handle-foreign-element ctx env (& elem))]
     [_
       (try
@@ -88095,8 +88154,8 @@
               ctx
               (tc-global-shared-view elem)
               reason))
-          (tc-init-type-supported ctx env elem))]
-      [(Zii) (tc-init-type-supported ctx env elem)])))
+          (tc-init-type-supported ctx env construct? elem))]
+      [(Zii) (tc-init-type-supported ctx env construct? elem)])))
 
 (define (tc-make-array-zero-literal-length?
   [expr-bases : i64]
@@ -88104,15 +88163,6 @@
   (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& len))
     [(Literal (Int value _)) (= value 0)]
     [_ false]))
-
-(define (tc-make-array-requires-element-init?
-  [expr-bases : i64]
-  [elem : ast.AstType]
-  [len : ast.AstExpr]) : bool
-  (not
-    (and
-      (tc-make-array-zero-literal-length? expr-bases len)
-      (not (tc-type-contains-reference? (& elem))))))
 
 (define (tc-make-array-type
   [ctx : TcContext]
@@ -88139,6 +88189,7 @@
                     (tc-make-array-element-ok
                       ctx
                       env
+                      (> count 0)
                       (ast.clone-ast-type (& elem))))]
                 (tc-init-expr ctx env (ast.ast-ty-array (& elem) count)))
               (Err
@@ -88163,15 +88214,18 @@
                 "typecheck: __tl_make-array element type is not supported"))]
           [else
             (let
+              [construct? : bool
+                (not
+                  (tc-make-array-zero-literal-length?
+                    (tc-context-expr-segment-bases ctx)
+                    len))]
               [_
                 (try
-                  (if (tc-make-array-requires-element-init?
-                    (tc-context-expr-segment-bases ctx)
-                    (ast.clone-ast-type (& elem))
-                    len)
+                  (if (or construct? (tc-type-contains-reference? (& elem)))
                     (tc-make-array-element-ok
                       ctx
                       env
+                      construct?
                       (ast.clone-ast-type (& elem)))
                     ResultTcUnit.Ok))]
               (Ok (tc-tag-active-region env (ast.ast-ty-dyn-array (& elem)))))])))))
@@ -89686,25 +89740,35 @@
 (define (tc-struct-field-mutation-admission
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [receiver-ty : ast.AstType]) : ResultTcUnit
+  [receiver-ty : ast.AstType]
+  [field-id : i64]) : ResultTcUnit
   (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
     [(or (ast.AstType.Struct name) (ast.AstType.StructArgs name _))
       (cond
         [(tc-arena-nominal-name-id? name)
           (tc-require-unsafe ctx env "mutation of Arena.handle")]
         [(tc-sealed-handle-foreign? ctx env name)
-          (tc-sealed-handle-require-unsafe ctx env name "field mutation")]
+          (let
+            [_
+              (when
+                (tc-job-state-opaque-fields? (tc-context-job-state ctx))
+                (let
+                  [_ (try (tc-struct-field-type-id ctx name field-id))]
+                  unit))]
+            (tc-sealed-handle-require-unsafe ctx env name "field mutation"))]
         [else ResultTcUnit.Ok])]
     [(ast.AstType.Ref _ referent)
       (tc-struct-field-mutation-admission
         ctx
         env
-        (tc-context-type-get ctx referent))]
+        (tc-context-type-get ctx referent)
+        field-id)]
     [(ast.AstType.MutRef _ referent)
       (tc-struct-field-mutation-admission
         ctx
         env
-        (tc-context-type-get ctx referent))]
+        (tc-context-type-get ctx referent)
+        field-id)]
     [_ ResultTcUnit.Ok]))
 
 ;; Writing into storage a place encloses mutates every struct on its chain:
@@ -89731,10 +89795,14 @@
               (& (tc-context-expr-get ctx virtual-id)))]
           [(ResultTcExprId.Err _) ResultTcUnit.Ok])
         ResultTcUnit.Ok)]
-    [(StructGet receiver-box _)
+    [(StructGet receiver-box field-id)
       (match (tc-expr-id ctx env receiver-box)
         [(ResultTcType.Ok receiver-ty)
-          (match (tc-struct-field-mutation-admission ctx env receiver-ty)
+          (match (tc-struct-field-mutation-admission
+            ctx
+            env
+            receiver-ty
+            field-id)
             [(ResultTcUnit.Ok)
               (tc-place-mutation-admission
                 ctx
@@ -89759,7 +89827,7 @@
     (tc-global-shared-view receiver-ty)
     field-id)
     [(ResultTcType.Ok field-ty)
-      (match (tc-struct-field-mutation-admission ctx env receiver-ty)
+      (match (tc-struct-field-mutation-admission ctx env receiver-ty field-id)
         [(ResultTcUnit.Ok) (ResultTcType.Ok field-ty)]
         [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
     [(ResultTcType.Err message) (ResultTcType.Err message)]))
@@ -93883,7 +93951,9 @@
               0))]
         (for [index (iterator.range start count)]
           (when
-            (ast.ast-decl-opaque? (& (array-ref decls index)))
+            (or
+              (ast.ast-decl-opaque? (& (array-ref decls index)))
+              (ast.ast-decl-opaque-field? (& (array-ref decls index)) -1))
             (let
               [owner-module : i64
                 (csym.compiler-symbols-owner-module-id-at-index-or
@@ -93927,6 +93997,48 @@
           data-addr)
         (tc-macro-walk-field state macro-opaque-module-providers)))))
 
+(define (tc-foreign-opaque-field?
+  [ctx : TcContext]
+  [owner : i64]
+  [field-index : i64]) : bool
+  (and
+    (tc-job-state-opaque-fields? (tc-context-job-state ctx))
+    (match (csym.compiler-symbols-decl-at-index (tc-context-symbols ctx) owner)
+      [(Ok decl) (ast.ast-decl-opaque-field? (& decl) field-index)]
+      [(Err _) false])
+    (tc-opaque-foreign-index? ctx owner)))
+
+(define (tc-foreign-field-construction? [ctx : TcContext] [name : i64]) : bool
+  (and
+    (tc-job-state-opaque-fields? (tc-context-job-state ctx))
+    (let
+      [handle : i64
+        (csym.compiler-symbols-lookup-type-id-or
+          (tc-context-symbols ctx)
+          name
+          (csym.compiler-symbols-missing-handle))]
+      (and
+        (csym.compiler-symbols-handle-found? handle)
+        (tc-foreign-opaque-field?
+          ctx
+          (csym.compiler-symbol-handle-index handle)
+          -1)))))
+
+(define (tc-field-opacity-message [name : i64] [operation : String]) : String
+  (tc-kind-message
+    (OpaqueRepresentation)
+    (str_cat.str-cat
+      "typecheck: "
+      operation
+      " "
+      (tc-nominal-name-id-display name)
+      " with an opaque field outside its module family")))
+
+(define (tc-struct-pattern-opacity-ok [ctx : TcContext] [name : i64]) : ResultTcUnit
+  (if (tc-foreign-field-construction? ctx name)
+    (Err (tc-field-opacity-message name "cannot match"))
+    (tc-opaque-name-representation-ok ctx name "cannot match the")))
+
 ;; The name of TY when TY is a struct or enum declared (:opaque) whose module
 ;; family excludes the code CTX checks, else -1.
 (define (tc-opaque-foreign-type-name [ctx : TcContext] [ty : (& ast.AstType)]) : i64
@@ -93946,24 +94058,24 @@
         name
         -1))))
 
-;; Whether DECLS, module bodies included, declare an (:opaque) aggregate. The
-;; gates below cost nothing more than this flag for programs without one.
-(define (tc-opaque-decls-declare? [decls : (& decls ast.AstDeclList)]) : bool
+(define (tc-opaque-decl-flags [decls : (& decls ast.AstDeclList)]) : i64
   (let
-    [index : i64 0]
-    [found : bool false]
-    (while (and (not found) (< index (ast.ast-decl-list-len decls)))
+    [flags : i64 0]
+    (for [i (iterator.range 0 decls.len)]
       (let
-        [decl : ast.AstDecl (ast.ast-decl-list-ref decls index)]
-        (match (tc-global-shared-view decl)
-          [(ModuleBody _ body-box)
-            (set!
-              found
-              (tc-opaque-decls-declare?
-                (& (ast.ast-decl-list-box-shared-view body-box))))]
-          [_ (set! found (ast.ast-decl-opaque? (& decl)))]))
-      (+= index 1))
-    found))
+        [decl : ast.AstDecl (ast.ast-decl-list-ref decls i)]
+        (match (& decl)
+          [(ModuleBody _ body)
+            (set! flags (bit-or flags (tc-opaque-decl-flags (& (deref body)))))]
+          [_
+            (when (ast.ast-decl-opaque? (& decl)) (set! flags (bit-or flags 1)))
+            (when
+              (and
+                (= (bit-and flags 2) 0)
+                (ast.ast-decl-opaque-field? (& decl) -1))
+              (set! flags (bit-or flags 2)))]))
+      (when (= flags 3) (return flags)))
+    flags))
 
 ;; E0221 text for USE (such as "cannot construct") applied to opaque NAME.
 (define (tc-opaque-representation-message [name : i64] [use : String]) : String
@@ -94226,7 +94338,7 @@
         fields
         index
         (ast.ast-field-def-fallback))
-        [(Def _ ty cleanup)
+        [(Def _ ty cleanup _)
           (match cleanup
             [(Fn hook)
               (or
@@ -94507,6 +94619,12 @@
   [ty : (& ast.AstType)]) : ResultTcUnit
   (let
     [nominal : i64 (tc-sealed-constructor-nominal ctx ty)]
+    (when
+      (and
+        (>= nominal 0)
+        (tc-foreign-field-construction? ctx nominal)
+        (tc-sealed-constructor-name? ctx name nominal))
+      (return (Err (tc-field-opacity-message nominal "cannot construct"))))
     (if (and
       (>= nominal 0)
       ;; Sealedness is cached per nominal, so it runs before the name test,
@@ -94896,7 +95014,7 @@
       fields
       index
       (ast.ast-field-def-fallback))
-      [(Def _ ty _)
+      [(Def _ ty _ _)
         (unless (tc-move-global-copyable-type? ctx ty depth) (return false))
         unit]))
   true)
@@ -97220,7 +97338,7 @@
                         (& fields)
                         i
                         (ast.ast-field-def-fallback))
-                        [(Def _ field-ty _)
+                        [(Def _ field-ty _ _)
                           (let
                             [resolved : ast.AstType
                               (tc-resolve-type owner-ctx field-ty)]
@@ -97446,7 +97564,7 @@
                     (& fields)
                     field
                     (ast.ast-field-def-fallback))
-                    [(Def _ ty hook)
+                    [(Def _ ty hook _)
                       (match hook
                         [(Fn name)
                           (tc-global-effect-cleanup-call!
@@ -129654,7 +129772,7 @@
   [struct-cleanup : ast.AstStructCleanup]
   [field : ast.AstFieldDef]) : ResultTcUnit
   (match field
-    [(Def field-name ty field-cleanup)
+    [(Def field-name ty field-cleanup _)
       (let
         [field-name-str : String
           (ci.intern-str (ci.intern-syntax-id-value field-name))]
@@ -131018,7 +131136,7 @@
                   (& fields)
                   index
                   (ast.ast-field-def-fallback))
-                  [(ast.AstFieldDef.Def _ field-ty _)
+                  [(ast.AstFieldDef.Def _ field-ty _ _)
                     (set!
                       found
                       (tc-selected-holds-reference-in? ctx walk field-ty))])
@@ -132877,7 +132995,7 @@
             (& defs)
             ordinal
             (ast.ast-field-def-fallback))
-            [(ast.AstFieldDef.Def field-name _ _)
+            [(ast.AstFieldDef.Def field-name _ _ _)
               (ci.intern-syntax-id-value field-name)])]
         [selected : TcResolvedField
           (match (tc-struct-field-selected-with-args-id

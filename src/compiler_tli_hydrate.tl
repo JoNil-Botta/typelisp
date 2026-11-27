@@ -1493,7 +1493,7 @@
               (set! (array-ref foffsets i) (array-ref fields i).byte-offset)
               (set!
                 (array-ref fslots i)
-                (ast.AstFieldDef.Def
+                (ast.ast-field-def-id
                   (intern.intern-syntax-id-from-raw fname-id)
                   (ast.ty-node-get fty-id)
                   (tli-hydrate-field-cleanup (& (array-ref fields i).cleanup))))))

@@ -67,6 +67,8 @@
 (define surface-ast-magic : i64
   3544386045472754772)
 (define surface-ast-schema-version : i64
+  ;; 22: each struct field records its opacity after cleanup metadata.
+  ;;
   ;; 21: AstExpr tag 90 adds the CloneOut scratch-form clone-out step (#8223).
   ;;
   ;; 20: AstExpr tag 46 (`init`) is retired and no longer encoded or decoded
@@ -131,7 +133,7 @@
   ;; requires TlciProducerIdentityAdmission.ExactMatch and degrades to re-parse),
   ;; so this is a deployment invariant rather than a format-compatibility one --
   ;; but the version still moves whenever the encoding shape does.
-  21)
+  22)
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -238,13 +240,14 @@
       (codec.surface-ast-write-i64! out count)
       (for [index (iterator.range 0 count)]
         (match (ast.ast-array-shared-view fields.slots index)
-          [(Def name ty cleanup)
+          [(Def name ty cleanup opaque?)
             (codec.surface-ast-write-name!
               out
               context
               (ci.intern-syntax-id-value name))
             (codec.surface-ast-write-type! out context (& ty))
-            (surface-ast-write-field-cleanup! out context cleanup)])))))
+            (surface-ast-write-field-cleanup! out context cleanup)
+            (codec.surface-ast-write-bool! out opaque?)])))))
 
 (define (surface-ast-read-field-def-list!
   [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstFieldDefList
@@ -258,7 +261,8 @@
         (ast.AstFieldDef.Def
           (ci.intern-syntax-id-from-raw (codec.surface-ast-read-name! reader))
           (codec.surface-ast-read-type! reader)
-          (surface-ast-read-field-cleanup! reader))))
+          (surface-ast-read-field-cleanup! reader)
+          (codec.surface-ast-read-bool! reader))))
     (ast.AstFieldDefList slots count)))
 
 (cfg

@@ -8462,7 +8462,7 @@
       fields
       index
       (ast.ast-field-def-fallback))
-      [(Def _ ty _)
+      [(Def _ ty _ _)
         (compiler-load-lazy-alias-demand-merge
           (compiler-load-session-state-lazy-type-demand
             (owned_view.compiler-owned-reference-shared-view state)
@@ -10088,7 +10088,7 @@
       fields
       index
       (ast.ast-field-def-fallback))
-      [(Def _ _ cleanup)
+      [(Def _ _ cleanup _)
         (when (ast.ast-field-cleanup? cleanup) (return true))
         unit]))
   false)

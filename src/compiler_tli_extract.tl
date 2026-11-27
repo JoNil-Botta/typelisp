@@ -345,7 +345,7 @@
         items
         index
         (ast.ast-field-def-fallback))
-        [(Def name ty cleanup)
+        [(Def name ty cleanup _)
           (let
             [offset : i64
               (if (< index (array-length offsets.slots))

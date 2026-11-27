@@ -978,6 +978,36 @@ Another module may write `(& a db.Connection)` or `(Ptr db.Connection)` and call
 `db.connection-fd`, but not `(db.Connection 3)`, `c.fd`, or a parameter of type
 `db.Connection`.
 
+A `defstruct` field may also carry `(:opaque)` after its type. The marker takes
+no arguments and may appear once per field, in either order with the field's
+alignment or cleanup metadata. Field opacity preserves layout, ABI and the
+struct's ordinary by-value semantics.
+
+```lisp test=ignore name=opaque-field reason="cross-module example"
+(defstruct Reading
+  (value i64)
+  (scale i64 (:opaque)))
+
+(define (reading [value : i64]) : Reading
+  (Reading value 2))
+```
+
+Outside the defining module family, callers can obtain a `Reading` from
+`reading`, store it, pass it, return it, move or drop it, and query its size
+and alignment. They can read, set, borrow and reflect `value` under the usual
+rules. Reading, setting, borrowing or reflecting `scale` produces E0221, even
+inside `unsafe`. Field indices retain declaration order. Field count is
+available, and indexed field queries, `offset-of` and indexing the field list
+from `type-info` check access to the selected field.
+
+A struct with any opaque field reserves its constructor and all positional
+and by-name struct patterns to its defining family. This includes using the
+constructor as a function value, matching only public fields, and implicit
+construction of elements in zero-initialized arrays. These restrictions also
+produce E0221 inside `unsafe`. The same family and provider rules apply to
+macro expansions. To expose a by-value enum with a private representation,
+wrap the enum in a struct with one opaque field.
+
 #### 3.5.5 Sealed handle types
 
 A struct or enum is a **sealed handle type** when one of its fields or variant

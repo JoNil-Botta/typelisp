@@ -834,8 +834,8 @@
       (ctfe.ctfe-reflect-field-list-push
         (ctfe.ctfe-reflect-field-list-push
           (ctfe.ctfe-reflect-field-list-with-capacity 2)
-          (Field cbi.compiler-builtin-id-fix-x (I64)))
-        (Field cbi.compiler-builtin-id-fix-flag (Bool)))]
+          (Field cbi.compiler-builtin-id-fix-x (I64) false))
+        (Field cbi.compiler-builtin-id-fix-flag (Bool) false))]
     [maybe-variants : ctfe.CtfeReflectVariantList
       (ctfe.ctfe-reflect-variant-list-push
         (ctfe.ctfe-reflect-variant-list-push
@@ -1566,14 +1566,14 @@
     [fields : ast.AstFieldDefList
       (ast.ast-field-def-cons
         (&
-          (Def
+          (ast.ast-field-def-id
             (ci.intern-syntax-id-from-raw cbi.compiler-builtin-id-fix-id)
             (I64)
             (No)))
         (&
           (ast.ast-field-def-cons
             (&
-              (Def
+              (ast.ast-field-def-id
                 (ci.intern-syntax-id-from-raw cbi.compiler-builtin-id-fix-label)
                 (String)
                 (No)))

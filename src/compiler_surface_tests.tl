@@ -1810,6 +1810,7 @@
                                 [decl (ast.ast-decl-list-ref hydration.decls 3)]
                                 (and
                                   (ast.ast-decl-must-use? decl)
+                                  (ast.ast-decl-has-opaque-field? decl)
                                   (ast.ast-decl-opaque-field? decl 0)))
                               (match (ast.ast-decl-list-ref hydration.decls 3)
                                 [(DefStruct _ _ hydrated-repr _ _)

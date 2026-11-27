@@ -250,7 +250,8 @@
             (codec.surface-ast-write-bool! out opaque?)])))))
 
 (define (surface-ast-read-field-def-list!
-  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstFieldDefList
+  [reader : (&mut reader codec.SurfaceAstReader)]
+  [markers : (&mut i64)]) : ast.AstFieldDefList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstFieldDef)
@@ -262,7 +263,12 @@
           (ci.intern-syntax-id-from-raw (codec.surface-ast-read-name! reader))
           (codec.surface-ast-read-type! reader)
           (surface-ast-read-field-cleanup! reader)
-          (codec.surface-ast-read-bool! reader))))
+          (codec.surface-ast-read-bool! reader)))
+      (set!
+        (deref markers)
+        (ast.ast-struct-markers-with-field
+          (deref markers)
+          (& (array-ref slots index)))))
     (ast.AstFieldDefList slots count)))
 
 (cfg
@@ -1305,10 +1311,13 @@
           [repr : ast.AstStructRepr (surface-ast-read-struct-repr! reader)]
           [cleanup : ast.AstStructCleanup
             (surface-ast-read-struct-cleanup! reader)]
+          [markers : i64 (ast.ast-decl-meta-markers (& meta))]
           [fields : ast.AstFieldDefList
-            (surface-ast-read-field-def-list! reader)]
+            (surface-ast-read-field-def-list! reader (&mut markers))]
           (surface-ast-check-field-aligns! reader (& repr) (& fields))
-          (DefStruct meta name repr cleanup fields))]
+          (ast.ast-decl-with-aggregate-markers
+            (DefStruct meta name repr cleanup fields)
+            markers))]
       [(= tag 9)
         (let
           [meta : ast.AstDeclMeta (surface-ast-read-decl-meta! reader)]
@@ -1318,10 +1327,13 @@
           [repr : ast.AstStructRepr (surface-ast-read-struct-repr! reader)]
           [cleanup : ast.AstStructCleanup
             (surface-ast-read-struct-cleanup! reader)]
+          [markers : i64 (ast.ast-decl-meta-markers (& meta))]
           [fields : ast.AstFieldDefList
-            (surface-ast-read-field-def-list! reader)]
+            (surface-ast-read-field-def-list! reader (&mut markers))]
           (surface-ast-check-field-aligns! reader (& repr) (& fields))
-          (DefStructLifetimes meta name lifetimes repr cleanup fields))]
+          (ast.ast-decl-with-aggregate-markers
+            (DefStructLifetimes meta name lifetimes repr cleanup fields)
+            markers))]
       [(= tag 10)
         (Import
           (surface-ast-read-decl-meta! reader)

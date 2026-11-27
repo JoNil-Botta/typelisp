@@ -2927,7 +2927,7 @@
         (if (= (ast.ast-decl-list-len (& decls)) 1)
           (let
             [decl (ast.ast-decl-list-ref decls 0)]
-            (ast.ast-decl-aggregate-markers decl))
+            (ast.ast-decl-markers decl))
           -1))]
     [(Err _) -1]))
 

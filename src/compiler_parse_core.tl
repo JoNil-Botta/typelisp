@@ -6069,6 +6069,8 @@
         (let
           [field-index : i64 fields.len]
           [next-fields : ast.AstFieldDefList fields]
+          [next-markers : i64
+            (ast.ast-struct-markers-with-field markers (& parsed-field))]
           (match (reader.spanned-sexpr-view head)
             [(BracketList _ _)
               (let
@@ -6093,7 +6095,7 @@
                 field-index
                 field-align))
             cleanup
-            markers
+            next-markers
             0
             next-fields
             seen-lifetimes

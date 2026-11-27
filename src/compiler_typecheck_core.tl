@@ -88177,30 +88177,37 @@
       (let
         [ctfe-env : ctfe_support.CtfeEnv
           (tc-ctfe-env-for-comptime ctx (tc-context-expr-get ctx len-id))]
-        (match (ctfe_support.compiler-ctfe-eval
-          (& len)
-          ctfe-env
-          (ctfe_support.ctfe-fuel-limit))
-          [(Ok (I64 count) _)
-            (if (>= count 0)
-              (let
-                [_
-                  (try
-                    (tc-make-array-element-ok
-                      ctx
-                      env
-                      (> count 0)
-                      (ast.clone-ast-type (& elem))))]
-                (tc-init-expr ctx env (ast.ast-ty-array (& elem) count)))
-              (Err
-                (tc-kind-message
-                  (ComptimeConstraint)
-                  "typecheck: make-array length must be a non-negative compile-time integer")))]
-          [_
-            (Err
-              (tc-kind-message
-                (ComptimeConstraint)
-                "typecheck: make-array length must be a non-negative compile-time integer"))]))
+        [count : i64
+          (match (ctfe_support.compiler-ctfe-eval
+            (& len)
+            ctfe-env
+            (ctfe_support.ctfe-fuel-limit))
+            [(Ok (I64 n) _) n]
+            [(Err diag)
+              (when
+                (string.eq
+                  (cdiag.compiler-diagnostic-code-or-empty (& (deref diag)))
+                  (cdiag.compiler-diagnostic-code-typecheck-opaque-representation))
+                (return
+                  (Err
+                    (cdiag.compiler-diagnostic-typecheck-error-text
+                      (& (deref diag))))))
+              -1]
+            [_ -1])]
+        (if (>= count 0)
+          (let
+            [_
+              (try
+                (tc-make-array-element-ok
+                  ctx
+                  env
+                  (> count 0)
+                  (ast.clone-ast-type (& elem))))]
+            (tc-init-expr ctx env (ast.ast-ty-array (& elem) count)))
+          (Err
+            (tc-kind-message
+              (ComptimeConstraint)
+              "typecheck: make-array length must be a non-negative compile-time integer"))))
       (let
         [len-ty (try (tc-expr-with-expected-or-actual-id ctx env len-id (I64)))]
         (cond
@@ -93953,7 +93960,7 @@
           (when
             (or
               (ast.ast-decl-opaque? (& (array-ref decls index)))
-              (ast.ast-decl-opaque-field? (& (array-ref decls index)) -1))
+              (ast.ast-decl-has-opaque-field? (& (array-ref decls index))))
             (let
               [owner-module : i64
                 (csym.compiler-symbols-owner-module-id-at-index-or
@@ -94004,7 +94011,10 @@
   (and
     (tc-job-state-opaque-fields? (tc-context-job-state ctx))
     (match (csym.compiler-symbols-decl-at-index (tc-context-symbols ctx) owner)
-      [(Ok decl) (ast.ast-decl-opaque-field? (& decl) field-index)]
+      [(Ok decl)
+        (if (< field-index 0)
+          (ast.ast-decl-has-opaque-field? (& decl))
+          (ast.ast-decl-opaque-field? (& decl) field-index))]
       [(Err _) false])
     (tc-opaque-foreign-index? ctx owner)))
 
@@ -94072,7 +94082,7 @@
             (when
               (and
                 (= (bit-and flags 2) 0)
-                (ast.ast-decl-opaque-field? (& decl) -1))
+                (ast.ast-decl-has-opaque-field? (& decl)))
               (set! flags (bit-or flags 2)))]))
       (when (= flags 3) (return flags)))
     flags))
@@ -118498,7 +118508,7 @@
 
 ;; The body of a `defmacro` carrying the parser's type-literal marker 4, or -1.
 (define (macro-type-literal-body-id [decl : (& ast.AstDecl)]) : i64
-  (if (not (= (bit-and (ast.ast-decl-aggregate-markers decl) 4) 0))
+  (if (not (= (bit-and (ast.ast-decl-markers decl) 4) 0))
     (macro-defmacro-body-id decl)
     -1))
 

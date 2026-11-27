@@ -3504,7 +3504,7 @@
   ;; Strip generation provenance, not the aggregate's semantic marker flags.
   (ast.ast-decl-with-meta
     (ast.ast-decl-meta-runtime-with-aggregate-markers
-      (ast.ast-decl-aggregate-markers decl))
+      (ast.ast-decl-markers decl))
     (owned_view.compiler-owned-reference-shared-view decl)))
 
 (define (gen-rewrite-generated-decl-with-owner

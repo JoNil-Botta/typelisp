@@ -998,7 +998,8 @@ and alignment. They can read, set, borrow and reflect `value` under the usual
 rules. Reading, setting, borrowing or reflecting `scale` produces E0221, even
 inside `unsafe`. Field indices retain declaration order. Field count is
 available, and indexed field queries, `offset-of` and indexing the field list
-from `type-info` check access to the selected field.
+from `type-info` check access to the selected field. A private field query in
+a `make-array` length produces E0221.
 
 A struct with any opaque field reserves its constructor and all positional
 and by-name struct patterns to its defining family. This includes using the

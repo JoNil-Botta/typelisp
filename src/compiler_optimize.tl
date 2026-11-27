@@ -23175,14 +23175,21 @@
           [kind : OptLicmPtrKind (opt-licm-ptr-lookup ptrs ptr-var)]
           (match kind
             [(or (GlobalSlot g) (GlobalDataSlot g))
-              (or
-                globals.clean?
-                globals.relaxed-clean?
+              (and
+                (not (opt-global-mod-ref-any? globals.obj-mask))
                 (not
                   (opt-global-mod-ref-mask-may-write?
-                    globals.index
-                    globals.mask
-                    g)))]
+                    globals.obj-index
+                    globals.obj-mask
+                    g))
+                (or
+                  globals.clean?
+                  globals.relaxed-clean?
+                  (not
+                    (opt-global-mod-ref-mask-may-write?
+                      globals.index
+                      globals.mask
+                      g))))]
             [_ (opt-licm-header-slot-ptr-kind? kind)])))]
     [_ false]))
 
@@ -108403,6 +108410,7 @@
   (set!
     opt-inline-caller-single-site?
     (opt-inline-census-single-site? index census name))
+  (opt-inline-checked-literal-table-reset!)
   (set! opt-inline-caller-facts-ready? false)
   (set! (array-ref opt-inline-caller-loop-labels 0) (OptLabelSet.Nil))
   (set! opt-inline-caller-has-bounds? false)
@@ -108425,6 +108433,7 @@
 ;; them (opt-inline-caller-facts-install!) before reading any of them.
 (define (opt-inline-caller-walk-unpublish!) : unit
   (opt-inline-checked-unpublish-strings!)
+  (opt-inline-checked-literal-table-reset!)
   (set!
     (array-ref opt-inline-caller-facts-blocks 0)
     (ir.compiler-ir-block-list-empty))
@@ -111181,9 +111190,165 @@
   (set! (array-ref opt-inline-checked-literal-scan 1) literal)
   (set! (array-ref opt-inline-checked-literal-scan 2) value))
 
-(define (opt-inline-checked-resolve-string-literal
-  [blocks : (& ir.CompilerIrBlockList)]
-  [value : (& ir.CompilerIrValue)]
+(defstruct OptInlineLiteralTable
+  (dense-cap i64)
+  (defs (__tl_dyn-array i64))
+  (stores (__tl_dyn-array i64))
+  (has-stores? bool))
+
+(defenum OptMaybeInlineLiteralTable
+  (No)
+  (Some OptInlineLiteralTable))
+
+(define opt-inline-checked-literal-table : (__tl_dyn-array
+    OptMaybeInlineLiteralTable)
+  (__tl_make-array (OptMaybeInlineLiteralTable.No)))
+
+(define (opt-inline-checked-literal-table-max-dense) : i64
+  1048576)
+
+(define (opt-inline-checked-literal-table-reset!) : unit
+  (set!
+    (array-ref opt-inline-checked-literal-table 0)
+    (OptMaybeInlineLiteralTable.No)))
+
+(define (opt-inline-checked-literal-table-record-store!
+  [stores : (&mut stores (__tl_dyn-array i64))]
+  [dense-cap : i64]
+  [target : i64]
+  [bi : i64]
+  [ii : i64]) : unit
+  (when
+    (and (>= target 0) (< target dense-cap))
+    (let
+      [base : i64 (* 3 target)]
+      [count : i64 (+ (array-ref stores base) 1)]
+      (set! (array-ref stores base) count)
+      (when
+        (= count 1)
+        (set! (array-ref stores (+ base 1)) bi)
+        (set! (array-ref stores (+ base 2)) ii)))))
+
+(define (opt-inline-checked-literal-table-build
+  [blocks : (& ir.CompilerIrBlockList)]) : OptInlineLiteralTable
+  (let
+    [max-var : i64 -1]
+    [has-addr-of? : bool false]
+    [has-store-ptr? : bool false]
+    [limit : i64 (opt-inline-checked-literal-table-max-dense)]
+    (match blocks
+      [(Array seq)
+        (for [bi (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+          (match (ir.compiler-ir-block-seq-borrow seq bi)
+            [(Block _ instrs)
+              (for [ii
+                (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+                (let
+                  [dst : i64
+                    (ir.compiler-ir-instr-dst-or
+                      (ir.compiler-ir-instr-seq-borrow instrs ii)
+                      -1)]
+                  (when
+                    (and (>= dst 0) (< dst limit) (> dst max-var))
+                    (set! max-var dst))
+                  (match (ir.compiler-ir-instr-seq-borrow instrs ii)
+                    [(AddrOf _ _ _) (set! has-addr-of? true)]
+                    [(StorePtr _ _ _) (set! has-store-ptr? true)]
+                    [_ unit])))]))])
+    (let
+      [dense-cap : i64
+        (if (>= max-var 0)
+          (+ max-var 1)
+          0)]
+      [defs : (__tl_dyn-array i64) (__tl_make-array i64 (* 3 dense-cap))]
+      [need-stores? : bool (and has-addr-of? has-store-ptr? (> dense-cap 0))]
+      [stores : (__tl_dyn-array i64)
+        (if need-stores?
+          (__tl_make-array i64 (* 3 dense-cap))
+          (__tl_make-array i64 0))]
+      (when
+        (> dense-cap 0)
+        (match blocks
+          [(Array seq)
+            (for [bi (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+              (match (ir.compiler-ir-block-seq-borrow seq bi)
+                [(Block _ instrs)
+                  (for [ii
+                    (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+                    (let
+                      [dst : i64
+                        (ir.compiler-ir-instr-dst-or
+                          (ir.compiler-ir-instr-seq-borrow instrs ii)
+                          -1)]
+                      (when
+                        (and (>= dst 0) (< dst dense-cap))
+                        (let
+                          [base : i64 (* 3 dst)]
+                          (set!
+                            (array-ref defs base)
+                            (+ (array-ref defs base) 1))
+                          (set! (array-ref defs (+ base 1)) bi)
+                          (set! (array-ref defs (+ base 2)) ii)))))]))]))
+      (when
+        need-stores?
+        (match blocks
+          [(Array seq)
+            (for [bi (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+              (match (ir.compiler-ir-block-seq-borrow seq bi)
+                [(Block _ instrs)
+                  (for [ii
+                    (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+                    (match (ir.compiler-ir-instr-seq-borrow instrs ii)
+                      [(StorePtr (Var place-var) _ _)
+                        (opt-inline-checked-literal-table-record-store!
+                          (&mut stores)
+                          dense-cap
+                          place-var
+                          bi
+                          ii)
+                        (when
+                          (and
+                            (>= place-var 0)
+                            (< place-var dense-cap)
+                            (= (array-ref defs (* 3 place-var)) 1))
+                          (let
+                            [def-bi : i64
+                              (array-ref defs (+ (* 3 place-var) 1))]
+                            [def-ii : i64
+                              (array-ref defs (+ (* 3 place-var) 2))]
+                            (match (ir.compiler-ir-block-seq-borrow seq def-bi)
+                              [(Block _ def-instrs)
+                                (match (ir.compiler-ir-instr-seq-borrow
+                                  def-instrs
+                                  def-ii)
+                                  [(Gep _ (Var base-var) (I64 0) _)
+                                    (when
+                                      (!= base-var place-var)
+                                      (opt-inline-checked-literal-table-record-store!
+                                        (&mut stores)
+                                        dense-cap
+                                        base-var
+                                        bi
+                                        ii))]
+                                  [_ unit])])))]
+                      [_ unit]))]))]))
+      (OptInlineLiteralTable dense-cap defs stores need-stores?))))
+
+(define (opt-inline-checked-literal-table-ensure!
+  [blocks : (& ir.CompilerIrBlockList)]) : unit
+  (when
+    (match (& (array-ref opt-inline-checked-literal-table 0))
+      [(OptMaybeInlineLiteralTable.No) true]
+      [(OptMaybeInlineLiteralTable.Some _) false])
+    (set!
+      (array-ref opt-inline-checked-literal-table 0)
+      (OptMaybeInlineLiteralTable.Some
+        (opt-inline-checked-literal-table-build blocks)))))
+
+(define (opt-inline-checked-resolve-string-literal-indexed
+  [table : (& table OptInlineLiteralTable)]
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [value : (& value ir.CompilerIrValue)]
   [budget : i64]) : bool
   (when (<= budget 0) (return false))
   (match value
@@ -111193,149 +111358,104 @@
         (string.copy text))
       true]
     [(Var target)
-      (let
-        [defs : i64 0]
-        [matched : bool false]
-        (match blocks
-          [(Array seq)
-            (for [bi (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
-              (match (ir.compiler-ir-block-seq-borrow seq bi)
-                [(Block _ instrs)
-                  (for [ii
-                    (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
-                    (when
-                      (=
-                        (ir.compiler-ir-instr-dst-or
-                          (ir.compiler-ir-instr-seq-borrow instrs ii)
-                          (- 0 1))
-                        target)
-                      (+= defs 1)
-                      (when
-                        (= defs 1)
-                        (match (ir.compiler-ir-instr-seq-borrow instrs ii)
-                          [(Mov _ src _)
-                            (set!
-                              matched
-                              (opt-inline-checked-resolve-string-literal
-                                blocks
-                                (& src)
-                                (- budget 1)))]
-                          [(Word _ src 0 _)
-                            (set!
-                              matched
-                              (opt-inline-checked-resolve-string-literal
-                                blocks
-                                (& src)
-                                (- budget 1)))]
-                          [(Pack _ vals _)
-                            (when
-                              (> (ir.compiler-ir-value-seq-count (& vals)) 0)
-                              (set!
-                                matched
-                                (opt-inline-checked-resolve-string-literal
-                                  blocks
-                                  (ir.compiler-ir-value-seq-borrow (& vals) 0)
-                                  (- budget 1))))]
-                          [_ unit]))))]))])
-        (and (= defs 1) matched))]
-    [_ false]))
-
-(define (opt-inline-checked-gep-zero-of?
-  [blocks : (& ir.CompilerIrBlockList)]
-  [place : (& ir.CompilerIrValue)]
-  [base-var : i64]) : bool
-  (match place
-    [(Var v)
-      (if (= v base-var)
-        true
+      (if (or (< target 0) (>= target table.dense-cap))
+        false
         (let
-          [defs : i64 0]
-          [ok : bool false]
-          (match blocks
-            [(Array seq)
-              (for [bi (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
-                (match (ir.compiler-ir-block-seq-borrow seq bi)
-                  [(Block _ instrs)
-                    (for [ii
-                      (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
-                      (when
-                        (=
-                          (ir.compiler-ir-instr-dst-or
-                            (ir.compiler-ir-instr-seq-borrow instrs ii)
-                            (- 0 1))
-                          v)
-                        (+= defs 1)
-                        (when
-                          (= defs 1)
-                          (match (ir.compiler-ir-instr-seq-borrow instrs ii)
-                            [(Gep _ (Var b) (I64 0) _)
-                              (when (= b base-var) (set! ok true))]
-                            [_ unit]))))]))])
-          (and (= defs 1) ok)))]
+          [base : i64 (* 3 target)]
+          (if (!= (array-ref table.defs base) 1)
+            false
+            (let
+              [bi : i64 (array-ref table.defs (+ base 1))]
+              [ii : i64 (array-ref table.defs (+ base 2))]
+              (match blocks
+                [(Array seq)
+                  (match (ir.compiler-ir-block-seq-borrow seq bi)
+                    [(Block _ instrs)
+                      (match (ir.compiler-ir-instr-seq-borrow instrs ii)
+                        [(Mov _ src _)
+                          (opt-inline-checked-resolve-string-literal-indexed
+                            table
+                            blocks
+                            (& src)
+                            (- budget 1))]
+                        [(Word _ src 0 _)
+                          (opt-inline-checked-resolve-string-literal-indexed
+                            table
+                            blocks
+                            (& src)
+                            (- budget 1))]
+                        [(Pack _ vals _)
+                          (if (> (ir.compiler-ir-value-seq-count (& vals)) 0)
+                            (opt-inline-checked-resolve-string-literal-indexed
+                              table
+                              blocks
+                              (ir.compiler-ir-value-seq-borrow (& vals) 0)
+                              (- budget 1))
+                            false)]
+                        [_ false])])])))))]
     [_ false]))
 
-(define (opt-inline-checked-addr-of-string-literal?
-  [blocks : (& ir.CompilerIrBlockList)]
+(define (opt-inline-checked-addr-of-string-literal-indexed?
+  [table : (& table OptInlineLiteralTable)]
+  [blocks : (& blocks ir.CompilerIrBlockList)]
   [addr-var : i64]
   [storage-var : i64]
   [words : i64]) : bool
-  (let
-    [word0-stores : i64 0]
-    [matched : bool false]
-    (match blocks
-      [(Array seq)
-        (for [bi (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
-          (match (ir.compiler-ir-block-seq-borrow seq bi)
-            [(Block _ instrs)
-              (for [ii
-                (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
-                (match (ir.compiler-ir-instr-seq-borrow instrs ii)
-                  [(StorePtr place val _)
-                    (when
-                      (opt-inline-checked-gep-zero-of?
-                        blocks
-                        (& place)
-                        addr-var)
-                      (+= word0-stores 1)
-                      (when
-                        (= word0-stores 1)
-                        (set!
-                          matched
-                          (opt-inline-checked-resolve-string-literal
+  (if (or (< addr-var 0) (>= addr-var table.dense-cap))
+    false
+    (let
+      [base : i64 (* 3 addr-var)]
+      [word0-stores : i64
+        (if table.has-stores?
+          (array-ref table.stores base)
+          0)]
+      (cond
+        [(= words 0)
+          (and
+            (= word0-stores 0)
+            (opt-inline-checked-resolve-string-literal-indexed
+              table
+              blocks
+              (& (ir.CompilerIrValue.Var storage-var))
+              4))]
+        [(= words 2)
+          (if (= word0-stores 1)
+            (let
+              [bi : i64 (array-ref table.stores (+ base 1))]
+              [ii : i64 (array-ref table.stores (+ base 2))]
+              (match blocks
+                [(Array seq)
+                  (match (ir.compiler-ir-block-seq-borrow seq bi)
+                    [(Block _ instrs)
+                      (match (ir.compiler-ir-instr-seq-borrow instrs ii)
+                        [(StorePtr _ val _)
+                          (opt-inline-checked-resolve-string-literal-indexed
+                            table
                             blocks
                             (& val)
-                            4))))]
-                  [_ unit]))]))])
-    (cond
-      [(= words 0)
-        (and
-          (= word0-stores 0)
-          (opt-inline-checked-resolve-string-literal
-            blocks
-            (& (Var storage-var))
-            4))]
-      [(= words 2) (and (= word0-stores 1) matched)]
-      [else false])))
+                            4)]
+                        [_ false])])]))
+            false)]
+        [else false]))))
 
-(define (opt-inline-checked-literal-scan-blocks!
-  [blocks : (& ir.CompilerIrBlockList)]
+(define (opt-inline-checked-literal-lookup-indexed!
+  [table : (& table OptInlineLiteralTable)]
+  [blocks : (& blocks ir.CompilerIrBlockList)]
   [var : i64]) : unit
-  (match blocks
-    [(Array seq)
-      (for [index (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
-        (match (ir.compiler-ir-block-seq-borrow seq index)
-          [(Block _ instrs)
-            (for [i (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
-              (when
-                (=
-                  (ir.compiler-ir-instr-dst-or
-                    (ir.compiler-ir-instr-seq-borrow instrs i)
-                    (- 0 1))
-                  var)
-                (set!
-                  (array-ref opt-inline-checked-literal-scan 0)
-                  (+ (array-ref opt-inline-checked-literal-scan 0) 1))
-                (match (ir.compiler-ir-instr-seq-borrow instrs i)
+  (let
+    [base : i64 (* 3 var)]
+    [defs : i64 (array-ref table.defs base)]
+    (set! (array-ref opt-inline-checked-literal-scan 0) defs)
+    (when
+      (= defs 1)
+      (let
+        [bi : i64 (array-ref table.defs (+ base 1))]
+        [ii : i64 (array-ref table.defs (+ base 2))]
+        (match blocks
+          [(Array seq)
+            (match (ir.compiler-ir-block-seq-borrow seq bi)
+              [(Block _ instrs)
+                (match (ir.compiler-ir-instr-seq-borrow instrs ii)
                   [(Mov _ value _)
                     (match value
                       [(I64 k)
@@ -111349,13 +111469,71 @@
                       [_ unit])]
                   [(AddrOf _ storage words)
                     (when
-                      (opt-inline-checked-addr-of-string-literal?
+                      (opt-inline-checked-addr-of-string-literal-indexed?
+                        table
                         blocks
                         var
                         storage
                         words)
                       (set! (array-ref opt-inline-checked-literal-scan 1) 2))]
-                  [_ unit])))]))]))
+                  [_ unit])])])))))
+
+(define (opt-inline-checked-literal-scan-blocks!
+  [blocks : (& ir.CompilerIrBlockList)]
+  [var : i64]) : unit
+  (let
+    [table : OptMaybeInlineLiteralTable (OptMaybeInlineLiteralTable.No)]
+    (match blocks
+      [(Array seq)
+        (for [index (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+          (match (ir.compiler-ir-block-seq-borrow seq index)
+            [(Block _ instrs)
+              (for [i
+                (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+                (when
+                  (=
+                    (ir.compiler-ir-instr-dst-or
+                      (ir.compiler-ir-instr-seq-borrow instrs i)
+                      (- 0 1))
+                    var)
+                  (set!
+                    (array-ref opt-inline-checked-literal-scan 0)
+                    (+ (array-ref opt-inline-checked-literal-scan 0) 1))
+                  (match (ir.compiler-ir-instr-seq-borrow instrs i)
+                    [(Mov _ value _)
+                      (match value
+                        [(I64 k)
+                          (set! (array-ref opt-inline-checked-literal-scan 1) 1)
+                          (set! (array-ref opt-inline-checked-literal-scan 2) k)]
+                        [(or (String text) (StrDesc text))
+                          (set! (array-ref opt-inline-checked-literal-scan 1) 2)
+                          (set!
+                            (array-ref opt-inline-checked-literal-scan-string 0)
+                            (string.copy (& text)))]
+                        [_ unit])]
+                    [(AddrOf _ storage words)
+                      (when
+                        (match (& table)
+                          [(OptMaybeInlineLiteralTable.No) true]
+                          [(OptMaybeInlineLiteralTable.Some _) false])
+                        (set!
+                          table
+                          (OptMaybeInlineLiteralTable.Some
+                            (opt-inline-checked-literal-table-build blocks))))
+                      (match (& table)
+                        [(OptMaybeInlineLiteralTable.Some built)
+                          (when
+                            (opt-inline-checked-addr-of-string-literal-indexed?
+                              built
+                              blocks
+                              var
+                              storage
+                              words)
+                            (set!
+                              (array-ref opt-inline-checked-literal-scan 1)
+                              2))]
+                        [(OptMaybeInlineLiteralTable.No) unit])]
+                    [_ unit])))]))])))
 
 (define (opt-inline-checked-literal-set! [slot : i64] [k : i64]) : i64
   (set! (array-ref opt-inline-checked-current-literals (* 2 slot)) 1)
@@ -111377,13 +111555,24 @@
     0
     (match value
       [(I64 k) (opt-inline-checked-literal-set! slot k)]
-      [(String text)
+      [(or (String text) (StrDesc text))
         (opt-inline-checked-literal-string-set! slot (string.copy text))]
       [(Var var)
         (opt-inline-checked-literal-scan-set! 0 0 0)
-        (opt-inline-checked-literal-scan-blocks!
-          (& (opt-inline-caller-facts-blocks-shared-view))
-          var)
+        (let
+          [blocks : ir.CompilerIrBlockList
+            (opt-inline-caller-facts-blocks-shared-view)]
+          (opt-inline-checked-literal-table-ensure! (& blocks))
+          (match (& (array-ref opt-inline-checked-literal-table 0))
+            [(OptMaybeInlineLiteralTable.Some table)
+              (if (and (>= var 0) (< var table.dense-cap))
+                (opt-inline-checked-literal-lookup-indexed!
+                  table
+                  (& blocks)
+                  var)
+                (opt-inline-checked-literal-scan-blocks! (& blocks) var))]
+            [(OptMaybeInlineLiteralTable.No)
+              (opt-inline-checked-literal-scan-blocks! (& blocks) var)]))
         (cond
           [(not (= (array-ref opt-inline-checked-literal-scan 0) 1)) 0]
           [(= (array-ref opt-inline-checked-literal-scan 1) 1)
@@ -111452,7 +111641,26 @@
     256
     (opt-inline-checked-max-blocks)))
 
+(define (opt-inline-checked-borrowed-str-type?
+  [type-segment-bases : i64]
+  [ty : (& ast.AstType)]) : bool
+  (match ty
+    [(or (Ref _ inner) (MutRef _ inner))
+      (match (ast.ast-type-segment-bases-get type-segment-bases inner)
+        [(or (Str) (String)) true]
+        [(Region _ nested)
+          (match (ast.ast-type-segment-bases-get type-segment-bases nested)
+            [(or (Str) (String)) true]
+            [_ false])]
+        [_ false])]
+    [(Region _ inner)
+      (opt-inline-checked-borrowed-str-type?
+        type-segment-bases
+        (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
+    [_ false]))
+
 (define (opt-inline-checked-literal-movs
+  [type-segment-bases : i64]
   [params : (& ir.CompilerIrParamSeq)]
   [np : i64]) : ir.CompilerIrInstrSeq
   (let
@@ -111475,12 +111683,18 @@
                       (array-ref
                         opt-inline-checked-target-literals
                         (+ (* 2 index) 1)))
-                    (String
-                      (string.copy
-                        (&
-                          (array-ref
-                            opt-inline-checked-target-literal-strings
-                            index)))))
+                    (let
+                      [text : String
+                        (string.copy
+                          (&
+                            (array-ref
+                              opt-inline-checked-target-literal-strings
+                              index)))]
+                      (if (opt-inline-checked-borrowed-str-type?
+                        type-segment-bases
+                        (& ty))
+                        (StrDesc text)
+                        (String text))))
                   (ast.ty-node-persist ty)))]))))
     (ir.compiler-ir-instr-builder-to-seq builder)))
 
@@ -111501,12 +111715,14 @@
           (ir.compiler-ir-block-builder-append-slice! out rest)])]))
 
 (define (opt-inline-checked-specialized
+  [type-segment-bases : i64]
   [callee : (& callee ir.CompilerIrFunction)]) : OptMaybeFunction
   (match (owned_view.compiler-owned-reference-shared-view callee)
     [(Function name params ret vars blocks function-abi)
       (let
         [prefix : ir.CompilerIrInstrSeq
           (opt-inline-checked-literal-movs
+            type-segment-bases
             (& params)
             (opt-inline-param-count params))]
         (if (= (ir.compiler-ir-instr-seq-count prefix) 0)
@@ -111527,7 +111743,7 @@
   [callee-cost : i64]
   [site-depth : i64]
   [site-weight : i64]) : i64
-  (match (opt-inline-checked-specialized callee)
+  (match (opt-inline-checked-specialized type-segment-bases callee)
     [(Some special)
       (let
         [special-cost : i64
@@ -129751,30 +129967,12 @@
       1
       2)))
 
-;; Taking a Slice parameter's storage address does not change its header type,
-;; but it does make the by-value words mutable through that escaped address.
-;; Downgrade code 3 to the ordinary-header code so store-crossing Word reuse is
-;; refused while descriptor location classification remains available.
+;; Taking a variable's storage address makes its by-value words mutable through
+;; that escaped address. Unconditionally poison the var to code 2 so neither an
+;; earlier nor a later definition can classify it as an immutable header (1) or
+;; stable Slice/String register group (3).
 (define (opt-load-header-set-mark-unstable [set : OptLoadHeaderSet] [var : i64]) : OptLoadHeaderSet
-  (match (compiler-opt-global-shared-view set)
-    [(Sparse map)
-      (match (opt_i64_i64_map.get (& map) var)
-        [(LookupFound value)
-          (if (= value 3)
-            (let
-              [out : opt_i64_i64_map.Map map]
-              (opt_i64_i64_map.insert-ref! (&mut out) var 1)
-              (Sparse out))
-            set)]
-        [(LookupMissing) set])]
-    [(Dense items)
-      (if (or (< var 0) (>= var (array-length items)))
-        set
-        (begin
-          (if (= (array-ref items var) 3)
-            (set! (array-ref items var) 1)
-            unit)
-          set))]))
+  (opt-load-header-set-mark-code set var 2))
 
 (define (opt-load-header-var? [set : (& OptLoadHeaderSet)] [var : i64]) : bool
   (match set

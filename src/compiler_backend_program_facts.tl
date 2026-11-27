@@ -1350,39 +1350,6 @@
       (when (and (>= v 0) (< v (array-length ok))) (set! (array-ref ok v) 0))]
     [_ unit]))
 
-(define (compiler-backend-const-pack-reject-value-seq!
-  [ok : (&mut ok (__tl_dyn-array i64))]
-  [values : (& compiler_ir_types.CompilerIrValueSeq)]) : unit
-  (for [i
-    (iterator.range 0 (compiler_ir_types.compiler-ir-value-seq-count values))]
-    (compiler-backend-const-pack-reject-value!
-      ok
-      (compiler_ir_types.compiler-ir-value-seq-borrow values i))))
-
-(define (compiler-backend-const-pack-reject-call-args!
-  [ok : (&mut ok (__tl_dyn-array i64))]
-  [args : (& compiler_ir_types.CompilerIrCallArgs)]) : unit
-  (match args
-    [(Nil) unit]
-    [(One a) (compiler-backend-const-pack-reject-value! ok (& a))]
-    [(Two a b)
-      (compiler-backend-const-pack-reject-value! ok (& a))
-      (compiler-backend-const-pack-reject-value! ok (& b))]
-    [(or (Array arr) (Sret arr _))
-      (for [i (iterator.range 0 (array-length arr))]
-        (compiler-backend-const-pack-reject-value! ok (& (array-ref arr i))))]))
-
-(define (compiler-backend-const-pack-reject-phi-inputs!
-  [ok : (&mut ok (__tl_dyn-array i64))]
-  [inputs : (& compiler_ir_types.CompilerIrPhiInputSeq)]) : unit
-  (for [i
-    (iterator.range
-      0
-      (compiler_ir_types.compiler-ir-phi-input-seq-count inputs))]
-    (compiler-backend-const-pack-reject-value!
-      ok
-      (& (array-ref inputs.slots i).value))))
-
 ;; Identify pure-constant non-SSE 2-word `Pack` vars (such as `String` literals)
 ;; whose ONLY uses are direct/indirect `Call`/`TailCall` arguments or `Return`
 ;; values. Eliding their `Pack` stores and materializing their constant words
@@ -1508,97 +1475,54 @@
                 (and (= (array-ref ok v) 1) (!= (array-ref defs v) 1))
                 (set! (array-ref ok v) 0)))
             ;; Pass 2: reject any candidate used outside Call/TailCall/CallIndirect/TailCallIndirect args or Return.
-            (match blocks
-              [(Array seq)
-                (for [bi
-                  (iterator.range
-                    0
-                    (compiler_ir_types.compiler-ir-block-seq-count seq))]
-                  (match (compiler_ir_types.compiler-ir-block-seq-borrow seq bi)
-                    [(Block _ instrs)
-                      (for [ii
-                        (iterator.range
-                          0
-                          (compiler_ir_types.compiler-ir-instr-seq-count instrs))]
-                        (match (compiler_ir_types.compiler-ir-instr-seq-borrow
-                          instrs
-                          ii)
-                          [(or (Call _ _ _ _) (TailCall _ _ _) (Return _)) unit]
-                          [(CallIndirect _ target _ _)
-                            (compiler-backend-const-pack-reject-value!
-                              (&mut ok)
-                              (& target))]
-                          [(TailCallIndirect target _ _)
-                            (compiler-backend-const-pack-reject-value!
-                              (&mut ok)
-                              (& target))]
-                          [(CallIndirectC _ target args _)
-                            (compiler-backend-const-pack-reject-value!
-                              (&mut ok)
-                              (& target))
-                            (compiler-backend-const-pack-reject-call-args!
-                              (&mut ok)
-                              (& args))]
-                          [(CallCAbiStoreResult payload)
-                            (compiler-backend-const-pack-reject-value!
-                              (&mut ok)
-                              (& payload.base))
-                            (compiler-backend-const-pack-reject-call-args!
-                              (&mut ok)
-                              (& payload.args))]
-                          [(CallIndirectCAbiStoreResult payload)
-                            (compiler-backend-const-pack-reject-value!
-                              (&mut ok)
-                              (& payload.base))
-                            (compiler-backend-const-pack-reject-value!
-                              (&mut ok)
-                              (& payload.callee))
-                            (compiler-backend-const-pack-reject-call-args!
-                              (&mut ok)
-                              (& payload.args))]
-                          [(Syscall _ args)
-                            (compiler-backend-const-pack-reject-call-args!
-                              (&mut ok)
-                              (& args))]
-                          [(Phi _ inputs _)
-                            (compiler-backend-const-pack-reject-phi-inputs!
-                              (&mut ok)
-                              (& inputs))]
-                          [(AddrOf _ src _)
-                            (when
-                              (and (>= src 0) (< src emit-vars))
-                              (set! (array-ref ok src) 0))]
-                          [(Pack _ words _)
-                            (compiler-backend-const-pack-reject-value-seq!
-                              (&mut ok)
-                              (& words))]
-                          [(or (Mov _ a _) (Cast _ a _ _) (Bitcast _ a _ _)
-                               (Load _ a _) (Word _ a _ _) (Store _ a _)
-                               (Branch a _ _) (Switch a _ _ _)
-                               (MaskReduce _ _ a _))
-                            (compiler-backend-const-pack-reject-value!
-                              (&mut ok)
-                              (& a))]
-                          [(or (BinOp _ _ a b _) (Gep _ a b _) (StorePtr a b _)
-                               (StoreOwned a b _) (BoundsCheck a b _)
-                               (CopyBytes a b _))
-                            (compiler-backend-const-pack-reject-value!
-                              (&mut ok)
-                              (& a))
-                            (compiler-backend-const-pack-reject-value!
-                              (&mut ok)
-                              (& b))]
-                          [(Select payload)
-                            (compiler-backend-const-pack-reject-value!
-                              (&mut ok)
-                              (& (deref payload).mask))
-                            (compiler-backend-const-pack-reject-value!
-                              (&mut ok)
-                              (& (deref payload).on-true))
-                            (compiler-backend-const-pack-reject-value!
-                              (&mut ok)
-                              (& (deref payload).on-false))]
-                          [_ unit]))]))])
+            (let
+              [uses : compiler_ir_types.CompilerIrIdList
+                (compiler_ir_types.compiler-ir-id-list-new)]
+              (match blocks
+                [(Array seq)
+                  (for [bi
+                    (iterator.range
+                      0
+                      (compiler_ir_types.compiler-ir-block-seq-count seq))]
+                    (match (compiler_ir_types.compiler-ir-block-seq-borrow
+                      seq
+                      bi)
+                      [(Block _ instrs)
+                        (for [ii
+                          (iterator.range
+                            0
+                            (compiler_ir_types.compiler-ir-instr-seq-count
+                              instrs))]
+                          (match (compiler_ir_types.compiler-ir-instr-seq-borrow
+                            instrs
+                            ii)
+                            [(or (Call _ _ _ _) (TailCall _ _ _) (Return _))
+                              unit]
+                            [(CallIndirect _ target _ _)
+                              (compiler-backend-const-pack-reject-value!
+                                (&mut ok)
+                                (& target))]
+                            [(TailCallIndirect target _ _)
+                              (compiler-backend-const-pack-reject-value!
+                                (&mut ok)
+                                (& target))]
+                            [(AddrOf _ src _)
+                              (when
+                                (and (>= src 0) (< src emit-vars))
+                                (set! (array-ref ok src) 0))]
+                            [_
+                              (set! uses.len 0)
+                              (compiler_ir_types.compiler-ir-instr-use-var-ids-into!
+                                (compiler_ir_types.compiler-ir-instr-seq-borrow
+                                  instrs
+                                  ii)
+                                (&mut uses))
+                              (for [u (& uses)]
+                                (let
+                                  [vid : i64 (deref u)]
+                                  (when
+                                    (and (>= vid 0) (< vid emit-vars))
+                                    (set! (array-ref ok vid) 0))))]))]))]))
             ;; Build dense index and filtered group-vars set.
             (let
               [kept : i64 0]

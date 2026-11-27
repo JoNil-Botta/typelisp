@@ -18570,75 +18570,32 @@
                   "lower: mutable borrow of by-value place requires writeback support")))]
           [_
             (if (not (> (lower-state-pattern-place state id) 0))
-              (let
-                [resolved-raw : ast.AstType
-                  (tc_core.tc-resolve-type
-                    ctx
-                    (ast.clone-ast-type (& value-ty)))]
-                [arena-string? : bool
-                  (match (& resolved-raw)
-                    [(Region _ inner)
-                      (match (tc_core.tc-type-strip-region
-                        (tc_core.tc-resolve-type ctx (ast.ty-node-get inner)))
-                        [(String) true]
-                        [_ false])]
-                    [_ false])]
-                [plain-string? : bool
-                  (match (tc_core.tc-type-strip-region resolved-raw)
-                    [(String) true]
-                    [_ false])]
-                (if arena-string?
-                  ;; An arena-branded `(in r String)` borrowed as `(& r str)`
-                  ;; may outlive this function's stack frame (#9288). Allocate
-                  ;; its 16-byte `{data_ptr, len}` descriptor in the active
-                  ;; arena so it outlives this frame and still frees with its
-                  ;; enclosing `with-arena` / `in-arena`.
+              (match (tc_core.tc-type-strip-region
+                (tc_core.tc-resolve-type ctx (ast.clone-ast-type (& value-ty))))
+                [(String)
+                  ;; A borrowed local `String` keeps a stable addressable
+                  ;; 16-byte home in the function frame so `(& s str)` never
+                  ;; points at a reusable temporary slot across loops.
                   (match (lower-state-alloc-var state)
-                    [(Alloc s0 slot-id)
+                    [(Alloc allocated var-id)
                       (let
-                        [s1 : LowerState
+                        [addr-state : LowerState
                           (lower-state-emit-at-expr
                             ctx
-                            s0
-                            (Call
-                              slot-id
-                              cbi.compiler-builtin-id-tl-alloc
-                              (ir.CompilerIrCallArgs.One (I64 16))
-                              (lower-global-shared-view result-ty))
+                            allocated
+                            (AddrOf var-id id 0)
                             origin)]
-                        [s2 : LowerState
-                          (lower-store-inline-value-at-offset
-                            ctx
-                            s1
-                            (& (ir.CompilerIrValue.Var slot-id))
-                            0
-                            (ir.CompilerIrValue.Var id)
-                            (ast.AstType.String)
-                            16)]
-                        (Ok (Expr s2 (Var slot-id) result-ty)))])
-                  (if plain-string?
-                    ;; A borrowed local `String` keeps a stable addressable 16-byte
-                    ;; home in the function frame so `(& s str)` never points at a
-                    ;; reusable temporary slot across loops.
-                    (match (lower-state-alloc-var state)
-                      [(Alloc allocated var-id)
-                        (let
-                          [addr-state : LowerState
-                            (lower-state-emit-at-expr
-                              ctx
-                              allocated
-                              (AddrOf var-id id 0)
-                              origin)]
-                          [marked-state : LowerState
-                            (lower-state-address-taken-mark addr-state id)]
-                          (Ok (Expr marked-state (Var var-id) result-ty)))])
-                    (ResultLowerExpr.Ok
-                      (lower-borrow-copy-to-inline-storage
-                        ctx
-                        state
-                        (Var id)
-                        value-ty
-                        result-ty)))))
+                        [marked-state : LowerState
+                          (lower-state-address-taken-mark addr-state id)]
+                        (Ok (Expr marked-state (Var var-id) result-ty)))])]
+                [_
+                  (ResultLowerExpr.Ok
+                    (lower-borrow-copy-to-inline-storage
+                      ctx
+                      state
+                      (Var id)
+                      value-ty
+                      result-ty))])
               ;; An auto-borrowed deferred Copy binding copies its value as
               ;; read here, not its address.
               (match (lower-load-inline-value-at-offset
@@ -37623,7 +37580,7 @@
       [arg : ast.AstExpr
         (lower-unwrap-borrowed-string-arg
           ctx
-          (& state)
+          state
           env
           type-env
           (lower-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0)))]
@@ -39652,7 +39609,7 @@
 ;; `Word 0` / `Word 1` directly instead of forcing stack storage or AddrOf.
 (define (lower-unwrap-borrowed-string-arg
   [ctx : tc_core.TcContext]
-  [state : (& state LowerState)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [expr : ast.AstExpr]) : ast.AstExpr
@@ -39670,14 +39627,8 @@
                   [id : i64 (sym_i64_env.sym-i64-lookup-id-or env sym -1)]
                   (and
                     (>= id 0)
-                    (not
-                      (lower-state-address-taken-var?
-                        (lower-clone-state state)
-                        id))
-                    (not
-                      (>
-                        (lower-state-pattern-place (lower-clone-state state) id)
-                        0))))]
+                    (not (lower-state-address-taken-var? state id))
+                    (not (> (lower-state-pattern-place state id) 0))))]
               [_ (not (lower-borrowable-place-expr? (& inner-unwrapped)))])]
           (if (not direct-ok?)
             expr
@@ -39685,8 +39636,8 @@
               ctx
               env
               type-env
-              (lower-state-type-cache (lower-clone-state state))
-              (lower-state-function-state (lower-clone-state state))
+              (lower-state-type-cache state)
+              (lower-state-function-state state)
               (& inner))
               [(Ok inner-ty)
                 (match (tc_core.tc-type-strip-region
@@ -39704,7 +39655,7 @@
   [arr : ast.AstExpr]) : ResultLowerExpr
   (let
     [target : ast.AstExpr
-      (lower-unwrap-borrowed-string-arg ctx (& state) env type-env arr)]
+      (lower-unwrap-borrowed-string-arg ctx state env type-env arr)]
     [lowered (try (lower-expr ctx state env type-env target))]
     (match lowered
       [(Expr arr-state arr-value arr-ty)
@@ -39771,7 +39722,7 @@
   [result-ty : ast.AstType]) : ResultLowerExpr
   (let
     [target : ast.AstExpr
-      (lower-unwrap-borrowed-string-arg ctx (& state) env type-env str)]
+      (lower-unwrap-borrowed-string-arg ctx state env type-env str)]
     [lowered : LowerExpr (try (lower-expr ctx state env type-env target))]
     (match lowered
       [(Expr str-state str-value str-ty)

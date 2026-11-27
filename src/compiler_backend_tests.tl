@@ -49885,3 +49885,128 @@ user_fn:
         (test.assert-true
           false
           "COFF object image emission for register-group global succeeded")])))
+
+(test
+  const-pack-rejects-non-whitelisted-uses
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [program : ir.CompilerIrProgram (compiler-backend-descriptor-pair-program)]
+    [index : be_state.CompilerBackendProgramIndex
+      (match program
+        [(Program _ functions externs _authority)
+          (compiler-backend-program-index-build bases functions externs)])]
+    [params : ir.CompilerIrParamSeq (ir.compiler-ir-param-seq-empty)]
+    [spmd-callee : i64 (ir.compiler-ir-symbol "spmd_sink")]
+    [global-sink : i64 (ir.compiler-ir-symbol "global_sink")]
+    [abi : ir.CompilerIrSpmdPrivateAbi
+      (ir.CompilerIrSpmdPrivateAbi
+        (ir.CompilerIrSpmdPrivateAbiSchema.V1)
+        spmd-callee
+        (ir.CompilerIrSpmdBackend.Avx2)
+        4
+        (ir.CompilerIrSpmdPrivateParamSeq
+          (__tl_make-array ir.CompilerIrSpmdPrivateParam 0)
+          0)
+        (ir.CompilerIrSpmdPrivateIndex.None)
+        (ir.CompilerIrSpmdPrivateResult.Unit))]
+    [spmd-args : (__tl_dyn-array ir.CompilerIrSpmdCallArg)
+      (__tl_make-array ir.CompilerIrSpmdCallArg 1)]
+    [_init-spmd : unit
+      (set!
+        (array-ref spmd-args 0)
+        (ir.CompilerIrSpmdCallArg.Arg
+          (ir.CompilerIrSpmdValueClass.Uniform)
+          (ir.CompilerIrValue.Var 1)
+          (ast.AstType.String)))]
+    [ib : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity 6)]
+    [_init-ib : unit
+      (begin
+        (ir.compiler-ir-instr-builder-push!
+          (&mut ib)
+          (ir.CompilerIrInstr.Pack
+            0
+            (ir.compiler-ir-value-seq2
+              (ir.CompilerIrValue.I64 10)
+              (ir.CompilerIrValue.I64 20))
+            (ast.AstType.String)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut ib)
+          (ir.CompilerIrInstr.Pack
+            1
+            (ir.compiler-ir-value-seq2
+              (ir.CompilerIrValue.I64 30)
+              (ir.CompilerIrValue.I64 40))
+            (ast.AstType.String)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut ib)
+          (ir.CompilerIrInstr.Pack
+            2
+            (ir.compiler-ir-value-seq2
+              (ir.CompilerIrValue.I64 50)
+              (ir.CompilerIrValue.I64 60))
+            (ast.AstType.String)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut ib)
+          (ir.CompilerIrInstr.SpmdCall
+            (box
+              (ir.CompilerIrInstrSpmdCallPayload
+                spmd-callee
+                (ir.CompilerIrSpmdBackend.Avx2)
+                4
+                (ir.CompilerIrValue.Bool true)
+                (ir.CompilerIrSpmdCallArgSeq spmd-args 1)
+                (ir.CompilerIrSpmdCallResult.Unit)
+                (ir.CompilerIrSpmdCallOrigin.Private (box abi))))))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut ib)
+          (ir.CompilerIrInstr.Store
+            global-sink
+            (ir.CompilerIrValue.Var 2)
+            (ast.AstType.String)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut ib)
+          (ir.CompilerIrInstr.Return
+            (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))))]
+    [bb : ir.CompilerIrBlockBuilder
+      (ir.compiler-ir-block-builder-with-capacity 1)]
+    [_init-bb : unit
+      (ir.compiler-ir-block-builder-push!
+        (&mut bb)
+        (ir.CompilerIrBlock.Block 0 (ir.compiler-ir-instr-builder-to-seq ib)))]
+    [blocks : ir.CompilerIrBlockList (ir.compiler-ir-block-builder-to-list bb)]
+    [group-vars : compiler_liveness.CompilerLiveI64Set
+      (compiler_liveness.compiler-live-set-insert
+        (compiler_liveness.compiler-live-set-insert
+          (compiler_liveness.compiler-live-set1 0)
+          1)
+        2)]
+    [addressable : compiler_liveness.CompilerLiveI64Set
+      (compiler_liveness.compiler-live-set-empty)]
+    [remaining : compiler_liveness.CompilerLiveI64Set
+      (be_facts.compiler-backend-const-pack-install!
+        bases
+        index
+        (& params)
+        (& blocks)
+        group-vars
+        (& addressable)
+        4)]
+    (test.assert-true
+      (be_facts.compiler-backend-const-pack-var? index.backend-state 0)
+      "const-Pack used only by Return is elided")
+    (test.assert-true
+      (not (compiler_liveness.compiler-live-set-contains? remaining 0))
+      "elided const-Pack is removed from group-vars")
+    (test.assert-true
+      (not (be_facts.compiler-backend-const-pack-var? index.backend-state 1))
+      "const-Pack used by SpmdCall is NOT elided")
+    (test.assert-true
+      (compiler_liveness.compiler-live-set-contains? remaining 1)
+      "SpmdCall-used const-Pack stays in group-vars")
+    (test.assert-true
+      (not (be_facts.compiler-backend-const-pack-var? index.backend-state 2))
+      "const-Pack used by Store is NOT elided")
+    (test.assert-true
+      (compiler_liveness.compiler-live-set-contains? remaining 2)
+      "Store-used const-Pack stays in group-vars")))

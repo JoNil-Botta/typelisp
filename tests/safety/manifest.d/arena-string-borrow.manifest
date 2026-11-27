@@ -1,0 +1,3 @@
+arena_string_borrow_inner_escape_reject|check-fail|tests/safety/arena_string_borrow_inner_escape_reject.tl|-|error[E0205]: typecheck: `s` does not live long enough
+arena_string_borrow_return_reject|check-fail|tests/safety/arena_string_borrow_return_reject.tl|-|error[E0205]: typecheck: cannot return a reference to local `s`
+arena_string_borrow_inner_arena_ok|run-exit|tests/safety/arena_string_borrow_inner_arena_ok.tl|42|-

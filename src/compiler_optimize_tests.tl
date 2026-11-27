@@ -18487,7 +18487,9 @@
         (opt.opt-inline-checked-adopt-literals!))]
     [recorded : i64 (opt.opt-inline-checked-literal-count-now)]
     [pinned : i64
-      (match (opt.opt-inline-checked-specialized forwarder)
+      (match (opt.opt-inline-checked-specialized
+        (ast.ast-node-pool-reader-type-segment-bases)
+        forwarder)
         [(Some special)
           (opt-inline-entry-literal-movs (opt.opt-function-blocks special))]
         [(No) (- 0 1)])]
@@ -18497,7 +18499,9 @@
         (opt.opt-inline-checked-record-literals! no-args)
         (opt.opt-inline-checked-adopt-literals!))]
     [unpinned? : bool
-      (match (opt.opt-inline-checked-specialized forwarder)
+      (match (opt.opt-inline-checked-specialized
+        (ast.ast-node-pool-reader-type-segment-bases)
+        forwarder)
         [(No) true]
         [(Some _) false])]
     (cond
@@ -90549,3 +90553,182 @@ inl.entry.0.cont:
               [_ false])
             "mask SPMD arg accepts var-to-var copy"))]
       [_ (test.assert-true false "expected SpmdCall instruction")])))
+
+(test
+  load-header-set-earlier-block-addr-of-string-unstable
+  (let
+    [type-segment-bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [params : ir.CompilerIrParamSeq (ir.compiler-ir-param-seq-empty)]
+    [b0-builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity 2)]
+    [b1-builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity 5)]
+    [_init-b0 : unit
+      (begin
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b0-builder)
+          (ir.CompilerIrInstr.AddrOf 1 0 0))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b0-builder)
+          (ir.CompilerIrInstr.Jump 1)))]
+    [_init-b1 : unit
+      (begin
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b1-builder)
+          (ir.CompilerIrInstr.Mov
+            0
+            (ir.CompilerIrValue.String "hello")
+            (ast.AstType.String)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b1-builder)
+          (ir.CompilerIrInstr.Word
+            2
+            (ir.CompilerIrValue.Var 0)
+            1
+            (ast.AstType.I64)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b1-builder)
+          (ir.CompilerIrInstr.StorePtr
+            (ir.CompilerIrValue.Var 1)
+            (ir.CompilerIrValue.I64 99)
+            (ast.AstType.I64)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b1-builder)
+          (ir.CompilerIrInstr.Word
+            3
+            (ir.CompilerIrValue.Var 0)
+            1
+            (ast.AstType.I64)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b1-builder)
+          (ir.CompilerIrInstr.Return
+            (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))))]
+    [bb-builder : ir.CompilerIrBlockBuilder
+      (ir.compiler-ir-block-builder-with-capacity 2)]
+    [_init-bb : unit
+      (begin
+        (ir.compiler-ir-block-builder-push!
+          (&mut bb-builder)
+          (ir.CompilerIrBlock.Block
+            0
+            (ir.compiler-ir-instr-builder-to-seq b0-builder)))
+        (ir.compiler-ir-block-builder-push!
+          (&mut bb-builder)
+          (ir.CompilerIrBlock.Block
+            1
+            (ir.compiler-ir-instr-builder-to-seq b1-builder))))]
+    [blocks : ir.CompilerIrBlockList
+      (ir.compiler-ir-block-builder-to-list bb-builder)]
+    [hs-sparse : opt.OptLoadHeaderSet
+      (opt.opt-load-header-set-from-function
+        type-segment-bases
+        (& params)
+        (& blocks))]
+    [hs-dense : opt.OptLoadHeaderSet
+      (opt.opt-load-header-set-from-function-with-size
+        type-segment-bases
+        (& params)
+        (& blocks)
+        8)]
+    (test.assert-true
+      (not (opt.opt-load-slice-var? (& hs-sparse) 0))
+      "sparse header set poisons String var with earlier-block AddrOf out of slice class")
+    (test.assert-true
+      (not (opt.opt-load-header-var? (& hs-sparse) 0))
+      "sparse header set poisons String var with earlier-block AddrOf out of header class")
+    (test.assert-true
+      (not (opt.opt-load-slice-var? (& hs-dense) 0))
+      "dense header set poisons String var with earlier-block AddrOf out of slice class")
+    (test.assert-true
+      (not (opt.opt-load-header-var? (& hs-dense) 0))
+      "dense header set poisons String var with earlier-block AddrOf out of header class")
+    (let
+      [table : opt.OptExprTable (opt.opt-expr-table-new)]
+      [r0 : opt.OptCseResult
+        (opt.opt-slice-word-cse-instr
+          type-segment-bases
+          (& hs-dense)
+          table
+          (ir.CompilerIrInstr.Mov
+            0
+            (ir.CompilerIrValue.String "hello")
+            (ast.AstType.String)))]
+      [t1 : opt.OptExprTable
+        (match r0
+          [(Result next _) next])]
+      [r1 : opt.OptCseResult
+        (opt.opt-slice-word-cse-instr
+          type-segment-bases
+          (& hs-dense)
+          t1
+          (ir.CompilerIrInstr.Word
+            2
+            (ir.CompilerIrValue.Var 0)
+            1
+            (ast.AstType.I64)))]
+      [t2 : opt.OptExprTable
+        (match r1
+          [(Result next _) next])]
+      [r2 : opt.OptCseResult
+        (opt.opt-slice-word-cse-instr
+          type-segment-bases
+          (& hs-dense)
+          t2
+          (ir.CompilerIrInstr.StorePtr
+            (ir.CompilerIrValue.Var 1)
+            (ir.CompilerIrValue.I64 99)
+            (ast.AstType.I64)))]
+      [t3 : opt.OptExprTable
+        (match r2
+          [(Result next _) next])]
+      [r3 : opt.OptCseResult
+        (opt.opt-slice-word-cse-instr
+          type-segment-bases
+          (& hs-dense)
+          t3
+          (ir.CompilerIrInstr.Word
+            3
+            (ir.CompilerIrValue.Var 0)
+            1
+            (ast.AstType.I64)))]
+      (test.assert-true
+        (match r3
+          [(Result _ (Word 3 (Var 0) 1 _)) true]
+          [_ false])
+        "opt-slice-word-cse-instr does not reuse Word across StorePtr on earlier-block AddrOf String"))))
+
+(test
+  inline-checked-literal-movs-borrowed-str-uses-strdesc
+  (let
+    [type-segment-bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [params : ir.CompilerIrParamSeq
+      (ir.compiler-ir-param-seq-prepend
+        (ir.CompilerIrParam.Param
+          "borrowed"
+          (ast.ast-ty-ref 0 (& (ast.AstType.Str)))
+          0)
+        (ir.compiler-ir-param-seq-prepend
+          (ir.CompilerIrParam.Param "owned" (ast.AstType.String) 1)
+          (ir.compiler-ir-param-seq-empty)))]
+    (opt.opt-inline-checked-clear-literals-from! 0)
+    (opt.opt-inline-checked-literal-string-set! 0 "abc")
+    (opt.opt-inline-checked-literal-string-set! 1 "xyz")
+    (opt.opt-inline-checked-adopt-literals!)
+    (let
+      [movs : ir.CompilerIrInstrSeq
+        (opt.opt-inline-checked-literal-movs type-segment-bases (& params) 2)]
+      (opt.opt-inline-checked-unpublish-strings!)
+      (test.assert-i64-eq
+        (ir.compiler-ir-instr-seq-count (& movs))
+        2
+        "two literal specialization movs emitted")
+      (test.assert-true
+        (match (ir.compiler-ir-instr-seq-borrow movs 0)
+          [(Mov 0 (StrDesc text) _) (string.eq (& text) "abc")]
+          [_ false])
+        "borrowed (& str) param specializes with StrDesc literal")
+      (test.assert-true
+        (match (ir.compiler-ir-instr-seq-borrow movs 1)
+          [(Mov 1 (String text) _) (string.eq (& text) "xyz")]
+          [_ false])
+        "owned String param specializes with String literal"))))

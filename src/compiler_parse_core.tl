@@ -135,7 +135,7 @@
     [owner : i64 (compiler-parse-origin-word storage 0)]
     (in-arena
       (unsafe
-        (arena.Arena owner))
+        (arena.from-raw-handle owner))
       (when
         (>= segment old-capacity)
         (let
@@ -449,7 +449,7 @@
     [next : (__tl_dyn-array ParseSemanticOriginRecord)
       (in-arena
         (unsafe
-          (arena.Arena items.arena-handle))
+          (arena.from-raw-handle items.arena-handle))
         (__tl_make-array
           ParseSemanticOriginRecord
           (if (< old-cap 1)
@@ -947,7 +947,7 @@
     [next : (__tl_dyn-array CompilerParseSemanticOriginLookupSlot)
       (in-arena
         (unsafe
-          (arena.Arena compiler-parse-semantic-origin-lookup-arena))
+          (arena.from-raw-handle compiler-parse-semantic-origin-lookup-arena))
         (__tl_make-array CompilerParseSemanticOriginLookupSlot next-capacity))]
     (set! compiler-parse-semantic-origin-lookup-slots next)
     (set! compiler-parse-semantic-origin-lookup-len 0)
@@ -1027,7 +1027,7 @@
       compiler-parse-origin-alias-heads
       (in-arena
         (unsafe
-          (arena.Arena compiler-parse-semantic-origin-lookup-arena))
+          (arena.from-raw-handle compiler-parse-semantic-origin-lookup-arena))
         (__tl_make-array CompilerParseOriginAliasHead next-capacity)))
     (for [old-index (iterator.range 0 old-capacity)]
       (let
@@ -1052,7 +1052,7 @@
       compiler-parse-origin-alias-runs
       (in-arena
         (unsafe
-          (arena.Arena compiler-parse-semantic-origin-lookup-arena))
+          (arena.from-raw-handle compiler-parse-semantic-origin-lookup-arena))
         (__tl_make-array CompilerParseOriginAliasRun next-capacity)))
     (for [index (iterator.range 0 compiler-parse-origin-alias-run-len)]
       (set!
@@ -1155,7 +1155,7 @@
         compiler-parse-origin-segments
         (in-arena
           (unsafe
-            (arena.Arena compiler-parse-semantic-origin-lookup-arena))
+            (arena.from-raw-handle compiler-parse-semantic-origin-lookup-arena))
           (__tl_make-array CompilerParseOriginSegment capacity)))
       (for [index (iterator.range 0 compiler-parse-origin-segment-len)]
         (set!
@@ -1243,7 +1243,7 @@
         compiler-parse-origin-paint
         (in-arena
           (unsafe
-            (arena.Arena compiler-parse-semantic-origin-lookup-arena))
+            (arena.from-raw-handle compiler-parse-semantic-origin-lookup-arena))
           (__tl_make-array
             i64
             (if (< (* (array-length compiler-parse-origin-paint) 2) (- hi lo))
@@ -4379,7 +4379,8 @@
     (let
       [persistent-arena : arena.Arena
         (unsafe
-          (arena.Arena (compiler-parse-state-owner-persistent-arena control)))]
+          (arena.from-raw-handle
+            (compiler-parse-state-owner-persistent-arena control)))]
       (in-arena
         persistent-arena
         (let
@@ -12451,7 +12452,7 @@
         [out : ast.AstDeclList
           (in-arena
             (unsafe
-              (arena.Arena owner))
+              (arena.from-raw-handle owner))
             (ast.ast-persist-parsed-decls pools (& items.slots) items.len))]
         (compiler-parse-decl-origin-register-selected! items (& out))
         (compiler-parse-semantic-origin-register-selected! items (& out))
@@ -13197,7 +13198,8 @@
                       (parse-ast-decl-vec-to-pool-list (& entry.items) pools)))))
               (in-arena
                 (unsafe
-                  (arena.Arena (ast.ast-node-pool-context-base-arena pools)))
+                  (arena.from-raw-handle
+                    (ast.ast-node-pool-context-base-arena pools)))
                 (ast.ast-persist-parsed-type-payloads! pools type-start)
                 (ast.ast-persist-parsed-expr-payloads! pools start)))]
           [(Current) unit])
@@ -13265,7 +13267,7 @@
       (Ok
         (in-arena
           (unsafe
-            (arena.Arena (ast.ast-node-pool-context-base-arena pools)))
+            (arena.from-raw-handle (ast.ast-node-pool-context-base-arena pools)))
           (ast.ast-program decls))))))
 
 (define (parse-ast-source-diagnostic [path : String] [src : (& str)]) : ResultAstProgramDiagnostic

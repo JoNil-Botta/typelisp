@@ -125,7 +125,7 @@
     [shared : String
       (in-arena
         (unsafe
-          (arena.Arena owner))
+          (arena.from-raw-handle owner))
         (string.copy "shared reader storage"))]
     (for [index (iterator.range 0 2049)]
       (reader.sp-node-push

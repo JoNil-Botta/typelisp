@@ -1,0 +1,4 @@
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+generated_set_tuple_indirect_eq|all|-|tests/integration/generated_set_tuple_indirect_eq.tl|42|-|-|stdlib/set.tl stdlib/eq.tl stdlib/hash.tl stdlib/clone.tl|-
+generated_set_tuple_direct_eq|all|-|tests/integration/generated_set_tuple_direct_eq.tl|42|-|-|stdlib/set.tl stdlib/eq.tl stdlib/hash.tl stdlib/clone.tl|-

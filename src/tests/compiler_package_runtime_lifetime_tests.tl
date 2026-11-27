@@ -36,7 +36,7 @@
         [program : parser.ResultAstProgram
           (in-arena
             (unsafe
-              (arena.Arena (array-ref scope.frontend-arena 0)))
+              (arena.from-raw-handle (array-ref scope.frontend-arena 0)))
             (unsafe
               ;; unsafe: resets the global origin capture; it keeps no allocation of this arena
               (parser.parse-ast-source (& source))))]

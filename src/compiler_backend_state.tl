@@ -1684,13 +1684,15 @@
       (CompilerBackendStreamStateData
         false
         (unsafe
-          (arena.Arena 0))
-        (arena.ArenaMark 0)
+          (arena.from-raw-handle 0))
         (unsafe
-          (arena.Arena 0))
-        (arena.ArenaMark 0)
+          (arena.mark-from-raw-handle 0))
         (unsafe
-          (arena.Arena 0))
+          (arena.from-raw-handle 0))
+        (unsafe
+          (arena.mark-from-raw-handle 0))
+        (unsafe
+          (arena.from-raw-handle 0))
         (text_buf.empty)
         0
         (text_buf.empty)
@@ -1755,7 +1757,8 @@
         (let
           [owner : arena.Arena
             (unsafe
-              (arena.Arena (compiler-backend-state-owner-arena backend-state)))]
+              (arena.from-raw-handle
+                (compiler-backend-state-owner-arena backend-state)))]
           [stream-state : CompilerBackendStreamState
             (in-arena owner (compiler-backend-stream-state-new))]
           (set! (deref data).stream-state-address stream-state.address)
@@ -1803,7 +1806,7 @@
           [current : arena.Arena (arena.current)]
           (set! (deref data).emission-arena (arena.raw-handle current))
           current)
-        (arena.Arena stored)))))
+        (arena.from-raw-handle stored)))))
 
 (define (compiler-backend-state-clear-emission-arena!
   [state : CompilerBackendState]) : unit
@@ -1820,7 +1823,7 @@
     (if (= stored 0)
       (arena.current)
       (unsafe
-        (arena.Arena stored)))))
+        (arena.from-raw-handle stored)))))
 
 ;; Whether scalar functions get full register allocation. Register allocation
 ;; makes the EMITTED binary faster but its planning + register-aware emission
@@ -2333,7 +2336,7 @@
         (compiler-backend-state-ptr state)]
       [owner : arena.Arena
         (unsafe
-          (arena.Arena (deref data).owner-arena))]
+          (arena.from-raw-handle (deref data).owner-arena))]
       [keys : (__tl_dyn-array i64)
         (in-arena owner (__tl_make-array i64 capacity))]
       [values : (__tl_dyn-array String)
@@ -2358,7 +2361,7 @@
     [old-capacity : i64 (array-length old-keys)]
     [owner : arena.Arena
       (unsafe
-        (arena.Arena data.owner-arena))]
+        (arena.from-raw-handle data.owner-arena))]
     [keys : (__tl_dyn-array i64)
       (in-arena owner (__tl_make-array i64 new-capacity))]
     [values : (__tl_dyn-array String)
@@ -2735,7 +2738,8 @@
   (empty-live-set compiler_liveness.CompilerLiveI64Set)
   (empty-instr-seq compiler_ir_types.CompilerIrInstrSeq)
   (empty-symbol-seq BackendSymbolSeq)
-  (empty-assignment-index compiler_regalloc.CompilerRegAssignmentTable))
+  (empty-assignment-index compiler_regalloc.CompilerRegAssignmentTable)
+  (use-ids compiler_ir_types.CompilerIrIdList))
 
 (define compiler-backend-function-i64-current-slot-vars : i64
   0)
@@ -2767,16 +2771,14 @@
   13)
 (define compiler-backend-function-i64-home-override1-reg : i64
   14)
-(define compiler-backend-function-i64-use-home-mask-value : i64
-  15)
 (define compiler-backend-function-i64-emit-plan-reg-mask : i64
-  16)
+  15)
 (define compiler-backend-function-i64-current-phi-target-point : i64
-  17)
+  16)
 (define compiler-backend-function-i64-current-phi-dst-home-mask : i64
-  18)
+  17)
 (define compiler-backend-function-i64-gep-fold-cursor : i64
-  19)
+  18)
 
 ;; SysV red zone (see compiler-backend-red-zone-decide!): the number of bytes
 ;; immediately below the post-prologue %rsp that the body's own tracked stack
@@ -2785,36 +2787,36 @@
 ;; a transient push can never land on a live red-zone slot. 0 when the body
 ;; never moves %rsp.
 (define compiler-backend-function-i64-red-zone-guard : i64
-  20)
+  19)
 
 ;; SW-1: the label of the block this function's prologue is spliced at when the
 ;; general shrink-wrap placement is applied, or the no-label sentinel. Read by
 ;; the jump-forward builder, which must never forward a jump past the saving
 ;; block: doing so would step over the spliced prologue.
 (define compiler-backend-function-i64-swb-saving-label : i64
-  21)
+  20)
 
 ;; The bound of the shift count of the IR instruction being emitted, plus one:
 ;; 0 when that instruction is not a shift or its count is not bounded (see
 ;; compiler-backend-shift-count-bounds). Read by compiler-backend-shift-guard-asm.
 (define compiler-backend-function-i64-shift-count-bound : i64
-  22)
+  21)
 
 ;; Whether a frame address of the function being emitted may escape
 ;; (compiler-ir-blocks-frame-may-escape? of its blocks): 0 not yet computed,
 ;; 1 no, 2 yes. Cleared when emit-blocks starts a function; see
 ;; compiler-backend-blocks-expose-frame-at?.
 (define compiler-backend-function-i64-frame-may-escape : i64
-  23)
+  22)
 
 ;; Words the dense group-pair region reserves below the callee-save area: two
 ;; per group var when the function exposes a group address (both words live in
 ;; the canonical pair region), one per group var otherwise (only word1 leaves
 ;; the var region). Zero when the function has no group var.
 (define compiler-backend-function-i64-group-pair-reserve : i64
-  24)
+  23)
 (define compiler-backend-function-i64-count : i64
-  25)
+  24)
 (define compiler-backend-function-bool-current-fn-win64 : i64
   0)
 (define compiler-backend-function-bool-addr-of-forwarding-enabled : i64
@@ -2837,14 +2839,12 @@
   9)
 (define compiler-backend-function-bool-fpo-bare-frame : i64
   10)
-(define compiler-backend-function-bool-use-home-mask-active : i64
-  11)
 (define compiler-backend-function-bool-emit-plan-reg-mask-active : i64
-  12)
+  11)
 (define compiler-backend-function-bool-gep-fold-ready : i64
-  13)
+  12)
 (define compiler-backend-function-bool-gep-fold-drift : i64
-  14)
+  13)
 
 ;; A frame reference the FPO push prologue does NOT absorb. The callee-save
 ;; slot region is spelled through compiler-backend-callee-save-slot, and in FPO
@@ -2854,7 +2854,7 @@
 ;; This flag is the one the slot region's liveness is decided by; bit 9 stays
 ;; the "any frame reference at all" fact its own readers were written for.
 (define compiler-backend-function-bool-nonsave-frame-slot-referenced : i64
-  15)
+  14)
 
 ;; True when the function's FINAL emitted text contains a call that RETURNS to
 ;; it. Only such a call imposes the x86-64 `%rsp % 16 == 0 at the call` duty on
@@ -2875,7 +2875,7 @@
 ;; IR so that runtime helper calls planted by non-Call instructions (allocation,
 ;; string concat, memory helpers, thread init, `__chkstk`) cannot be missed.
 (define compiler-backend-function-bool-call-align-needed : i64
-  16)
+  15)
 
 ;; True when this function's frame lives in the System V red zone: the 128
 ;; bytes below %rsp that the ABI guarantees no signal handler or interrupt
@@ -2884,7 +2884,7 @@
 ;; prologue emits no `subq $N, %rsp`, the epilogue no matching `addq`, and
 ;; every local slot is addressed at a NEGATIVE displacement from %rsp.
 (define compiler-backend-function-bool-red-zone : i64
-  17)
+  16)
 
 ;; True when this function's IR contains a RETURNING call (a call plus a
 ;; syscall; the tail-call and abort families do not return here). Set once from
@@ -2897,9 +2897,9 @@
 ;; chosen without a returning call) nor sit in a bare frameless leaf (a bare
 ;; frame needs no returning call either, and frame > 0 pays the alignment pad).
 (define compiler-backend-function-bool-has-returning-call : i64
-  18)
+  17)
 (define compiler-backend-function-bool-count : i64
-  19)
+  18)
 (define compiler-backend-function-string-shrinkwrap-bare-label : i64
   0)
 (define compiler-backend-function-string-abort-site-path : i64
@@ -2978,6 +2978,20 @@
       (int->ptr
         (cast state.address : u64)
         : (Ptr CompilerBackendFunctionStateData)))))
+
+;; The emission walk grows this buffer in its function arena and reuses it
+;; for each reserved-home query.
+(define (compiler-backend-function-use-ids
+  [state : CompilerBackendFunctionState]) : (MutPtr
+    compiler_ir_types.CompilerIrIdList)
+  (unsafe
+    (int->ptr
+      (cast
+        (+
+          state.address
+          (comptime (offset-of (type CompilerBackendFunctionStateData) use-ids)))
+        : u64)
+      : (MutPtr compiler_ir_types.CompilerIrIdList))))
 
 ;; Representation-lane reads intentionally address the field in place.  A
 ;; generic field projection from `(ptr-read StateData)` materialises the entire wide state
@@ -3567,7 +3581,8 @@
         empty-live-set
         empty-instr-seq
         empty-symbol-seq
-        empty-assignment-index))
+        empty-assignment-index
+        (compiler_ir_types.compiler-ir-id-list-new)))
     (CompilerBackendFunctionState
       (cast
         (unsafe
@@ -3586,7 +3601,8 @@
       (let
         [owner : arena.Arena
           (unsafe
-            (arena.Arena (compiler-backend-state-owner-arena backend-state)))]
+            (arena.from-raw-handle
+              (compiler-backend-state-owner-arena backend-state)))]
         [function-state : CompilerBackendFunctionState
           (in-arena owner (compiler-backend-function-state-new))]
         (compiler-backend-state-set-function-state-address!
@@ -3992,6 +4008,10 @@
       (array-ref data.phi-targets 0)
       (compiler-backend-global-shared-view data.empty-symbol-seq))
     (set! (array-ref data.abort-targets 0) (CompilerBackendTarget.Linux))
+    (unsafe
+      (ptr-write!
+        (compiler-backend-function-use-ids state)
+        (compiler_ir_types.compiler-ir-id-list-new)))
     (compiler-backend-function-scratch-reset! state)))
 
 (defstruct BackendFloatEntry
@@ -5126,11 +5146,11 @@
         (let
           [owner : arena.Arena
             (unsafe
-              (arena.Arena (arena.tl_arena_make_small)))]
+              (arena.from-raw-handle (arena.tl_arena_make_small)))]
           (set! (deref data).lazy-table-arena (arena.raw-handle owner))
           owner)
         (unsafe
-          (arena.Arena (deref data).lazy-table-arena))))))
+          (arena.from-raw-handle (deref data).lazy-table-arena))))))
 
 (define (compiler-backend-symbol-char
   [text : (& text str)]

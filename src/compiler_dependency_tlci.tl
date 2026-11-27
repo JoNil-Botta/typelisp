@@ -427,7 +427,7 @@
         (owned_view.compiler-owned-shared-view state))]
     (in-arena
       (unsafe
-        (arena.Arena owner))
+        (arena.from-raw-handle owner))
       (compiler-dependency-tlci-prepare-source-set-owned! state source-set))))
 
 (define (compiler-dependency-tlci-prepare-dep-transitive!
@@ -468,7 +468,7 @@
               (owned_view.compiler-owned-shared-view state))]
           (in-arena
             (unsafe
-              (arena.Arena owner))
+              (arena.from-raw-handle owner))
             (compiler-dependency-tlci-record-unavailable!
               state
               (compiler-dependency-tlci-key

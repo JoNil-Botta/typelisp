@@ -10210,18 +10210,26 @@ high:
 (define (compiler-backend-ir-walker-call-use-counts-ok?) : bool
   (let
     [counts : (__tl_dyn-array i64) (__tl_make-array i64 12)]
+    [ids : ir.CompilerIrIdList (ir.compiler-ir-id-list-new)]
     (backend.compiler-backend-count-instr-uses
       (&mut counts)
-      (irt.instr "%0 = call* %1(%2, %3) : i64"))
+      (& (irt.instr "%0 = call* %1(%2, %3) : i64"))
+      (&mut ids))
     (backend.compiler-backend-count-instr-uses
       (&mut counts)
-      (irt.instr "%4 = call_c* %4(%5) : i64"))
+      (& (irt.instr "%4 = call_c* %4(%5) : i64"))
+      (&mut ids))
     (backend.compiler-backend-count-instr-uses
       (&mut counts)
-      (TailCall (ci.intern "tail") (Two (Var 6) (Var 7)) (I64)))
+      (&
+        (ann
+          (TailCall (ci.intern "tail") (Two (Var 6) (Var 7)) (I64))
+          : ir.CompilerIrInstr))
+      (&mut ids))
     (backend.compiler-backend-count-instr-uses
       (&mut counts)
-      (irt.instr "tailcall* %8(%9, %10) : i64"))
+      (& (irt.instr "tailcall* %8(%9, %10) : i64"))
+      (&mut ids))
     (and
       (be_state.backend-and8
         (= (array-ref counts 1) 1)
@@ -13640,6 +13648,40 @@ f:
     ret
     .size f, . - f
 ")))
+
+(test
+  backend-layout-classifies-bare-ret
+  (let
+    [source : String "    ret\nret\n    retq\n    ret $8\n    retry\n je ret\n"]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 7)]
+    [flags : (__tl_dyn-array i64) (__tl_make-array i64 6)]
+    (unsafe
+      (let
+        [data : (Ptr u8) (string-data source)]
+        [lines : i64
+          (be_peephole.compiler-backend-layout-split-lines
+            data
+            (string.string-length (& source))
+            6
+            (__tl_array-data starts))]
+        (be_peephole.compiler-backend-layout-classify-lines!
+          data
+          lines
+          (__tl_array-data starts)
+          (__tl_array-data flags))))
+    (test.assert-true
+      (and
+        (= (array-ref flags 0) be_peephole.compiler-backend-layout-flag-ret)
+        (= (array-ref flags 1) be_peephole.compiler-backend-layout-flag-ret)
+        (= (array-ref flags 2) be_peephole.compiler-backend-layout-flag-ret)
+        (= (array-ref flags 3) be_peephole.compiler-backend-layout-flag-ret)
+        (= (array-ref flags 4) 0)
+        (=
+          (array-ref flags 5)
+          (bit-or
+            be_peephole.compiler-backend-layout-flag-jcc
+            (shl 4 be_peephole.compiler-backend-layout-flag-ops-shift))))
+      "identify returns by mnemonic and preserve a branch to a symbol named ret")))
 
 ;; PREDICTED-COLD ARM OUT-OF-LINING, one case per prediction rule.
 (define (compiler-backend-layout-cold-arm-ok?) : bool
@@ -26363,6 +26405,44 @@ entry:
         (asm-has? asm "    movsd (%r10), %xmm2\n" "    movsd 8(%r10), %xmm2\n")
         (asm-lacks? asm "%xmm0" "    movq -40(%rbp), %r10\n"))]
     [(Err _) false]))
+
+(define (compiler-backend-fused-load-order-ok?
+  [source : String]
+  [expected : String]) : bool
+  (asm-ok?
+    (compiler-backend-emit-test-instrs
+      (irt.instrs source)
+      (reg-homes "%0=%r12")
+      5)
+    (has expected)))
+
+(test
+  backend-fused-load-branch-comparison-signedness
+  (test.assert-true
+    (and
+      (compiler-backend-fused-load-order-ok?
+        "%1 = gep %0, 1 : i64
+         %2 = load %1 : i64
+         %3 = le %2, 7 : u64
+         branch %3, yes, no"
+        "    cmpq $7, 8(%r12)\n    jbe ")
+      (compiler-backend-fused-load-order-ok?
+        "%1 = gep %0, 1 : u64
+         %2 = load %1 : u64
+         %3 = le %2, 7 : i64
+         branch %3, yes, no"
+        "    cmpq $7, 8(%r12)\n    jle ")
+      (compiler-backend-fused-load-order-ok?
+        "%2 = load %0 : i64
+         %3 = lt %2, 7 : u64
+         branch %3, yes, no"
+        "    cmpq $7, (%r12)\n    jb ")
+      (compiler-backend-fused-load-order-ok?
+        "%2 = load %0 : u64
+         %3 = lt %2, 7 : i64
+         branch %3, yes, no"
+        "    cmpq $7, (%r12)\n    jl "))
+    "the memory compare must branch with the signedness of its BinOp"))
 
 (define (compiler-backend-gep-load-compare-priority-shape-ok?) : bool
   (asm-ok?
@@ -44043,7 +44123,7 @@ b_keep:
           [group : text_buf.TextBuf
             (unsafe
               (in-arena
-                (arena.Arena (arena.raw-handle group-arena))
+                (arena.from-raw-handle (arena.raw-handle group-arena))
                 (text_buf.append at-boundary.group chunk)))]
           (set! state (CompilerBackendPeepholeChunkState at-boundary.out group))))
       (let
@@ -44228,7 +44308,7 @@ b_keep:
     ;; owner after emission before inspecting the caller-owned records.
     [owner : arena.Arena
       (unsafe
-        (arena.Arena (arena.tl_arena_make_small)))]
+        (arena.from-raw-handle (arena.tl_arena_make_small)))]
     [items : be_state.BackendStringSeq
       (in-arena
         owner
@@ -44988,19 +45068,19 @@ b_keep:
           false)
         (be_state.compiler-backend-function-state-set-bool!
           function-a
-          be_state.compiler-backend-function-bool-use-home-mask-active
+          be_state.compiler-backend-function-bool-identity-tail-forwarder-active
           true)
         (be_state.compiler-backend-function-state-set-bool!
           function-b
-          be_state.compiler-backend-function-bool-use-home-mask-active
+          be_state.compiler-backend-function-bool-identity-tail-forwarder-active
           false)
         (be_state.compiler-backend-function-state-set-i64!
           function-a
-          be_state.compiler-backend-function-i64-use-home-mask-value
+          be_state.compiler-backend-function-i64-red-zone-guard
           85)
         (be_state.compiler-backend-function-state-set-i64!
           function-b
-          be_state.compiler-backend-function-i64-use-home-mask-value
+          be_state.compiler-backend-function-i64-red-zone-guard
           170)
         (be_scalar.compiler-backend-set-emit-plan-reg-mask!
           state-a
@@ -45167,20 +45247,20 @@ b_keep:
           be_state.compiler-backend-function-bool-fpo-bare-frame))
       (be_state.compiler-backend-function-state-bool?
         function-a
-        be_state.compiler-backend-function-bool-use-home-mask-active)
+        be_state.compiler-backend-function-bool-identity-tail-forwarder-active)
       (not
         (be_state.compiler-backend-function-state-bool?
           function-b
-          be_state.compiler-backend-function-bool-use-home-mask-active))
+          be_state.compiler-backend-function-bool-identity-tail-forwarder-active))
       (=
         (be_state.compiler-backend-function-state-i64
           function-a
-          be_state.compiler-backend-function-i64-use-home-mask-value)
+          be_state.compiler-backend-function-i64-red-zone-guard)
         85)
       (=
         (be_state.compiler-backend-function-state-i64
           function-b
-          be_state.compiler-backend-function-i64-use-home-mask-value)
+          be_state.compiler-backend-function-i64-red-zone-guard)
         170)
       (be_operand.compiler-backend-plan-uses-reg?
         state-a
@@ -45292,20 +45372,20 @@ b_keep:
       (not
         (be_state.compiler-backend-function-state-bool?
           function-a
-          be_state.compiler-backend-function-bool-use-home-mask-active))
+          be_state.compiler-backend-function-bool-identity-tail-forwarder-active))
       (not
         (be_state.compiler-backend-function-state-bool?
           function-b
-          be_state.compiler-backend-function-bool-use-home-mask-active))
+          be_state.compiler-backend-function-bool-identity-tail-forwarder-active))
       (=
         (be_state.compiler-backend-function-state-i64
           function-a
-          be_state.compiler-backend-function-i64-use-home-mask-value)
+          be_state.compiler-backend-function-i64-red-zone-guard)
         0)
       (=
         (be_state.compiler-backend-function-state-i64
           function-b
-          be_state.compiler-backend-function-i64-use-home-mask-value)
+          be_state.compiler-backend-function-i64-red-zone-guard)
         170)
       (not
         (be_state.compiler-backend-function-state-bool?
@@ -47798,7 +47878,7 @@ user_fn:
   (let
     [owner : arena.Arena
       (unsafe
-        (arena.Arena (arena.tl_arena_make_small)))]
+        (arena.from-raw-handle (arena.tl_arena_make_small)))]
     [items : be_state.BackendStringSeq
       (in-arena
         owner

@@ -4292,9 +4292,9 @@ production modules without inline tests remain outside the checked entry
 closure, as with package `check`/`build`. `--list` only lists tests and does not
 perform the production preflight.
 
-`--backend-mode scalar|avx2|avx512` selects one code-generation mode for every
+`--backend-mode scalar|sse2|avx2|avx512` selects one code-generation mode for every
 harness of the invocation: a source file, each `--batch` entry, package inline
-tests, and package integration tests. The default is `scalar`. A SIMD request
+tests, and package integration tests. The default follows the [command defaults table](#command-defaults). A SIMD request
 lowers and emits that mode as one selection and never falls back to scalar, so
 `(program-count)` and the other lane identity forms observe the requested gang
 shape. `--check` and `--list` accept every mode on every host because they
@@ -10584,8 +10584,8 @@ supplied. A dash means that the command does not apply that setting.
 | `lsp` | Host | — | — | — | Target aliases |
 | `repl` | Host | 1 | Scalar | Off | Target aliases |
 | `doc --test` | Host | 1 for runnable examples | Scalar for runnable examples | Off for runnable examples | Target aliases |
-| `doc --load` | Host | — | — | — | Target aliases |
-| `doc` (rendering), `fmt` | — | — | — | — | — |
+| `doc --load`, `doc <input.tl> -o <output.md>` | Host | — | — | — | Target aliases |
+| Other documentation rendering, `fmt` | — | — | — | — | — |
 | `inspect sysroot` | Host | — | — | — | — |
 | `clean`, `explain`, `init`, `inspect <file>`, `new` | — | — | — | — | — |
 

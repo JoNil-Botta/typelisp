@@ -176,6 +176,10 @@ run doc --load "{{dir}}/docs-main.tl" "{{dir}}/loaded.md"
 stderr empty
 in file {{dir}}/loaded.md
 contains Loaded host documentation.
+run doc "{{dir}}/docs-main.tl" -o "{{dir}}/rendered.md"
+stderr empty
+in file {{dir}}/rendered.md
+contains Loaded host documentation.
 
 step repl-defaults
 file -x repl.in

@@ -525,12 +525,18 @@
       (lower_i64_i64_map.clone-map (& facts.scopes))
       exposed)))
 
+;; The row index and the lexical stability facts for its affine subscripts.
+(defenum LowerSerializedRow
+  (No)
+  (Some i64 lower_i64_i64_map.Map))
+
 (defstruct CompilerLowerFunctionStateData
   (owner-address i64)
   (inline-helper-stack LowerIdSet)
   (inline-recursion-detected bool)
   (inline-next-temp i64)
   (scalar-call-context LowerSpmdScalarCallContext)
+  (serialized-row LowerSerializedRow)
   (rtf-generation i64)
   (variant-generation i64)
   ;; Proven only by scanning the complete body being lowered under this state:
@@ -8856,6 +8862,7 @@
         false
         0
         (No)
+        (No)
         rtf-generation
         variant-generation
         false
@@ -13630,6 +13637,7 @@
               mask
               (+ index 1)))))]))
 
+;; Only constant offsets can share a load under the same array and mask.
 (define (lower-masked-load-cache-get
   [state : LowerState]
   [array-var : i64]
@@ -13637,7 +13645,7 @@
   [active-mask : ir.CompilerIrMaybeValue]) : LowerMaybeMaskedLoad
   (let
     [mask : i64 (lower-masked-load-mask-key active-mask)]
-    (if (< mask -1)
+    (if (or (< offset 0) (< mask -1))
       (No)
       (lower-masked-load-cache-get-at state array-var offset mask 0))))
 
@@ -13649,7 +13657,7 @@
   [value : ir.CompilerIrValue]) : unit
   (let
     [mask : i64 (lower-masked-load-mask-key active-mask)]
-    (if (< mask -1)
+    (if (or (< offset 0) (< mask -1))
       unit
       (match (lower-state-masked-load-cache state)
         [(No) unit]
@@ -51409,7 +51417,14 @@
         (let
           [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
           [idx : ast.AstExpr (lower-context-expr-get ctx idx-box)]
-          (if (>= (lower-masked-vector-index-offset ctx index idx) 0)
+          (if (or
+            (>=
+              (lower-masked-vector-index-offset
+                ctx
+                index
+                (lower-clone-ast-expr (& idx)))
+              0)
+            (lower-serialized-row-index? ctx function-state env type-env idx))
             (match (lower-contiguous-sequence-var ctx env type-env arr)
               [(Some _ elem-ty)
                 (if (lower-type-bool? elem-ty)
@@ -51422,7 +51437,14 @@
           [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
           [idx : ast.AstExpr (lower-context-expr-get ctx idx-box)]
           [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-          (if (>= (lower-masked-vector-index-offset ctx index idx) 0)
+          (if (or
+            (>=
+              (lower-masked-vector-index-offset
+                ctx
+                index
+                (lower-clone-ast-expr (& idx)))
+              0)
+            (lower-serialized-row-index? ctx function-state env type-env idx))
             (match (lower-contiguous-sequence-var ctx env type-env arr)
               [(Some _ elem-ty)
                 (if (lower-type-bool? elem-ty)
@@ -59655,6 +59677,8 @@
 (define (lower-avx512-masked-index-value
   [ctx : tc_core.TcContext]
   [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
   [index : (& index str)]
   [index-var : i64]
   [expr : ast.AstExpr]) : ResultLowerExpr
@@ -59664,6 +59688,16 @@
         ctx
         index
         (lower-global-shared-view expr))]
+    (when
+      (and
+        (< offset 0)
+        (lower-serialized-row-index?
+          ctx
+          (lower-state-function-state state)
+          env
+          type-env
+          (lower-clone-ast-expr (& expr))))
+      (return (lower-expr ctx state env type-env expr)))
     (if (< offset 0)
       (lower-avx512-masked-unsupported
         ctx
@@ -59812,46 +59846,43 @@
             ctx
             expr
             "mixed lane widths inside one masked foreach")
-          (if (< offset 0)
-            (lower-avx512-masked-unsupported
-              ctx
-              expr
-              "non-contiguous array indexes in this AVX-512 slice")
-            (match (lower-masked-load-cache-get
-              state
-              array-var
-              offset
-              (lower-global-shared-view active-mask))
-              [(Some value) (Ok (Expr state value lane-ty))]
-              [(No)
-                (let
-                  [idx-lowered : LowerExpr
-                    (try
-                      (lower-avx512-masked-index-value
-                        ctx
-                        state
-                        index
-                        index-var
-                        idx))]
-                  (match idx-lowered
-                    [(Expr idx-state idx-value _)
-                      (match (lower-emit-active-load
-                        (& ctx)
-                        (& expr)
-                        idx-state
-                        array-var
-                        idx-value
-                        (lower-global-shared-view active-mask)
-                        lanes
-                        lane-ty)
-                        [(Expr load-state load-value load-ty)
-                          (lower-masked-load-cache-put!
-                            load-state
-                            array-var
-                            offset
-                            active-mask
-                            (lower-global-shared-view load-value))
-                          (Ok (Expr load-state load-value load-ty))])]))]))))]
+          (match (lower-masked-load-cache-get
+            state
+            array-var
+            offset
+            (lower-global-shared-view active-mask))
+            [(Some value) (Ok (Expr state value lane-ty))]
+            [(No)
+              (let
+                [idx-lowered : LowerExpr
+                  (try
+                    (lower-avx512-masked-index-value
+                      ctx
+                      state
+                      env
+                      type-env
+                      index
+                      index-var
+                      idx))]
+                (match idx-lowered
+                  [(Expr idx-state idx-value _)
+                    (match (lower-emit-active-load
+                      (& ctx)
+                      (& expr)
+                      idx-state
+                      array-var
+                      idx-value
+                      (lower-global-shared-view active-mask)
+                      lanes
+                      lane-ty)
+                      [(Expr load-state load-value load-ty)
+                        (lower-masked-load-cache-put!
+                          load-state
+                          array-var
+                          offset
+                          active-mask
+                          (lower-global-shared-view load-value))
+                        (Ok (Expr load-state load-value load-ty))])]))])))]
     [(No)
       (lower-avx512-masked-unsupported
         ctx
@@ -59880,7 +59911,14 @@
           (let
             [idx-lowered : LowerExpr
               (try
-                (lower-avx512-masked-index-value ctx state index index-var idx))]
+                (lower-avx512-masked-index-value
+                  ctx
+                  state
+                  env
+                  type-env
+                  index
+                  index-var
+                  idx))]
             (match idx-lowered
               [(Expr idx-state idx-value _)
                 (let
@@ -59925,6 +59963,8 @@
                   (lower-avx512-masked-index-value
                     ctx
                     state
+                    env
+                    type-env
                     index
                     index-var
                     idx))]
@@ -60040,6 +60080,8 @@
                 (match (lower-avx512-masked-index-value
                   ctx
                   state
+                  env
+                  type-env
                   index
                   index-var
                   idx)
@@ -67044,39 +67086,49 @@
         (> sites 0)
         (let
           [mode (lower-state-mode state)]
+          [function-state (lower-state-function-state state)]
+          [enclosing-row
+            (lower-swap-serialized-row!
+              function-state
+              (if row?
+                (lower-serialized-row
+                  ctx
+                  index-id
+                  (lower-clone-ast-expr (& body)))
+                (No)))]
           [width
             (lower-masked-vector-expr-lanes
               ctx
-              (lower-state-function-state state)
+              function-state
               mode
               env
               type-env
               (string.copy (& index))
               (lower-clone-ast-expr (& body)))]
-          (when
-            (or
+          [result
+            (if (or
               (< width 0)
               (not (lower-type-i64? (ast.clone-ast-type (& index-ty)))))
-            (return
               (lower-avx512-masked-unsupported
                 ctx
                 body
-                "this foreach-active gang shape")))
-          (return
-            (lower-serialized-gangs
-              ctx
-              state
-              env
-              type-env
-              index-id
-              index
-              start-value
-              end-value
-              body
-              (if (= width 0)
-                (lower-simd-lanes-for-elem mode (I64))
-                width)
-              (> sites 1)))))))
+                "this foreach-active gang shape")
+              (lower-serialized-gangs
+                ctx
+                state
+                env
+                type-env
+                index-id
+                index
+                start-value
+                end-value
+                body
+                (if (= width 0)
+                  (lower-simd-lanes-for-elem mode (I64))
+                  width)
+                (> sites 1)))]
+          (lower-swap-serialized-row! function-state enclosing-row)
+          (return result)))))
   (match (lower-plan-foreach
     ctx
     state
@@ -67595,6 +67647,51 @@
                   lower-row-origin-unsupported)]
               [_ lower-row-origin-unsupported])]))]
     [_ lower-row-origin-unsupported]))
+
+;; A serialized row keeps the original array descriptor. A coefficient-one
+;; subscript can be evaluated at the gang base, then the normal active-lane
+;; bounds checks and masked memory operation use that signed element index.
+(define (lower-serialized-row-index?
+  [ctx : tc_core.TcContext]
+  [state : CompilerLowerFunctionState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [index : ast.AstExpr]) : bool
+  (let
+    [row : LowerSerializedRow
+      (unsafe
+        (deref (compiler-lower-function-state-view state)).serialized-row)]
+    (match (& row)
+      [(Some id flags)
+        (= 1 (lower-row-origin-coefficient ctx env type-env flags id index))]
+      [(No) false])))
+
+(define (lower-swap-serialized-row!
+  [state : CompilerLowerFunctionState]
+  [row : LowerSerializedRow]) : LowerSerializedRow
+  (let
+    [ptr (compiler-lower-function-state-ptr state)]
+    [previous : LowerSerializedRow
+      (unsafe
+        (deref ptr).serialized-row)]
+    (unsafe
+      (set! (deref ptr).serialized-row row))
+    previous))
+
+(define (lower-serialized-row
+  [ctx : tc_core.TcContext]
+  [index-id : i64]
+  [body : ast.AstExpr]) : LowerSerializedRow
+  (let
+    [flags (lower_i64_i64_map.with-capacity 8)]
+    (lower-spmd-array-view-scan! ctx (&mut flags) body)
+    (if (=
+      0
+      (bit-and
+        (lower_i64_i64_map.get-value-or (& flags) index-id 0)
+        lower-spmd-array-view-bound))
+      (Some index-id flags)
+      (No))))
 
 ;; The expression id of index ID with the foreach index replaced by 0. Only
 ;; called on an index of coefficient 1, whose other leaves are literals and

@@ -6871,6 +6871,8 @@ Serialized lanes:
   surrounding gang expressions support masked lowering at one element
   width. Those expressions determine the gang width. A body consisting only
   of serialized work uses the backend's `i64` gang width (2, 4 or 8).
+  In a rank-2 row, a contiguous array access may add a row-stable signed
+  offset to the inner index. Only active elements undergo bounds checks.
   The backend packs the current predicate into one bit per lane and visits
   its set bits from lowest to highest. Gang-local values are captured before
   the loop. Checked reads and scalar calls inside the body occur when their

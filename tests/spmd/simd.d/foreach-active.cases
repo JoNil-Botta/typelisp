@@ -3,6 +3,20 @@ opt 0 1 2
 mode scalar sse2 avx2 avx512
 do link-run
 
+# Isolate the serialized function from the rank-2 safety corpus. The
+# other functions in that fixture exercise separate backend policies.
+file row_major_capture.tl
+(import spmd_foreach2_row_major_ok as rows)
+
+(define (main) : i64
+  (let [out : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+    (rows.fill-captured (&mut out))
+    (if (and (= (array-ref out 0) 0) (= (array-ref out 1) 1)
+             (= (array-ref out 2) 100) (= (array-ref out 3) 101))
+      42
+      1)))
+end-file
+
 case foreach-active-lane-values
 source tests/spmd/foreach_active_{{each}}.tl
 each types masks pressure order
@@ -76,4 +90,17 @@ contains %ymm
 end-if
 if-mode avx512
 contains %zmm
+end-if
+
+case foreach-active-row-major
+source {{work}}/row_major_capture.tl
+args --stdlib-root tests/safety
+do link-run
+exit 42
+in stderr
+empty
+if-mode sse2 avx2 avx512
+in asm
+contains active_bits
+contains bsrq
 end-if

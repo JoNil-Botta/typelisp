@@ -24,6 +24,31 @@
         (set! trace (+ (* trace 10) (lane-value (array-ref xs (+ (* r 3) c)))))))
     (= trace 123456)))
 
+;; The first row starts at a negative origin. Its masked-out column zero
+;; must not load. Two reads of the same array have different row offsets.
+(define (row-reads [bias : i64]) : bool
+  (let
+    [xs : (Array i64 10) (array 0 1 2 3 4 5 6 7 8 9)]
+    [seen : i64 0]
+    [ok : bool true]
+    (foreach
+      ([y : i64 0 2] [x : i64 0 5])
+      (if (> x 0)
+        (let
+          [left : i64 (array-ref xs (+ bias (+ (* y 5) x)))]
+          [right : i64 (array-ref xs (+ (* y 5) x))]
+          (foreach-active
+            [lane : i64]
+            (set!
+              ok
+              (and
+                ok
+                (= (lane-value left) (+ seen (lane-value y)))
+                (= (lane-value right) (+ (+ seen (lane-value y)) 1))))
+            (set! seen (+ seen 1))))
+        unit))
+    (and ok (= seen 8))))
+
 (define (negative-range) : bool
   (let
     [seen : i64 0]
@@ -71,6 +96,7 @@
       (= next 18)
       (loop-order)
       (rows)
+      (row-reads -1)
       (negative-range)
       (endpoints 9223372036854775796 9223372036854775807 11)
       (endpoints -9223372036854775808 -9223372036854775797 11)

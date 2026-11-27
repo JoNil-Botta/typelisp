@@ -21566,7 +21566,7 @@
     [retired : i64 compiler-reg-call-facts-arena]
     [owner : arena.Arena
       (unsafe
-        (arena.Arena (arena.tl_arena_make_small)))]
+        (arena.from-raw-handle (arena.tl_arena_make_small)))]
     (set!
       compiler-reg-c-memory-call-names
       (in-arena owner (reg_i64_i64_map.with-capacity 8)))
@@ -21641,7 +21641,7 @@
       (reg_i64_i64_map.get-value-or (& compiler-reg-c-memory-call-names) name 0)]
     (in-arena
       (unsafe
-        (arena.Arena compiler-reg-call-facts-arena))
+        (arena.from-raw-handle compiler-reg-call-facts-arena))
       (reg_i64_i64_map.insert-ref!
         (&mut compiler-reg-c-memory-call-names)
         name
@@ -27514,7 +27514,7 @@
   (let
     [scratch : arena.Arena
       (unsafe
-        (arena.Arena (arena.tl_arena_make_small)))]
+        (arena.from-raw-handle (arena.tl_arena_make_small)))]
     [raw : CompilerRegPlan
       (in-arena
         scratch

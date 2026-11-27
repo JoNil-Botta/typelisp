@@ -1669,7 +1669,7 @@
                 [storage : (__tl_dyn-array AstExprCanonicalSpanRecord)
                   (in-arena
                     (unsafe
-                      (arena.Arena owner))
+                      (arena.from-raw-handle owner))
                     (__tl_make-array AstExprCanonicalSpanRecord 1))]
                 (cast
                   (unsafe
@@ -1711,7 +1711,7 @@
     [segment : (__tl_dyn-array i64)
       (in-arena
         (unsafe
-          (arena.Arena owner))
+          (arena.from-raw-handle owner))
         (__tl_make-array i64 (* records 2)))]
     (cast
       (unsafe
@@ -1725,7 +1725,7 @@
     [words : (__tl_dyn-array i64)
       (in-arena
         (unsafe
-          (arena.Arena owner))
+          (arena.from-raw-handle owner))
         (__tl_make-array i64 (+ ast-expr-span-record-max-segments 6)))]
     [table : i64
       (cast
@@ -2008,12 +2008,12 @@
           [new-segment : (__tl_dyn-array AstExpr)
             (in-arena
               (unsafe
-                (arena.Arena storage-root))
+                (arena.from-raw-handle storage-root))
               (__tl_make-array AstExpr ast-expr-node-pool-segment-size))]
           [new-span-slots : (__tl_dyn-array i32)
             (in-arena
               (unsafe
-                (arena.Arena storage-root))
+                (arena.from-raw-handle storage-root))
               (__tl_make-array i32 ast-expr-node-pool-segment-size))]
           (unsafe
             (ptr-write!
@@ -2223,7 +2223,7 @@
     [next : (__tl_dyn-array i64)
       (in-arena
         (unsafe
-          (arena.Arena node-pool-base-arena))
+          (arena.from-raw-handle node-pool-base-arena))
         (__tl_make-array i64 new-capacity))]
     [used : i64
       (* ast-node-protected-journal-len ast-node-protected-journal-stride)]
@@ -2795,12 +2795,12 @@
     [segment-bases : (__tl_dyn-array i64)
       (in-arena
         (unsafe
-          (arena.Arena base-arena))
+          (arena.from-raw-handle base-arena))
         (ast-expr-node-pool-segment-base-table-new segment-count))]
     [span-slot-segment-bases : (__tl_dyn-array i64)
       (in-arena
         (unsafe
-          (arena.Arena base-arena))
+          (arena.from-raw-handle base-arena))
         (ast-node-pool-segment-base-table-new))]
     [canonical-span-records : i64
       (ast-expr-span-table-new base-arena ast-expr-span-record-initial-capacity)]
@@ -2812,12 +2812,12 @@
         [segment : (__tl_dyn-array AstExpr)
           (in-arena
             (unsafe
-              (arena.Arena storage-root))
+              (arena.from-raw-handle storage-root))
             (__tl_make-array AstExpr ast-expr-node-pool-segment-size))]
         [span-slots : (__tl_dyn-array i32)
           (in-arena
             (unsafe
-              (arena.Arena storage-root))
+              (arena.from-raw-handle storage-root))
             (__tl_make-array i32 ast-expr-node-pool-segment-size))]
         (set!
           (array-ref segment-bases segment-index)
@@ -3570,7 +3570,7 @@
           [new-segment : (__tl_dyn-array AstType)
             (in-arena
               (unsafe
-                (arena.Arena storage-root))
+                (arena.from-raw-handle storage-root))
               (__tl_make-array AstType ast-type-node-pool-segment-size))]
           (unsafe
             (ptr-write!
@@ -3742,18 +3742,18 @@
     [segment-bases : (__tl_dyn-array i64)
       (in-arena
         (unsafe
-          (arena.Arena base-arena))
+          (arena.from-raw-handle base-arena))
         (ast-node-pool-segment-base-table-new))]
     [dedup-slots : (__tl_dyn-array i64)
       (in-arena
         (unsafe
-          (arena.Arena base-arena))
+          (arena.from-raw-handle base-arena))
         (ty-node-dedup-slots-new dedup-cap))]
     [revision : i64 (ast-type-pool-revision-fresh!)]
     [revision-cell : u64
       (in-arena
         (unsafe
-          (arena.Arena base-arena))
+          (arena.from-raw-handle base-arena))
         (ast-type-pool-revision-cell-new
           revision
           (cast
@@ -3767,7 +3767,7 @@
         [segment : (__tl_dyn-array AstType)
           (in-arena
             (unsafe
-              (arena.Arena storage-root))
+              (arena.from-raw-handle storage-root))
             (__tl_make-array AstType ast-type-node-pool-segment-size))]
         (set!
           (array-ref segment-bases segment-index)
@@ -3836,7 +3836,7 @@
     [persistent : AstType
       (in-arena
         (unsafe
-          (arena.Arena
+          (arena.from-raw-handle
             (if (= parse-arena -1)
               base-arena
               parse-arena)))
@@ -3927,7 +3927,7 @@
           (owned_view.compiler-owned-reference-shared-view node))
         (in-arena
           (unsafe
-            (arena.Arena pool.base-arena))
+            (arena.from-raw-handle pool.base-arena))
           (let
             [grown-slots : (__tl_dyn-array i64)
               (ast-type-dedup-grow-slots
@@ -3994,7 +3994,7 @@
       [persistent : AstType
         (in-arena
           (unsafe
-            (arena.Arena base-arena))
+            (arena.from-raw-handle base-arena))
           (ty-node-persist node))]
       [dest : (MutPtr i64)
         (unsafe
@@ -4253,7 +4253,7 @@
   [base-arena : i64]) : (__tl_dyn-array i64)
   (in-arena
     (unsafe
-      (arena.Arena base-arena))
+      (arena.from-raw-handle base-arena))
     (let
       [old-capacity : i64 (ty-node-dedup-table-capacity old-slots)]
       [new-capacity : i64 (* old-capacity 2)]
@@ -4283,7 +4283,7 @@
       (* (ty-node-dedup-table-capacity ty-node-dedup-slots) 2)]
     (in-arena
       (unsafe
-        (arena.Arena node-pool-base-arena))
+        (arena.from-raw-handle node-pool-base-arena))
       (let
         [grown-slots : (__tl_dyn-array i64)
           (ast-type-dedup-grow-slots
@@ -4816,14 +4816,14 @@
         (__tl_make-array AstExprNodePoolState 1)
         (in-arena
           (unsafe
-            (arena.Arena allocation-owner-arena))
+            (arena.from-raw-handle allocation-owner-arena))
           (__tl_make-array AstExprNodePoolState 1)))]
     [type-cell : (__tl_dyn-array AstTypeNodePoolState)
       (if (= allocation-owner-arena 0)
         (__tl_make-array AstTypeNodePoolState 1)
         (in-arena
           (unsafe
-            (arena.Arena allocation-owner-arena))
+            (arena.from-raw-handle allocation-owner-arena))
           (__tl_make-array AstTypeNodePoolState 1)))]
     (begin
       (cfg
@@ -5101,7 +5101,7 @@
     unit
     (in-arena
       (unsafe
-        (arena.Arena (ast-node-pool-context-base-arena pools)))
+        (arena.from-raw-handle (ast-node-pool-context-base-arena pools)))
       (compiler-arena-debug-assert-pool-install!
         (__tl-project-field
           (ast-expr-pool-cell-read pools.expr-pool)

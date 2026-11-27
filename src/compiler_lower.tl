@@ -108,7 +108,7 @@
     [owner : i64 store.arena]
     (in-arena
       (unsafe
-        (arena.Arena owner))
+        (arena.from-raw-handle owner))
       (if (< count capacity)
         unit
         (let
@@ -3075,7 +3075,7 @@
   (let
     [base-arena : arena.Arena
       (unsafe
-        (arena.Arena (ast.ast-node-pool-context-base-arena pools)))]
+        (arena.from-raw-handle (ast.ast-node-pool-context-base-arena pools)))]
     (in-arena base-arena (string.copy (& text)))))
 
 (define (lower-copy-paths-into-pools
@@ -3084,7 +3084,7 @@
   (let
     [base-arena : arena.Arena
       (unsafe
-        (arena.Arena (ast.ast-node-pool-context-base-arena pools)))]
+        (arena.from-raw-handle (ast.ast-node-pool-context-base-arena pools)))]
     (in-arena
       base-arena
       (let
@@ -3113,7 +3113,7 @@
   (let
     [base-arena : arena.Arena
       (unsafe
-        (arena.Arena (ast.ast-node-pool-context-base-arena pools)))]
+        (arena.from-raw-handle (ast.ast-node-pool-context-base-arena pools)))]
     (in-arena
       base-arena
       (load.compiler-load-dotted-path-cache-reset!)
@@ -3134,7 +3134,7 @@
   (let
     [base-arena : arena.Arena
       (unsafe
-        (arena.Arena (ast.ast-node-pool-context-base-arena pools)))]
+        (arena.from-raw-handle (ast.ast-node-pool-context-base-arena pools)))]
     (in-arena
       base-arena
       (cfg
@@ -5658,7 +5658,7 @@
     [storage : CompilerLowerFunctionMemoStorage
       (compiler-lower-function-memo-storage lower-state)]
     (unsafe
-      (arena.Arena storage.arena))))
+      (arena.from-raw-handle storage.arena))))
 
 ;; Only an insert that grows the table allocates, so only that insert needs
 ;; the retained arena; the rest skip the arena switch.
@@ -7748,7 +7748,7 @@
             index-arena))]
       (in-arena
         (unsafe
-          (arena.Arena index-arena))
+          (arena.from-raw-handle index-arena))
         (let
           [modules : lower_i64_i64_map.Map
             (lower_i64_i64_map.with-capacity 512)]
@@ -8777,7 +8777,7 @@
       unit
       (in-arena
         (unsafe
-          (arena.Arena storage.arena))
+          (arena.from-raw-handle storage.arena))
         (let
           [rtf-generations : (__tl_dyn-array i64)
             (__tl_make-array i64 tc-rtf-cap)]
@@ -12876,7 +12876,7 @@
   (let
     [base-arena : arena.Arena
       (unsafe
-        (arena.Arena (ast.ast-node-pool-context-base-arena pools)))]
+        (arena.from-raw-handle (ast.ast-node-pool-context-base-arena pools)))]
     (in-arena
       base-arena
       (let
@@ -63259,7 +63259,7 @@
               unit)
             (in-arena
               (unsafe
-                (arena.Arena package.arena))
+                (arena.from-raw-handle package.arena))
               (lower_i64_i64_map.insert-ref!
                 (&mut package.identity-stable-hashes)
                 identity
@@ -63429,7 +63429,7 @@
       [(LookupMissing)
         (in-arena
           (unsafe
-            (arena.Arena package.arena))
+            (arena.from-raw-handle package.arena))
           (lower_i64_i64_map.insert-ref!
             (&mut package.symbol-identities)
             registration-key
@@ -76058,7 +76058,7 @@
             [created : (Box LowerIrChunkDirectory)
               (in-arena
                 (unsafe
-                  (arena.Arena directory-arena))
+                  (arena.from-raw-handle directory-arena))
                 (box
                   (LowerIrChunkDirectory
                     (__tl_make-array i64 64)
@@ -76085,7 +76085,7 @@
             (>= chunk (array-length directory.handles))
             (in-arena
               (unsafe
-                (arena.Arena
+                (arena.from-raw-handle
                   (array-ref
                     state.ir-chunk-cells
                     lower-ir-chunk-directory-arena-cell)))
@@ -76131,7 +76131,7 @@
     (if (= (compiler-lower-arena-state-ir-chunk-budget (& arenas)) 0)
       (in-arena
         (unsafe
-          (arena.Arena carrier))
+          (arena.from-raw-handle carrier))
         (ir.compiler-ir-clone-function-seq pools (& functions)))
       ;; Chunked: the sequence's slot array stays in the carrier, and each
       ;; body is deep-cloned into the chunk its lower-sequence position falls
@@ -76140,7 +76140,7 @@
         [builder : ir.CompilerIrFunctionBuilder
           (in-arena
             (unsafe
-              (arena.Arena carrier))
+              (arena.from-raw-handle carrier))
             (ir.compiler-ir-function-builder-with-capacity functions.len))]
         (for [i (iterator.range 0 functions.len)]
           (let
@@ -76149,18 +76149,18 @@
             [body : ir.CompilerIrFunction
               (in-arena
                 (unsafe
-                  (arena.Arena chunk))
+                  (arena.from-raw-handle chunk))
                 (ir.compiler-ir-clone-function
                   pools
                   (& (array-ref functions.slots i))))]
             (in-arena
               (unsafe
-                (arena.Arena carrier))
+                (arena.from-raw-handle carrier))
               (ir.compiler-ir-function-builder-push! (&mut builder) body))
             (compiler-lower-ir-chunk-note-escaped! (& arenas))))
         (in-arena
           (unsafe
-            (arena.Arena carrier))
+            (arena.from-raw-handle carrier))
           (ir.compiler-ir-function-builder-to-seq builder))))))
 
 (define (lower-checked-named-function
@@ -79266,7 +79266,7 @@
       [types : LowerDebugTypes (compiler-lower-state-debug-types owner)]
       (in-arena
         (unsafe
-          (arena.Arena types.arena))
+          (arena.from-raw-handle types.arena))
         (lower-debug-type-id! ctx (&mut types) ty))
       (compiler-lower-state-set-debug-types! owner types))))
 

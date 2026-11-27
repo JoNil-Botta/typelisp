@@ -855,7 +855,7 @@
     [table : InternStructuralTable
       (in-arena
         (unsafe
-          (arena.Arena arena-handle))
+          (arena.from-raw-handle arena-handle))
         (intern-structural-table-new))]
     (__tl_make-array table)))
 
@@ -1100,7 +1100,7 @@
     [generation : i64 (intern-structural-generation-make!)]
     (in-arena
       (unsafe
-        (arena.Arena generation))
+        (arena.from-raw-handle generation))
       (let
         [next-kinds : (__tl_dyn-array u8) (__tl_make-array u8 new-capacity)]
         [next-lefts : (__tl_dyn-array i64) (__tl_make-array i64 new-capacity)]
@@ -1156,7 +1156,7 @@
     [generation : i64 (intern-structural-generation-make!)]
     (in-arena
       (unsafe
-        (arena.Arena generation))
+        (arena.from-raw-handle generation))
       (let
         [next-slots : (__tl_dyn-array i64) (__tl_make-array i64 new-capacity)]
         (set! table.map-slots next-slots)
@@ -1378,7 +1378,7 @@
     [next : InternStructuralTable
       (in-arena
         (unsafe
-          (arena.Arena arena-handle))
+          (arena.from-raw-handle arena-handle))
         (intern-structural-table-new))]
     (set! (array-ref cell 0) next)))
 
@@ -2115,7 +2115,7 @@
   [len : i64]) : String
   (in-arena
     (unsafe
-      (arena.Arena (array-ref state.persistent-arena 0)))
+      (arena.from-raw-handle (array-ref state.persistent-arena 0)))
     (intern-substring text start len)))
 
 (define (intern-compat-state-persistent-substring
@@ -2698,7 +2698,7 @@
 (define (intern-persistent-arena-floor-refresh!) : unit
   (in-arena
     (unsafe
-      (arena.Arena intern-persistent-arena))
+      (arena.from-raw-handle intern-persistent-arena))
     (set! intern-persistent-arena-floor-mark (tl_region_mark))))
 
 (define (intern-persistent-arena-floor-ensure!) : unit
@@ -3214,7 +3214,7 @@
     text
     (in-arena
       (unsafe
-        (arena.Arena arena-handle))
+        (arena.from-raw-handle arena-handle))
       (intern-substring text 0 (__tl_string_length text)))))
 
 (define (intern-composite-rendered-name [id : i64]) : String
@@ -4971,7 +4971,7 @@
 (define (intern-source-name-session-handle [session : InternSourceNameSession]) : InternSourceNameSessionHandle
   (in-arena
     (unsafe
-      (arena.Arena intern-persistent-arena))
+      (arena.from-raw-handle intern-persistent-arena))
     (let
       [cell : (__tl_dyn-array InternSourceNameSession)
         (__tl_make-array InternSourceNameSession 1)]

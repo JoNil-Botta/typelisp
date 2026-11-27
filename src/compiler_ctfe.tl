@@ -120,7 +120,7 @@
   (if (ctfe_key_map.needs-grow? map)
     (in-arena
       (unsafe
-        (arena.Arena
+        (arena.from-raw-handle
           (unsafe
             (deref (compiler-ctfe-macro-state-view state)).map-storage-arena)))
       (ctfe_key_map.grow! map))
@@ -217,7 +217,7 @@
     [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
     (in-arena
       (unsafe
-        (arena.Arena data.map-storage-arena))
+        (arena.from-raw-handle data.map-storage-arena))
       (if (< (ctfe_key_map.capacity (& data.visible-macro-name-set)) 128)
         (set! data.visible-macro-name-set (ctfe_key_map.with-capacity 128))
         (ctfe_key_map.clear-ref! (&mut data.visible-macro-name-set))))
@@ -1640,7 +1640,7 @@
     [owner : i64 store.owner-arena]
     (in-arena
       (unsafe
-        (arena.Arena owner))
+        (arena.from-raw-handle owner))
       (if (< count capacity)
         unit
         (let
@@ -2751,7 +2751,7 @@
     [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
     (in-arena
       (unsafe
-        (arena.Arena data.map-storage-arena))
+        (arena.from-raw-handle data.map-storage-arena))
       (if (< (ctfe_key_map.capacity (& data.module-macro-export-keys)) 256)
         (set! data.module-macro-export-keys (ctfe_key_map.with-capacity 256))
         (ctfe_key_map.clear-ref! (&mut data.module-macro-export-keys))))
@@ -2816,7 +2816,7 @@
         1)]
     (in-arena
       (unsafe
-        (arena.Arena data.map-storage-arena))
+        (arena.from-raw-handle data.map-storage-arena))
       (if (<
         (ctfe_key_map.capacity (& data.module-value-type-ids))
         minimum-capacity)

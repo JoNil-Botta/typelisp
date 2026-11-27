@@ -44115,7 +44115,7 @@ b_keep:
           [group : text_buf.TextBuf
             (unsafe
               (in-arena
-                (arena.Arena (arena.raw-handle group-arena))
+                (arena.from-raw-handle (arena.raw-handle group-arena))
                 (text_buf.append at-boundary.group chunk)))]
           (set! state (CompilerBackendPeepholeChunkState at-boundary.out group))))
       (let
@@ -44300,7 +44300,7 @@ b_keep:
     ;; owner after emission before inspecting the caller-owned records.
     [owner : arena.Arena
       (unsafe
-        (arena.Arena (arena.tl_arena_make_small)))]
+        (arena.from-raw-handle (arena.tl_arena_make_small)))]
     [items : be_state.BackendStringSeq
       (in-arena
         owner
@@ -47870,7 +47870,7 @@ user_fn:
   (let
     [owner : arena.Arena
       (unsafe
-        (arena.Arena (arena.tl_arena_make_small)))]
+        (arena.from-raw-handle (arena.tl_arena_make_small)))]
     [items : be_state.BackendStringSeq
       (in-arena
         owner

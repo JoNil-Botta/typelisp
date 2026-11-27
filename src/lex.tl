@@ -989,7 +989,7 @@
     [new-buffer : (__tl_dyn-array token.SpannedToken)
       (in-arena
         (unsafe
-          (arena.Arena storage-root))
+          (arena.from-raw-handle storage-root))
         (__tl_make-array
           token.SpannedToken
           (spanned-token-buffer-next-capacity required)))]

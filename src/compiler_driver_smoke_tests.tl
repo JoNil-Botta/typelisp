@@ -1020,7 +1020,7 @@
     [caller-handle : i64 (arena.tl_arena_make)]
     [caller : arena.Arena
       (unsafe
-        (arena.Arena caller-handle))]
+        (arena.from-raw-handle caller-handle))]
     [ok : bool
       (in-arena
         caller
@@ -1137,7 +1137,7 @@
                         globals
                         (in-arena
                           (unsafe
-                            (arena.Arena
+                            (arena.from-raw-handle
                               (lower.compiler-lower-arena-state-ensure-ir!
                                 arenas-b)))
                           (compiler_ir_types.compiler-ir-clone-function-seq
@@ -1365,7 +1365,7 @@
       [b-word : i64
         (in-arena
           (unsafe
-            (arena.Arena b-scratch))
+            (arena.from-raw-handle b-scratch))
           (compiler-driver-smoke-runtime-alloc 8))]
       (unsafe
         (ptr-write! (int->ptr b-word : (MutPtr i64)) 313))
@@ -1510,13 +1510,13 @@
     [a-word : i64
       (in-arena
         (unsafe
-          (arena.Arena a-scratch))
+          (arena.from-raw-handle a-scratch))
         (compiler-driver-smoke-runtime-alloc 67108800)
         (compiler-driver-smoke-runtime-alloc 8))]
     [b-word : i64
       (in-arena
         (unsafe
-          (arena.Arena b-ir))
+          (arena.from-raw-handle b-ir))
         (compiler-driver-smoke-runtime-alloc 67108800)
         (compiler-driver-smoke-runtime-alloc 8))]
     (unsafe
@@ -1604,13 +1604,13 @@
         (begin
           (in-arena
             (unsafe
-              (arena.Arena
+              (arena.from-raw-handle
                 (lower.compiler-lower-arena-state-ensure-ir! lower-a)))
             (compiler-driver-smoke-runtime-alloc 67108800)
             (compiler-driver-smoke-runtime-alloc 8))
           (in-arena
             (unsafe
-              (arena.Arena b-scratch))
+              (arena.from-raw-handle b-scratch))
             (let
               [owner : lower.CompilerLowerState
                 (driver.compiler-driver-state-owned-lower-state state-a)]
@@ -1627,7 +1627,7 @@
       [isolated? : bool
         (in-arena
           (unsafe
-            (arena.Arena b-scratch))
+            (arena.from-raw-handle b-scratch))
           (driver.compiler-driver-state-release-lower-arenas!
             (owned_view.compiler-owned-shared-view state-a))
           (driver.compiler-driver-state-release-lower-arenas!
@@ -1648,7 +1648,7 @@
       [reused-word : i64
         (in-arena
           (unsafe
-            (arena.Arena reused))
+            (arena.from-raw-handle reused))
           (compiler-driver-smoke-runtime-alloc 8))]
       (unsafe
         (ptr-write! (int->ptr reused-word : (MutPtr i64)) 121))
@@ -2489,7 +2489,7 @@
       [body : (__tl_dyn-array i64)
         (in-arena
           (unsafe
-            (arena.Arena chunk))
+            (arena.from-raw-handle chunk))
           (__tl_make-array i64 words))]
       (set! (array-ref body 0) words)
       (lower.compiler-lower-ir-chunk-note-escaped! owner))))

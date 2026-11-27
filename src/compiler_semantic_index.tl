@@ -516,7 +516,7 @@
     (+= compiler-semantic-source-index-live-owners 1)
     (in-arena
       (unsafe
-        (arena.Arena owner))
+        (arena.from-raw-handle owner))
       (CompilerSemanticSourceIndex
         owner
         (__tl_make-array CompilerSemanticRecord 0)
@@ -5129,7 +5129,7 @@
       (& fields)
       index
       (ast.ast-field-def-fallback))
-      [(Def field-name-id ty _)
+      [(Def field-name-id ty _ _)
         (compiler-semantic-record-field-definition!
           (owned_view.compiler-owned-shared-view state)
           struct-name-id
@@ -6427,7 +6427,7 @@
     (+= compiler-semantic-source-index-live-owners 1)
     (in-arena
       (unsafe
-        (arena.Arena owner))
+        (arena.from-raw-handle owner))
       (let
         [decls : ast.AstDeclList
           (match (tc.tc-context-program ctx)

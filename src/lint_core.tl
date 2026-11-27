@@ -2818,7 +2818,7 @@
       fields
       index
       (ast.ast-field-def-fallback))
-      [(Def _ ty cleanup)
+      [(Def _ ty cleanup _)
         (lint-field-def-list-names-at
           fields
           (lint-field-cleanup-names cleanup (lint-type-names ty names))
@@ -4848,7 +4848,7 @@
       fields
       index
       (ast.ast-field-def-fallback))
-      [(Def name _ _)
+      [(Def name _ _ _)
         (lint-copy-on-update-field-names-at
           fields
           (+ index 1)

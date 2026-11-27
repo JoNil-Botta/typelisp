@@ -1610,6 +1610,7 @@
       (match (tc_core.tc-init-type-supported
         ctx
         (tc_core.tc-empty-type-env)
+        true
         (tc_core.tc-global-shared-view ty))
         [(Ok) true]
         [(Err _) false])]
@@ -1617,6 +1618,7 @@
       (match (tc_core.tc-make-array-element-ok
         ctx
         (tc_core.tc-empty-type-env)
+        true
         ty)
         [(Ok) true]
         [(Err _) false])]
@@ -5225,7 +5227,7 @@
         state.exhausted
         (in-arena
           (unsafe
-            (arena.Arena state.base-arena))
+            (arena.from-raw-handle state.base-arena))
           (ast.ty-node-dedup-slots-new 8))
         state.dedup-count
         state.storage-arena

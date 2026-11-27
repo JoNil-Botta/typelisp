@@ -1800,7 +1800,7 @@
       fields
       index
       (ast.ast-field-def-fallback))
-      [(Def _ _ cleanup)
+      [(Def _ _ cleanup _)
         (tltest-reach-mark-field-cleanups-at
           fields
           (tltest-reach-mark-field-cleanup cleanup names)

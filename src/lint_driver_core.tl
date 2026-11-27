@@ -1051,7 +1051,7 @@
   [summary : compiler_load.CompilerLoadSurfaceSummary]) : unit
   (in-arena
     (unsafe
-      (arena.Arena selfhost-lint-unsafe-surface-cache-arena))
+      (arena.from-raw-handle selfhost-lint-unsafe-surface-cache-arena))
     (selfhost-lint-unsafe-surface-cache-push!
       (SelfhostLintUnsafeSurfaceCacheEntry
         (string.copy path)
@@ -1065,7 +1065,7 @@
   [path : (& path str)]) : unit
   (in-arena
     (unsafe
-      (arena.Arena selfhost-lint-unsafe-surface-cache-arena))
+      (arena.from-raw-handle selfhost-lint-unsafe-surface-cache-arena))
     (selfhost-lint-unsafe-surface-cache-push!
       (SelfhostLintUnsafeSurfaceCacheEntry
         (string.copy path)
@@ -3637,7 +3637,7 @@
           ;; owner while the old scratch-backed nodes are still mapped.
           (if (arena.eq?
             (unsafe
-              (arena.Arena selfhost-lint-unsafe-surface-cache-arena))
+              (arena.from-raw-handle selfhost-lint-unsafe-surface-cache-arena))
             (arena.current))
             (unsafe
               ;; unsafe: releases the global lint cache; it keeps no allocation of this arena
@@ -3694,7 +3694,7 @@
                 dead-decls))]
           (if (arena.eq?
             (unsafe
-              (arena.Arena selfhost-lint-unsafe-surface-cache-arena))
+              (arena.from-raw-handle selfhost-lint-unsafe-surface-cache-arena))
             (arena.current))
             (unsafe
               ;; unsafe: releases the global lint cache; it keeps no allocation of this arena

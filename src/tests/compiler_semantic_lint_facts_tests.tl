@@ -373,7 +373,7 @@
           (tc.tc-serial-job-state)
           ;; The request borrows the facts arena destroyed after it.
           (unsafe
-            (arena.Arena owner.handle))
+            (arena.from-raw-handle owner.handle))
           false
           false
           0
@@ -535,7 +535,7 @@
           (tc.tc-serial-job-state)
           ;; The request borrows the facts arena destroyed after it.
           (unsafe
-            (arena.Arena owner.handle))
+            (arena.from-raw-handle owner.handle))
           false
           false
           0
@@ -556,7 +556,7 @@
           (tc.tc-serial-job-state)
           ;; The request borrows the facts arena destroyed after it.
           (unsafe
-            (arena.Arena package-owner.handle))
+            (arena.from-raw-handle package-owner.handle))
           false
           false
           0
@@ -735,7 +735,7 @@
   [snapshot : (& snapshot facts.CompilerSemanticFacts)]) : unit
   (in-arena
     (unsafe
-      (arena.Arena owner))
+      (arena.from-raw-handle owner))
     (semantic-facts-test-consumer 0 snapshot)))
 
 (define (semantic-facts-test-owned-job [source : String] [generated : bool]) : bool
@@ -751,7 +751,7 @@
         [checked : bool
           (in-arena
             (unsafe
-              (arena.Arena (array-ref scope.frontend-arena 0)))
+              (arena.from-raw-handle (array-ref scope.frontend-arena 0)))
             (match (unsafe
               ;; unsafe: the test consumer's globals are read before this arena ends
               ;; unsafe: false positive: the callee stores only into a cell it allocates itself
@@ -766,7 +766,7 @@
                   (driver.compiler-driver-state-typecheck (& scope.state))
                   ;; The request borrows the facts arena destroyed after it.
                   (unsafe
-                    (arena.Arena owner.handle))
+                    (arena.from-raw-handle owner.handle))
                   generated
                   false
                   home.handle

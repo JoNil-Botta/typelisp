@@ -401,27 +401,13 @@
 (define (tlci-loader-i64-array-addr [items : (& items (__tl_dyn-array i64))]) : i64
   (cast
     (unsafe
-      (ptr->int
-        (ptr-cast
-          (__tl_array-data
-            (unsafe
-              (ptr-read
-                (ptr-cast
-                  (__tl_array-data (array items))
-                  : (Ptr (__tl_dyn-array i64))))))
-          : (Ptr u8))))
+      (ptr->int (ptr-cast (__tl_array-data (deref items)) : (Ptr u8))))
     : i64))
 
 (define (tlci-loader-u8-array-addr [items : (& items (__tl_dyn-array u8))]) : i64
   (cast
     (unsafe
-      (ptr->int
-        (__tl_array-data
-          (unsafe
-            (ptr-read
-              (ptr-cast
-                (__tl_array-data (array items))
-                : (Ptr (__tl_dyn-array u8))))))))
+      (ptr->int (__tl_array-data (deref items))))
     : i64))
 
 ;; OWNERSHIP RULE FOR RETAINED IMAGE STORAGE.

@@ -13372,16 +13372,16 @@
     [(No) unit]
     [(Some cache)
       (let
-        [cache-data : LowerMaskedPreheaderCacheData
-          (lower-box-shared-view cache)]
-        [count : i64 cache-data.uniform-count]
-        [values : (__tl_dyn-array ir.CompilerIrValue) cache-data.uniform-values]
-        [types : (__tl_dyn-array ast.AstType) cache-data.uniform-types]
-        [vectors : (__tl_dyn-array ir.CompilerIrValue)
-          cache-data.uniform-vectors]
-        (__tl_array-push! values value)
-        (__tl_array-push! types elem-ty)
-        (__tl_array-push! vectors vector)
+        [count : i64 (__tl-project-field (__tl-box-place cache) uniform-count)]
+        (__tl_array-push!
+          (__tl-project-field (__tl-box-place cache) uniform-values)
+          value)
+        (__tl_array-push!
+          (__tl-project-field (__tl-box-place cache) uniform-types)
+          elem-ty)
+        (__tl_array-push!
+          (__tl-project-field (__tl-box-place cache) uniform-vectors)
+          vector)
         (__tl-project-set-field
           (__tl-box-place cache)
           uniform-count
@@ -13418,13 +13418,13 @@
     [(No) unit]
     [(Some cache)
       (let
-        [cache-data : LowerMaskedPreheaderCacheData
-          (lower-box-shared-view cache)]
-        [count : i64 cache-data.array-count]
-        [vars : (__tl_dyn-array i64) cache-data.array-vars]
-        [values : (__tl_dyn-array ir.CompilerIrValue) cache-data.array-data]
-        (__tl_array-push! vars array-var)
-        (__tl_array-push! values data)
+        [count : i64 (__tl-project-field (__tl-box-place cache) array-count)]
+        (__tl_array-push!
+          (__tl-project-field (__tl-box-place cache) array-vars)
+          array-var)
+        (__tl_array-push!
+          (__tl-project-field (__tl-box-place cache) array-data)
+          data)
         (__tl-project-set-field (__tl-box-place cache) array-count (+ count 1)))]))
 
 (define (lower-masked-load-cache-entry-capacity) : i64
@@ -30966,7 +30966,7 @@
       (let
         [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
         [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-        (lower-array-push ctx state env type-env arr value))]
+        (lower-array-push ctx state env type-env arr value origin))]
     [(Tuple values) (lower-tuple ctx state env type-env values expr-ty origin)]
     [(TupleRef tuple-expr-box index)
       (let
@@ -45022,6 +45022,45 @@
                           elem-ty
                           value-ir)])])]))])]))
 
+;; Whether `lower-capture-store-place` yields the 8B dynamic-array handle
+;; directly (rather than the address of a slot holding that handle).
+(define (lower-array-push-direct-handle-expr?
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [place : (& place ast.AstExpr)]) : bool
+  (match (ast.ast-expr-unspan place)
+    [(ast.AstExpr.Ann inner _)
+      (lower-array-push-direct-handle-expr?
+        ctx
+        state
+        env
+        type-env
+        (& (lower-context-expr-get ctx inner)))]
+    [(ast.AstExpr.Var name)
+      (not (tc_core.tc-dotted-local-field-name-id? ctx type-env name))]
+    [(or (ast.AstExpr.BoxGet _) (ast.AstExpr.BoxTake _))
+      (lower-handle-deref-place?
+        ctx
+        state
+        env
+        type-env
+        (lower-clone-ast-expr place))]
+    [_ false]))
+
+(define (lower-array-push-direct-handle-place?
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [place : (& place ast.AstExpr)]
+  [place-ty : (& place-ty ast.AstType)]) : bool
+  (match (tc_core.tc-type-strip-region
+    (tc_core.tc-resolve-type ctx (ast.clone-ast-type place-ty)))
+    [(ast.AstType.MutRef _ _) true]
+    [_ (lower-array-push-direct-handle-expr? ctx state env type-env place)]))
+
 ;; `(__tl_array-push! arr value)` -> allocate a new element buffer in the active
 ;; arena, copy old elements, append `value`, and update the fat `{ptr, len}`.
 (define (lower-array-push
@@ -45030,7 +45069,8 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [arr : ast.AstExpr]
-  [value : ast.AstExpr]) : ResultLowerExpr
+  [value : ast.AstExpr]
+  [origin : ast.AstExpr]) : ResultLowerExpr
   (match (lower-expr-result-type-or-check
     ctx
     env
@@ -45039,38 +45079,76 @@
     (lower-state-function-state state)
     arr)
     [(Ok arr-ty)
-      (match (tc_core.tc-array-push-receiver ctx arr-ty)
-        [(Ok receiver)
-          (match receiver
-            [(TcArrayReceiver _ elem-ty)
-              (let
-                [elem-ir-ty : ast.AstType
-                  (tc_core.tc-type-without-regions elem-ty)]
-                [arr-lowered : LowerExpr
-                  (try (lower-expr ctx state env type-env arr))]
-                (match arr-lowered
-                  [(Expr arr-state arr-value _)
-                    (let
-                      [value-lowered
-                        (try
-                          (lower-expr-expected
-                            ctx
-                            arr-state
-                            env
-                            type-env
-                            (lower-global-shared-view value)
-                            (lower-global-shared-view elem-ir-ty)
-                            value))]
-                      (match value-lowered
-                        [(Expr value-state value-ir _)
-                          (Ok
-                            (lower-array-push-from-values
-                              ctx
-                              value-state
-                              arr-value
-                              elem-ir-ty
-                              value-ir))]))]))])]
-        [(Err message) (Err (box (lower-diagnostic-at-expr ctx arr message)))])]
+      (let
+        [direct-handle? : bool
+          (lower-array-push-direct-handle-place?
+            ctx
+            state
+            env
+            type-env
+            (& arr)
+            (& arr-ty))]
+        (match (tc_core.tc-array-push-receiver ctx arr-ty)
+          [(Ok receiver)
+            (match receiver
+              [(TcArrayReceiver _ elem-ty)
+                (let
+                  [elem-ir-ty : ast.AstType
+                    (tc_core.tc-type-without-regions elem-ty)]
+                  (match (lower-capture-store-place
+                    ctx
+                    state
+                    env
+                    type-env
+                    arr
+                    (lower-clone-ast-expr (& origin)))
+                    [(ResultLowerStorePlace.Ok place-state place)
+                      (if (tc_core.tc-never-type?
+                        (ast.clone-ast-type (& place.ty)))
+                        (Ok (Expr place-state Unit (Never)))
+                        (let
+                          [value-lowered
+                            (try
+                              (lower-expr-expected
+                                ctx
+                                place-state
+                                env
+                                type-env
+                                (lower-global-shared-view value)
+                                (lower-global-shared-view elem-ir-ty)
+                                value))]
+                          (match value-lowered
+                            [(Expr value-state value-ir value-ty)
+                              (if (tc_core.tc-never-type? value-ty)
+                                (Ok (Expr value-state Unit (Never)))
+                                (match (lower-store-place-address
+                                  ctx
+                                  value-state
+                                  place
+                                  origin)
+                                  [(Expr addr-state place-ptr place-ty)
+                                    (if direct-handle?
+                                      (Ok
+                                        (lower-array-push-from-values
+                                          ctx
+                                          addr-state
+                                          place-ptr
+                                          elem-ir-ty
+                                          value-ir))
+                                      (match (lower-emit-load
+                                        addr-state
+                                        place-ptr
+                                        place-ty)
+                                        [(Expr load-state arr-value _)
+                                          (Ok
+                                            (lower-array-push-from-values
+                                              ctx
+                                              load-state
+                                              arr-value
+                                              elem-ir-ty
+                                              value-ir))]))]))])))]
+                    [(ResultLowerStorePlace.Err error) (Err error)]))])]
+          [(Err message) (Err (box (lower-diagnostic-at-expr ctx arr message)))]))]
     [(Err message) (Err (box (lower-diagnostic-at-expr ctx arr message)))]))
 
 ;; Lower each syscall operand and widen it to i64 (the kernel reads the full

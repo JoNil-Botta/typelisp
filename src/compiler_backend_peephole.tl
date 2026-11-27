@@ -1280,8 +1280,8 @@
     text
     frame
     fpo
-    (be_state.compiler-backend-string-array-shared-view
-      (& compiler-backend-rsp-rebase-no-push))
+    (unsafe
+      (ptr-read (ptr-addr-of compiler-backend-rsp-rebase-no-push)))
     0
     0
     backend-state))

@@ -2866,9 +2866,6 @@
           backend-state
           assignments
           all))]
-    [cands : (__tl_dyn-array i64)
-      (be_state.compiler-backend-i64-array-shared-view
-        (& be_operand.compiler-backend-scavenge-candidate-pool))]
     (compiler-backend-phi-temp-pick-reg-iter
       function-state
       occupied-mask
@@ -2876,8 +2873,8 @@
       (be_state.compiler-backend-function-scratch-i64
         function-state
         be_state.compiler-backend-scratch-i64-scavenge-plan-reg-mask)
-      cands
-      (array-length cands))))
+      (& be_operand.compiler-backend-scavenge-candidate-pool)
+      (array-length be_operand.compiler-backend-scavenge-candidate-pool))))
 
 (define (compiler-backend-emit-arg-move-list
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -5720,9 +5717,6 @@
       (be_operand.compiler-backend-scavenge-occupied-mask-at-point
         function-state
         point)]
-    [cands : (__tl_dyn-array i64)
-      (be_state.compiler-backend-i64-array-shared-view
-        (& be_operand.compiler-backend-scavenge-candidate-pool))]
     [reg-id : i64
       (compiler-backend-phi-temp-pick-reg-iter
         function-state
@@ -5731,8 +5725,8 @@
         (be_state.compiler-backend-function-scratch-i64
           function-state
           be_state.compiler-backend-scratch-i64-scavenge-plan-reg-mask)
-        cands
-        (array-length cands))]
+        (& be_operand.compiler-backend-scavenge-candidate-pool)
+        (array-length be_operand.compiler-backend-scavenge-candidate-pool))]
     [reg : String (compiler_abi.compiler-abi-register-spelling reg-id)]
     reg))
 

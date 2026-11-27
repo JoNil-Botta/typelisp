@@ -3188,18 +3188,15 @@
 ;; Passed as `mirror` by callers that have no second use-count array to keep in
 ;; step. Zero length is the "no mirror" signal, so the rewrite paths below skip
 ;; the mirrored bookkeeping with one length test and no allocation.
-(define opt-dce-no-mirror : (__tl_dyn-array (__tl_dyn-array i64))
-  (__tl_make-array (__tl_make-array i64 0)))
+(define opt-dce-no-mirror : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
 
 ;; The zero-length mirror sentinel is immutable in practice: every update is
 ;; guarded by its length. Preserve the allocation-free shared sentinel behind
 ;; one explicit internal boundary.
 (define (opt-dce-no-mirror-shared-view) : (__tl_dyn-array i64)
   (unsafe
-    (ptr-read
-      (ptr-cast
-        (__tl_array-data opt-dce-no-mirror)
-        : (Ptr (__tl_dyn-array i64))))))
+    (ptr-read (ptr-addr-of opt-dce-no-mirror))))
 
 ;; Apply to `mirror` the same use-count edit a rewrite just applied to the
 ;; array the walk is reading. See `opt-dce-block-list-array-pass`: the dry run
@@ -8348,25 +8345,34 @@
 ;; negative sentinels: storage grows by element count, never by value magnitude.
 (defenum OptLabelSet
   (Nil)
-  ;; Slot zero is the shared high-water length; labels occupy slots 1..len in
-  ;; oldest-first order. The logical set head is `items[len]`, so recursive
-  ;; consumers can take an allocation-free tail view by decrementing `len`.
+  ;; Slot 0 is the shared high-water length, slot 1 is the element capacity,
+  ;; and labels occupy slots 2..(len + 1) in oldest-first order. The logical
+  ;; set head is `buf[len + 1]`, so recursive consumers can take an
+  ;; allocation-free tail view by decrementing `len`.
   ;; Extending a prefix is in-place only while it is the unique high-water
   ;; view. Extending a tail or an already-branched prefix copies first, keeping
   ;; persistent cons semantics.
-  ;; The buffer travels as its handle's bits (a dynamic buffer is one
-  ;; pointer), so a set is a Copy value; every view shares the one buffer.
-  (Dense u64 i64))
+  ;; The backing buffer travels as a typed raw pointer into its arena-owned i64
+  ;; array, so a set stays a Copy value across any dynamic-array representation.
+  (Dense (MutPtr i64) i64))
 
-;; The label buffer behind a Dense set's handle, and the handle of a buffer.
-;; Both only reinterpret the pointer; the views already share the buffer.
-(defmacro (opt-label-items [handle : Expr]) : Expr
-  `(unsafe
-    (ptr-read (ptr-cast (ptr-addr-of ,handle) : (Ptr (__tl_dyn-array i64))))))
+(define (opt-label-buf-new [capacity : i64]) : (MutPtr i64)
+  (let
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 (+ capacity 2))]
+    [buf : (MutPtr i64)
+      (unsafe
+        (ptr-cast (__tl_array-data items) : (MutPtr i64)))]
+    (unsafe
+      (ptr-write! (ptr-offset buf 1) capacity))
+    buf))
 
-(defmacro (opt-label-handle [items : Expr]) : Expr
-  `(unsafe
-    (ptr-read (ptr-cast (ptr-addr-of ,items) : (Ptr u64)))))
+(define (opt-label-buf-get [buf : (MutPtr i64)] [slot : i64]) : i64
+  (unsafe
+    (ptr-read (ptr-offset buf slot))))
+
+(define (opt-label-buf-set! [buf : (MutPtr i64)] [slot : i64] [value : i64]) : unit
+  (unsafe
+    (ptr-write! (ptr-offset buf slot) value)))
 
 (define (opt-dense-next-capacity [len : i64]) : i64
   (if (< len 4)
@@ -8376,18 +8382,15 @@
 (define (opt-label-ref [set : OptLabelSet] [index : i64]) : i64
   (match set
     [(Nil) (ir.compiler-ir-label-none)]
-    [(Dense items-handle len)
-      (let
-        [items : (__tl_dyn-array i64) (opt-label-items items-handle)]
-        (array-ref items (- len index)))]))
+    [(Dense buf len) (opt-label-buf-get buf (+ (- len index) 1))]))
 
 (define (opt-label-tail [set : OptLabelSet]) : OptLabelSet
   (match set
     [(Nil) (Nil)]
-    [(Dense items len)
+    [(Dense buf len)
       (if (<= len 1)
         (Nil)
-        (Dense items (- len 1)))]))
+        (Dense buf (- len 1)))]))
 
 ;; `opt-label-tail` for a set whose longer views are all dead -- a worklist its
 ;; caller owns outright and pops like a stack. The popped slot is released with
@@ -8398,63 +8401,60 @@
 (define (opt-label-pop-owned [set : OptLabelSet]) : OptLabelSet
   (match set
     [(Nil) (Nil)]
-    [(Dense items-handle len)
-      (let
-        [items : (__tl_dyn-array i64) (opt-label-items items-handle)]
-        (if (<= len 1)
-          (Nil)
-          (begin
-            (if (= (array-ref items 0) len)
-              (set! (array-ref items 0) (- len 1))
-              unit)
-            (Dense items-handle (- len 1)))))]))
+    [(Dense buf len)
+      (if (<= len 1)
+        (Nil)
+        (begin
+          (if (= (opt-label-buf-get buf 0) len)
+            (opt-label-buf-set! buf 0 (- len 1))
+            unit)
+          (Dense buf (- len 1))))]))
 
 (define (opt-label-cons [label : i64] [set : OptLabelSet]) : OptLabelSet
   (match set
     [(Nil)
       (let
-        [items : (__tl_dyn-array i64) (__tl_make-array i64 5)]
-        (set! (array-ref items 0) 1)
-        (set! (array-ref items 1) label)
-        (Dense (opt-label-handle items) 1))]
-    [(Dense items-handle len)
+        [buf : (MutPtr i64) (opt-label-buf-new 4)]
+        (opt-label-buf-set! buf 0 1)
+        (opt-label-buf-set! buf 2 label)
+        (Dense buf 1))]
+    [(Dense buf len)
       (let
-        [items : (__tl_dyn-array i64) (opt-label-items items-handle)]
-        (if (and (= len (array-ref items 0)) (< len (- (array-length items) 1)))
+        [old-capacity : i64 (opt-label-buf-get buf 1)]
+        (if (and (= len (opt-label-buf-get buf 0)) (< len old-capacity))
           (begin
-            (set! (array-ref items (+ len 1)) label)
-            (set! (array-ref items 0) (+ len 1))
-            (Dense items-handle (+ len 1)))
+            (opt-label-buf-set! buf (+ len 2) label)
+            (opt-label-buf-set! buf 0 (+ len 1))
+            (Dense buf (+ len 1)))
           (let
-            [old-capacity : i64 (- (array-length items) 1)]
             [capacity : i64
               (if (< len old-capacity)
                 old-capacity
                 (opt-dense-next-capacity len))]
-            [bigger : (__tl_dyn-array i64) (__tl_make-array i64 (+ capacity 1))]
+            [bigger : (MutPtr i64) (opt-label-buf-new capacity)]
             (for [index (iterator.range 0 len)]
-              (set!
-                (array-ref bigger (+ index 1))
-                (array-ref items (+ index 1))))
-            (set! (array-ref bigger 0) (+ len 1))
-            (set! (array-ref bigger (+ len 1)) label)
-            (Dense (opt-label-handle bigger) (+ len 1)))))]))
+              (opt-label-buf-set!
+                bigger
+                (+ index 2)
+                (opt-label-buf-get buf (+ index 2))))
+            (opt-label-buf-set! bigger 0 (+ len 1))
+            (opt-label-buf-set! bigger (+ len 2) label)
+            (Dense bigger (+ len 1)))))]))
 
 ;; Membership walks the backing array directly rather than through
 ;; `opt-label-count` plus one `opt-label-ref` per element. The sets are tiny --
 ;; most queries see two labels or fewer, many see none -- so the dispatch per
-;; element, not the element count, is what this loop costs. Slot `len` down to
-;; slot 1 is exactly `opt-label-ref`'s index 0 up to `count - 1`, newest label
-;; first.
+;; element, not the element count, is what this loop costs. Slot `len + 1` down
+;; to slot 2 is exactly `opt-label-ref`'s index 0 up to `count - 1`, newest
+;; label first.
 (define (opt-label-contains [set : OptLabelSet] [label : i64]) : bool
   (match set
     [(Nil) false]
-    [(Dense items-handle len)
+    [(Dense buf len)
       (let
-        [items : (__tl_dyn-array i64) (opt-label-items items-handle)]
-        [slot : i64 len]
-        (while (> slot 0)
-          (if (= (array-ref items slot) label)
+        [slot : i64 (+ len 1)]
+        (while (> slot 1)
+          (if (= (opt-label-buf-get buf slot) label)
             (return true)
             (-= slot 1)))
         false)]))
@@ -8873,12 +8873,12 @@
   [index : i64]) : i64
   (match items
     [(Nil) index]
-    [(Dense values-handle len)
-      (let
-        [values : (__tl_dyn-array i64) (opt-label-items values-handle)]
-        (for [slot (iterator.range 1 (+ len 1))]
-          (set! (array-ref edges (+ index (- slot 1))) (array-ref values slot)))
-        (+ index len))]))
+    [(Dense values len)
+      (for [slot (iterator.range 0 len)]
+        (set!
+          (array-ref edges (+ index slot))
+          (opt-label-buf-get values (+ slot 2))))
+      (+ index len)]))
 
 (define (opt-cfg-row-list-total
   [rows : (& (__tl_dyn-array OptLabelSet))]
@@ -9049,26 +9049,21 @@
                   (set! end start)
                   (match succs
                     [(Nil) unit]
-                    [(Dense values-handle len)
-                      (let
-                        [values : (__tl_dyn-array i64)
-                          (opt-label-items values-handle)]
-                        (for [slot (iterator.range 1 (+ len 1))]
-                          (let
-                            [id : i64
-                              (opt-cfg-label-table-get
-                                (array-ref values slot)
-                                generation)]
-                            (if (< id 0)
-                              (set! known false)
-                              (begin
-                                (when
-                                  (>= end (array-length edges))
-                                  (set!
-                                    edges
-                                    (opt-cfg-edges-grow (& edges) end)))
-                                (set! (array-ref edges end) id)
-                                (+= end 1))))))]))
+                    [(Dense values len)
+                      (for [slot (iterator.range 0 len)]
+                        (let
+                          [id : i64
+                            (opt-cfg-label-table-get
+                              (opt-label-buf-get values (+ slot 2))
+                              generation)]
+                          (if (< id 0)
+                            (set! known false)
+                            (begin
+                              (when
+                                (>= end (array-length edges))
+                                (set! edges (opt-cfg-edges-grow (& edges) end)))
+                              (set! (array-ref edges end) id)
+                              (+= end 1)))))]))
                 (when
                   (and
                     (ir.compiler-ir-label-some? next-label)
@@ -9480,20 +9475,18 @@
     (if (<= n 0)
       (Nil)
       (let
-        [items : (__tl_dyn-array i64)
-          (__tl_make-array
-            i64
-            (+
-              (if (< n 4)
-                4
-                n)
-              1))]
+        [capacity : i64
+          (if (< n 4)
+            4
+            n)]
+        [buf : (MutPtr i64) (opt-label-buf-new capacity)]
         (for [k (iterator.range 0 n)]
-          (set!
-            (array-ref items (+ k 1))
+          (opt-label-buf-set!
+            buf
+            (+ k 2)
             (opt-cfg-index-label index (array-ref csr.edges (+ start k)))))
-        (set! (array-ref items 0) n)
-        (Dense (opt-label-handle items) n)))))
+        (opt-label-buf-set! buf 0 n)
+        (Dense buf n)))))
 
 (define (opt-cfg-index-successors [index : (& index OptCfgIndex)] [label : i64]) : OptLabelSet
   (match (opt-cfg-index-id index label)
@@ -9613,22 +9606,19 @@
     (if (= n 0)
       (Nil)
       (let
-        [items : (__tl_dyn-array i64)
-          (__tl_make-array
-            i64
-            (+
-              (if (< n 4)
-                4
-                n)
-              1))]
-        [k : i64 1]
+        [capacity : i64
+          (if (< n 4)
+            4
+            n)]
+        [buf : (MutPtr i64) (opt-label-buf-new capacity)]
+        [k : i64 2]
         (for [id (iterator.range 0 count)]
           (when
             (array-ref index.reachable id)
-            (set! (array-ref items k) (array-ref index.labels id))
+            (opt-label-buf-set! buf k (array-ref index.labels id))
             (+= k 1)))
-        (set! (array-ref items 0) n)
-        (Dense (opt-label-handle items) n)))))
+        (opt-label-buf-set! buf 0 n)
+        (Dense buf n)))))
 
 (define (opt-cfg-index-rpo-id [index : (& index OptCfgIndex)] [slot : i64]) : i64
   (if (and (>= slot 0) (< slot index.reach-count))
@@ -17269,23 +17259,21 @@
               1
               2)]
           [n : i64 (+ seeds found-count)]
-          [items : (__tl_dyn-array i64)
-            (__tl_make-array
-              i64
-              (+
-                (if (< n 4)
-                  4
-                  n)
-                1))]
-          (set! (array-ref items 0) n)
-          (set! (array-ref items 1) header)
-          (when (= seeds 2) (set! (array-ref items 2) first-latch))
+          [capacity : i64
+            (if (< n 4)
+              4
+              n)]
+          [buf : (MutPtr i64) (opt-label-buf-new capacity)]
+          (opt-label-buf-set! buf 0 n)
+          (opt-label-buf-set! buf 2 header)
+          (when (= seeds 2) (opt-label-buf-set! buf 3 first-latch))
           (for [k (iterator.range 0 found-count)]
-            (set!
-              (array-ref items (+ seeds (+ k 1)))
+            (opt-label-buf-set!
+              buf
+              (+ seeds (+ k 2))
               (opt-cfg-index-label index (array-ref found k))))
           (let
-            [body-labels : OptLabelSet (Dense (opt-label-handle items) n)]
+            [body-labels : OptLabelSet (Dense buf n)]
             [body-blocks : ir.CompilerIrBlockList
               (opt-loop-body-blocks-by-id
                 marks
@@ -119353,13 +119341,11 @@
   [mask : i64]) : i64
   (match names
     [(Nil) mask]
-    [(Dense integer-items-handle integer-count)
+    [(Dense integer-items integer-count)
       (let
-        [integer-items : (__tl_dyn-array i64)
-          (opt-label-items integer-items-handle)]
-        [name : i64 (array-ref integer-items integer-count)]
+        [name : i64 (opt-label-buf-get integer-items (+ integer-count 1))]
         [rest : OptLabelSet
-          (opt-label-tail (Dense integer-items-handle integer-count))]
+          (opt-label-tail (Dense integer-items integer-count))]
         (if (opt-global-mod-ref-any? mask)
           mask
           (opt-global-cell-call-writes-list
@@ -120462,13 +120448,11 @@
   [index : (& index opt_i64_i64_map.Map)]) : unit
   (match vars
     [(Nil) unit]
-    [(Dense integer-items-handle integer-count)
+    [(Dense integer-items integer-count)
       (let
-        [integer-items : (__tl_dyn-array i64)
-          (opt-label-items integer-items-handle)]
-        [var : i64 (array-ref integer-items integer-count)]
+        [var : i64 (opt-label-buf-get integer-items (+ integer-count 1))]
         [rest : OptLabelSet
-          (opt-label-tail (Dense integer-items-handle integer-count))]
+          (opt-label-tail (Dense integer-items integer-count))]
         (if (and (not (= var allowed)) (opt_i64_i64_map.contains? uses var))
           (opt-global-obj-escape!
             escaped
@@ -120503,13 +120487,11 @@
   [index : (& index opt_i64_i64_map.Map)]) : unit
   (match names
     [(Nil) unit]
-    [(Dense integer-items-handle integer-count)
+    [(Dense integer-items integer-count)
       (let
-        [integer-items : (__tl_dyn-array i64)
-          (opt-label-items integer-items-handle)]
-        [id : i64 (array-ref integer-items integer-count)]
+        [id : i64 (opt-label-buf-get integer-items (+ integer-count 1))]
         [rest : OptLabelSet
-          (opt-label-tail (Dense integer-items-handle integer-count))]
+          (opt-label-tail (Dense integer-items integer-count))]
         (opt-global-obj-escape-id! escaped index id)
         (opt-global-obj-escape-refs! rest escaped index))]))
 
@@ -124668,13 +124650,11 @@
     [out : opt_i64_i64_map.Map out-input]
     (match refs
       [(Nil) out]
-      [(Dense integer-items-handle integer-count)
+      [(Dense integer-items integer-count)
         (let
-          [integer-items : (__tl_dyn-array i64)
-            (opt-label-items integer-items-handle)]
-          [name : i64 (array-ref integer-items integer-count)]
+          [name : i64 (opt-label-buf-get integer-items (+ integer-count 1))]
           [rest : OptLabelSet
-            (opt-label-tail (Dense integer-items-handle integer-count))]
+            (opt-label-tail (Dense integer-items integer-count))]
           [next : opt_i64_i64_map.Map out]
           (opt_i64_i64_map.insert-ref! (&mut next) name 1)
           (opt-global-cell-refs-add rest next))])))
@@ -125046,13 +125026,11 @@
   [refs : OptLabelSet]) : bool
   (match refs
     [(Nil) false]
-    [(Dense integer-items-handle integer-count)
+    [(Dense integer-items integer-count)
       (let
-        [integer-items : (__tl_dyn-array i64)
-          (opt-label-items integer-items-handle)]
-        [name : i64 (array-ref integer-items integer-count)]
+        [name : i64 (opt-label-buf-get integer-items (+ integer-count 1))]
         [rest : OptLabelSet
-          (opt-label-tail (Dense integer-items-handle integer-count))]
+          (opt-label-tail (Dense integer-items integer-count))]
         (if (opt-global-cell-single-ref? counts name)
           true
           (opt-global-cell-any-single-ref? counts rest)))]))
@@ -125115,13 +125093,11 @@
   [count : i64]) : OptGlobalCellPlan
   (match refs
     [(Nil) (OptGlobalCellPlan plan count)]
-    [(Dense integer-items-handle integer-count)
+    [(Dense integer-items integer-count)
       (let
-        [integer-items : (__tl_dyn-array i64)
-          (opt-label-items integer-items-handle)]
-        [name : i64 (array-ref integer-items integer-count)]
+        [name : i64 (opt-label-buf-get integer-items (+ integer-count 1))]
         [rest : OptLabelSet
-          (opt-label-tail (Dense integer-items-handle integer-count))]
+          (opt-label-tail (Dense integer-items integer-count))]
         (if (or
           (opt_i64_i64_map.contains? stores name)
           (opt_i64_i64_map.contains? (& cell.addr-taken) name)
@@ -125192,13 +125168,11 @@
   [index : i64]) : i64
   (match refs
     [(Nil) index]
-    [(Dense integer-items-handle integer-count)
+    [(Dense integer-items integer-count)
       (let
-        [integer-items : (__tl_dyn-array i64)
-          (opt-label-items integer-items-handle)]
-        [name : i64 (array-ref integer-items integer-count)]
+        [name : i64 (opt-label-buf-get integer-items (+ integer-count 1))]
         [rest : OptLabelSet
-          (opt-label-tail (Dense integer-items-handle integer-count))]
+          (opt-label-tail (Dense integer-items integer-count))]
         (match (opt_i64_i64_map.get (& plan) name)
           [(LookupMissing)
             (opt-global-cell-hoists-fill! plan cell rest hoists index)]
@@ -132774,22 +132748,21 @@
 ;; This is before SSA: the copied guard's definitions are renamed later.
 (define (opt-loop-call-only-pred? [preds : OptLabelSet] [label : i64]) : bool
   (match preds
-    [(Dense items-handle len)
-      (let
-        [items : (__tl_dyn-array i64) (opt-label-items items-handle)]
-        (and (= len 1) (= (array-ref items 1) label)))]
+    [(Dense items len) (and (= len 1) (= (opt-label-buf-get items 2) label))]
     [_ false]))
 
 (define (opt-loop-call-two-preds? [preds : OptLabelSet] [a : i64] [b : i64]) : bool
   (match preds
-    [(Dense items-handle len)
-      (let
-        [items : (__tl_dyn-array i64) (opt-label-items items-handle)]
-        (and
-          (= len 2)
-          (or
-            (and (= (array-ref items 1) a) (= (array-ref items 2) b))
-            (and (= (array-ref items 1) b) (= (array-ref items 2) a)))))]
+    [(Dense items len)
+      (and
+        (= len 2)
+        (or
+          (and
+            (= (opt-label-buf-get items 2) a)
+            (= (opt-label-buf-get items 3) b))
+          (and
+            (= (opt-label-buf-get items 2) b)
+            (= (opt-label-buf-get items 3) a))))]
     [_ false]))
 
 ;; A unit-stride counted loop that only adds the invariant result has a closed
@@ -134199,13 +134172,11 @@
     [out : opt_i64_i64_map.Map out-input]
     (match names
       [(Nil) out]
-      [(Dense integer-items-handle integer-count)
+      [(Dense integer-items integer-count)
         (let
-          [integer-items : (__tl_dyn-array i64)
-            (opt-label-items integer-items-handle)]
-          [name : i64 (array-ref integer-items integer-count)]
+          [name : i64 (opt-label-buf-get integer-items (+ integer-count 1))]
           [rest : OptLabelSet
-            (opt-label-tail (Dense integer-items-handle integer-count))]
+            (opt-label-tail (Dense integer-items integer-count))]
           (if (opt-load-cell-candidate? cells refs name)
             (opt_i64_i64_map.insert-ref! (&mut out) name 1)
             unit)
@@ -134227,11 +134198,9 @@
     (while true
       (match cur
         [(Nil) (return unit)]
-        [(Dense integer-items-handle integer-count)
+        [(Dense integer-items integer-count)
           (let
-            [integer-items : (__tl_dyn-array i64)
-              (opt-label-items integer-items-handle)]
-            [name : i64 (array-ref integer-items integer-count)]
+            [name : i64 (opt-label-buf-get integer-items (+ integer-count 1))]
             (if (and
               (opt_i64_i64_map.contains? (& candidates) name)
               (< (array-ref counters 1) (opt-load-cell-read-cap)))
@@ -134242,9 +134211,7 @@
                 (set! (array-ref reads (+ slot 2)) name)
                 (set! (array-ref counters 1) (+ (array-ref counters 1) 1)))
               unit)
-            (set!
-              cur
-              (opt-label-tail (Dense integer-items-handle integer-count))))]))))
+            (set! cur (opt-label-tail (Dense integer-items integer-count))))]))))
 
 ;; A `Phi` input is deliberately never recorded. Its use position is the
 ;; INCOMING EDGE's predecessor end, not the phi's own block, so a materialized

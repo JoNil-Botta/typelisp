@@ -4397,32 +4397,46 @@
       (tc-type-env-cache-raw-fields-match? layer))))
 
 (define (tc-type-env-raw-layout-smoke?) : bool
-  (and
-    (tc-type-env-cache-raw-fields-smoke?)
-    (= (comptime (offset-of (type TcTypeEnvBinding) name-id)) 0)
-    (= (comptime (offset-of (type TcTypeEnvBinding) ty)) 8)
-    (= (comptime (offset-of (type TcTypeEnvBinding) parent)) 32)
-    (= (comptime (offset-of (type TcTypeEnvStore) bindings)) 0)
-    (= (comptime (offset-of (type TcTypeEnvStore) binding-capacity)) 8)
-    (= (comptime (offset-of (type TcTypeEnvStore) binding-len)) 16)
-    (=
-      (comptime
-        (offset-of (type TcTypeEnvStore) topenv-membership-state-address))
-      56)
-    (= (comptime (offset-of (type TcTypeEnvStore) chain-state)) 64)
-    (=
-      (comptime (offset-of (type TcTypeEnvStore) structural-session-address))
-      72)
-    (=
-      (comptime
-        (offset-of (type TcTypeEnvStore) type-resolution-cache-state-address))
-      80)
-    ;; The structural top-env index reads these four through raw word offsets,
-    ;; so they must stay first and stay one word wide.
-    (= (comptime (offset-of (type TcTypeEnvCache) chain-depth)) 0)
-    (= (comptime (offset-of (type TcTypeEnvCache) chain-seq)) 8)
-    (= (comptime (offset-of (type TcTypeEnvCache) chain-jumps-address)) 16)
-    (= (comptime (offset-of (type TcTypeEnvCache) chain-prev-address)) 24)))
+  (let
+    [dyn-bindings : i64
+      (comptime (size-of (type (__tl_dyn-array TcTypeEnvBinding))))]
+    [dyn-caches : i64
+      (comptime (size-of (type (__tl_dyn-array TcTypeEnvCache))))]
+    [caches-base : i64 (+ dyn-bindings 16)]
+    [tail-base : i64 (+ (+ caches-base dyn-caches) 16)]
+    (and
+      (tc-type-env-cache-raw-fields-smoke?)
+      (= (comptime (offset-of (type TcTypeEnvBinding) name-id)) 0)
+      (= (comptime (offset-of (type TcTypeEnvBinding) ty)) 8)
+      (= (comptime (offset-of (type TcTypeEnvBinding) parent)) 32)
+      (= (comptime (offset-of (type TcTypeEnvStore) bindings)) 0)
+      (=
+        (comptime (offset-of (type TcTypeEnvStore) binding-capacity))
+        dyn-bindings)
+      (=
+        (comptime (offset-of (type TcTypeEnvStore) binding-len))
+        (+ dyn-bindings 8))
+      (= (comptime (offset-of (type TcTypeEnvStore) owner-arena)) tail-base)
+      (=
+        (comptime
+          (offset-of (type TcTypeEnvStore) topenv-membership-state-address))
+        (+ tail-base 8))
+      (=
+        (comptime (offset-of (type TcTypeEnvStore) chain-state))
+        (+ tail-base 16))
+      (=
+        (comptime (offset-of (type TcTypeEnvStore) structural-session-address))
+        (+ tail-base 24))
+      (=
+        (comptime
+          (offset-of (type TcTypeEnvStore) type-resolution-cache-state-address))
+        (+ tail-base 32))
+      ;; The structural top-env index reads these four through raw word offsets,
+      ;; so they must stay first and stay one word wide.
+      (= (comptime (offset-of (type TcTypeEnvCache) chain-depth)) 0)
+      (= (comptime (offset-of (type TcTypeEnvCache) chain-seq)) 8)
+      (= (comptime (offset-of (type TcTypeEnvCache) chain-jumps-address)) 16)
+      (= (comptime (offset-of (type TcTypeEnvCache) chain-prev-address)) 24))))
 
 (define (tc-type-env-owner-arena-smoke?) : bool
   (let

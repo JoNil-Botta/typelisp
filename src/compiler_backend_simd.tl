@@ -9994,9 +9994,6 @@
       (be_state.compiler-backend-state-function-state backend-state)]
     [point : i64
       (be_state.compiler-backend-function-state-emission-point function-state)]
-    [cands : (__tl_dyn-array i64)
-      (be_state.compiler-backend-i64-array-shared-view
-        (& compiler-backend-scavenge-rcx-candidate-pool))]
     [reg : String
       (be_operand.compiler-backend-scavenge-pick-from-mask
         function-state
@@ -10006,5 +10003,5 @@
         exclude
         exclude-n
         "%rcx"
-        cands)]
+        (& compiler-backend-scavenge-rcx-candidate-pool))]
     reg))

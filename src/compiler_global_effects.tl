@@ -21,6 +21,7 @@
   (links words.Vec)
   (writers ids.Map)
   (summaries ids.Map)
+  (summary-arrays (__tl_dyn-array (__tl_dyn-array i64)))
   (indirect i64))
 
 (define (new [node-count : i64]) : Graph
@@ -35,6 +36,7 @@
     (words.with-capacity 8)
     (ids.with-capacity 0)
     (ids.with-capacity 0)
+    (__tl_make-array (__tl_dyn-array i64) 0)
     node-count))
 
 ;; Retained edges never point into the source collector's scratch arena.
@@ -75,6 +77,7 @@
 
 (define (add-call! [graph : (&mut graph Graph)] [caller : i64] [callee : i64]) : unit
   (ids.clear-ref! (&mut graph.summaries))
+  (set! graph.summary-arrays (__tl_make-array (__tl_dyn-array i64) 0))
   (let
     [head : i64 (array-ref graph.callers callee)]
     (when (= head 0) (words.push-ref! (&mut graph.callee-nodes) callee))
@@ -87,18 +90,17 @@
   [function : i64]
   [global : i64]) : unit
   (ids.clear-ref! (&mut graph.summaries))
+  (set! graph.summary-arrays (__tl_make-array (__tl_dyn-array i64) 0))
   (let
     [head : i64 (ids.get-value-or (& graph.writers) global 0)]
     [next : i64 (link! graph function head)]
     (ids.insert-ref! (&mut graph.writers) global next)))
 
-(define (summary! [graph : (&mut graph Graph)] [global : i64]) : (__tl_dyn-array
-    i64)
+(define (summary-index! [graph : (&mut graph Graph)] [global : i64]) : i64
   (let
     [cached : i64 (ids.get-value-or (& graph.summaries) global 0)]
     (if (!= cached 0)
-      (unsafe
-        (ptr-read (int->ptr (cast cached : u64) : (Ptr (__tl_dyn-array i64)))))
+      (- cached 1)
       (let
         [result : (__tl_dyn-array i64)
           (__tl_make-array i64 (array-length graph.callers))]
@@ -131,17 +133,17 @@
                   (set! head edge.next)))
               (+= index 1))))
         (let
-          [cell : (__tl_dyn-array (__tl_dyn-array i64))
-            (__tl_make-array (__tl_dyn-array i64) 1)]
-          [address : i64
-            (unsafe
-              (cast (ptr->int (__tl_array-data cell)) : i64))]
-          (set! (array-ref cell 0) result)
-          (ids.insert-ref! (&mut graph.summaries) global address)
-          ;; The cache keeps the array; hand out the same handle, as a hit does.
-          (unsafe
-            (ptr-read
-              (int->ptr (cast address : u64) : (Ptr (__tl_dyn-array i64))))))))))
+          [slot : i64 (array-length graph.summary-arrays)]
+          (__tl_array-push! graph.summary-arrays result)
+          (ids.insert-ref! (&mut graph.summaries) global (+ slot 1))
+          slot)))))
+
+(define (summary! [graph : (&mut graph Graph)] [global : i64]) : (__tl_dyn-array
+    i64)
+  (let
+    [slot : i64 (summary-index! graph global)]
+    (unsafe
+      (ptr-read (ptr-offset (__tl_array-data graph.summary-arrays) slot)))))
 
 (define (witness! [graph : (&mut graph Graph)] [callee : i64] [global : i64]) : words.Vec
   ;; No call path can write a global without a direct writer. Recheck this
@@ -150,12 +152,14 @@
     (= (ids.get-value-or (& graph.writers) global 0) 0)
     (return (words.new)))
   (let
-    [summary : (__tl_dyn-array i64) (summary! graph global)]
+    [slot : i64 (summary-index! graph global)]
     [path : words.Vec (words.new)]
     [node : i64 callee]
-    (while (and (>= node 0) (!= (array-ref summary node) 0))
+    (while (and
+      (>= node 0)
+      (!= (array-ref (array-ref graph.summary-arrays slot) node) 0))
       (words.push-ref! (&mut path) node)
-      (set! node (- (array-ref summary node) 1)))
+      (set! node (- (array-ref (array-ref graph.summary-arrays slot) node) 1)))
     path))
 
 ;; Whether `node` itself writes `key`, not only through a call.

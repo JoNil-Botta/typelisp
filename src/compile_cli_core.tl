@@ -1480,6 +1480,7 @@
         (cli_svec.len (& stdlib-roots))
         (& cfgs.slots)
         (cli_svec.len (& cfgs))
+        (ir.compiler-debug-info-enabled?)
         opt-level
         true)))
   (let
@@ -1718,6 +1719,7 @@
             (cli_svec.len (& stdlib-roots))
             (& cfgs.slots)
             (cli_svec.len (& cfgs))
+            (ir.compiler-debug-info-enabled?)
             opt-level
             true)))]
     [_image-owner : i64

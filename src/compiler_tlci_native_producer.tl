@@ -1444,62 +1444,64 @@
       [(Lambda lambda-node)
         (match lambda-node
           [(Lambda lambda-params maybe-ret body)
-            (let
-              [param-count : i64
-                (compiler_ast_types.ast-param-list-len lambda-params)]
-              [payload : String
-                (embedded-native-template-lambda-param-payload
-                  context
-                  lambda-params)]
-              [params-opened : i64
-                (embedded-native-template-lambda-param-type-ops
-                  context
-                  params
-                  lambda-params
-                  0
-                  ops
-                  ops-count)]
-              (if (< params-opened 0)
-                -1
+            (match (embedded-native-template-lambda-param-payload
+              context
+              lambda-params)
+              [(EmbeddedNativePayloadUnrenderable) -1]
+              [(EmbeddedNativePayloadOk payload)
                 (let
-                  [ret-opened : i64
-                    (match (compiler_ast_types.clone-ast-maybe-type maybe-ret)
-                      [(No) 0]
-                      [(Some ret-ty)
-                        (embedded-native-template-type-ops
-                          context
-                          params
-                          ret-ty
-                          ops
-                          ops-count)])]
-                  (if (< ret-opened 0)
+                  [param-count : i64
+                    (compiler_ast_types.ast-param-list-len lambda-params)]
+                  [params-opened : i64
+                    (embedded-native-template-lambda-param-type-ops
+                      context
+                      params
+                      lambda-params
+                      0
+                      ops
+                      ops-count)]
+                  (if (< params-opened 0)
                     -1
                     (let
-                      [body-opened : i64
-                        (embedded-native-template-ops
-                          context
-                          params
-                          body
-                          ops
-                          ops-count)]
-                      (if (< body-opened 0)
+                      [ret-opened : i64
+                        (match (compiler_ast_types.clone-ast-maybe-type
+                          maybe-ret)
+                          [(No) 0]
+                          [(Some ret-ty)
+                            (embedded-native-template-type-ops
+                              context
+                              params
+                              ret-ty
+                              ops
+                              ops-count)])]
+                      (if (< ret-opened 0)
                         -1
-                        (begin
-                          (embedded-native-template-push!
-                            ops
-                            ops-count
-                            (tlci_core.tlci-host-callback-name expr-lambda)
-                            (embedded-native-name-arg
-                              (embedded-native-escape-string (& payload)))
-                            (string.int->string
-                              (string.string-length (& payload)))
-                            (string.int->string
-                              (+
-                                (* param-count 2)
-                                (match maybe-ret
-                                  [(No) 0]
-                                  [(Some _) 1]))))
-                          (+ params-opened ret-opened body-opened 1))))))))])]
+                        (let
+                          [body-opened : i64
+                            (embedded-native-template-ops
+                              context
+                              params
+                              body
+                              ops
+                              ops-count)]
+                          (if (< body-opened 0)
+                            -1
+                            (begin
+                              (embedded-native-template-push!
+                                ops
+                                ops-count
+                                (tlci_core.tlci-host-callback-name expr-lambda)
+                                (embedded-native-name-arg
+                                  (embedded-native-escape-string (& payload)))
+                                (string.int->string
+                                  (string.string-length (& payload)))
+                                (string.int->string
+                                  (+
+                                    (* param-count 2)
+                                    (match maybe-ret
+                                      [(No) 0]
+                                      [(Some _) 1]))))
+                              (+ params-opened ret-opened body-opened 1))))))))])])]
       [_
         (let
           [list-opened : i64
@@ -1770,50 +1772,56 @@
         "0")
       1]
     [(Binding name-id)
-      (let
-        [name : String (embedded-native-intern-str context name-id)]
-        (embedded-native-template-push!
-          ops
-          ops-count
-          (tlci_core.tlci-host-callback-name pattern-binding)
-          (embedded-native-name-arg
-            (owned_view.compiler-owned-shared-view name))
-          (string.int->string (string.string-length name))
-          "0")
-        1)]
+      (if (not (ci.intern-renderable-id? name-id))
+        -1
+        (let
+          [name : String (embedded-native-intern-str context name-id)]
+          (embedded-native-template-push!
+            ops
+            ops-count
+            (tlci_core.tlci-host-callback-name pattern-binding)
+            (embedded-native-name-arg
+              (owned_view.compiler-owned-shared-view name))
+            (string.int->string (string.string-length name))
+            "0")
+          1))]
     [(Var name-id maybe-ty)
       (match maybe-ty
         [(No)
-          (let
-            [name : String (embedded-native-intern-str context name-id)]
-            (embedded-native-template-push!
-              ops
-              ops-count
-              (tlci_core.tlci-host-callback-name pattern-var)
-              (embedded-native-name-arg
-                (owned_view.compiler-owned-shared-view name))
-              (string.int->string (string.string-length name))
-              "0")
-            1)]
+          (if (not (ci.intern-renderable-id? name-id))
+            -1
+            (let
+              [name : String (embedded-native-intern-str context name-id)]
+              (embedded-native-template-push!
+                ops
+                ops-count
+                (tlci_core.tlci-host-callback-name pattern-var)
+                (embedded-native-name-arg
+                  (owned_view.compiler-owned-shared-view name))
+                (string.int->string (string.string-length name))
+                "0")
+              1))]
         [_ -1])]
     [(Variant name-id args-box)
-      (let
-        [name : String (embedded-native-intern-str context name-id)]
-        [args : compiler_ast_types.AstPatternList (deref args-box)]
-        [arg-opened : i64
-          (embedded-native-pattern-list-ops context (& args) ops ops-count 0)]
-        (if (< arg-opened 0)
-          -1
-          (begin
-            (embedded-native-template-push!
-              ops
-              ops-count
-              (tlci_core.tlci-host-callback-name pattern-variant)
-              (embedded-native-name-arg
-                (owned_view.compiler-owned-shared-view name))
-              (string.int->string (string.string-length name))
-              (string.int->string args.len))
-            (+ arg-opened 1))))]
+      (if (not (ci.intern-renderable-id? name-id))
+        -1
+        (let
+          [name : String (embedded-native-intern-str context name-id)]
+          [args : compiler_ast_types.AstPatternList (deref args-box)]
+          [arg-opened : i64
+            (embedded-native-pattern-list-ops context (& args) ops ops-count 0)]
+          (if (< arg-opened 0)
+            -1
+            (begin
+              (embedded-native-template-push!
+                ops
+                ops-count
+                (tlci_core.tlci-host-callback-name pattern-variant)
+                (embedded-native-name-arg
+                  (owned_view.compiler-owned-shared-view name))
+                (string.int->string (string.string-length name))
+                (string.int->string args.len))
+              (+ arg-opened 1)))))]
     [_ (embedded-native-fallback-opened "template-pattern:unsupported")]))
 
 (define (embedded-native-pattern-list-ops
@@ -1897,6 +1905,10 @@
         (embedded-native-template-push! ops ops-count op immediate "0" "0")
         (+ elem-opened 1)))))
 
+(defenum EmbeddedNativePayloadResult
+  (EmbeddedNativePayloadOk String)
+  (EmbeddedNativePayloadUnrenderable))
+
 ;; `(& r T)` / `(&mut r T)`: the inner template, then the wrapper carrying the
 ;; mutability flag and the lifetime name.
 (define (embedded-native-template-type-ref-ops
@@ -1907,29 +1919,31 @@
   [mutable : i64]
   [ops : (&mut ops (__tl_dyn-array String))]
   [ops-count : (&mut ops-count (__tl_dyn-array i64))]) : i64
-  (let
-    [region : String (embedded-native-intern-str context region-id)]
-    [inner-opened : i64
-      (embedded-native-template-type-ops
-        context
-        params
-        (compiler_ast_types.ast-node-pool-context-type-get
-          context.pools
-          inner-id)
-        ops
-        ops-count)]
-    (if (< inner-opened 0)
-      -1
-      (begin
-        (embedded-native-template-push!
+  (if (not (ci.intern-renderable-id? region-id))
+    -1
+    (let
+      [region : String (embedded-native-intern-str context region-id)]
+      [inner-opened : i64
+        (embedded-native-template-type-ops
+          context
+          params
+          (compiler_ast_types.ast-node-pool-context-type-get
+            context.pools
+            inner-id)
           ops
-          ops-count
-          (tlci_core.tlci-host-callback-name type-ref)
-          (string.int->string mutable)
-          (embedded-native-name-arg
-            (owned_view.compiler-owned-shared-view region))
-          (string.int->string (string.string-length region)))
-        (+ inner-opened 1)))))
+          ops-count)]
+      (if (< inner-opened 0)
+        -1
+        (begin
+          (embedded-native-template-push!
+            ops
+            ops-count
+            (tlci_core.tlci-host-callback-name type-ref)
+            (string.int->string mutable)
+            (embedded-native-name-arg
+              (owned_view.compiler-owned-shared-view region))
+            (string.int->string (string.string-length region)))
+          (+ inner-opened 1))))))
 
 ;; Pack a nominal type name followed by its ordered lifetime names. Source
 ;; identifiers cannot contain newlines, so the host callback can validate and
@@ -1939,23 +1953,29 @@
 (define (embedded-native-template-type-var-args-payload
   [context : (& context TlciNativeSourceContext)]
   [name : i64]
-  [lifetimes : (& lifetimes compiler_ast_types.AstLifetimeList)]) : String
-  (let
-    [payload : String (embedded-native-intern-str context name)]
-    (for [index
-      (iterator.range 0 (compiler_ast_types.ast-lifetime-list-len lifetimes))]
-      (set!
-        payload
-        (str_cat.str-cat
-          payload
-          "\n"
-          (embedded-native-intern-str
-            context
+  [lifetimes : (& lifetimes compiler_ast_types.AstLifetimeList)]) : EmbeddedNativePayloadResult
+  (if (not (ci.intern-renderable-id? name))
+    EmbeddedNativePayloadUnrenderable
+    (let
+      [payload : String (embedded-native-intern-str context name)]
+      (for [index
+        (iterator.range 0 (compiler_ast_types.ast-lifetime-list-len lifetimes))]
+        (let
+          [lifetime-id : i64
             (compiler_ast_types.ast-lifetime-list-get
               lifetimes
               index
-              (compiler_ast_types.ast-lifetime-fallback))))))
-    payload))
+              (compiler_ast_types.ast-lifetime-fallback))]
+          (when
+            (not (ci.intern-renderable-id? lifetime-id))
+            (return EmbeddedNativePayloadUnrenderable))
+          (set!
+            payload
+            (str_cat.str-cat
+              payload
+              "\n"
+              (embedded-native-intern-str context lifetime-id)))))
+      (EmbeddedNativePayloadOk payload))))
 
 (define (embedded-native-template-type-ops
   [context : (& context TlciNativeSourceContext)]
@@ -2106,38 +2126,40 @@
                   "0")
                 1)))
           (let
-            [payload : String
-              (embedded-native-template-type-var-args-payload
-                context
-                name
-                (& lifetimes))]
             [count : i64
               (compiler_ast_types.ast-lifetime-list-len (& lifetimes))]
             (if (= count 0)
               (embedded-native-fallback-opened "template-type:var-args-empty")
-              (begin
-                (embedded-native-template-push!
-                  ops
-                  ops-count
-                  (tlci_core.tlci-host-callback-name type-var-args)
-                  (string.int->string count)
-                  (embedded-native-name-arg
-                    (embedded-native-escape-string
-                      (owned_view.compiler-owned-shared-view payload)))
-                  (string.int->string (string.string-length payload)))
-                1)))))]
+              (match (embedded-native-template-type-var-args-payload
+                context
+                name
+                (& lifetimes))
+                [(EmbeddedNativePayloadUnrenderable) -1]
+                [(EmbeddedNativePayloadOk payload)
+                  (embedded-native-template-push!
+                    ops
+                    ops-count
+                    (tlci_core.tlci-host-callback-name type-var-args)
+                    (string.int->string count)
+                    (embedded-native-name-arg
+                      (embedded-native-escape-string
+                        (owned_view.compiler-owned-shared-view payload)))
+                    (string.int->string (string.string-length payload)))
+                  1])))))]
     [(Var type-name-id)
-      (let
-        [type-name : String (embedded-native-intern-str context type-name-id)]
-        (embedded-native-template-push!
-          ops
-          ops-count
-          (tlci_core.tlci-host-callback-name type-var)
-          (embedded-native-name-arg
-            (owned_view.compiler-owned-shared-view type-name))
-          (string.int->string (string.string-length type-name))
-          "0")
-        1)]
+      (if (not (ci.intern-renderable-id? type-name-id))
+        -1
+        (let
+          [type-name : String (embedded-native-intern-str context type-name-id)]
+          (embedded-native-template-push!
+            ops
+            ops-count
+            (tlci_core.tlci-host-callback-name type-var)
+            (embedded-native-name-arg
+              (owned_view.compiler-owned-shared-view type-name))
+            (string.int->string (string.string-length type-name))
+            "0")
+          1))]
     [_
       (let
         [ordinal : i64 (embedded-native-scalar-type-ordinal ty)]
@@ -2196,7 +2218,7 @@
 ;; final expr-lambda callback validates and combines both streams. Refs #6868.
 (define (embedded-native-template-lambda-param-payload
   [context : (& context TlciNativeSourceContext)]
-  [params : (& params compiler_ast_types.AstParamList)]) : String
+  [params : (& params compiler_ast_types.AstParamList)]) : EmbeddedNativePayloadResult
   (let
     [payload : String ""]
     (for [index
@@ -2206,6 +2228,9 @@
         index
         (compiler_ast_types.ast-param-fallback))
         [(Param name _ comptime?)
+          (when
+            (not (ci.intern-renderable-id? name))
+            (return EmbeddedNativePayloadUnrenderable))
           (set!
             payload
             (str_cat.str-cat
@@ -2217,7 +2242,7 @@
               ":"
               (embedded-native-intern-str context name)
               "\n"))]))
-    payload))
+    (EmbeddedNativePayloadOk payload)))
 
 (define (embedded-native-template-lambda-param-type-ops
   [context : (& context TlciNativeSourceContext)]
@@ -2270,72 +2295,74 @@
       index
       (compiler_ast_types.ast-let-binding-fallback))
       [(Binding name-id maybe-ty init)
-        (let
-          [name : String (embedded-native-intern-str context name-id)]
-          [init-opened : i64
-            (embedded-native-template-ops context params init ops ops-count)]
-          (if (< init-opened 0)
-            -1
-            (let
-              [binding-opened : i64
-                (match maybe-ty
-                  [(No)
+        (if (not (ci.intern-renderable-id? name-id))
+          -1
+          (let
+            [name : String (embedded-native-intern-str context name-id)]
+            [init-opened : i64
+              (embedded-native-template-ops context params init ops ops-count)]
+            (if (< init-opened 0)
+              -1
+              (let
+                [binding-opened : i64
+                  (match maybe-ty
+                    [(No)
+                      (embedded-native-template-push!
+                        ops
+                        ops-count
+                        (tlci_core.tlci-host-callback-name let-binding)
+                        (embedded-native-name-arg
+                          (owned_view.compiler-owned-shared-view name))
+                        (string.int->string (string.string-length name))
+                        "0")
+                      1]
+                    [(Some ty)
+                      (let
+                        [type-opened : i64
+                          (embedded-native-template-type-ops
+                            context
+                            params
+                            ty
+                            ops
+                            ops-count)]
+                        (if (< type-opened 0)
+                          -1
+                          (begin
+                            (embedded-native-template-push!
+                              ops
+                              ops-count
+                              (tlci_core.tlci-host-callback-name
+                                let-binding-typed)
+                              (embedded-native-name-arg
+                                (owned_view.compiler-owned-shared-view name))
+                              (string.int->string (string.string-length name))
+                              "0")
+                            (+ type-opened 1))))]
+                    [_
+                      (embedded-native-fallback-opened
+                        "template-let-binding:unsupported")])]
+                (if (< binding-opened 0)
+                  -1
+                  (begin
                     (embedded-native-template-push!
                       ops
                       ops-count
-                      (tlci_core.tlci-host-callback-name let-binding)
-                      (embedded-native-name-arg
-                        (owned_view.compiler-owned-shared-view name))
-                      (string.int->string (string.string-length name))
+                      (tlci_core.tlci-host-callback-name let-binding-list-cons)
+                      "0"
+                      "0"
                       "0")
-                    1]
-                  [(Some ty)
                     (let
-                      [type-opened : i64
-                        (embedded-native-template-type-ops
+                      [rest-opened : i64
+                        (embedded-native-template-let-bindings-ops
                           context
                           params
-                          ty
+                          bindings
+                          (+ index 1)
                           ops
                           ops-count)]
-                      (if (< type-opened 0)
+                      (if (< rest-opened 0)
                         -1
-                        (begin
-                          (embedded-native-template-push!
-                            ops
-                            ops-count
-                            (tlci_core.tlci-host-callback-name
-                              let-binding-typed)
-                            (embedded-native-name-arg
-                              (owned_view.compiler-owned-shared-view name))
-                            (string.int->string (string.string-length name))
-                            "0")
-                          (+ type-opened 1))))]
-                  [_
-                    (embedded-native-fallback-opened
-                      "template-let-binding:unsupported")])]
-              (if (< binding-opened 0)
-                -1
-                (begin
-                  (embedded-native-template-push!
-                    ops
-                    ops-count
-                    (tlci_core.tlci-host-callback-name let-binding-list-cons)
-                    "0"
-                    "0"
-                    "0")
-                  (let
-                    [rest-opened : i64
-                      (embedded-native-template-let-bindings-ops
-                        context
-                        params
-                        bindings
-                        (+ index 1)
-                        ops
-                        ops-count)]
-                    (if (< rest-opened 0)
-                      -1
-                      (+ init-opened binding-opened 1 rest-opened))))))))]
+                        (+ init-opened binding-opened 1 rest-opened)))))))))]
       [_ -1])))
 
 ;; Preserve the exact legacy nested source shape for ordinary-sized arms.

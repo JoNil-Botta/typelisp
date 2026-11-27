@@ -984,6 +984,7 @@
   [roots-len : i64]
   [user-cfg-names : (& (__tl_dyn-array String))]
   [user-cfg-count : i64]
+  [debug-info? : bool]
   [opt-level : i64]
   [require-archive : bool]) : unit
   (when
@@ -993,35 +994,52 @@
         (match target
           [(Windows) true]
           [(Linux) false])]
-      [cfg-digest : (Array u8 32)
-        (hydrate.tli-hydrate-stdlib-cfg-digest-for-names
-          is-windows
-          user-cfg-names
-          user-cfg-count)]
-      (tli-batch-cache-lookup-or-open!
-        (& tli-active-sysroot-options-state)
-        target
-        roots
-        roots-len
-        (& cfg-digest)
-        opt-level
-        require-archive)
+      [effective-cfgs : (__tl_dyn-array String)
+        (__tl_make-array String (+ user-cfg-count 1))]
+      [effective-cfg-count : i64 0]
+      (for [i (iterator.range 0 user-cfg-count)]
+        (let
+          [name : String (string.copy (& (array-ref user-cfg-names i)))]
+          (unless
+            (string.eq (& name) "compiler-backtrace")
+            (set! (array-ref effective-cfgs effective-cfg-count) name)
+            (+= effective-cfg-count 1))))
+      (when
+        debug-info?
+        (set!
+          (array-ref effective-cfgs effective-cfg-count)
+          "compiler-backtrace")
+        (+= effective-cfg-count 1))
       (let
-        [extra-count : i64 (svec.len (& tli-active-extra-tli-paths-state))]
-        (when
-          (> extra-count 0)
-          (let
-            [extra-digest : (Array u8 32)
-              (hydrate.tli-hydrate-cfg-digest-for-names
-                is-windows
-                user-cfg-names
-                user-cfg-count)]
-            (for [i (iterator.range 0 extra-count)]
-              (tli-batch-cache-lookup-or-open-extra!
-                (& (array-ref tli-active-extra-tli-paths-state.slots i))
-                target
-                (& extra-digest))
-              unit))))
+        [cfg-digest : (Array u8 32)
+          (hydrate.tli-hydrate-stdlib-cfg-digest-for-names
+            is-windows
+            (& effective-cfgs)
+            effective-cfg-count)]
+        (tli-batch-cache-lookup-or-open!
+          (& tli-active-sysroot-options-state)
+          target
+          roots
+          roots-len
+          (& cfg-digest)
+          opt-level
+          require-archive)
+        (let
+          [extra-count : i64 (svec.len (& tli-active-extra-tli-paths-state))]
+          (when
+            (> extra-count 0)
+            (let
+              [extra-digest : (Array u8 32)
+                (hydrate.tli-hydrate-cfg-digest-for-names
+                  is-windows
+                  (& effective-cfgs)
+                  effective-cfg-count)]
+              (for [i (iterator.range 0 extra-count)]
+                (tli-batch-cache-lookup-or-open-extra!
+                  (& (array-ref tli-active-extra-tli-paths-state.slots i))
+                  target
+                  (& extra-digest))
+                unit)))))
       unit)))
 
 ;; Sysroot options of the running command; every compile it starts opens the
@@ -1188,7 +1206,9 @@
         (& (array-ref tli-active-extra-tli-paths-state.slots i))
         target
         cfgs)
-        [(Err msg) (return (ResultTliCatalogOpen.Err msg))]
+        [(Err msg)
+          (compiler_load.compiler-load-session-state-tli-release! load-state)
+          (return (ResultTliCatalogOpen.Err msg))]
         [(Ok) unit]))
     ResultTliCatalogOpen.Ok))
 

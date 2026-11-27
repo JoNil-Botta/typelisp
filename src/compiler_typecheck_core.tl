@@ -118497,14 +118497,16 @@
   (Source ast.AstExpr i64)
   (Unavailable String))
 
-;; Cache every hydrated `defmacro` body discovered in one parsed fallback file
-;; so repeated expansions of any macro from that file reuse the parsed AST
-;; nodes in `pools` instead of re-reading and re-parsing the declaring source.
+;; Cache hydrated `defmacro` bodies belonging to `target-module-id` discovered
+;; in one parsed fallback file so repeated expansions of macros from that
+;; verified module reuse the parsed AST nodes in `pools` instead of re-reading
+;; and re-parsing the declaring source.
 (define (macro-cache-tli-hydrated-file-defmacros!
   [facts-ptr : i64]
   [pool-bases : i64]
   [decls : (& ast.AstDeclList)]
-  [initial-module-id : i64]) : unit
+  [initial-module-id : i64]
+  [target-module-id : i64]) : unit
   (let
     [current : i64 initial-module-id]
     [n : i64 (ast.ast-decl-list-len decls)]
@@ -118519,10 +118521,11 @@
               facts-ptr
               pool-bases
               (& (__tl-box-place body-box))
-              nested)]
+              nested
+              target-module-id)]
           [_
             (when
-              (>= current 0)
+              (and (>= current 0) (= current target-module-id))
               (match (ast.ast-decl-unwrapped (& decl))
                 [(DefMacro _ name _ _ body-id)
                   (when
@@ -118676,7 +118679,8 @@
                               (ast.ast-node-pool-context-expr-segment-bases
                                 (& pools))
                               file-decls
-                              initial-mod)
+                              initial-mod
+                              entry.module-id)
                             (Source
                               (ast.ast-node-pool-context-expr-get pools body-id)
                               (macro-type-literal-body-id (& decl))))

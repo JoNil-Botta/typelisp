@@ -124946,9 +124946,9 @@
   [cfgs : sym_i64_env.SymI64Env]
   [decl-path : String]) : ResultMacroDeclExpansion
   (let
-    ;; Generated placeholders carry the originating call's span on the
-    ;; declaration, while their expression still has the template's span.
-    [call-expr : ast.AstExpr (Spanned call-id span)]
+    ;; Name-resolution diagnostics use the expression's spelling in the
+    ;; template. The declaration span follows the invocation through splices.
+    [call-expr : ast.AstExpr (tc-context-expr-get ctx call-id)]
     [pools : ast.AstNodePoolContext (tc-context-pools ctx)]
     (match (ast.ast-expr-unspan-with-pools pools (& call-expr))
       [(Call func-box args)
@@ -125027,7 +125027,7 @@
                                 call-ctx
                                 global-env
                                 (tc-global-shared-view decl-path)
-                                (tc-global-shared-view call-expr)
+                                (Spanned call-id span)
                                 (macro-decl-name-display
                                   macro-name
                                   definition-module)
@@ -125114,10 +125114,7 @@
                                                     (macro-decl-name-display
                                                       macro-name
                                                       definition-module)))
-                                                (macro-expr-span-or-zero
-                                                  (tc-context-expr-bases ctx)
-                                                  (tc-global-shared-view
-                                                    call-expr)))]
+                                                span)]
                                             (macro-decls-splice-with-memo
                                               (tc-context-expr-bases call-ctx)
                                               (tc-context-macro-state call-ctx)

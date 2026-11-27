@@ -32,6 +32,9 @@ SC_CHECKPOINT_FILE=perf/self-compile-ledger-checkpoint.tsv
 # main, newest-updated first, at most this many pages of this size.
 SC_PR_SCAN_PAGES=10
 SC_PR_SCAN_PER_PAGE=100
+# Maximum first-parent ancestor steps when immediate base/parent B is unbuildable
+# (both hosted reference unavailable and in-place fallback failed).
+SC_UNBUILDABLE_BASE_WALK_LIMIT=${TYPELISP_SELF_COMPILE_UNBUILDABLE_WALK_LIMIT:-5}
 
 # The measured invocation. The output directory keeps the historical `-o`
 # argument byte-for-byte (target/instruction-count-check/measure/...), so a
@@ -582,32 +585,32 @@ sc_pr_page_ends() {
         length < $n or ([.[].updated_at | fromdateiso8601] | min) < $since' "$1" >/dev/null
 }
 
-# sc_reference_record_check REF HEAD REPO RUN_ID ATTEMPT COMMIT EXPECT_ROLE
-#   Binds a downloaded record to the run that produced it and to the commit it
-#   claims, then requires a comparable measurement identity with HEAD. Prints
+# sc_reference_record_provenance_check REF REPO RUN_ID ATTEMPT COMMIT EXPECT_ROLE
+#   Structural and producer-provenance validation of a downloaded reference
+#   record, independent of runner/procedure identity comparability. Prints
 #   every problem; fails on any.
-sc_reference_record_check() {
+sc_reference_record_provenance_check() {
     _srrc_ref=$1
     _srrc_status=0
-    _srrc_msg=$(sc_record_validate "$_srrc_ref" "$7") || { echo "$_srrc_msg"; return 1; }
-    [ "$(sc_record_get "$_srrc_ref" commit)" = "$6" ] || {
-        echo "record commit $(sc_record_get "$_srrc_ref" commit) is not $6"
+    _srrc_msg=$(sc_record_validate "$_srrc_ref" "$6") || { echo "$_srrc_msg"; return 1; }
+    [ "$(sc_record_get "$_srrc_ref" commit)" = "$5" ] || {
+        echo "record commit $(sc_record_get "$_srrc_ref" commit) is not $5"
         _srrc_status=1
     }
     [ "$(sc_record_get "$_srrc_ref" authority)" = hosted ] || {
         echo "record authority is $(sc_record_get "$_srrc_ref" authority), not hosted"
         _srrc_status=1
     }
-    [ "$(sc_record_get "$_srrc_ref" run.repository 2>/dev/null || true)" = "$3" ] || {
-        echo "record repository $(sc_record_get "$_srrc_ref" run.repository 2>/dev/null || true) is not $3"
+    [ "$(sc_record_get "$_srrc_ref" run.repository 2>/dev/null || true)" = "$2" ] || {
+        echo "record repository $(sc_record_get "$_srrc_ref" run.repository 2>/dev/null || true) is not $2"
         _srrc_status=1
     }
-    [ "$(sc_record_get "$_srrc_ref" run.id 2>/dev/null || true)" = "$4" ] || {
-        echo "record run $(sc_record_get "$_srrc_ref" run.id 2>/dev/null || true) is not producer run $4"
+    [ "$(sc_record_get "$_srrc_ref" run.id 2>/dev/null || true)" = "$3" ] || {
+        echo "record run $(sc_record_get "$_srrc_ref" run.id 2>/dev/null || true) is not producer run $3"
         _srrc_status=1
     }
-    [ "$(sc_record_get "$_srrc_ref" run.attempt 2>/dev/null || true)" = "$5" ] || {
-        echo "record attempt $(sc_record_get "$_srrc_ref" run.attempt 2>/dev/null || true) is not the producer's latest attempt $5"
+    [ "$(sc_record_get "$_srrc_ref" run.attempt 2>/dev/null || true)" = "$4" ] || {
+        echo "record attempt $(sc_record_get "$_srrc_ref" run.attempt 2>/dev/null || true) is not the producer's latest attempt $4"
         _srrc_status=1
     }
     [ "$(sc_record_get "$_srrc_ref" run.event 2>/dev/null || true)" = push ] || {
@@ -615,17 +618,28 @@ sc_reference_record_check() {
         _srrc_status=1
     }
     case "$(sc_record_get "$_srrc_ref" run.workflow_ref 2>/dev/null || true)" in
-        "$3/$SC_REFERENCE_WORKFLOW@refs/heads/main") ;;
+        "$2/$SC_REFERENCE_WORKFLOW@refs/heads/main") ;;
         *)
-            echo "record workflow $(sc_record_get "$_srrc_ref" run.workflow_ref 2>/dev/null || true) is not $3/$SC_REFERENCE_WORKFLOW@refs/heads/main"
+            echo "record workflow $(sc_record_get "$_srrc_ref" run.workflow_ref 2>/dev/null || true) is not $2/$SC_REFERENCE_WORKFLOW@refs/heads/main"
             _srrc_status=1
             ;;
     esac
-    if ! _srrc_diff=$(sc_records_comparable "$2" "$_srrc_ref"); then
-        printf '%s\n' "$_srrc_diff" | sed 's/^/identity differs: /'
-        _srrc_status=1
-    fi
     return "$_srrc_status"
+}
+
+# sc_reference_record_check REF HEAD REPO RUN_ID ATTEMPT COMMIT EXPECT_ROLE
+#   Binds a downloaded record to the run that produced it and to the commit it
+#   claims, then requires a comparable measurement identity with HEAD. Prints
+#   every problem; fails on any.
+sc_reference_record_check() {
+    _srrc_all_status=0
+    _srrc_msg=$(sc_record_validate "$1" "$7") || { echo "$_srrc_msg"; return 1; }
+    sc_reference_record_provenance_check "$1" "$3" "$4" "$5" "$6" "$7" || _srrc_all_status=1
+    if ! _srrc_diff=$(sc_records_comparable "$2" "$1"); then
+        printf '%s\n' "$_srrc_diff" | sed 's/^/identity differs: /'
+        _srrc_all_status=1
+    fi
+    return "$_srrc_all_status"
 }
 
 # --- ledger -------------------------------------------------------------------
@@ -654,6 +668,10 @@ sc_ledger_entry() {
     sc_record_line schema "$SC_ENTRY_SCHEMA"
     sc_record_line commit "$_sle_c"
     sc_record_line parent "$_sle_p"
+    if [ -f "$_sle_dir/git-parent" ]; then
+        sc_record_line git_parent "$(cat "$_sle_dir/git-parent")"
+        sc_record_line effective_parent "$_sle_p"
+    fi
 
     # The step must subtract a comparable pair of p and c.
     _sle_pair_ok=yes

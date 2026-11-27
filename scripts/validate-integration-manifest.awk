@@ -107,7 +107,9 @@ FILENAME == catalog {
     # the runner leaves such a row out of the batched pre-pass and compiles it
     # standalone at that level. Everything after the prefix (possibly nothing)
     # is the extra field every other row spells.
+    has_opt_level = 0
     if (extra ~ /^opt-level:/) {
+        has_opt_level = 1
         opt_level_spec = extra
         sub(/^opt-level:/, "", opt_level_spec)
         if (opt_level_spec !~ /^[012]\+/) {
@@ -115,6 +117,26 @@ FILENAME == catalog {
         }
         sub(/^[012]\+/, "", opt_level_spec)
         extra = opt_level_spec
+    }
+    has_backend_mode = 0
+    if (extra ~ /^backend-mode:/) {
+        has_backend_mode = 1
+        if (has_opt_level) {
+            fail("manifest line " FNR " cannot combine opt-level and backend-mode for " name ": " field[7])
+        }
+        backend_mode_spec = extra
+        sub(/^backend-mode:/, "", backend_mode_spec)
+        if (backend_mode_spec ~ /^scalar$/) {
+            extra = ""
+        } else if (backend_mode_spec ~ /^scalar\+/) {
+            sub(/^scalar\+/, "", backend_mode_spec)
+            extra = backend_mode_spec
+        } else {
+            fail("manifest line " FNR " has invalid backend-mode prefix for " name ": " extra)
+        }
+    }
+    if (has_backend_mode && (extra == "stage-stdlib" || extra ~ /^stage-stdlib\+/)) {
+        fail("manifest line " FNR " cannot combine backend-mode:scalar with stage-stdlib for " name ": " field[7])
     }
     if (extra == "expected-stderr:" || extra == "stage-stdlib+expected-stderr:") {
         fail("manifest line " FNR " has empty expected stderr for " name)

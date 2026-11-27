@@ -39169,6 +39169,115 @@ exit:
 }"))
     "each mask negation reads the previous gang's mask"))
 
+(define (opt-unroll-test-first-vector-store-seq
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]) : i64
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [found : i64 (- 0 1)]
+    (for [index (iterator.range 0 count)]
+      (when
+        (< found 0)
+        (match (ir.compiler-ir-instr-seq-borrow instrs index)
+          [(VectorStore _) (set! found index)]
+          [_ unit])))
+    found))
+
+(define (opt-unroll-test-first-vector-store-index
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [label : i64]) : i64
+  (match (opt.opt-cfg-find-block blocks label)
+    [(No) (- 0 1)]
+    [(Some block)
+      (match block
+        [(Block _ instrs) (opt-unroll-test-first-vector-store-seq instrs)])]))
+
+(test
+  simd-unroll-skips-store-pipeline-when-load-follows-store
+  (let
+    [func : ir.CompilerIrFunction
+      (irt.func
+        "function @store_before_load(n=%0:i64, src=%1:i64, dst=%2:i64) -> unit vars 11 {
+entry:
+  %3 = mov 0 : i64
+  %4 = add %3, 2 : i64
+  %5 = le %4, %0 : i64
+  branch %5, body, exit
+body:
+  %6 = vector_load %1, %3 lanes 2 : i64
+  %7 = vector_add %6, %6 lanes 2 : i64
+  vector_store %2, %3, %7 lanes 2 : i64
+  %8 = vector_load %2, %3 lanes 2 : i64
+  %9 = vector_add %7, %8 lanes 2 : i64
+  %3 = mov %4 : i64
+  %4 = add %3, 2 : i64
+  %5 = le %4, %0 : i64
+  branch %5, body, exit
+exit:
+  return
+}")]
+    [type-bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    (match (opt.opt-unroll-simd-function-with-context-result
+      type-bases
+      (opt.opt-cfg-context-build (opt.opt-function-blocks func))
+      func
+      true)
+      [(Result result _)
+        (test.assert-true
+          (opt.opt-verify-ok? (& (opt.opt-verify-final-function result)))
+          "unrolled store-before-load gang passes IR verification")
+        (let
+          [out : ir.CompilerIrBlockList (opt.opt-function-blocks result)]
+          (test.assert-true
+            (=
+              5
+              (opt-unroll-test-first-vector-store-index
+                (& out)
+                (ir.compiler-ir-label "body__unroll_body")))
+            "copy 0 VectorStore stays at index 5 (1 Phi + 2 Geps + 2 ops) before its trailing VectorLoad (not deferred by store pipelining)"))])))
+
+(test
+  simd-unroll-store-pipelines-pure-128bit-map
+  (let
+    [func : ir.CompilerIrFunction
+      (irt.func
+        "function @pure_map_128(n=%0:i64, left=%1:i64, right=%2:i64, out=%3:i64) -> unit vars 11 {
+entry:
+  %4 = mov 0 : i64
+  %5 = add %4, 2 : i64
+  %6 = le %5, %0 : i64
+  branch %6, body, exit
+body:
+  %7 = vector_load %1, %4 lanes 2 : i64
+  %8 = vector_load %2, %4 lanes 2 : i64
+  %9 = vector_add %7, %8 lanes 2 : i64
+  vector_store %3, %4, %9 lanes 2 : i64
+  %4 = mov %5 : i64
+  %5 = add %4, 2 : i64
+  %6 = le %5, %0 : i64
+  branch %6, body, exit
+exit:
+  return
+}")]
+    [type-bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    (match (opt.opt-unroll-simd-function-with-context-result
+      type-bases
+      (opt.opt-cfg-context-build (opt.opt-function-blocks func))
+      func
+      true)
+      [(Result result _)
+        (test.assert-true
+          (opt.opt-verify-ok? (& (opt.opt-verify-final-function result)))
+          "store-pipelined 128-bit map passes IR verification")
+        (let
+          [out : ir.CompilerIrBlockList (opt.opt-function-blocks result)]
+          (test.assert-true
+            (=
+              19
+              (opt-unroll-test-first-vector-store-index
+                (& out)
+                (ir.compiler-ir-label "body__unroll_body")))
+            "copy 0 VectorStore is deferred to index 19 (1 Phi + 3 Geps + 5 gangs of 3 non-store ops, depth 4)"))])))
+
 (define (opt-unroll-test-count-add-instr-seq
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [acc : i64]) : i64

@@ -54,7 +54,7 @@ EOF
 # Windows runner differential).
 integration_shards() {
     cat <<'EOF'
-default|-|stage-stdlib embedded
+default|-|stage-stdlib embedded embedded-scalar
 opt-levels|-opt-levels|stage-stdlib-opt0 stage-stdlib-opt1 stage-stdlib-opt2 embedded-opt0 embedded-opt1 embedded-opt2
 EOF
 }
@@ -452,6 +452,9 @@ integration_batch_group_run() {
     set -- "$@" --verify-ir
     case "$_compile_group" in
         embedded | stage-stdlib) ;;
+        embedded-scalar)
+            set -- "$@" --backend-mode scalar
+            ;;
         embedded-opt0 | stage-stdlib-opt0 | embedded-opt1 | stage-stdlib-opt1 | embedded-opt2 | stage-stdlib-opt2)
             set -- "$@" --opt-level "${_compile_group##*opt}"
             ;;
@@ -461,7 +464,7 @@ integration_batch_group_run() {
             ;;
     esac
     case "$_compile_group" in
-        embedded | embedded-opt*)
+        embedded | embedded-scalar | embedded-opt*)
             # shellcheck disable=SC2086
             "$@" $INTEGRATION_BATCH_TARGET_ARGS --stdlib-root "$ROOT/src"
             ;;
@@ -1925,6 +1928,7 @@ run_path_normalization_self_test() {
 manifest_row_split_opt_level() {
     MANIFEST_ROW_EXTRA=${1:-}
     MANIFEST_ROW_OPT_LEVEL=
+    MANIFEST_ROW_BACKEND_MODE=
     case "$MANIFEST_ROW_EXTRA" in
         opt-level:*)
             MANIFEST_ROW_OPT_LEVEL=${MANIFEST_ROW_EXTRA#opt-level:}
@@ -1934,6 +1938,20 @@ manifest_row_split_opt_level() {
                 0 | 1 | 2) ;;
                 *) echo "invalid manifest optimization level: $MANIFEST_ROW_OPT_LEVEL" >&2; return 1 ;;
             esac
+            ;;
+    esac
+    case "$MANIFEST_ROW_EXTRA" in
+        backend-mode:scalar)
+            MANIFEST_ROW_BACKEND_MODE=scalar
+            MANIFEST_ROW_EXTRA=
+            ;;
+        backend-mode:scalar+*)
+            MANIFEST_ROW_BACKEND_MODE=scalar
+            MANIFEST_ROW_EXTRA=${MANIFEST_ROW_EXTRA#backend-mode:scalar+}
+            ;;
+        backend-mode:*)
+            echo "invalid manifest backend mode: $MANIFEST_ROW_EXTRA" >&2
+            return 1
             ;;
     esac
 }
@@ -1949,6 +1967,8 @@ manifest_row_batch_group() {
     esac
     [ -z "$MANIFEST_ROW_OPT_LEVEL" ] ||
         MANIFEST_ROW_GROUP="$MANIFEST_ROW_GROUP-opt$MANIFEST_ROW_OPT_LEVEL"
+    [ -z "$MANIFEST_ROW_BACKEND_MODE" ] ||
+        MANIFEST_ROW_GROUP="$MANIFEST_ROW_GROUP-$MANIFEST_ROW_BACKEND_MODE"
 }
 
 # Select this shard's rows: the batch pre-pass, the staged tree, the case loop
@@ -2149,6 +2169,7 @@ integration_build_dedup_plan() {
             extra = (NF >= 7 ? $7 : "")
             rest = extra
             opt = ""
+            backend_mode = ""
             if (rest ~ /^opt-level:/) {
                 sub(/^opt-level:/, "", rest)
                 plus = index(rest, "+")
@@ -2159,8 +2180,22 @@ integration_build_dedup_plan() {
                     fail("invalid manifest optimization level: " opt)
                 }
             }
+            if (rest ~ /^backend-mode:/) {
+                if (opt != "") fail("cannot combine opt-level and backend-mode for " name)
+                sub(/^backend-mode:/, "", rest)
+                if (rest == "scalar") {
+                    backend_mode = "scalar"
+                    rest = ""
+                } else if (rest ~ /^scalar\+/) {
+                    backend_mode = "scalar"
+                    sub(/^scalar\+/, "", rest)
+                } else {
+                    fail("invalid manifest backend mode for " name ": backend-mode:" rest)
+                }
+            }
             group = (rest == "stage-stdlib" || rest ~ /^stage-stdlib\+expected-stderr:/) ? "stage-stdlib" : "embedded"
             if (opt != "") group = group "-opt" opt
+            if (backend_mode != "") group = group "-" backend_mode
             deps_norm = (deps == "" || deps == "-") ? "" : deps
             forced = (name in forced_set) ? 1 : 0
             key = group SUBSEP source SUBSEP deps_norm SUBSEP forced
@@ -2337,6 +2372,7 @@ integration_batch_queue() {
             extra = (NF >= 7 ? $7 : "")
             rest = extra
             opt = ""
+            backend_mode = ""
             if (rest ~ /^opt-level:/) {
                 sub(/^opt-level:/, "", rest)
                 plus = index(rest, "+")
@@ -2347,8 +2383,22 @@ integration_batch_queue() {
                     fail("invalid manifest optimization level: " opt)
                 }
             }
+            if (rest ~ /^backend-mode:/) {
+                if (opt != "") fail("cannot combine opt-level and backend-mode for " name)
+                sub(/^backend-mode:/, "", rest)
+                if (rest == "scalar") {
+                    backend_mode = "scalar"
+                    rest = ""
+                } else if (rest ~ /^scalar\+/) {
+                    backend_mode = "scalar"
+                    sub(/^scalar\+/, "", rest)
+                } else {
+                    fail("invalid manifest backend mode for " name ": backend-mode:" rest)
+                }
+            }
             grp = (rest == "stage-stdlib" || rest ~ /^stage-stdlib\+expected-stderr:/) ? "stage-stdlib" : "embedded"
             if (opt != "") grp = grp "-opt" opt
+            if (backend_mode != "") grp = grp "-" backend_mode
 
             rel = work_root "/" name "/" name
             if (host == "windows") {
@@ -3524,11 +3574,22 @@ windows_build_and_assemble_manifest() {
             extra = (NF >= 7 ? $7 : "")
             rest = extra
             opt = ""
+            backend_mode = ""
             if (rest ~ /^opt-level:/) {
                 sub(/^opt-level:/, "", rest)
                 plus = index(rest, "+")
                 opt = substr(rest, 1, plus - 1)
                 rest = substr(rest, plus + 1)
+            }
+            if (rest ~ /^backend-mode:/) {
+                sub(/^backend-mode:/, "", rest)
+                if (rest == "scalar") {
+                    backend_mode = "scalar"
+                    rest = ""
+                } else if (rest ~ /^scalar\+/) {
+                    backend_mode = "scalar"
+                    sub(/^scalar\+/, "", rest)
+                }
             }
             stage_stdlib = (rest == "stage-stdlib" || rest ~ /^stage-stdlib\+expected-stderr:/) ? 1 : 0
             case_dir = workdir "/" name
@@ -3554,7 +3615,7 @@ windows_build_and_assemble_manifest() {
                 print name "|" source "|" kind "|" cls "|" arch "|" deps > ready_out
             } else {
                 standalone_cnt++
-                print name "|" source "|" stage_stdlib "|" opt "|" deps > standalone_out
+                print name "|" source "|" stage_stdlib "|" opt "|" backend_mode "|" deps > standalone_out
             }
         }
         END {
@@ -3571,7 +3632,7 @@ windows_build_and_assemble_manifest() {
 
     # Rare path: standalone diagnostic/fallback compiles when a batch chunk failed.
     if [ -s "$_win_standalone" ]; then
-        while IFS='|' read -r name _st_source stage_stdlib opt_level deps || [ -n "$name" ]; do
+        while IFS='|' read -r name _st_source stage_stdlib opt_level backend_mode deps || [ -n "$name" ]; do
             [ -n "$name" ] || continue
             work_src_rel="target/integration-verify/$HOST_OS$INTEGRATION_SHARD_SUFFIX/$name/$name.tl"
             case_dir="$WORKDIR/$name"
@@ -3583,6 +3644,9 @@ windows_build_and_assemble_manifest() {
                 opt_level_args="--opt-level $opt_level"
             else
                 opt_level_args=
+            fi
+            if [ -n "$backend_mode" ]; then
+                opt_level_args="${opt_level_args:+$opt_level_args }--backend-mode $backend_mode"
             fi
             INTEGRATION_STANDALONE_COMPILES=$((INTEGRATION_STANDALONE_COMPILES + 1))
             if [ "$stage_stdlib" -eq 1 ]; then
@@ -4239,6 +4303,11 @@ windows_process_manifest_link_results() {
                 rest = extra
                 if (rest ~ /^opt-level:/) {
                     sub(/^opt-level:[^+]+\+/, "", rest)
+                }
+                if (rest ~ /^backend-mode:scalar\+/) {
+                    sub(/^backend-mode:scalar\+/, "", rest)
+                } else if (rest == "backend-mode:scalar") {
+                    rest = ""
                 }
                 stderr_spec = "-"
                 if (rest ~ /^stage-stdlib\+expected-stderr:/) {
@@ -5304,6 +5373,7 @@ while IFS='|' read -r owner name source want stdout_spec runtime_args deps extra
     stage_stdlib=0
     manifest_row_split_opt_level "${extra:-}"
     opt_level=$MANIFEST_ROW_OPT_LEVEL
+    backend_mode=$MANIFEST_ROW_BACKEND_MODE
     case "$MANIFEST_ROW_EXTRA" in
         "") ;;
         stage-stdlib) stage_stdlib=1 ;;
@@ -5317,6 +5387,9 @@ while IFS='|' read -r owner name source want stdout_spec runtime_args deps extra
         opt_level_args="--opt-level $opt_level"
     else
         opt_level_args=
+    fi
+    if [ -n "$backend_mode" ]; then
+        opt_level_args="${opt_level_args:+$opt_level_args }--backend-mode $backend_mode"
     fi
 
     case_dir="$WORKDIR/$name"

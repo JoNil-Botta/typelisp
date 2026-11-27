@@ -1746,6 +1746,13 @@
     [(Assembly _) true]
     [_ false]))
 
+(define (source-tool-program-uses-simd?
+  [program : (& program SourceToolProgram)]) : bool
+  (match program
+    [(Lowered lowered _ _)
+      (backend.compiler-backend-program-uses-simd? lowered)]
+    [_ false]))
+
 ;; Serialize an emitted object image for the target's linker, or say why the
 ;; program has to take the assembly route instead.
 (define (source-tool-render-object-result
@@ -1804,7 +1811,7 @@
             spans
             target
             true
-            (Scalar)
+            mode
             opt-level
             true
             crt-entry
@@ -1813,9 +1820,9 @@
 
 ;; The direct object route, taken only when TYPELISP_{LINUX,WINDOWS}_DIRECT_OBJECT
 ;; enables it for the target and no debug information is requested. Lowered
-;; programs take it only in scalar mode: the lowered object emitters encode
-;; scalar IR only (SIMD parity is #7030), so a SIMD program goes to assembly
-;; with its mode intact instead of pairing vector IR with the scalar backend.
+;; programs take it in scalar mode or in baseline SSE2 mode when the lowered IR
+;; has zero SIMD instructions; SIMD programs go to assembly with their mode
+;; intact instead of pairing vector IR with the scalar object encoder (#7030).
 (define (source-tool-try-direct-object-and-link
   [request : SourceToolLinkRequest]) : SourceToolDirectObjectStatus
   (let
@@ -1826,7 +1833,12 @@
         [(Linux) (source-tool-linux-direct-object-enabled?)]
         [(Windows) (source-tool-windows-direct-object-enabled?)])
       (not (source-tool-program-assembly? (& request.program)))
-      (or (not lowered) (be_state.compiler-backend-mode-scalar? request.mode)))
+      (or
+        (not lowered)
+        (be_state.compiler-backend-mode-scalar? request.mode)
+        (and
+          (be_state.compiler-backend-mode-sse2? request.mode)
+          (not (source-tool-program-uses-simd? (& request.program))))))
       (match (source-tool-emit-object
         request.source
         request.program

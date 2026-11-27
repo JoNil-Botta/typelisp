@@ -4424,7 +4424,12 @@
   [functions : (& compiler_ir_types.CompilerIrFunctionSeq)]) : bool
   (for [index (iterator.range 0 functions.len)]
     (match (compiler_ir_types.compiler-ir-function-seq-borrow functions index)
-      [(Function name _ _ _ blocks _)
+      [(Function name _ _ _ blocks function-abi)
+        (when
+          (match (& function-abi)
+            [(SpmdPrivate _) true]
+            [_ false])
+          (return false))
         (when
           (not
             (or

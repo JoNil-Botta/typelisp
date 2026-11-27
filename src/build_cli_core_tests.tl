@@ -399,21 +399,32 @@
             (& empty-decls)
             (& one-path))
             [(Eligible) true]
+            [_ false])
+          (match (build.build-package-direct-object-preflight
+            (CompilerPkgKindBin)
+            (Windows)
+            (Sse2)
+            false
+            1
+            false
+            (& empty-decls)
+            (& one-path))
+            [(Eligible) true]
             [_ false]))
         (io.panic "typed package direct-object route failed")))))
 
 (cfg
   test
   (define (build-package-typed-route-table-from) : bool
-    (for [index (iterator.range 0 192)]
+    (for [index (iterator.range 0 256)]
       (let
         [target-index : i64 (% index 2)]
         [kind-index : i64 (% (/ index 2) 2)]
         [debug-index : i64 (% (/ index 4) 2)]
-        [mode-index : i64 (% (/ index 8) 3)]
-        [spmd-index : i64 (% (/ index 24) 2)]
-        [size-index : i64 (% (/ index 48) 2)]
-        [override-index : i64 (% (/ index 96) 2)]
+        [mode-index : i64 (% (/ index 8) 4)]
+        [spmd-index : i64 (% (/ index 32) 2)]
+        [size-index : i64 (% (/ index 64) 2)]
+        [override-index : i64 (% (/ index 128) 2)]
         [target : be_state.CompilerBackendTarget
           (if (= target-index 0)
             (Linux)
@@ -425,7 +436,8 @@
         [mode : be_state.CompilerBackendMode
           (cond
             [(= mode-index 0) (Scalar)]
-            [(= mode-index 1) (Avx2)]
+            [(= mode-index 1) (Sse2)]
+            [(= mode-index 2) (Avx2)]
             [else (Avx512)])]
         [decls : ast.AstDeclList
           (if (= spmd-index 0)
@@ -452,7 +464,7 @@
             [(and (= target-index 1) (= kind-index 1))
               "artifact-kind-unavailable"]
             [(= debug-index 1) "debug-metadata"]
-            [(> mode-index 0) "backend-mode"]
+            [(> mode-index 1) "backend-mode"]
             [(= spmd-index 1) "private-spmd-abi"]
             [(and (= size-index 1) (or (= target-index 1) (= override-index 0)))
               "resource-budget"]

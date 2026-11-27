@@ -7430,25 +7430,29 @@
 ;; 1 when the pass turned the loop into its closed form (a bit_length of the
 ;; probe and a jump to the exit), 0 when it left the loop alone, -1 otherwise.
 (define (opt-bitlen-test-outcome [blocks : ir.CompilerIrBlockList]) : i64
-  (match (let
-    [blocks-2 (opt.opt-bit-length-idiom-blocks 10 blocks)]
-    (opt.opt-cfg-find-block blocks-2 (ir.compiler-ir-label "loop")))
-    [(Some (Block _ instrs))
-      (match (ir.compiler-ir-instr-seq-borrow instrs (- instrs.len 1))
-        [(Branch _ _ _) 0]
-        [(Jump target)
-          (if (and
-            (= target (ir.compiler-ir-label "exit"))
-            (match (ir.compiler-ir-instr-seq-borrow instrs 2)
-              [(UnOp 5 (BitLength) (Var 4) _) true]
-              [_ false])
-            (match (ir.compiler-ir-instr-seq-borrow instrs 3)
-              [(Mov 7 (Var 5) _) true]
-              [_ false]))
-            1
-            (- 0 1))]
-        [_ (- 0 1)])]
-    [(No) (- 0 1)]))
+  (match (opt.opt-bit-length-idiom-blocks 10 blocks)
+    [(Result blocks-2 changed?)
+      (match (opt.opt-cfg-find-block blocks-2 (ir.compiler-ir-label "loop"))
+        [(Some (Block _ instrs))
+          (match (ir.compiler-ir-instr-seq-borrow instrs (- instrs.len 1))
+            [(Branch _ _ _)
+              (if changed?
+                (- 0 1)
+                0)]
+            [(Jump target)
+              (if (and
+                changed?
+                (= target (ir.compiler-ir-label "exit"))
+                (match (ir.compiler-ir-instr-seq-borrow instrs 2)
+                  [(UnOp 5 (BitLength) (Var 4) _) true]
+                  [_ false])
+                (match (ir.compiler-ir-instr-seq-borrow instrs 3)
+                  [(Mov 7 (Var 5) _) true]
+                  [_ false]))
+                1
+                (- 0 1))]
+            [_ (- 0 1)])]
+        [(No) (- 0 1)])]))
 
 ;; Reordering the independent source increment ahead of the shift must not
 ;; leave the replacement add/copy reading BitLength's result before it exists.
@@ -7509,9 +7513,10 @@
     (let
       [blocks : ir.CompilerIrBlockList (Array seq)]
       [rewritten : ir.CompilerIrBlockList
-        (opt.opt-bit-length-idiom-blocks
+        (match (opt.opt-bit-length-idiom-blocks
           10
-          (opt.compiler-opt-global-shared-view blocks))]
+          (opt.compiler-opt-global-shared-view blocks))
+          [(Result rewritten _) rewritten])]
       (and
         (opt.opt-verify-ok?
           (&

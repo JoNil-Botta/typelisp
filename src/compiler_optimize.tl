@@ -526,13 +526,13 @@
   (CompilerOptOwnedState
     (OptInlineOwnedState
       (unsafe
-        (arena.Arena 0))
+        (arena.from-raw-handle 0))
       (__tl_make-array i64 0)
       (__tl_make-array i64 0)
       (opt-global-mod-ref-none))
     (OptDebugState
       (unsafe
-        (arena.Arena 0))
+        (arena.from-raw-handle 0))
       (cis.InternStructuralSessionHandle 0)
       ""
       (compiler-opt-debug-text-buf-cell-empty)
@@ -586,7 +586,7 @@
     (CompilerOptOwnedState
       (OptInlineOwnedState
         (unsafe
-          (arena.Arena 0))
+          (arena.from-raw-handle 0))
         (__tl_make-array i64 0)
         (__tl_make-array i64 0)
         (opt-global-mod-ref-none))
@@ -9079,7 +9079,7 @@
         (set! size (* size 2)))
       (in-arena
         (unsafe
-          (arena.Arena (ir.compiler-ir-label-arena)))
+          (arena.from-raw-handle (ir.compiler-ir-label-arena)))
         (set! opt-cfg-label-slot (__tl_make-array i64 size))
         (set! opt-cfg-label-stamp (__tl_make-array i64 size)))
       ;; A fresh stamp array reads as generation 0, so restart the counter
@@ -9141,7 +9141,7 @@
         (set! size (* size 2)))
       (in-arena
         (unsafe
-          (arena.Arena (ir.compiler-ir-label-arena)))
+          (arena.from-raw-handle (ir.compiler-ir-label-arena)))
         (let
           [next : (__tl_dyn-array i64) (__tl_make-array i64 size)]
           (for [index (iterator.range 0 (array-length opt-label-marker-rows))]
@@ -102051,7 +102051,7 @@
       [placed : ir.CompilerIrFunction
         (in-arena
           (unsafe
-            (arena.Arena (array-ref input.chunks chunk)))
+            (arena.from-raw-handle (array-ref input.chunks chunk)))
           (ir.compiler-ir-clone-function pools func))]
       (match (& placed)
         [(Function name _ _ _ _ _)
@@ -102148,7 +102148,7 @@
         (Carried
           (in-arena
             (unsafe
-              (arena.Arena input.arena))
+              (arena.from-raw-handle input.arena))
             (let
               [out : ir.CompilerIrFunctionSeq
                 (ir.compiler-ir-clone-function-seq-shell funcs)]
@@ -102877,7 +102877,7 @@
         (set! size (* size 2)))
       (in-arena
         (unsafe
-          (arena.Arena (ir.compiler-ir-label-arena)))
+          (arena.from-raw-handle (ir.compiler-ir-label-arena)))
         (set! opt-inline-census-depth-slots (__tl_make-array i64 size))))))
 
 (define (opt-inline-census-depth-clear! [count : i64]) : unit
@@ -102988,7 +102988,7 @@
         (set! size (* size 2)))
       (in-arena
         (unsafe
-          (arena.Arena (ir.compiler-ir-label-arena)))
+          (arena.from-raw-handle (ir.compiler-ir-label-arena)))
         (set! opt-inline-census-slow-slots (__tl_make-array bool size))
         (set! opt-inline-census-guard-slots (__tl_make-array bool size))))))
 
@@ -103562,7 +103562,7 @@
         (set! size (* size 2)))
       (in-arena
         (unsafe
-          (arena.Arena (ir.compiler-ir-label-arena)))
+          (arena.from-raw-handle (ir.compiler-ir-label-arena)))
         (set! opt-inline-synth-slots (__tl_make-array i64 size))))))
 
 (define (opt-inline-synth-at [slot : i64]) : i64
@@ -105371,7 +105371,7 @@
       inline-state
       (OptInlineOwnedState
         (unsafe
-          (arena.Arena 0))
+          (arena.from-raw-handle 0))
         (__tl_make-array i64 0)
         (__tl_make-array i64 0)
         (opt-global-mod-ref-none)))
@@ -108433,7 +108433,7 @@
         (set! size (* size 2)))
       (in-arena
         (unsafe
-          (arena.Arena (ir.compiler-ir-label-arena)))
+          (arena.from-raw-handle (ir.compiler-ir-label-arena)))
         (set! opt-inline-checked-reach-stamp (__tl_make-array i64 size)))
       ;; A fresh stamp array reads as generation 0, so restart the counter
       ;; above it rather than leaving stale entries live.
@@ -110454,7 +110454,7 @@
       (array-length opt-inline-callee-cost-funcs))
     (in-arena
       (unsafe
-        (arena.Arena (ir.compiler-ir-label-arena)))
+        (arena.from-raw-handle (ir.compiler-ir-label-arena)))
       (let
         [size : i64 (* 2 (array-length opt-inline-callee-cost-funcs))]
         [funcs : (__tl_dyn-array ir.CompilerIrFunction)
@@ -117867,7 +117867,7 @@
     [built : OptConstLengths
       (in-arena
         (unsafe
-          (arena.Arena scratch))
+          (arena.from-raw-handle scratch))
         (let
           [summaries (opt-program-summaries-empty)]
           ;; Proven rematerialization and dead captures must not look like an
@@ -123329,7 +123329,7 @@
     [built : opt_i64_i64_map.Map
       (in-arena
         (unsafe
-          (arena.Arena scratch))
+          (arena.from-raw-handle scratch))
         (opt-nonneg-globals-build type-segment-bases globals functions cell))]
     [out : opt_i64_i64_map.Map (opt_i64_i64_map.clone-map (& built))]
     (unsafe

@@ -61,6 +61,7 @@ insn_decimal() {
 
 case "$INSN_WAIT_SECONDS" in "" | *[!0-9]*) insn_fail "TYPELISP_INSN_EXEC_WAIT_SECONDS must be a non-negative integer: $INSN_WAIT_SECONDS" ;; esac
 case "$INSN_POLL_SECONDS" in "" | *[!0-9]*) insn_fail "TYPELISP_INSN_EXEC_POLL_SECONDS must be a non-negative integer: $INSN_POLL_SECONDS" ;; esac
+case "$SC_UNBUILDABLE_BASE_WALK_LIMIT" in "" | *[!0-9]* | 0*) insn_fail "TYPELISP_SELF_COMPILE_UNBUILDABLE_WALK_LIMIT must be a positive integer: $SC_UNBUILDABLE_BASE_WALK_LIMIT" ;; esac
 INSN_WAIT_SECONDS=$(insn_decimal "$INSN_WAIT_SECONDS")
 INSN_POLL_SECONDS=$(insn_decimal "$INSN_POLL_SECONDS")
 
@@ -353,29 +354,31 @@ insn_records_comparable() {
         }' "$1" "$2"
 }
 
-# insn_reference_record_check REF HEAD_META REPO RUN_ID ATTEMPT COMMIT EXPECT_ROLE
-insn_reference_record_check() {
+# insn_reference_record_provenance_check REF REPO RUN_ID ATTEMPT COMMIT EXPECT_ROLE
+#   Structural and producer-provenance validation of a downloaded insn-exec
+#   reference record, independent of runner/procedure identity comparability.
+insn_reference_record_provenance_check() {
     _irrc_ref=$1
     _irrc_status=0
-    _irrc_msg=$(insn_record_validate "$_irrc_ref" "$7") || { echo "$_irrc_msg"; return 1; }
-    [ "$(sc_record_get "$_irrc_ref" commit)" = "$6" ] || {
-        echo "record commit $(sc_record_get "$_irrc_ref" commit) is not $6"
+    _irrc_msg=$(insn_record_validate "$_irrc_ref" "$6") || { echo "$_irrc_msg"; return 1; }
+    [ "$(sc_record_get "$_irrc_ref" commit)" = "$5" ] || {
+        echo "record commit $(sc_record_get "$_irrc_ref" commit) is not $5"
         _irrc_status=1
     }
     [ "$(sc_record_get "$_irrc_ref" authority)" = hosted ] || {
         echo "record authority is $(sc_record_get "$_irrc_ref" authority), not hosted"
         _irrc_status=1
     }
-    [ "$(sc_record_get "$_irrc_ref" run.repository 2>/dev/null || true)" = "$3" ] || {
-        echo "record repository $(sc_record_get "$_irrc_ref" run.repository 2>/dev/null || true) is not $3"
+    [ "$(sc_record_get "$_irrc_ref" run.repository 2>/dev/null || true)" = "$2" ] || {
+        echo "record repository $(sc_record_get "$_irrc_ref" run.repository 2>/dev/null || true) is not $2"
         _irrc_status=1
     }
-    [ "$(sc_record_get "$_irrc_ref" run.id 2>/dev/null || true)" = "$4" ] || {
-        echo "record run $(sc_record_get "$_irrc_ref" run.id 2>/dev/null || true) is not producer run $4"
+    [ "$(sc_record_get "$_irrc_ref" run.id 2>/dev/null || true)" = "$3" ] || {
+        echo "record run $(sc_record_get "$_irrc_ref" run.id 2>/dev/null || true) is not producer run $3"
         _irrc_status=1
     }
-    [ "$(sc_record_get "$_irrc_ref" run.attempt 2>/dev/null || true)" = "$5" ] || {
-        echo "record attempt $(sc_record_get "$_irrc_ref" run.attempt 2>/dev/null || true) is not producer attempt $5"
+    [ "$(sc_record_get "$_irrc_ref" run.attempt 2>/dev/null || true)" = "$4" ] || {
+        echo "record attempt $(sc_record_get "$_irrc_ref" run.attempt 2>/dev/null || true) is not producer attempt $4"
         _irrc_status=1
     }
     [ "$(sc_record_get "$_irrc_ref" run.event 2>/dev/null || true)" = push ] || {
@@ -383,17 +386,25 @@ insn_reference_record_check() {
         _irrc_status=1
     }
     case "$(sc_record_get "$_irrc_ref" run.workflow_ref 2>/dev/null || true)" in
-        "$3/$SC_REFERENCE_WORKFLOW@refs/heads/main") ;;
+        "$2/$SC_REFERENCE_WORKFLOW@refs/heads/main") ;;
         *)
-            echo "record workflow $(sc_record_get "$_irrc_ref" run.workflow_ref 2>/dev/null || true) is not $3/$SC_REFERENCE_WORKFLOW@refs/heads/main"
+            echo "record workflow $(sc_record_get "$_irrc_ref" run.workflow_ref 2>/dev/null || true) is not $2/$SC_REFERENCE_WORKFLOW@refs/heads/main"
             _irrc_status=1
             ;;
     esac
-    if ! _irrc_diff=$(insn_records_comparable "$2" "$_irrc_ref"); then
-        printf '%s\n' "$_irrc_diff" | sed 's/^/identity differs: /'
-        _irrc_status=1
-    fi
     return "$_irrc_status"
+}
+
+# insn_reference_record_check REF HEAD_META REPO RUN_ID ATTEMPT COMMIT EXPECT_ROLE
+insn_reference_record_check() {
+    _irrc_all_status=0
+    _irrc_msg=$(insn_record_validate "$1" "$7") || { echo "$_irrc_msg"; return 1; }
+    insn_reference_record_provenance_check "$1" "$3" "$4" "$5" "$6" "$7" || _irrc_all_status=1
+    if ! _irrc_diff=$(insn_records_comparable "$2" "$1"); then
+        printf '%s\n' "$_irrc_diff" | sed 's/^/identity differs: /'
+        _irrc_all_status=1
+    fi
+    return "$_irrc_all_status"
 }
 
 # Exact comparison for C rows (`benchmark/c-scalar/*` and optional `benchmark/c/*`).
@@ -764,7 +775,9 @@ insn_download_artifact() {
 #   Locate the push-to-main `insn-exec-reference` artifact for COMMIT from
 #   `.github/workflows/self-compile-reference.yml`.
 #   Sets INSN_REF_STATUS to ok, pending, absent, rejected, or api-error,
-#   and INSN_REF_RUN / INSN_REF_ATTEMPT.
+#   INSN_REF_PROVEN_BUILDABLE to yes/no (yes when the producing reference job
+#   succeeded and published a structurally valid, provenance- and tree-verified
+#   hosted record for COMMIT), and INSN_REF_RUN / INSN_REF_ATTEMPT.
 insn_resolve_reference() {
     _irr_commit=$1
     _irr_head_meta=$2
@@ -773,6 +786,7 @@ insn_resolve_reference() {
     : > "$_irr_dest/reasons"
     INSN_REF_RUN=
     INSN_REF_ATTEMPT=
+    INSN_REF_PROVEN_BUILDABLE=no
     if ! insn_api "repos/$GITHUB_REPOSITORY/actions/workflows/$(basename "$SC_REFERENCE_WORKFLOW")/runs?event=push&branch=main&head_sha=$_irr_commit&per_page=50" \
         "$_irr_dest/runs.json"; then
         INSN_REF_STATUS=api-error
@@ -837,15 +851,24 @@ insn_resolve_reference() {
         echo "reference: downloading $INSN_REF_ARTIFACT from run $INSN_REF_RUN failed" >> "$_irr_dest/reasons"
         return 0
     fi
-    if ! _irr_probs=$(insn_reference_record_check "$_irr_dest/artifact/record.tsv" "$_irr_head_meta" \
+    _irr_prov_ok=yes
+    if ! _irr_prov_probs=$(insn_reference_record_provenance_check "$_irr_dest/artifact/record.tsv" \
         "$GITHUB_REPOSITORY" "$INSN_REF_RUN" "$INSN_REF_ATTEMPT" "$_irr_commit" reference); then
+        _irr_prov_ok=no
+        printf '%s\n' "$_irr_prov_probs" | sed 's/^/reference: /' >> "$_irr_dest/reasons"
+    fi
+    if [ "$_irr_prov_ok" = yes ] && [ "$(sc_record_get "$_irr_dest/artifact/record.tsv" tree)" != "$(git rev-parse "$_irr_commit^{tree}")" ]; then
+        _irr_prov_ok=no
+        echo "reference: record tree is not the tree of $_irr_commit" >> "$_irr_dest/reasons"
+    fi
+    if [ "$_irr_prov_ok" != yes ]; then
         INSN_REF_STATUS=rejected
-        printf '%s\n' "$_irr_probs" | sed 's/^/reference: /' >> "$_irr_dest/reasons"
         return 0
     fi
-    if [ "$(sc_record_get "$_irr_dest/artifact/record.tsv" tree)" != "$(git rev-parse "$_irr_commit^{tree}")" ]; then
+    INSN_REF_PROVEN_BUILDABLE=yes
+    if ! _irr_diff=$(insn_records_comparable "$_irr_head_meta" "$_irr_dest/artifact/record.tsv"); then
         INSN_REF_STATUS=rejected
-        echo "reference: record tree is not the tree of $_irr_commit" >> "$_irr_dest/reasons"
+        printf '%s\n' "$_irr_diff" | sed 's/^/reference: identity differs: /' >> "$_irr_dest/reasons"
         return 0
     fi
     cp "$_irr_dest/artifact/record.tsv" "$_irr_dest/record.tsv"
@@ -934,6 +957,15 @@ insn_walk_unbuildable_base() {
             INSN_EFF_FROM_FALLBACK=0
             insn_log "using ancestor $_iwub_cur ($_iwub_orig +$_iwub_step): $INSN_EFF_SRC"
             return 0
+        elif [ "$INSN_REF_PROVEN_BUILDABLE" = yes ]; then
+            insn_log "ancestor $_iwub_cur ($_iwub_orig +$_iwub_step) has a valid hosted reference with different identity; trying in-place fallback (will not skip)"
+            if insn_run_fallback "$_iwub_cur" "$_iwub_head" "$_iwub_cases" "$_iwub_out" "$_iwub_role"; then
+                INSN_EFF_BASE=$_iwub_cur
+                INSN_EFF_SRC="unbuildable-base ancestor $_iwub_cur ($_iwub_orig +$_iwub_step) in-place fallback (reference $INSN_REF_STATUS)"
+                INSN_EFF_FROM_FALLBACK=1
+                return 0
+            fi
+            insn_fail "ancestor $_iwub_cur has a valid hosted reference (identity mismatch) and fallback failed; refusing to skip buildable ancestor"
         elif [ "$INSN_REF_STATUS" = absent ] || [ "$INSN_REF_STATUS" = rejected ]; then
             insn_log "ancestor $_iwub_cur ($_iwub_orig +$_iwub_step) has no usable reference ($INSN_REF_STATUS); trying in-place fallback"
             if insn_run_fallback "$_iwub_cur" "$_iwub_head" "$_iwub_cases" "$_iwub_out" "$_iwub_role"; then
@@ -1365,15 +1397,19 @@ insn_cmd_finalize_ci() {
         insn_log "no usable insn-exec reference for $_icfc_b ($INSN_REF_STATUS):"
         sed 's/^/  /' "$_icfc_refdir/reasons" >&2
         _icfc_dedup_cases=$(printf '%s\n' "$_icfc_all_cases" | tr ',' '\n' | LC_ALL=C sort -u | paste -sd, -)
+        _icfc_orig_ref_status=$INSN_REF_STATUS
+        _icfc_orig_ref_buildable=${INSN_REF_PROVEN_BUILDABLE:-no}
         if insn_run_fallback "$_icfc_b" "$_icfc_t" "$_icfc_dedup_cases" "$_icfc_base_tl" base-fallback; then
-            _icfc_base_src="in-place fallback on this runner (reference $INSN_REF_STATUS)"
-        elif [ "$INSN_REF_STATUS" = absent ] || [ "$INSN_REF_STATUS" = rejected ]; then
+            _icfc_base_src="in-place fallback on this runner (reference $_icfc_orig_ref_status)"
+        elif [ "$_icfc_orig_ref_buildable" = yes ]; then
+            insn_fail "fallback measurement of $_icfc_b failed (commit has a valid hosted reference that differs only in measurement identity; refusing to walk past buildable base)"
+        elif [ "$_icfc_orig_ref_status" = absent ] || [ "$_icfc_orig_ref_status" = rejected ]; then
             insn_walk_unbuildable_base "$_icfc_b" "$_icfc_t" "$_icfc_dedup_cases" "$_icfc_head_meta" \
                 "$_icfc_base_tl" "$_icfc_work/unbuildable-walk" base-fallback
             _icfc_eff_b=$INSN_EFF_BASE
             _icfc_base_src=$INSN_EFF_SRC
         else
-            insn_fail "fallback measurement of $_icfc_b failed (reference $INSN_REF_STATUS)"
+            insn_fail "fallback measurement of $_icfc_b failed (reference $_icfc_orig_ref_status)"
         fi
     fi
 
@@ -1501,10 +1537,14 @@ insn_cmd_main_check() {
         sed 's/^/  /' "$_icmc_pdir/reasons" >&2
         [ "${TYPELISP_SELF_COMPILE_TOOLS_READY:-}" = true ] ||
             insn_fail "main-check: fallback measurement requires Linux instruction-count tools (TYPELISP_SELF_COMPILE_TOOLS_READY=true)"
+        _icmc_orig_ref_status=$INSN_REF_STATUS
+        _icmc_orig_ref_buildable=${INSN_REF_PROVEN_BUILDABLE:-no}
         _icmc_used_fallback=0
         if insn_run_fallback "$_icmc_p" "$_icmc_c" "$_icmc_valid_cases" "$_icmc_base_tl" parent-fallback; then
             _icmc_used_fallback=1
-            _icmc_base_src="in-place fallback on ledger runner (parent reference $INSN_REF_STATUS)"
+            _icmc_base_src="in-place fallback on ledger runner (parent reference $_icmc_orig_ref_status)"
+        elif [ "$_icmc_orig_ref_buildable" = yes ]; then
+            insn_fail "main-check: fallback measurement of $_icmc_p failed (commit has a valid hosted reference that differs only in measurement identity; refusing to walk past buildable parent)"
         else
             insn_walk_unbuildable_base "$_icmc_p" "$_icmc_c" "$_icmc_valid_cases" "$_icmc_head_rec" \
                 "$_icmc_base_tl" "$_icmc_out/unbuildable-walk" parent-fallback
@@ -2146,7 +2186,10 @@ self_test() {
         git merge -q --no-ff --no-edit "$_ub_pr_h"
         _ub_pr_t=$(git rev-parse HEAD)
 
-        # Also create a merge off bad3 for walk-bound exhaustion testing.
+        # Also create merges off bad2 and bad3 for intermediate-buildable & walk-bound testing.
+        git checkout -q --detach "$_ub_bad2"
+        git merge -q --no-ff -s ours --no-edit "$_ub_pr_h"
+        _ub_pr_t2=$(git rev-parse HEAD)
         git checkout -q --detach "$_ub_bad3"
         git merge -q --no-ff -s ours --no-edit "$_ub_pr_h"
         _ub_pr_t3=$(git rev-parse HEAD)
@@ -2158,11 +2201,12 @@ self_test() {
         _ub_mc_c=$(git rev-parse HEAD)
 
         _ub_a0_tree=$(git rev-parse "$_ub_a0^{tree}")
+        _ub_bad1_tree=$(git rev-parse "$_ub_bad1^{tree}")
         _ub_t_tree=$(git rev-parse "$_ub_pr_t^{tree}")
         _ub_c_tree=$(git rev-parse "$_ub_mc_c^{tree}")
 
         _ub_write_rec() {
-            _uwr_out=$1; _uwr_sha=$2; _uwr_tree=$3; _uwr_run=$4; _uwr_a=$5; _uwr_role=${6:-reference}
+            _uwr_out=$1; _uwr_sha=$2; _uwr_tree=$3; _uwr_run=$4; _uwr_a=$5; _uwr_role=${6:-reference}; _uwr_vg=${7:-valgrind-3.23.0}
             {
                 printf 'schema\t%s\n' "$INSN_REF_SCHEMA"
                 printf 'commit\t%s\n' "$_uwr_sha"
@@ -2173,7 +2217,7 @@ self_test() {
                 printf 'compiler_sha256\t%s\n' "$_st_hash"
                 printf 'compiler_commit\t%s\n' "$_uwr_sha"
                 printf 'key.image_os\tubuntu24\n'
-                printf 'key.valgrind\tvalgrind-3.23.0\n'
+                printf 'key.valgrind\t%s\n' "$_uwr_vg"
                 printf 'key.as\tGNU assembler\n'
                 printf 'key.ld\tGNU ld\n'
                 printf 'key.arch\tx86_64\n'
@@ -2229,11 +2273,27 @@ self_test() {
                     ;;
                 "repos/test/repo/actions/workflows/"*"head_sha=$_ub_bad1"*)
                     [ "$_ub_api_mode" != base-api-error ] || return 1
-                    printf '{"workflow_runs":[{"id":110,"run_number":2,"run_attempt":1,"status":"completed","conclusion":"failure","event":"push","head_branch":"main","head_sha":"%s","path":"%s","repository":{"full_name":"test/repo"},"head_repository":{"full_name":"test/repo"}}]}\n' "$_ub_bad1" "$SC_REFERENCE_WORKFLOW" > "$2"
+                    if [ "$_ub_api_mode" = bad1-identity-mismatch ]; then
+                        printf '{"workflow_runs":[{"id":110,"run_number":2,"run_attempt":1,"status":"completed","conclusion":"success","event":"push","head_branch":"main","head_sha":"%s","path":"%s","repository":{"full_name":"test/repo"},"head_repository":{"full_name":"test/repo"}}]}\n' "$_ub_bad1" "$SC_REFERENCE_WORKFLOW" > "$2"
+                    else
+                        printf '{"workflow_runs":[{"id":110,"run_number":2,"run_attempt":1,"status":"completed","conclusion":"failure","event":"push","head_branch":"main","head_sha":"%s","path":"%s","repository":{"full_name":"test/repo"},"head_repository":{"full_name":"test/repo"}}]}\n' "$_ub_bad1" "$SC_REFERENCE_WORKFLOW" > "$2"
+                    fi
                     return 0
                     ;;
                 "repos/test/repo/actions/runs/110/jobs"*)
-                    printf '{"jobs":[{"run_attempt":1,"name":"%s","status":"completed","conclusion":"failure"}]}\n' "$SC_REFERENCE_JOB_NAME" > "$2"
+                    if [ "$_ub_api_mode" = bad1-identity-mismatch ]; then
+                        printf '{"jobs":[{"run_attempt":1,"name":"%s","status":"completed","conclusion":"success"}]}\n' "$SC_REFERENCE_JOB_NAME" > "$2"
+                    else
+                        printf '{"jobs":[{"run_attempt":1,"name":"%s","status":"completed","conclusion":"failure"}]}\n' "$SC_REFERENCE_JOB_NAME" > "$2"
+                    fi
+                    return 0
+                    ;;
+                "repos/test/repo/actions/runs/110/artifacts"*)
+                    if [ "$_ub_api_mode" = bad1-identity-mismatch ]; then
+                        printf '{"artifacts":[{"id":111,"name":"%s","expired":false,"workflow_run":{"id":110}}]}\n' "$INSN_REF_ARTIFACT" > "$2"
+                    else
+                        printf '{"artifacts":[]}\n' > "$2"
+                    fi
                     return 0
                     ;;
                 "repos/test/repo/actions/workflows/"*"head_sha=$_ub_bad2"* | \
@@ -2261,6 +2321,8 @@ self_test() {
             mkdir -p "$2"
             if [ "$1" = 301 ]; then
                 _ub_write_rec "$2/record.tsv" "$_ub_mc_c" "$_ub_c_tree" 300 "$_ub_mc_head_ir"
+            elif [ "$1" = 111 ]; then
+                _ub_write_rec "$2/record.tsv" "$_ub_bad1" "$_ub_bad1_tree" 110 100 reference "valgrind-3.22.0"
             elif [ "$1" = 101 ]; then
                 _ub_write_rec "$2/record.tsv" "$_ub_a0" "$_ub_a0_tree" 100 100
             else
@@ -2320,6 +2382,45 @@ self_test() {
         if (insn_cmd_main_check) >/dev/null 2>&1; then
             echo "main-check unbuildable bad1 -> a0 missed +1 Ir regression" >&2; exit 1
         fi
+
+        # 11g. finalize-ci: identity-incompatible valid reference on bad1 MUST NOT walk to a0 (fails closed).
+        : > "$_ub_fb_log"
+        _ub_api_mode=bad1-identity-mismatch
+        _ub_stage_pr_deferred "$_ub_pr_t" "$_ub_bad1" 100
+        if (insn_cmd_finalize_ci) >/dev/null 2>&1; then
+            echo "finalize-ci walked past identity-incompatible valid reference on bad1" >&2; exit 1
+        fi
+        [ "$(cat "$_ub_fb_log")" = "$_ub_bad1" ] || { echo "finalize-ci unexpected fallback log on identity-incompatible bad1" >&2; exit 1; }
+
+        # 11h. finalize-ci: walk from unbuildable bad2 MUST NOT skip intermediate buildable bad1 to reach a0.
+        : > "$_ub_fb_log"
+        _ub_api_mode=bad1-identity-mismatch
+        _ub_stage_pr_deferred "$_ub_pr_t2" "$_ub_bad2" 100
+        if (insn_cmd_finalize_ci) >/dev/null 2>&1; then
+            echo "finalize-ci skipped intermediate buildable ancestor bad1 to reach a0" >&2; exit 1
+        fi
+        [ "$(cat "$_ub_fb_log")" = "$(printf '%s\n%s' "$_ub_bad2" "$_ub_bad1")" ] || {
+            echo "finalize-ci expected fallback attempts bad2 then bad1, got: $(cat "$_ub_fb_log")" >&2; exit 1
+        }
+
+        # 11i. main-check: identity-incompatible valid reference on bad1 MUST NOT walk to a0 (fails closed).
+        : > "$_ub_fb_log"
+        _ub_api_mode=bad1-identity-mismatch
+        git -c advice.detachedHead=false checkout -q --detach "$_ub_mc_c"
+        GITHUB_SHA=$_ub_mc_c
+        TYPELISP_SELF_COMPILE_TOOLS_READY=true
+        _ub_mc_head_ir=100
+        if (insn_cmd_main_check) >/dev/null 2>&1; then
+            echo "main-check walked past identity-incompatible valid reference on bad1" >&2; exit 1
+        fi
+        [ "$(cat "$_ub_fb_log")" = "$_ub_bad1" ] || { echo "main-check unexpected fallback log on identity-incompatible bad1" >&2; exit 1; }
+
+        # 11j. Startup validation rejects non-positive/malformed TYPELISP_SELF_COMPILE_UNBUILDABLE_WALK_LIMIT.
+        for _ub_badlim in 0 00 -1 abc 05; do
+            if (TYPELISP_SELF_COMPILE_UNBUILDABLE_WALK_LIMIT="$_ub_badlim" sh "$INSN_TOOL_DIR/check-instruction-counts.sh" --help) >/dev/null 2>&1; then
+                echo "check-instruction-counts.sh accepted invalid walk limit '$_ub_badlim'" >&2; exit 1
+            fi
+        done
     ) || { echo "self-test unbuildable-base ancestor fallback failed" >&2; _st_status=1; }
 
     c_provenance_self_test "$SELF_TEST_DIR" || _st_status=1

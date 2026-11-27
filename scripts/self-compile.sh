@@ -105,7 +105,7 @@ case "$SC_TOLERANCE_PPM" in
     "" | *[!0-9]*) sc_fail "TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM must be a non-negative integer: $SC_TOLERANCE_PPM" ;;
 esac
 case "$SC_UNBUILDABLE_BASE_WALK_LIMIT" in
-    "" | *[!0-9]* | 0) sc_fail "TYPELISP_SELF_COMPILE_UNBUILDABLE_WALK_LIMIT must be a positive integer: $SC_UNBUILDABLE_BASE_WALK_LIMIT" ;;
+    "" | *[!0-9]* | 0*) sc_fail "TYPELISP_SELF_COMPILE_UNBUILDABLE_WALK_LIMIT must be a positive integer: $SC_UNBUILDABLE_BASE_WALK_LIMIT" ;;
 esac
 [ "$SC_TOLERANCE_PPM" -gt "$SC_CLASS_M_FAIL_PPM" ] ||
     sc_fail "TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM must exceed the class-M bound ($SC_CLASS_M_FAIL_PPM ppm): $SC_TOLERANCE_PPM"
@@ -443,7 +443,12 @@ sc_fetch_run_artifact() {
 # sc_resolve_reference COMMIT HEAD_RECORD DEST
 #   SC_REF_STATUS: ok (DEST/record.tsv is a verified comparable reference),
 #   pending, absent, rejected or api-error, with DEST/reasons.
+#   SC_REF_PROVEN_BUILDABLE: `yes` when the producing reference job succeeded
+#   and published a structurally valid, provenance- and tree-verified hosted
+#   record for COMMIT (even if rejected solely for measurement-identity
+#   mismatch), else `no`.
 sc_resolve_reference() {
+    SC_REF_PROVEN_BUILDABLE=no
     sc_fetch_run_artifact reference "$1" "$SC_REFERENCE_JOB_NAME" "$SC_REFERENCE_ARTIFACT" "$3"
     SC_REF_STATUS=$SC_RUN_STATUS
     SC_REF_RUN=$SC_RUN_ID
@@ -454,15 +459,24 @@ sc_resolve_reference() {
         echo "reference: job '$SC_REFERENCE_JOB_NAME' concluded $SC_JOB_CONCLUSION" >> "$3/reasons"
         return 0
     fi
-    if ! _srr_problems=$(sc_reference_record_check "$3/artifact/record.tsv" "$2" \
+    _srr_prov_ok=yes
+    if ! _srr_prov_problems=$(sc_reference_record_provenance_check "$3/artifact/record.tsv" \
         "$GITHUB_REPOSITORY" "$SC_REF_RUN" "$SC_REF_ATTEMPT" "$1" gate); then
+        _srr_prov_ok=no
+        printf '%s\n' "$_srr_prov_problems" | sed 's/^/reference: /' >> "$3/reasons"
+    fi
+    if [ "$_srr_prov_ok" = yes ] && [ "$(sc_record_get "$3/artifact/record.tsv" tree)" != "$(sc_commit_tree "$1")" ]; then
+        _srr_prov_ok=no
+        echo "reference: record tree is not the tree of $1" >> "$3/reasons"
+    fi
+    if [ "$_srr_prov_ok" != yes ]; then
         SC_REF_STATUS=rejected
-        printf '%s\n' "$_srr_problems" | sed 's/^/reference: /' >> "$3/reasons"
         return 0
     fi
-    if [ "$(sc_record_get "$3/artifact/record.tsv" tree)" != "$(sc_commit_tree "$1")" ]; then
+    SC_REF_PROVEN_BUILDABLE=yes
+    if ! _srr_diff=$(sc_records_comparable "$2" "$3/artifact/record.tsv"); then
         SC_REF_STATUS=rejected
-        echo "reference: record tree is not the tree of $1" >> "$3/reasons"
+        printf '%s\n' "$_srr_diff" | sed 's/^/reference: identity differs: /' >> "$3/reasons"
         return 0
     fi
     cp "$3/artifact/record.tsv" "$3/record.tsv"
@@ -544,6 +558,15 @@ sc_walk_unbuildable_base() {
             SC_EFF_SOURCE="unbuildable-base ancestor $_swub_cur ($_swub_orig +$_swub_step) reference run $SC_REF_RUN attempt $SC_REF_ATTEMPT"
             sc_log "using ancestor $_swub_cur ($_swub_orig +$_swub_step): $SC_EFF_SOURCE"
             return 0
+        elif [ "$SC_REF_PROVEN_BUILDABLE" = yes ]; then
+            sc_log "ancestor $_swub_cur ($_swub_orig +$_swub_step) has a valid hosted reference with different identity; trying in-place fallback (will not skip)"
+            if sc_run_fallback "$_swub_cur" "$_swub_head" "$_swub_out" "$_swub_role"; then
+                SC_EFF_BASE=$_swub_cur
+                SC_EFF_SOURCE="unbuildable-base ancestor $_swub_cur ($_swub_orig +$_swub_step) in-place fallback (reference $SC_REF_STATUS)"
+                return 0
+            fi
+            SC_WALK_ERR="ancestor $_swub_cur has a valid hosted reference (identity mismatch) and fallback failed; refusing to skip buildable ancestor"
+            return 3
         elif [ "$SC_REF_STATUS" = absent ] || [ "$SC_REF_STATUS" = rejected ]; then
             sc_log "ancestor $_swub_cur ($_swub_orig +$_swub_step) has no usable reference ($SC_REF_STATUS); trying in-place fallback"
             if sc_run_fallback "$_swub_cur" "$_swub_head" "$_swub_out" "$_swub_role"; then
@@ -824,8 +847,11 @@ sc_cmd_check() {
             cp "$_scc_refdir/artifact/record.tsv" "$_scc_out/reference-rejected.tsv"
         fi
         _scc_orig_ref_status=$SC_REF_STATUS
+        _scc_orig_ref_buildable=${SC_REF_PROVEN_BUILDABLE:-no}
         if sc_run_fallback "$_scc_b" "$_scc_t" "$_scc_out/base.tsv" base-fallback; then
             _scc_source="in-place fallback on this runner (reference $_scc_orig_ref_status)"
+        elif [ "$_scc_orig_ref_buildable" = yes ]; then
+            sc_fail "fallback measurement of $_scc_b failed (commit has a valid hosted reference that differs only in measurement identity; refusing to walk past buildable base)"
         elif [ "$_scc_orig_ref_status" = absent ] || [ "$_scc_orig_ref_status" = rejected ]; then
             if sc_walk_unbuildable_base "$_scc_b" "$_scc_t" "$_scc_out/head.tsv" "$_scc_out/base.tsv" \
                 "$_scc_out/unbuildable-walk" base-fallback; then
@@ -1222,12 +1248,17 @@ sc_ledger_pair_measure() {
     _slp_dest=$3
     _slp_work=$4
     _slp_orig_ref_status=$SC_REF_STATUS
+    _slp_orig_ref_buildable=${SC_REF_PROVEN_BUILDABLE:-no}
     SC_EFF_PARENT=$_slp_p
     sc_this_runner_record "$_slp_work/this-runner.tsv" "$_slp_dest/landed.tsv"
     if sc_records_comparable "$_slp_dest/landed.tsv" "$_slp_work/this-runner.tsv" > "$_slp_work/runner-differences"; then
         if sc_run_fallback "$_slp_p" "$_slp_c" "$_slp_dest/parent.tsv" parent-fallback; then
             SC_PAIR_SOURCE="parent measured on the ledger runner (parent reference $_slp_orig_ref_status)"
             return 0
+        fi
+        if [ "$_slp_orig_ref_buildable" = yes ]; then
+            echo "measuring $_slp_p on the ledger runner failed (parent has a valid hosted reference that differs only in measurement identity; refusing to walk past buildable parent)" > "$_slp_dest/measurement-problem"
+            return 3
         fi
         if [ "$_slp_orig_ref_status" = absent ] || [ "$_slp_orig_ref_status" = rejected ]; then
             _slp_wrc=0
@@ -1251,23 +1282,29 @@ sc_ledger_pair_measure() {
             SC_PAIR_SOURCE="parent and commit measured on the ledger runner (reference not comparable here)"
             return 0
         fi
-        if { [ "$_slp_orig_ref_status" = absent ] || [ "$_slp_orig_ref_status" = rejected ]; } &&
-            [ -f "$_slp_dest/landed.tsv" ] &&
+        if [ -f "$_slp_dest/landed.tsv" ] &&
             sc_record_validate "$_slp_dest/landed.tsv" >/dev/null 2>&1 &&
-            [ "$(sc_record_get "$_slp_dest/landed.tsv" commit)" = "$_slp_c" ]; then
-            _slp_wrc=0
-            sc_walk_unbuildable_base "$_slp_p" "$_slp_c" "$_slp_dest/landed.tsv" "$_slp_dest/parent.tsv" \
-                "$_slp_work/unbuildable-walk" parent-fallback || _slp_wrc=$?
-            if [ "$_slp_wrc" -eq 0 ]; then
-                SC_EFF_PARENT=$SC_EFF_BASE
-                SC_PAIR_SOURCE="$SC_EFF_SOURCE (commit re-measured on the ledger runner)"
-                return 0
-            elif [ "$_slp_wrc" -eq 1 ]; then
-                SC_LEDGER_INFRA=$SC_WALK_ERR
-                return 1
+            [ "$(sc_record_get "$_slp_dest/landed.tsv" commit)" = "$_slp_c" ] &&
+            sc_records_comparable "$_slp_dest/landed.tsv" "$_slp_work/this-runner.tsv" >/dev/null 2>&1; then
+            if [ "$_slp_orig_ref_buildable" = yes ]; then
+                echo "measuring $_slp_p on the ledger runner failed (parent has a valid hosted reference that differs only in measurement identity; refusing to walk past buildable parent)" > "$_slp_dest/measurement-problem"
+                return 3
             fi
-            echo "measuring $_slp_p on the ledger runner failed: $SC_WALK_ERR" > "$_slp_dest/measurement-problem"
-            return 3
+            if [ "$_slp_orig_ref_status" = absent ] || [ "$_slp_orig_ref_status" = rejected ]; then
+                _slp_wrc=0
+                sc_walk_unbuildable_base "$_slp_p" "$_slp_c" "$_slp_dest/landed.tsv" "$_slp_dest/parent.tsv" \
+                    "$_slp_work/unbuildable-walk" parent-fallback || _slp_wrc=$?
+                if [ "$_slp_wrc" -eq 0 ]; then
+                    SC_EFF_PARENT=$SC_EFF_BASE
+                    SC_PAIR_SOURCE="$SC_EFF_SOURCE (commit re-measured on the ledger runner)"
+                    return 0
+                elif [ "$_slp_wrc" -eq 1 ]; then
+                    SC_LEDGER_INFRA=$SC_WALK_ERR
+                    return 1
+                fi
+                echo "measuring $_slp_p on the ledger runner failed: $SC_WALK_ERR" > "$_slp_dest/measurement-problem"
+                return 3
+            fi
         fi
         return 3
     fi
@@ -1481,6 +1518,33 @@ sc_ledger_repair_entries() {
     done
 }
 
+# sc_ledger_repair_parent COMMIT OLD_ENTRY INPUT_DIR
+#   Populate INPUT_DIR/{commit,parent,tree.commit,tree.parent} (and git-parent
+#   when OLD_ENTRY telescoped across unbuildable intermediate parent(s) to a
+#   verified first-parent ancestor within SC_UNBUILDABLE_BASE_WALK_LIMIT) from
+#   git objects, setting SC_REPAIR_PARENT.
+sc_ledger_repair_parent() {
+    _slrp_c=$1
+    _slrp_old=$2
+    _slrp_in=$3
+    _slrp_git_p=$(git rev-parse --verify -q "$_slrp_c^1") || return 1
+    _slrp_p=$_slrp_git_p
+    _slrp_ep=$(sc_record_get "$_slrp_old" effective_parent 2>/dev/null || true)
+    rm -f "$_slrp_in/git-parent"
+    if [ -n "$_slrp_ep" ]; then
+        sc_verify_first_parent_ancestor "$_slrp_git_p" "$_slrp_ep" "$SC_UNBUILDABLE_BASE_WALK_LIMIT" || return 1
+        _slrp_old_gp=$(sc_record_get "$_slrp_old" git_parent 2>/dev/null || true)
+        [ -z "$_slrp_old_gp" ] || [ "$_slrp_old_gp" = "$_slrp_git_p" ] || return 1
+        _slrp_p=$_slrp_ep
+        printf '%s\n' "$_slrp_git_p" > "$_slrp_in/git-parent"
+    fi
+    printf '%s\n' "$_slrp_c" > "$_slrp_in/commit"
+    printf '%s\n' "$_slrp_p" > "$_slrp_in/parent"
+    git rev-parse "$_slrp_c^{tree}" > "$_slrp_in/tree.commit" || return 1
+    git rev-parse "$_slrp_p^{tree}" > "$_slrp_in/tree.parent" || return 1
+    SC_REPAIR_PARENT=$_slrp_p
+}
+
 # sc_ledger_reproduce_repair COMMIT HEAD_COMMIT DIR  ->  DIR/reproduced/entry.tsv,
 # COMMIT's entry recomputed from the pair and PR records its ledger run uploaded
 # (DIR/artifact, already bound to that run), reproducing the PR comparison on
@@ -1516,18 +1580,16 @@ sc_ledger_reproduce_repair() {
     sc_record_validate "$_slrr_in/parent.tsv" >/dev/null || return 1
     sc_record_validate "$_slrr_in/pr-head.tsv" >/dev/null || return 1
     sc_record_validate "$_slrr_in/pr-base.tsv" >/dev/null || return 1
-    # The commit, its parent, their trees and merges-between come from git.
-    _slrr_p=$(git rev-parse --verify -q "$_slrr_c^1") || return 1
-    printf '%s\n' "$_slrr_c" > "$_slrr_in/commit"
-    printf '%s\n' "$_slrr_p" > "$_slrr_in/parent"
-    git rev-parse "$_slrr_c^{tree}" > "$_slrr_in/tree.commit" || return 1
-    git rev-parse "$_slrr_p^{tree}" > "$_slrr_in/tree.parent" || return 1
+    # The commit, its verified parent, their trees and merges-between come from git.
+    sc_ledger_repair_parent "$_slrr_c" "$_slrr_old" "$_slrr_in" || return 1
+    _slrr_p=$SC_REPAIR_PARENT
     _slrr_b=$(sc_record_get "$_slrr_in/pr.tsv" base 2>/dev/null || true)
+    _slrr_merge_b=$(sc_record_get "$_slrr_in/pr.tsv" merge_base 2>/dev/null || printf '%s' "$_slrr_b")
     _slrr_h=$(sc_record_get "$_slrr_in/pr.tsv" head 2>/dev/null || true)
     _slrr_pr=$(sc_record_get "$_slrr_in/pr.tsv" pr 2>/dev/null || true)
     _slrr_tt=$(sc_record_get "$_slrr_in/pr-head.tsv" tree 2>/dev/null || true)
     _slrr_tb=$(sc_record_get "$_slrr_in/pr-base.tsv" tree 2>/dev/null || true)
-    sc_is_sha "$_slrr_b" && sc_is_sha "$_slrr_h" && sc_is_sha "$_slrr_tt" && sc_is_sha "$_slrr_tb" || return 1
+    sc_is_sha "$_slrr_b" && sc_is_sha "$_slrr_merge_b" && sc_is_sha "$_slrr_h" && sc_is_sha "$_slrr_tt" && sc_is_sha "$_slrr_tb" || return 1
     [ "$(sc_record_get "$_slrr_in/pr-base.tsv" commit)" = "$_slrr_b" ] || return 1
     [ "$(sc_record_get "$_slrr_in/pr-head.tsv" commit)" = "$(sc_record_get "$_slrr_in/pr.tsv" merge 2>/dev/null || true)" ] || return 1
     if git merge-base --is-ancestor "$_slrr_b" "$_slrr_p" 2>/dev/null; then
@@ -1550,7 +1612,7 @@ sc_ledger_reproduce_repair() {
             return 1
         }
     fi
-    if ! sc_ledger_reproduce_head "$_slrr_c" "$_slrr_head" "$_slrr_in" "$_slrr_b" "$_slrr_h" "$_slrr_pr" "$_slrr_tt"; then
+    if ! sc_ledger_reproduce_head "$_slrr_c" "$_slrr_head" "$_slrr_in" "$_slrr_merge_b" "$_slrr_h" "$_slrr_pr" "$_slrr_tt"; then
         sc_log "cannot repair $_slrr_c: $(cat "$_slrr_in/reproduction-problem" 2>/dev/null)"
         return 1
     fi
@@ -1585,12 +1647,9 @@ sc_ledger_reattribute() {
             cp "$2/artifact/entry-inputs/$_slra_kind.tsv" "$_slra_in/"
         fi
     done
-    # The commit, its parent and their trees come from git, not the artifact.
-    _slra_p=$(git rev-parse --verify -q "$1^1") || return 1
-    printf '%s\n' "$1" > "$_slra_in/commit"
-    printf '%s\n' "$_slra_p" > "$_slra_in/parent"
-    git rev-parse "$1^{tree}" > "$_slra_in/tree.commit" || return 1
-    git rev-parse "$_slra_p^{tree}" > "$_slra_in/tree.parent" || return 1
+    # The commit, its verified parent and their trees come from git, not the artifact.
+    sc_ledger_repair_parent "$1" "$_slra_old" "$_slra_in" || return 1
+    _slra_p=$SC_REPAIR_PARENT
     if ! sc_fetch_pr_record "$1" "$2/reattributed/pr"; then
         sc_log "cannot re-attribute $1: $(cat "$2/reattributed/pr/attribution-problem" 2>/dev/null)"
         return 1
@@ -1639,6 +1698,7 @@ sc_cmd_ledger_prepare() {
     SC_LEDGER_INFRA=
     SC_PAIR_SOURCE=
     SC_REF_STATUS=
+    SC_REF_PROVEN_BUILDABLE=no
     {
         sc_record_line commit "$_scl_c"
         sc_run_lines
@@ -1703,6 +1763,7 @@ sc_cmd_ledger_prepare() {
         sc_record_line pair_rc "$_scl_pair_rc"
         sc_record_line pair_source "${SC_PAIR_SOURCE:-}"
         sc_record_line reference_status "${SC_REF_STATUS:-}"
+        sc_record_line reference_proven_buildable "${SC_REF_PROVEN_BUILDABLE:-no}"
         sc_record_line outcome "$_scl_outcome"
         sc_record_line detail "$_scl_detail"
         sc_record_line needs_tools "$_scl_tools"
@@ -1735,6 +1796,7 @@ sc_cmd_ledger() {
     _scl_pair_rc=$(sc_record_get "$_scl_work/preparation.tsv" pair_rc)
     SC_PAIR_SOURCE=$(sc_record_get "$_scl_work/preparation.tsv" pair_source)
     SC_REF_STATUS=$(sc_record_get "$_scl_work/preparation.tsv" reference_status)
+    SC_REF_PROVEN_BUILDABLE=$(sc_record_get "$_scl_work/preparation.tsv" reference_proven_buildable 2>/dev/null || echo no)
     if [ "$(sc_record_get "$_scl_work/preparation.tsv" needs_tools)" = yes ]; then
         # This value is set only by the workflow's successful shared action.
         # Never predict valgrind's identity from a reference or package plan.

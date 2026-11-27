@@ -10659,7 +10659,6 @@ high:
           (ir.compiler-ir-value-seq-prepend
             (& (F64 (compiler-backend-test-f64-bits "6.25")))
             (& (ir.compiler-ir-value-seq-empty)))))]
-    [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
     [packed : object_target.CompilerBackendObjectTargetParts
       (be_object.compiler-backend-object-instr
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -10671,8 +10670,7 @@ high:
         (ir.compiler-ir-block-list-empty)
         (Pack 0 values (owned_view.compiler-owned-shared-view ty))
         plan
-        index
-        (&mut uses))]
+        index)]
     [worded : object_target.CompilerBackendObjectTargetParts
       (be_object.compiler-backend-object-instr
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -10684,8 +10682,7 @@ high:
         (ir.compiler-ir-block-list-empty)
         (Word 1 (Function word-target-id) 0 ty)
         plan
-        index
-        (&mut uses))]
+        index)]
     [relocs : cobj.CompilerObjectRelocationList
       (cobj.compiler-object-relocation-builder-finish worded.relocations)]
     (and

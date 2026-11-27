@@ -28990,18 +28990,18 @@
 (define (compiler-reg-color-invalidate-seq!
   [instrs : (& ir.CompilerIrInstrSeq)]
   [roots : (& (__tl_dyn-array i64))]
-  [invalid : (& (__tl_dyn-array bool))]) : unit
+  [invalid : (& (__tl_dyn-array bool))]
+  [uses : (&mut ir.CompilerIrUseList)]) : unit
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
       (owned_view.compiler-owned-reference-shared-view (& instrs.slots))]
     [len : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
     (for [i (iterator.range 0 len)]
       (compiler-reg-color-invalidate-instr!
         (& (array-ref slots i))
         roots
         (owned_view.compiler-owned-reference-shared-view invalid)
-        (&mut uses)))))
+        uses))))
 
 (define (compiler-reg-color-invalidate-blocks!
   [blocks : (& ir.CompilerIrBlockList)]
@@ -29009,10 +29009,16 @@
   [invalid : (& (__tl_dyn-array bool))]) : unit
   (match blocks
     [(Array seq)
-      (for [i (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
-        (match (ir.compiler-ir-block-seq-borrow seq i)
-          [(Block _ instrs)
-            (compiler-reg-color-invalidate-seq! (& instrs) roots invalid)]))]))
+      (let
+        [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
+        (for [i (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+          (match (ir.compiler-ir-block-seq-borrow seq i)
+            [(Block _ instrs)
+              (compiler-reg-color-invalidate-seq!
+                (& instrs)
+                roots
+                invalid
+                (&mut uses))])))]))
 
 ;; The ordinary escape scan above handles every alias, including uses after
 ;; the call. Its Sret exemption is conditional on this separate proof scan:
@@ -31563,19 +31569,19 @@
 ;; without writing through the input sequence.
 (define (compiler-reg-remap-instr-seq
   [remap : (& (__tl_dyn-array i64))]
-  [instrs : (& ir.CompilerIrInstrSeq)]) : ir.CompilerIrInstrSeq
+  [instrs : (& ir.CompilerIrInstrSeq)]
+  [rw : (&mut ir.CompilerIrInstrRewrite)]) : ir.CompilerIrInstrSeq
   (let
     [count : i64 instrs.len]
     [out : (__tl_dyn-array ir.CompilerIrInstr)
       (__tl_make-array ir.CompilerIrInstr count)]
-    [rw : ir.CompilerIrInstrRewrite (ir.compiler-ir-instr-rewrite-new)]
     (for [index (iterator.range 0 count)]
       (set!
         (array-ref out index)
         (compiler-reg-remap-instr
           remap
           (ir.compiler-ir-instr-seq-ref instrs index)
-          (&mut rw))))
+          rw)))
     (ir.CompilerIrInstrSeq out count)))
 
 (define (compiler-reg-remap-blocks
@@ -31587,6 +31593,7 @@
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [slots : (__tl_dyn-array ir.CompilerIrBlock)
           (__tl_make-array ir.CompilerIrBlock count)]
+        [rw : ir.CompilerIrInstrRewrite (ir.compiler-ir-instr-rewrite-new)]
         (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-borrow seq i)
             [(Block label instrs)
@@ -31594,7 +31601,7 @@
                 (array-ref slots i)
                 (ir.CompilerIrBlock.Block
                   label
-                  (compiler-reg-remap-instr-seq remap (& instrs))))]))
+                  (compiler-reg-remap-instr-seq remap (& instrs) (&mut rw))))]))
         (Array (ir.CompilerIrBlockSeq slots count)))]))
 
 (define (compiler-reg-plan-assignments [plan : (& CompilerRegPlan)]) : CompilerRegAssignmentTable

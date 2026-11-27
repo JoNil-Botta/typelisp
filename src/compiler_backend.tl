@@ -3142,16 +3142,13 @@
 
 (define (compiler-backend-count-instr-seq-uses
   [counts : (__tl_dyn-array i64)]
-  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : unit
-  (let
-    [ids : compiler_ir_types.CompilerIrIdList
-      (compiler_ir_types.compiler-ir-id-list-new)]
-    (for [index (iterator.range 0 instrs.len)]
-      (compiler-backend-count-instr-uses
-        (&mut counts)
-        (compiler_ir_types.compiler-ir-instr-seq-borrow instrs index)
-        (&mut ids)))
-    unit))
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [ids : (&mut compiler_ir_types.CompilerIrIdList)]) : unit
+  (for [index (iterator.range 0 instrs.len)]
+    (compiler-backend-count-instr-uses
+      (&mut counts)
+      (compiler_ir_types.compiler-ir-instr-seq-borrow instrs index)
+      ids)))
 
 (define (compiler-backend-count-block-uses
   [counts : (__tl_dyn-array i64)]
@@ -3164,12 +3161,15 @@
   [blocks : compiler_ir_types.CompilerIrBlockSeq]) : unit
   (let
     [count : i64 (compiler_ir_types.compiler-ir-block-seq-count blocks)]
+    [ids : compiler_ir_types.CompilerIrIdList
+      (compiler_ir_types.compiler-ir-id-list-new)]
     (for [index (iterator.range 0 count)]
       (match (compiler_ir_types.compiler-ir-block-seq-ref blocks index)
         [(Block _ instrs)
           (compiler-backend-count-instr-seq-uses
             (be_state.compiler-backend-global-shared-view counts)
-            instrs)]))
+            instrs
+            (&mut ids))]))
     unit))
 
 ;; Pre-regalloc SIMD select-add/sub factoring
@@ -3269,13 +3269,12 @@
 (define (compiler-backend-gep-fusion-pin-seq!
   [counts : (__tl_dyn-array i64)]
   [adjacent : (&mut adjacent (__tl_dyn-array bool))]
-  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : unit
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [ids : (&mut compiler_ir_types.CompilerIrIdList)]) : unit
   (let
     [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
     [pending : i64 (- 0 1)]
-    [ids : compiler_ir_types.CompilerIrIdList
-      (compiler_ir_types.compiler-ir-id-list-new)]
     (for [index (iterator.range 0 count)]
       (let
         [instr : compiler_ir_types.CompilerIrInstr
@@ -3286,7 +3285,7 @@
           (if (>= pending 0)
             (array-ref counts pending)
             0)]
-        (compiler-backend-count-instr-uses (&mut counts) (& instr) (&mut ids))
+        (compiler-backend-count-instr-uses (&mut counts) (& instr) ids)
         (if (and (>= pending 0) (> (array-ref counts pending) before))
           (set! (array-ref adjacent pending) true)
           unit)
@@ -3305,13 +3304,16 @@
   [blocks : compiler_ir_types.CompilerIrBlockSeq]) : unit
   (let
     [count : i64 (compiler_ir_types.compiler-ir-block-seq-count blocks)]
+    [ids : compiler_ir_types.CompilerIrIdList
+      (compiler_ir_types.compiler-ir-id-list-new)]
     (for [index (iterator.range 0 count)]
       (match (compiler_ir_types.compiler-ir-block-seq-ref blocks index)
         [(Block _ instrs)
           (compiler-backend-gep-fusion-pin-seq!
             (be_state.compiler-backend-global-shared-view counts)
             (&mut adjacent)
-            instrs)]))))
+            instrs
+            (&mut ids))]))))
 
 (define (compiler-backend-gep-fusion-pin-blocks!
   [counts : (__tl_dyn-array i64)]
@@ -3482,17 +3484,16 @@
 (define (compiler-backend-count-instr-seq-use-facts
   [counts : (__tl_dyn-array i64)]
   [free : (&mut free (__tl_dyn-array i64))]
-  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : unit
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [ids : (&mut compiler_ir_types.CompilerIrIdList)]) : unit
   (let
     [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [n : i64 instrs.len]
-    [ids : compiler_ir_types.CompilerIrIdList
-      (compiler_ir_types.compiler-ir-id-list-new)]
     (for [j (iterator.range 0 n)]
       (compiler-backend-count-instr-uses
         (&mut counts)
         (& (array-ref slots j))
-        (&mut ids))
+        ids)
       (let
         [v : i64
           (compiler-backend-fuse-free-branch-var
@@ -3515,13 +3516,16 @@
   [blocks : compiler_ir_types.CompilerIrBlockSeq]) : unit
   (let
     [count : i64 (compiler_ir_types.compiler-ir-block-seq-count blocks)]
+    [ids : compiler_ir_types.CompilerIrIdList
+      (compiler_ir_types.compiler-ir-id-list-new)]
     (for [index (iterator.range 0 count)]
       (match (compiler_ir_types.compiler-ir-block-seq-ref blocks index)
         [(Block _ instrs)
           (compiler-backend-count-instr-seq-use-facts
             (be_state.compiler-backend-global-shared-view counts)
             (&mut free)
-            instrs)]))
+            instrs
+            (&mut ids))]))
     unit))
 
 (define (compiler-backend-fuse-need-enable!

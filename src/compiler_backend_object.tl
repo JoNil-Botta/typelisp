@@ -1756,61 +1756,24 @@
           count
           program-index)])))
 
-(define (compiler-backend-object-literal-use?
-  [value : (& compiler_ir_types.CompilerIrValue)]) : bool
-  (match value
-    [(or (F64 _) (String _) (StrDesc _) (Bytes _)) true]
-    [_ false]))
-
-;; The SIMD cases below emit references in operand order. Literals can also
-;; emit text and relocations, so use the original operands when one is present.
 (define (compiler-backend-object-uses-ref
   [parts : object_target.CompilerBackendObjectTargetParts]
   [site : String]
-  [instr : (& compiler_ir_types.CompilerIrInstr)]
   [ty : (& compiler_ast_types.AstType)]
   [first : (& operands compiler_ir_types.CompilerIrValue)]
   [second : (& operands compiler_ir_types.CompilerIrValue)]
-  [program-index : be_state.CompilerBackendProgramIndex]
-  [uses : (&mut uses compiler_ir_types.CompilerIrUseList)]) : object_target.CompilerBackendObjectTargetParts
-  (let
-    [literal? : bool
-      (or
-        (compiler-backend-object-literal-use? first)
-        (compiler-backend-object-literal-use? second))]
-    [out : object_target.CompilerBackendObjectTargetParts parts]
-    (set! uses.len 0)
-    (unless
-      literal?
-      (compiler_ir_types.compiler-ir-instr-symbol-uses-into! instr uses))
-    (for [index
-      (iterator.range
-        0
-        (if literal?
-          2
-          uses.len))]
-      (let
-        [operand-site : String
-          (be_state.compiler-backend-global-shared-view site)]
-        (set!
-          out
-          (if literal?
-            (compiler-backend-object-borrowed-value-ref-with-type
-              out
-              operand-site
-              (if (= index 0)
-                first
-                second)
-              ty
-              program-index)
-            (compiler-backend-object-value-ref
-              out
-              operand-site
-              (&
-                (compiler_ir_types.compiler-ir-use-value
-                  (& (array-ref uses.slots index))))
-              program-index)))))
-    out))
+  [program-index : be_state.CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
+  (compiler-backend-object-borrowed-value-ref-with-type
+    (compiler-backend-object-borrowed-value-ref-with-type
+      parts
+      (be_state.compiler-backend-global-shared-view site)
+      first
+      ty
+      program-index)
+    site
+    second
+    ty
+    program-index))
 
 ;; The object walk emits a function's blocks in order. It records the label of
 ;; the block it emits next, so a jump there can fall through instead.
@@ -1976,8 +1939,7 @@
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [instr : compiler_ir_types.CompilerIrInstr]
   [plan : be_state.CompilerBackendRuntimePlan]
-  [program-index : be_state.CompilerBackendProgramIndex]
-  [uses : (&mut uses compiler_ir_types.CompilerIrUseList)]) : object_target.CompilerBackendObjectTargetParts
+  [program-index : be_state.CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
   (match (be_state.compiler-backend-global-shared-view instr)
     [(compiler_ir_types.CompilerIrInstr.Mov dst src ty)
       (if (be_facts.compiler-backend-copy-group?
@@ -2372,8 +2334,7 @@
         blocks
         (compiler_ir_types.CompilerIrInstr.Branch cond true-label false-label)
         plan
-        program-index
-        uses)]
+        program-index)]
     [(compiler_ir_types.CompilerIrInstr.Return value)
       (compiler-backend-object-add-nonempty-bytes
         (match value
@@ -2453,48 +2414,36 @@
         program-index)]
     [(or (compiler_ir_types.CompilerIrInstr.Splat _ value _ elem-ty)
          (compiler_ir_types.CompilerIrInstr.VectorReduce _ _ value _ elem-ty))
-      (compiler-backend-object-uses-ref
+      (compiler-backend-object-borrowed-value-ref-with-type
         parts
         function
-        (& instr)
-        (& elem-ty)
         (& value)
-        (&
-          (ann
-            (compiler_ir_types.CompilerIrValue.Unit)
-            : compiler_ir_types.CompilerIrValue))
-        program-index
-        uses)]
+        (& elem-ty)
+        program-index)]
     [(compiler_ir_types.CompilerIrInstr.VectorBinOp payload-box)
       (compiler-backend-object-uses-ref
         parts
         function
-        (& instr)
         (& (deref payload-box).ty)
         (& (deref payload-box).lhs)
         (& (deref payload-box).rhs)
-        program-index
-        uses)]
+        program-index)]
     [(compiler_ir_types.CompilerIrInstr.VectorPrefix payload-box)
       (compiler-backend-object-uses-ref
         parts
         function
-        (& instr)
         (& (deref payload-box).ty)
         (& (deref payload-box).src)
         (& (deref payload-box).carry)
-        program-index
-        uses)]
+        program-index)]
     [(compiler_ir_types.CompilerIrInstr.VectorCompare payload-box)
       (compiler-backend-object-uses-ref
         parts
         function
-        (& instr)
         (& (deref payload-box).ty)
         (& (deref payload-box).lhs)
         (& (deref payload-box).rhs)
-        program-index
-        uses)]
+        program-index)]
     [(compiler_ir_types.CompilerIrInstr.Select payload-box)
       (let
         [dst (be_state.compiler-backend-box-field-shared-view payload-box dst)]
@@ -2836,7 +2785,6 @@
   [instrs : (& compiler_ir_types.CompilerIrInstrSeq)]
   [plan : be_state.CompilerBackendRuntimePlan]
   [program-index : be_state.CompilerBackendProgramIndex]
-  [uses : (&mut uses compiler_ir_types.CompilerIrUseList)]
   [index : i64]) : object_target.CompilerBackendObjectTargetParts
   (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
     parts
@@ -2854,8 +2802,7 @@
           (be_state.compiler-backend-global-shared-view blocks)
           (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
           plan
-          program-index
-          uses))
+          program-index))
       target
       function
       label-scope
@@ -2864,7 +2811,6 @@
       instrs
       plan
       program-index
-      uses
       (+ index 1))))
 
 (define (compiler-backend-object-blocks
@@ -2875,8 +2821,7 @@
   [label-scope : String]
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [plan : be_state.CompilerBackendRuntimePlan]
-  [program-index : be_state.CompilerBackendProgramIndex]
-  [uses : (&mut uses compiler_ir_types.CompilerIrUseList)]) : object_target.CompilerBackendObjectTargetParts
+  [program-index : be_state.CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
   (match blocks
     [(Array seq)
       (compiler-backend-object-block-seq
@@ -2888,7 +2833,6 @@
         seq
         plan
         program-index
-        uses
         0)]))
 
 (define (compiler-backend-object-block-seq
@@ -2900,7 +2844,6 @@
   [blocks : compiler_ir_types.CompilerIrBlockSeq]
   [plan : be_state.CompilerBackendRuntimePlan]
   [program-index : be_state.CompilerBackendProgramIndex]
-  [uses : (&mut uses compiler_ir_types.CompilerIrUseList)]
   [index : i64]) : object_target.CompilerBackendObjectTargetParts
   (if (>= index (compiler_ir_types.compiler-ir-block-seq-count blocks))
     parts
@@ -2941,7 +2884,6 @@
               instrs
               plan
               program-index
-              uses
               0)
             target
             function-symbol
@@ -2949,7 +2891,6 @@
             blocks
             plan
             program-index
-            uses
             (+ index 1)))])))
 
 (define (compiler-backend-object-emit-function
@@ -2999,8 +2940,6 @@
               program-index.backend-state
               (be_state.compiler-backend-global-shared-view groups)
               (compiler_liveness.compiler-live-set-empty)))]
-        [uses : compiler_ir_types.CompilerIrUseList
-          (compiler_ir_types.compiler-ir-use-list-new)]
         [emitted : object_target.CompilerBackendObjectTargetParts
           (compiler-backend-object-blocks
             type-segment-bases
@@ -3027,8 +2966,7 @@
             label-scope
             blocks
             plan
-            program-index
-            (&mut uses))]
+            program-index)]
         [_group-disable : unit
           (be_facts.compiler-backend-group-vars-disable!
             program-index.backend-state)]

@@ -822,7 +822,7 @@ EOF
         rm -rf "$CONSUMER/target"
         log="$WORKDIR/opacity-$opacity_case-$route"
         status=0
-        "$COMPILER" build --manifest-path "$CONSUMER/typelisp.pkg" \
+        "$COMPILER" build --release --manifest-path "$CONSUMER/typelisp.pkg" \
             --target "$NL_BOOTSTRAP_TARGET" --opt-level 0 \
             > "$log.out" 2> "$log.err" || status=$?
         if [ "$opacity_case" = public ]; then

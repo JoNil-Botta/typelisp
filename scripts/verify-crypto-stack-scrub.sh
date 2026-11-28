@@ -31,6 +31,49 @@ while IFS= read -r input; do
 done < "$work/inline-files.txt"
 printf 'target\topt\tmutant\texit\n' > "$work/results.tsv"
 tab=$(printf '\t')
+
+verify_rep_rejections() {
+    input=$1
+    opt_level=$2
+    # The original store form remains a valid input to the residue gate.
+    if ! awk '
+        /^_tl_stdlib_crypto_stack_scrub_stdlib_crypto_stack_scrub_block_bang:$/ { block=1 }
+        /^ *\.(size|seh_endproc|globl)( |$)/ { block=0 }
+        block && /^    rep stosq$/ { found=1 }
+        END { exit !found }
+    ' "$input"; then return; fi
+    for mutation in unknown-count out-of-frame nonzero-value unknown-value unknown-destination wrong-slot changed-stack backwards missing-wipe; do
+        output="$work/opt$opt_level-rep-$mutation"
+        mkdir -p "$output"
+        awk -v mutation="$mutation" '
+            /^_tl_stdlib_crypto_stack_scrub_stdlib_crypto_stack_scrub_block_bang:$/ { block=1 }
+            /^ *\.(size|seh_endproc|globl)( |$)/ { block=0 }
+            block && /^    rep stosq$/ {
+                if (mutation=="unknown-count") print "    movq %r10, %rcx"
+                if (mutation=="out-of-frame") print "    movl $2147483647, %ecx"
+                if (mutation=="nonzero-value") print "    movl $1, %eax"
+                if (mutation=="unknown-value") print "    movq %r10, %rax"
+                if (mutation=="unknown-destination") print "    movq %r10, %rdi"
+                if (mutation=="wrong-slot") print "    leaq (%rsp), %rdi"
+                if (mutation=="changed-stack") print "    subq $8, %rsp"
+                if (mutation=="backwards") print "    std"
+                if (mutation!="missing-wipe") mutated=1
+                filled=1
+            }
+            block && filled && mutation=="missing-wipe" && /^    callq? / {
+                print "    nop"; mutated=1; next
+            }
+            { print }
+            END { if (!mutated) exit 1 }
+        ' "$input" > "$output/input.s"
+        if scripts/check-crypto-stack-scrub.sh "$output/input.s" "$output" "$NL_BOOTSTRAP_TARGET" "$opt_level" 0 > "$output/stdout" 2> "$output/stderr" ||
+            ! grep -Fq 'unproved REP STOSQ reclaim interval: block' "$output/stderr"; then
+            echo "unproved REP STOSQ was not rejected: target=$NL_BOOTSTRAP_TARGET opt=$opt_level mutation=$mutation" >&2
+            exit 1
+        fi
+    done
+}
+
 for opt in 1 2; do
     "$COMPILER" test --batch "$work/inline-files.txt" \
         --stdlib-root "$ROOT/stdlib" --opt-level "$opt"
@@ -40,6 +83,7 @@ for opt in 1 2; do
         --stdlib-root "$ROOT/stdlib" --no-prebuilt-stdlib \
         --target "$NL_BOOTSTRAP_TARGET" \
         --opt-level "$opt" -o "$work/opt$opt.s"
+    verify_rep_rejections "$work/opt$opt.s" "$opt"
     while IFS="$tab" read -r name phase expected; do
         case "$name" in ''|\#*) continue ;; esac
         case "$phase" in 0|1|2|3|4|5|6|7|8|-1|-2|-3|-4|-5|-6|-7|-8) ;; *) echo 'invalid residue mutant phase' >&2; exit 1 ;; esac

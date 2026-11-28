@@ -42,7 +42,7 @@
 ;; Frames per group after the first: frame zero is decoded on its own, so a
 ;; plain compile never expands the rest of the catalog.
 (define (compiler-embedded-stdlib-tlci-codec-group-frames) : i64
-  16)
+  1)
 
 (define (compiler-embedded-stdlib-tlci-codec-group-count [count : i64]) : i64
   (if (<= count 1)

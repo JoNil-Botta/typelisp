@@ -1,0 +1,3 @@
+path	required	advisory	reason
+scripts/lib-stage0-lzss.sh	stage0-size-ratchet	-	Embedded payload scanner used by the stage0 binary size analyzer and scanner fixtures.
+scripts/verify-stage0-lzss-scanner.sh	stage0-size-ratchet	-	Scanner fixtures run by the stage0 size ratchet on both hosts.

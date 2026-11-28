@@ -28,15 +28,18 @@
   (Ok)
   (Err String))
 
-(define (fmt-write-error-message [path : String] [error : io.IoError]) : String
+(define (fmt-write-error-message [path : String] [error : io.IoError])
+  (:cold) : String
   (str_cat.str-cat "fmt: failed to write " path ": " (io.error-message error)))
 
-(define (fmt-try-write-formatted-file [path : String] [formatted : String]) : ResultFmtWrite
+(define (fmt-try-write-formatted-file [path : String] [formatted : String])
+  (:cold) : ResultFmtWrite
   (match (io.try-write-file (& path) (byte_buf.str-as-bytes (& formatted)))
     [(OkIoUnit) Ok]
     [(ErrIoUnit error) (Err (fmt-write-error-message path error))]))
 
-(define (fmt-write-formatted-file [path : String] [formatted : String]) : i64
+(define (fmt-write-formatted-file [path : String] [formatted : String])
+  (:cold) : i64
   (match (fmt-try-write-formatted-file path formatted)
     [(Ok) 0]
     [(Err message)
@@ -45,7 +48,8 @@
 
 (define (fmt-source-error-message
   [path : String]
-  [err : tokens.FormatSourceError]) : String
+  [err : tokens.FormatSourceError])
+  (:cold) : String
   (let
     [span : tokens.FormatSourceSpan
       (tokens.format-source-error-span
@@ -59,7 +63,8 @@
       ": "
       (tokens.format-source-error-message err))))
 
-(define (fmt-config-from [start : i64] [count : i64]) : ResultFmtConfig
+(define (fmt-config-from [start : i64] [count : i64])
+  (:cold) : ResultFmtConfig
   (let
     [options : cli_option.CliCompileOptions (cli_option.cli-compile-options)]
     [args : cli_option.CliArgs
@@ -98,11 +103,13 @@
 
 ;; `io.stderr-write` exits 134 when stderr fails, as `io.print-error` does, so
 ;; this unbounded rendering either completes or ends the process.
-(define (fmt-diff-stderr-sink [chunk : (& bytes)]) : i64
+(define (fmt-diff-stderr-sink [chunk : (& bytes)])
+  (:cold) : i64
   (io.stderr-write chunk)
   0)
 
-(define (fmt-check-diff [path : String] [source : String] [formatted : String]) : i64
+(define (fmt-check-diff [path : String] [source : String] [formatted : String])
+  (:cold) : i64
   (match (unified_diff.render
     (& path)
     (& source)
@@ -112,7 +119,8 @@
     [(Complete) 1]
     [_ (io.panic "fmt: unbounded stderr diff stopped early\n")]))
 
-(define (fmt-format-file [check : bool] [path : String]) : i64
+(define (fmt-format-file [check : bool] [path : String])
+  (:cold) : i64
   (let
     [source : String
       (byte_buf.to-string
@@ -142,7 +150,8 @@
 ;; Parsing and rendering retain a complete token stream and CST. Reclaim that
 ;; scratch state after each file so multi-file formatter invocations do not grow
 ;; the process-lifetime arena with the size of the whole corpus.
-(define (fmt-format-file-scoped [check : bool] [path : String]) : i64
+(define (fmt-format-file-scoped [check : bool] [path : String])
+  (:cold) : i64
   (with-arena
     file-arena
     ;; The indirect-call union reaches optimizer globals only in some linked
@@ -152,7 +161,8 @@
     (unsafe
       (fmt-format-file check path))))
 
-(define (fmt-files-from [check : bool] [paths : fmt_svec.Vec] [status : i64]) : i64
+(define (fmt-files-from [check : bool] [paths : fmt_svec.Vec] [status : i64])
+  (:cold) : i64
   (for [index (iterator.range 0 (fmt_svec.len (& paths)))]
     (let
       [path : String (fmt_svec.get (& paths) index "")]
@@ -164,13 +174,15 @@
           status))))
   status)
 
-(define (fmt-files [check : bool] [paths : fmt_svec.Vec] [status : i64]) : i64
+(define (fmt-files [check : bool] [paths : fmt_svec.Vec] [status : i64])
+  (:cold) : i64
   (fmt-files-from check paths status))
 
 (define (fmt-package-files-from
   [check : bool]
   [paths : fmt_svec.Vec]
-  [status : i64]) : i64
+  [status : i64])
+  (:cold) : i64
   (for [index (iterator.range 0 (fmt_svec.len (& paths)))]
     (let
       [path : String (fmt_svec.get (& paths) index "")]
@@ -182,13 +194,15 @@
           status))))
   status)
 
-(define (fmt-package-files [check : bool] [paths : fmt_svec.Vec] [status : i64]) : i64
+(define (fmt-package-files [check : bool] [paths : fmt_svec.Vec] [status : i64])
+  (:cold) : i64
   (fmt-package-files-from check paths status))
 
 (define (fmt-package
   [check : bool]
   [manifest-path : String]
-  [has-manifest : bool]) : i64
+  [has-manifest : bool])
+  (:cold) : i64
   (match (package_source_core.package-source-discover-for
     "fmt"
     manifest-path
@@ -200,7 +214,8 @@
 
 ;; Run the `fmt` command over arguments starting at `start` (the index of the
 ;; first argument after any subcommand name); `count` is `(arg-count)`.
-(define (fmt-run-from [start : i64] [count : i64]) : i64
+(define (fmt-run-from [start : i64] [count : i64])
+  (:cold) : i64
   (match (fmt-config-from start count)
     [(Ok config)
       (match config

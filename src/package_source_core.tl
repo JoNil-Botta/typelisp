@@ -61,10 +61,12 @@
   (UnsupportedSchema i64)
   (Malformed String))
 
-(define (package-source-char-code-at [text : (& text str)] [idx : i64]) : i64
+(define (package-source-char-code-at [text : (& text str)] [idx : i64])
+  (:cold) : i64
   (cast (string.string-ref text idx) : i64))
 
-(define (package-source-string-less? [left : String] [right : String]) : bool
+(define (package-source-string-less? [left : String] [right : String])
+  (:cold) : bool
   (let
     [left-len : i64 (string.string-length left)]
     [right-len : i64 (string.string-length right)]
@@ -91,7 +93,8 @@
 (define (package-source-vec-insert-slot-from
   [items : (& items svec.Vec)]
   [value : String]
-  [index : i64]) : i64
+  [index : i64])
+  (:cold) : i64
   (if (>= index (svec.len (& items)))
     index
     (let
@@ -108,7 +111,8 @@
   [items : (& items svec.Vec)]
   [out : svec.Vec]
   [start : i64]
-  [end : i64]) : svec.Vec
+  [end : i64])
+  (:cold) : svec.Vec
   (let
     [cur : svec.Vec out]
     (for [idx (iterator.range start end)]
@@ -118,7 +122,8 @@
 (define (package-source-vec-insert-at
   [items : svec.Vec]
   [value : String]
-  [slot : i64]) : svec.Vec
+  [slot : i64])
+  (:cold) : svec.Vec
   (let
     [out : svec.Vec (svec.with-capacity (+ (svec.len (& items)) 1))]
     (set! out (package-source-vec-copy-range items out 0 slot))
@@ -128,7 +133,8 @@
       (package-source-vec-copy-range items out slot (svec.len (& items))))
     out))
 
-(define (package-source-vec-insert [items : svec.Vec] [value : String]) : svec.Vec
+(define (package-source-vec-insert [items : svec.Vec] [value : String])
+  (:cold) : svec.Vec
   (let
     [slot : i64
       (package-source-vec-insert-slot-from
@@ -139,14 +145,16 @@
       items
       (package-source-vec-insert-at items value slot))))
 
-(define (package-source-manifest-dir [manifest-path : String]) : String
+(define (package-source-manifest-dir [manifest-path : String])
+  (:cold) : String
   (let
     [dir : String (compiler_load.compiler-load-dirname manifest-path)]
     (if (= (string.string-length dir) 0)
       "."
       dir)))
 
-(define (package-source-discover-manifest-up [prefix : String] [fuel : i64]) : compiler_load.CompilerLoadMaybePath
+(define (package-source-discover-manifest-up [prefix : String] [fuel : i64])
+  (:cold) : compiler_load.CompilerLoadMaybePath
   (if (<= fuel 0)
     (CompilerLoadNoPath)
     (let
@@ -160,7 +168,8 @@
           (str_cat.str-cat prefix "../")
           (- fuel 1))))))
 
-(define (package-source-load-manifest [path : String]) : ResultPackageSourceSet
+(define (package-source-load-manifest [path : String])
+  (:cold) : ResultPackageSourceSet
   (if (io.file-exists? (owned_view.compiler-owned-shared-view path))
     (match (compiler_load.compiler-load-parse-manifest-diagnostic-infer-kind
       (owned_view.compiler-owned-shared-view path)
@@ -187,7 +196,8 @@
 (define (package-source-resolve-manifest
   [command : String]
   [manifest-path : String]
-  [has-manifest : bool]) : ResultPackageSourceSet
+  [has-manifest : bool])
+  (:cold) : ResultPackageSourceSet
   (let
     [resolved : compiler_load.CompilerLoadMaybePath
       (if has-manifest
@@ -203,7 +213,8 @@
 
 (define (package-source-relative-join
   [prefix : (& prefix str)]
-  [name : (& name str)]) : String
+  [name : (& name str)])
+  (:cold) : String
   (if (= (string.string-length prefix) 0)
     (string.copy name)
     (compiler_load.compiler-load-join-root-path
@@ -212,7 +223,8 @@
 
 (define (package-source-root-join
   [root : (& root str)]
-  [relative : (& relative str)]) : String
+  [relative : (& relative str)])
+  (:cold) : String
   (if (= (string.string-length relative) 0)
     (string.copy root)
     (compiler_load.compiler-load-join-root-path
@@ -223,7 +235,8 @@
   [package-name : String]
   [field : String]
   [requested : String]
-  [checkout-root : String]) : String
+  [checkout-root : String])
+  (:cold) : String
   (str_cat.str-cat
     "build: fetched package `"
     package-name
@@ -237,7 +250,8 @@
 
 (define (package-source-confined-kind-ok?
   [kind : fs.FsFileKind]
-  [expected : PackageSourceConfinedPathKind]) : bool
+  [expected : PackageSourceConfinedPathKind])
+  (:cold) : bool
   (match expected
     [(File) (fs.file-kind-regular? kind)]
     [(Directory) (fs.file-kind-directory? kind)]
@@ -251,7 +265,8 @@
   [normalized : (& normalized str)]
   [cursor : i64]
   [prefix : String]
-  [expected : PackageSourceConfinedPathKind]) : ResultPackageSourceConfinedPath
+  [expected : PackageSourceConfinedPathKind])
+  (:cold) : ResultPackageSourceConfinedPath
   (let
     [n : i64 (string.string-length normalized)]
     [separator : i64 (package-source-relative-separator normalized cursor n)]
@@ -298,7 +313,8 @@
   [field : String]
   [requested : String]
   [checkout-root : String]
-  [expected : PackageSourceConfinedPathKind]) : ResultPackageSourceConfinedPath
+  [expected : PackageSourceConfinedPathKind])
+  (:cold) : ResultPackageSourceConfinedPath
   (let
     [normalized-root : String
       (compiler_load.compiler-load-normalize-path checkout-root)]
@@ -340,7 +356,8 @@
   [package-name : String]
   [field : String]
   [requested : String]
-  [checkout-root : String]) : ResultPackageSourceConfinedPath
+  [checkout-root : String])
+  (:cold) : ResultPackageSourceConfinedPath
   (package-source-confined-existing-path
     package-name
     field
@@ -352,7 +369,8 @@
   [package-name : String]
   [checkout-root : String]
   [relative : (& relative str)]
-  [name : String]) : ResultPackageSourceConfinedPath
+  [name : String])
+  (:cold) : ResultPackageSourceConfinedPath
   ;; The checkout implementation owns the root `.git` directory; it is not a
   ;; package-controlled input. A nested `.git` remains subject to the audit.
   (if (and (string.eq relative "") (string.eq name ".git"))
@@ -387,7 +405,8 @@
   [package-name : String]
   [checkout-root : String]
   [relative : (& relative str)]
-  [entries : svec.Vec]) : ResultPackageSourceConfinedPath
+  [entries : svec.Vec])
+  (:cold) : ResultPackageSourceConfinedPath
   (for [index (iterator.range 0 (svec.len (& entries)))]
     (let
       [_
@@ -403,7 +422,8 @@
 (define (package-source-fetched-checkout-audit-dir
   [package-name : String]
   [checkout-root : String]
-  [relative : String]) : ResultPackageSourceConfinedPath
+  [relative : String])
+  (:cold) : ResultPackageSourceConfinedPath
   (let
     [dir : String (package-source-root-join checkout-root relative)]
     (match (fs.try-read-dir (& dir))
@@ -429,7 +449,8 @@
 ;; normalized `..` segments remain valid, while links are never followed.
 (define (package-source-fetched-checkout-audit
   [package-name : String]
-  [checkout-root : String]) : ResultPackageSourceConfinedPath
+  [checkout-root : String])
+  (:cold) : ResultPackageSourceConfinedPath
   (let
     [normalized-root : String
       (compiler_load.compiler-load-normalize-path checkout-root)]
@@ -454,7 +475,8 @@
               "."
               normalized-root)))])))
 
-(define (package-source-internal-dir? [name : (& name str)]) : bool
+(define (package-source-internal-dir? [name : (& name str)])
+  (:cold) : bool
   (or
     (string.eq name "target")
     (string.eq name ".git")
@@ -462,16 +484,19 @@
     (string.eq name ".svn")
     (string.eq name ".jj")))
 
-(define (package-source-test-dir? [name : String]) : bool
+(define (package-source-test-dir? [name : String])
+  (:cold) : bool
   (string.eq name "tests"))
 
-(define (package-source-skip-dir? [name : String]) : bool
+(define (package-source-skip-dir? [name : String])
+  (:cold) : bool
   (or (package-source-internal-dir? name) (package-source-test-dir? name)))
 
 (define (package-source-sort-entries-from
   [entries : (& entries fs.FsStringVector)]
   [index : i64]
-  [acc : svec.Vec]) : svec.Vec
+  [acc : svec.Vec])
+  (:cold) : svec.Vec
   (if (>= index (fs.string-vector-len (& entries)))
     acc
     (package-source-sort-entries-from
@@ -481,25 +506,30 @@
         acc
         (fs.string-vector-get (& entries) index "")))))
 
-(define (package-source-sort-entries [entries : fs.FsStringVector]) : svec.Vec
+(define (package-source-sort-entries [entries : fs.FsStringVector])
+  (:cold) : svec.Vec
   (package-source-sort-entries-from entries 0 (svec.new)))
 
-(define (package-source-dir-has-manifest? [dir : String]) : bool
+(define (package-source-dir-has-manifest? [dir : String])
+  (:cold) : bool
   (io.file-exists?
     (compiler_load.compiler-load-join-root-path dir "typelisp.pkg")))
 
-(define (package-source-tl-file? [path : (& path str)]) : bool
+(define (package-source-tl-file? [path : (& path str)])
+  (:cold) : bool
   (string.eq (fs.extension path) "tl"))
 
 (define (package-source-include-kind?
   [path : (& path str)]
-  [kind : fs.FsFileKind]) : bool
+  [kind : fs.FsFileKind])
+  (:cold) : bool
   (and (fs.file-kind-regular? kind) (package-source-tl-file? path)))
 
 (define (package-source-entry-error
   [command : String]
   [path : String]
-  [error : io.IoError]) : ResultPackageSourceList
+  [error : io.IoError])
+  (:cold) : ResultPackageSourceList
   (Err
     (str_cat.str-cat
       command
@@ -511,7 +541,8 @@
 (define (package-source-read-dir-error
   [command : String]
   [path : String]
-  [error : io.IoError]) : ResultPackageSourceList
+  [error : io.IoError])
+  (:cold) : ResultPackageSourceList
   (Err
     (str_cat.str-cat
       command
@@ -520,7 +551,8 @@
       "': "
       (io.error-message error))))
 
-(define (package-source-entry-list [source-set : PackageSourceSet]) : svec.Vec
+(define (package-source-entry-list [source-set : PackageSourceSet])
+  (:cold) : svec.Vec
   (let
     [manifest : compiler_load.CompilerPkgManifest source-set.manifest]
     [entry : String
@@ -534,7 +566,8 @@
   [command : String]
   [root : (& root str)]
   [relative : String]
-  [acc : svec.Vec]) : ResultPackageSourceList
+  [acc : svec.Vec])
+  (:cold) : ResultPackageSourceList
   (let
     [dir : String (package-source-root-join root relative)]
     (match (fs.try-read-dir (& dir))
@@ -552,7 +585,8 @@
   [command : String]
   [root : String]
   [relative : String]
-  [acc : svec.Vec]) : ResultPackageSourceList
+  [acc : svec.Vec])
+  (:cold) : ResultPackageSourceList
   (let
     [dir : String (package-source-root-join root relative)]
     (match (fs.try-read-dir (& dir))
@@ -572,7 +606,8 @@
 
 (define (package-source-scan-root
   [command : String]
-  [source-set : PackageSourceSet]) : ResultPackageSourceList
+  [source-set : PackageSourceSet])
+  (:cold) : ResultPackageSourceList
   (let
     [root : String
       (owned_view.compiler-owned-shared-view source-set.manifest-dir)]
@@ -602,7 +637,8 @@
   [child-relative : String]
   [child-path : String]
   [inspected : fs.ResultFsFileKind]
-  [acc : svec.Vec]) : ResultPackageSourceList
+  [acc : svec.Vec])
+  (:cold) : ResultPackageSourceList
   (match inspected
     [(ErrFsFileKind error)
       (if (io.error-not-found? (owned_view.compiler-owned-shared-view error))
@@ -627,7 +663,8 @@
   [root : (& root str)]
   [relative : (& relative str)]
   [name : String]
-  [acc : svec.Vec]) : ResultPackageSourceList
+  [acc : svec.Vec])
+  (:cold) : ResultPackageSourceList
   (if (or
     (package-source-skip-dir? (owned_view.compiler-owned-shared-view name))
     (package_lock_core.package-lock-stage-name? (& name)))
@@ -654,7 +691,8 @@
   [relative : (& relative str)]
   [entries : svec.Vec]
   [index : i64]
-  [acc : svec.Vec]) : ResultPackageSourceList
+  [acc : svec.Vec])
+  (:cold) : ResultPackageSourceList
   (if (>= index (svec.len (& entries)))
     (Ok acc)
     (let
@@ -679,7 +717,8 @@
   [root : (& root str)]
   [relative : String]
   [entries : svec.Vec]
-  [acc : svec.Vec]) : ResultPackageSourceList
+  [acc : svec.Vec])
+  (:cold) : ResultPackageSourceList
   (package-source-scan-entries-from command root relative entries 0 acc))
 
 ;; Discover ordinary package-style TypeLisp sources below an explicit root.
@@ -689,7 +728,8 @@
 ;; deterministic traversal, exclusion, regular-file, and nested-package rules.
 (define (package-source-discover-root-for
   [command : String]
-  [root : (& root str)]) : ResultPackageSourceList
+  [root : (& root str)])
+  (:cold) : ResultPackageSourceList
   (let
     [normalized-root : String (compiler_load.compiler-load-normalize-path root)]
     (match (fs.try-read-dir (& normalized-root))
@@ -707,7 +747,8 @@
 (define (package-source-relative-separator
   [relative : (& relative str)]
   [start : i64]
-  [end : i64]) : i64
+  [end : i64])
+  (:cold) : i64
   (let
     [index : i64 start]
     (while (and
@@ -721,7 +762,8 @@
 (define (package-source-relative-parent-eligible?
   [root : (& root str)]
   [relative : (& relative str)]
-  [discover : bool]) : bool
+  [discover : bool])
+  (:cold) : bool
   (let
     [end : i64 (fs.last-separator-index relative)]
     [cursor : i64 0]
@@ -757,7 +799,8 @@
 ;; associated with its workspace root.
 (define (package-source-path-location-eligible-for-root?
   [root : (& root str)]
-  [path : (& path str)]) : bool
+  [path : (& path str)])
+  (:cold) : bool
   (let
     [normalized-root : String (compiler_load.compiler-load-normalize-path root)]
     [normalized-path : String (compiler_load.compiler-load-normalize-path path)]
@@ -775,7 +818,8 @@
 ;; The path must additionally be a current regular file.
 (define (package-source-path-eligible-for-root?
   [root : (& root str)]
-  [path : (& path str)]) : bool
+  [path : (& path str)])
+  (:cold) : bool
   (let
     [normalized-path : String (compiler_load.compiler-load-normalize-path path)]
     (and
@@ -788,7 +832,8 @@
 ;; The loader's paths are relative to the working directory or already
 ;; absolute. Use absolute paths for ownership checks, and retain the loader's
 ;; spelling for the later source checks and their diagnostics.
-(define (package-source-absolute-path [cwd : (& str)] [path : (& str)]) : String
+(define (package-source-absolute-path [cwd : (& str)] [path : (& str)])
+  (:cold) : String
   (compiler_load.compiler-load-normalize-path
     (if (compiler_load.compiler-load-absolute-path? path)
       (string.copy path)
@@ -797,7 +842,8 @@
 (define (package-source-reachable-owned-files
   [paths : (& ast.AstDeclPathList)]
   [manifest-dir : (& str)]
-  [stdlib-roots : (& svec.Vec)]) : svec.Vec
+  [stdlib-roots : (& svec.Vec)])
+  (:cold) : svec.Vec
   (let
     [cwd : String (fs.current-dir)]
     [root : String (package-source-absolute-path (& cwd) manifest-dir)]
@@ -848,7 +894,8 @@
 (define (package-source-discover-for
   [command : String]
   [manifest-path : String]
-  [has-manifest : bool]) : ResultPackageSourceSet
+  [has-manifest : bool])
+  (:cold) : ResultPackageSourceSet
   (let
     [base
       (try
@@ -877,7 +924,8 @@
 
 (define (package-source-discover-tests-for
   [command : String]
-  [source-set : PackageSourceSet]) : ResultPackageSourceList
+  [source-set : PackageSourceSet])
+  (:cold) : ResultPackageSourceList
   (let
     [root : String source-set.manifest-dir]
     (package-source-scan-optional-dir command root "tests" (svec.new))))
@@ -896,12 +944,14 @@
 (define package-source-binding-hash-multiplier : i64
   131)
 
-(define (package-source-binding-hash-byte [hash : i64] [value : i64]) : i64
+(define (package-source-binding-hash-byte [hash : i64] [value : i64])
+  (:cold) : i64
   (%
     (+ (* hash package-source-binding-hash-multiplier) (bit-and value 0xff))
     package-source-binding-hash-modulus))
 
-(define (package-source-binding-hash-u64 [hash : i64] [value : i64]) : i64
+(define (package-source-binding-hash-u64 [hash : i64] [value : i64])
+  (:cold) : i64
   (let
     [next : i64 hash]
     (for [index (iterator.range 0 8)]
@@ -910,7 +960,8 @@
         (package-source-binding-hash-byte next (shr value (* index 8)))))
     next))
 
-(define (package-source-binding-hash-string [hash : i64] [text : String]) : i64
+(define (package-source-binding-hash-string [hash : i64] [text : String])
+  (:cold) : i64
   (let
     [next : i64 hash]
     [count : i64 (string.string-length text)]
@@ -924,7 +975,8 @@
 
 (define (package-source-binding-hash-bytes
   [hash : i64]
-  [bytes : (__tl_dyn-array u8)]) : i64
+  [bytes : (__tl_dyn-array u8)])
+  (:cold) : i64
   (let
     [next : i64 hash]
     [count : i64 (array-length bytes)]
@@ -938,7 +990,8 @@
 
 (define (package-source-binding-relative-path
   [root : (& root str)]
-  [path : (& path str)]) : String
+  [path : (& path str)])
+  (:cold) : String
   (let
     [normalized-root : String (compiler_load.compiler-load-normalize-path root)]
     [normalized-path : String (compiler_load.compiler-load-normalize-path path)]
@@ -969,7 +1022,8 @@
 (define (package-source-binding-invalid-set-error
   [source-set : PackageSourceSet]
   [path : String]
-  [reason : String]) : String
+  [reason : String])
+  (:cold) : String
   (str_cat.str-cat
     "package '"
     source-set.manifest-path
@@ -981,7 +1035,8 @@
 (define (package-source-binding-read-error
   [source-set : PackageSourceSet]
   [path : String]
-  [error : io.IoError]) : String
+  [error : io.IoError])
+  (:cold) : String
   (package-source-binding-invalid-set-error
     source-set
     path
@@ -993,7 +1048,8 @@
 (define (package-source-binding-hash-source
   [hash : i64]
   [relative : String]
-  [bytes : (__tl_dyn-array u8)]) : i64
+  [bytes : (__tl_dyn-array u8)])
+  (:cold) : i64
   (let
     [with-path-len : i64
       (package-source-binding-hash-u64 hash (string.string-length relative))]
@@ -1003,7 +1059,8 @@
       (package-source-binding-hash-u64 with-path (array-length bytes))]
     (package-source-binding-hash-bytes with-file-len bytes)))
 
-(define (package-source-set-digest [source-set : PackageSourceSet]) : ResultPackageSourceDigest
+(define (package-source-set-digest [source-set : PackageSourceSet])
+  (:cold) : ResultPackageSourceDigest
   (let
     [sources : svec.Vec
       (owned_view.compiler-owned-shared-view source-set.sources)]
@@ -1100,7 +1157,8 @@
       (Ok hash))))
 
 (define (package-source-binding-verification-from-admission
-  [admission : tlci.TlciPackageSourceBindingAdmission]) : PackageSourceBindingVerification
+  [admission : tlci.TlciPackageSourceBindingAdmission])
+  (:cold) : PackageSourceBindingVerification
   (match admission
     [(Match digest) (Match digest)]
     [(Mismatch expected actual) (Mismatch expected actual)]
@@ -1110,7 +1168,8 @@
 
 (define (package-source-verify-binding
   [source-set : PackageSourceSet]
-  [rodata : (__tl_dyn-array u8)]) : PackageSourceBindingVerification
+  [rodata : (__tl_dyn-array u8)])
+  (:cold) : PackageSourceBindingVerification
   (match (package-source-set-digest source-set)
     [(Err message) (Unreadable message)]
     [(Ok expected)

@@ -27,7 +27,8 @@
   (Err String))
 
 ;; The decimal value of `text`, or -1 unless it is 1-9 digits.
-(define (selfhost-expand-positive-int [text : String]) : i64
+(define (selfhost-expand-positive-int [text : String])
+  (:cold) : i64
   (let
     [count : i64 (string.string-length (& text))]
     [index : i64 0]
@@ -46,7 +47,8 @@
 
 ;; `line:column`, both 1-based, as a two-element pair packed into one value:
 ;; line * 2^32 + column, or -1 when malformed.
-(define (selfhost-expand-position [text : String]) : i64
+(define (selfhost-expand-position [text : String])
+  (:cold) : i64
   (let
     [count : i64 (string.string-length (& text))]
     [colon : i64 -1]
@@ -70,7 +72,8 @@
 
 ;; Parse the `expand` config from arguments starting at `start`. `count` is
 ;; `(arg-count)`.
-(define (selfhost-expand-config-from [start : i64] [count : i64]) : ResultSelfhostExpandConfig
+(define (selfhost-expand-config-from [start : i64] [count : i64])
+  (:cold) : ResultSelfhostExpandConfig
   (let
     [args : cli_option.CliArgs
       (cli_option.cli-args
@@ -145,7 +148,8 @@
 
 (define (selfhost-expand-span-text
   [path : String]
-  [frame : expand.CompilerExpandFrame]) : String
+  [frame : expand.CompilerExpandFrame])
+  (:cold) : String
   (str_cat.str-cat
     path
     ":"
@@ -158,7 +162,8 @@
     (string.int->string frame.end-col)))
 
 (define (selfhost-expand-report-diagnostics
-  [diagnostics : cdiag.CompilerDiagnosticList]) : unit
+  [diagnostics : cdiag.CompilerDiagnosticList])
+  (:cold) : unit
   (let
     [count : i64 (cdiag.compiler-diagnostic-list-count diagnostics)]
     [index : i64 0]
@@ -178,7 +183,8 @@
   [frames : expand.CompilerExpandFrames]
   [text : String]
   [truncated : bool]
-  [max-bytes : i64]) : String
+  [max-bytes : i64])
+  (:cold) : String
   (let
     [count : i64 frames.len]
     [ends-newline? : bool
@@ -231,7 +237,8 @@
           " bytes\n")
         ""))))
 
-(define (selfhost-expand-run [config : SelfhostExpandConfig]) : i64
+(define (selfhost-expand-run [config : SelfhostExpandConfig])
+  (:cold) : i64
   (match (io.try-read-file (& config.input-path))
     [(ErrIoBytes error)
       (io.print-error
@@ -283,7 +290,8 @@
           (selfhost-expand-report-diagnostics diagnostics)
           1])]))
 
-(define (selfhost-expand-run-from [start : i64] [count : i64]) : i64
+(define (selfhost-expand-run-from [start : i64] [count : i64])
+  (:cold) : i64
   (match (selfhost-expand-config-from start count)
     [(Ok config) (selfhost-expand-run config)]
     [(Err message)

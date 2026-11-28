@@ -90,11 +90,13 @@
   (Checked CompilerCheckOverlayPackageResult)
   (Rejected source_overlay.CompilerSourceOverlayError))
 
-(define (compiler-check-advisories-for-job [job-state : tc.TcJobState]) : cdiag.CompilerAdvisoryList
+(define (compiler-check-advisories-for-job [job-state : tc.TcJobState])
+  (:cold) : cdiag.CompilerAdvisoryList
   (cdiag.compiler-advisory-sink-snapshot
     (tc.tc-job-state-advisory-sink job-state)))
 
-(define (compiler-check-serial-advisories) : cdiag.CompilerAdvisoryList
+(define (compiler-check-serial-advisories)
+  (:cold) : cdiag.CompilerAdvisoryList
   (compiler-check-advisories-for-job (tc.tc-serial-job-state)))
 
 (cfg
@@ -104,12 +106,14 @@
 
 (cfg
   compile-profile
-  (define (compiler-check-profile-start) : unit
+  (define (compiler-check-profile-start)
+    (:cold) : unit
     (set! compiler-check-profile-start-ms (profile.now-ms))))
 
 (cfg
   compile-profile
-  (define (compiler-check-profile-finish [phase : String]) : unit
+  (define (compiler-check-profile-finish [phase : String])
+    (:cold) : unit
     (io.print-error
       (str_cat.str-cat
         "compile-profile|check."
@@ -119,19 +123,22 @@
           (- (profile.now-ms) compiler-check-profile-start-ms))
         "|0|0|0\n"))))
 
-(define (compiler-check-language-cfgs) : sym_i64_env.SymI64Env
+(define (compiler-check-language-cfgs)
+  (:cold) : sym_i64_env.SymI64Env
   (target_cfg.compiler-target-cfgs
     (target_cfg.compiler-target-cfg-host)
     (cfg_core.compiler-cfg-empty)))
 
 (define (compiler-check-diagnostic-with-fallback-path
   [diag : cdiag.CompilerDiagnostic]
-  [path : String]) : cdiag.CompilerDiagnostic
+  [path : String])
+  (:cold) : cdiag.CompilerDiagnostic
   (cdiag.compiler-diagnostic-with-fallback-path diag path))
 
 (define (compiler-check-diagnostics-with-fallback-path
   [diagnostics : cdiag.CompilerDiagnosticList]
-  [path : String]) : cdiag.CompilerDiagnosticList
+  [path : String])
+  (:cold) : cdiag.CompilerDiagnosticList
   (let
     [count : i64 (cdiag.compiler-diagnostic-list-count diagnostics)]
     [out : cdiag.CompilerDiagnosticList
@@ -146,7 +153,8 @@
 
 (define (compiler-check-diagnostic-before?
   [left : (& left cdiag.CompilerDiagnostic)]
-  [right : (& right cdiag.CompilerDiagnostic)]) : bool
+  [right : (& right cdiag.CompilerDiagnostic)])
+  (:cold) : bool
   (let
     [left-primary : (& left cdiag.CompilerDiagnosticSpan) (& left.primary)]
     [right-primary : (& right cdiag.CompilerDiagnosticSpan) (& right.primary)]
@@ -163,7 +171,8 @@
 
 (define (compiler-check-diagnostic-list-insert-source-order
   [diag : cdiag.CompilerDiagnostic]
-  [sorted : (&mut sorted cdiag.CompilerDiagnosticList)]) : unit
+  [sorted : (&mut sorted cdiag.CompilerDiagnosticList)])
+  (:cold) : unit
   (let
     [count : i64 sorted.len]
     [index : i64 0]
@@ -178,7 +187,8 @@
 
 (define (compiler-check-diagnostic-list-insert-all-source-order
   [incoming : cdiag.CompilerDiagnosticList]
-  [sorted : (&mut sorted cdiag.CompilerDiagnosticList)]) : unit
+  [sorted : (&mut sorted cdiag.CompilerDiagnosticList)])
+  (:cold) : unit
   (let
     [count : i64 (cdiag.compiler-diagnostic-list-count incoming)]
     (for [index (iterator.range 0 count)]
@@ -188,7 +198,8 @@
 
 (define (compiler-check-result-with-parse-diagnostics
   [parse-diagnostics : cdiag.CompilerDiagnosticList]
-  [result : ResultCompilerCheck]) : ResultCompilerCheck
+  [result : ResultCompilerCheck])
+  (:cold) : ResultCompilerCheck
   (if (= (cdiag.compiler-diagnostic-list-count parse-diagnostics) 0)
     result
     (let
@@ -207,10 +218,12 @@
             (&mut owned-parse))
           (Err (box owned-parse) advisories)]))))
 
-(define (compiler-check-reset-pools!) : unit
+(define (compiler-check-reset-pools!)
+  (:cold) : unit
   (compiler_load.compiler-load-session-reset-pools!))
 
-(define (compiler-check-reset-interns!) : unit
+(define (compiler-check-reset-interns!)
+  (:cold) : unit
   (compiler_load.compiler-load-session-reset-interns!)
   (tc.compiler-typecheck-reset-intern-owned-state!))
 
@@ -221,7 +234,8 @@
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [cache-scope : String]
-  [job-state : tc.TcJobState]) : ResultCompilerCheck
+  [job-state : tc.TcJobState])
+  (:cold) : ResultCompilerCheck
   (begin
     (cfg compile-profile (compiler-check-profile-start))
     (match (compiler_typecheck_api.typecheck-compiler-request
@@ -259,7 +273,8 @@
   [cfgs : sym_i64_env.SymI64Env]
   [cache-scope : String]
   [job-state : tc.TcJobState]
-  [preparation : CompilerCheckPreparation]) : ResultCompilerCheck
+  [preparation : CompilerCheckPreparation])
+  (:cold) : ResultCompilerCheck
   (match loaded
     [(Ok entry-decls entry-paths entry-modules _)
       (let
@@ -318,7 +333,8 @@
   [cfgs : sym_i64_env.SymI64Env]
   [cache-scope : String]
   [job-state : tc.TcJobState]
-  [preparation : CompilerCheckPreparation]) : ResultCompilerCheck
+  [preparation : CompilerCheckPreparation])
+  (:cold) : ResultCompilerCheck
   (match (parser.parse-ast-source-recovery-diagnostic-with-cfg
     (owned_view.compiler-owned-shared-view path)
     (& source)
@@ -362,7 +378,8 @@
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [cache-scope : String]
-  [job-state : tc.TcJobState]) : ResultCompilerCheckWithPaths
+  [job-state : tc.TcJobState])
+  (:cold) : ResultCompilerCheckWithPaths
   (match loaded
     [(Ok decls paths modules _)
       (let
@@ -389,7 +406,8 @@
 
 (define (compiler-check-file-with-roots
   [path : String]
-  [stdlib-roots : svec.Vec]) : ResultCompilerCheck
+  [stdlib-roots : svec.Vec])
+  (:cold) : ResultCompilerCheck
   (compiler-check-file-with-roots-and-cfg
     path
     stdlib-roots
@@ -398,7 +416,8 @@
 (define (compiler-check-file-with-roots-and-cfg
   [path : String]
   [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheck
+  [cfgs : sym_i64_env.SymI64Env])
+  (:cold) : ResultCompilerCheck
   (match (compiler_load.compiler-load-try-read-file-text (& path))
     [(OkIoString source)
       (compiler-check-source-with-roots-and-cfg path source stdlib-roots cfgs)]
@@ -419,7 +438,8 @@
   [deps : compiler_load.CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]
   [job-state : tc.TcJobState]
-  [preparation : CompilerCheckPreparation]) : ResultCompilerCheck
+  [preparation : CompilerCheckPreparation])
+  (:cold) : ResultCompilerCheck
   (match (parser.parse-ast-source-recovery-diagnostic-with-cfg
     (owned_view.compiler-owned-shared-view path)
     (& source)
@@ -462,7 +482,8 @@
             job-state
             preparation)))]))
 
-(define (compiler-check-target-from-cfgs [cfgs : sym_i64_env.SymI64Env]) : target_cfg.CompilerTargetCfg
+(define (compiler-check-target-from-cfgs [cfgs : sym_i64_env.SymI64Env])
+  (:cold) : target_cfg.CompilerTargetCfg
   (if (cfg_core.compiler-cfg-enabled? cfgs (ci.intern "windows"))
     (target_cfg.CompilerTargetCfg.Windows)
     (target_cfg.CompilerTargetCfg.Linux)))
@@ -473,7 +494,8 @@
   [stdlib-roots : (& svec.Vec)]
   [manifest-dir : (& str)]
   [deps : (& compiler_load.CompilerPkgDeps)]
-  [cfgs : sym_i64_env.SymI64Env]) : tli_cli.ResultTliCatalogOpen
+  [cfgs : sym_i64_env.SymI64Env])
+  (:cold) : tli_cli.ResultTliCatalogOpen
   (let
     [load-state : compiler_load.CompilerLoadSessionState
       (compiler_load.compiler-load-serial-test-session-state)]
@@ -518,7 +540,8 @@
               cfgs
               false)))])))
 
-(define (compiler-check-package-finish-tli-and-deps!) : unit
+(define (compiler-check-package-finish-tli-and-deps!)
+  (:cold) : unit
   (let
     [load-state : compiler_load.CompilerLoadSessionState
       (compiler_load.compiler-load-serial-test-session-state)]
@@ -550,7 +573,8 @@
   [deps : compiler_load.CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]
   [job-state : tc.TcJobState]
-  [preparation : CompilerCheckPreparation]) : ResultCompilerCheck
+  [preparation : CompilerCheckPreparation])
+  (:cold) : ResultCompilerCheck
   (begin
     (compiler-check-reset-pools!)
     (tc.tc-job-state-reset-advisories! job-state)
@@ -607,7 +631,8 @@
   [stdlib-roots : svec.Vec]
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheck
+  [cfgs : sym_i64_env.SymI64Env])
+  (:cold) : ResultCompilerCheck
   (compiler-check-package-source-prepared
     path
     source
@@ -618,7 +643,8 @@
     (tc.tc-serial-job-state)
     CompilerCheckPreparation.Unchanged))
 
-(define (compiler-check-package-begin! [job-state : tc.TcJobState]) : unit
+(define (compiler-check-package-begin! [job-state : tc.TcJobState])
+  (:cold) : unit
   (begin
     (compiler-check-reset-pools!)
     (tc.tc-job-state-reset-advisories! job-state)
@@ -629,7 +655,8 @@
   [loaded : compiler_load.ResultCompilerLoadWithPaths]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
-  [job-state : tc.TcJobState]) : ResultCompilerCheckWithPaths
+  [job-state : tc.TcJobState])
+  (:cold) : ResultCompilerCheckWithPaths
   (compiler-check-loaded-cache-with-paths
     path
     loaded
@@ -648,7 +675,8 @@
   [deps : compiler_load.CompilerPkgDeps]
   [emit-entry : bool]
   [cfgs : sym_i64_env.SymI64Env]
-  [job-state : tc.TcJobState]) : ResultCompilerCheckWithPaths
+  [job-state : tc.TcJobState])
+  (:cold) : ResultCompilerCheckWithPaths
   (compiler-check-package-begin! job-state)
   (match (compiler-check-package-open-tli-and-deps!
     (& path)
@@ -681,7 +709,8 @@
         (compiler-check-package-finish-tli-and-deps!)
         result)]))
 
-(define (compiler-check-source [path : String] [source : String]) : ResultCompilerCheck
+(define (compiler-check-source [path : String] [source : String])
+  (:cold) : ResultCompilerCheck
   (compiler-check-source-with-roots-and-cfg
     path
     source
@@ -689,7 +718,8 @@
     (compiler-check-language-cfgs)))
 
 (define (compiler-check-observed-request
-  [request : CompilerObservedCheckRequest]) : ResultCompilerCheck
+  [request : CompilerObservedCheckRequest])
+  (:cold) : ResultCompilerCheck
   (let
     [job : tc.TcJobState request.job-state]
     [previous-parser-control : i64 (tc.tc-job-state-parser-control job)]
@@ -761,7 +791,8 @@
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [job-state : tc.TcJobState]
-  [preparation : CompilerCheckPreparation]) : ResultCompilerCheck
+  [preparation : CompilerCheckPreparation])
+  (:cold) : ResultCompilerCheck
   (begin
     (compiler-check-reset-pools!)
     (tc.tc-job-state-reset-advisories! job-state)
@@ -817,7 +848,8 @@
   [source : String]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
-  [job-state : tc.TcJobState]) : ResultCompilerCheck
+  [job-state : tc.TcJobState])
+  (:cold) : ResultCompilerCheck
   (compiler-check-source-prepared
     path
     source
@@ -830,7 +862,8 @@
   [path : String]
   [source : String]
   [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheck
+  [cfgs : sym_i64_env.SymI64Env])
+  (:cold) : ResultCompilerCheck
   (compiler-check-source-with-roots-and-cfg-and-job-state
     path
     source
@@ -841,7 +874,8 @@
 ;; An overlay may only replace sources outside every stdlib root.
 (define (compiler-check-overlay-editable
   [overlay : (& overlay source_overlay.CompilerSourceOverlay)]
-  [stdlib-roots : (& stdlib-roots svec.Vec)]) : source_overlay.CompilerSourceOverlayStatus
+  [stdlib-roots : (& stdlib-roots svec.Vec)])
+  (:cold) : source_overlay.CompilerSourceOverlayStatus
   (let
     [count : i64 (svec.len stdlib-roots)]
     [index : i64 0]
@@ -867,7 +901,8 @@
 (define (compiler-check-overlay-ledger-status
   [overlay : (& overlay source_overlay.CompilerSourceOverlay)]
   [ledger : (& ledger source_overlay.CompilerSourceLedger)]
-  [passed : bool]) : source_overlay.CompilerSourceOverlayStatus
+  [passed : bool])
+  (:cold) : source_overlay.CompilerSourceOverlayStatus
   (if (source_overlay.compiler-source-ledger-failed? ledger)
     (Err (source_overlay.compiler-source-ledger-failure ledger))
     (let
@@ -890,7 +925,8 @@
   [path : String]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
-  [overlay : source_overlay.CompilerSourceOverlay]) : ResultCompilerCheckOverlay
+  [overlay : source_overlay.CompilerSourceOverlay])
+  (:cold) : ResultCompilerCheckOverlay
   (match (compiler-check-overlay-editable (& overlay) (& stdlib-roots))
     [(Err failure) (Rejected failure)]
     [(Ok)
@@ -929,7 +965,8 @@
   [deps : compiler_load.CompilerPkgDeps]
   [emit-entry : bool]
   [cfgs : sym_i64_env.SymI64Env]
-  [overlay : source_overlay.CompilerSourceOverlay]) : ResultCompilerCheckOverlayPackage
+  [overlay : source_overlay.CompilerSourceOverlay])
+  (:cold) : ResultCompilerCheckOverlayPackage
   (match (compiler-check-overlay-editable (& overlay) (& stdlib-roots))
     [(Err failure) (Rejected failure)]
     [(Ok)

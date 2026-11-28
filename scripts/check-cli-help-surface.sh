@@ -51,12 +51,29 @@ parsed_flags() {
     grep -v '^[[:space:]]*;' "$1" 2>/dev/null | grep -o '[" |]--[a-z][a-z0-9-]*' | cut -c2- | sort -u
 }
 
-# Print the help block body for cli-<name>-help-text out of a main.tl-shaped
-# file: everything from the defining line to the next top-level `(define `.
-help_block() {
-    awk -v name="$2" '
-        $0 == "(define (cli-" name "-help-text) : String" { inside = 1; next }
-        inside && /^\(define / { inside = 0 }
+# Read the help body up to the next top-level define. With an omitted flag,
+# print the whole source with lines mentioning that flag removed from the body.
+help_source() {
+    awk -v name="$2" -v omit_flag="${3:-}" '
+        BEGIN { head = "(define (cli-" name "-help-text)" }
+        /^\(define / {
+            inside = ($0 == head " : String")
+            cold_head = ($0 == head)
+            if (omit_flag != "") print
+            next
+        }
+        cold_head {
+            cold_head = 0
+            if ($0 ~ /^[[:space:]]+\(:cold\) : String$/) {
+                inside = 1
+                if (omit_flag != "") print
+                next
+            }
+        }
+        omit_flag != "" {
+            if (!inside || index($0, omit_flag) == 0) print
+            next
+        }
         inside { print }
     ' "$1"
 }
@@ -77,7 +94,7 @@ check_surface() {
         [ -n "$core" ] || continue
         _source="src/${core}_cli_core.tl"
         [ -f "$_source" ] || continue
-        _block=$(help_block "$_main" "$help_name")
+        _block=$(help_source "$_main" "$help_name")
         if [ -z "$_block" ]; then
             echo "no cli-$help_name-help-text block in $_main" >&2
             exit 1
@@ -104,15 +121,8 @@ if [ "$SELF_TEST" -eq 1 ]; then
     # An undocumented, unlisted flag must fail. Drop --backend-mode from the
     # test help block while the parser keeps accepting it.
     BAD="$WORKDIR/main-missing-flag.tl"
-    awk '
-        $0 == "(define (cli-test-help-text) : String" { inside = 1 }
-        inside && /--backend-mode/ { next }
-        inside && /^\(define / && $0 != "(define (cli-test-help-text) : String" { inside = 0 }
-        { print }
-    ' "$MAIN" > "$BAD"
-    if grep -q -- "--backend-mode" "$(printf '%s' "$BAD")" && \
-        awk '$0 == "(define (cli-test-help-text) : String" { i = 1; next }
-             i && /^\(define / { i = 0 } i { print }' "$BAD" | grep -q -- "--backend-mode"; then
+    help_source "$MAIN" test --backend-mode > "$BAD"
+    if help_source "$BAD" test | grep -q -- "--backend-mode"; then
         echo "self-test: fixture still documents --backend-mode" >&2
         exit 1
     fi

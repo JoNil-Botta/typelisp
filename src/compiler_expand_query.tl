@@ -63,7 +63,8 @@
 (define compiler-expand-default-max-bytes : i64
   65536)
 
-(define (compiler-expand-frames-new) : CompilerExpandFrames
+(define (compiler-expand-frames-new)
+  (:cold) : CompilerExpandFrames
   (CompilerExpandFrames
     (__tl_make-array i64 (* 4 compiler-expand-frame-words))
     0))
@@ -72,7 +73,8 @@
   [frames : (&mut frames CompilerExpandFrames)]
   [name-id : i64]
   [provenance : i64]
-  [span : ast.AstSourceSpan]) : unit
+  [span : ast.AstSourceSpan])
+  (:cold) : unit
   (let
     [base : i64 (* frames.len compiler-expand-frame-words)]
     (when
@@ -93,7 +95,8 @@
     (set! (array-ref frames.slots (+ base 5)) (+ (cast span.end-col : i64) 1))
     (set! frames.len (+ frames.len 1))))
 
-(define (compiler-expand-frames-copy [frames : (& frames CompilerExpandFrames)]) : CompilerExpandFrames
+(define (compiler-expand-frames-copy [frames : (& frames CompilerExpandFrames)])
+  (:cold) : CompilerExpandFrames
   (let
     [words : i64 (* frames.len compiler-expand-frame-words)]
     [slots : (__tl_dyn-array i64) (__tl_make-array i64 (+ words 1))]
@@ -106,7 +109,8 @@
 ;: Frame `index`, 0 being the outermost.
 (define (compiler-expand-frame-ref
   [frames : (& frames CompilerExpandFrames)]
-  [index : i64]) : CompilerExpandFrame
+  [index : i64])
+  (:cold) : CompilerExpandFrame
   (let
     [base : i64 (* index compiler-expand-frame-words)]
     [origin-path-id : i64
@@ -125,7 +129,8 @@
 (define (compiler-expand-span-covers?
   [span : ast.AstSourceSpan]
   [line : i64]
-  [col : i64]) : bool
+  [col : i64])
+  (:cold) : bool
   (let
     [start-line : i64 (cast span.start-line : i64)]
     [start-col : i64 (cast span.start-col : i64)]
@@ -152,7 +157,8 @@
 ;; the produced expression.
 (define (compiler-expand-walk!
   [walk : (&mut walk CompilerExpandWalk)]
-  [id : i64]) : unit
+  [id : i64])
+  (:cold) : unit
   (let
     [expr : ast.AstExpr (ast.ast-expr-segment-bases-get walk.expr-bases id)]
     [pushed? : bool false]
@@ -191,7 +197,8 @@
 
 (define (compiler-expand-walk-decl!
   [walk : (&mut walk CompilerExpandWalk)]
-  [decl : ast.AstDecl]) : unit
+  [decl : ast.AstDecl])
+  (:cold) : unit
   (match decl
     [(or (Def _ _ _ body) (DefFn _ _ _ _ body _) (Test _ body _ _))
       (compiler-expand-walk! walk body)]
@@ -204,7 +211,8 @@
 
 (define (compiler-expand-walk-decls!
   [walk : (&mut walk CompilerExpandWalk)]
-  [decls : ast.AstDeclList]) : unit
+  [decls : ast.AstDeclList])
+  (:cold) : unit
   (let
     [index : i64 0]
     (while (< index (ast.ast-decl-list-len (& decls)))
@@ -221,7 +229,8 @@
 
 (define (compiler-expand-text-append!
   [out : (&mut out CompilerExpandText)]
-  [chunk : String]) : unit
+  [chunk : String])
+  (:cold) : unit
   (unless
     out.truncated
     (if (> (string.string-length (& chunk)) out.remaining)
@@ -232,7 +241,8 @@
           out.buf
           (text_buf.append (replace! out.buf (text_buf.empty)) chunk))))))
 
-(define (compiler-expand-string-literal [text : String]) : String
+(define (compiler-expand-string-literal [text : String])
+  (:cold) : String
   (let
     [buf : text_buf.TextBuf (text_buf.append (text_buf.empty) "\"")]
     [index : i64 0]
@@ -252,7 +262,8 @@
       (set! index (+ index 1)))
     (text_buf.render (text_buf.append buf "\""))))
 
-(define (compiler-expand-char-literal [c : char]) : String
+(define (compiler-expand-char-literal [c : char])
+  (:cold) : String
   (cond
     [(= c '\n') "'\\n'"]
     [(= c '\t') "'\\t'"]
@@ -274,7 +285,8 @@
   [names : doc_expand.DocExpandContext]
   [items : (& program (Slice reader.SpannedSexpr))]
   [open : String]
-  [close : String]) : unit
+  [close : String])
+  (:cold) : unit
   (compiler-expand-text-append! out open)
   (compiler-expand-sexpr-each! out names items false)
   (compiler-expand-text-append! out close))
@@ -283,7 +295,8 @@
   [out : (&mut out CompilerExpandText)]
   [names : doc_expand.DocExpandContext]
   [items : (& program (Slice reader.SpannedSexpr))]
-  [separate? : bool]) : unit
+  [separate? : bool])
+  (:cold) : unit
   (match items
     [(slice) unit]
     [(slice item & rest)
@@ -299,7 +312,8 @@
 (define (compiler-expand-sexpr!
   [out : (&mut out CompilerExpandText)]
   [names : doc_expand.DocExpandContext]
-  [s : reader.SpannedSexpr]) : unit
+  [s : reader.SpannedSexpr])
+  (:cold) : unit
   (match (reader.spanned-sexpr-view s)
     [(Int n text _)
       (compiler-expand-text-append!
@@ -330,7 +344,8 @@
   [ctx : tc.TcContext]
   [produced : i64]
   [frame : CompilerExpandFrame]
-  [max-bytes : i64]) : CompilerExpandText
+  [max-bytes : i64])
+  (:cold) : CompilerExpandText
   (let
     [owner : tc.MacroSexprOwner
       (tc.macro-sexpr-owner
@@ -385,7 +400,8 @@
   [line : i64]
   [col : i64]
   [max-bytes : i64]
-  [diagnostics : cdiag.CompilerDiagnosticList]) : CompilerExpandQueryResult
+  [diagnostics : cdiag.CompilerDiagnosticList])
+  (:cold) : CompilerExpandQueryResult
   (let
     [walk : CompilerExpandWalk
       (CompilerExpandWalk
@@ -424,7 +440,8 @@
   [cfgs : sym_i64_env.SymI64Env]
   [line : i64]
   [col : i64]
-  [max-bytes : i64]) : CompilerExpandQueryResult
+  [max-bytes : i64])
+  (:cold) : CompilerExpandQueryResult
   (match loaded
     [(Ok entry-decls entry-paths entry-modules _)
       (match (tc_api.typecheck-compiler-program-with-paths-checked-cache
@@ -464,7 +481,8 @@
   [cfgs : sym_i64_env.SymI64Env]
   [line : i64]
   [col : i64]
-  [max-bytes : i64]) : CompilerExpandQueryResult
+  [max-bytes : i64])
+  (:cold) : CompilerExpandQueryResult
   (check_core.compiler-check-reset-pools!)
   (match (cload.compiler-load-core-macro-prelude-with-roots-cfg
     (sym_i64_env.sym-i64-empty)

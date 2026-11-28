@@ -82,7 +82,8 @@
 
 (define (surface-identity-string-eq?
   [left : (& left str)]
-  [right : (& right str)]) : bool
+  [right : (& right str)])
+  (:cold) : bool
   (let
     [left-len : i64 (binary.surface-binary-string-length left)]
     [right-len : i64 (binary.surface-binary-string-length right)]
@@ -98,7 +99,8 @@
 
 (define (surface-identity-string-less?
   [left : (& left str)]
-  [right : (& right str)]) : bool
+  [right : (& right str)])
+  (:cold) : bool
   (let
     [left-len : i64 (binary.surface-binary-string-length left)]
     [right-len : i64 (binary.surface-binary-string-length right)]
@@ -124,7 +126,8 @@
       (< left-len right-len))))
 
 (define (surface-identity-module-set-canonical?
-  [modules : (& modules (__tl_dyn-array String))]) : bool
+  [modules : (& modules (__tl_dyn-array String))])
+  (:cold) : bool
   (let
     [index : i64 0]
     [ok : bool (> (array-length modules) 0)]
@@ -140,7 +143,8 @@
         (set! ok false)))
     ok))
 
-(define (surface-identity-key-valid? [key : (& key SurfaceIdentityKey)]) : bool
+(define (surface-identity-key-valid? [key : (& key SurfaceIdentityKey)])
+  (:cold) : bool
   (and
     (> (binary.surface-binary-string-length key.package-name) 0)
     (> (binary.surface-binary-string-length key.source-hash) 0)
@@ -149,7 +153,8 @@
 
 (define (surface-identity-string-array-eq?
   [left : (& left (__tl_dyn-array String))]
-  [right : (& right (__tl_dyn-array String))]) : bool
+  [right : (& right (__tl_dyn-array String))])
+  (:cold) : bool
   (let
     [index : i64 0]
     [equal : bool (= (array-length left) (array-length right))]
@@ -163,7 +168,8 @@
 
 (define (surface-identity-key-eq?
   [left : (& left SurfaceIdentityKey)]
-  [right : (& right SurfaceIdentityKey)]) : bool
+  [right : (& right SurfaceIdentityKey)])
+  (:cold) : bool
   (and
     (surface-identity-string-eq? left.package-name right.package-name)
     (surface-identity-string-array-eq? left.modules right.modules)
@@ -173,35 +179,42 @@
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
-  (define (surface-identity-local-ref [id : i64] [source-count : i64]) : i64
+  (define (surface-identity-local-ref [id : i64] [source-count : i64])
+    (:cold) : i64
     (cond
       [(and (>= id 0) (< id source-count)) id]
       [(ci.intern-generated-id-active? id)
         (+ source-count (- (- (ci.intern-capacity) 1) id))]
       [else -2])))
 
-(define (surface-identity-portable-triple-end [identity-count : i64]) : i64
+(define (surface-identity-portable-triple-end [identity-count : i64])
+  (:cold) : i64
   (let
     [identity-count2 : i64 (* identity-count identity-count)]
     (+ identity-count (+ identity-count2 (* identity-count2 identity-count)))))
 
-(define (surface-identity-portable-template-offset [identity-count : i64]) : i64
+(define (surface-identity-portable-template-offset [identity-count : i64])
+  (:cold) : i64
   (surface-identity-portable-triple-end identity-count))
 
-(define (surface-identity-portable-macro-global-offset [identity-count : i64]) : i64
+(define (surface-identity-portable-macro-global-offset [identity-count : i64])
+  (:cold) : i64
   (+ (surface-identity-portable-template-offset identity-count) identity-count))
 
-(define (surface-identity-portable-macro-local-offset [identity-count : i64]) : i64
+(define (surface-identity-portable-macro-local-offset [identity-count : i64])
+  (:cold) : i64
   (+
     (surface-identity-portable-fresh-local-offset identity-count)
     (* (surface-identity-fresh-local-ordinal-count) identity-count)))
 
-(define (surface-identity-portable-fresh-local-offset [identity-count : i64]) : i64
+(define (surface-identity-portable-fresh-local-offset [identity-count : i64])
+  (:cold) : i64
   (+
     (surface-identity-portable-macro-global-offset identity-count)
     (* 2 (* identity-count identity-count))))
 
-(define (surface-identity-fresh-local-ordinal-count) : i64
+(define (surface-identity-fresh-local-ordinal-count)
+  (:cold) : i64
   ;; The prior arithmetic identity family admitted ordinals [0, 2^43). Keep
   ;; that portable contract explicitly; it is a wire limit, not an intern-table
   ;; capacity calculation.
@@ -220,7 +233,8 @@
     [session : cis.InternStructuralSessionHandle]
     [id : i64]
     [source-count : i64]
-    [identity-count : i64]) : i64
+    [identity-count : i64])
+    (:cold) : i64
     (let
       [session-stride : i64 (ci.intern-capacity)]
       [session-stride2 : i64 (* session-stride session-stride)]
@@ -433,7 +447,8 @@
 (define (surface-identity-resolve-portable-id
   [session : cis.InternStructuralSessionHandle]
   [id : i64]
-  [remap : (& remap (__tl_dyn-array i64))]) : i64
+  [remap : (& remap (__tl_dyn-array i64))])
+  (:cold) : i64
   (let
     [image-stride : i64 (array-length remap)]
     [image-stride2 : i64 (* image-stride image-stride)]
@@ -531,7 +546,8 @@
 
 (define (surface-identity-generated-record-valid?
   [record : (& record SurfaceGeneratedIdentity)]
-  [prior-count : i64]) : bool
+  [prior-count : i64])
+  (:cold) : bool
   (let
     [qualified : bool record.qualified]
     [dotted : bool record.dotted]
@@ -552,7 +568,8 @@
         (and (= ref0 -1) (= ref1 -1) (= ref2 -1))))))
 
 (define (surface-identity-payload-valid?
-  [payload : (& payload SurfaceIdentityPayload)]) : bool
+  [payload : (& payload SurfaceIdentityPayload)])
+  (:cold) : bool
   (let
     [source-count : i64 (array-length payload.source-names)]
     [index : i64 0]
@@ -566,7 +583,8 @@
     ok))
 
 (define (surface-identity-reader-u64!
-  [reader : (&mut reader byte_reader.ByteReader)]) : i64
+  [reader : (&mut reader byte_reader.ByteReader)])
+  (:cold) : i64
   (if (byte_reader.available? reader 8)
     (byte_reader.read-u64! reader)
     (let
@@ -579,7 +597,8 @@
       -1)))
 
 (define (surface-identity-reader-string!
-  [reader : (&mut reader byte_reader.ByteReader)]) : String
+  [reader : (&mut reader byte_reader.ByteReader)])
+  (:cold) : String
   (let
     [len : i64 (surface-identity-reader-u64! (&mut reader))]
     [offset : i64 reader.offset]
@@ -597,10 +616,12 @@
           "surface identity: truncated string")
         ""))))
 
-(define (surface-identity-safe-count? [count : i64]) : bool
+(define (surface-identity-safe-count? [count : i64])
+  (:cold) : bool
   (and (>= count 0) (<= count surface-identity-max-count)))
 
-(define (surface-identity-decode [bytes : (& (__tl_dyn-array u8))]) : ResultSurfaceIdentityPayload
+(define (surface-identity-decode [bytes : (& (__tl_dyn-array u8))])
+  (:cold) : ResultSurfaceIdentityPayload
   (let
     [reader : byte_reader.ByteReader
       (byte_reader.new
@@ -690,7 +711,8 @@
 
 (define (surface-identity-hydrate-generated!
   [record : SurfaceGeneratedIdentity]
-  [remap : (& remap (__tl_dyn-array i64))]) : i64
+  [remap : (& remap (__tl_dyn-array i64))])
+  (:cold) : i64
   (let
     [name : String record.name]
     [canonical : bool record.canonical]
@@ -727,7 +749,8 @@
 
 (define (surface-identity-hydrate-payload
   [payload : SurfaceIdentityPayload]
-  [expected-key : (& expected-key SurfaceIdentityKey)]) : ResultSurfaceIdentityHydration
+  [expected-key : (& expected-key SurfaceIdentityKey)])
+  (:cold) : ResultSurfaceIdentityHydration
   (if (not (surface-identity-key-eq? payload.key expected-key))
     (KeyMismatch "surface identity: package key mismatch")
     (let
@@ -751,7 +774,8 @@
 
 (define (surface-identity-hydrate
   [bytes : (& (__tl_dyn-array u8))]
-  [expected-key : (& expected-key SurfaceIdentityKey)]) : ResultSurfaceIdentityHydration
+  [expected-key : (& expected-key SurfaceIdentityKey)])
+  (:cold) : ResultSurfaceIdentityHydration
   (match (surface-identity-decode bytes)
     [(Err message) (Err message)]
     [(Ok payload) (surface-identity-hydrate-payload payload expected-key)]))
@@ -766,13 +790,15 @@
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-identity-push-string!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
-    [text : String]) : unit
+    [text : String])
+    (:cold) : unit
     (byte_le.push-u64! out (binary.surface-binary-string-length text))
     (binary.surface-binary-push-string! out text)))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
-  (define (surface-identity-generated-record [id : i64] [source-count : i64]) : SurfaceGeneratedIdentity
+  (define (surface-identity-generated-record [id : i64] [source-count : i64])
+    (:cold) : SurfaceGeneratedIdentity
     (let
       [qualified : bool (ci.intern-qualified? id)]
       [dotted : bool (ci.intern-dotted? id)]
@@ -819,7 +845,8 @@
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
-  (define (surface-identity-capture [key : SurfaceIdentityKey]) : SurfaceIdentityPayload
+  (define (surface-identity-capture [key : SurfaceIdentityKey])
+    (:cold) : SurfaceIdentityPayload
     (let
       [source-count : i64 (ci.intern-pool-len)]
       [generated-count : i64 (ci.intern-generated-count)]
@@ -839,7 +866,8 @@
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
-  (define (surface-identity-encode [payload : (& SurfaceIdentityPayload)]) : ResultSurfaceIdentityBytes
+  (define (surface-identity-encode [payload : (& SurfaceIdentityPayload)])
+    (:cold) : ResultSurfaceIdentityBytes
     (if (not (surface-identity-payload-valid? payload))
       (Err "surface identity: invalid package key or identity graph")
       (let

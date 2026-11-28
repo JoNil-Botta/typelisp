@@ -5206,7 +5206,8 @@
 
 (define (parse-ast-param-metadata-error
   [dispatch : sym_i64_env.SymI64Env]
-  [end : (& program (Slice reader.SpannedSexpr))]) : String
+  [end : (& program (Slice reader.SpannedSexpr))])
+  (:cold) : String
   (match end
     [(slice metadata-node & _)
       (match (reader.sexpr-view metadata-node)
@@ -13016,7 +13017,8 @@
   [path : String]
   [toks : (& (__tl_dyn-array token.SpannedToken))]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : ast.AstNodePoolContext]) : ResultAstProgramRecovery
+  [pools : ast.AstNodePoolContext])
+  (:cold) : ResultAstProgramRecovery
   (let
     [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [base-dispatch : sym_i64_env.SymI64Env
@@ -13088,7 +13090,8 @@
 (define (parse-ast-source-recovery-diagnostic-with-cfg
   [path : String]
   [src : (& str)]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramRecovery
+  [cfgs : sym_i64_env.SymI64Env])
+  (:cold) : ResultAstProgramRecovery
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : ResultAstProgramRecovery
@@ -13209,7 +13212,8 @@
   [pools : ast.AstNodePoolContext]
   [toks : (& (__tl_dyn-array token.SpannedToken))]
   [cur : (& (__tl_dyn-array i64))]
-  [modules : (& modules ParseModuleLists)]) : ResultAstDeclListDiagnostic
+  [modules : (& modules ParseModuleLists)])
+  (:cold) : ResultAstDeclListDiagnostic
   (let
     [out : ParseAstDeclVec (parse-ast-decl-vec-new dispatch)]
     [start : i64 (ast.ast-node-pool-context-expr-len pools)]
@@ -13268,7 +13272,8 @@
   [path : String]
   [toks : (& (__tl_dyn-array token.SpannedToken))]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : ast.AstNodePoolContext]) : ResultAstProgramDiagnostic
+  [pools : ast.AstNodePoolContext])
+  (:cold) : ResultAstProgramDiagnostic
   (let
     [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [base-dispatch : sym_i64_env.SymI64Env

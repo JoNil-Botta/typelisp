@@ -11630,7 +11630,8 @@
   [kind : i64]
   [arena : i64]
   [origin-id : i64]
-  [holder : i64]) : String
+  [holder : i64])
+  (:cold) : String
   (let
     [origin : ast.AstExpr
       (if (< origin-id 0)
@@ -26807,7 +26808,8 @@
     (tc-rich-error? message)
     (tc-located-error? message)))
 
-(define (tc-rich-error-span-fields [span : ast.AstSourceSpan]) : String
+(define (tc-rich-error-span-fields [span : ast.AstSourceSpan])
+  (:cold) : String
   (str_cat.str-cat
     (string.int->string (ast.ast-source-span-start-line span))
     "|"
@@ -26839,7 +26841,8 @@
   [edit-span : ast.AstSourceSpan]
   [message : String]
   [help : String]
-  [replacement : String]) : String
+  [replacement : String])
+  (:cold) : String
   (str_cat.str-cat
     (tc-rich-error-prefix)
     (tc-rich-error-span-fields primary)
@@ -26874,7 +26877,8 @@
   [first : ast.AstSourceSpan]
   [first-label : String]
   [second : ast.AstSourceSpan]
-  [second-label : String]) : String
+  [second-label : String])
+  (:cold) : String
   (str_cat.str-cat
     (tc-rich-error-prefix)
     (tc-rich-error-span-fields primary)
@@ -26902,7 +26906,8 @@
 (define (tc-located-error-field [text : (& text str)] [start : i64] [end : i64]) : String
   (string.substring text start (- end start)))
 
-(define (tc-rich-error-diag [message : String]) : cdiag.CompilerDiagnostic
+(define (tc-rich-error-diag [message : String])
+  (:cold) : cdiag.CompilerDiagnostic
   (let
     [prefix-len : i64 (string.string-length (tc-rich-error-prefix))]
     [line-end : i64 (tc-located-error-field-end message prefix-len)]
@@ -27043,7 +27048,8 @@
     "|"
     message))
 
-(define (tc-located-error-diag [message : String]) : cdiag.CompilerDiagnostic
+(define (tc-located-error-diag [message : String])
+  (:cold) : cdiag.CompilerDiagnostic
   (let
     [prefix-len : i64 (string.string-length (tc-located-error-prefix))]
     [line-end : i64 (tc-located-error-field-end message prefix-len)]
@@ -27094,7 +27100,8 @@
   [span : ast.AstSourceSpan]
   [origin-path-id : i64]
   [macro-name-id : i64]
-  [message : String]) : String
+  [message : String])
+  (:cold) : String
   (str_cat.str-cat
     prefix
     (string.int->string path-id)
@@ -27109,7 +27116,8 @@
 (define (tc-macro-framed-error-from-root
   [expr-bases : i64]
   [expr : ast.AstExpr]
-  [message : String]) : TcMaybeString
+  [message : String])
+  (:cold) : TcMaybeString
   (match expr
     [(Spanned inner-id span)
       (match (ast.ast-expr-segment-bases-get expr-bases inner-id)
@@ -27149,7 +27157,8 @@
   (diagnostic cdiag.CompilerDiagnostic)
   (primary-origin-claimed bool))
 
-(define (tc-framed-error-decode [message : String] [fallback-path : (& str)]) : TcDecodedDiagnostic
+(define (tc-framed-error-decode [message : String] [fallback-path : (& str)])
+  (:cold) : TcDecodedDiagnostic
   (let
     [spmd? : bool
       (tc-diag-string-prefix? message (tc-spmd-framed-error-prefix))]
@@ -29009,7 +29018,8 @@
 (define (tc-expr-diag
   [expr-bases : i64]
   [expr : ast.AstExpr]
-  [message : String]) : cdiag.CompilerDiagnostic
+  [message : String])
+  (:cold) : cdiag.CompilerDiagnostic
   (cond
     [(tc-framed-error? message) (tc-framed-error-diag message "")]
     [(tc-rich-error? message) (tc-rich-error-diag message)]
@@ -29050,7 +29060,8 @@
 (define (tc-decl-location-diag
   [expr-bases : i64]
   [decl : ast.AstDecl]
-  [message : String]) : cdiag.CompilerDiagnostic
+  [message : String])
+  (:cold) : cdiag.CompilerDiagnostic
   (match decl
     [(Def decl-meta _ _ expr-box)
       (let
@@ -29075,7 +29086,8 @@
 (define (tc-decl-diag
   [expr-bases : i64]
   [decl : ast.AstDecl]
-  [message : String]) : cdiag.CompilerDiagnostic
+  [message : String])
+  (:cold) : cdiag.CompilerDiagnostic
   (cond
     [(tc-framed-error? message) (tc-framed-error-diag message "")]
     [(tc-rich-error? message) (tc-rich-error-diag message)]
@@ -29092,7 +29104,8 @@
   [origin-key : i64]
   [origin-slot : i64]
   [decl : ast.AstDecl]
-  [message : String]) : cdiag.CompilerDiagnostic
+  [message : String])
+  (:cold) : cdiag.CompilerDiagnostic
   (let
     [diag : cdiag.CompilerDiagnostic (tc-decl-diag expr-bases decl message)]
     (if (and
@@ -29377,7 +29390,8 @@
 ;; move-only aggregate. Keep the sound confinement rejection, but make this
 ;; frequent vector-iteration shape actionable without changing diagnostics for
 ;; unrelated region values crossing a call boundary.
-(define (tc-region-call-arg-error [expr-bases : i64] [arg : ast.AstExpr]) : String
+(define (tc-region-call-arg-error [expr-bases : i64] [arg : ast.AstExpr])
+  (:cold) : String
   (let
     [message : String
       (tc-kind-message
@@ -36695,7 +36709,8 @@
 
 (define (tc-lifetime-list-render-at
   [lifetimes : (& lifetimes ast.AstLifetimeList)]
-  [index : i64]) : String
+  [index : i64])
+  (:cold) : String
   (if (>= index (ast.ast-lifetime-list-len lifetimes))
     ""
     (let
@@ -36726,7 +36741,8 @@
         (ci.intern-str name)
         (tc-elided-lifetime-name-prefix)))))
 
-(define (tc-type-render [ty : ast.AstType]) : String
+(define (tc-type-render [ty : ast.AstType])
+  (:cold) : String
   (match ty
     [(I64) "i64"]
     [(I32) "i32"]
@@ -36830,7 +36846,8 @@
 (define (tc-type-mismatch-message
   [actual : ast.AstType]
   [expected : ast.AstType]
-  [message : String]) : String
+  [message : String])
+  (:cold) : String
   (let
     [context-kind : bool
       (cdiag.compiler-diagnostic-typecheck-tagged? (& message))]
@@ -39110,7 +39127,8 @@
   [_module : String]
   [name : String]
   [name-id : i64]
-  [key-id : i64]) : TcMaybeString
+  [key-id : i64])
+  (:cold) : TcMaybeString
   (let
     [first-modules : sym_i64_env.SymI64Env
       tc-unqualified-import-ambiguous-first-modules]
@@ -46373,7 +46391,8 @@
 (define (tc-entry-hidden-unbound-message
   [ctx : TcContext]
   [source-name-id : i64]
-  [message : String]) : String
+  [message : String])
+  (:cold) : String
   (if (and
     (tc-entry-hidden-contains? source-name-id)
     (string.eq
@@ -48892,7 +48911,8 @@
     (BorrowViolation)
     "typecheck: bytes is a borrowed byte-slice referent; use (& lifetime bytes) or (&mut lifetime bytes)"))
 
-(define (tc-source-type-policy-message [name : String]) : String
+(define (tc-source-type-policy-message [name : String])
+  (:cold) : String
   (cond
     [(string.eq name "varying")
       (tc-kind-message
@@ -49672,7 +49692,8 @@
   [field-id : i64]
   [declared : i64]
   [problem : String]
-  [limit : i64]) : String
+  [limit : i64])
+  (:cold) : String
   (str_cat.str-cat
     "typecheck: repr c struct "
     (tc-env-key-name-text struct-id)
@@ -52021,7 +52042,8 @@
 ;; A lifetime as a diagnostic names it, with its role: a signature's elided
 ;; lifetime has a synthesized name no source can spell, so it is described
 ;; instead (Rust's "anonymous lifetime").
-(define (tc-lifetime-diagnostic-name [role : String] [name : i64]) : String
+(define (tc-lifetime-diagnostic-name [role : String] [name : i64])
+  (:cold) : String
   (cond
     [(tc-elaborated-lifetime-hidden? name) "the signature's elided lifetime"]
     [(= name (tc-unconstrained-lifetime-id)) "an unconstrained lifetime"]
@@ -52039,7 +52061,8 @@
 (define (tc-lifetime-coercion-invariant-detail
   [label : String]
   [expected : ast.AstType]
-  [actual : ast.AstType]) : String
+  [actual : ast.AstType])
+  (:cold) : String
   (let
     [source-lifetimes : TcNameIdList
       (tc-type-collect-reference-lifetimes actual)]
@@ -52128,7 +52151,8 @@
   [name-id : i64]
   [expected : ast.AstLifetimeList]
   [actual : ast.AstLifetimeList]
-  [index : i64]) : String
+  [index : i64])
+  (:cold) : String
   (if (>= index (ast.ast-lifetime-list-len (& expected)))
     ""
     (let
@@ -52185,7 +52209,8 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [expected : ast.AstType]
-  [actual : ast.AstType]) : String
+  [actual : ast.AstType])
+  (:cold) : String
   (let
     [want : ast.AstType (tc-type-strip-region (tc-resolve-type ctx expected))]
     [got : ast.AstType (tc-type-strip-region (tc-resolve-type ctx actual))]
@@ -52291,7 +52316,8 @@
   [env : TcTypeEnv]
   [actual : ast.AstType]
   [expected : ast.AstType]
-  [message : String]) : String
+  [message : String])
+  (:cold) : String
   (let
     [context-kind : bool
       (and
@@ -60148,7 +60174,8 @@
   [session : cis.InternStructuralSessionHandle]
   [inner : ast.AstExpr]
   [span : ast.AstSourceSpan]
-  [message : String]) : ResultTcType
+  [message : String])
+  (:cold) : ResultTcType
   (if (tc-borrow-place-error-message? message)
     (Err (tc-rich-borrow-place-error span message))
     (match (tc-spanned-escape-error
@@ -60789,7 +60816,8 @@
   [module-id : i64]
   [env : TcTypeEnv]
   [name : String]
-  [name-id : i64]) : TcUnboundSuggestion
+  [name-id : i64])
+  (:cold) : TcUnboundSuggestion
   (let
     [migration : String (tc-unbound-migration-help name)]
     (if (> (string.string-length migration) 0)
@@ -60925,7 +60953,8 @@
   [left-id : i64]
   [right-id : i64]
   [fallback : ast.AstSourceSpan]
-  [message : String]) : ResultTcType
+  [message : String])
+  (:cold) : ResultTcType
   (let
     [saved : TcTypeEnvScopedRuntimeSave (tc-type-env-scoped-runtime-save env)]
     [left : ast.AstExpr (tc-context-expr-get ctx left-id)]
@@ -61069,7 +61098,8 @@
   [expr-bases : i64]
   [func : ast.AstExpr]
   [expected : i64]
-  [actual : i64]) : String
+  [actual : i64])
+  (:cold) : String
   (str_cat.str-cat
     (tc-call-arity-message-prefix)
     (tc-call-arity-callee-name expr-bases func)
@@ -61177,7 +61207,8 @@
 (define (tc-call-argument-message-prefix
   [ctx : TcContext]
   [func : ast.AstExpr]
-  [index : i64]) : String
+  [index : i64])
+  (:cold) : String
   (str_cat.str-cat
     (cdiag.compiler-diagnostic-typecheck-tag (TypeMismatch))
     "typecheck: call `"
@@ -77729,7 +77760,8 @@
 
 (define (tc-inline-aggregate-cycle-message
   [name : String]
-  [stack : TcStringList]) : String
+  [stack : TcStringList])
+  (:cold) : String
   (str_cat.str-cat
     "typecheck: inline aggregate layout cycle "
     (tc-inline-aggregate-cycle-path stack (tc-global-shared-view name))
@@ -79906,7 +79938,8 @@
       (set! cursor (tc-name-id-list-rest cursor)))
     found))
 
-(define (tc-region-escape-error [region : i64]) : String
+(define (tc-region-escape-error [region : i64])
+  (:cold) : String
   (str_cat.str-cat
     (cdiag.compiler-diagnostic-typecheck-tag (RegionEscape))
     (if (tc-generated-arena-brand-id? region)
@@ -80326,7 +80359,8 @@
 (define (tc-unknown-struct-field-message
   [ctx : TcContext]
   [struct-name-id : i64]
-  [field-id : i64]) : String
+  [field-id : i64])
+  (:cold) : String
   (let
     [base : String
       (str_cat.str-cat
@@ -84488,7 +84522,8 @@
         [_ -1])]
     [(Err _) -1]))
 
-(define (tc-bare-variant-ambiguous-message [ctx : TcContext] [name-id : i64]) : String
+(define (tc-bare-variant-ambiguous-message [ctx : TcContext] [name-id : i64])
+  (:cold) : String
   (unsafe
     (match (tc-context-program ctx)
       [(Program decls-box)
@@ -87904,7 +87939,8 @@
 (define (tc-make-array-not-zii-message
   [ctx : TcContext]
   [elem : ast.AstType]
-  [reason : TcNotZiiReason]) : String
+  [reason : TcNotZiiReason])
+  (:cold) : String
   (tc-kind-message
     (match reason
       [(CleanupOwner) (ResourceOwnership)]
@@ -88565,7 +88601,8 @@
 (define (tc-clone-out-type-mismatch-message
   [form : String]
   [expected : ast.AstType]
-  [actual : ast.AstType]) : String
+  [actual : ast.AstType])
+  (:cold) : String
   (tc-kind-message
     (TypeMismatch)
     (str_cat.str-cat
@@ -89747,7 +89784,8 @@
 ;; borrow rule's direct diagnostic keeps it, including a plain source location.
 ;; Other framed errors keep the storage fallback. A write through a `&mut` held
 ;; behind a shared reference is the graph's (`normalize-exclusive-ok`).
-(define (tc-replace-storage-place-error [message : String]) : String
+(define (tc-replace-storage-place-error [message : String])
+  (:cold) : String
   (if (or
     (string.eq message (tc-borrow-through-shared-message))
     (and
@@ -90371,7 +90409,8 @@
 ;; environment. When its longest qualified prefix names another module's
 ;; global, report the ownership rule the unqualified forms get instead of an
 ;; unbound name.
-(define (tc-set-foreign-qualified-global-message [ctx : TcContext] [name : i64]) : TcMaybeString
+(define (tc-set-foreign-qualified-global-message [ctx : TcContext] [name : i64])
+  (:cold) : TcMaybeString
   (if (and (>= name 0) (< name (ci.intern-capacity)))
     (let
       [candidate : i64 name]
@@ -91138,7 +91177,8 @@
   [expr : ast.AstExpr]
   [chain : TcStringList]
   [name : String]
-  [reason : String]) : ResultTcUnit
+  [reason : String])
+  (:cold) : ResultTcUnit
   (Err
     (tc-locate-error-at-expr
       expr-bases
@@ -98667,7 +98707,8 @@
 (define (tc-global-effect-message
   [ctx : TcContext]
   [root : i64]
-  [path : (& path effect_words.Vec)]) : String
+  [path : (& path effect_words.Vec)])
+  (:cold) : String
   (let
     [global-name : String (tc-move-global-source-name root)]
     [chain : String ""]
@@ -99451,7 +99492,8 @@
           (tc-tli-hydrated-fn-summary-arena-arg-store? ctx canonical-id index)))]
     [else false]))
 
-(define (tc-arena-store-late-diagnostics [ctx : TcContext]) : cdiag.CompilerDiagnosticList
+(define (tc-arena-store-late-diagnostics [ctx : TcContext])
+  (:cold) : cdiag.CompilerDiagnosticList
   (let
     [out : cdiag.CompilerDiagnosticList (cdiag.compiler-diagnostic-list-empty)]
     [state : (MutPtr TcGlobalCallEffects) (tc-global-call-effects-ensure! ctx)]
@@ -102486,7 +102528,8 @@
 (define (macro-failed-operand-diagnostic
   [ctx : TcContext]
   [type-env : TcTypeEnv]
-  [diag : cdiag.CompilerDiagnostic]) : cdiag.CompilerDiagnostic
+  [diag : cdiag.CompilerDiagnostic])
+  (:cold) : cdiag.CompilerDiagnostic
   (let
     [state : ctfe_support.CompilerCtfeMacroState
       (tc-context-ctfe-macro-state ctx)]
@@ -102534,7 +102577,8 @@
   [call-expr : ast.AstExpr]
   [macro-name : String]
   [decls-splice? : bool]
-  [diag : cdiag.CompilerDiagnostic]) : cdiag.CompilerDiagnostic
+  [diag : cdiag.CompilerDiagnostic])
+  (:cold) : cdiag.CompilerDiagnostic
   (if (and decls-splice? (macro-diagnostic-author-error? (& diag)))
     diag
     (match (macro-expansion-site-span ctx call-expr)
@@ -115496,7 +115540,8 @@
   [macro-name : String]
   [param-name : i64]
   [resolved-ty : ast.AstType]
-  [type-kinds : (& type-kinds ast.AstMacroTypeKindList)]) : String
+  [type-kinds : (& type-kinds ast.AstMacroTypeKindList)])
+  (:cold) : String
   (str_cat.str-cat
     "typecheck: macro "
     (tc-name-slashes-to-dots macro-name)
@@ -125124,7 +125169,8 @@
   [ctx : TcContext]
   [decls : ast.AstDeclList]
   [module-id : i64]
-  [call-expr : ast.AstExpr]) : cdiag.CompilerDiagnostic
+  [call-expr : ast.AstExpr])
+  (:cold) : cdiag.CompilerDiagnostic
   (ctfe_support.ctfe-diagnostic-at-expr
     (MacroNamespace)
     (& call-expr)
@@ -130344,7 +130390,8 @@
 (define (tc-struct-field-cleanup-owning-without-owned-message
   [struct-name : String]
   [field-name : String]
-  [ty : ast.AstType]) : String
+  [ty : ast.AstType])
+  (:cold) : String
   (str_cat.str-cat
     (cdiag.compiler-diagnostic-typecheck-tag (ResourceOwnership))
     "typecheck: struct "
@@ -130358,7 +130405,8 @@
 (define (tc-struct-field-owned-non-cleanup-message
   [struct-name : String]
   [field-name : String]
-  [ty : ast.AstType]) : String
+  [ty : ast.AstType])
+  (:cold) : String
   (str_cat.str-cat
     (cdiag.compiler-diagnostic-typecheck-tag (ResourceOwnership))
     "typecheck: struct "
@@ -130372,7 +130420,8 @@
 (define (tc-struct-field-cleanup-fn-mismatch-message
   [struct-name : String]
   [field-name : String]
-  [cleanup-name : String]) : String
+  [cleanup-name : String])
+  (:cold) : String
   (str_cat.str-cat
     (cdiag.compiler-diagnostic-typecheck-tag (ResourceOwnership))
     "typecheck: struct "
@@ -130639,7 +130688,8 @@
 (define (tc-enum-payload-cleanup-owning-without-owned-message
   [enum-name : String]
   [variant-name : String]
-  [ty : ast.AstType]) : String
+  [ty : ast.AstType])
+  (:cold) : String
   (str_cat.str-cat
     (cdiag.compiler-diagnostic-typecheck-tag (ResourceOwnership))
     "typecheck: enum "
@@ -130653,7 +130703,8 @@
 (define (tc-enum-payload-owned-non-cleanup-message
   [enum-name : String]
   [variant-name : String]
-  [ty : ast.AstType]) : String
+  [ty : ast.AstType])
+  (:cold) : String
   (str_cat.str-cat
     (cdiag.compiler-diagnostic-typecheck-tag (ResourceOwnership))
     "typecheck: enum "
@@ -130667,7 +130718,8 @@
 (define (tc-enum-payload-cleanup-fn-mismatch-message
   [enum-name : String]
   [variant-name : String]
-  [cleanup-name : String]) : String
+  [cleanup-name : String])
+  (:cold) : String
   (str_cat.str-cat
     (cdiag.compiler-diagnostic-typecheck-tag (ResourceOwnership))
     "typecheck: enum "
@@ -134949,7 +135001,8 @@
 (define (tc-selected-normalization-failure
   [store : (&mut store typed.TypedStore)]
   [lease : (& lease (typed.TypedBodyLease intern))]
-  [failure : ownership_normalize.OwnershipNormalizeFailure]) : ResultTcUnit
+  [failure : ownership_normalize.OwnershipNormalizeFailure])
+  (:cold) : ResultTcUnit
   (match failure
     [(ownership_normalize.OwnershipNormalizeFailure.Unsupported _)
       ResultTcUnit.Ok]
@@ -134989,7 +135042,8 @@
 ;; borrow): at the borrow, labelled with the use that needs it afterwards.
 (define (tc-selected-escape-failure
   [name : String]
-  [diagnostic : (& diagnostic ownership_normalize.OwnershipEscapeDiagnostic)]) : ResultTcUnit
+  [diagnostic : (& diagnostic ownership_normalize.OwnershipEscapeDiagnostic)])
+  (:cold) : ResultTcUnit
   (let
     [temporary? : bool (= (string.string-length (& name)) 0)]
     [owner : String
@@ -135061,7 +135115,8 @@
 (define (tc-selected-release-failure
   [owner : String]
   [name : String]
-  [diagnostic : ownership_normalize.OwnershipObligationDiagnostic]) : ResultTcUnit
+  [diagnostic : ownership_normalize.OwnershipObligationDiagnostic])
+  (:cold) : ResultTcUnit
   (ResultTcUnit.Err
     (tc-selected-expansion-framed
       diagnostic.source.expansion
@@ -135074,7 +135129,8 @@
 ;; A broken cleanup obligation in the legacy cleanup checker's wording.
 (define (tc-selected-obligation-failure
   [name : String]
-  [diagnostic : ownership_normalize.OwnershipObligationDiagnostic]) : ResultTcUnit
+  [diagnostic : ownership_normalize.OwnershipObligationDiagnostic])
+  (:cold) : ResultTcUnit
   (let
     [where : String
       (cond
@@ -135175,7 +135231,8 @@
 (define (tc-selected-move-out-reference-error
   [store : (&mut store typed.TypedStore)]
   [lease : (& lease (typed.TypedBodyLease intern))]
-  [diagnostic : (& diagnostic ownership_normalize.OwnershipMoveOutDiagnostic)]) : TcMaybeString
+  [diagnostic : (& diagnostic ownership_normalize.OwnershipMoveOutDiagnostic)])
+  (:cold) : TcMaybeString
   (if (not (or (= diagnostic.kind 1) (= diagnostic.kind 2)))
     TcMaybeString.No
     (match (& diagnostic.type)
@@ -135215,7 +135272,8 @@
 ;; reference (SPEC: array element ownership; Rust E0507).
 (define (tc-selected-move-out-failure
   [name : String]
-  [diagnostic : ownership_normalize.OwnershipMoveOutDiagnostic]) : ResultTcUnit
+  [diagnostic : ownership_normalize.OwnershipMoveOutDiagnostic])
+  (:cold) : ResultTcUnit
   (ResultTcUnit.Err
     (tc-selected-expansion-framed
       diagnostic.source.expansion
@@ -135281,7 +135339,8 @@
 
 ;; A loan conflict in the legacy borrow checker's wording: the conflicting
 ;; access is primary and the borrow that is still live is labelled.
-(define (tc-selected-borrow-message [access : i64] [name : String]) : String
+(define (tc-selected-borrow-message [access : i64] [name : String])
+  (:cold) : String
   (cond
     [(= access 0) (tc-borrow-check-assign-message name)]
     [(= access 1) (tc-borrow-check-move-message name)]
@@ -135336,7 +135395,8 @@
   [ctx : TcContext]
   [store : (&mut store typed.TypedStore)]
   [lease : (& lease (typed.TypedBodyLease intern))]
-  [failure : ownership_normalize.OwnershipNormalizeFailure]) : ResultTcUnit
+  [failure : ownership_normalize.OwnershipNormalizeFailure])
+  (:cold) : ResultTcUnit
   (if (not (tc-selected-moved-failure? (& failure)))
     (tc-selected-normalization-failure store lease failure)
     (match failure
@@ -135498,7 +135558,8 @@
 (define (tc-selected-with-owner-moved-failure
   [ctx : TcContext]
   [name : String]
-  [diagnostic : ownership_normalize.OwnershipObligationDiagnostic]) : ResultTcUnit
+  [diagnostic : ownership_normalize.OwnershipObligationDiagnostic])
+  (:cold) : ResultTcUnit
   (match (& diagnostic.move)
     [(ownership_normalize.NormalizeMoveDiagnosticResult.Some move)
       (ResultTcUnit.Err
@@ -137075,7 +137136,8 @@
   [origin-slot : i64]
   [decl : ast.AstDecl]
   [path : String]
-  [message : String]) : cdiag.CompilerDiagnostic
+  [message : String])
+  (:cold) : cdiag.CompilerDiagnostic
   (let
     [diag : cdiag.CompilerDiagnostic
       (if (tc-framed-error? message)

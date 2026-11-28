@@ -16,12 +16,14 @@
   (Ok String)
   (Err tokens.FormatSourceError))
 
-(define (format-rules-node-colon? [node : (& cst.FormatCst)]) : bool
+(define (format-rules-node-colon? [node : (& cst.FormatCst)])
+  (:cold) : bool
   (match node
     [(Atom (Colon)) true]
     [_ false]))
 
-(define (format-rules-node-symbol-name [node : cst.FormatCst]) : String
+(define (format-rules-node-symbol-name [node : cst.FormatCst])
+  (:cold) : String
   (match node
     [(Atom tok)
       (match tok
@@ -29,12 +31,14 @@
         [_ ""])]
     [_ ""]))
 
-(define (format-rules-node-comment? [node : cst.FormatCst]) : bool
+(define (format-rules-node-comment? [node : cst.FormatCst])
+  (:cold) : bool
   (match node
     [(Comment _) true]
     [_ false]))
 
-(define (format-rules-node-colon-list? [node : (& cst.FormatCst)]) : bool
+(define (format-rules-node-colon-list? [node : (& cst.FormatCst)])
+  (:cold) : bool
   (match node
     [(List items)
       (match (cst.fmt-cst-list-step (deref items))
@@ -42,7 +46,8 @@
         [_ false])]
     [_ false]))
 
-(define (format-rules-node-spmd-callable? [node : (& cst.FormatCst)]) : bool
+(define (format-rules-node-spmd-callable? [node : (& cst.FormatCst)])
+  (:cold) : bool
   (match node
     [(List items)
       (match (cst.fmt-cst-list-step (deref items))
@@ -56,7 +61,8 @@
         [_ false])]
     [_ false]))
 
-(define (format-rules-define-value-rest? [rest : cst.FormatCstList]) : bool
+(define (format-rules-define-value-rest? [rest : cst.FormatCstList])
+  (:cold) : bool
   (match (cst.fmt-cst-list-step rest)
     [(Item target _)
       (match target
@@ -64,7 +70,8 @@
         [_ true])]
     [_ false]))
 
-(define (format-rules-cfg-top-form-family [rest : cst.FormatCstList]) : String
+(define (format-rules-cfg-top-form-family [rest : cst.FormatCstList])
+  (:cold) : String
   (match (cst.fmt-cst-list-step rest)
     [(Item _ after-predicate)
       (match (cst.fmt-cst-list-step after-predicate)
@@ -72,7 +79,8 @@
         [_ ""])]
     [_ ""]))
 
-(define (format-rules-top-form-family-list [items : cst.FormatCstList]) : String
+(define (format-rules-top-form-family-list [items : cst.FormatCstList])
+  (:cold) : String
   (match (cst.fmt-cst-list-step items)
     [(Item head rest)
       (let
@@ -89,14 +97,16 @@
           [else ""]))]
     [_ ""]))
 
-(define (format-rules-top-form-family [node : cst.FormatCst]) : String
+(define (format-rules-top-form-family [node : cst.FormatCst])
+  (:cold) : String
   (match node
     [(List items) (format-rules-top-form-family-list (deref items))]
     [_ ""]))
 
 (define (format-rules-list-append
   [left : cst.FormatCstList]
-  [right : cst.FormatCstList]) : cst.FormatCstList
+  [right : cst.FormatCstList])
+  (:cold) : cst.FormatCstList
   (let
     [out : cst.FormatCstVec (cst.format-cst-vec-new)]
     (cst.fmt-cst-vec-push-list! (&mut out) left)
@@ -105,7 +115,8 @@
 
 (define (format-rules-bracket-binding-items?
   [items : cst.FormatCstList]
-  [seen : bool]) : bool
+  [seen : bool])
+  (:cold) : bool
   (match (cst.fmt-cst-list-step items)
     [(Empty) seen]
     [(Item node rest)
@@ -114,10 +125,12 @@
         [(BracketList _) (format-rules-bracket-binding-items? rest true)]
         [_ false])]))
 
-(define (format-rules-bracket-binding-list? [items : cst.FormatCstList]) : bool
+(define (format-rules-bracket-binding-list? [items : cst.FormatCstList])
+  (:cold) : bool
   (format-rules-bracket-binding-items? items false))
 
-(define (format-rules-let-rest [rest : cst.FormatCstList]) : cst.FormatCstList
+(define (format-rules-let-rest [rest : cst.FormatCstList])
+  (:cold) : cst.FormatCstList
   (match (cst.fmt-cst-list-step rest)
     [(Item first tail)
       (match first
@@ -147,7 +160,8 @@
   [col : i64]
   [_flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (if emit
     (let
       [text-width : i64 (string.string-length text)]
@@ -164,7 +178,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (if emit
     (if flat
       (begin
@@ -184,7 +199,8 @@
   [col : i64]
   [_flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (if emit
     (begin
       (fmt_buf.render-newline-into! buf indent)
@@ -201,7 +217,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (match node
     [(Atom tok)
       (format-rules-layout-text
@@ -300,7 +317,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (format-rules-layout-cst
     node
     emit
@@ -320,7 +338,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (format-rules-layout-space-cst
     next
     emit
@@ -340,7 +359,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (format-rules-layout-colon-pair
     colon
     typ
@@ -361,7 +381,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (format-rules-layout-colon-pair
     colon
     typ
@@ -382,7 +403,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (if emit
     (let
       [remaining : i64 (- width col)]
@@ -428,7 +450,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (if spmd-callable?
     (format-rules-layout-colon-pair
       colon
@@ -461,7 +484,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (let
     [end : i64 (+ start count)]
     [out : i64 col]
@@ -487,7 +511,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (format-rules-layout-inline-tail-dense
     items.slots
     items.start
@@ -512,7 +537,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (let
     [index : i64 start]
     [end : i64 (+ start count)]
@@ -600,7 +626,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (format-rules-layout-hard-tail-dense
     items.slots
     items.start
@@ -617,7 +644,8 @@
 
 ;; Match and cond arms: a bracket arm with two or more body forms is laid out
 ;; like a `begin` body, its head on the bracket's line and one form per line.
-(define (format-rules-arm-form-count [items : (& items cst.FormatCstList)]) : i64
+(define (format-rules-arm-form-count [items : (& items cst.FormatCstList)])
+  (:cold) : i64
   (let
     [count : i64 0]
     (for [index (iterator.range 0 items.len)]
@@ -631,7 +659,8 @@
 
 ;; A `:` after the head marks a parameter or binding clause such as
 ;; `[arms : ExprClause ...]` in a `(cond ...)` macro signature, never an arm.
-(define (format-rules-arm-sequence? [node : cst.FormatCst]) : bool
+(define (format-rules-arm-sequence? [node : cst.FormatCst])
+  (:cold) : bool
   (match node
     [(BracketList items)
       (match (cst.fmt-cst-list-step (deref items))
@@ -645,7 +674,8 @@
         [(Empty) false])]
     [_ false]))
 
-(define (format-rules-arms-have-sequence? [items : (& items cst.FormatCstList)]) : bool
+(define (format-rules-arms-have-sequence? [items : (& items cst.FormatCstList)])
+  (:cold) : bool
   (let
     [index : i64 0]
     [found : bool false]
@@ -668,7 +698,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (cond
     [(and
         or-arms
@@ -729,7 +760,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (format-rules-layout-hard-tail-dense
     items.slots
     items.start
@@ -757,7 +789,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (let
     [after-head : i64
       (format-rules-layout-text
@@ -821,7 +854,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (if (or previous-comment (format-rules-node-comment? node))
     (format-rules-layout-hard-line emit width indent col flat limit buf)
     (format-rules-layout-soft-line emit width indent col flat limit buf)))
@@ -837,7 +871,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (let
     [index : i64 start]
     [end : i64 (+ start count)]
@@ -932,7 +967,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (if (<= count 0)
     col
     (let
@@ -980,7 +1016,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (format-rules-layout-list-items-dense
     items.slots
     items.start
@@ -1003,7 +1040,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (format-rules-layout-text
     close
     emit
@@ -1032,7 +1070,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (if emit
     (let
       [remaining : i64 (- width col)]
@@ -1080,7 +1119,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (format-rules-layout-text
     ")"
     emit
@@ -1116,7 +1156,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (if emit
     (let
       [remaining : i64 (- width col)]
@@ -1161,7 +1202,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (format-rules-layout-text
     ")"
     emit
@@ -1198,7 +1240,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (format-rules-layout-text
     ")"
     emit
@@ -1242,7 +1285,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (match (cst.fmt-cst-list-step rest)
     [(Empty)
       (format-rules-layout-inline-form
@@ -1279,7 +1323,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (format-rules-layout-text
     "]"
     emit
@@ -1348,7 +1393,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (if emit
     (let
       [remaining : i64 (- width col)]
@@ -1399,7 +1445,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (format-rules-layout-text
     "]"
     emit
@@ -1442,7 +1489,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (if emit
     (let
       [remaining : i64 (- width col)]
@@ -1486,7 +1534,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (match (cst.fmt-cst-list-step items)
     [(Item name after-name)
       (match (cst.fmt-cst-list-step after-name)
@@ -1599,7 +1648,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (match (owned_view.compiler-owned-shared-view node)
     [(BracketList items)
       (format-rules-layout-let-item-list
@@ -1623,7 +1673,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (let
     [end : i64 (+ start count)]
     [out : i64 col]
@@ -1656,7 +1707,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (format-rules-layout-let-tail-dense
     items.slots
     items.start
@@ -1677,7 +1729,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (format-rules-layout-text
     ")"
     emit
@@ -1716,7 +1769,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (format-rules-layout-text
     ")"
     emit
@@ -1769,7 +1823,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (let
     [spmd-callable? : bool (format-rules-node-spmd-callable? (& metadata))]
     [next-col : i64
@@ -1850,7 +1905,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (format-rules-layout-text
     ")"
     emit
@@ -1895,7 +1951,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (format-rules-layout-text
     ")"
     emit
@@ -1938,7 +1995,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (match (cst.fmt-cst-list-step rest)
     [(Item target after-target)
       (match (cst.fmt-cst-list-step after-target)
@@ -2034,7 +2092,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (match (cst.fmt-cst-list-step rest)
     [(Item target after-target)
       (match (cst.fmt-cst-list-step after-target)
@@ -2118,7 +2177,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (match (cst.fmt-cst-list-step rest)
     [(Item target after-target)
       (match (cst.fmt-cst-list-step after-target)
@@ -2200,7 +2260,8 @@
 ;; keeps the ordinary call layout. Trailing comments do not decide.
 (define (format-rules-loop-form-from?
   [items : (& items cst.FormatCstList)]
-  [ends-in-body : bool]) : bool
+  [ends-in-body : bool])
+  (:cold) : bool
   (match (cst.fmt-cst-list-step items)
     [(cst.FormatCstListStep.Empty) ends-in-body]
     [(cst.FormatCstListStep.Item node tail)
@@ -2211,7 +2272,8 @@
           [(cst.FormatCst.Comment _) ends-in-body]
           [_ true]))]))
 
-(define (format-rules-node-or-list? [node : cst.FormatCst]) : bool
+(define (format-rules-node-or-list? [node : cst.FormatCst])
+  (:cold) : bool
   (match node
     [(List items)
       (match (cst.fmt-cst-list-step (deref items))
@@ -2220,7 +2282,8 @@
     [_ false]))
 
 ;; Whether `node` is a `[pattern body...]` arm whose pattern is `(or ...)`.
-(define (format-rules-arm-or-pattern? [node : cst.FormatCst]) : bool
+(define (format-rules-arm-or-pattern? [node : cst.FormatCst])
+  (:cold) : bool
   (match node
     [(BracketList items)
       (match (cst.fmt-cst-list-step (deref items))
@@ -2239,7 +2302,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (match (owned_view.compiler-owned-shared-view node)
     [(BracketList items)
       (if emit
@@ -2283,7 +2347,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (let
     [pattern : cst.FormatCst
       (owned_view.compiler-owned-array-element-shared-view
@@ -2348,7 +2413,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (if (not emit)
     (format-rules-layout-cst node false width indent col flat limit buf)
     (let
@@ -2502,7 +2568,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (let
     [head-name : String (format-rules-node-symbol-name head)]
     (cond
@@ -2703,7 +2770,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (match (cst.fmt-cst-list-step rest)
     [(Item key tail)
       (let
@@ -2762,7 +2830,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (match (cst.fmt-cst-list-step items)
     [(Empty)
       (format-rules-layout-delimited
@@ -2810,7 +2879,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (if previous-comment
     (format-rules-layout-hard-line emit width indent col flat limit buf)
     (let
@@ -2838,7 +2908,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (if (<= count 0)
     col
     (let
@@ -2899,7 +2970,8 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (format-rules-layout-forms-dense
     items.slots
     items.start
@@ -2914,13 +2986,15 @@
 
 (define (format-rules-render-hard-line-into
   [indent : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (fmt_buf.render-newline-into! buf indent)
   indent)
 
 (define (format-rules-render-gap-into
   [indent : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (format-rules-render-hard-line-into
     (format-rules-render-hard-line-into indent buf)
     buf))
@@ -2930,7 +3004,8 @@
   [previous-family : (& previous-family str)]
   [node : cst.FormatCst]
   [indent : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (if previous-comment
     (format-rules-render-hard-line-into indent buf)
     (let
@@ -2946,7 +3021,8 @@
   [width : i64]
   [indent : i64]
   [col : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (format-rules-layout-cst node true width indent col false 0 buf))
 
 (define (format-rules-render-forms-into-dense
@@ -2956,7 +3032,8 @@
   [width : i64]
   [indent : i64]
   [col : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (if (<= count 0)
     col
     (let
@@ -3005,7 +3082,8 @@
   [width : i64]
   [indent : i64]
   [col : i64]
-  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)])
+  (:cold) : i64
   (format-rules-render-forms-into-dense
     items.slots
     items.start
@@ -3015,7 +3093,8 @@
     col
     buf))
 
-(define (format-rules-render-cst-width [node : cst.FormatCst] [width : i64]) : String
+(define (format-rules-render-cst-width [node : cst.FormatCst] [width : i64])
+  (:cold) : String
   (let
     [buf : fmt_buf.FmtRenderBuf (fmt_buf.fmt-render-buf-new)]
     (match (owned_view.compiler-owned-shared-view node)
@@ -3024,7 +3103,8 @@
       [_ (format-rules-render-node-fragment-into node width 0 0 (&mut buf))])
     (fmt_buf.fmt-render-buf-string buf)))
 
-(define (format-rules-render-source-width-result [src : String] [width : i64]) : ResultFormatString
+(define (format-rules-render-source-width-result [src : String] [width : i64])
+  (:cold) : ResultFormatString
   (let
     [tree (try (cst.parse-format-source-result src))]
     (Ok (format-rules-render-cst-width tree width))))

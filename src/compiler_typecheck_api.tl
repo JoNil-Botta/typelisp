@@ -14,16 +14,19 @@
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
 
-(define (compiler-typecheck-context-program [ctx : tc_core.TcContext]) : ast.AstProgram
+(define (compiler-typecheck-context-program [ctx : tc_core.TcContext])
+  (:cold) : ast.AstProgram
   (tc_core.tc-context-program ctx))
 
 (define (compiler-typecheck-prefix-cache-scope
   [kind : String]
   [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : String
+  [cfgs : sym_i64_env.SymI64Env])
+  (:cold) : String
   (load.compiler-load-prelude-cache-key kind (& stdlib-roots) cfgs))
 
-(define (compiler-typecheck-reset-load-session!) : unit
+(define (compiler-typecheck-reset-load-session!)
+  (:cold) : unit
   (load.compiler-load-session-reset-pools!)
   (load.compiler-load-session-reset-interns!)
   (cbi.compiler-builtin-initialize-for-parse!)
@@ -54,7 +57,8 @@
   [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
-  [cache-scope : String]) : TypecheckRequest
+  [cache-scope : String])
+  (:cold) : TypecheckRequest
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [load-state : load.CompilerLoadSessionState
@@ -73,7 +77,8 @@
       (tc_core.TcSemanticObserver 0)
       false)))
 
-(define (typecheck-compiler-request [request : TypecheckRequest]) : tc_core.ResultCompilerTypecheck
+(define (typecheck-compiler-request [request : TypecheckRequest])
+  (:cold) : tc_core.ResultCompilerTypecheck
   (tc_core.tc-typecheck-checked-result-summary
     (typecheck-compiler-request-checked request)))
 
@@ -83,13 +88,15 @@
   [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
-  [cache-scope : String]) : tc_core.ResultCompilerTypecheck
+  [cache-scope : String])
+  (:cold) : tc_core.ResultCompilerTypecheck
   (typecheck-compiler-request
     (typecheck-request-serial program paths stdlib-roots cfgs cache-scope)))
 
 (define (typecheck-compiler-program-with-paths
   [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]) : tc_core.ResultCompilerTypecheck
+  [paths : ast.AstDeclPathList])
+  (:cold) : tc_core.ResultCompilerTypecheck
   (typecheck-compiler-program-with-paths-cache
     program
     paths
@@ -108,7 +115,8 @@
   [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
   [pools : ast.AstNodePoolContext]
-  [intern-state : ci.InternCompatState]) : ResultCompilerDocExpand
+  [intern-state : ci.InternCompatState])
+  (:cold) : ResultCompilerDocExpand
   (let
     [intern-state : ci.InternCompatState intern-state]
     (tc_core.tc-spmd-inline-helper-stack-reset-for-job! job-state)
@@ -154,7 +162,8 @@
 ;; Generate declaration families before type-directed macro expansion; then
 ;; normalize generated declarations, specialize if needed, and typecheck once.
 ;; Summary and checked callers use the same owner publication and pool guards.
-(define (typecheck-compiler-request-checked [request : TypecheckRequest]) : tc_core.ResultCompilerTypecheckChecked
+(define (typecheck-compiler-request-checked [request : TypecheckRequest])
+  (:cold) : tc_core.ResultCompilerTypecheckChecked
   (let
     [observer-job : tc_core.TcJobState request.job-state]
     [_parser-owner : unit
@@ -345,13 +354,15 @@
   [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
-  [cache-scope : String]) : tc_core.ResultCompilerTypecheckChecked
+  [cache-scope : String])
+  (:cold) : tc_core.ResultCompilerTypecheckChecked
   (typecheck-compiler-request-checked
     (typecheck-request-serial program paths stdlib-roots cfgs cache-scope)))
 
 (define (typecheck-compiler-program-with-paths-checked
   [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]) : tc_core.ResultCompilerTypecheckChecked
+  [paths : ast.AstDeclPathList])
+  (:cold) : tc_core.ResultCompilerTypecheckChecked
   (typecheck-compiler-program-with-paths-checked-cache
     program
     paths
@@ -359,14 +370,17 @@
     (typecheck-compiler-source-language-cfgs)
     (tc_core.tc-prefix-default-cache-scope)))
 
-(define (typecheck-compiler-program [program : ast.AstProgram]) : tc_core.ResultCompilerTypecheck
+(define (typecheck-compiler-program [program : ast.AstProgram])
+  (:cold) : tc_core.ResultCompilerTypecheck
   (typecheck-compiler-program-with-paths program (ast.ast-decl-path-list-new)))
 
-(define (typecheck-compiler-source-language-cfgs) : sym_i64_env.SymI64Env
+(define (typecheck-compiler-source-language-cfgs)
+  (:cold) : sym_i64_env.SymI64Env
   (cbi.compiler-builtin-initialize-for-parse!)
   (cfg_core.compiler-cfg-empty))
 
-(define (typecheck-compiler-source-load [src : String]) : load.ResultCompilerLoadWithPaths
+(define (typecheck-compiler-source-load [src : String])
+  (:cold) : load.ResultCompilerLoadWithPaths
   (let
     [stdlib-roots : svec.Vec (svec.new)]
     [cfgs : sym_i64_env.SymI64Env (typecheck-compiler-source-language-cfgs)]
@@ -398,14 +412,16 @@
 
 (define (typecheck-compiler-source-stdlib-import-kind?
   [kind : ast.AstImportKind]
-  [path : String]) : bool
+  [path : String])
+  (:cold) : bool
   (match kind
     [(Module)
       (load.compiler-load-stdlib-import?
         (load.compiler-load-dotted-module-path (& path)))]
     [_ false]))
 
-(define (typecheck-compiler-source-decl-has-stdlib-import? [decl : ast.AstDecl]) : bool
+(define (typecheck-compiler-source-decl-has-stdlib-import? [decl : ast.AstDecl])
+  (:cold) : bool
   (match decl
     [(Import decl-meta (Spec kind path _ _ _))
       (typecheck-compiler-source-stdlib-import-kind? kind path)]
@@ -414,7 +430,8 @@
     [_ false]))
 
 (define (typecheck-compiler-source-decls-have-stdlib-import?
-  [decls : ast.AstDeclList]) : bool
+  [decls : ast.AstDeclList])
+  (:cold) : bool
   (match (ast.ast-decl-list-step decls)
     [(Nil) false]
     [(Cons decl rest)
@@ -423,7 +440,8 @@
         (typecheck-compiler-source-decls-have-stdlib-import? rest))]))
 
 (define (typecheck-compiler-source-program-has-stdlib-import?
-  [program : ast.AstProgram]) : bool
+  [program : ast.AstProgram])
+  (:cold) : bool
   (match program
     [(Program decls-box)
       (typecheck-compiler-source-decls-have-stdlib-import? (deref decls-box))]))
@@ -433,7 +451,8 @@
 ;; the previous binding on every return (success or failure).
 (define (typecheck-compiler-repl-expr
   [decls : ast.AstDeclList]
-  [expr : ast.AstExpr]) : tc_core.ResultTcType
+  [expr : ast.AstExpr])
+  (:cold) : tc_core.ResultTcType
   (let
     [job : tc_core.TcJobState (tc_core.tc-serial-job-state)]
     [binding : tc_core.TcTypeWalkBinding (tc_core.tc-type-walk-bind! job)]
@@ -447,7 +466,8 @@
 
 (define (typecheck-compiler-repl-expr-bound
   [decls : ast.AstDeclList]
-  [expr : ast.AstExpr]) : tc_core.ResultTcType
+  [expr : ast.AstExpr])
+  (:cold) : tc_core.ResultTcType
   (let
     [program : ast.AstProgram
       (ast.ast-program (owned_view.compiler-owned-shared-view decls))]
@@ -506,7 +526,8 @@
         [(Err diag)
           (Err (cdiag.compiler-diagnostic-message (__tl-box-place diag)))]))))
 
-(define (typecheck-compiler-source [src : String]) : tc_core.ResultCompilerTypecheck
+(define (typecheck-compiler-source [src : String])
+  (:cold) : tc_core.ResultCompilerTypecheck
   (let
     [_cache-reset : unit (tc_core.tc-prefix-snapshot-cache-clear!)]
     [_dedup-reset : unit (ast.ty-node-dedup-clear!)]
@@ -532,7 +553,8 @@
     result))
 
 (define (compiler-typecheck-summary-score
-  [summary : tc_core.CompilerTypecheckSummary]) : i64
+  [summary : tc_core.CompilerTypecheckSummary])
+  (:cold) : i64
   (match summary
     [(CompilerTypecheckSummary values functions externs)
       (+ values (+ (* functions 10) (* externs 100)))]))

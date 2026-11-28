@@ -75,7 +75,8 @@
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
-  (define (surface-clone-observation-seq-empty) : SurfaceCloneObservationSeq
+  (define (surface-clone-observation-seq-empty)
+    (:cold) : SurfaceCloneObservationSeq
     (SurfaceCloneObservationSeq (__tl_make-array SurfaceCloneObservation 0) 0)))
 
 (cfg
@@ -83,14 +84,16 @@
   (define (surface-clone-observation-copy-range!
     [dst : (&mut dst (__tl_dyn-array SurfaceCloneObservation))]
     [src : (& src (__tl_dyn-array SurfaceCloneObservation))]
-    [count : i64]) : unit
+    [count : i64])
+    (:cold) : unit
     (for [index (iterator.range 0 count)]
       (set! (array-ref dst index) (array-ref src index)))))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-clone-observation-seq-grow!
-    [seq : (&mut seq SurfaceCloneObservationSeq)]) : unit
+    [seq : (&mut seq SurfaceCloneObservationSeq)])
+    (:cold) : unit
     (let
       [count : i64 seq.len]
       [bigger : (__tl_dyn-array SurfaceCloneObservation)
@@ -106,7 +109,8 @@
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-clone-observation-seq-push!
     [seq : (&mut seq SurfaceCloneObservationSeq)]
-    [observation : SurfaceCloneObservation]) : unit
+    [observation : SurfaceCloneObservation])
+    (:cold) : unit
     (if (< seq.len (array-length seq.slots))
       unit
       (surface-clone-observation-seq-grow! seq))
@@ -147,7 +151,8 @@
     SurfaceTypecheckFacts)
   (__tl_make-array (surface-typecheck-facts-empty)))
 
-(define (surface-typecheck-facts-installed-shared-view) : SurfaceTypecheckFacts
+(define (surface-typecheck-facts-installed-shared-view)
+  (:cold) : SurfaceTypecheckFacts
   (unsafe
     (ptr-read
       (ptr-cast
@@ -164,11 +169,12 @@
 (define (surface-typecheck-facts-active?) : bool
   surface-typecheck-facts-installed)
 
-(define (surface-typecheck-facts-current) : SurfaceTypecheckFacts
+(define (surface-typecheck-facts-current)
+  (:cold) : SurfaceTypecheckFacts
   (surface-typecheck-facts-installed-shared-view))
 
-(define (surface-clone-i64-array [src : (& (__tl_dyn-array i64))]) : (__tl_dyn-array
-    i64)
+(define (surface-clone-i64-array [src : (& (__tl_dyn-array i64))])
+  (:cold) : (__tl_dyn-array i64)
   (let
     [count : i64 (array-length src)]
     [dst : (__tl_dyn-array i64) (__tl_make-array i64 count)]
@@ -176,7 +182,8 @@
       (set! (array-ref dst index) (array-ref src index)))
     dst))
 
-(define (clone-surface-typecheck-facts [facts : (& SurfaceTypecheckFacts)]) : SurfaceTypecheckFacts
+(define (clone-surface-typecheck-facts [facts : (& SurfaceTypecheckFacts)])
+  (:cold) : SurfaceTypecheckFacts
   (SurfaceTypecheckFacts
     facts.macro-prefix-decl-count
     facts.prefix-decl-count
@@ -188,7 +195,8 @@
     (surface-clone-i64-array (& facts.clone-call-indices))))
 
 (define (clone-surface-typecheck-facts-builder
-  [builder : (& SurfaceTypecheckFactsBuilder)]) : SurfaceTypecheckFactsBuilder
+  [builder : (& SurfaceTypecheckFactsBuilder)])
+  (:cold) : SurfaceTypecheckFactsBuilder
   (SurfaceTypecheckFactsBuilder
     builder.fragment-count
     builder.macro-prefix-decl-count
@@ -205,7 +213,8 @@
 ;; its source frontend is retired. Keep both activation and composite status;
 ;; prefix rebasing still belongs to macro expansion/typechecking. The caller
 ;; must clear the publication before releasing the destination owner.
-(define (surface-typecheck-facts-retain-current!) : unit
+(define (surface-typecheck-facts-retain-current!)
+  (:cold) : unit
   (if surface-typecheck-facts-installed
     (set!
       (array-ref surface-typecheck-facts-installed-value 0)
@@ -213,7 +222,8 @@
         (& (array-ref surface-typecheck-facts-installed-value 0))))
     unit))
 
-(define (surface-typecheck-facts-composite-active?) : bool
+(define (surface-typecheck-facts-composite-active?)
+  (:cold) : bool
   (and
     surface-typecheck-facts-installed
     surface-typecheck-facts-installed-composite))
@@ -237,7 +247,8 @@
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
-  (define (surface-typecheck-facts-recording-observations-shared-view) : SurfaceCloneObservationSeq
+  (define (surface-typecheck-facts-recording-observations-shared-view)
+    (:cold) : SurfaceCloneObservationSeq
     (unsafe
       (ptr-read (ptr-addr-of surface-typecheck-facts-recording-observations)))))
 
@@ -252,7 +263,8 @@
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
-  (define (surface-typecheck-facts-recording-start! [arena-handle : i64]) : unit
+  (define (surface-typecheck-facts-recording-start! [arena-handle : i64])
+    (:cold) : unit
     (set! surface-typecheck-facts-recording-arena arena-handle)
     (set! surface-typecheck-facts-recording-decl-key -1)
     (set!
@@ -264,14 +276,16 @@
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
-  (define (surface-typecheck-facts-recording-select-decl! [decl-key : i64]) : unit
+  (define (surface-typecheck-facts-recording-select-decl! [decl-key : i64])
+    (:cold) : unit
     (if surface-typecheck-facts-recording-active
       (set! surface-typecheck-facts-recording-decl-key decl-key)
       unit)))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
-  (define (surface-typecheck-facts-recording-start-clone-call!) : unit
+  (define (surface-typecheck-facts-recording-start-clone-call!)
+    (:cold) : unit
     (when
       surface-typecheck-facts-recording-active
       (set!
@@ -281,7 +295,8 @@
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
-  (define (surface-typecheck-facts-recording-note-clone-root! [root-key : i64]) : unit
+  (define (surface-typecheck-facts-recording-note-clone-root! [root-key : i64])
+    (:cold) : unit
     (if (and
       surface-typecheck-facts-recording-active
       (>= surface-typecheck-facts-recording-decl-key 0)
@@ -305,7 +320,8 @@
     [prefix-decl-count : i64]
     [summary-values : i64]
     [summary-functions : i64]
-    [summary-externs : i64]) : SurfaceTypecheckFacts
+    [summary-externs : i64])
+    (:cold) : SurfaceTypecheckFacts
     (let
       [observations : SurfaceCloneObservationSeq
         (surface-typecheck-facts-recording-observations-shared-view)]
@@ -352,16 +368,20 @@
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
-  (define (surface-typecheck-facts-recording?) : bool
+  (define (surface-typecheck-facts-recording?)
+    (:cold) : bool
     surface-typecheck-facts-recording-active))
 
-(define (surface-typecheck-facts-count-valid? [count : i64]) : bool
+(define (surface-typecheck-facts-count-valid? [count : i64])
+  (:cold) : bool
   (and (>= count 0) (<= count surface-typecheck-facts-max-count)))
 
-(define (surface-typecheck-facts-positive-count-valid? [count : i64]) : bool
+(define (surface-typecheck-facts-positive-count-valid? [count : i64])
+  (:cold) : bool
   (and (> count 0) (<= count surface-typecheck-facts-max-count)))
 
-(define (surface-typecheck-facts-count-sum-valid? [left : i64] [right : i64]) : bool
+(define (surface-typecheck-facts-count-sum-valid? [left : i64] [right : i64])
+  (:cold) : bool
   (and
     (surface-typecheck-facts-count-valid? left)
     (surface-typecheck-facts-count-valid? right)
@@ -370,7 +390,8 @@
 (define (surface-typecheck-facts-observations-valid?
   [decl-keys : (& decl-keys (__tl_dyn-array i64))]
   [root-keys : (& root-keys (__tl_dyn-array i64))]
-  [call-indices : (& call-indices (__tl_dyn-array i64))]) : bool
+  [call-indices : (& call-indices (__tl_dyn-array i64))])
+  (:cold) : bool
   (let
     [count : i64 (array-length decl-keys)]
     [index : i64 0]
@@ -401,7 +422,8 @@
     ok))
 
 (define (surface-typecheck-facts-valid?
-  [facts : (& facts SurfaceTypecheckFacts)]) : bool
+  [facts : (& facts SurfaceTypecheckFacts)])
+  (:cold) : bool
   (and
     (surface-typecheck-facts-positive-count-valid?
       facts.macro-prefix-decl-count)
@@ -416,7 +438,8 @@
 
 ;; Publishing validates first and changes both installed fields only on success,
 ;; so a rejected candidate cannot disturb the previously active prefix.
-(define (surface-typecheck-facts-publish! [facts : SurfaceTypecheckFacts]) : bool
+(define (surface-typecheck-facts-publish! [facts : SurfaceTypecheckFacts])
+  (:cold) : bool
   (if (surface-typecheck-facts-valid? facts)
     (begin
       (set! (array-ref surface-typecheck-facts-installed-value 0) facts)
@@ -431,7 +454,8 @@
 ;; value; macro expansion and typechecking replace only those derived scalar
 ;; fields once each phase has established the actual safe prefix.
 (define (surface-typecheck-facts-publish-composite!
-  [facts : SurfaceTypecheckFacts]) : bool
+  [facts : SurfaceTypecheckFacts])
+  (:cold) : bool
   (if (surface-typecheck-facts-valid? facts)
     (begin
       (set! (array-ref surface-typecheck-facts-installed-value 0) facts)
@@ -440,7 +464,8 @@
       true)
     false))
 
-(define (surface-typecheck-facts-rebase-composite-macro-prefix! [count : i64]) : bool
+(define (surface-typecheck-facts-rebase-composite-macro-prefix! [count : i64])
+  (:cold) : bool
   (if (not (surface-typecheck-facts-composite-active?))
     false
     (let
@@ -465,7 +490,8 @@
   [count : i64]
   [summary-values : i64]
   [summary-functions : i64]
-  [summary-externs : i64]) : bool
+  [summary-externs : i64])
+  (:cold) : bool
   (if (not (surface-typecheck-facts-composite-active?))
     false
     (let
@@ -486,7 +512,8 @@
           true)
         false))))
 
-(define (surface-typecheck-facts-builder-empty) : SurfaceTypecheckFactsBuilder
+(define (surface-typecheck-facts-builder-empty)
+  (:cold) : SurfaceTypecheckFactsBuilder
   (SurfaceTypecheckFactsBuilder
     0
     0
@@ -500,7 +527,8 @@
     0))
 
 (define (surface-typecheck-facts-builder-valid?
-  [builder : SurfaceTypecheckFactsBuilder]) : bool
+  [builder : SurfaceTypecheckFactsBuilder])
+  (:cold) : bool
   (let
     [observation-count : i64 (array-length builder.clone-call-indices)]
     (if (= builder.fragment-count 0)
@@ -542,13 +570,15 @@
 (define (surface-typecheck-facts-copy-i64-range!
   [dst : (&mut dst (__tl_dyn-array i64))]
   [dst-offset : i64]
-  [src : (& src (__tl_dyn-array i64))]) : unit
+  [src : (& src (__tl_dyn-array i64))])
+  (:cold) : unit
   (for [index (iterator.range 0 (array-length src))]
     (set! (array-ref dst (+ dst-offset index)) (array-ref src index))))
 
 (define (surface-typecheck-facts-builder-append
   [builder : SurfaceTypecheckFactsBuilder]
-  [fragment : SurfaceTypecheckFacts]) : ResultSurfaceTypecheckFactsBuilder
+  [fragment : SurfaceTypecheckFacts])
+  (:cold) : ResultSurfaceTypecheckFactsBuilder
   (cond
     [(not
         (surface-typecheck-facts-builder-valid?
@@ -646,7 +676,8 @@
                 (+ base-call-index call-range-size))))))]))
 
 (define (surface-typecheck-facts-builder-finish
-  [builder : SurfaceTypecheckFactsBuilder]) : ResultSurfaceTypecheckFacts
+  [builder : SurfaceTypecheckFactsBuilder])
+  (:cold) : ResultSurfaceTypecheckFacts
   (if (or
     (= builder.fragment-count 0)
     (not
@@ -670,7 +701,8 @@
     [facts : (& SurfaceTypecheckFacts)]
     [structural-session : cis.InternStructuralSessionHandle]
     [source-count : i64]
-    [identity-count : i64]) : ResultSurfaceTypecheckFactBytes
+    [identity-count : i64])
+    (:cold) : ResultSurfaceTypecheckFactBytes
     (if (not (surface-typecheck-facts-valid? facts))
       (Err "surface facts: invalid checked-prefix facts")
       (let
@@ -721,7 +753,8 @@
           (Err "surface facts: identity is not relocatable"))))))
 
 (define (surface-typecheck-fact-reader-u64!
-  [reader : (&mut reader byte_reader.ByteReader)]) : i64
+  [reader : (&mut reader byte_reader.ByteReader)])
+  (:cold) : i64
   (if (byte_reader.available? reader 8)
     (byte_reader.read-u64! reader)
     (let
@@ -735,7 +768,8 @@
 
 (define (surface-typecheck-facts-portable-id-valid?
   [id : i64]
-  [identity-count : i64]) : bool
+  [identity-count : i64])
+  (:cold) : bool
   (let
     [identity-count2 : i64 (* identity-count identity-count)]
     [triple-offset : i64 (+ identity-count identity-count2)]
@@ -749,7 +783,8 @@
 (define (surface-typecheck-facts-decode
   [bytes : (& (__tl_dyn-array u8))]
   [structural-session : cis.InternStructuralSessionHandle]
-  [remap : (& (__tl_dyn-array i64))]) : ResultSurfaceTypecheckFacts
+  [remap : (& (__tl_dyn-array i64))])
+  (:cold) : ResultSurfaceTypecheckFacts
   (let
     [reader : byte_reader.ByteReader
       (byte_reader.new

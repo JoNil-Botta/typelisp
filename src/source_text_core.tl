@@ -17,11 +17,13 @@
 (import stdlib.io)
 (import stdlib.string)
 
-(define (source-text-space? [c : char]) : bool
+(define (source-text-space? [c : char])
+  (:cold) : bool
   (or (= c ' ') (= c '\t') (= c '\n') (= c '\r')))
 
 ;; First non-whitespace offset at or after `i`, or `n`.
-(define (source-text-skip-space [text : (& text str)] [i : i64] [n : i64]) : i64
+(define (source-text-skip-space [text : (& text str)] [i : i64] [n : i64])
+  (:cold) : i64
   (let
     [j : i64 i]
     (while (and (< j n) (source-text-space? (string.string-ref text j)))
@@ -29,7 +31,8 @@
     j))
 
 ;; Offset just past the `\n` that ends the line containing `i`, or `n`.
-(define (source-text-skip-line [text : (& text str)] [i : i64] [n : i64]) : i64
+(define (source-text-skip-line [text : (& text str)] [i : i64] [n : i64])
+  (:cold) : i64
   (let
     [j : i64 i]
     (while (and (< j n) (not (= (string.string-ref text j) '\n')))
@@ -41,7 +44,8 @@
 ;; Offset just past the string literal whose opening quote is at `i`. An
 ;; escape skips two bytes, so an unterminated literal ending in `\` stops at
 ;; `n + 1`.
-(define (source-text-skip-string [text : (& text str)] [i : i64] [n : i64]) : i64
+(define (source-text-skip-string [text : (& text str)] [i : i64] [n : i64])
+  (:cold) : i64
   (let
     [j : i64 (+ i 1)]
     [done : bool false]
@@ -56,7 +60,8 @@
           [else (+= j 1)])))
     j))
 
-(define (source-text-char-escape? [c : char]) : bool
+(define (source-text-char-escape? [c : char])
+  (:cold) : bool
   (or (= c 'n') (= c 't') (= c 'r') (= c '0') (= c '\\') (= c '\'')))
 
 ;; Offset just past the character literal whose apostrophe is at `i` (`'a'`,
@@ -65,7 +70,8 @@
 (define (source-text-skip-char-literal
   [text : (& text str)]
   [i : i64]
-  [n : i64]) : i64
+  [n : i64])
+  (:cold) : i64
   (if (< (+ i 1) n)
     (let
       [payload : char (string.string-ref text (+ i 1))]
@@ -85,12 +91,14 @@
     (+ i 1)))
 
 ;; A UTF-8 continuation byte adds no UTF-16 code unit.
-(define (source-text-utf8-continuation-byte? [c : char]) : bool
+(define (source-text-utf8-continuation-byte? [c : char])
+  (:cold) : bool
   (= (bit-and (cast c : i64) 192) 128))
 
 ;; Column units one UTF-8 byte contributes: 1 when counting bytes; in UTF-16, a
 ;; four-byte lead is a surrogate pair and continuation bytes add nothing.
-(define (source-text-column-units [c : char] [utf16 : bool]) : i64
+(define (source-text-column-units [c : char] [utf16 : bool])
+  (:cold) : i64
   (if (not utf16)
     1
     (let
@@ -102,7 +110,8 @@
 (define (source-text-offset-at-byte-position
   [text : (& text str)]
   [line0 : i64]
-  [col0 : i64]) : i64
+  [col0 : i64])
+  (:cold) : i64
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
@@ -125,7 +134,8 @@
 (define (source-text-line-col-at-offset
   [text : (& text str)]
   [off : i64]
-  [utf16 : bool]) : SourceTextLineCol
+  [utf16 : bool])
+  (:cold) : SourceTextLineCol
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
@@ -143,7 +153,8 @@
 ;; Line-start table of one text: `starts[k]` is the byte offset of 1-based line
 ;; `k + 1`. Built once per text, it turns span-to-offset conversion into an
 ;; index and offset-to-line into a binary search.
-(define (source-text-line-starts [text : (& text str)]) : (__tl_dyn-array i64)
+(define (source-text-line-starts [text : (& text str)])
+  (:cold) : (__tl_dyn-array i64)
   (let
     [n : i64 (string.string-length text)]
     [line-count : i64 1]
@@ -162,7 +173,8 @@
 ;; Byte offset where 1-based `line` starts, or -1 when the text has no such line.
 (define (source-text-line-start
   [starts : (& starts (__tl_dyn-array i64))]
-  [line : i64]) : i64
+  [line : i64])
+  (:cold) : i64
   (if (or (<= line 0) (> line (array-length starts)))
     -1
     (array-ref starts (- line 1))))
@@ -170,7 +182,8 @@
 ;; 0-based index of the line containing byte offset `offset`.
 (define (source-text-line-index
   [starts : (& starts (__tl_dyn-array i64))]
-  [offset : i64]) : i64
+  [offset : i64])
+  (:cold) : i64
   (let
     [low : i64 0]
     [high : i64 (array-length starts)]
@@ -183,11 +196,13 @@
     (- low 1)))
 
 ;; True if `text` begins with `prefix`.
-(define (starts-with? [text : (& text str)] [prefix : (& prefix str)]) : bool
+(define (starts-with? [text : (& text str)] [prefix : (& prefix str)])
+  (:cold) : bool
   (string.is-string-prefix-at text prefix 0))
 
 ;; True if `text` ends with `suffix`.
-(define (ends-with? [text : (& text str)] [suffix : (& suffix str)]) : bool
+(define (ends-with? [text : (& text str)] [suffix : (& suffix str)])
+  (:cold) : bool
   (string.is-string-prefix-at
     text
     suffix
@@ -195,7 +210,8 @@
 
 ;; End of the line starting at `start`: the index of the next `\n` or `\r`, or
 ;; the length of `text` when the last line is unterminated.
-(define (line-end [text : (& text str)] [start : i64]) : i64
+(define (line-end [text : (& text str)] [start : i64])
+  (:cold) : i64
   (let
     [n : i64 (string.string-length text)]
     [i : i64 start]
@@ -208,7 +224,8 @@
 
 ;; Start of the line after the one `line-end` ended at `end`, consuming one
 ;; `\n`, `\r` or `\r\n` break. At the end of `text` it returns `end`.
-(define (next-line-start [text : (& text str)] [end : i64]) : i64
+(define (next-line-start [text : (& text str)] [end : i64])
+  (:cold) : i64
   (let
     [n : i64 (string.string-length text)]
     (cond

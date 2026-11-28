@@ -16,13 +16,16 @@
 (import (vector.vector DocModule core) as doc_module_vec)
 (import (vector.vector doc_extract.DocItem core) as doc_item_vec)
 
-(define (doc-module-fallback) : DocModule
+(define (doc-module-fallback)
+  (:cold) : DocModule
   (Module "" (doc_extract.doc-extraction-empty)))
 
-(define (doc-module-list-count [modules : doc_module_vec.Vec]) : i64
+(define (doc-module-list-count [modules : doc_module_vec.Vec])
+  (:cold) : i64
   (doc_module_vec.len (& modules)))
 
-(define (doc-module-copy [module : (& module DocModule)]) : DocModule
+(define (doc-module-copy [module : (& module DocModule)])
+  (:cold) : DocModule
   (match module
     [(Module path docs)
       (match docs
@@ -40,7 +43,8 @@
 
 (define (doc-module-list-ref
   [modules : (& modules doc_module_vec.Vec)]
-  [index : i64]) : DocModule
+  [index : i64])
+  (:cold) : DocModule
   (if (and (>= index 0) (< index (doc_module_vec.len modules)))
     (let
       [view : (& modules (Slice DocModule)) (doc_module_vec.view modules)]
@@ -51,7 +55,8 @@
   [out : (&mut out doc_module_vec.Vec)]
   [src : doc_module_vec.Vec]
   [index : i64]
-  [count : i64]) : unit
+  [count : i64])
+  (:cold) : unit
   (unless
     (>= index count)
     (doc_module_vec.push-ref! out (doc-module-list-ref (& src) index))
@@ -59,7 +64,8 @@
 
 (define (doc-module-list-append
   [left : doc_module_vec.Vec]
-  [right : doc_module_vec.Vec]) : doc_module_vec.Vec
+  [right : doc_module_vec.Vec])
+  (:cold) : doc_module_vec.Vec
   (let
     [left-count : i64
       (doc-module-list-count (owned_view.compiler-owned-shared-view left))]
@@ -71,27 +77,34 @@
     (doc-module-list-append-from (&mut out) right 0 right-count)
     out))
 
-(define (doc-module-path [module : DocModule]) : String
+(define (doc-module-path [module : DocModule])
+  (:cold) : String
   (match module
     [(Module path _) path]))
 
-(define (doc-module-docs [module : DocModule]) : doc_extract.DocExtraction
+(define (doc-module-docs [module : DocModule])
+  (:cold) : doc_extract.DocExtraction
   (match module
     [(Module _ docs) docs]))
 
-(define (doc-render-code [c : char]) : i64
+(define (doc-render-code [c : char])
+  (:cold) : i64
   (cast c : i64))
 
-(define (doc-render-alpha? [c : char]) : bool
+(define (doc-render-alpha? [c : char])
+  (:cold) : bool
   (or (and (>= c 'A') (<= c 'Z')) (and (>= c 'a') (<= c 'z'))))
 
-(define (doc-render-digit? [c : char]) : bool
+(define (doc-render-digit? [c : char])
+  (:cold) : bool
   (and (>= c '0') (<= c '9')))
 
-(define (doc-render-anchor-char? [c : char]) : bool
+(define (doc-render-anchor-char? [c : char])
+  (:cold) : bool
   (or (doc-render-alpha? c) (doc-render-digit? c) (= c '-')))
 
-(define (doc-render-hex-digit [value : i64]) : String
+(define (doc-render-hex-digit [value : i64])
+  (:cold) : String
   (string.substring "0123456789abcdef" value 1))
 
 ;; One field of a canonical anchor. ASCII letters, digits and `-` stand for
@@ -100,7 +113,8 @@
 ;; the encoding is injective, and a field never contains `.`, which frames the
 ;; fields of an item identity. The alphabet needs no escaping in an HTML id or
 ;; a URL fragment.
-(define (doc-render-anchor-field [text : (& text str)]) : String
+(define (doc-render-anchor-field [text : (& text str)])
+  (:cold) : String
   (let
     [n : i64 (string.string-length text)]
     [out : String ""]
@@ -120,7 +134,8 @@
                 (doc-render-hex-digit (% code 16))))))))
     out))
 
-(define (doc-render-anchor [name : (& name str)]) : String
+(define (doc-render-anchor [name : (& name str)])
+  (:cold) : String
   (str_cat.str-cat "tl-" (doc-render-anchor-field name)))
 
 ;; Canonical declaration identity shared by HTML, search metadata, generated
@@ -130,7 +145,8 @@
 (define (doc-render-identity-anchor
   [module-path : (& module-path str)]
   [kind-name : (& kind-name str)]
-  [name : (& name str)]) : String
+  [name : (& name str)])
+  (:cold) : String
   (str_cat.str-cat
     "tl-"
     (doc-render-anchor-field module-path)
@@ -143,7 +159,8 @@
 ;; generated module can expose more than one import record.
 (define (doc-render-item-anchor
   [module-path : String]
-  [item : doc_extract.DocItem]) : String
+  [item : doc_extract.DocItem])
+  (:cold) : String
   (let
     [kind : doc_extract.DocItemKind
       (doc_extract.doc-item-kind (owned_view.compiler-owned-shared-view item))]
@@ -159,7 +176,8 @@
         (doc-render-anchor-field (doc_extract.doc-item-signature item)))
       base)))
 
-(define (doc-render-escape-one [text : (& text str)] [idx : i64]) : String
+(define (doc-render-escape-one [text : (& text str)] [idx : i64])
+  (:cold) : String
   (let
     [c : char (string.string-ref text idx)]
     (cond
@@ -176,7 +194,8 @@
       [(= c '|') "\\|"]
       [else (string.substring text idx 1)])))
 
-(define (doc-render-escape-markdown [text : String]) : String
+(define (doc-render-escape-markdown [text : String])
+  (:cold) : String
   (let
     [n : i64 (string.string-length text)]
     [out : String ""]
@@ -184,20 +203,24 @@
       (set! out (str_cat.str-cat out (doc-render-escape-one text i) "")))
     out))
 
-(define (doc-render-code-block [source : String]) : String
+(define (doc-render-code-block [source : String])
+  (:cold) : String
   (str_cat.str-cat "```typelisp\n" source "\n```\n"))
 
-(define (doc-render-module-doc [module-doc : String]) : String
+(define (doc-render-module-doc [module-doc : String])
+  (:cold) : String
   (if (= (string.string-length module-doc) 0)
     "_No module docs._\n\n"
     (str_cat.str-cat (doc-render-escape-markdown module-doc) "\n\n")))
 
-(define (doc-render-item-doc [doc-text : String]) : String
+(define (doc-render-item-doc [doc-text : String])
+  (:cold) : String
   (if (= (string.string-length doc-text) 0)
     "_No item docs._\n"
     (str_cat.str-cat (doc-render-escape-markdown doc-text) "\n")))
 
-(define (doc-render-item-heading [item : doc_extract.DocItem]) : String
+(define (doc-render-item-heading [item : doc_extract.DocItem])
+  (:cold) : String
   (let
     [name : String
       (doc_extract.doc-item-name (owned_view.compiler-owned-shared-view item))]
@@ -209,7 +232,8 @@
       (doc-render-escape-markdown name)
       "\n\n")))
 
-(define (doc-render-item [item : doc_extract.DocItem]) : String
+(define (doc-render-item [item : doc_extract.DocItem])
+  (:cold) : String
   (str_cat.str-cat
     (doc-render-item-heading (owned_view.compiler-owned-shared-view item))
     "Kind: "
@@ -223,7 +247,8 @@
 
 (define (doc-render-module-item-heading
   [path : String]
-  [item : doc_extract.DocItem]) : String
+  [item : doc_extract.DocItem])
+  (:cold) : String
   (str_cat.str-cat
     "<a id=\""
     (doc-render-item-anchor path (owned_view.compiler-owned-shared-view item))
@@ -231,7 +256,8 @@
     (doc-render-escape-markdown (doc_extract.doc-item-name item))
     "\n\n"))
 
-(define (doc-render-module-item [path : String] [item : doc_extract.DocItem]) : String
+(define (doc-render-module-item [path : String] [item : doc_extract.DocItem])
+  (:cold) : String
   (str_cat.str-cat
     (doc-render-module-item-heading
       path
@@ -249,7 +275,8 @@
   [path : String]
   [items : doc_item_vec.Vec]
   [index : i64]
-  [count : i64]) : String
+  [count : i64])
+  (:cold) : String
   (if (>= index count)
     ""
     (str_cat.str-cat
@@ -258,7 +285,8 @@
         (doc_extract.doc-item-list-ref items index))
       (doc-render-module-item-list-from path items (+ index 1) count))))
 
-(define (doc-render-module-items [path : String] [items : doc_item_vec.Vec]) : String
+(define (doc-render-module-items [path : String] [items : doc_item_vec.Vec])
+  (:cold) : String
   (let
     [count : i64 (doc_extract.doc-item-list-count items)]
     (if (= count 0)
@@ -268,25 +296,29 @@
 (define (doc-render-item-list-from
   [items : doc_item_vec.Vec]
   [index : i64]
-  [count : i64]) : String
+  [count : i64])
+  (:cold) : String
   (if (>= index count)
     ""
     (str_cat.str-cat
       (doc-render-item (doc_extract.doc-item-list-ref items index))
       (doc-render-item-list-from items (+ index 1) count))))
 
-(define (doc-render-item-list [items : doc_item_vec.Vec]) : String
+(define (doc-render-item-list [items : doc_item_vec.Vec])
+  (:cold) : String
   (doc-render-item-list-from
     (owned_view.compiler-owned-shared-view items)
     0
     (doc_extract.doc-item-list-count items)))
 
-(define (doc-render-items [items : doc_item_vec.Vec]) : String
+(define (doc-render-items [items : doc_item_vec.Vec])
+  (:cold) : String
   (if (= (doc_extract.doc-item-list-count items) 0)
     "_No documented declarations._\n"
     (doc-render-item-list items)))
 
-(define (doc-render-markdown [docs : doc_extract.DocExtraction]) : String
+(define (doc-render-markdown [docs : doc_extract.DocExtraction])
+  (:cold) : String
   (str_cat.str-cat
     "# TypeLisp Documentation\n\n"
     (doc-render-module-doc
@@ -295,7 +327,8 @@
     "## Items\n\n"
     (doc-render-items (doc_extract.doc-extraction-items docs))))
 
-(define (doc-render-module-nav-item [module : DocModule]) : String
+(define (doc-render-module-nav-item [module : DocModule])
+  (:cold) : String
   (let
     [path : String (doc-module-path module)]
     (str_cat.str-cat
@@ -308,20 +341,23 @@
 (define (doc-render-module-nav-from
   [modules : doc_module_vec.Vec]
   [index : i64]
-  [count : i64]) : String
+  [count : i64])
+  (:cold) : String
   (if (>= index count)
     ""
     (str_cat.str-cat
       (doc-render-module-nav-item (doc-module-list-ref (& modules) index))
       (doc-render-module-nav-from modules (+ index 1) count))))
 
-(define (doc-render-module-nav [modules : doc_module_vec.Vec]) : String
+(define (doc-render-module-nav [modules : doc_module_vec.Vec])
+  (:cold) : String
   (doc-render-module-nav-from
     (owned_view.compiler-owned-shared-view modules)
     0
     (doc-module-list-count modules)))
 
-(define (doc-render-module-section [module : DocModule]) : String
+(define (doc-render-module-section [module : DocModule])
+  (:cold) : String
   (let
     [path : String
       (doc-module-path (owned_view.compiler-owned-shared-view module))]
@@ -342,20 +378,23 @@
 (define (doc-render-module-sections-from
   [modules : doc_module_vec.Vec]
   [index : i64]
-  [count : i64]) : String
+  [count : i64])
+  (:cold) : String
   (if (>= index count)
     ""
     (str_cat.str-cat
       (doc-render-module-section (doc-module-list-ref (& modules) index))
       (doc-render-module-sections-from modules (+ index 1) count))))
 
-(define (doc-render-module-sections [modules : doc_module_vec.Vec]) : String
+(define (doc-render-module-sections [modules : doc_module_vec.Vec])
+  (:cold) : String
   (doc-render-module-sections-from
     (owned_view.compiler-owned-shared-view modules)
     0
     (doc-module-list-count modules)))
 
-(define (doc-render-module-graph-markdown [modules : doc_module_vec.Vec]) : String
+(define (doc-render-module-graph-markdown [modules : doc_module_vec.Vec])
+  (:cold) : String
   (str_cat.str-cat
     "# TypeLisp Documentation\n\n"
     "## Modules\n\n"

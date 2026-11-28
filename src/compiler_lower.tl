@@ -19960,7 +19960,8 @@
 (define (lower-unsupported-match-pattern-message
   [ctx : tc_core.TcContext]
   [scrut-ty : ast.AstType]
-  [variant-name : String]) : String
+  [variant-name : String])
+  (:cold) : String
   (let
     [resolved : ast.AstType
       (tc_core.tc-type-strip-region
@@ -80683,7 +80684,8 @@
   [types : (&mut types LowerDebugTypes)]
   [ty : ast.AstType]
   [size : i64]
-  [align : i64]) : ir.CompilerDebugTypeNode
+  [align : i64])
+  (:cold) : ir.CompilerDebugTypeNode
   (let
     [name : String (tc_core.tc-type-render (lower-global-shared-view ty))]
     (match ty
@@ -80751,7 +80753,8 @@
   [ctx : tc_core.TcContext]
   [types : (&mut types LowerDebugTypes)]
   [name : String]
-  [inner : i64]) : ir.CompilerDebugTypeNode
+  [inner : i64])
+  (:cold) : ir.CompilerDebugTypeNode
   (let
     [referent : ast.AstType
       (lower-debug-type-resolve ctx (tc_core.tc-context-type-get ctx inner))]
@@ -80800,7 +80803,8 @@
   [name : String]
   [elems : ast.AstTypeList]
   [size : i64]
-  [align : i64]) : ir.CompilerDebugTypeNode
+  [align : i64])
+  (:cold) : ir.CompilerDebugTypeNode
   (let
     [count : i64 (ast.ast-type-list-len (& elems))]
     [ids : (__tl_dyn-array i64) (__tl_make-array i64 count)]
@@ -80916,7 +80920,8 @@
   [ctx : tc_core.TcContext]
   [types : (&mut types LowerDebugTypes)]
   [name : String]
-  [layout : tc_core.TcInlineAggregateLayout]) : ir.CompilerDebugTypeNode
+  [layout : tc_core.TcInlineAggregateLayout])
+  (:cold) : ir.CompilerDebugTypeNode
   (let
     [resident : bool
       (tc_core.tc-inline-aggregate-layout-register-resident? layout)]
@@ -80965,7 +80970,8 @@
   [size : i64]
   [align : i64]
   [variants : tc_core.TcInlineVariantLayoutList]
-  [resident : bool]) : ir.CompilerDebugTypeNode
+  [resident : bool])
+  (:cold) : ir.CompilerDebugTypeNode
   (let
     [tag : i64 (lower-debug-type-id! ctx types (ast.AstType.I64))]
     [count : i64 (tc_core.tc-inline-variant-layout-list-count (& variants))]

@@ -22,7 +22,8 @@
 (define (lsp-decl-vec-get
   [decls : (& decls lsp_decl_vec.Vec)]
   [index : i64]
-  [fallback : LspDeclEntry]) : LspDeclEntry
+  [fallback : LspDeclEntry])
+  (:cold) : LspDeclEntry
   (if (and (>= index 0) (< index (lsp_decl_vec.len decls)))
     (let
       [view : (& decls (Slice LspDeclEntry)) (lsp_decl_vec.view decls)]
@@ -230,16 +231,19 @@
   (slots (__tl_dyn-array LspCallFrame))
   (len i64))
 
-(define (lsp-call-frames-new) : LspCallFrames
+(define (lsp-call-frames-new)
+  (:cold) : LspCallFrames
   (LspCallFrames (__tl_make-array LspCallFrame 0) 0))
 
-(define (lsp-call-frames-len [frames : (& frames LspCallFrames)]) : i64
+(define (lsp-call-frames-len [frames : (& frames LspCallFrames)])
+  (:cold) : i64
   frames.len)
 
 (define (lsp-call-frames-get
   [frames : (& frames LspCallFrames)]
   [index : i64]
-  [fallback : LspCallFrame]) : LspCallFrame
+  [fallback : LspCallFrame])
+  (:cold) : LspCallFrame
   (if (and (>= index 0) (< index frames.len))
     (array-ref frames.slots index)
     fallback))
@@ -247,7 +251,8 @@
 (define (lsp-call-frames-set!
   [frames : (&mut frames LspCallFrames)]
   [index : i64]
-  [value : LspCallFrame]) : unit
+  [value : LspCallFrame])
+  (:cold) : unit
   (if (and (>= index 0) (< index frames.len))
     (set! (array-ref frames.slots index) value)
     unit))
@@ -255,11 +260,13 @@
 (define (lsp-call-frames-copy-range!
   [dst : (&mut dst (__tl_dyn-array LspCallFrame))]
   [src : (& src (__tl_dyn-array LspCallFrame))]
-  [count : i64]) : unit
+  [count : i64])
+  (:cold) : unit
   (for [i (iterator.range 0 count)]
     (set! (array-ref dst i) (array-ref src i))))
 
-(define (lsp-call-frames-grow! [frames : (&mut frames LspCallFrames)]) : unit
+(define (lsp-call-frames-grow! [frames : (&mut frames LspCallFrames)])
+  (:cold) : unit
   (let
     [old-cap : i64 (array-length frames.slots)]
     [new-cap : i64
@@ -273,31 +280,37 @@
 
 (define (lsp-call-frames-push!
   [frames : (&mut frames LspCallFrames)]
-  [value : LspCallFrame]) : unit
+  [value : LspCallFrame])
+  (:cold) : unit
   (if (>= frames.len (array-length frames.slots))
     (lsp-call-frames-grow! frames)
     unit)
   (set! (array-ref frames.slots frames.len) value)
   (+= frames.len 1))
 
-(define (lsp-call-frames-pop! [frames : (&mut frames LspCallFrames)]) : unit
+(define (lsp-call-frames-pop! [frames : (&mut frames LspCallFrames)])
+  (:cold) : unit
   (if (> frames.len 0)
     (-= frames.len 1)
     unit))
 
-(define (lsp-call-frames-clear! [frames : (&mut frames LspCallFrames)]) : unit
+(define (lsp-call-frames-clear! [frames : (&mut frames LspCallFrames)])
+  (:cold) : unit
   (set! frames.len 0))
 
-(define (lsp-fold-ranges-new) : LspFoldRanges
+(define (lsp-fold-ranges-new)
+  (:cold) : LspFoldRanges
   (LspFoldRanges (__tl_make-array LspFoldRange 0) 0))
 
-(define (lsp-fold-ranges-len [folds : (& folds LspFoldRanges)]) : i64
+(define (lsp-fold-ranges-len [folds : (& folds LspFoldRanges)])
+  (:cold) : i64
   folds.len)
 
 (define (lsp-fold-ranges-get
   [folds : (& folds LspFoldRanges)]
   [index : i64]
-  [fallback : LspFoldRange]) : LspFoldRange
+  [fallback : LspFoldRange])
+  (:cold) : LspFoldRange
   (if (and (>= index 0) (< index folds.len))
     (array-ref folds.slots index)
     fallback))
@@ -305,7 +318,8 @@
 (define (lsp-fold-ranges-set!
   [folds : (&mut folds LspFoldRanges)]
   [index : i64]
-  [value : LspFoldRange]) : unit
+  [value : LspFoldRange])
+  (:cold) : unit
   (if (and (>= index 0) (< index folds.len))
     (set! (array-ref folds.slots index) value)
     unit))
@@ -314,13 +328,15 @@
   [dst : (&mut dst (__tl_dyn-array LspFoldRange))]
   [src : (& src (__tl_dyn-array LspFoldRange))]
   [index : i64]
-  [count : i64]) : unit
+  [count : i64])
+  (:cold) : unit
   (unless
     (>= index count)
     (set! (array-ref dst index) (array-ref src index))
     (lsp-fold-ranges-copy-range! dst src (+ index 1) count)))
 
-(define (lsp-fold-ranges-grow! [folds : (&mut folds LspFoldRanges)]) : unit
+(define (lsp-fold-ranges-grow! [folds : (&mut folds LspFoldRanges)])
+  (:cold) : unit
   (let
     [old-cap : i64 (array-length folds.slots)]
     [new-cap : i64
@@ -334,14 +350,16 @@
 
 (define (lsp-fold-ranges-push!
   [folds : (&mut folds LspFoldRanges)]
-  [value : LspFoldRange]) : unit
+  [value : LspFoldRange])
+  (:cold) : unit
   (if (>= folds.len (array-length folds.slots))
     (lsp-fold-ranges-grow! folds)
     unit)
   (set! (array-ref folds.slots folds.len) value)
   (+= folds.len 1))
 
-(define (lsp-documents-drop-last! [docs : (&mut docs lsp_document_vec.Vec)]) : unit
+(define (lsp-documents-drop-last! [docs : (&mut docs lsp_document_vec.Vec)])
+  (:cold) : unit
   (if (> docs.len 0)
     (-= docs.len 1)
     unit))

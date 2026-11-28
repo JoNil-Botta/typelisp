@@ -54,25 +54,31 @@
   (define cli-build-date : String
     "unknown"))
 
-(define (cli-argc) : i64
+(define (cli-argc)
+  (:cold) : i64
   (io.arg-count))
 
-(define (cli-arg [index : i64]) : String
+(define (cli-arg [index : i64])
+  (:cold) : String
   (io.arg index))
 
-(define (cli-err [text : (& text str)]) : unit
+(define (cli-err [text : (& text str)])
+  (:cold) : unit
   (io.print-error text))
 
-(define (cli-eq? [left : (& left str)] [right : (& right str)]) : bool
+(define (cli-eq? [left : (& left str)] [right : (& right str)])
+  (:cold) : bool
   (string.eq left right))
 
-(define (cli-cat [left : (& left str)] [right : (& right str)]) : String
+(define (cli-cat [left : (& left str)] [right : (& right str)])
+  (:cold) : String
   (str_cat.str-cat-scoped left right))
 
 ;; Keeps the shipped stage0 help surface stable while individual commands route
 ;; through selfhost entry points. The unified selfhost CLI presents the same
 ;; help surface as the published stage0 driver.
-(define (cli-help-text) : String
+(define (cli-help-text)
+  (:cold) : String
   "Synopsis:
     typelisp - A typed Lisp/Scheme dialect with x86_64 backend
 
@@ -121,7 +127,8 @@ Environment:
 Run `typelisp <command> --help` for command-specific usage.
 ")
 
-(define (cli-build-help-text) : String
+(define (cli-build-help-text)
+  (:cold) : String
   "Usage:
     typelisp build <file.tl> [-o <exe>] [--debug|-g|--backtrace] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|s>|-Os] [--stdlib-root <dir>...] [--cfg <name>...]
     typelisp build [--manifest-path <typelisp.pkg>] [--deps-only] [--debug|-g|--backtrace] [--profile dev|release] [--release] [--locked|--update-lock] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|s>|-Os] [--stdlib-root <dir>...] [--cfg <name>...]
@@ -151,7 +158,8 @@ Options:
     --no-prebuilt-stdlib           Skip prebuilt stdlib discovery
 ")
 
-(define (cli-clean-help-text) : String
+(define (cli-clean-help-text)
+  (:cold) : String
   "Usage:
     typelisp clean [<file.tl>] [--manifest-path <typelisp.pkg>] [--dry-run]
     typelisp clean --experiments [--manifest-path <typelisp.pkg>] [--dry-run]
@@ -165,7 +173,8 @@ Options:
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward
 ")
 
-(define (cli-run-help-text) : String
+(define (cli-run-help-text)
+  (:cold) : String
   "Usage:
     typelisp run <file.tl> [--debug|-g|--backtrace] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|s>|-Os] [--stdlib-root <dir>...] [--cfg <name>...] [-- args...]
     typelisp run [--manifest-path <typelisp.pkg>] [--debug|-g|--backtrace] [--profile dev|release] [--release] [--locked|--update-lock] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|s>|-Os] [--stdlib-root <dir>...] [--cfg <name>...] [-- args...]
@@ -191,7 +200,8 @@ Options:
     --link-arg <arg>               Pass a raw native linker argument for source runs
 ")
 
-(define (cli-check-help-text) : String
+(define (cli-check-help-text)
+  (:cold) : String
   "Usage:
     typelisp check [<file.tl>] [--manifest-path <typelisp.pkg>] [--profile dev|release] [--release] [--target <target>] [--cfg <name>...] [--stdlib-root <dir>...]
     typelisp check --batch <inputs.txt> [--target <target>] [--cfg <name>...] [--stdlib-root <dir>...]
@@ -212,7 +222,8 @@ Options:
     --stdlib-root <dir>            Search root for stdlib/... imports
 ")
 
-(define (cli-fmt-help-text) : String
+(define (cli-fmt-help-text)
+  (:cold) : String
   "Usage:
     typelisp fmt [<file.tl>...] [--check] [--manifest-path <typelisp.pkg>] [--target <target>] [--cfg <name>...] [--stdlib-root <dir>...]
 
@@ -227,7 +238,8 @@ Options:
     --stdlib-root <dir>            Accepted but unused; formatting does not load imports
 ")
 
-(define (cli-lint-help-text) : String
+(define (cli-lint-help-text)
+  (:cold) : String
   "Usage:
     typelisp lint [<file.tl>...] [--check] [--format <rich|flat>] [--deprecated-string-concat] [--redundant-function-name] [--redundant-begin] [--prefer-dotted-field] [--name-case] [--manifest-path <typelisp.pkg>] [--profile dev|release] [--release] [--target <target>] [--cfg <name>...] [--stdlib-root <dir>...]
 
@@ -253,7 +265,8 @@ Options:
     --stdlib-root <dir>            Search root for stdlib/... imports
 ")
 
-(define (cli-test-help-text) : String
+(define (cli-test-help-text)
+  (:cold) : String
   "Usage:
     typelisp test [--check] [--filter <substring>|--exact <name>] [--include-ignored] [--include-slow] [--shuffle [--seed <u64>]] [<file.tl>] [--manifest-path <typelisp.pkg>] [--profile dev|release] [--release] [--target <target>] [--cfg <name>...] [--backend-mode <mode>] [--opt-level <0|1|2|s>|-Os] [--stdlib-root <dir>...]
     typelisp test [--check] [--filter <substring>|--exact <name>] [--include-ignored] [--include-slow] [--shuffle [--seed <u64>]] --batch <inputs.txt> [--combined] [--target <target>] [--cfg <name>...] [--backend-mode <mode>] [--opt-level <0|1|2|s>|-Os] [--stdlib-root <dir>...] [--prefix-cache-stats]
@@ -286,7 +299,8 @@ Options:
     --stdlib-root <dir>            Search root for stdlib/... imports
 ")
 
-(define (cli-doc-help-text) : String
+(define (cli-doc-help-text)
+  (:cold) : String
   "Usage:
     typelisp doc <file.tl> [<out.md>|-o <out.md>] [--stdlib-root <dir>...]
     typelisp doc [--manifest-path <typelisp.pkg>] [--profile dev|release] [--release] [--open] [--no-deps]
@@ -316,7 +330,8 @@ Output:
     Explicit -o remains deterministic single-file Markdown output and cannot be combined with --open.
 ")
 
-(define (cli-compile-help-text) : String
+(define (cli-compile-help-text)
+  (:cold) : String
   "Usage:
     typelisp compile <file.tl> [-o <file>] [--debug|-g|--backtrace] [--emit-ir | --dump-ir [after-<pass>] | --emit-tli] [--verify-ir] [--trace-passes] [--pic | --no-entry] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|s>|-Os] [--stdlib-root <dir>...] [--extra-tli <file>...] [--cfg <name>...] [--profile-allocations]
     typelisp compile --batch <input-output-list> [--debug|-g|--backtrace] [--no-entry] [--verify-ir] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|s>|-Os] [--stdlib-root <dir>...] [--extra-tli <file>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]
@@ -348,10 +363,12 @@ Options:
     --cfg <name>                   Enable a compile-time cfg predicate name
 ")
 
-(define (cli-inspect-help-text) : String
+(define (cli-inspect-help-text)
+  (:cold) : String
   (inspect_cli_core.tlci-inspect-help-text))
 
-(define (cli-assemble-help-text) : String
+(define (cli-assemble-help-text)
+  (:cold) : String
   "Usage:
     typelisp assemble <file.s> -o <file.o>
 
@@ -359,7 +376,8 @@ Summary:
     Assemble final TypeLisp Linux x86-64 assembly into a relocatable ELF object.
 ")
 
-(define (cli-assemble [count : i64]) : i64
+(define (cli-assemble [count : i64])
+  (:cold) : i64
   (if (and (= count 5) (cli-eq? (cli-arg 3) "-o"))
     (match (build_run_core.source-tool-assemble
       "assembler"
@@ -375,7 +393,8 @@ Summary:
       (cli-err (& usage))
       1)))
 
-(define (cli-expand-help-text) : String
+(define (cli-expand-help-text)
+  (:cold) : String
   "Usage:
     typelisp expand <file.tl> --at <line>:<column> [--max-bytes <n>] [--target <target>] [--cfg <name>...] [--stdlib-root <dir>...]
 
@@ -396,13 +415,15 @@ Options:
     --stdlib-root <dir>            Search root for stdlib/... imports
 ")
 
-(define (cli-explain-help-text) : String
+(define (cli-explain-help-text)
+  (:cold) : String
   ;; The help-surface gate scans this dispatcher block while the rendered help
   ;; is deliberately owned by explain_cli_core. Keep its delegated public
   ;; options visible here as well: --list and --search.
   (explain_cli_core.diagnostic-explain-help-text))
 
-(define (cli-repl-help-text) : String
+(define (cli-repl-help-text)
+  (:cold) : String
   "Usage:
     typelisp repl
 
@@ -416,7 +437,8 @@ REPL Commands:
     .exit                          Exit the REPL
 ")
 
-(define (cli-lsp-help-text) : String
+(define (cli-lsp-help-text)
+  (:cold) : String
   "Usage:
     typelisp lsp [--stdlib-root <dir>...] [--prefix-cache-stats]
     typelisp lsp --transcript-batch <manifest> [--stdlib-root <dir>...] [--prefix-cache-stats]
@@ -435,7 +457,8 @@ Initialization options:
     Fields may be direct or nested under initializationOptions.typelisp.
 ")
 
-(define (cli-new-help-text) : String
+(define (cli-new-help-text)
+  (:cold) : String
   "Usage:
     typelisp new [--lib] <name>
 
@@ -446,7 +469,8 @@ Options:
     --lib                          Scaffold a static library package
 ")
 
-(define (cli-init-help-text) : String
+(define (cli-init-help-text)
+  (:cold) : String
   "Usage:
     typelisp init [--lib] <name>
 
@@ -457,20 +481,25 @@ Options:
     --lib                          Scaffold a static library package
 ")
 
-(define (cli-help-flag? [value : String]) : bool
+(define (cli-help-flag? [value : String])
+  (:cold) : bool
   (or (cli-eq? value "--help") (cli-eq? value "-h")))
 
-(define (cli-subcommand-help-request? [count : i64]) : bool
+(define (cli-subcommand-help-request? [count : i64])
+  (:cold) : bool
   (and (= count 3) (cli-help-flag? (cli-arg 2))))
 
-(define (cli-print-help-text [text : String] [code : i64]) : i64
+(define (cli-print-help-text [text : String] [code : i64])
+  (:cold) : i64
   (cli-err text)
   code)
 
-(define (cli-print-help [code : i64]) : i64
+(define (cli-print-help [code : i64])
+  (:cold) : i64
   (cli-print-help-text (cli-help-text) code))
 
-(define (cli-print-version) : i64
+(define (cli-print-version)
+  (:cold) : i64
   (io.print-format
     "{}"
     (cli-cat
@@ -480,13 +509,15 @@ Options:
         (cli-cat " built " (cli-cat cli-build-date "\n")))))
   0)
 
-(define (cli-print-producer-identity) : i64
+(define (cli-print-producer-identity)
+  (:cold) : i64
   (io.print-format
     "{}"
     (cli-cat (build_identity.compiler-build-producer-identity) "\n"))
   0)
 
-(define (cli-dispatch [command : String] [count : i64]) : i64
+(define (cli-dispatch [command : String] [count : i64])
+  (:cold) : i64
   (cond
     [(or
         (cli-eq? command "help")

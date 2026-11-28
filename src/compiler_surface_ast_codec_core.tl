@@ -42,7 +42,8 @@
   (define (surface-ast-write-context-new
     [structural-session : cis.InternStructuralSessionHandle]
     [source-identity-count : i64]
-    [identity-count : i64]) : SurfaceAstWriteContext
+    [identity-count : i64])
+    (:cold) : SurfaceAstWriteContext
     (let
       [valid : (__tl_dyn-array bool) (__tl_make-array bool 1)]
       [invalid-name : (__tl_dyn-array i64) (__tl_make-array i64 1)]
@@ -58,13 +59,15 @@
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-valid?
-    [context : (& context SurfaceAstWriteContext)]) : bool
+    [context : (& context SurfaceAstWriteContext)])
+    (:cold) : bool
     (array-ref context.valid 0)))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-invalid-name
-    [context : (& SurfaceAstWriteContext)]) : i64
+    [context : (& SurfaceAstWriteContext)])
+    (:cold) : i64
     (array-ref
       (owned_view.compiler-owned-reference-shared-view (& context.invalid-name))
       0)))
@@ -72,21 +75,24 @@
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-fail!
-    [context : (&mut context SurfaceAstWriteContext)]) : unit
+    [context : (&mut context SurfaceAstWriteContext)])
+    (:cold) : unit
     (set! (array-ref context.valid 0) false)))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-i64!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
-    [value : i64]) : unit
+    [value : i64])
+    (:cold) : unit
     (byte_le.push-u64! out value)))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-bool!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
-    [value : bool]) : unit
+    [value : bool])
+    (:cold) : unit
     (surface-ast-write-i64!
       out
       (if value
@@ -97,7 +103,8 @@
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-string!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
-    [text : String]) : unit
+    [text : String])
+    (:cold) : unit
     (surface-ast-write-i64! out (binary.surface-binary-string-length text))
     (binary.surface-binary-push-string! out text)))
 
@@ -106,7 +113,8 @@
   (define (surface-ast-write-name!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context SurfaceAstWriteContext)]
-    [name : i64]) : unit
+    [name : i64])
+    (:cold) : unit
     (let
       [portable : i64
         (identity.surface-identity-portable-id
@@ -127,7 +135,8 @@
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-span!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
-    [span : ast.AstSourceSpan]) : unit
+    [span : ast.AstSourceSpan])
+    (:cold) : unit
     (surface-ast-write-i64! out (ast.ast-source-span-start-line span))
     (surface-ast-write-i64! out (ast.ast-source-span-start-col span))
     (surface-ast-write-i64! out (ast.ast-source-span-end-line span))
@@ -136,7 +145,8 @@
 (define (surface-ast-reader-new
   [bytes : (& (__tl_dyn-array u8))]
   [structural-session : cis.InternStructuralSessionHandle]
-  [identity-remap : (__tl_dyn-array i64)]) : SurfaceAstReader
+  [identity-remap : (__tl_dyn-array i64)])
+  (:cold) : SurfaceAstReader
   (let
     [c-function-signatures : (__tl_dyn-array ast.AstTypeList)
       (__tl_make-array ast.AstTypeList 1)]
@@ -151,18 +161,22 @@
       identity-remap
       c-function-signatures)))
 
-(define (surface-ast-reader-valid? [reader : (& reader SurfaceAstReader)]) : bool
+(define (surface-ast-reader-valid? [reader : (& reader SurfaceAstReader)])
+  (:cold) : bool
   reader.cursor.ok?)
 
-(define (surface-ast-reader-message [reader : (& reader SurfaceAstReader)]) : String
+(define (surface-ast-reader-message [reader : (& reader SurfaceAstReader)])
+  (:cold) : String
   (string.copy reader.cursor.error-message))
 
-(define (surface-ast-reader-offset [reader : (& reader SurfaceAstReader)]) : i64
+(define (surface-ast-reader-offset [reader : (& reader SurfaceAstReader)])
+  (:cold) : i64
   reader.cursor.offset)
 
 (define (surface-ast-reader-fail!
   [reader : (&mut reader SurfaceAstReader)]
-  [message : String]) : unit
+  [message : String])
+  (:cold) : unit
   (let
     [offset : i64 reader.cursor.offset]
     (byte_reader.fail!
@@ -171,14 +185,16 @@
       offset
       message)))
 
-(define (surface-ast-read-i64! [reader : (&mut reader SurfaceAstReader)]) : i64
+(define (surface-ast-read-i64! [reader : (&mut reader SurfaceAstReader)])
+  (:cold) : i64
   (if (byte_reader.available? (& reader.cursor) 8)
     (byte_reader.read-u64! (&mut reader.cursor))
     (begin
       (surface-ast-reader-fail! reader "surface ast: truncated integer")
       0)))
 
-(define (surface-ast-read-bool! [reader : (&mut reader SurfaceAstReader)]) : bool
+(define (surface-ast-read-bool! [reader : (&mut reader SurfaceAstReader)])
+  (:cold) : bool
   (let
     [value : i64 (surface-ast-read-i64! reader)]
     (cond
@@ -193,7 +209,8 @@
 ;; primitive decoding alone cannot distinguish an in-range non-function id.
 (define (surface-ast-record-c-function-signature!
   [reader : (&mut reader SurfaceAstReader)]
-  [signature : i64]) : unit
+  [signature : i64])
+  (:cold) : unit
   (let
     [signatures : ast.AstTypeList
       (owned_view.compiler-owned-array-element-shared-view
@@ -204,7 +221,8 @@
 
 (define (surface-ast-validate-c-function-signatures!
   [reader : (&mut reader SurfaceAstReader)]
-  [pools : ast.AstNodePoolContext]) : unit
+  [pools : ast.AstNodePoolContext])
+  (:cold) : unit
   (let
     [signatures : ast.AstTypeList
       (owned_view.compiler-owned-array-element-shared-view
@@ -231,10 +249,12 @@
             "surface ast: C function signature must reference a function type"))
         (+= index 1)))))
 
-(define (surface-ast-count-valid? [count : i64]) : bool
+(define (surface-ast-count-valid? [count : i64])
+  (:cold) : bool
   (and (>= count 0) (<= count surface-ast-max-count)))
 
-(define (surface-ast-read-count! [reader : (&mut reader SurfaceAstReader)]) : i64
+(define (surface-ast-read-count! [reader : (&mut reader SurfaceAstReader)])
+  (:cold) : i64
   (let
     [count : i64 (surface-ast-read-i64! reader)]
     (if (surface-ast-count-valid? count)
@@ -245,7 +265,8 @@
           "surface ast: invalid collection count")
         0))))
 
-(define (surface-ast-read-string! [reader : (&mut reader SurfaceAstReader)]) : String
+(define (surface-ast-read-string! [reader : (&mut reader SurfaceAstReader)])
+  (:cold) : String
   (let
     [len : i64 (surface-ast-read-count! reader)]
     [offset : i64 reader.cursor.offset]
@@ -259,7 +280,8 @@
         (surface-ast-reader-fail! reader "surface ast: truncated string")
         ""))))
 
-(define (surface-ast-read-name! [reader : (&mut reader SurfaceAstReader)]) : i64
+(define (surface-ast-read-name! [reader : (&mut reader SurfaceAstReader)])
+  (:cold) : i64
   (let
     [portable : i64 (surface-ast-read-i64! reader)]
     [resolved : i64
@@ -276,7 +298,8 @@
         0)
       resolved)))
 
-(define (surface-ast-read-span! [reader : (&mut reader SurfaceAstReader)]) : ast.AstSourceSpan
+(define (surface-ast-read-span! [reader : (&mut reader SurfaceAstReader)])
+  (:cold) : ast.AstSourceSpan
   (ast.ast-source-span
     (surface-ast-read-i64! reader)
     (surface-ast-read-i64! reader)
@@ -289,7 +312,8 @@
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context SurfaceAstWriteContext)]
     [items : (& (__tl_dyn-array i64))]
-    [count : i64]) : unit
+    [count : i64])
+    (:cold) : unit
     (surface-ast-write-i64! out count)
     (for [index (iterator.range 0 count)]
       (surface-ast-write-name! out context (array-ref items index)))))
@@ -299,11 +323,13 @@
   (define (surface-ast-write-lifetime-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context SurfaceAstWriteContext)]
-    [lifetimes : (& ast.AstLifetimeList)]) : unit
+    [lifetimes : (& ast.AstLifetimeList)])
+    (:cold) : unit
     (surface-ast-write-name-list! out context (& lifetimes.slots) lifetimes.len)))
 
 (define (surface-ast-read-lifetime-list!
-  [reader : (&mut reader SurfaceAstReader)]) : ast.AstLifetimeList
+  [reader : (&mut reader SurfaceAstReader)])
+  (:cold) : ast.AstLifetimeList
   (let
     [count : i64 (surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array i64) (__tl_make-array i64 count)]
@@ -315,14 +341,16 @@
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-type-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
-    [types : (& ast.AstTypeList)]) : unit
+    [types : (& ast.AstTypeList)])
+    (:cold) : unit
     (let
       [count : i64 types.len]
       (surface-ast-write-i64! out count)
       (for [index (iterator.range 0 count)]
         (surface-ast-write-i64! out (array-ref types.slots index))))))
 
-(define (surface-ast-read-type-list! [reader : (&mut reader SurfaceAstReader)]) : ast.AstTypeList
+(define (surface-ast-read-type-list! [reader : (&mut reader SurfaceAstReader)])
+  (:cold) : ast.AstTypeList
   (let
     [count : i64 (surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array i64) (__tl_make-array i64 count)]
@@ -335,7 +363,8 @@
   (define (surface-ast-write-type!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context SurfaceAstWriteContext)]
-    [ty : (& ast.AstType)]) : unit
+    [ty : (& ast.AstType)])
+    (:cold) : unit
     (match ty
       [(I64) (surface-ast-write-i64! out 0)]
       [(I32) (surface-ast-write-i64! out 1)]
@@ -424,7 +453,8 @@
         (surface-ast-write-i64! out 36)
         (surface-ast-write-i64! out elem)])))
 
-(define (surface-ast-read-type! [reader : (&mut reader SurfaceAstReader)]) : ast.AstType
+(define (surface-ast-read-type! [reader : (&mut reader SurfaceAstReader)])
+  (:cold) : ast.AstType
   (let
     [tag : i64 (surface-ast-read-i64! reader)]
     (cond
@@ -509,14 +539,16 @@
   (define (surface-ast-write-maybe-type!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context SurfaceAstWriteContext)]
-    [maybe-ty : (& ast.AstMaybeType)]) : unit
+    [maybe-ty : (& ast.AstMaybeType)])
+    (:cold) : unit
     (match maybe-ty
       [(No) (surface-ast-write-i64! out 0)]
       [(Some ty)
         (surface-ast-write-i64! out 1)
         (surface-ast-write-type! out context (& ty))])))
 
-(define (surface-ast-read-maybe-type! [reader : (&mut reader SurfaceAstReader)]) : ast.AstMaybeType
+(define (surface-ast-read-maybe-type! [reader : (&mut reader SurfaceAstReader)])
+  (:cold) : ast.AstMaybeType
   (let
     [tag : i64 (surface-ast-read-i64! reader)]
     (cond
@@ -533,7 +565,8 @@
   (define (surface-ast-write-literal!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context SurfaceAstWriteContext)]
-    [literal : (& ast.AstLiteral)]) : unit
+    [literal : (& ast.AstLiteral)])
+    (:cold) : unit
     (match (owned_view.compiler-owned-reference-shared-view literal)
       [(Int value text)
         (surface-ast-write-i64! out 0)
@@ -553,7 +586,8 @@
         (surface-ast-write-name! out context name)]
       [(Unit) (surface-ast-write-i64! out 5)])))
 
-(define (surface-ast-read-literal! [reader : (&mut reader SurfaceAstReader)]) : ast.AstLiteral
+(define (surface-ast-read-literal! [reader : (&mut reader SurfaceAstReader)])
+  (:cold) : ast.AstLiteral
   (let
     [tag : i64 (surface-ast-read-i64! reader)]
     (cond
@@ -573,7 +607,8 @@
   (define (surface-ast-write-borrow-lifetime!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context SurfaceAstWriteContext)]
-    [lifetime : ast.AstBorrowLifetime]) : unit
+    [lifetime : ast.AstBorrowLifetime])
+    (:cold) : unit
     (match lifetime
       [(Inferred) (surface-ast-write-i64! out 0)]
       [(Named name)
@@ -581,7 +616,8 @@
         (surface-ast-write-name! out context name)])))
 
 (define (surface-ast-read-borrow-lifetime!
-  [reader : (&mut reader SurfaceAstReader)]) : ast.AstBorrowLifetime
+  [reader : (&mut reader SurfaceAstReader)])
+  (:cold) : ast.AstBorrowLifetime
   (let
     [tag : i64 (surface-ast-read-i64! reader)]
     (cond
@@ -597,7 +633,8 @@
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-bin-op!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
-    [op : ast.AstBinOp]) : unit
+    [op : ast.AstBinOp])
+    (:cold) : unit
     (surface-ast-write-i64!
       out
       (match op
@@ -620,7 +657,8 @@
         [(Shl) 16]
         [(Shr) 17]))))
 
-(define (surface-ast-read-bin-op! [reader : (&mut reader SurfaceAstReader)]) : ast.AstBinOp
+(define (surface-ast-read-bin-op! [reader : (&mut reader SurfaceAstReader)])
+  (:cold) : ast.AstBinOp
   (let
     [tag : i64 (surface-ast-read-i64! reader)]
     (cond
@@ -650,7 +688,8 @@
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-un-op!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
-    [op : ast.AstUnOp]) : unit
+    [op : ast.AstUnOp])
+    (:cold) : unit
     (surface-ast-write-i64!
       out
       (match op
@@ -658,7 +697,8 @@
         [(Not) 1]
         [(BitNot) 2]))))
 
-(define (surface-ast-read-un-op! [reader : (&mut reader SurfaceAstReader)]) : ast.AstUnOp
+(define (surface-ast-read-un-op! [reader : (&mut reader SurfaceAstReader)])
+  (:cold) : ast.AstUnOp
   (let
     [tag : i64 (surface-ast-read-i64! reader)]
     (cond
@@ -673,7 +713,8 @@
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-reduce-op!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
-    [op : ast.AstReduceOp]) : unit
+    [op : ast.AstReduceOp])
+    (:cold) : unit
     (surface-ast-write-i64!
       out
       (match op
@@ -683,7 +724,8 @@
         [(All) 3]
         [(Any) 4]))))
 
-(define (surface-ast-read-reduce-op! [reader : (&mut reader SurfaceAstReader)]) : ast.AstReduceOp
+(define (surface-ast-read-reduce-op! [reader : (&mut reader SurfaceAstReader)])
+  (:cold) : ast.AstReduceOp
   (let
     [tag : i64 (surface-ast-read-i64! reader)]
     (cond

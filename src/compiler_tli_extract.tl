@@ -54,7 +54,8 @@
   (tlci-sha256 (Array u8 32))
   (macro-identities (__tl_dyn-array String)))
 
-(define (tli-package-companion-binding-empty) : TliPackageCompanionBinding
+(define (tli-package-companion-binding-empty)
+  (:cold) : TliPackageCompanionBinding
   (TliPackageCompanionBinding
     false
     (make-array u8 32)
@@ -98,24 +99,26 @@
   (Ok tli.TliBundle)
   (Err String))
 
-(define (tli-extract-sha256 [source : (& source bytes)]) : (Array u8 32)
+(define (tli-extract-sha256 [source : (& source bytes)])
+  (:cold) : (Array u8 32)
   (match (sha.digest source)
     [(Sha256FinalizeOk digest) (sha.digest-bytes (& digest))]
     [(Sha256FinalizeErr _) (io.panic "TLI source exceeds SHA-256 input limit")]))
 
-(define (tli-extract-cfg-digest [cfgs : sym_i64_env.SymI64Env]) : (Array u8 32)
+(define (tli-extract-cfg-digest [cfgs : sym_i64_env.SymI64Env])
+  (:cold) : (Array u8 32)
   (hydrate.tli-hydrate-cfg-digest cfgs))
 
-(define (tli-extract-stdlib-cfg-digest [cfgs : sym_i64_env.SymI64Env]) : (Array
-    u8
-    32)
+(define (tli-extract-stdlib-cfg-digest [cfgs : sym_i64_env.SymI64Env])
+  (:cold) : (Array u8 32)
   (hydrate.tli-hydrate-stdlib-cfg-digest cfgs))
 
-(define (tli-extract-name [id : i64]) : String
+(define (tli-extract-name [id : i64])
+  (:cold) : String
   (string.copy (ast.ast-nominal-name-id-display id)))
 
-(define (tli-extract-lifetimes [items : (& ast.AstLifetimeList)]) : (__tl_dyn-array
-    String)
+(define (tli-extract-lifetimes [items : (& ast.AstLifetimeList)])
+  (:cold) : (__tl_dyn-array String)
   (let
     [out : (__tl_dyn-array String) (__tl_make-array String items.len)]
     (for [index (iterator.range 0 items.len)]
@@ -127,7 +130,8 @@
 (define (tli-extract-nominal-name
   [sources : (& sources (__tl_dyn-array TliSource))]
   [root-type-slots : (& root-type-slots str_map.Map)]
-  [id : i64]) : String
+  [id : i64])
+  (:cold) : String
   (let
     [raw : String (tli-extract-name id)]
     (if (string.contains (& raw) "/")
@@ -145,7 +149,8 @@
   [ctx : tc.TcContext]
   [sources : (& sources (__tl_dyn-array TliSource))]
   [root-type-slots : (& root-type-slots str_map.Map)]
-  [items : (& ast.AstTypeList)]) : (__tl_dyn-array tli.TliType)
+  [items : (& ast.AstTypeList)])
+  (:cold) : (__tl_dyn-array tli.TliType)
   (let
     [out : (__tl_dyn-array tli.TliType) (__tl_make-array tli.TliType items.len)]
     (for [index (iterator.range 0 items.len)]
@@ -162,7 +167,8 @@
   [ctx : tc.TcContext]
   [sources : (& sources (__tl_dyn-array TliSource))]
   [root-type-slots : (& root-type-slots str_map.Map)]
-  [id : i64]) : tli.TliType
+  [id : i64])
+  (:cold) : tli.TliType
   (tli-extract-type-in
     ctx
     sources
@@ -173,7 +179,8 @@
   [ctx : tc.TcContext]
   [sources : (& sources (__tl_dyn-array TliSource))]
   [root-type-slots : (& root-type-slots str_map.Map)]
-  [ty : ast.AstType]) : tli.TliType
+  [ty : ast.AstType])
+  (:cold) : tli.TliType
   (match (tc.tc-resolve-type ctx ty)
     [(I64) (tli.TliType.I64)]
     [(I32) (tli.TliType.I32)]
@@ -270,21 +277,24 @@
         (box (tli-extract-child-in ctx sources root-type-slots signature))
         (ast.ast-c-function-mode-key mode))]))
 
-(define (tli-extract-type [ctx : tc.TcContext] [ty : ast.AstType]) : tli.TliType
+(define (tli-extract-type [ctx : tc.TcContext] [ty : ast.AstType])
+  (:cold) : tli.TliType
   (let
     [empty-sources : (__tl_dyn-array TliSource) (__tl_make-array TliSource 0)]
     [empty-roots : str_map.Map (str_map.with-capacity 4)]
     (tli-extract-type-in ctx (& empty-sources) (& empty-roots) ty)))
 
 ;; Stdlib-only SPMD bodies name no package-local type root.
-(define (tli-extract-child [ctx : tc.TcContext] [id : i64]) : tli.TliType
+(define (tli-extract-child [ctx : tc.TcContext] [id : i64])
+  (:cold) : tli.TliType
   (tli-extract-type ctx (tc.tc-context-type-get ctx id)))
 
 (define (tli-extract-cleanup-symbol
   [ctx : tc.TcContext]
   [sources : (& sources (__tl_dyn-array TliSource))]
   [root-origins : (& root-origins (__tl_dyn-array i64))]
-  [name : intern.InternSyntaxId]) : tli.TliCleanup
+  [name : intern.InternSyntaxId])
+  (:cold) : tli.TliCleanup
   (let
     [raw : i64 (intern.intern-syntax-id-value name)]
     [resolved : i64
@@ -336,7 +346,8 @@
   [root-origins : (& root-origins (__tl_dyn-array i64))]
   [items : (& ast.AstFieldDefList)]
   [offsets : (& tc.TcInlineFieldLayoutList)]
-  [aligns : (& ast.AstFieldAligns)]) : tli.TliTypeBody
+  [aligns : (& ast.AstFieldAligns)])
+  (:cold) : tli.TliTypeBody
   (let
     [out : (__tl_dyn-array tli.TliField)
       (__tl_make-array tli.TliField items.len)]
@@ -381,7 +392,8 @@
   [sources : (& sources (__tl_dyn-array TliSource))]
   [root-type-slots : (& root-type-slots str_map.Map)]
   [root-origins : (& root-origins (__tl_dyn-array i64))]
-  [items : (& ast.AstVariantDefList)]) : tli.TliTypeBody
+  [items : (& ast.AstVariantDefList)])
+  (:cold) : tli.TliTypeBody
   (let
     [out : (__tl_dyn-array tli.TliVariant)
       (__tl_make-array tli.TliVariant items.len)]
@@ -416,18 +428,21 @@
               (tli.TliVariant (tli-extract-name name) payloads)))]))
     (tli.TliTypeBody.Enum out)))
 
-(define (tli-extract-flag [enabled : bool] [flag : i64]) : i64
+(define (tli-extract-flag [enabled : bool] [flag : i64])
+  (:cold) : i64
   (if enabled
     flag
     0))
 
-(define (tli-extract-owner [ctx : tc.TcContext] [index : i64]) : i64
+(define (tli-extract-owner [ctx : tc.TcContext] [index : i64])
+  (:cold) : i64
   (symbols.compiler-symbols-owner-module-id-at-index-or
     (tc.tc-context-symbols (& ctx))
     index
     (symbols.compiler-symbol-root-module-id)))
 
-(define (tli-extract-module-name [id : i64]) : String
+(define (tli-extract-module-name [id : i64])
+  (:cold) : String
   (if (symbols.compiler-symbol-root-module-id? id)
     ""
     (tli-extract-name id)))
@@ -439,7 +454,8 @@
   [ctx : tc.TcContext]
   [sources : (& sources (__tl_dyn-array TliSource))]
   [root-origins : (& root-origins (__tl_dyn-array i64))]
-  [index : i64]) : String
+  [index : i64])
+  (:cold) : String
   (let
     [owner : i64 (tli-extract-owner ctx index)]
     [origin : i64
@@ -460,7 +476,8 @@
   [out : (&mut (__tl_dyn-array String))]
   [decls : (& ast.AstDeclList)]
   [decl-path : (& str)]
-  [cursor : i64]) : i64
+  [cursor : i64])
+  (:cold) : i64
   (let
     [n : i64 (ast.ast-decl-list-len decls)]
     [next : i64 cursor]
@@ -483,7 +500,8 @@
 (define (tli-extract-decl-paths-by-index
   [decls : (& ast.AstDeclList)]
   [paths : (& ast.AstDeclPathList)]
-  [decl-count : i64]) : (__tl_dyn-array String)
+  [decl-count : i64])
+  (:cold) : (__tl_dyn-array String)
   (let
     [out : (__tl_dyn-array String) (__tl_make-array String decl-count)]
     [n : i64 (ast.ast-decl-list-len decls)]
@@ -514,7 +532,8 @@
   [ctx : tc.TcContext]
   [decl-paths : (& (__tl_dyn-array String))]
   [sources : (& sources (__tl_dyn-array TliSource))]
-  [is-stdlib : bool]) : (__tl_dyn-array i64)
+  [is-stdlib : bool])
+  (:cold) : (__tl_dyn-array i64)
   (let
     [count : i64
       (symbols.compiler-symbols-decl-count (tc.tc-context-symbols (& ctx)))]
@@ -537,7 +556,8 @@
   [ctx : tc.TcContext]
   [sources : (& sources (__tl_dyn-array TliSource))]
   [root-origins : (& root-origins (__tl_dyn-array i64))]
-  [index : i64]) : String
+  [index : i64])
+  (:cold) : String
   (symbols.compiler-symbol-module-key
     (tli-extract-module-at ctx sources root-origins index)
     (tli-extract-name
@@ -555,7 +575,8 @@
   [align : i64]
   [repr-kind : i64]
   [repr-align : i64]
-  [body : tli.TliTypeBody]) : tli.TliTypeDecl
+  [body : tli.TliTypeBody])
+  (:cold) : tli.TliTypeDecl
   (tli.TliTypeDecl
     (tli-extract-name name)
     module-name
@@ -584,7 +605,8 @@
   [lifetimes : (& ast.AstLifetimeList)]
   [repr : (& ast.AstStructRepr)]
   [cleanup : ast.AstStructCleanup]
-  [fields : (& ast.AstFieldDefList)]) : unit
+  [fields : (& ast.AstFieldDefList)])
+  (:cold) : unit
   (let
     [id : i64
       (ast.ast-nominal-name-id-key
@@ -669,7 +691,8 @@
   [flags : i64]
   [lifetimes : (& ast.AstLifetimeList)]
   [cleanup : ast.AstEnumCleanup]
-  [variants : (& ast.AstVariantDefList)]) : unit
+  [variants : (& ast.AstVariantDefList)])
+  (:cold) : unit
   (let
     [id : i64
       (ast.ast-nominal-name-id-key
@@ -731,7 +754,8 @@
 (define (tli-extract-locally-impure?
   [ctx : tc.TcContext]
   [env : tc.TcTypeEnv]
-  [index : i64]) : bool
+  [index : i64])
+  (:cold) : bool
   (match (symbols.compiler-symbols-decl-at-index
     (tc.tc-context-symbols (& ctx))
     index)
@@ -751,7 +775,8 @@
   [ctx : tc.TcContext]
   [env : tc.TcTypeEnv]
   [sources : (& sources (__tl_dyn-array TliSource))]
-  [root-origins : (& root-origins (__tl_dyn-array i64))]) : TliExtractEffects
+  [root-origins : (& root-origins (__tl_dyn-array i64))])
+  (:cold) : TliExtractEffects
   (let
     [state : (MutPtr tc.TcGlobalCallEffects)
       (tc.tc-global-call-effects-ensure! ctx)]
@@ -833,7 +858,8 @@
   [comptime-only : bool]
   [unsafe-decl : bool]
   [must-use : bool]
-  [cold? : bool]) : tli.TliFnSummary
+  [cold? : bool])
+  (:cold) : tli.TliFnSummary
   (let
     [mask : i64 0]
     [extra : indices.Vec (indices.new)]
@@ -893,7 +919,8 @@
 ;; The declaration index of each defdispatch variant, or -1 when unresolved.
 (define (tli-extract-dispatch-variant-indices
   [ctx : tc.TcContext]
-  [variants : (& ast.AstDispatchVariantList)]) : (__tl_dyn-array i64)
+  [variants : (& ast.AstDispatchVariantList)])
+  (:cold) : (__tl_dyn-array i64)
   (let
     [out : (__tl_dyn-array i64) (__tl_make-array i64 variants.len)]
     (for [slot (iterator.range 0 variants.len)]
@@ -916,7 +943,8 @@
   [variant-indices : (& (__tl_dyn-array i64))]
   [sig : (& ast.AstType)]
   [unsafe-decl : bool]
-  [must-use : bool]) : tli.TliFnSummary
+  [must-use : bool])
+  (:cold) : tli.TliFnSummary
   (let
     [params : i64
       (match sig
@@ -981,7 +1009,8 @@
   [ctx : tc.TcContext]
   [sources : (& sources (__tl_dyn-array TliSource))]
   [root-type-slots : (& root-type-slots str_map.Map)]
-  [params : (& ast.AstParamList)]) : (__tl_dyn-array tli.TliParam)
+  [params : (& ast.AstParamList)])
+  (:cold) : (__tl_dyn-array tli.TliParam)
   (let
     [out : (__tl_dyn-array tli.TliParam)
       (__tl_make-array tli.TliParam params.len)]
@@ -1003,7 +1032,8 @@
   [sources : (& sources (__tl_dyn-array TliSource))]
   [root-type-slots : (& root-type-slots str_map.Map)]
   [params : (& ast.AstTypeList)]
-  [abi : ast.AstExternAbi]) : (__tl_dyn-array tli.TliParam)
+  [abi : ast.AstExternAbi])
+  (:cold) : (__tl_dyn-array tli.TliParam)
   (let
     [typed-tail : bool
       (match (& abi)
@@ -1035,8 +1065,8 @@
       [_ unit])
     out))
 
-(define (tli-extract-link-inputs [items : (& ast.AstExternLinkInputList)]) : (__tl_dyn-array
-    tli.TliExternLinkInput)
+(define (tli-extract-link-inputs [items : (& ast.AstExternLinkInputList)])
+  (:cold) : (__tl_dyn-array tli.TliExternLinkInput)
   (let
     [out : (__tl_dyn-array tli.TliExternLinkInput)
       (__tl_make-array tli.TliExternLinkInput items.len)]
@@ -1049,11 +1079,13 @@
           [(Arg name) (tli.TliExternLinkInput 2 (string.copy name))])))
     out))
 
-(define (tli-extract-bytes [text : (& str)]) : tli.TliConst
+(define (tli-extract-bytes [text : (& str)])
+  (:cold) : tli.TliConst
   (tli.TliConst.Bytes
     (byte_buf.to-array (byte_buf.from-bytes (byte_buf.str-as-bytes text)))))
 
-(define (tli-extract-const [value : (& ir.CompilerIrValue)] [ty : ast.AstType]) : tli.TliConst
+(define (tli-extract-const [value : (& ir.CompilerIrValue)] [ty : ast.AstType])
+  (:cold) : tli.TliConst
   (match value
     [(I64 n)
       (match (tc.tc-type-strip-region ty)
@@ -1084,7 +1116,8 @@
   [ctx : tc.TcContext]
   [sources : (& sources (__tl_dyn-array TliSource))]
   [root-type-slots : (& root-type-slots str_map.Map)]
-  [items : (& ast.AstMacroParamList)]) : (__tl_dyn-array tli.TliMacroParam)
+  [items : (& ast.AstMacroParamList)])
+  (:cold) : (__tl_dyn-array tli.TliMacroParam)
   (let
     [out : (__tl_dyn-array tli.TliMacroParam)
       (__tl_make-array tli.TliMacroParam items.len)]
@@ -1112,7 +1145,8 @@
 
 (cfg
   embedded-stdlib-tlci
-  (define (tli-extract-native-catalog-digest [generation : i64]) : (Array u8 32)
+  (define (tli-extract-native-catalog-digest [generation : i64])
+    (:cold) : (Array u8 32)
     (let
       [frame : i64
         (tlci.compiler-embedded-stdlib-tlci-session-index generation)]
@@ -1123,7 +1157,8 @@
 
 (define (tli-extract-companion-macro-index
   [companion : (& TliPackageCompanionBinding)]
-  [identity : (& str)]) : i64
+  [identity : (& str)])
+  (:cold) : i64
   (when (not companion.has-companion) (return -1))
   (for [i (iterator.range 0 (array-length companion.macro-identities))]
     (when
@@ -1141,7 +1176,8 @@
   [name : String]
   [params : (& ast.AstMacroParamList)]
   [ret : ast.AstType]
-  [body-box : i64]) : tli.TliMacroHandle
+  [body-box : i64])
+  (:cold) : tli.TliMacroHandle
   (let
     [identity : String
       (tc.macro-tlci-catalog-identity
@@ -1203,7 +1239,8 @@
 (define (tli-extract-package-link-symbol
   [decl-path : (& str)]
   [raw-module-name : (& str)]
-  [spelling : (& str)]) : String
+  [spelling : (& str)])
+  (:cold) : String
   (let
     [logical : String
       (if (= (string.string-length raw-module-name) 0)
@@ -1236,7 +1273,8 @@
   [is-stdlib : bool]
   [name : i64]
   [expr : i64]
-  [flags : i64]) : unit
+  [flags : i64])
+  (:cold) : unit
   (let
     [spelling : String (tli-extract-name name)]
     [symbol : String
@@ -1305,8 +1343,8 @@
       (set! index (+ index 1)))
     rows))
 
-(define (tli-extract-copy-writes [source : (& source writes.Vec)]) : (__tl_dyn-array
-    tli.TliGlobalWrite)
+(define (tli-extract-copy-writes [source : (& source writes.Vec)])
+  (:cold) : (__tl_dyn-array tli.TliGlobalWrite)
   (let
     [count : i64 (writes.len source)]
     [out : (__tl_dyn-array tli.TliGlobalWrite)
@@ -1321,7 +1359,8 @@
 
 ;; Generated declarations carry comptime provenance. The handwritten
 ;; stdlib.comptime surface is also compile-time by module identity.
-(define (tli-extract-comptime? [ctx : tc.TcContext] [decl : (& ast.AstDecl)]) : bool
+(define (tli-extract-comptime? [ctx : tc.TcContext] [decl : (& ast.AstDecl)])
+  (:cold) : bool
   (or
     (symbols.compiler-symbols-comptime-module-id? (tc.tc-context-module-id ctx))
     (and
@@ -1330,7 +1369,8 @@
         [(No) true]
         [_ false]))))
 
-(define (tli-extract-spmd-type-ok? [ty : (& tli.TliType)]) : bool
+(define (tli-extract-spmd-type-ok? [ty : (& tli.TliType)])
+  (:cold) : bool
   (match ty
     [(or (tli.TliType.I64) (tli.TliType.I32) (tli.TliType.I16) (tli.TliType.I8)
          (tli.TliType.U64) (tli.TliType.U32) (tli.TliType.U16) (tli.TliType.U8)
@@ -1341,7 +1381,8 @@
 
 (define (tli-extract-spmd-sig-ok?
   [params : (& (__tl_dyn-array tli.TliParam))]
-  [ret : (& tli.TliType)]) : bool
+  [ret : (& tli.TliType)])
+  (:cold) : bool
   (unless (tli-extract-spmd-type-ok? ret) (return false))
   (for [i (iterator.range 0 (array-length params))]
     (unless
@@ -1353,7 +1394,8 @@
   (Ok tli.TliSpmdExpr)
   (No))
 
-(define (tli-extract-binop-tag [op : ast.AstBinOp]) : i64
+(define (tli-extract-binop-tag [op : ast.AstBinOp])
+  (:cold) : i64
   (match op
     [(Add) 0]
     [(Sub) 1]
@@ -1374,7 +1416,8 @@
     [(Shl) 16]
     [(Shr) 17]))
 
-(define (tli-extract-unop-tag [op : ast.AstUnOp]) : i64
+(define (tli-extract-unop-tag [op : ast.AstUnOp])
+  (:cold) : i64
   (match op
     [(Neg) 0]
     [(Not) 1]
@@ -1386,7 +1429,8 @@
   [locals : sym_i64_env.SymI64Env]
   [expr-id : i64]
   [budget : (&mut i64)]
-  [depth : i64]) : TliSpmdExprExtractResult
+  [depth : i64])
+  (:cold) : TliSpmdExprExtractResult
   (when (or (<= (deref budget) 0) (> depth 48)) (return (No)))
   (set! (deref budget) (- (deref budget) 1))
   (match (tc.tc-context-expr-get ctx expr-id)
@@ -1674,7 +1718,8 @@
   [meta : (& ast.AstFnMetadata)]
   [facts : (& facts TliExtractEffects)]
   [original : (& ast.AstDecl)]
-  [unsafe-decl : bool]) : unit
+  [unsafe-decl : bool])
+  (:cold) : unit
   (let
     [signature : tc.TcElidedSignature
       (match (tc.tc-elide-function-signature
@@ -1785,7 +1830,8 @@
   [ty : ast.AstType]
   [facts : (& facts TliExtractEffects)]
   [original : (& ast.AstDecl)]
-  [unsafe-decl : bool]) : unit
+  [unsafe-decl : bool])
+  (:cold) : unit
   (let
     [spelling : String (tli-extract-name name)]
     [comptime-only : bool (tli-extract-comptime? ctx original)]
@@ -1872,7 +1918,8 @@
   [unsafe-decl : bool]
   [decl : (& ast.AstDecl)]
   [lower-state : lower.CompilerLowerState]
-  [facts : (& facts TliExtractEffects)]) : unit
+  [facts : (& facts TliExtractEffects)])
+  (:cold) : unit
   (let
     [comptime-only : bool (tli-extract-comptime? ctx decl)]
     [type-flags : i64
@@ -2047,7 +2094,8 @@
 
 (define (tli-extract-find-module
   [sources : (& sources (__tl_dyn-array TliSource))]
-  [name : (& str)]) : i64
+  [name : (& str)])
+  (:cold) : i64
   (for [index (iterator.range 0 (array-length sources))]
     (when
       (string.eq name (& (array-ref sources index).module-name))
@@ -2059,7 +2107,8 @@
   [name : String]
   [tag : i64]
   [alias : String]
-  [item : String]) : unit
+  [item : String])
+  (:cold) : unit
   (for [index (iterator.range 0 out.len)]
     (let
       [row (& (array-ref out.slots index))]
@@ -2076,7 +2125,8 @@
   [decls : (& decls ast.AstDeclList)]
   [initial-owner : i64]
   [owner : i64]
-  [qualifier : (& str)]) : String
+  [qualifier : (& str)])
+  (:cold) : String
   (let
     [current : i64 initial-owner]
     (for [index (iterator.range 0 (ast.ast-decl-list-len decls))]
@@ -2102,7 +2152,8 @@
   [initial-owner : i64]
   [owner : i64]
   [expr-bases : i64]
-  [call : i64]) : String
+  [call : i64])
+  (:cold) : String
   (match (ast.ast-expr-unspan-with-segment-bases
     expr-bases
     (& (ast.ast-expr-segment-bases-get expr-bases call)))
@@ -2135,7 +2186,8 @@
   [paths : (& ast.AstDeclPathList)]
   [has-paths : bool]
   [initial-owner : i64]
-  [expr-bases : i64]) : unit
+  [expr-bases : i64])
+  (:cold) : unit
   (let
     [current : i64 initial-owner]
     (for [index (iterator.range 0 (ast.ast-decl-list-len decls))]
@@ -2205,7 +2257,8 @@
   [source : (& TliSource)]
   [path : String]
   [cfg-digest : (& (Array u8 32))]
-  [record : TliExtractModule]) : tli.TliModuleRecord
+  [record : TliExtractModule])
+  (:cold) : tli.TliModuleRecord
   (match record
     [(TliExtractModule flags imps tys fns vals macs disps)
       (let
@@ -2230,7 +2283,8 @@
           (tli-extract-finish-vector tli.TliMacroHandle macs)
           (tli-extract-finish-vector tli.TliDispatchDecl disps)))]))
 
-(define (tli-extract-empty-module [path : (& str)]) : TliExtractModule
+(define (tli-extract-empty-module [path : (& str)])
+  (:cold) : TliExtractModule
   (TliExtractModule
     (tli-extract-flag
       (or
@@ -2246,8 +2300,8 @@
 
 (define (tli-extract-open-modules
   [request : (& request api.TypecheckRequest)]
-  [sources : (& sources (__tl_dyn-array TliSource))]) : (__tl_dyn-array
-    TliExtractModule)
+  [sources : (& sources (__tl_dyn-array TliSource))])
+  (:cold) : (__tl_dyn-array TliExtractModule)
   (let
     [count : i64 (array-length sources)]
     [records : (__tl_dyn-array TliExtractModule)
@@ -2270,7 +2324,8 @@
 
 (define (tli-extract-find-record
   [modules : (& modules (__tl_dyn-array tli.TliModuleRecord))]
-  [name : (& str)]) : i64
+  [name : (& str)])
+  (:cold) : i64
   (for [index (iterator.range 0 (array-length modules))]
     (when (string.eq name (& (array-ref modules index).name)) (return index)))
   -1)
@@ -2283,7 +2338,8 @@
   [modules : (&mut modules (__tl_dyn-array tli.TliModuleRecord))]
   [states : (&mut states (__tl_dyn-array i64))]
   [digests : (&mut digests (__tl_dyn-array sha.Sha256Digest))]
-  [slot : i64]) : bool
+  [slot : i64])
+  (:cold) : bool
   (match (array-ref states slot)
     [2 true]
     [1 false]
@@ -2315,7 +2371,8 @@
       (set! (array-ref states slot) 2)
       true]))
 
-(define (tli-extract-pin-imports! [bundle : (&mut bundle tli.TliBundle)]) : bool
+(define (tli-extract-pin-imports! [bundle : (&mut bundle tli.TliBundle)])
+  (:cold) : bool
   (let
     [count : i64 (array-length bundle.modules)]
     [pool (codec.tli-collect-pool bundle)]
@@ -2342,7 +2399,8 @@
 (define (tli-extract-unsafe-decls!
   [flags : (&mut flags (__tl_dyn-array bool))]
   [decls : (& decls ast.AstDeclList)]
-  [start : i64]) : i64
+  [start : i64])
+  (:cold) : i64
   (let
     [next : i64 start]
     (for [index (iterator.range 0 (ast.ast-decl-list-len decls))]
@@ -2371,7 +2429,8 @@
 
 (define (tli-extract-source-for-path
   [sources : (& sources (__tl_dyn-array TliSource))]
-  [path : (& str)]) : i64
+  [path : (& str)])
+  (:cold) : i64
   (for [index (iterator.range 0 (array-length sources))]
     (when (string.eq path (& (array-ref sources index).path)) (return index)))
   -1)
@@ -2379,8 +2438,8 @@
 (define (tli-extract-add-generated-sources
   [ctx : tc.TcContext]
   [paths : (& ast.AstDeclPathList)]
-  [sources : (& sources (__tl_dyn-array TliSource))]) : (__tl_dyn-array
-    TliSource)
+  [sources : (& sources (__tl_dyn-array TliSource))])
+  (:cold) : (__tl_dyn-array TliSource)
   (let
     [seen : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
     [out : source_rows.Vec (source_rows.new)]
@@ -2424,8 +2483,8 @@
 
 (define (tli-extract-extend-records
   [original : (__tl_dyn-array TliExtractModule)]
-  [sources : (& sources (__tl_dyn-array TliSource))]) : (__tl_dyn-array
-    TliExtractModule)
+  [sources : (& sources (__tl_dyn-array TliSource))])
+  (:cold) : (__tl_dyn-array TliExtractModule)
   (let
     [count : i64 (array-length original)]
     [records : (__tl_dyn-array TliExtractModule)
@@ -2453,7 +2512,8 @@
   [bundle-flags : i64]
   [build : String]
   [target : String]
-  [companion : (& TliPackageCompanionBinding)]) : tli.TliBundle
+  [companion : (& TliPackageCompanionBinding)])
+  (:cold) : tli.TliBundle
   ;; Macro-expansion CTFE probes aggregate layouts before generated-instance
   ;; import aliases resolve, and caches what it saw. Recorded layouts must match
   ;; the ones lowering emits, so start from the same clean view lowering uses.
@@ -2635,7 +2695,8 @@
   [cfg-digest : (& (Array u8 32))]
   [bundle-flags : i64]
   [build : String]
-  [target : String]) : tli.TliBundle
+  [target : String])
+  (:cold) : tli.TliBundle
   (let
     [empty-companion : TliPackageCompanionBinding
       (tli-package-companion-binding-empty)]
@@ -2656,7 +2717,8 @@
   [sources : (& sources (__tl_dyn-array TliSource))]
   [bundle-flags : i64]
   [build : String]
-  [target : String]) : TliExtractResult
+  [target : String])
+  (:cold) : TliExtractResult
   (let
     [cfg-digest : (Array u8 32)
       (if (!= (bit-and bundle-flags tli.tli-is-stdlib-bundle) 0)
@@ -2702,7 +2764,8 @@
       result)))
 
 ;; --- Shared single-pass typecheck + partitioned module emitter ---------------
-(define (tli-partition-sanitize-module-filename [name : (& str)]) : String
+(define (tli-partition-sanitize-module-filename [name : (& str)])
+  (:cold) : String
   (let
     [buf : text_buf.TextBuf (text_buf.empty)]
     [n : i64 (string.string-length name)]
@@ -2721,7 +2784,8 @@
           (set! buf (text_buf.append buf "_")))))
     (text_buf.render buf)))
 
-(define (tli-partition-pad3 [n : i64]) : String
+(define (tli-partition-pad3 [n : i64])
+  (:cold) : String
   (let
     [s : String (string.int->string n)]
     (cond
@@ -2729,7 +2793,8 @@
       [(< n 100) (str_cat.str-cat "0" s)]
       [else s])))
 
-(define (tli-partition-sort-strings! [items : (&mut (__tl_dyn-array String))]) : unit
+(define (tli-partition-sort-strings! [items : (&mut (__tl_dyn-array String))])
+  (:cold) : unit
   (let
     [n : i64 (array-length (deref items))]
     (for [i (iterator.range 1 n)]
@@ -2753,7 +2818,8 @@
 (define (tli-partition-fn-physical-signature
   [pools : ast.AstNodePoolContext]
   [params : (& ir.CompilerIrParamSeq)]
-  [ret : (& ast.AstType)]) : ast.AstType
+  [ret : (& ast.AstType)])
+  (:cold) : ast.AstType
   (let
     [list : ast.AstTypeList (ast.ast-type-list-with-capacity params.len)]
     (for [i (iterator.range 0 params.len)]
@@ -2771,18 +2837,21 @@
 
 (define (tli-partition-intern-symbol!
   [interns : (&mut intern.InternCompatState)]
-  [text : String]) : i64
+  [text : String])
+  (:cold) : i64
   (let
     [id : i64 (intern.intern-compat-state-intern interns text)]
     (intern.intern-compat-state-install! (& (deref interns)))
     id))
 
-(define (tli-partition-note-ref! [refs : (&mut i64_map.Map)] [symbol-id : i64]) : unit
+(define (tli-partition-note-ref! [refs : (&mut i64_map.Map)] [symbol-id : i64])
+  (:cold) : unit
   (i64_map.insert-ref! refs (ir.compiler-ir-symbol-id symbol-id) 1))
 
 (define (tli-partition-collect-value-refs!
   [refs : (&mut i64_map.Map)]
-  [value : (& ir.CompilerIrValue)]) : unit
+  [value : (& ir.CompilerIrValue)])
+  (:cold) : unit
   (match value
     [(ir.CompilerIrValue.Function name) (tli-partition-note-ref! refs name)]
     [(ir.CompilerIrValue.Global name) (tli-partition-note-ref! refs name)]
@@ -2792,7 +2861,8 @@
 (define (tli-partition-collect-instr-refs
   [refs : (&mut i64_map.Map)]
   [instr : (& ir.CompilerIrInstr)]
-  [uses : (&mut uses ir.CompilerIrUseList)]) : unit
+  [uses : (&mut uses ir.CompilerIrUseList)])
+  (:cold) : unit
   (match instr
     [(or (ir.CompilerIrInstr.Call _ name _ _)
          (ir.CompilerIrInstr.TailCall name _ _))
@@ -2813,10 +2883,12 @@
 
 (define (tli-partition-module-refs-contains?
   [mrefs : (& TliPartitionModuleRefs)]
-  [symbol-id : i64]) : bool
+  [symbol-id : i64])
+  (:cold) : bool
   (i64_map.contains? (& mrefs.refs) (ir.compiler-ir-symbol-id symbol-id)))
 
-(define (tli-partition-function-has-syscall? [func : (& ir.CompilerIrFunction)]) : bool
+(define (tli-partition-function-has-syscall? [func : (& ir.CompilerIrFunction)])
+  (:cold) : bool
   (match func
     [(ir.CompilerIrFunction.Function _ _ _ _ blocks _ _)
       (match blocks
@@ -2834,7 +2906,8 @@
                         [_ unit]))])))
             found)])]))
 
-(define (tli-partition-function-collect-refs [func : (& ir.CompilerIrFunction)]) : i64_map.Map
+(define (tli-partition-function-collect-refs [func : (& ir.CompilerIrFunction)])
+  (:cold) : i64_map.Map
   (let
     [refs : i64_map.Map (i64_map.with-capacity 32)]
     [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
@@ -2853,7 +2926,8 @@
     refs))
 
 (define (tli-partition-windows-syscall-skip-mask
-  [functions : (& ir.CompilerIrFunctionSeq)]) : (__tl_dyn-array bool)
+  [functions : (& ir.CompilerIrFunctionSeq)])
+  (:cold) : (__tl_dyn-array bool)
   (let
     [fn-count : i64 functions.len]
     [skip : (__tl_dyn-array bool) (__tl_make-array bool fn-count)]
@@ -2893,7 +2967,8 @@
 
 (define (tli-partition-collect-module-refs
   [globals : (& ir.CompilerIrGlobalSeq)]
-  [functions : (& ir.CompilerIrFunctionSeq)]) : TliPartitionModuleRefs
+  [functions : (& ir.CompilerIrFunctionSeq)])
+  (:cold) : TliPartitionModuleRefs
   (let
     [refs : i64_map.Map (i64_map.with-capacity 256)]
     [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
@@ -2916,7 +2991,8 @@
                         (&mut uses)))]))])]))
     (TliPartitionModuleRefs refs)))
 
-(define (tli-typecheck-for-extract-and-lower [request : api.TypecheckRequest]) : tc.ResultCompilerTypecheckChecked
+(define (tli-typecheck-for-extract-and-lower [request : api.TypecheckRequest])
+  (:cold) : tc.ResultCompilerTypecheckChecked
   (let
     [observer-job : tc.TcJobState request.job-state]
     (tc.tc-job-state-set-parser-control!
@@ -3007,7 +3083,8 @@
 
 (define (tli-partition-owner-slot
   [name-to-slot : (& str_map.Map)]
-  [owner-name : (& str)]) : i64
+  [owner-name : (& str)])
+  (:cold) : i64
   (let
     [direct : i64
       (str_map.get-value-or name-to-slot (string.copy owner-name) -1)]
@@ -3020,7 +3097,8 @@
           (str_map.get-value-or name-to-slot canonical -1))
         -1))))
 
-(define (tli-partition-noexecstack-note) : String
+(define (tli-partition-noexecstack-note)
+  (:cold) : String
   "\n    .section .note.GNU-stack,\"\",@progbits\n")
 
 ;; One module's object through `route`, from its own backend state so the
@@ -3035,7 +3113,8 @@
   [backend-mode : be_state.CompilerBackendMode]
   [opt-level : i64]
   [representations : ir.CompilerIrRepresentationIndex]
-  [asm-path : (& str)]) : bool
+  [asm-path : (& str)])
+  (:cold) : bool
   (match route
     [(Assembly) false]
     [(DirectObject write-object)
@@ -3076,7 +3155,8 @@
           written))]))
 
 (define (tli-partition-cross-module-tiny-helper?
-  [blocks : (& ir.CompilerIrBlockList)]) : bool
+  [blocks : (& ir.CompilerIrBlockList)])
+  (:cold) : bool
   (match blocks
     [(ir.CompilerIrBlockList.Array block-seq)
       (if (> block-seq.len 4)
@@ -3121,7 +3201,8 @@
   [windows? : bool]
   [opt-level : i64]
   [is-stdlib? : bool]
-  [object-route : TliPartitionObjectRoute]) : ResultTliPartitionedEmit
+  [object-route : TliPartitionObjectRoute])
+  (:cold) : ResultTliPartitionedEmit
   (let
     [interns : intern.InternCompatState
       (lower.compiler-lower-state-interns lower-state)]

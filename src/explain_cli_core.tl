@@ -10,7 +10,8 @@
   (DiagnosticExplainUnknown)
   (DiagnosticExplainDetailed String))
 
-(define (diagnostic-explain-help-text) : String
+(define (diagnostic-explain-help-text)
+  (:cold) : String
   "Usage:
     typelisp explain <code>
     typelisp explain --list
@@ -21,7 +22,8 @@ Summary:
     ASCII case-insensitive.
 ")
 
-(define (diagnostic-explain-e0100) : String
+(define (diagnostic-explain-e0100)
+  (:cold) : String
   "E0100: parse error
 
 Description:
@@ -47,7 +49,8 @@ See also:
     SPEC.md, \"Grammar (informal)\"; docs/diagnostic-codes.md.
 ")
 
-(define (diagnostic-explain-e0101) : String
+(define (diagnostic-explain-e0101)
+  (:cold) : String
   "E0101: unbalanced delimiter
 
 Description:
@@ -69,7 +72,8 @@ See also:
     SPEC.md, \"Lexical structure\"; SPEC.md, \"Grammar (informal)\".
 ")
 
-(define (diagnostic-explain-e0102) : String
+(define (diagnostic-explain-e0102)
+  (:cold) : String
   "E0102: malformed token
 
 Description:
@@ -93,7 +97,8 @@ See also:
     SPEC.md, \"Lexical structure\".
 ")
 
-(define (diagnostic-explain-e0103) : String
+(define (diagnostic-explain-e0103)
+  (:cold) : String
   "E0103: malformed form
 
 Description:
@@ -117,7 +122,8 @@ See also:
     SPEC.md, \"Grammar (informal)\".
 ")
 
-(define (diagnostic-explain-e0104) : String
+(define (diagnostic-explain-e0104)
+  (:cold) : String
   "E0104: invalid pattern syntax
 
 Description:
@@ -144,7 +150,8 @@ See also:
     SPEC.md, \"pattern matching\"; E0213.
 ")
 
-(define (diagnostic-explain-e0200) : String
+(define (diagnostic-explain-e0200)
+  (:cold) : String
   "E0200: unclassified typecheck error
 
 Description:
@@ -163,7 +170,8 @@ See also:
     CONTRIBUTING.md; docs/compiler-architecture.md, \"Diagnostics\".
 ")
 
-(define (diagnostic-explain-e0201) : String
+(define (diagnostic-explain-e0201)
+  (:cold) : String
   "E0201: unbound name
 
 Description:
@@ -186,7 +194,8 @@ See also:
     SPEC.md, \"Names and bindings\"; README.md, \"Modules\".
 ")
 
-(define (diagnostic-explain-e0202) : String
+(define (diagnostic-explain-e0202)
+  (:cold) : String
   "E0202: arity mismatch
 
 Description:
@@ -207,7 +216,8 @@ See also:
     SPEC.md, \"Functions\" and \"Pattern matching\".
 ")
 
-(define (diagnostic-explain-e0203) : String
+(define (diagnostic-explain-e0203)
+  (:cold) : String
   "E0203: non-exhaustive match
 
 Description:
@@ -227,7 +237,8 @@ See also:
     SPEC.md, \"Pattern matching\"; tests/safety/generated_match_pattern_non_exhaustive_reject.tl.
 ")
 
-(define (diagnostic-explain-e0204) : String
+(define (diagnostic-explain-e0204)
+  (:cold) : String
   "E0204: unknown struct field
 
 Description:
@@ -246,7 +257,8 @@ See also:
     SPEC.md, \"Structs\"; src/tests/compiler_check_smoke.tl.
 ")
 
-(define (diagnostic-explain-e0205) : String
+(define (diagnostic-explain-e0205)
+  (:cold) : String
   "E0205: region escape
 
 Description:
@@ -266,7 +278,8 @@ See also:
     SPEC.md, \"Arena regions\"; tests/safety/region_escape_reject.tl.
 ")
 
-(define (diagnostic-explain-e0206) : String
+(define (diagnostic-explain-e0206)
+  (:cold) : String
   "E0206: type mismatch
 
 Description:
@@ -284,7 +297,8 @@ See also:
     SPEC.md, \"Types\" and \"Type checking\".
 ")
 
-(define (diagnostic-explain-e0207) : String
+(define (diagnostic-explain-e0207)
+  (:cold) : String
   "E0207: borrow violation
 
 Description:
@@ -304,7 +318,8 @@ See also:
     SPEC.md, \"Borrowing\"; tests/safety/mutable_reference_reject.tl.
 ")
 
-(define (diagnostic-explain-e0208) : String
+(define (diagnostic-explain-e0208)
+  (:cold) : String
   "E0208: move violation
 
 Description:
@@ -331,7 +346,8 @@ See also:
     tests/safety/move_out_of_reference_call_arg_reject.tl.
 ")
 
-(define (diagnostic-explain-e0209) : String
+(define (diagnostic-explain-e0209)
+  (:cold) : String
   "E0209: unsafe context required
 
 Description:
@@ -350,7 +366,8 @@ See also:
     SPEC.md, \"Unsafe operations\"; tests/safety/safe_raw_pointer_read_reject.tl.
 ")
 
-(define (diagnostic-explain-e0210) : String
+(define (diagnostic-explain-e0210)
+  (:cold) : String
   "E0210: lifetime mismatch
 
 Description:
@@ -370,7 +387,8 @@ See also:
     SPEC.md, \"Reference lifetimes\"; tests/safety/signature_lifetime_alias_local_return_reject.tl.
 ")
 
-(define (diagnostic-explain-e0211) : String
+(define (diagnostic-explain-e0211)
+  (:cold) : String
   "E0211: resource ownership violation
 
 Description:
@@ -392,7 +410,8 @@ See also:
     SPEC.md, \"Cleanup ownership\"; tests/safety/sync_mutex_guard_let_reject.tl.
 ")
 
-(define (diagnostic-explain-e0212) : String
+(define (diagnostic-explain-e0212)
+  (:cold) : String
   "E0212: arena ownership violation
 
 Description:
@@ -412,7 +431,8 @@ See also:
     SPEC.md, \"Arena ownership\"; tests/safety/arena_phase_non_direct_owner_reject.tl.
 ")
 
-(define (diagnostic-explain-e0213) : String
+(define (diagnostic-explain-e0213)
+  (:cold) : String
   "E0213: invalid pattern
 
 Description:
@@ -434,7 +454,8 @@ See also:
     SPEC.md, \"Pattern matching\"; tests/safety/struct_match_pattern_unreachable_reject.tl.
 ")
 
-(define (diagnostic-explain-e0214) : String
+(define (diagnostic-explain-e0214)
+  (:cold) : String
   "E0214: SPMD restriction
 
 Description:
@@ -457,7 +478,8 @@ See also:
     SPEC.md, section 5.15; tests/safety/spmd_outer_mutation_reject.tl.
 ")
 
-(define (diagnostic-explain-e0215) : String
+(define (diagnostic-explain-e0215)
+  (:cold) : String
   "E0215: invalid storage place
 
 Description:
@@ -477,7 +499,8 @@ See also:
     SPEC.md, \"Places and assignment\"; tests/safety/struct_field_set_temporary_reject.tl.
 ")
 
-(define (diagnostic-explain-e0216) : String
+(define (diagnostic-explain-e0216)
+  (:cold) : String
   "E0216: control-flow misuse
 
 Description:
@@ -496,7 +519,8 @@ See also:
     SPEC.md, \"Loops\"; tests/safety/while_break_outside_reject.tl.
 ")
 
-(define (diagnostic-explain-e0217) : String
+(define (diagnostic-explain-e0217)
+  (:cold) : String
   "E0217: thread-safety violation
 
 Description:
@@ -527,7 +551,8 @@ See also:
     docs/concurrency-and-simd.md; tests/safety/thread_spawn_i64_raw_pointer_capture_reject.tl.
 ")
 
-(define (diagnostic-explain-e0218) : String
+(define (diagnostic-explain-e0218)
+  (:cold) : String
   "E0218: compile-time constraint
 
 Description:
@@ -546,7 +571,8 @@ See also:
     SPEC.md, \"Compile-time evaluation\"; tests/safety/fixed_make_array_runtime_count_reject.tl.
 ")
 
-(define (diagnostic-explain-e0219) : String
+(define (diagnostic-explain-e0219)
+  (:cold) : String
   "E0219: unsafe callable effect erasure
 
 Description:
@@ -570,7 +596,8 @@ See also:
     SPEC.md, \"(unsafe declaration)\"; tests/safety/unsafe_callable_value_launder_reject.tl.
 ")
 
-(define (diagnostic-explain-e0220) : String
+(define (diagnostic-explain-e0220)
+  (:cold) : String
   "E0220: global written outside its module
 
 Description:
@@ -600,7 +627,8 @@ See also:
     SPEC.md, \"Default visibility\"; tests/safety/foreign_global_selected_set_reject.tl.
 ")
 
-(define (diagnostic-explain-e0221) : String
+(define (diagnostic-explain-e0221)
+  (:cold) : String
   "E0221: opaque representation used outside its module family
 
 Description:
@@ -638,7 +666,8 @@ See also:
     SPEC.md, \"Opaque aggregates\"; tests/safety/opaque_foreign_construct_reject.tl.
 ")
 
-(define (diagnostic-explain-e0222) : String
+(define (diagnostic-explain-e0222)
+  (:cold) : String
   "E0222: call may write a borrowed global
 
 Description:
@@ -670,7 +699,8 @@ See also:
     SPEC.md, \"Global places\"; E0207 (borrow violation).
 ")
 
-(define (diagnostic-explain-e0301) : String
+(define (diagnostic-explain-e0301)
+  (:cold) : String
   "E0301: cannot read source module
 
 Description:
@@ -691,7 +721,8 @@ See also:
     SPEC.md, section 4.4 (modules and imports); E0303 (import resolution).
 ")
 
-(define (diagnostic-explain-e0302) : String
+(define (diagnostic-explain-e0302)
+  (:cold) : String
   "E0302: cannot read included file
 
 Description:
@@ -712,7 +743,8 @@ See also:
     SPEC.md, sections 4.4.6 and 4.4.7 (include forms); E0301 (source modules).
 ")
 
-(define (diagnostic-explain-e0303) : String
+(define (diagnostic-explain-e0303)
+  (:cold) : String
   "E0303: cannot resolve import or include
 
 Description:
@@ -742,7 +774,8 @@ See also:
     SPEC.md, section 4.4 (modules, imports and includes); E0304 (selected item).
 ")
 
-(define (diagnostic-explain-e0304) : String
+(define (diagnostic-explain-e0304)
+  (:cold) : String
   "E0304: missing selected import item
 
 Description:
@@ -762,7 +795,8 @@ See also:
     SPEC.md, section 4.4 (selected imports); E0303 (import resolution).
 ")
 
-(define (diagnostic-explain-e0305) : String
+(define (diagnostic-explain-e0305)
+  (:cold) : String
   "E0305: ambiguous import binding
 
 Description:
@@ -784,7 +818,8 @@ See also:
     SPEC.md, section 4.4 (import namespaces); E0304 (selected imports).
 ")
 
-(define (diagnostic-explain-e0307) : String
+(define (diagnostic-explain-e0307)
+  (:cold) : String
   "E0307: duplicate module declaration
 
 Description:
@@ -805,14 +840,16 @@ See also:
     SPEC.md, section 4.4 (modules and load-once imports); E0303 (resolution).
 ")
 
-(define (diagnostic-explain-ascii-fold-char [c : char]) : char
+(define (diagnostic-explain-ascii-fold-char [c : char])
+  (:cold) : char
   (if (and (>= c 'A') (<= c 'Z'))
     (cast (+ (cast c : i64) 32) : char)
     c))
 
 (define (diagnostic-explain-ascii-case-eq
   [left : (& left str)]
-  [right : (& right str)]) : bool
+  [right : (& right str)])
+  (:cold) : bool
   (let
     [left-n : i64 (string.string-length left)]
     [right-n : i64 (string.string-length right)]
@@ -829,7 +866,8 @@ See also:
 
 (define (diagnostic-explain-ascii-case-contains
   [haystack : (& haystack str)]
-  [needle : (& needle str)]) : bool
+  [needle : (& needle str)])
+  (:cold) : bool
   (let
     [haystack-n : i64 (string.string-length haystack)]
     [needle-n : i64 (string.string-length needle)]
@@ -854,7 +892,8 @@ See also:
       (+= start 1))
     found))
 
-(define (diagnostic-explain-e0501) : String
+(define (diagnostic-explain-e0501)
+  (:cold) : String
   "E0501: macro namespace error
 
 Description:
@@ -877,7 +916,8 @@ See also:
     SPEC.md, \"Modules\" and \"Macros\"; E0304 (selected import item).
 ")
 
-(define (diagnostic-explain-e0502) : String
+(define (diagnostic-explain-e0502)
+  (:cold) : String
   "E0502: invalid macro use
 
 Description:
@@ -899,7 +939,8 @@ See also:
     SPEC.md, \"Macros\"; E0202 (arity mismatch); E0218 (compile-time constraint).
 ")
 
-(define (diagnostic-explain-e0503) : String
+(define (diagnostic-explain-e0503)
+  (:cold) : String
   "E0503: invalid macro output
 
 Description:
@@ -924,7 +965,8 @@ See also:
     SPEC.md, \"Macros\"; E0103 (malformed form); E0502 (invalid macro use).
 ")
 
-(define (diagnostic-explain-e0504) : String
+(define (diagnostic-explain-e0504)
+  (:cold) : String
   "E0504: macro expansion depth exceeded
 
 Description:
@@ -946,7 +988,8 @@ See also:
     SPEC.md, \"Macros\"; E0507 (compile-time evaluation limit exceeded).
 ")
 
-(define (diagnostic-explain-e0505) : String
+(define (diagnostic-explain-e0505)
+  (:cold) : String
   "E0505: explicit compile-time error
 
 Description:
@@ -968,7 +1011,8 @@ See also:
     SPEC.md, \"Compile-time evaluation\"; E0506 (compile-time evaluation failed).
 ")
 
-(define (diagnostic-explain-e0506) : String
+(define (diagnostic-explain-e0506)
+  (:cold) : String
   "E0506: compile-time evaluation failed
 
 Description:
@@ -990,7 +1034,8 @@ See also:
     SPEC.md, \"Compile-time evaluation\"; E0218 (compile-time constraint).
 ")
 
-(define (diagnostic-explain-e0507) : String
+(define (diagnostic-explain-e0507)
+  (:cold) : String
   "E0507: compile-time evaluation limit exceeded
 
 Description:
@@ -1013,7 +1058,8 @@ See also:
     SPEC.md, \"Compile-time evaluation\"; E0504 (macro expansion depth exceeded).
 ")
 
-(define (diagnostic-explain-lookup [code : String]) : DiagnosticExplainLookup
+(define (diagnostic-explain-lookup [code : String])
+  (:cold) : DiagnosticExplainLookup
   (cond
     [(diagnostic-explain-ascii-case-eq
         code
@@ -1167,20 +1213,23 @@ See also:
       (DiagnosticExplainDetailed (diagnostic-explain-e0507))]
     [else DiagnosticExplainUnknown]))
 
-(define (diagnostic-explain-print-registry-row [index : i64]) : unit
+(define (diagnostic-explain-print-registry-row [index : i64])
+  (:cold) : unit
   (io.print-format
     "{}: {}\n"
     (cdiag.compiler-diagnostic-code-registry-code index)
     (cdiag.compiler-diagnostic-code-registry-title index)))
 
-(define (diagnostic-explain-list) : i64
+(define (diagnostic-explain-list)
+  (:cold) : i64
   (let
     [count : i64 (cdiag.compiler-diagnostic-code-registry-count)]
     (for [index (iterator.range 0 count)]
       (diagnostic-explain-print-registry-row index))
     0))
 
-(define (diagnostic-explain-search [term : String]) : i64
+(define (diagnostic-explain-search [term : String])
+  (:cold) : i64
   (let
     [count : i64 (cdiag.compiler-diagnostic-code-registry-count)]
     [matches : i64 0]
@@ -1205,7 +1254,8 @@ See also:
           (str_cat.str-cat "explain: no diagnostic codes match `" term "`\n"))
         1))))
 
-(define (diagnostic-explain-one [code : String]) : i64
+(define (diagnostic-explain-one [code : String])
+  (:cold) : i64
   (match (diagnostic-explain-lookup (string.copy (& code)))
     [(DiagnosticExplainDetailed text)
       (io.print-format "{}" text)
@@ -1215,7 +1265,8 @@ See also:
         (str_cat.str-cat "explain: unknown diagnostic code `" code "`\n"))
       1]))
 
-(define (diagnostic-explain-run-from [idx : i64] [count : i64]) : i64
+(define (diagnostic-explain-run-from [idx : i64] [count : i64])
+  (:cold) : i64
   (cond
     [(= count (+ idx 1))
       (let

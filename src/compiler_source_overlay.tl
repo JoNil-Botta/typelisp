@@ -67,7 +67,8 @@
   (max-ledger-entries i64)
   (max-ledger-path-bytes i64))
 
-(define (compiler-source-overlay-default-limits) : CompilerSourceOverlayLimits
+(define (compiler-source-overlay-default-limits)
+  (:cold) : CompilerSourceOverlayLimits
   (CompilerSourceOverlayLimits 4096 268435456 4096 65536 16777216))
 
 (defstruct CompilerSourceOverlayError
@@ -147,17 +148,19 @@
 (define (compiler-source-overlay-error
   [code : i64]
   [path : (& path str)]
-  [message : (& message str)]) : CompilerSourceOverlayError
+  [message : (& message str)])
+  (:cold) : CompilerSourceOverlayError
   (CompilerSourceOverlayError code (string.copy path) (string.copy message)))
 
-(define (compiler-source-string-array [text : (& text str)]) : (__tl_dyn-array
-    u8)
+(define (compiler-source-string-array [text : (& text str)])
+  (:cold) : (__tl_dyn-array u8)
   (byte_buf.to-array (byte_buf.from-string (string.copy text))))
 
 ;; The content identity of exact bytes, hashed in place.
 (define (compiler-source-content-identity
   [path : (& path str)]
-  [text : (& text str)]) : ResultCompilerSourceContent
+  [text : (& text str)])
+  (:cold) : ResultCompilerSourceContent
   (match (sha256.digest (byte_buf.str-as-bytes text))
     [(Sha256FinalizeOk digest)
       (Ok
@@ -172,18 +175,21 @@
           "SHA-256 rejected the source bytes"))]))
 
 ;; Owned copies of values held in borrowed tables.
-(define (compiler-source-class-copy [class : (& class CompilerSourceClass)]) : CompilerSourceClass
+(define (compiler-source-class-copy [class : (& class CompilerSourceClass)])
+  (:cold) : CompilerSourceClass
   (match class
     [(Disk) (Disk)]
     [(Embedded) (Embedded)]
     [(Overlay) (Overlay)]))
 
 (define (compiler-source-content-copy
-  [content : (& content CompilerSourceContent)]) : CompilerSourceContent
+  [content : (& content CompilerSourceContent)])
+  (:cold) : CompilerSourceContent
   (CompilerSourceContent content.length (string.copy (& content.sha256))))
 
 (define (compiler-source-overlay-input-copy
-  [input : (& input CompilerSourceOverlayInput)]) : CompilerSourceOverlayInput
+  [input : (& input CompilerSourceOverlayInput)])
+  (:cold) : CompilerSourceOverlayInput
   (CompilerSourceOverlayInput
     (string.copy (& input.path))
     (string.copy (& input.bytes))
@@ -193,13 +199,15 @@
 
 (define (compiler-source-content-eq?
   [left : (& left CompilerSourceContent)]
-  [right : (& right CompilerSourceContent)]) : bool
+  [right : (& right CompilerSourceContent)])
+  (:cold) : bool
   (and
     (= left.length right.length)
     (string.eq (& left.sha256) (& right.sha256))))
 
 ;; `text` with ASCII upper-case letters lowered.
-(define (compiler-source-ascii-lower [text : (& text str)]) : String
+(define (compiler-source-ascii-lower [text : (& text str)])
+  (:cold) : String
   (let
     [bytes : (__tl_dyn-array u8) (compiler-source-string-array text)]
     [count : i64 (array-length bytes)]
@@ -213,28 +221,33 @@
 
 ;; Windows file names compare case-insensitively (ASCII); every other host
 ;; compares exact bytes.
-(define (compiler-source-path-fold [path : (& path str)]) : String
+(define (compiler-source-path-fold [path : (& path str)])
+  (:cold) : String
   (cfg windows (compiler-source-ascii-lower path) (string.copy path)))
 
-(define (compiler-source-path-eq? [left : (& left str)] [right : (& right str)]) : bool
+(define (compiler-source-path-eq? [left : (& left str)] [right : (& right str)])
+  (:cold) : bool
   (string.eq (compiler-source-path-fold left) (compiler-source-path-fold right)))
 
 ;; True when `path` is absolute and already in `fs.path-normalize` form.
-(define (compiler-source-path-canonical? [path : (& path str)]) : bool
+(define (compiler-source-path-canonical? [path : (& path str)])
+  (:cold) : bool
   (and (fs.path-absolute? path) (string.eq path (fs.path-normalize path))))
 
 ;; The canonical physical path of a loader path, resolving a relative one
 ;; against the admitted working directory.
 (define (compiler-source-canonical-path
   [cwd : (& cwd str)]
-  [path : (& path str)]) : String
+  [path : (& path str)])
+  (:cold) : String
   (if (fs.path-absolute? path)
     (fs.path-normalize path)
     (fs.path-normalize (fs.path-join cwd path))))
 
 ;; Overlays replace TypeLisp sources only, never the manifests or other inputs
 ;; that decide which source an import names.
-(define (compiler-source-tl-path? [path : (& path str)]) : bool
+(define (compiler-source-tl-path? [path : (& path str)])
+  (:cold) : bool
   (let
     [length : i64 (string.string-length path)]
     (and (> length 3) (string.eq (string.substring path (- length 3) 3) ".tl"))))
@@ -243,7 +256,8 @@
 ;; `C:/`) is the only canonical path that ends in its separator.
 (define (compiler-source-path-under?
   [root : (& root str)]
-  [path : (& path str)]) : bool
+  [path : (& path str)])
+  (:cold) : bool
   (let
     [root-folded : String (compiler-source-path-fold root)]
     [path-folded : String (compiler-source-path-fold path)]
@@ -262,20 +276,23 @@
           (= (string.string-ref root-folded (- root-length 1)) '/')
           (= (string.string-ref path-folded root-length) '/'))])))
 
-(define (compiler-source-read-text [path : (& path str)]) : io.ResultIoString
+(define (compiler-source-read-text [path : (& path str)])
+  (:cold) : io.ResultIoString
   (let
     [bytes (try (io.try-read-file path))]
     (OkIoString (byte_buf.to-string bytes))))
 
 ;; An empty admission request and a way to add one replacement to it.
-(define (compiler-source-overlay-inputs) : overlay_input_vec.Vec
+(define (compiler-source-overlay-inputs)
+  (:cold) : overlay_input_vec.Vec
   (overlay_input_vec.new))
 
 (define (compiler-source-overlay-inputs-push!
   [inputs : (&mut inputs overlay_input_vec.Vec)]
   [path : String]
   [bytes : String]
-  [base : CompilerSourceOverlayBase]) : unit
+  [base : CompilerSourceOverlayBase])
+  (:cold) : unit
   (overlay_input_vec.push-ref!
     inputs
     (CompilerSourceOverlayInput path bytes base)))
@@ -287,7 +304,8 @@
   [root : String]
   [cwd : String]
   [inputs : overlay_input_vec.Vec]
-  [limits : CompilerSourceOverlayLimits]) : ResultCompilerSourceOverlay
+  [limits : CompilerSourceOverlayLimits])
+  (:cold) : ResultCompilerSourceOverlay
   (let
     [count : i64 (overlay_input_vec.len (& inputs))]
     [entries : overlay_entry_vec.Vec (overlay_entry_vec.with-capacity count)]
@@ -429,7 +447,8 @@
 (define (compiler-source-overlay-base-check
   [path : (& path str)]
   [disk-text : (& disk-text str)]
-  [base : (& base CompilerSourceOverlayBase)]) : CompilerSourceOverlayStatus
+  [base : (& base CompilerSourceOverlayBase)])
+  (:cold) : CompilerSourceOverlayStatus
   (match base
     [(Any) (Ok)]
     [(Expect expected)
@@ -448,7 +467,8 @@
 ;; editable through an overlay.
 (define (compiler-source-overlay-check-not-under
   [overlay : (& overlay CompilerSourceOverlay)]
-  [root : (& root str)]) : CompilerSourceOverlayStatus
+  [root : (& root str)])
+  (:cold) : CompilerSourceOverlayStatus
   (let
     [canonical-root : String
       (compiler-source-canonical-path (& overlay.cwd) root)]
@@ -476,7 +496,8 @@
             "overlay replaces a source below a stdlib root"))))))
 
 ;; The empty overlay: every source is read as it would be without one.
-(define (compiler-source-overlay-empty [cwd : String]) : CompilerSourceOverlay
+(define (compiler-source-overlay-empty [cwd : String])
+  (:cold) : CompilerSourceOverlay
   (CompilerSourceOverlay
     0
     (string.copy (& cwd))
@@ -485,13 +506,15 @@
     (compiler-source-overlay-default-limits)))
 
 (define (compiler-source-overlay-entry-count
-  [overlay : (& overlay CompilerSourceOverlay)]) : i64
+  [overlay : (& overlay CompilerSourceOverlay)])
+  (:cold) : i64
   (overlay_entry_vec.len (& overlay.entries)))
 
 ;; The index of the admitted entry for canonical `path`, or -1.
 (define (compiler-source-overlay-find
   [overlay : (& overlay CompilerSourceOverlay)]
-  [path : (& path str)]) : i64
+  [path : (& path str)])
+  (:cold) : i64
   (let
     [count : i64 (overlay_entry_vec.len (& overlay.entries))]
     [index : i64 0]
@@ -507,7 +530,8 @@
 
 (define (compiler-source-overlay-entry
   [overlay : (& overlay CompilerSourceOverlay)]
-  [index : i64]) : CompilerSourceOverlayEntry
+  [index : i64])
+  (:cold) : CompilerSourceOverlayEntry
   (let
     [slots (overlay_entry_vec.slots (& overlay.entries))]
     [entry (& (array-ref slots index))]
@@ -520,7 +544,8 @@
 ;; them in place, and the overlay outlives the check.
 (define (compiler-source-overlay-entry-bytes
   [overlay : (& overlay CompilerSourceOverlay)]
-  [index : i64]) : String
+  [index : i64])
+  (:cold) : String
   (let
     [slots (overlay_entry_vec.slots (& overlay.entries))]
     (owned_view.compiler-owned-string-place-shared-view
@@ -528,12 +553,14 @@
 
 (define (compiler-source-overlay-entry-content
   [overlay : (& overlay CompilerSourceOverlay)]
-  [index : i64]) : CompilerSourceContent
+  [index : i64])
+  (:cold) : CompilerSourceContent
   (let
     [slots (overlay_entry_vec.slots (& overlay.entries))]
     (compiler-source-content-copy (& (array-ref slots index).content))))
 
-(define (compiler-source-ledger-new [limits : CompilerSourceOverlayLimits]) : CompilerSourceLedger
+(define (compiler-source-ledger-new [limits : CompilerSourceOverlayLimits])
+  (:cold) : CompilerSourceLedger
   (CompilerSourceLedger
     (ledger_entry_vec.new)
     0
@@ -542,12 +569,14 @@
     false))
 
 (define (compiler-source-ledger-count
-  [ledger : (& ledger CompilerSourceLedger)]) : i64
+  [ledger : (& ledger CompilerSourceLedger)])
+  (:cold) : i64
   (ledger_entry_vec.len (& ledger.entries)))
 
 (define (compiler-source-ledger-get
   [ledger : (& ledger CompilerSourceLedger)]
-  [index : i64]) : CompilerSourceLedgerEntry
+  [index : i64])
+  (:cold) : CompilerSourceLedgerEntry
   (let
     [slots (ledger_entry_vec.slots (& ledger.entries))]
     [entry (& (array-ref slots index))]
@@ -558,11 +587,13 @@
       (compiler-source-content-copy (& entry.content)))))
 
 (define (compiler-source-ledger-failed?
-  [ledger : (& ledger CompilerSourceLedger)]) : bool
+  [ledger : (& ledger CompilerSourceLedger)])
+  (:cold) : bool
   ledger.failed)
 
 (define (compiler-source-ledger-failure
-  [ledger : (& ledger CompilerSourceLedger)]) : CompilerSourceOverlayError
+  [ledger : (& ledger CompilerSourceLedger)])
+  (:cold) : CompilerSourceOverlayError
   (let
     [failure (& (array-ref ledger.failure 0))]
     (CompilerSourceOverlayError
@@ -572,7 +603,8 @@
 
 (define (compiler-source-ledger-fail!
   [ledger : (&mut ledger CompilerSourceLedger)]
-  [failure : CompilerSourceOverlayError]) : unit
+  [failure : CompilerSourceOverlayError])
+  (:cold) : unit
   (unless
     ledger.failed
     (set! (array-ref ledger.failure 0) failure)
@@ -586,7 +618,8 @@
   [class : CompilerSourceClass]
   [path : (& path str)]
   [logical-path : (& logical-path str)]
-  [content : CompilerSourceContent]) : unit
+  [content : CompilerSourceContent])
+  (:cold) : unit
   (if ledger.failed
     unit
     (let
@@ -636,7 +669,8 @@
 (define (compiler-source-ledger-content-matches?
   [ledger : (& ledger CompilerSourceLedger)]
   [index : i64]
-  [content : (& content CompilerSourceContent)]) : bool
+  [content : (& content CompilerSourceContent)])
+  (:cold) : bool
   (let
     [slots (ledger_entry_vec.slots (& ledger.entries))]
     (compiler-source-content-eq? (& (array-ref slots index).content) content)))
@@ -647,7 +681,8 @@
   [class : CompilerSourceClass]
   [path : (& path str)]
   [logical-path : (& logical-path str)]
-  [text : (& text str)]) : unit
+  [text : (& text str)])
+  (:cold) : unit
   (if ledger.failed
     unit
     (match (compiler-source-content-identity path text)
@@ -659,7 +694,8 @@
 ;; recorded content, or that can no longer be read. Embedded and overlay
 ;; entries do not depend on the filesystem.
 (define (compiler-source-ledger-stale-paths
-  [ledger : (& ledger CompilerSourceLedger)]) : source_path_vec.Vec
+  [ledger : (& ledger CompilerSourceLedger)])
+  (:cold) : source_path_vec.Vec
   (let
     [count : i64 (ledger_entry_vec.len (& ledger.entries))]
     [stale : source_path_vec.Vec (source_path_vec.new)]
@@ -695,7 +731,8 @@
 ;; that relies on one is told which.
 (define (compiler-source-overlay-unread
   [overlay : (& overlay CompilerSourceOverlay)]
-  [ledger : (& ledger CompilerSourceLedger)]) : source_path_vec.Vec
+  [ledger : (& ledger CompilerSourceLedger)])
+  (:cold) : source_path_vec.Vec
   (let
     [count : i64 (overlay_entry_vec.len (& overlay.entries))]
     [unread : source_path_vec.Vec (source_path_vec.new)]
@@ -715,7 +752,8 @@
 
 (define (compiler-source-ledger-find
   [ledger : (& ledger CompilerSourceLedger)]
-  [path : (& path str)]) : i64
+  [path : (& path str)])
+  (:cold) : i64
   (let
     [count : i64 (ledger_entry_vec.len (& ledger.entries))]
     [index : i64 0]

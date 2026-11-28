@@ -155,7 +155,8 @@
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
   [cfgs : sym_i64_env.SymI64Env]
-  [entry-path : String]) : BuildPackageDirectObjectRequest
+  [entry-path : String])
+  (:cold) : BuildPackageDirectObjectRequest
   (BuildPackageDirectObjectRequest
     name
     kind
@@ -358,7 +359,8 @@
     (:cleanup cleanup-build-package-graph-worker-list-tail)))
 
 (define (cleanup-build-package-graph-worker-list-tail
-  [tail : (Box BuildPackageGraphWorkerList)]) : unit
+  [tail : (Box BuildPackageGraphWorkerList)])
+  (:cold) : unit
   (cleanup-build-package-graph-worker-list (deref tail)))
 
 (defstruct BuildPackageSchedulePass
@@ -397,7 +399,8 @@
 (define (build-string-index-map-put
   [map : build_string_i64_map.Map]
   [key : String]
-  [value : i64]) : build_string_i64_map.Map
+  [value : i64])
+  (:cold) : build_string_i64_map.Map
   (let
     [out : build_string_i64_map.Map map]
     (build_string_i64_map.insert-ref! (&mut out) key value)
@@ -406,50 +409,59 @@
 (define (build-string-index-map-put!
   [map : (&mut map build_string_i64_map.Map)]
   [key : String]
-  [value : i64]) : unit
+  [value : i64])
+  (:cold) : unit
   (build_string_i64_map.insert-ref! map key value))
 
 (define (build-invalid-manifest-message
-  [diag : compiler_diagnostic.CompilerDiagnostic]) : String
+  [diag : compiler_diagnostic.CompilerDiagnostic])
+  (:cold) : String
   (str_cat.str-cat
     "invalid package manifest: "
     (compiler_diagnostic.compiler-diagnostic-render (& diag))))
 
-(define (build-backend-mode-name [mode : be_state.CompilerBackendMode]) : String
+(define (build-backend-mode-name [mode : be_state.CompilerBackendMode])
+  (:cold) : String
   (match mode
     [(Scalar) "scalar"]
     [(Sse2) "sse2"]
     [(Avx2) "avx2"]
     [(Avx512) "avx512"]))
 
-(define (build-package-lock-policy-provided? [policy : BuildPackageLockPolicy]) : bool
+(define (build-package-lock-policy-provided? [policy : BuildPackageLockPolicy])
+  (:cold) : bool
   (match policy
     [(Default) false]
     [_ true]))
 
-(define (build-package-lock-policy-locked? [policy : BuildPackageLockPolicy]) : bool
+(define (build-package-lock-policy-locked? [policy : BuildPackageLockPolicy])
+  (:cold) : bool
   (match policy
     [(Locked) true]
     [_ false]))
 
-(define (build-package-lock-policy-update? [policy : BuildPackageLockPolicy]) : bool
+(define (build-package-lock-policy-update? [policy : BuildPackageLockPolicy])
+  (:cold) : bool
   (match policy
     [(Update) true]
     [_ false]))
 
-(define (build-package-lock-policy-option-error) : String
+(define (build-package-lock-policy-option-error)
+  (:cold) : String
   "build: package lock policy was provided more than once")
 
 (define (build-package-lock-policy-arg
   [args : process.ProcessStringList]
-  [policy : BuildPackageLockPolicy]) : process.ProcessStringList
+  [policy : BuildPackageLockPolicy])
+  (:cold) : process.ProcessStringList
   (match policy
     [(Locked) (build_run_core.source-tool-args-append args "--locked")]
     [(Update) (build_run_core.source-tool-args-append args "--update-lock")]
     [(Default) args]))
 
 ;; Options a package build accepts.
-(define (build-package-cli-options) : String
+(define (build-package-cli-options)
+  (:cold) : String
   (str_cat.str-cat
     "--cfg <name> --stdlib-root <dir> --target <target> --opt-level <0|1|2|s> -Os
      --debug|-g|--backtrace -o <exe> --manifest-path <file> --backend-mode <mode>
@@ -457,7 +469,8 @@
     (cli_option.cli-package-profile-options)
     (tli_cli.tli-sysroot-cli-options)))
 
-(define (build-config-from [idx : i64] [count : i64]) : ResultBuildConfig
+(define (build-config-from [idx : i64] [count : i64])
+  (:cold) : ResultBuildConfig
   (let
     [args : cli_option.CliArgs
       (cli_option.cli-args "build" (build-package-cli-options) idx count)]
@@ -545,7 +558,8 @@
             options.cfgs))])))
 
 ;; Parse the private `--package-worker` / `--package-doctest-worker` protocol.
-(define (build-package-worker-config-from [idx : i64] [count : i64]) : ResultBuildPackageWorkerConfig
+(define (build-package-worker-config-from [idx : i64] [count : i64])
+  (:cold) : ResultBuildPackageWorkerConfig
   (let
     [args : cli_option.CliArgs
       (cli_option.cli-args
@@ -633,7 +647,8 @@
             resolved-deps))]
       [else (Err "build: --package-worker requires --manifest-path")])))
 
-(define (build-discover-manifest-up [prefix : String] [fuel : i64]) : load.CompilerLoadMaybePath
+(define (build-discover-manifest-up [prefix : String] [fuel : i64])
+  (:cold) : load.CompilerLoadMaybePath
   (if (<= fuel 0)
     (CompilerLoadNoPath)
     (let
@@ -645,7 +660,8 @@
         (CompilerLoadSomePath candidate)
         (build-discover-manifest-up (str_cat.str-cat prefix "../") (- fuel 1))))))
 
-(define (build-load-manifest [manifest-path : String]) : ResultBuildManifest
+(define (build-load-manifest [manifest-path : String])
+  (:cold) : ResultBuildManifest
   (if (io.file-exists? (owned_view.compiler-owned-shared-view manifest-path))
     (match (load.compiler-load-parse-manifest-diagnostic-infer-kind
       (owned_view.compiler-owned-shared-view manifest-path)
@@ -657,7 +673,8 @@
 (define (build-package-output-dir-profile
   [manifest-dir : String]
   [_name : (& name str)]
-  [profile : pkg_profile.PackageProfile]) : String
+  [profile : pkg_profile.PackageProfile])
+  (:cold) : String
   (load.compiler-load-join-root-path
     (load.compiler-load-join-root-path manifest-dir "target")
     (pkg_profile.package-profile-name profile)))
@@ -665,7 +682,8 @@
 (define (build-package-asm-path-profile
   [manifest-dir : String]
   [name : String]
-  [profile : pkg_profile.PackageProfile]) : String
+  [profile : pkg_profile.PackageProfile])
+  (:cold) : String
   (load.compiler-load-join-root-path
     (build-package-output-dir-profile manifest-dir "" profile)
     (str_cat.str-cat name ".s")))
@@ -674,7 +692,8 @@
   [manifest-dir : String]
   [name : String]
   [profile : pkg_profile.PackageProfile]
-  [target : be_state.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget])
+  (:cold) : String
   (load.compiler-load-join-root-path
     (build-package-output-dir-profile manifest-dir "" profile)
     (str_cat.str-cat
@@ -686,7 +705,8 @@
   [manifest-dir : String]
   [name : String]
   [profile : pkg_profile.PackageProfile]
-  [target : be_state.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget])
+  (:cold) : String
   (load.compiler-load-join-root-path
     (build-package-output-dir-profile manifest-dir "" profile)
     (str_cat.str-cat
@@ -697,7 +717,8 @@
   [manifest-dir : String]
   [name : String]
   [profile : pkg_profile.PackageProfile]
-  [target : be_state.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget])
+  (:cold) : String
   (load.compiler-load-join-root-path
     (build-package-output-dir-profile manifest-dir "" profile)
     (build_run_core.source-tool-static-library-filename name target)))
@@ -705,7 +726,8 @@
 (define (build-package-tli-path-profile
   [manifest-dir : String]
   [name : String]
-  [profile : pkg_profile.PackageProfile]) : String
+  [profile : pkg_profile.PackageProfile])
+  (:cold) : String
   (load.compiler-load-join-root-path
     (build-package-output-dir-profile manifest-dir "" profile)
     (str_cat.str-cat name ".tli")))
@@ -713,7 +735,8 @@
 (define (build-package-tlci-path-profile
   [manifest-dir : String]
   [name : String]
-  [profile : pkg_profile.PackageProfile]) : String
+  [profile : pkg_profile.PackageProfile])
+  (:cold) : String
   (load.compiler-load-join-root-path
     (build-package-output-dir-profile manifest-dir "" profile)
     (str_cat.str-cat name ".tlci")))
@@ -723,7 +746,8 @@
   [name : String]
   [kind : load.CompilerPkgKind]
   [profile : pkg_profile.PackageProfile]
-  [target : be_state.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget])
+  (:cold) : String
   (match kind
     [(CompilerPkgKindBin)
       (build-package-bin-path-profile manifest-dir name profile target)]
@@ -735,7 +759,8 @@
   [name : String]
   [kind : load.CompilerPkgKind]
   [profile : pkg_profile.PackageProfile]
-  [target : be_state.CompilerBackendTarget]) : BuildPackageArtifactPaths
+  [target : be_state.CompilerBackendTarget])
+  (:cold) : BuildPackageArtifactPaths
   (BuildPackageArtifactPaths
     (build-package-artifact-path-profile
       (owned_view.compiler-owned-shared-view manifest-dir)
@@ -754,31 +779,37 @@
       "")))
 
 (define (build-package-runtime-artifact-path
-  [artifacts : BuildPackageArtifactPaths]) : String
+  [artifacts : BuildPackageArtifactPaths])
+  (:cold) : String
   artifacts.runtime)
 
 (define (build-package-tli-artifact-path
-  [artifacts : BuildPackageArtifactPaths]) : String
+  [artifacts : BuildPackageArtifactPaths])
+  (:cold) : String
   artifacts.tli)
 
 (define (build-package-host-tlci-artifact-path
-  [artifacts : BuildPackageArtifactPaths]) : String
+  [artifacts : BuildPackageArtifactPaths])
+  (:cold) : String
   artifacts.tlci)
 
 (define (build-package-artifact-state-dirty?
-  [state : BuildPackageArtifactState]) : bool
+  [state : BuildPackageArtifactState])
+  (:cold) : bool
   (match state
     [(Clean) false]
     [_ true]))
 
 (define (build-package-artifact-state-render
-  [state : BuildPackageArtifactState]) : String
+  [state : BuildPackageArtifactState])
+  (:cold) : String
   (match state
     [(Clean) "clean"]
     [(Missing) "missing"]
     [(Stale reason) reason]))
 
-(define (build-package-artifact-file-state [path : String]) : BuildPackageArtifactState
+(define (build-package-artifact-file-state [path : String])
+  (:cold) : BuildPackageArtifactState
   (let
     [path-text : String path]
     (match (fs.try-file-metadata (& path-text))
@@ -792,7 +823,8 @@
   [package-name : String]
   [role-name : String]
   [path : String]
-  [state : BuildPackageArtifactState]) : String
+  [state : BuildPackageArtifactState])
+  (:cold) : String
   (str_cat.str-cat
     "build: package dependency `"
     package-name
@@ -803,25 +835,29 @@
     ": "
     (build-package-artifact-state-render state)))
 
-(define (build-package-kind-lib? [kind : load.CompilerPkgKind]) : bool
+(define (build-package-kind-lib? [kind : load.CompilerPkgKind])
+  (:cold) : bool
   (match kind
     [(CompilerPkgKindLib) true]
     [_ false]))
 
-(define (build-package-kind-entry? [kind : load.CompilerPkgKind]) : bool
+(define (build-package-kind-entry? [kind : load.CompilerPkgKind])
+  (:cold) : bool
   (match kind
     [(CompilerPkgKindBin) true]
     [(CompilerPkgKindLib) false]))
 
 (define (build-package-dep-root
   [manifest-dir : String]
-  [dep : load.CompilerPkgDep]) : String
+  [dep : load.CompilerPkgDep])
+  (:cold) : String
   (load.compiler-load-normalize-path
     (load.compiler-load-join-root-path manifest-dir dep.path)))
 
 (define (build-package-dep-manifest-path
   [manifest-dir : String]
-  [dep : load.CompilerPkgDep]) : String
+  [dep : load.CompilerPkgDep])
+  (:cold) : String
   (load.compiler-load-normalize-path
     (load.compiler-load-join-root-path
       (build-package-dep-root manifest-dir dep)
@@ -830,14 +866,16 @@
 (define (build-package-dep-provenance
   [manifest-dir : String]
   [declared : load.CompilerPkgDep]
-  [resolved : load.CompilerPkgDep]) : BuildPackageSourceProvenance
+  [resolved : load.CompilerPkgDep])
+  (:cold) : BuildPackageSourceProvenance
   (if (load.compiler-load-github-dependency-path?
     (& (string.copy declared.path)))
     (Fetched declared.alias (build-package-dep-root manifest-dir resolved))
     (Local)))
 
 (define (build-package-validate-fetched-checkout-before-manifest
-  [provenance : BuildPackageSourceProvenance]) : ResultBuildString
+  [provenance : BuildPackageSourceProvenance])
+  (:cold) : ResultBuildString
   (match provenance
     [(Local) (Ok "")]
     [(Fetched alias checkout-root)
@@ -853,7 +891,8 @@
 
 (define (build-package-validate-fetched-checkout
   [provenance : BuildPackageSourceProvenance]
-  [manifest : load.CompilerPkgManifest]) : ResultBuildString
+  [manifest : load.CompilerPkgManifest])
+  (:cold) : ResultBuildString
   (match provenance
     [(Local) (Ok "")]
     [(Fetched _ checkout-root)
@@ -874,24 +913,28 @@
           (Ok "")))]))
 
 (define (build-package-validate-graph-node-checkout
-  [node : BuildPackageGraphNode]) : ResultBuildString
+  [node : BuildPackageGraphNode])
+  (:cold) : ResultBuildString
   (build-package-validate-fetched-checkout node.provenance node.manifest))
 
 (define (build-string-index-from
   [s : (& s str)]
   [needle : char]
   [i : i64]
-  [n : i64]) : i64
+  [n : i64])
+  (:cold) : i64
   (let
     [pos : i64 (string.index-of-byte s i (cast needle : u8))]
     (if (and (>= pos 0) (< pos n))
       pos
       -1)))
 
-(define (build-github-dep-relative-root [alias : String]) : String
+(define (build-github-dep-relative-root [alias : String])
+  (:cold) : String
   (str_cat.str-cat "target/typelisp/git-deps/" alias))
 
-(define (build-github-dep-cache-root [manifest-dir : String] [alias : String]) : String
+(define (build-github-dep-cache-root [manifest-dir : String] [alias : String])
+  (:cold) : String
   (load.compiler-load-normalize-path
     (load.compiler-load-join-root-path
       manifest-dir
@@ -899,7 +942,8 @@
 
 (define (build-github-dep-cache-manifest-path
   [manifest-dir : String]
-  [alias : String]) : String
+  [alias : String])
+  (:cold) : String
   (load.compiler-load-normalize-path
     (load.compiler-load-join-root-path
       (build-github-dep-cache-root manifest-dir alias)
@@ -912,7 +956,8 @@
     "` "
     ,message))
 
-(define (build-parse-git-dependency [alias : String] [path : String]) : ResultBuildGitDependency
+(define (build-parse-git-dependency [alias : String] [path : String])
+  (:cold) : ResultBuildGitDependency
   (let
     [n : i64 (string.string-length path)]
     [hash : i64 (build-string-index-from (& path) '#' 0 n)]
@@ -938,7 +983,8 @@
 
 (define (build-git-dep-pin-kind
   [alias : String]
-  [dep : (& dep BuildGitDependency)]) : package_cache_core.ResultPackageCachePinKind
+  [dep : (& dep BuildGitDependency)])
+  (:cold) : package_cache_core.ResultPackageCachePinKind
   (let
     [kind : String (string.copy (& dep.pin-kind))]
     (cond
@@ -947,12 +993,14 @@
       [(string.eq kind "branch") (Ok (Branch))]
       [else (Err (build-git-dep-error alias "has invalid pin kind"))])))
 
-(define (build-package-lock-path [manifest-dir : String]) : String
+(define (build-package-lock-path [manifest-dir : String])
+  (:cold) : String
   (load.compiler-load-join-root-path
     manifest-dir
     (package_lock_core.package-lock-file-name)))
 
-(define (build-load-package-lock [manifest-dir : String]) : ResultBuildPackageLockState
+(define (build-load-package-lock [manifest-dir : String])
+  (:cold) : ResultBuildPackageLockState
   (let
     [path : String (build-package-lock-path manifest-dir)]
     (match (package_lock_core.package-lock-transaction-read (string.copy path))
@@ -976,7 +1024,8 @@
 
 (define (build-write-package-lock
   [state : BuildPackageLockState]
-  [entries : package_lock_entry_vec.Vec]) : ResultBuildString
+  [entries : package_lock_entry_vec.Vec])
+  (:cold) : ResultBuildString
   (let
     [lock : package_lock_core.PackageLockFile
       (package_lock_core.PackageLockFile
@@ -996,7 +1045,8 @@
 (define (build-package-lock-entry-matches?
   [entry : package_lock_core.PackageLockEntry]
   [alias : String]
-  [dep : (& dep BuildGitDependency)]) : bool
+  [dep : (& dep BuildGitDependency)])
+  (:cold) : bool
   (match (build-git-dep-pin-kind
     (owned_view.compiler-owned-shared-view alias)
     dep)
@@ -1011,7 +1061,8 @@
 (define (build-package-lock-matching-entry
   [entries : package_lock_entry_vec.Vec]
   [alias : String]
-  [dep : (& dep BuildGitDependency)]) : BuildMaybeLockEntry
+  [dep : (& dep BuildGitDependency)])
+  (:cold) : BuildMaybeLockEntry
   (match (package_lock_core.package-lock-entry-list-lookup entries alias)
     [(No) (No)]
     [(Some entry)
@@ -1025,7 +1076,8 @@
 (define (build-package-lock-entry-status
   [entries : package_lock_entry_vec.Vec]
   [alias : String]
-  [dep : (& dep BuildGitDependency)]) : BuildPackageLockEntryStatus
+  [dep : (& dep BuildGitDependency)])
+  (:cold) : BuildPackageLockEntryStatus
   (match (package_lock_core.package-lock-entry-list-lookup entries alias)
     [(No) (Missing)]
     [(Some entry)
@@ -1036,13 +1088,15 @@
         (Matched entry)
         (Stale))]))
 
-(define (build-package-lock-missing-message [alias : String]) : String
+(define (build-package-lock-missing-message [alias : String])
+  (:cold) : String
   (str_cat.str-cat
     "build: --locked requires typelisp.lock entry for remote dependency `"
     alias
     "`; run with --update-lock to refresh typelisp.lock"))
 
-(define (build-package-lock-stale-message [alias : String]) : String
+(define (build-package-lock-stale-message [alias : String])
+  (:cold) : String
   (str_cat.str-cat
     "build: package lock entry for remote dependency `"
     alias
@@ -1051,7 +1105,8 @@
 (define (build-package-lock-entry
   [alias : String]
   [dep : (& dep BuildGitDependency)]
-  [commit : String]) : package_lock_core.ResultPackageLockEntry
+  [commit : String])
+  (:cold) : package_lock_core.ResultPackageLockEntry
   (let
     [kind
       (try
@@ -1068,17 +1123,20 @@
 
 (define (build-git-dependency-at-commit
   [dep : (& dep BuildGitDependency)]
-  [commit : String]) : BuildGitDependency
+  [commit : String])
+  (:cold) : BuildGitDependency
   (BuildGitDependency (string.copy (& dep.remote)) "rev" commit))
 
-(define (build-git-checkout-ref [dep : (& dep BuildGitDependency)]) : String
+(define (build-git-checkout-ref [dep : (& dep BuildGitDependency)])
+  (:cold) : String
   (let
     [kind : String (string.copy (& dep.pin-kind))]
     (if (string.eq kind "branch")
       (str_cat.str-cat "origin/" (string.copy (& dep.pin-value)))
       (string.copy (& dep.pin-value)))))
 
-(define (build-process-output-detail [output : process.ProcessOutput]) : String
+(define (build-process-output-detail [output : process.ProcessOutput])
+  (:cold) : String
   (let
     [stderr : String (process.output-stderr output)]
     [stdout : String (process.output-stdout output)]
@@ -1090,7 +1148,8 @@
 
 (define (build-run-captured
   [context : String]
-  [command : process.ProcessCommand]) : ResultBuildString
+  [command : process.ProcessCommand])
+  (:cold) : ResultBuildString
   (match (process.output command)
     [(OkProcessOutput output)
       (if (process.success? output)
@@ -1104,13 +1163,16 @@
     [(ErrProcessOutput error)
       (Err (str_cat.str-cat context ": " (process.error-message error)))]))
 
-(define (build-git-clone-command [remote : String] [root : String]) : process.ProcessCommand
+(define (build-git-clone-command [remote : String] [root : String])
+  (:cold) : process.ProcessCommand
   (build_run_core.source-tool-git-clone-command remote root))
 
-(define (build-git-checkout-command [root : String] [checkout-ref : String]) : process.ProcessCommand
+(define (build-git-checkout-command [root : String] [checkout-ref : String])
+  (:cold) : process.ProcessCommand
   (build_run_core.source-tool-git-checkout-command root checkout-ref))
 
-(define (build-git-rev-parse-command [root : String]) : process.ProcessCommand
+(define (build-git-rev-parse-command [root : String])
+  (:cold) : process.ProcessCommand
   (build_run_core.source-tool-git-local-rev-parse-command root "HEAD"))
 
 ;; --git-dir/--work-tree override GIT_DIR/GIT_WORK_TREE, including Windows
@@ -1118,7 +1180,8 @@
 ;; CLI override. Refuse them before any dependency Git child can touch a repo.
 (define (build-run-git-dependency
   [context : String]
-  [command : process.ProcessCommand]) : ResultBuildString
+  [command : process.ProcessCommand])
+  (:cold) : ResultBuildString
   (let
     [redirect : String
       (cond
@@ -1141,10 +1204,12 @@
           "; unset it to keep dependency Git metadata local"))
       (build-run-captured context command))))
 
-(define (build-trim-command-output [output : String]) : String
+(define (build-trim-command-output [output : String])
+  (:cold) : String
   (string.trim (& output)))
 
-(define (build-resolve-git-head [alias : String] [root : String]) : ResultBuildString
+(define (build-resolve-git-head [alias : String] [root : String])
+  (:cold) : ResultBuildString
   (let
     [output
       (try
@@ -1165,7 +1230,8 @@
 (define (build-verify-git-head
   [alias : String]
   [root : String]
-  [expected : (& expected str)]) : ResultBuildString
+  [expected : (& expected str)])
+  (:cold) : ResultBuildString
   (let
     [observed (try (build-resolve-git-head (string.copy (& alias)) root))]
     (if (string.eq (& observed) expected)
@@ -1180,13 +1246,15 @@
             observed
             "`"))))))
 
-(define (build-absolute-dep-root [manifest-dir : String] [dep-root : String]) : String
+(define (build-absolute-dep-root [manifest-dir : String] [dep-root : String])
+  (:cold) : String
   (load.compiler-load-normalize-path
     (load.compiler-load-join-root-path manifest-dir dep-root)))
 
 (define (build-ensure-github-cache-parent
   [manifest-dir : (& manifest-dir str)]
-  [alias : String]) : ResultBuildString
+  [alias : String])
+  (:cold) : ResultBuildString
   (let
     [target-dir : String
       (load.compiler-load-join-root-path (string.copy manifest-dir) "target")]
@@ -1209,13 +1277,15 @@
             "could not create target/typelisp/git-deps directory"))]
       [else (Ok deps-dir)])))
 
-(define (build-github-cache-git-dir [manifest-dir : String] [alias : String]) : String
+(define (build-github-cache-git-dir [manifest-dir : String] [alias : String])
+  (:cold) : String
   (load.compiler-load-normalize-path
     (load.compiler-load-join-root-path
       (build-github-dep-cache-root manifest-dir alias)
       ".git")))
 
-(define (build-github-cache-needs-git? [manifest-dir : String] [alias : String]) : bool
+(define (build-github-cache-needs-git? [manifest-dir : String] [alias : String])
+  (:cold) : bool
   (or
     (not
       (io.file-exists?
@@ -1224,18 +1294,22 @@
           (string.copy alias))))
     (io.file-exists? (build-github-cache-git-dir manifest-dir alias))))
 
-(define (build-git-dep-rev? [dep : (& dep BuildGitDependency)]) : bool
+(define (build-git-dep-rev? [dep : (& dep BuildGitDependency)])
+  (:cold) : bool
   (string.eq (& dep.pin-kind) "rev"))
 
-(define (build-package-cache-relative-root) : String
+(define (build-package-cache-relative-root)
+  (:cold) : String
   "target/typelisp/cache/packages/v1")
 
-(define (build-package-cache-manifest-path [entry-path : (& entry-path str)]) : String
+(define (build-package-cache-manifest-path [entry-path : (& entry-path str)])
+  (:cold) : String
   (str_cat.str-cat-scoped entry-path "/typelisp.pkg"))
 
 (define (build-ensure-package-cache-root
   [manifest-dir : String]
-  [alias : String]) : ResultBuildString
+  [alias : String])
+  (:cold) : ResultBuildString
   (let
     [target-dir : String
       (load.compiler-load-join-root-path (string.copy manifest-dir) "target")]
@@ -1274,7 +1348,8 @@
 (define (build-package-cache-io-error
   [alias : String]
   [action : String]
-  [error : io.IoError]) : String
+  [error : io.IoError])
+  (:cold) : String
   (build-git-dep-error
     alias
     (str_cat.str-cat action ": " (io.error-message error))))
@@ -1283,7 +1358,8 @@
   [alias : String]
   [root : (& root str)]
   [key : (& key package_cache_core.PackageCacheKey)]
-  [attempt : i64]) : ResultBuildString
+  [attempt : i64])
+  (:cold) : ResultBuildString
   (if (> attempt 16)
     (Err (build-git-dep-error alias "package cache has no free staging path"))
     (let
@@ -1295,13 +1371,15 @@
 
 (define (build-package-cache-conflict-backup-path
   [entry-path : String]
-  [attempt : i64]) : String
+  [attempt : i64])
+  (:cold) : String
   (str_cat.str-cat entry-path ".corrupt." (string.int->string attempt)))
 
 (define (build-package-cache-move-conflict-attempt
   [alias : String]
   [entry-path : String]
-  [attempt : i64]) : ResultBuildString
+  [attempt : i64])
+  (:cold) : ResultBuildString
   (if (> attempt 16)
     (Err
       (build-git-dep-error
@@ -1328,7 +1406,8 @@
 
 (define (build-package-cache-move-conflict
   [alias : String]
-  [entry-path : String]) : ResultBuildString
+  [entry-path : String])
+  (:cold) : ResultBuildString
   (if (io.file-exists? (owned_view.compiler-owned-shared-view entry-path))
     (build-package-cache-move-conflict-attempt alias entry-path 1)
     (Ok entry-path)))
@@ -1336,7 +1415,8 @@
 (define (build-package-cache-hit-result
   [alias : String]
   [entry-path : (& entry-path str)]
-  [relative-entry-root : String]) : ResultBuildString
+  [relative-entry-root : String])
+  (:cold) : ResultBuildString
   (if (io.file-exists? (build-package-cache-manifest-path entry-path))
     (Ok relative-entry-root)
     (Err (build-git-dep-error alias "cached package is missing typelisp.pkg"))))
@@ -1346,7 +1426,8 @@
   [staged-path : String]
   [entry-path : (& entry-path str)]
   [relative-entry-root : String]
-  [key : (& key package_cache_core.PackageCacheKey)]) : ResultBuildString
+  [key : (& key package_cache_core.PackageCacheKey)])
+  (:cold) : ResultBuildString
   (match (package_cache_core.package-cache-finalize-staged
     staged-path
     entry-path)
@@ -1362,7 +1443,8 @@
 (define (build-package-cache-write-marker
   [alias : String]
   [staged-path : String]
-  [key : (& key package_cache_core.PackageCacheKey)]) : ResultBuildString
+  [key : (& key package_cache_core.PackageCacheKey)])
+  (:cold) : ResultBuildString
   (match (package_cache_core.package-cache-write-complete-marker
     staged-path
     key)
@@ -1374,7 +1456,8 @@
 (define (build-package-cache-prepare-entry-parents-result
   [alias : String]
   [root : String]
-  [key : (& key package_cache_core.PackageCacheKey)]) : ResultBuildString
+  [key : (& key package_cache_core.PackageCacheKey)])
+  (:cold) : ResultBuildString
   (match (package_cache_core.package-cache-prepare-entry-parents root key)
     [(OkIoUnit) (Ok root)]
     [(ErrIoUnit error)
@@ -1388,7 +1471,8 @@
   [key : (& key package_cache_core.PackageCacheKey)]
   [entry-path : String]
   [relative-entry-root : String]
-  [replace-existing : bool]) : ResultBuildString
+  [replace-existing : bool])
+  (:cold) : ResultBuildString
   (match (package_cache_core.package-cache-prepare-staging-parents root key)
     [(ErrIoUnit error)
       (Err
@@ -1467,7 +1551,8 @@
 (define (build-fetch-github-dependency-cached
   [manifest-dir : String]
   [alias : String]
-  [dep : (& dep BuildGitDependency)]) : ResultBuildString
+  [dep : (& dep BuildGitDependency)])
+  (:cold) : ResultBuildString
   (let
     [remote : String (string.copy (& dep.remote))]
     [pin-value : String (string.copy (& dep.pin-value))]
@@ -1535,7 +1620,8 @@
   [manifest-dir : String]
   [alias : String]
   [dep : (& dep BuildGitDependency)]
-  [root : String]) : ResultBuildString
+  [root : String])
+  (:cold) : ResultBuildString
   (if (io.file-exists?
     (build-github-cache-git-dir
       manifest-dir
@@ -1548,7 +1634,8 @@
 (define (build-fetch-github-dependency-legacy
   [manifest-dir : String]
   [alias : String]
-  [dep : (& dep BuildGitDependency)]) : ResultBuildString
+  [dep : (& dep BuildGitDependency)])
+  (:cold) : ResultBuildString
   (let
     [root : String
       (build-github-dep-cache-root
@@ -1597,7 +1684,8 @@
 (define (build-fetch-github-dependency
   [manifest-dir : String]
   [alias : String]
-  [dep : (& dep BuildGitDependency)]) : ResultBuildString
+  [dep : (& dep BuildGitDependency)])
+  (:cold) : ResultBuildString
   (if (not
     (build-github-cache-needs-git?
       (owned_view.compiler-owned-shared-view manifest-dir)
@@ -1611,7 +1699,8 @@
   [manifest-dir : String]
   [alias : String]
   [dep : BuildGitDependency]
-  [entry : package_lock_core.PackageLockEntry]) : ResultBuildResolvedGitDependency
+  [entry : package_lock_core.PackageLockEntry])
+  (:cold) : ResultBuildResolvedGitDependency
   (let
     [locked-commit : String
       (owned_view.compiler-owned-shared-view entry.commit)]
@@ -1625,7 +1714,8 @@
 (define (build-resolve-github-dependency-without-lock
   [manifest-dir : String]
   [alias : String]
-  [dep : BuildGitDependency]) : ResultBuildResolvedGitDependency
+  [dep : BuildGitDependency])
+  (:cold) : ResultBuildResolvedGitDependency
   (let
     [dep-root
       (try
@@ -1650,7 +1740,8 @@
   [alias : String]
   [dep : BuildGitDependency]
   [lock-entries : package_lock_entry_vec.Vec]
-  [lock-policy : BuildPackageLockPolicy]) : ResultBuildResolvedGitDependency
+  [lock-policy : BuildPackageLockPolicy])
+  (:cold) : ResultBuildResolvedGitDependency
   (if (build-package-lock-policy-update? lock-policy)
     (build-resolve-github-dependency-without-lock manifest-dir alias dep)
     (if (build-package-lock-policy-locked? lock-policy)
@@ -1683,7 +1774,8 @@
   [manifest-dir : String]
   [lock-entries : package_lock_entry_vec.Vec]
   [lock-policy : BuildPackageLockPolicy]
-  [dep : load.CompilerPkgDep]) : ResultBuildResolvedPkgDep
+  [dep : load.CompilerPkgDep])
+  (:cold) : ResultBuildResolvedPkgDep
   (let
     [path : String dep.path]
     [alias : String dep.alias]
@@ -1710,7 +1802,8 @@
 
 (define (build-package-lock-entry-list-add
   [entries : package_lock_entry_vec.Vec]
-  [maybe-entry : BuildMaybeLockEntry]) : package_lock_core.ResultPackageLockEntryList
+  [maybe-entry : BuildMaybeLockEntry])
+  (:cold) : package_lock_core.ResultPackageLockEntryList
   (match maybe-entry
     [(No) (Ok entries)]
     [(Some entry)
@@ -1718,7 +1811,8 @@
 
 (define (build-package-lock-list-has-exact-entry?
   [entries : (& entries package_lock_entry_vec.Vec)]
-  [entry : (& entry package_lock_core.PackageLockEntry)]) : bool
+  [entry : (& entry package_lock_core.PackageLockEntry)])
+  (:cold) : bool
   (package_lock_core.package-lock-list-has-entry?
     entries
     (string.copy (& entry.alias))
@@ -1729,12 +1823,14 @@
 
 (define (build-package-lock-list-contains-all?
   [haystack : package_lock_entry_vec.Vec]
-  [needles : (& needles package_lock_entry_vec.Vec)]) : bool
+  [needles : (& needles package_lock_entry_vec.Vec)])
+  (:cold) : bool
   (build-package-lock-list-contains-all-from haystack (& needles)))
 
 (define (build-package-lock-list-contains-all-from
   [haystack : (& haystack package_lock_entry_vec.Vec)]
-  [needles : (& needles package_lock_entry_vec.Vec)]) : bool
+  [needles : (& needles package_lock_entry_vec.Vec)])
+  (:cold) : bool
   (let
     [view : (& needles (Slice package_lock_core.PackageLockEntry))
       (package_lock_entry_vec.view needles)]
@@ -1749,7 +1845,8 @@
 
 (define (build-package-lock-list-eq?
   [left : package_lock_entry_vec.Vec]
-  [right : (& right package_lock_entry_vec.Vec)]) : bool
+  [right : (& right package_lock_entry_vec.Vec)])
+  (:cold) : bool
   (and
     (=
       (package_lock_entry_vec.len (& left))
@@ -1759,7 +1856,8 @@
 (define (build-package-lock-policy-check
   [policy : BuildPackageLockPolicy]
   [lock-state : BuildPackageLockState]
-  [resolved : (& resolved BuildResolvedPkgDeps)]) : ResultBuildString
+  [resolved : (& resolved BuildResolvedPkgDeps)])
+  (:cold) : ResultBuildString
   (if (build-package-lock-policy-locked? policy)
     (if (and resolved.has-remote (not lock-state.has-lock))
       (Err
@@ -1776,7 +1874,8 @@
 (define (build-package-maybe-write-lock
   [policy : BuildPackageLockPolicy]
   [lock-state : BuildPackageLockState]
-  [resolved : BuildResolvedPkgDeps]) : ResultBuildString
+  [resolved : BuildResolvedPkgDeps])
+  (:cold) : ResultBuildString
   (if (and
     (not (build-package-lock-policy-locked? policy))
     (or resolved.has-remote lock-state.has-lock))
@@ -1788,7 +1887,8 @@
   [lock-entries : package_lock_entry_vec.Vec]
   [lock-policy : BuildPackageLockPolicy]
   [deps : load.CompilerPkgDepList]
-  [index : i64]) : ResultBuildResolvedPkgDeps
+  [index : i64])
+  (:cold) : ResultBuildResolvedPkgDeps
   (if (>= index (load.compiler-pkg-dep-list-count deps))
     (Ok
       (BuildResolvedPkgDeps
@@ -1831,7 +1931,8 @@
 (define (build-package-resolve-manifest-deps
   [manifest-path : String]
   [manifest : load.CompilerPkgManifest]
-  [lock-policy : BuildPackageLockPolicy]) : ResultBuildManifest
+  [lock-policy : BuildPackageLockPolicy])
+  (:cold) : ResultBuildManifest
   (match manifest.kind
     [(CompilerPkgKindLib)
       ;; Libraries have no normal dependency resolution or lock contract.
@@ -1883,17 +1984,21 @@
               (load.compiler-pkg-deps-from-list resolved.deps)
               manifest.link))))]))
 
-(define (build-package-normalize-manifest-path [manifest-path : String]) : String
+(define (build-package-normalize-manifest-path [manifest-path : String])
+  (:cold) : String
   (load.compiler-load-normalize-path manifest-path))
 
-(define (build-package-graph-node-vec-len [v : (& v BuildPackageGraphNodeVec)]) : i64
+(define (build-package-graph-node-vec-len [v : (& v BuildPackageGraphNodeVec)])
+  (:cold) : i64
   v.len)
 
 (define (build-package-graph-node-vec-capacity
-  [v : (& v BuildPackageGraphNodeVec)]) : i64
+  [v : (& v BuildPackageGraphNodeVec)])
+  (:cold) : i64
   (array-length v.slots))
 
-(define (build-package-graph-node-vec-with-capacity [capacity : i64]) : BuildPackageGraphNodeVec
+(define (build-package-graph-node-vec-with-capacity [capacity : i64])
+  (:cold) : BuildPackageGraphNodeVec
   (let
     [cap : i64
       (if (< capacity 1)
@@ -1901,12 +2006,14 @@
         capacity)]
     (BuildPackageGraphNodeVec (__tl_make-array BuildPackageGraphNode cap) 0)))
 
-(define (build-package-graph-node-vec-new) : BuildPackageGraphNodeVec
+(define (build-package-graph-node-vec-new)
+  (:cold) : BuildPackageGraphNodeVec
   (build-package-graph-node-vec-with-capacity 4))
 
 (define (build-package-graph-node-vec-at
   [v : (& v BuildPackageGraphNodeVec)]
-  [index : i64]) : BuildPackageGraphNode
+  [index : i64])
+  (:cold) : BuildPackageGraphNode
   (let
     [v : BuildPackageGraphNodeVec
       (owned_view.compiler-owned-reference-shared-view v)]
@@ -1915,13 +2022,15 @@
 (define (build-package-graph-node-vec-copy-range!
   [dst : (&mut dst (__tl_dyn-array BuildPackageGraphNode))]
   [src : (__tl_dyn-array BuildPackageGraphNode)]
-  [count : i64]) : unit
+  [count : i64])
+  (:cold) : unit
   (for [index (iterator.range 0 count)]
     (set!
       (array-ref dst index)
       (owned_view.compiler-owned-element-view src index))))
 
-(define (build-package-graph-node-vec-grow [v : BuildPackageGraphNodeVec]) : BuildPackageGraphNodeVec
+(define (build-package-graph-node-vec-grow [v : BuildPackageGraphNodeVec])
+  (:cold) : BuildPackageGraphNodeVec
   (let
     [count : i64 (build-package-graph-node-vec-len v)]
     [bigger : (__tl_dyn-array BuildPackageGraphNode)
@@ -1933,7 +2042,8 @@
 
 (define (build-package-graph-node-vec-push
   [v : BuildPackageGraphNodeVec]
-  [node : BuildPackageGraphNode]) : BuildPackageGraphNodeVec
+  [node : BuildPackageGraphNode])
+  (:cold) : BuildPackageGraphNodeVec
   (if (<
     (build-package-graph-node-vec-len v)
     (build-package-graph-node-vec-capacity v))
@@ -1951,21 +2061,24 @@
 (define (build-package-graph-state-mark
   [state : BuildPackageGraphState]
   [manifest-path : String]
-  [mark : i64]) : BuildPackageGraphState
+  [mark : i64])
+  (:cold) : BuildPackageGraphState
   (BuildPackageGraphState
     (build-string-index-map-put state.seen manifest-path mark)
     state.order))
 
 (define (build-package-graph-state-add-order
   [state : BuildPackageGraphState]
-  [node : BuildPackageGraphNode]) : BuildPackageGraphState
+  [node : BuildPackageGraphNode])
+  (:cold) : BuildPackageGraphState
   (set! state.order (build-package-graph-node-vec-push state.order node))
   state)
 
 (define (build-package-load-dep-node
   [manifest-dir : String]
   [declared-dep : load.CompilerPkgDep]
-  [resolved-dep : load.CompilerPkgDep]) : ResultBuildPackageGraphNode
+  [resolved-dep : load.CompilerPkgDep])
+  (:cold) : ResultBuildPackageGraphNode
   (let
     [provenance : BuildPackageSourceProvenance
       (build-package-dep-provenance
@@ -2007,7 +2120,8 @@
 
 (define (build-package-acquired-library-dependency-message
   [node : (& node BuildPackageGraphNode)]
-  [dep : load.CompilerPkgDep]) : String
+  [dep : load.CompilerPkgDep])
+  (:cold) : String
   (str_cat.str-cat
     "build: acquired manifest at "
     (string.copy node.manifest-path)
@@ -2018,7 +2132,8 @@
 
 (define (build-package-graph-add-node
   [node : BuildPackageGraphNode]
-  [state : BuildPackageGraphState]) : ResultBuildPackageGraphState
+  [state : BuildPackageGraphState])
+  (:cold) : ResultBuildPackageGraphState
   ;; This second policy boundary is deliberately independent of source
   ;; parsing. Any future acquired manifest representation must still fail
   ;; before it can create a deeper graph edge.
@@ -2043,7 +2158,8 @@
   [declared-deps : (& load.CompilerPkgDepList)]
   [resolved-deps : (& load.CompilerPkgDepList)]
   [index : i64]
-  [state : BuildPackageGraphState]) : ResultBuildPackageGraphState
+  [state : BuildPackageGraphState])
+  (:cold) : ResultBuildPackageGraphState
   (if (>= index (load.compiler-pkg-dep-list-count resolved-deps))
     (Ok state)
     (let
@@ -2064,7 +2180,8 @@
 (define (build-package-dependency-graph
   [manifest-path : String]
   [declared-deps : (& load.CompilerPkgDeps)]
-  [resolved-deps : (& load.CompilerPkgDeps)]) : ResultBuildPackageGraph
+  [resolved-deps : (& load.CompilerPkgDeps)])
+  (:cold) : ResultBuildPackageGraph
   (let
     [root-path : String (build-package-normalize-manifest-path manifest-path)]
     [root-dir : String (load.compiler-load-dirname root-path)]
@@ -2085,19 +2202,22 @@
           initial))]
     (Ok (BuildPackageGraph state.order))))
 
-(define (build-mkdir-ok? [path : (& path str)]) : bool
+(define (build-mkdir-ok? [path : (& path str)])
+  (:cold) : bool
   (let
     [status : i64 (fs.mkdir-status path)]
     (or (= status build-status-ok) (= status build-status-already-exists))))
 
-(define (build-mkdir-ok-owned? [path : String]) : bool
+(define (build-mkdir-ok-owned? [path : String])
+  (:cold) : bool
   (let
     [status : i64 (fs.mkdir-status-owned path)]
     (or (= status build-status-ok) (= status build-status-already-exists))))
 
 (define (build-package-root-compiler?
   [manifest-dir : String]
-  [manifest : (& manifest load.CompilerPkgManifest)]) : bool
+  [manifest : (& manifest load.CompilerPkgManifest)])
+  (:cold) : bool
   ;; Keep the compiler-only cfg out of ordinary packages. The source marker
   ;; also prevents an unrelated package named `typelisp` from opting in.
   (and
@@ -2108,7 +2228,8 @@
         manifest-dir
         "src/compiler_build_identity.tl"))))
 
-(define (build-package-refresh-root-compiler-identity [manifest-dir : String]) : ResultBuildString
+(define (build-package-refresh-root-compiler-identity [manifest-dir : String])
+  (:cold) : ResultBuildString
   ;; Always resolve and overwrite the generated input. Reading a pre-existing
   ;; bootstrap stamp here could silently give package-built compilers a stale
   ;; producer identity.
@@ -2178,7 +2299,8 @@
 
 (define (build-package-compile-context
   [manifest-dir : String]
-  [manifest : (& manifest load.CompilerPkgManifest)]) : BuildPackageCompileContext
+  [manifest : (& manifest load.CompilerPkgManifest)])
+  (:cold) : BuildPackageCompileContext
   (if (build-package-root-compiler?
     (owned_view.compiler-owned-shared-view manifest-dir)
     manifest)
@@ -2190,7 +2312,8 @@
 (define (build-package-compile-cfgs
   [target : be_state.CompilerBackendTarget]
   [root-compiler : bool]
-  [cfg-names : (& cfg-names cli_svec.Vec)]) : sym_i64_env.SymI64Env
+  [cfg-names : (& cfg-names cli_svec.Vec)])
+  (:cold) : sym_i64_env.SymI64Env
   (let
     [cfgs : sym_i64_env.SymI64Env
       (compiler_driver_core.compiler-driver-target-cfgs
@@ -2205,7 +2328,8 @@
 (define (build-ensure-package-output-dirs
   [manifest-dir : String]
   [_name : (& _name str)]
-  [profile : pkg_profile.PackageProfile]) : bool
+  [profile : pkg_profile.PackageProfile])
+  (:cold) : bool
   (let
     [target-dir : String
       (load.compiler-load-join-root-path manifest-dir "target")]
@@ -2220,7 +2344,8 @@
 ;: the caller's working directory; absolute paths are left as written.
 (define (build-package-link-resolve-search-path
   [manifest-dir : String]
-  [value : String]) : String
+  [value : String])
+  (:cold) : String
   (if (load.compiler-load-absolute-path? value)
     value
     (load.compiler-load-normalize-path
@@ -2228,13 +2353,15 @@
 
 ;; The declaration of a link input: its package, and the manifest field when
 ;; there is one.
-(define (build-package-link-declared-by [owner : String] [field : String]) : String
+(define (build-package-link-declared-by [owner : String] [field : String])
+  (:cold) : String
   (if (= (string.string-length field) 0)
     owner
     (str_cat.str-cat owner " field `" field "`")))
 
 ;; `package `NAME` (MANIFEST)`, the owner of a manifest's link inputs.
-(define (build-package-link-owner [name : String] [manifest-path : String]) : String
+(define (build-package-link-owner [name : String] [manifest-path : String])
+  (:cold) : String
   (str_cat.str-cat "package `" name "` (" manifest-path ")"))
 
 ;; Record the origin of every value of one `(link ...)` field.
@@ -2244,7 +2371,8 @@
   [manifest-dir : String]
   [owner : String]
   [field : String]
-  [vec : (& vec fs.FsStringVector)]) : build_run_core.SourceToolLinkInputs
+  [vec : (& vec fs.FsStringVector)])
+  (:cold) : build_run_core.SourceToolLinkInputs
   (let
     [out : build_run_core.SourceToolLinkInputs inputs]
     (for [index (iterator.range 0 (fs.string-vector-len vec))]
@@ -2270,7 +2398,8 @@
   [manifest-dir : String]
   [owner : String]
   [prefix : String]
-  [set : (& load.CompilerPkgLinkSet)]) : build_run_core.SourceToolLinkInputs
+  [set : (& load.CompilerPkgLinkSet)])
+  (:cold) : build_run_core.SourceToolLinkInputs
   (build-package-link-add-field-origins
     (build-package-link-add-field-origins
       (build-package-link-add-field-origins
@@ -2298,7 +2427,8 @@
 (define (build-package-link-add-libs
   [inputs : build_run_core.SourceToolLinkInputs]
   [vec : (& vec fs.FsStringVector)]
-  [idx : i64]) : build_run_core.SourceToolLinkInputs
+  [idx : i64])
+  (:cold) : build_run_core.SourceToolLinkInputs
   (if (>= idx (fs.string-vector-len vec))
     inputs
     (build-package-link-add-libs
@@ -2312,7 +2442,8 @@
   [inputs : build_run_core.SourceToolLinkInputs]
   [manifest-dir : String]
   [vec : (& vec fs.FsStringVector)]
-  [idx : i64]) : build_run_core.SourceToolLinkInputs
+  [idx : i64])
+  (:cold) : build_run_core.SourceToolLinkInputs
   (if (>= idx (fs.string-vector-len vec))
     inputs
     (build-package-link-add-search-paths
@@ -2329,7 +2460,8 @@
 (define (build-package-link-add-args
   [inputs : build_run_core.SourceToolLinkInputs]
   [vec : (& vec fs.FsStringVector)]
-  [idx : i64]) : build_run_core.SourceToolLinkInputs
+  [idx : i64])
+  (:cold) : build_run_core.SourceToolLinkInputs
   (if (>= idx (fs.string-vector-len vec))
     inputs
     (build-package-link-add-args
@@ -2345,7 +2477,8 @@
 (define (build-package-link-add-set
   [inputs : build_run_core.SourceToolLinkInputs]
   [manifest-dir : String]
-  [set : (& load.CompilerPkgLinkSet)]) : build_run_core.SourceToolLinkInputs
+  [set : (& load.CompilerPkgLinkSet)])
+  (:cold) : build_run_core.SourceToolLinkInputs
   (build-package-link-add-args
     (build-package-link-add-search-paths
       (build-package-link-add-libs inputs (& set.libraries) 0)
@@ -2360,7 +2493,8 @@
   [manifest-dir : (& str)]
   [owner : (& str)]
   [prefix : String]
-  [set : (& load.CompilerPkgLinkSet)]) : build_run_core.SourceToolLinkInputs
+  [set : (& load.CompilerPkgLinkSet)])
+  (:cold) : build_run_core.SourceToolLinkInputs
   (build-package-link-add-set-origins
     (build-package-link-add-set inputs (string.copy manifest-dir) set)
     (string.copy manifest-dir)
@@ -2376,7 +2510,8 @@
   [link : (& load.CompilerPkgLink)]
   [manifest-dir : String]
   [owner : String]
-  [target : be_state.CompilerBackendTarget]) : build_run_core.SourceToolLinkInputs
+  [target : be_state.CompilerBackendTarget])
+  (:cold) : build_run_core.SourceToolLinkInputs
   (let
     [inputs : build_run_core.SourceToolLinkInputs
       (build-package-link-add-scope
@@ -2408,7 +2543,8 @@
   [obj-path : String]
   [artifact-path : String]
   [link-inputs : build_run_core.SourceToolLinkInputs]
-  [direct-status : build_run_core.SourceToolDirectObjectStatus]) : build_run_core.SourceToolCommandStatus
+  [direct-status : build_run_core.SourceToolDirectObjectStatus])
+  (:cold) : build_run_core.SourceToolCommandStatus
   (match direct-status
     [(Ok) Ok]
     [(Err message) (Err message)]
@@ -2439,7 +2575,8 @@
 
 (define (build-package-render-linux-direct-object
   [kind : load.CompilerPkgKind]
-  [image : cobj.CompilerObjectImage]) : build_run_core.ResultSourceToolLinuxDirectObject
+  [image : cobj.CompilerObjectImage])
+  (:cold) : build_run_core.ResultSourceToolLinuxDirectObject
   (build_run_core.source-tool-render-linux-direct-object
     (match kind
       [(CompilerPkgKindBin) Bin]
@@ -2452,7 +2589,8 @@
   [obj-path : String]
   [artifact-path : String]
   [link-inputs : build_run_core.SourceToolLinkInputs]
-  [obj : String]) : build_run_core.SourceToolDirectObjectStatus
+  [obj : String])
+  (:cold) : build_run_core.SourceToolDirectObjectStatus
   (match kind
     [(CompilerPkgKindBin)
       (build_run_core.source-tool-write-direct-object-and-link
@@ -2471,12 +2609,14 @@
         "build: failed to write package direct object artifact")]))
 
 (define (build-package-direct-object-mode?
-  [mode : be_state.CompilerBackendMode]) : bool
+  [mode : be_state.CompilerBackendMode])
+  (:cold) : bool
   (match mode
     [(or (Scalar) (Sse2)) true]
     [_ false]))
 
-(define (build-package-decl-has-spmd-callable? [decl : ast.AstDecl]) : bool
+(define (build-package-decl-has-spmd-callable? [decl : ast.AstDecl])
+  (:cold) : bool
   (match decl
     [(DefFn _ _ _ _ _ metadata)
       (match metadata
@@ -2487,7 +2627,8 @@
         (ast.ast-decl-box-shared-view inner))]
     [_ false]))
 
-(define (build-package-decls-have-spmd-callable? [decls : (& ast.AstDeclList)]) : bool
+(define (build-package-decls-have-spmd-callable? [decls : (& ast.AstDeclList)])
+  (:cold) : bool
   (match (ast.ast-decl-list-step decls)
     [(Nil) false]
     [(Cons decl rest)
@@ -2495,14 +2636,16 @@
         (build-package-decl-has-spmd-callable? decl)
         (build-package-decls-have-spmd-callable? (& rest)))]))
 
-(define (build-package-direct-object-owned-path-budget) : i64
+(define (build-package-direct-object-owned-path-budget)
+  (:cold) : i64
   ;; Large package direct-object emission duplicates enough object/ELF state to
   ;; exceed CI memory; keep it for small no-assembler package smokes.
   512)
 
 (define (build-package-direct-object-owned-path-count-from
   [paths : (& paths ast.AstDeclPathList)]
-  [index : i64]) : i64
+  [index : i64])
+  (:cold) : i64
   (if (>= index (ast.ast-decl-path-list-len paths))
     0
     (+
@@ -2514,14 +2657,16 @@
       (build-package-direct-object-owned-path-count-from paths (+ index 1)))))
 
 (define (build-package-direct-object-owned-path-count
-  [paths : (& paths ast.AstDeclPathList)]) : i64
+  [paths : (& paths ast.AstDeclPathList)])
+  (:cold) : i64
   (build-package-direct-object-owned-path-count-from paths 0))
 
 (define (build-package-direct-object-size-ok?
   [target : be_state.CompilerBackendTarget]
   [path-budget : i64]
   [linux-budget-override : bool]
-  [paths : (& paths ast.AstDeclPathList)]) : bool
+  [paths : (& paths ast.AstDeclPathList)])
+  (:cold) : bool
   (match target
     [(Linux)
       (or
@@ -2542,7 +2687,8 @@
   [path-budget : i64]
   [linux-budget-override : bool]
   [decls : (& ast.AstDeclList)]
-  [paths : (& paths ast.AstDeclPathList)]) : BuildPackageDirectObjectPreflight
+  [paths : (& paths ast.AstDeclPathList)])
+  (:cold) : BuildPackageDirectObjectPreflight
   (cond
     ;; COFF archive production remains on the assembler path.
     [(match target
@@ -2580,7 +2726,8 @@
   [emit-entry : bool]
   [crt-entry : bool]
   [lowered : compiler_driver_core.ResultCompilerDriverLowered]
-  [reason : be_state.CompilerDirectObjectFallbackReason]) : ResultBuildPackagePreparedRuntime
+  [reason : be_state.CompilerDirectObjectFallbackReason])
+  (:cold) : ResultBuildPackagePreparedRuntime
   (match (compiler_driver_core.compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
     entry-path
     lowered
@@ -2611,7 +2758,8 @@
   [emit-entry : bool]
   [crt-entry : bool]
   [preflight : BuildPackageDirectObjectPreflight]
-  [lowered : compiler_driver_core.ResultCompilerDriverLowered]) : ResultBuildPackagePreparedRuntime
+  [lowered : compiler_driver_core.ResultCompilerDriverLowered])
+  (:cold) : ResultBuildPackagePreparedRuntime
   (match preflight
     [(Eligible)
       (match target
@@ -2684,7 +2832,8 @@
 (define (build-package-graph-node-artifact-paths
   [node : BuildPackageGraphNode]
   [profile : pkg_profile.PackageProfile]
-  [target : be_state.CompilerBackendTarget]) : BuildPackageArtifactPaths
+  [target : be_state.CompilerBackendTarget])
+  (:cold) : BuildPackageArtifactPaths
   (let
     [manifest-path : String node.manifest-path]
     [manifest : load.CompilerPkgManifest node.manifest]
@@ -2699,12 +2848,14 @@
 (define (build-package-graph-node-artifact-path
   [node : BuildPackageGraphNode]
   [profile : pkg_profile.PackageProfile]
-  [target : be_state.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget])
+  (:cold) : String
   (build-package-runtime-artifact-path
     (build-package-graph-node-artifact-paths node profile target)))
 
 (define (build-package-validate-graph-checkouts-from
-  [nodes : BuildPackageGraphNodeVec]) : ResultBuildString
+  [nodes : BuildPackageGraphNodeVec])
+  (:cold) : ResultBuildString
   (for [index (iterator.range 0 (build-package-graph-node-vec-len nodes))]
     (let
       [_
@@ -2715,7 +2866,8 @@
   (Ok ""))
 
 (define (build-package-validate-graph-checkouts
-  [nodes : BuildPackageGraphNodeVec]) : ResultBuildString
+  [nodes : BuildPackageGraphNodeVec])
+  (:cold) : ResultBuildString
   (build-package-validate-graph-checkouts-from nodes))
 
 ;; A fetched dependency's relative search paths must stay inside its locked
@@ -2723,7 +2875,8 @@
 (define (build-package-link-confine-search-paths
   [node : BuildPackageGraphNode]
   [field : String]
-  [vec : (& vec fs.FsStringVector)]) : ResultBuildString
+  [vec : (& vec fs.FsStringVector)])
+  (:cold) : ResultBuildString
   (match node.provenance
     [(Local) (Ok "")]
     [(Fetched _ checkout-root)
@@ -2756,7 +2909,8 @@
 (define (build-package-graph-link-inputs
   [nodes : BuildPackageGraphNodeVec]
   [profile : pkg_profile.PackageProfile]
-  [target : be_state.CompilerBackendTarget]) : build_run_core.ResultSourceToolLinkInputs
+  [target : be_state.CompilerBackendTarget])
+  (:cold) : build_run_core.ResultSourceToolLinkInputs
   (let
     [index : i64 (- (build-package-graph-node-vec-len nodes) 1)]
     [out : build_run_core.SourceToolLinkInputs
@@ -2836,7 +2990,8 @@
 
 (define (build-package-catalog-dep-root
   [manifest-dir : String]
-  [dep : load.CompilerPkgDep]) : String
+  [dep : load.CompilerPkgDep])
+  (:cold) : String
   (load.compiler-load-canonical-path
     (&
       (if (load.compiler-load-absolute-path? dep.path)
@@ -2849,7 +3004,8 @@
   [deps : (& deps load.CompilerPkgDepList)]
   [count : i64]
   [manifest-dir : String]
-  [root : (& root str)]) : bool
+  [root : (& root str)])
+  (:cold) : bool
   (let
     [found : bool false]
     (for [index (iterator.range 0 count)]
@@ -2865,7 +3021,8 @@
 (define (build-package-graph-catalog-deps
   [nodes : BuildPackageGraphNodeVec]
   [manifest-dir : String]
-  [direct-deps : load.CompilerPkgDepList]) : load.CompilerPkgDepList
+  [direct-deps : load.CompilerPkgDepList])
+  (:cold) : load.CompilerPkgDepList
   (let
     [count : i64 (build-package-graph-node-vec-len nodes)]
     [direct-count : i64 (load.compiler-pkg-dep-list-count (& direct-deps))]
@@ -2895,7 +3052,8 @@
 
 (define (build-package-tlci-owner-stdlib-path?
   [owner : String]
-  [path : (& path str)]) : bool
+  [path : (& path str)])
+  (:cold) : bool
   (if (= (string.string-length owner) 0)
     false
     (let
@@ -2905,14 +3063,16 @@
         (>= (string.string-length path) prefix-len)
         (string.eq (string.substring path 0 prefix-len) prefix)))))
 
-(define (build-package-tlci-stdlib-path? [owner : String] [path : (& path str)]) : bool
+(define (build-package-tlci-stdlib-path? [owner : String] [path : (& path str)])
+  (:cold) : bool
   (or
     (load.compiler-load-stdlib-import? path)
     (build-package-tlci-owner-stdlib-path? owner path)))
 
 (define (build-package-tlci-metadata
   [manifest : (& manifest load.CompilerPkgManifest)]
-  [callables : tlci.TlciSpmdCallables]) : tlci.TlciMetadata
+  [callables : tlci.TlciSpmdCallables])
+  (:cold) : tlci.TlciMetadata
   (if (= (tlci.tlci-spmd-callables-len callables) 0)
     (tlci.tlci-make-metadata
       "v1"
@@ -2931,7 +3091,8 @@
 ;; into one right-sized dense sequence at the located slot.
 (define (build-package-tlci-specialization-insert
   [item : tlci.TlciSpmdSpecialization]
-  [items : tlci.TlciSpmdSpecializations]) : tlci.TlciSpmdSpecializations
+  [items : tlci.TlciSpmdSpecializations])
+  (:cold) : tlci.TlciSpmdSpecializations
   (let
     [count : i64 (tlci.tlci-spmd-specializations-len items)]
     [position : i64 count]
@@ -2972,7 +3133,8 @@
 
 (define (build-package-tlci-callable-insert
   [item : tlci.TlciSpmdCallable]
-  [items : tlci.TlciSpmdCallables]) : tlci.TlciSpmdCallables
+  [items : tlci.TlciSpmdCallables])
+  (:cold) : tlci.TlciSpmdCallables
   (let
     [count : i64 (tlci.tlci-spmd-callables-len items)]
     [position : i64 count]
@@ -3006,7 +3168,8 @@
 ;; :spmd-callable private ABI v1 defines scalar and avx512 package helpers;
 ;; sse2 packages emit and advertise the scalar helper while vectorizing other
 ;; loops with SSE2.
-(define (build-package-tlci-backend [mode : be_state.CompilerBackendMode]) : ir.CompilerIrSpmdBackend
+(define (build-package-tlci-backend [mode : be_state.CompilerBackendMode])
+  (:cold) : ir.CompilerIrSpmdBackend
   (match mode
     [(Scalar) Scalar]
     [(Sse2) Scalar]
@@ -3022,7 +3185,8 @@
   [index : i64]
   [limit : i64]
   [spmd-backend : ir.CompilerIrSpmdBackend]
-  [out : tlci.TlciSpmdSpecializations]) : tlci.TlciSpmdSpecializations
+  [out : tlci.TlciSpmdSpecializations])
+  (:cold) : tlci.TlciSpmdSpecializations
   (if (or
     (>= index limit)
     (>= index (ast.ast-spmd-specialization-list-len items)))
@@ -3086,7 +3250,8 @@
   [params : ast.AstParamList]
   [ret : ast.AstType]
   [specializations : ast.AstSpmdSpecializationList]
-  [mode : be_state.CompilerBackendMode]) : tlci.TlciSpmdCallable
+  [mode : be_state.CompilerBackendMode])
+  (:cold) : tlci.TlciSpmdCallable
   (let
     [canonical-name : String
       (csym.compiler-symbol-module-key
@@ -3116,7 +3281,8 @@
   [package-name : (& str)]
   [manifest-dir : (& str)]
   [stdlib-roots : (& cli_svec.Vec)]
-  [decl-path : (& str)]) : String
+  [decl-path : (& str)])
+  (:cold) : String
   (if (> (string.string-length module) 0)
     (string.copy module)
     (let
@@ -3140,7 +3306,8 @@
   [manifest-dir : (& str)]
   [stdlib-roots : (& cli_svec.Vec)]
   [mode : be_state.CompilerBackendMode]
-  [collector : BuildPackageTlciCallableCollector]) : BuildPackageTlciCallableCollector
+  [collector : BuildPackageTlciCallableCollector])
+  (:cold) : BuildPackageTlciCallableCollector
   (match decl
     [(DefFn decl-meta name params ret _ metadata)
       (if (= (string.string-length owned-path) 0)
@@ -3191,7 +3358,8 @@
 
 (define (build-package-tlci-push-macro-name!
   [out : (&mut out cli_svec.Vec)]
-  [name : String]) : bool
+  [name : String])
+  (:cold) : bool
   (let
     [index : i64 0]
     [present : bool false]
@@ -3210,7 +3378,8 @@
   (captures compiler_tlci_native_producer.TlciNativeMacroCaptures))
 
 (define (build-package-tlci-sort-macro-catalog!
-  [catalog : (&mut catalog (__tl_dyn-array String))]) : unit
+  [catalog : (&mut catalog (__tl_dyn-array String))])
+  (:cold) : unit
   (let
     [count : i64 (array-length catalog)]
     (for [index (iterator.range 1 count)]
@@ -3230,7 +3399,8 @@
 
 (define (build-package-tlci-finish-macro-collector
   [names : (&mut names cli_svec.Vec)]
-  [captures : compiler_tlci_native_producer.TlciNativeMacroCaptures]) : BuildPackageTlciMacroCollector
+  [captures : compiler_tlci_native_producer.TlciNativeMacroCaptures])
+  (:cold) : BuildPackageTlciMacroCollector
   (let
     [count : i64 (cli_svec.len names)]
     [catalog (__tl_make-array String count)]
@@ -3250,7 +3420,8 @@
   [owned-sources : (& owned-sources build_string_i64_map.Map)]
   [out : (&mut out cli_svec.Vec)]
   [captures
-    : (&mut captures compiler_tlci_native_producer.TlciNativeMacroCaptures)]) : unit
+    : (&mut captures compiler_tlci_native_producer.TlciNativeMacroCaptures)])
+  (:cold) : unit
   (match decl
     [(DefMacro decl-meta name params ret body)
       (if (= (string.string-length owned-path) 0)
@@ -3307,7 +3478,8 @@
         captures)]
     [_ unit]))
 
-(define (build-package-tlci-source-map [sources : (& sources cli_svec.Vec)]) : build_string_i64_map.Map
+(define (build-package-tlci-source-map [sources : (& sources cli_svec.Vec)])
+  (:cold) : build_string_i64_map.Map
   (let
     [out : build_string_i64_map.Map
       (build_string_i64_map.with-capacity
@@ -3321,7 +3493,8 @@
 
 (define (build-package-tlci-source-owned?
   [owned-sources : (& owned-sources build_string_i64_map.Map)]
-  [path : (& path str)]) : bool
+  [path : (& path str)])
+  (:cold) : bool
   (match (build_string_i64_map.get
     (& owned-sources)
     (load.compiler-load-normalize-path path))
@@ -3340,7 +3513,8 @@
   [owned-sources : (& owned-sources build_string_i64_map.Map)]
   [out : (&mut out cli_svec.Vec)]
   [captures
-    : (&mut captures compiler_tlci_native_producer.TlciNativeMacroCaptures)]) : unit
+    : (&mut captures compiler_tlci_native_producer.TlciNativeMacroCaptures)])
+  (:cold) : unit
   (let
     [decl-cursor : ast.AstDeclList decls]
     [path-cursor : ast.AstDeclPathList paths]
@@ -3387,7 +3561,8 @@
   [manifest : (& manifest load.CompilerPkgManifest)]
   [stdlib-roots : (& cli_svec.Vec)]
   [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]) : BuildPackageTlciMacroCollector
+  [paths : ast.AstDeclPathList])
+  (:cold) : BuildPackageTlciMacroCollector
   (let
     [out : cli_svec.Vec (cli_svec.new)]
     [captures : compiler_tlci_native_producer.TlciNativeMacroCaptures
@@ -3418,7 +3593,8 @@
   [stdlib-roots : (& cli_svec.Vec)]
   [mode : be_state.CompilerBackendMode]
   [owned-sources : (& owned-sources build_string_i64_map.Map)]
-  [collector : BuildPackageTlciCallableCollector]) : BuildPackageTlciCallableCollector
+  [collector : BuildPackageTlciCallableCollector])
+  (:cold) : BuildPackageTlciCallableCollector
   (let
     [decl-cursor : ast.AstDeclList decls]
     [path-cursor : ast.AstDeclPathList paths]
@@ -3478,7 +3654,8 @@
   [stdlib-roots : (& cli_svec.Vec)]
   [mode : be_state.CompilerBackendMode]
   [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]) : BuildPackageTlciCallableCollector
+  [paths : ast.AstDeclPathList])
+  (:cold) : BuildPackageTlciCallableCollector
   (let
     [owned-sources : build_string_i64_map.Map
       (build-package-tlci-source-map source-set.sources)]
@@ -3497,7 +3674,8 @@
 (define (build-package-tlci-image
   [metadata : tlci.TlciMetadata]
   [producer-identity : String]
-  [rodata : (__tl_dyn-array u8)]) : tlci.TlciImage
+  [rodata : (__tl_dyn-array u8)])
+  (:cold) : tlci.TlciImage
   (tlci.TlciImage
     (tlci.tlci-build-host-platform)
     tlci.tlci-callback-abi-version
@@ -3530,7 +3708,8 @@
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (build-package-tlci-source-inputs
     [manifest-path : String]
-    [producer-identity : (& producer-identity str)]) : ResultBuildPackageTlciSourceInputs
+    [producer-identity : (& producer-identity str)])
+    (:cold) : ResultBuildPackageTlciSourceInputs
     (if (not (tlci.tlci-producer-identity-valid? producer-identity))
       (Err "build: exact producer compiler identity is unavailable")
       (let
@@ -3556,7 +3735,8 @@
   (Err String))
 
 (define (clone-result-build-package-tlci-exports
-  [value : (& value ResultBuildPackageTlciExports)]) : ResultBuildPackageTlciExports
+  [value : (& value ResultBuildPackageTlciExports)])
+  (:cold) : ResultBuildPackageTlciExports
   (match value
     [(Ok metadata names native-source has-spmd)
       (let
@@ -3574,7 +3754,8 @@
   [mode : be_state.CompilerBackendMode]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
-  [source-set : (& source-set package_source_core.PackageSourceSet)]) : ResultBuildPackageTlciExports
+  [source-set : (& source-set package_source_core.PackageSourceSet)])
+  (:cold) : ResultBuildPackageTlciExports
   ;; The clone-out copies the native report strings before this arena ends.
   (with-scratch
     (unsafe
@@ -3594,7 +3775,8 @@
   [mode : be_state.CompilerBackendMode]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
-  [source-set : (& source-set package_source_core.PackageSourceSet)]) : ResultBuildPackageTlciExports
+  [source-set : (& source-set package_source_core.PackageSourceSet)])
+  (:cold) : ResultBuildPackageTlciExports
   (let
     [collector : BuildPackageTlciCallableCollector
       (build-package-tlci-callable-collector
@@ -3633,9 +3815,8 @@
   (SomeTlci String (Array u8 32))
   (Err String))
 
-(define (build-package-bytes-sha256 [bytes : (& (__tl_dyn-array u8))]) : (Array
-    u8
-    32)
+(define (build-package-bytes-sha256 [bytes : (& (__tl_dyn-array u8))])
+  (:cold) : (Array u8 32)
   (let
     [st : sha256.Sha256State (sha256.new)]
     [n : i64 (array-length (deref bytes))]
@@ -3658,7 +3839,8 @@
   (define (build-package-tlci-emit-optional
     [exports : ResultBuildPackageTlciExports]
     [producer-identity : String]
-    [source-digest : i64]) : BuildPackageTlciEmitted
+    [source-digest : i64])
+    (:cold) : BuildPackageTlciEmitted
     (match exports
       [(Err message) (BuildPackageTlciEmitted.Err message)]
       [(Ok metadata-text names native-source has-spmd)
@@ -3726,15 +3908,18 @@
                           (tlci.tlci-bytes->string bytes 0 (array-length bytes))
                           digest))]))])))])))
 
-(define (build-package-runtime-fingerprint-path [artifact-path : String]) : String
+(define (build-package-runtime-fingerprint-path [artifact-path : String])
+  (:cold) : String
   (str_cat.str-cat artifact-path ".runtime-inputs"))
 
-(define (build-package-file-regular? [path : String]) : bool
+(define (build-package-file-regular? [path : String])
+  (:cold) : bool
   (match (build-package-artifact-file-state path)
     [(Clean) true]
     [_ false]))
 
-(define (build-package-file-text-eq? [path : String] [expected : String]) : bool
+(define (build-package-file-text-eq? [path : String] [expected : String])
+  (:cold) : bool
   (if (not
     (build-package-file-regular? (owned_view.compiler-owned-shared-view path)))
     false
@@ -3742,7 +3927,8 @@
       [(OkIoBytes contents) (string.eq (byte_buf.to-string contents) expected)]
       [(ErrIoBytes _) false])))
 
-(define (build-package-file-digest [path : (& path str)] [context : String]) : ResultBuildPackageFileDigest
+(define (build-package-file-digest [path : (& path str)] [context : String])
+  (:cold) : ResultBuildPackageFileDigest
   (match (io.try-read-file path)
     [(ErrIoBytes error)
       (Err (str_cat.str-cat context ": " (io.error-message error)))]
@@ -3769,7 +3955,8 @@
 (define (build-package-sampled-file-digest-text
   [size : i64]
   [first : (__tl_dyn-array u8)]
-  [last : (__tl_dyn-array u8)]) : String
+  [last : (__tl_dyn-array u8)])
+  (:cold) : String
   (let
     [first-count : i64 (array-length first)]
     [last-count : i64 (array-length last)]
@@ -3806,7 +3993,8 @@
 
 (define (build-package-tool-file-digest
   [path : (& path str)]
-  [context : String]) : ResultBuildPackageFileDigest
+  [context : String])
+  (:cold) : ResultBuildPackageFileDigest
   (match (fs.try-file-metadata path)
     [(ErrFsMetadata error)
       (Err (str_cat.str-cat context ": " (io.error-message error)))]
@@ -3851,7 +4039,8 @@
                 (Ok (build-package-sampled-file-digest-text size first last))
                 (Err (str_cat.str-cat context ": " error-message))))]))]))
 
-(define (build-package-transcript-field [name : String] [value : String]) : String
+(define (build-package-transcript-field [name : String] [value : String])
+  (:cold) : String
   (str_cat.str-cat
     name
     " "
@@ -3861,7 +4050,8 @@
     "\n"))
 
 (define (build-package-command-args-transcript
-  [args : process.ProcessStringList]) : String
+  [args : process.ProcessStringList])
+  (:cold) : String
   (let
     [count : i64 (process.args-count args)]
     [out : String
@@ -3874,7 +4064,8 @@
           (build-package-transcript-field "arg" (process.args-ref args index)))))
     out))
 
-(define (build-package-command-env-transcript [items : process.ProcessEnvList]) : String
+(define (build-package-command-env-transcript [items : process.ProcessEnvList])
+  (:cold) : String
   (let
     [count : i64 (process.env-count items)]
     [out : String
@@ -3894,7 +4085,8 @@
 
 (define (build-package-command-transcript
   [role : String]
-  [command : process.ProcessCommand]) : ResultBuildString
+  [command : process.ProcessCommand])
+  (:cold) : ResultBuildString
   (let
     [executable : String
       (build_run_core.source-tool-resolve-command
@@ -3926,7 +4118,8 @@
               (process.command-argv command))
             (build-package-command-env-transcript (process.command-env command))))))))
 
-(define (build-package-env-transcript-one [name : String]) : String
+(define (build-package-env-transcript-one [name : String])
+  (:cold) : String
   (match (env.get (& name))
     [(EnvNoString)
       (build-package-transcript-field
@@ -3937,7 +4130,8 @@
         (str_cat.str-cat "inherited-env-" name)
         value)]))
 
-(define (build-package-runtime-inherited-env-transcript) : String
+(define (build-package-runtime-inherited-env-transcript)
+  (:cold) : String
   (str_cat.str-cat
     (build-package-transcript-field "working-directory" (fs.current-dir))
     (build-package-env-transcript-one "PATH")
@@ -3949,7 +4143,8 @@
     (build-package-env-transcript-one "GCC_EXEC_PREFIX")
     (build-package-env-transcript-one "SDKROOT")))
 
-(define (build-package-link-path-transcript [path : String]) : ResultBuildString
+(define (build-package-link-path-transcript [path : String])
+  (:cold) : ResultBuildString
   (if (build-package-file-regular? (owned_view.compiler-owned-shared-view path))
     (let
       [digest
@@ -3965,7 +4160,8 @@
 
 ;; Digest every raw argument and dependency archive that names a file.
 (define (build-package-link-raw-file-transcript
-  [inputs : build_run_core.SourceToolLinkInputs]) : ResultBuildString
+  [inputs : build_run_core.SourceToolLinkInputs])
+  (:cold) : ResultBuildString
   (let
     [args : process.ProcessStringList
       (process.args-append
@@ -3989,7 +4185,8 @@
       (Ok out)
       (Err error))))
 
-(define (build-package-link-library-candidate [dir : String] [name : String]) : String
+(define (build-package-link-library-candidate [dir : String] [name : String])
+  (:cold) : String
   (if (= (string.string-length dir) 0)
     name
     (load.compiler-load-join-root-path dir name)))
@@ -3997,7 +4194,8 @@
 (define (build-package-link-library-file-transcript
   [target : be_state.CompilerBackendTarget]
   [dir : String]
-  [library : String]) : ResultBuildString
+  [library : String])
+  (:cold) : ResultBuildString
   (let
     [direct : String
       (build-package-link-library-candidate
@@ -4032,7 +4230,8 @@
 
 (define (build-package-link-library-files-transcript
   [target : be_state.CompilerBackendTarget]
-  [inputs : build_run_core.SourceToolLinkInputs]) : ResultBuildString
+  [inputs : build_run_core.SourceToolLinkInputs])
+  (:cold) : ResultBuildString
   (let
     [libraries : process.ProcessStringList
       (build_run_core.source-tool-link-inputs-libs inputs)]
@@ -4071,7 +4270,8 @@
 
 (define (build-package-link-file-transcript
   [target : be_state.CompilerBackendTarget]
-  [inputs : build_run_core.SourceToolLinkInputs]) : ResultBuildString
+  [inputs : build_run_core.SourceToolLinkInputs])
+  (:cold) : ResultBuildString
   (let
     [raw-text
       (try
@@ -4091,7 +4291,8 @@
 ;; Each link input's kind, value and declaring package, manifest and field, in
 ;; declaration order (source-tool-link-inputs-origins).
 (define (build-package-link-origins-transcript
-  [inputs : build_run_core.SourceToolLinkInputs]) : String
+  [inputs : build_run_core.SourceToolLinkInputs])
+  (:cold) : String
   (let
     [origins : build_run_core.SourceToolLinkOrigins
       (build_run_core.source-tool-link-inputs-origins inputs)]
@@ -4117,7 +4318,8 @@
   [target : be_state.CompilerBackendTarget]
   [obj-path : String]
   [artifact-path : String]
-  [link-inputs : build_run_core.SourceToolLinkInputs]) : build_run_core.ResultSourceToolCommand
+  [link-inputs : build_run_core.SourceToolLinkInputs])
+  (:cold) : build_run_core.ResultSourceToolCommand
   (match kind
     [(CompilerPkgKindBin)
       (match target
@@ -4148,7 +4350,8 @@
   [target : be_state.CompilerBackendTarget]
   [obj-path : String]
   [artifact-path : String]
-  [link-inputs : build_run_core.SourceToolLinkInputs]) : ResultBuildString
+  [link-inputs : build_run_core.SourceToolLinkInputs])
+  (:cold) : ResultBuildString
   (let
     [command
       (try
@@ -4178,13 +4381,15 @@
               link-file-text
               (build-package-runtime-inherited-env-transcript))))])))
 
-(define (build-package-bytes-sha256-hex [bytes : (& (__tl_dyn-array u8))]) : String
+(define (build-package-bytes-sha256-hex [bytes : (& (__tl_dyn-array u8))])
+  (:cold) : String
   (let
     [d : sha256.Sha256Digest
       (sha256.Sha256Digest (build-package-bytes-sha256 bytes))]
     (sha256.to-hex (& d))))
 
-(define (build-package-file-sha256-hex [path : (& str)]) : ResultBuildPackageFileDigest
+(define (build-package-file-sha256-hex [path : (& str)])
+  (:cold) : ResultBuildPackageFileDigest
   (match (io.try-read-file path)
     [(ErrIoBytes error)
       (Err
@@ -4198,7 +4403,8 @@
         [bytes : (__tl_dyn-array u8) (byte_buf.to-array contents)]
         (Ok (build-package-bytes-sha256-hex (& bytes))))]))
 
-(define (build-package-target-cfg [target : be_state.CompilerBackendTarget]) : target_cfg.CompilerTargetCfg
+(define (build-package-target-cfg [target : be_state.CompilerBackendTarget])
+  (:cold) : target_cfg.CompilerTargetCfg
   (match target
     [(Linux) (target_cfg.CompilerTargetCfg.Linux)]
     [(Windows) (target_cfg.CompilerTargetCfg.Windows)]))
@@ -4208,7 +4414,8 @@
   [deps : (& load.CompilerPkgDeps)]
   [profile : pkg_profile.PackageProfile]
   [visited : (&mut build_string_i64_map.Map)]
-  [out : text_buf.TextBuf]) : text_buf.TextBuf
+  [out : text_buf.TextBuf])
+  (:cold) : text_buf.TextBuf
   (let
     [ordered : load.CompilerPkgDepList
       (load.compiler-pkg-deps-list (load.clone-compiler-pkg-deps deps))]
@@ -4273,7 +4480,8 @@
   [profile : pkg_profile.PackageProfile]
   [target : be_state.CompilerBackendTarget]
   [cfgs : sym_i64_env.SymI64Env]
-  [sources : (& cli_svec.Vec)]) : ResultBuildString
+  [sources : (& cli_svec.Vec)])
+  (:cold) : ResultBuildString
   (let
     [out : text_buf.TextBuf (text_buf.empty)]
     [cfg-bytes : (Array u8 32) (tli_extract.tli-extract-cfg-digest cfgs)]
@@ -4365,7 +4573,8 @@
   [artifact-path : String]
   [link-inputs : build_run_core.SourceToolLinkInputs]
   [direct-object : bool]
-  [extra-v3 : String]) : ResultBuildString
+  [extra-v3 : String])
+  (:cold) : ResultBuildString
   (let
     [base : String
       (str_cat.str-cat
@@ -4428,7 +4637,8 @@
   [asm-path : String]
   [obj-path : String]
   [artifact-path : String]
-  [extra-v3 : String]) : ResultBuildString
+  [extra-v3 : String])
+  (:cold) : ResultBuildString
   (build-package-runtime-input-transcript
     (load.CompilerPkgKind.CompilerPkgKindLib)
     target
@@ -4449,7 +4659,8 @@
   [input-transcript : String]
   [tli-path : (& str)]
   [artifact-path : (& str)]
-  [tlci-path : (& str)]) : ResultBuildString
+  [tlci-path : (& str)])
+  (:cold) : ResultBuildString
   (let
     [tli-digest
       (try
@@ -4482,7 +4693,8 @@
   [tli-path : (& str)]
   [artifact-path : (& str)]
   [tlci-path : (& str)]
-  [fingerprint-path : (& str)]) : bool
+  [fingerprint-path : (& str)])
+  (:cold) : bool
   (if (not
     (and
       (build-package-file-regular? (string.copy tli-path))
@@ -4502,7 +4714,8 @@
   [input-transcript : String]
   [asm-path : (& asm-path str)]
   [obj-path : (& obj-path str)]
-  [artifact-path : (& artifact-path str)]) : ResultBuildString
+  [artifact-path : (& artifact-path str)])
+  (:cold) : ResultBuildString
   (let
     [asm-digest
       (try
@@ -4530,7 +4743,8 @@
   [asm-path : String]
   [obj-path : String]
   [artifact-path : String]
-  [fingerprint-path : String]) : bool
+  [fingerprint-path : String])
+  (:cold) : bool
   (and
     (build-package-file-regular? asm-path)
     (build-package-file-regular? obj-path)
@@ -4542,7 +4756,8 @@
   [asm-path : String]
   [obj-path : String]
   [artifact-path : String]
-  [fingerprint-path : String]) : bool
+  [fingerprint-path : String])
+  (:cold) : bool
   (if (not
     (build-package-runtime-outputs-regular?
       (owned_view.compiler-owned-shared-view asm-path)
@@ -4564,7 +4779,8 @@
   [obj-path : String]
   [artifact-path : String]
   [fingerprint-path : String]
-  [object-text : String]) : bool
+  [object-text : String])
+  (:cold) : bool
   (and
     (build-package-file-text-eq?
       (owned_view.compiler-owned-shared-view obj-path)
@@ -4582,7 +4798,8 @@
   [obj-path : String]
   [artifact-path : String]
   [fingerprint-path : String]
-  [asm : String]) : bool
+  [asm : String])
+  (:cold) : bool
   (and
     (build-package-file-text-eq?
       (owned_view.compiler-owned-shared-view asm-path)
@@ -4594,7 +4811,8 @@
       artifact-path
       fingerprint-path)))
 
-(define (build-package-path-present? [path : (& path str)]) : bool
+(define (build-package-path-present? [path : (& path str)])
+  (:cold) : bool
   (match (fs.try-file-metadata path)
     [(OkFsMetadata _) true]
     [(ErrFsMetadata _) false]))
@@ -4602,7 +4820,8 @@
 (define (build-package-stage-dir-attempt
   [output-dir : String]
   [_name : String]
-  [attempt : i64]) : ResultBuildString
+  [attempt : i64])
+  (:cold) : ResultBuildString
   (if (> attempt 64)
     (Err "build: package artifact staging has no free path")
     (let
@@ -4623,7 +4842,8 @@
 (define (build-package-stage-file
   [dir : String]
   [stem : String]
-  [final-path : (& final-path str)]) : String
+  [final-path : (& final-path str)])
+  (:cold) : String
   (let
     [extension : String (fs.extension final-path)]
     (load.compiler-load-join-root-path
@@ -4640,7 +4860,8 @@
   [artifact-path : (& artifact-path str)]
   [fingerprint-path : (& fingerprint-path str)]
   [tli-path : (& tli-path str)]
-  [tlci-path : (& tlci-path str)]) : ResultBuildPackageStagePaths
+  [tlci-path : (& tlci-path str)])
+  (:cold) : ResultBuildPackageStagePaths
   (let
     [dir (try (build-package-stage-dir-attempt output-dir name 1))]
     (Ok
@@ -4679,7 +4900,8 @@
   [obj-path : (& obj-path str)]
   [artifact-path : (& artifact-path str)]
   [fingerprint-path : (& fingerprint-path str)]
-  [tlci-path : (& tlci-path str)]) : ResultBuildPackageStagePaths
+  [tlci-path : (& tlci-path str)])
+  (:cold) : ResultBuildPackageStagePaths
   (build-package-stage-paths-with-tli
     output-dir
     name
@@ -4690,14 +4912,16 @@
     ""
     tlci-path))
 
-(define (build-package-remove-staged-file [path : String]) : unit
+(define (build-package-remove-staged-file [path : String])
+  (:cold) : unit
   (fs.try-remove-file-if-exists (& path))
   (let
     [backup : String (str_cat.str-cat path ".previous")]
     (fs.try-remove-file-if-exists (& backup)))
   unit)
 
-(define (build-package-clean-stage [paths : BuildPackageStagePaths]) : unit
+(define (build-package-clean-stage [paths : BuildPackageStagePaths])
+  (:cold) : unit
   (build-package-remove-staged-file paths.asm)
   (build-package-remove-staged-file paths.obj)
   (build-package-remove-staged-file paths.artifact)
@@ -4715,7 +4939,8 @@
 
 (define (build-package-rollback-preserves-backup?
   [rollback : (& rollback BuildPackageRollbackDisposition)]
-  [backup-path : (& backup-path str)]) : bool
+  [backup-path : (& backup-path str)])
+  (:cold) : bool
   (let
     [index : i64 0]
     [preserve : bool false]
@@ -4730,7 +4955,8 @@
 
 (define (build-package-remove-staged-file-after-rollback
   [path : String]
-  [rollback : (& rollback BuildPackageRollbackDisposition)]) : unit
+  [rollback : (& rollback BuildPackageRollbackDisposition)])
+  (:cold) : unit
   (fs.try-remove-file-if-exists (& path))
   (let
     [backup : String (str_cat.str-cat path ".previous")]
@@ -4743,7 +4969,8 @@
 
 (define (build-package-clean-stage-after-rollback
   [paths : (& paths BuildPackageStagePaths)]
-  [rollback : BuildPackageRollbackDisposition]) : unit
+  [rollback : BuildPackageRollbackDisposition])
+  (:cold) : unit
   ;; Always discard new staged data. Delete only superseded `.previous` files;
   ;; a retained entry also keeps the containing stage directory recoverable.
   (let
@@ -4768,7 +4995,8 @@
           unit)))
     unit))
 
-(define (build-package-commit-plan-new) : BuildPackageCommitPlan
+(define (build-package-commit-plan-new)
+  (:cold) : BuildPackageCommitPlan
   (BuildPackageCommitPlan
     (__tl_make-array BuildPackageCommitFile build-package-commit-file-capacity)
     0))
@@ -4776,7 +5004,8 @@
 (define (build-package-commit-plan-add
   [plan : BuildPackageCommitPlan]
   [final-path : String]
-  [staged-path : String]) : BuildPackageCommitPlan
+  [staged-path : String])
+  (:cold) : BuildPackageCommitPlan
   (let
     [files : (__tl_dyn-array BuildPackageCommitFile) plan.files]
     [index : i64 plan.len]
@@ -4791,7 +5020,8 @@
 
 (define (build-package-commit-plan-set-had-old!
   [plan : BuildPackageCommitPlan]
-  [index : i64]) : unit
+  [index : i64])
+  (:cold) : unit
   (let
     [files : (__tl_dyn-array BuildPackageCommitFile) plan.files]
     [item : BuildPackageCommitFile
@@ -4804,7 +5034,8 @@
         item.backup-path
         true))))
 
-(define (build-package-rollback-disposition-new) : BuildPackageRollbackDisposition
+(define (build-package-rollback-disposition-new)
+  (:cold) : BuildPackageRollbackDisposition
   (BuildPackageRollbackDisposition
     (__tl_make-array
       BuildPackageBackupRollback
@@ -4814,7 +5045,8 @@
 
 (define (build-package-rollback-disposition-add-backup
   [rollback : BuildPackageRollbackDisposition]
-  [backup : BuildPackageBackupRollback]) : BuildPackageRollbackDisposition
+  [backup : BuildPackageBackupRollback])
+  (:cold) : BuildPackageRollbackDisposition
   (let
     [backups : (__tl_dyn-array BuildPackageBackupRollback) rollback.backups]
     [index : i64 rollback.len]
@@ -4823,7 +5055,8 @@
 
 (define (build-package-rollback-disposition-add-error
   [rollback : BuildPackageRollbackDisposition]
-  [message : String]) : BuildPackageRollbackDisposition
+  [message : String])
+  (:cold) : BuildPackageRollbackDisposition
   (set!
     rollback.errors
     (if (= (string.string-length rollback.errors) 0)
@@ -4832,7 +5065,8 @@
   rollback)
 
 (define (build-package-rollback-recovery-required?
-  [rollback : BuildPackageRollbackDisposition]) : bool
+  [rollback : BuildPackageRollbackDisposition])
+  (:cold) : bool
   (let
     [index : i64 0]
     [required : bool false]
@@ -4848,7 +5082,8 @@
 (define (build-package-commit-error-message
   [primary : String]
   [rollback : BuildPackageRollbackDisposition]
-  [stage-dir : String]) : String
+  [stage-dir : String])
+  (:cold) : String
   (let
     [with-secondary : String
       (if (= (string.string-length rollback.errors) 0)
@@ -4866,7 +5101,8 @@
       with-secondary)))
 
 (define (build-package-commit-plan-preflight
-  [plan : (& plan BuildPackageCommitPlan)]) : ResultBuildString
+  [plan : (& plan BuildPackageCommitPlan)])
+  (:cold) : ResultBuildString
   (let
     [index : i64 0]
     [count : i64 plan.len]
@@ -4908,7 +5144,8 @@
 (define (build-package-commit-plan-rollback
   [plan : BuildPackageCommitPlan]
   [installed : i64]
-  [backed-up : i64]) : BuildPackageRollbackDisposition
+  [backed-up : i64])
+  (:cold) : BuildPackageRollbackDisposition
   (let
     [index : i64 (- installed 1)]
     [rollback : BuildPackageRollbackDisposition
@@ -4973,7 +5210,8 @@
         (-= index 1)))
     rollback))
 
-(define (build-package-commit-plan-run [plan : BuildPackageCommitPlan]) : ResultBuildPackageCommit
+(define (build-package-commit-plan-run [plan : BuildPackageCommitPlan])
+  (:cold) : ResultBuildPackageCommit
   (match (build-package-commit-plan-preflight plan)
     [(Err message) (Err message (build-package-rollback-disposition-new))]
     [(Ok _)
@@ -5057,7 +5295,8 @@
             error
             (build-package-commit-plan-rollback plan installed backed-up))))]))
 
-(define (build-package-write-tlci [path : (& path str)] [text : String]) : build_run_core.SourceToolCommandStatus
+(define (build-package-write-tlci [path : (& path str)] [text : String])
+  (:cold) : build_run_core.SourceToolCommandStatus
   (build_run_core.source-tool-write-file
     path
     text
@@ -5066,7 +5305,8 @@
 (define (build-package-write-assembly
   [path : (& path str)]
   [asm : String]
-  [target : be_state.CompilerBackendTarget]) : build_run_core.SourceToolCommandStatus
+  [target : be_state.CompilerBackendTarget])
+  (:cold) : build_run_core.SourceToolCommandStatus
   (let
     [_
       (try
@@ -5094,7 +5334,8 @@
   [tlci-path : String]
   [runtime-dirty : bool]
   [tlci-dirty : bool]
-  [announce : bool]) : i64
+  [announce : bool])
+  (:cold) : i64
   (if announce
     (begin
       (io.print-format
@@ -5129,7 +5370,8 @@
   [input-transcript : String]
   [runtime-dirty : bool]
   [tlci-dirty : bool]
-  [announce : bool]) : i64
+  [announce : bool])
+  (:cold) : i64
   (let
     [ok : bool true]
     [error : String ""]
@@ -5230,7 +5472,8 @@
   [object-text : String]
   [side-assembly : String]
   [extra-v3 : String]
-  [announce : bool]) : i64
+  [announce : bool])
+  (:cold) : i64
   (let
     [fingerprint-path : String
       (build-package-runtime-fingerprint-path
@@ -5356,7 +5599,8 @@
   [tlci-text : String]
   [asm : String]
   [extra-v3 : String]
-  [announce : bool]) : i64
+  [announce : bool])
+  (:cold) : i64
   (let
     [fingerprint-path : String
       (build-package-runtime-fingerprint-path
@@ -5474,7 +5718,8 @@
   [tlci-path : String]
   [tlci-text : String]
   [extra-v3 : String]
-  [announce : bool]) : i64
+  [announce : bool])
+  (:cold) : i64
   (match prepared
     [(DirectObject object-text side-assembly)
       (build-package-finish-direct-fresh-artifacts
@@ -5520,7 +5765,8 @@
       1]))
 
 (define (build-package-require-direct-object
-  [prepared : ResultBuildPackagePreparedRuntime]) : ResultBuildPackagePreparedRuntime
+  [prepared : ResultBuildPackagePreparedRuntime])
+  (:cold) : ResultBuildPackagePreparedRuntime
   (match prepared
     [(DirectObject object side-assembly) (DirectObject object side-assembly)]
     [(Assembly _ reason)
@@ -5532,7 +5778,8 @@
 
 (define (build-package-elf-member-needs-runtime?
   [bytes : (& bytes str)]
-  [request : (& elf.ElfReadRequest)]) : bool
+  [request : (& elf.ElfReadRequest)])
+  (:cold) : bool
   (let
     [size : i64 (string.string-length bytes)]
     (when (> size request.limits.max-input-bytes) (return true))
@@ -5562,7 +5809,8 @@
               [_ unit]))
           false]))))
 
-(define (build-package-elf-archive-needs-runtime? [path : (& str)]) : bool
+(define (build-package-elf-archive-needs-runtime? [path : (& str)])
+  (:cold) : bool
   (let
     [limits : elf.ElfLimits (elf.default-limits)]
     [size : i64 (fs.file-size path)]
@@ -5604,7 +5852,8 @@
 
 (define (build-package-archives-need-runtime?
   [target : be_state.CompilerBackendTarget]
-  [inputs : (& inputs build_run_core.SourceToolLinkInputs)]) : bool
+  [inputs : (& inputs build_run_core.SourceToolLinkInputs)])
+  (:cold) : bool
   (and
     (build_run_core.source-tool-link-inputs-have-archives? inputs)
     (if (and
@@ -5628,7 +5877,8 @@
   (define (build-package-prepare-owned-runtime
     [scope : compiler_driver_core.CompilerDriverPackageRuntimeScope]
     [request : BuildPackageDirectObjectRequest]
-    [archive-runtime : bool]) : ResultBuildPackagePreparedRuntime
+    [archive-runtime : bool])
+    (:cold) : ResultBuildPackagePreparedRuntime
     (let
       [preflight : BuildPackageDirectObjectPreflight
         (build-package-direct-object-preflight
@@ -5682,7 +5932,8 @@
 ;; The later catalog-finish report belongs to the restored parent, which owns
 ;; admitted mappings but did not perform this runtime's surface hydration.
 (define (build-package-runtime-scope-release!
-  [scope : compiler_driver_core.CompilerDriverPackageRuntimeScope]) : unit
+  [scope : compiler_driver_core.CompilerDriverPackageRuntimeScope])
+  (:cold) : unit
   (begin
     (cfg
       dependency-tlci-verification
@@ -5719,7 +5970,8 @@
     [artifact-path : String]
     [link-inputs : build_run_core.SourceToolLinkInputs]
     [announce : bool]
-    [cfgs : sym_i64_env.SymI64Env]) : i64
+    [cfgs : sym_i64_env.SymI64Env])
+    (:cold) : i64
     (let
       [prepared : ResultBuildPackagePreparedRuntime
         (build-package-prepare-owned-runtime
@@ -5783,7 +6035,8 @@
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
-  (define (build-package-lib-file-sha256 [path : (& str)]) : (Array u8 32)
+  (define (build-package-lib-file-sha256 [path : (& str)])
+    (:cold) : (Array u8 32)
     (match (io.try-read-file path)
       [(ErrIoBytes _) (make-array u8 32)]
       [(OkIoBytes contents)
@@ -5801,8 +6054,8 @@
     [package-name : (& str)]
     [manifest-dir : (& str)]
     [stdlib-roots : (& cli_svec.Vec)]
-    [source-set : (& package_source_core.PackageSourceSet)]) : (__tl_dyn-array
-      tli_extract.TliSource)
+    [source-set : (& package_source_core.PackageSourceSet)])
+    (:cold) : (__tl_dyn-array tli_extract.TliSource)
     (let
       [owned-sources : build_string_i64_map.Map
         (build-package-tlci-source-map (& source-set.sources))]
@@ -5936,7 +6189,8 @@
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (build-package-lib-snapshot-external-imports!
     [bundle : (&mut tli.TliBundle)]
-    [load-state : (& load.CompilerLoadSessionState)]) : unit
+    [load-state : (& load.CompilerLoadSessionState)])
+    (:cold) : unit
     (let
       [mcount : i64 (array-length bundle.modules)]
       (for [m (iterator.range 0 mcount)]
@@ -5961,7 +6215,8 @@
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (build-package-lib-stamp-tlci-companion!
     [bundle : (&mut tli.TliBundle)]
-    [tlci-sha256 : (Array u8 32)]) : unit
+    [tlci-sha256 : (Array u8 32)])
+    (:cold) : unit
     (set! bundle.flags (bit-or bundle.flags tli.tli-has-tlci-companion))
     (for [m (iterator.range 0 (array-length bundle.modules))]
       (for [k
@@ -5978,7 +6233,8 @@
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (build-package-lib-obj-name
     [asm-file : (& str)]
-    [target : be_state.CompilerBackendTarget]) : String
+    [target : be_state.CompilerBackendTarget])
+    (:cold) : String
     (let
       [n : i64 (string.string-length asm-file)]
       [stem : String
@@ -5995,7 +6251,8 @@
   ;; False keeps that module on the assembler.
   (define (build-package-lib-write-direct-object
     [image : cobj.CompilerObjectImage]
-    [asm-path : String]) : bool
+    [asm-path : String])
+    (:cold) : bool
     (match (build-package-render-linux-direct-object
       (load.CompilerPkgKind.CompilerPkgKindLib)
       image)
@@ -6010,7 +6267,8 @@
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
-  (define (build-package-lib-clean-mods-dir! [mods-dir : (& str)]) : unit
+  (define (build-package-lib-clean-mods-dir! [mods-dir : (& str)])
+    (:cold) : unit
     (match (fs.try-read-dir mods-dir)
       [(ErrIoStringVector _) unit]
       [(OkIoStringVector entries)
@@ -6030,7 +6288,8 @@
     [direct-objects : (& (__tl_dyn-array bool))]
     [package-name : (& str)]
     [target : be_state.CompilerBackendTarget]
-    [archive-path : String]) : build_run_core.SourceToolCommandStatus
+    [archive-path : String])
+    (:cold) : build_run_core.SourceToolCommandStatus
     (let
       [obj-paths : process.ProcessStringList (process.args-empty)]
       [count : i64 (array-length (deref asm-files))]
@@ -6086,7 +6345,8 @@
       (build_run_core.source-tool-archive-many target obj-paths archive-path))))
 
 (define (build-package-target-is-host?
-  [target : be_state.CompilerBackendTarget]) : bool
+  [target : be_state.CompilerBackendTarget])
+  (:cold) : bool
   (match target
     [(Linux) (cfg windows false true)]
     [(Windows) (cfg windows true false)]))
@@ -6099,7 +6359,8 @@
     [tlci-path : (& str)]
     [tlci-text : String]
     [has-tlci : bool]
-    [tlci-dirty : bool]) : i64
+    [tlci-dirty : bool])
+    (:cold) : i64
     (when
       tlci-dirty
       (match (build-package-write-tlci (& stage.tlci) tlci-text)
@@ -6148,7 +6409,8 @@
   (define (build-package-lib-checked-raw-paths
     [checked-paths : (& ast.AstDeclPathList)]
     [raw-paths : (& ast.AstDeclPathList)]
-    [raw-by-owned : (& build_string_i64_map.Map)]) : ast.AstDeclPathList
+    [raw-by-owned : (& build_string_i64_map.Map)])
+    (:cold) : ast.AstDeclPathList
     (let
       [count : i64 (ast.ast-decl-path-list-len checked-paths)]
       [out : ast.AstDeclPathList (ast.ast-decl-path-list-with-capacity count)]
@@ -6178,7 +6440,8 @@
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (build-package-lib-owned-path-slots
-    [owned-paths : (& ast.AstDeclPathList)]) : build_string_i64_map.Map
+    [owned-paths : (& ast.AstDeclPathList)])
+    (:cold) : build_string_i64_map.Map
     (let
       [out : build_string_i64_map.Map (build_string_i64_map.with-capacity 16)]
       (for [index (iterator.range 0 (ast.ast-decl-path-list-len owned-paths))]
@@ -6198,7 +6461,8 @@
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
-  (define (build-package-lib-encode-interface [bundle : (&mut tli.TliBundle)]) : ResultBuildPackageLibInterface
+  (define (build-package-lib-encode-interface [bundle : (&mut tli.TliBundle)])
+    (:cold) : ResultBuildPackageLibInterface
     (if (tli_extract.tli-extract-pin-imports! bundle)
       (ResultBuildPackageLibInterface.Ok (tli_codec.tli-encode-bundle bundle))
       (ResultBuildPackageLibInterface.Err
@@ -6210,7 +6474,8 @@
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (build-package-lib-stamp-interface
     [bytes : (& (__tl_dyn-array u8))]
-    [tlci-sha256 : (& (Array u8 32))]) : ResultBuildPackageLibInterface
+    [tlci-sha256 : (& (Array u8 32))])
+    (:cold) : ResultBuildPackageLibInterface
     (match (tli_codec.tli-decode-bundle bytes)
       [(Err failure)
         (ResultBuildPackageLibInterface.Err
@@ -6248,7 +6513,8 @@
     [target : be_state.CompilerBackendTarget]
     [mode : be_state.CompilerBackendMode]
     [request : (& BuildPackageEmitRequest)]
-    [direct-object? : bool]) : BuildPackageLibCode
+    [direct-object? : bool])
+    (:cold) : BuildPackageLibCode
     (let
       [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
       [checked-program : ast.AstProgram (tc_core.tc-context-program ctx)]
@@ -6328,7 +6594,8 @@
     [fingerprint-path : String]
     [tlci-text : String]
     [has-tlci : bool]
-    [tlci-dirty : bool]) : i64
+    [tlci-dirty : bool])
+    (:cold) : i64
     (let
       [combined-asm : text_buf.TextBuf (text_buf.empty)]
       (if (= (array-length emitted.asm-files) 0)
@@ -6463,7 +6730,8 @@
     [decls : ast.AstDeclList]
     [raw-paths : ast.AstDeclPathList]
     [owned-paths : ast.AstDeclPathList]
-    [cfgs : sym_i64_env.SymI64Env]) : i64
+    [cfgs : sym_i64_env.SymI64Env])
+    (:cold) : i64
     (let
       [output-dir : String
         (build-package-output-dir-profile
@@ -6793,7 +7061,8 @@
 
 (define (build-package-doctest-paths
   [owner : String]
-  [paths : ast.AstDeclPathList]) : ast.AstDeclPathList
+  [paths : ast.AstDeclPathList])
+  (:cold) : ast.AstDeclPathList
   (let
     [owner-id : i64
       (ast.ast-decl-path-list-owner-id
@@ -6830,7 +7099,8 @@
   [cfg-names : (& cfg-names cli_svec.Vec)]
   [manifest-dir : String]
   [deps : load.CompilerPkgDeps]
-  [emit-entry : bool]) : i64
+  [emit-entry : bool])
+  (:cold) : i64
   (load.compiler-load-session-set-package-profile!
     (load.compiler-load-serial-test-session-state)
     profile)
@@ -6896,7 +7166,8 @@
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (clone-result-build-package-emit
-    [value : (& value ResultBuildPackageEmit)]) : ResultBuildPackageEmit
+    [value : (& value ResultBuildPackageEmit)])
+    (:cold) : ResultBuildPackageEmit
     (match value
       [(Finished status) (Finished status)]
       [(Preflight inline-sources doctests)
@@ -6906,7 +7177,8 @@
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (build-package-emit-attempt
     [request : (& BuildPackageEmitRequest)]
-    [check-closure : bool]) : ResultBuildPackageEmit
+    [check-closure : bool])
+    (:cold) : ResultBuildPackageEmit
     (let
       [home : arena.Arena (arena.current)]
       (with-scratch
@@ -6937,7 +7209,8 @@
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (build-package-emit-one-with-surface
-    [request : (& BuildPackageEmitRequest)]) : i64
+    [request : (& BuildPackageEmitRequest)])
+    (:cold) : i64
     (match (build-package-emit-attempt request true)
       [(Finished status) status]
       [(Preflight inline-sources doctests)
@@ -6988,7 +7261,8 @@
   (define (build-package-emit-one-in-runtime-scope
     [scope : compiler_driver_core.CompilerDriverPackageRuntimeScope]
     [request : (& BuildPackageEmitRequest)]
-    [check-closure : bool]) : ResultBuildPackageEmit
+    [check-closure : bool])
+    (:cold) : ResultBuildPackageEmit
     (let
       [cfgs : sym_i64_env.SymI64Env
         (cfg_core.compiler-cfg-snapshot-to-env (& request.compile-cfgs))]
@@ -7143,7 +7417,8 @@
     [catalog-deps : load.CompilerPkgDepList]
     [producer-identity : String]
     [announce : bool]
-    [interface-only : bool]) : i64
+    [interface-only : bool])
+    (:cold) : i64
     (let
       ;; Windows package DAG nodes are serial same-process compiles; keep only
       ;; persistent cache floors between dependency and root emits.
@@ -7348,7 +7623,8 @@
     [dep-link-inputs : build_run_core.SourceToolLinkInputs]
     [catalog-deps : load.CompilerPkgDepList]
     [producer-identity : String]
-    [announce : bool]) : i64
+    [announce : bool])
+    (:cold) : i64
     (build-package-emit-one-mode
       manifest-path
       manifest
@@ -7382,7 +7658,8 @@
     [_catalog-deps : load.CompilerPkgDepList]
     [_producer-identity : String]
     [_announce : bool]
-    [_interface-only : bool]) : i64
+    [_interface-only : bool])
+    (:cold) : i64
     (io.print-error
       "build: package emission requires checked frontend surface support")
     1))
@@ -7403,12 +7680,14 @@
     [_dep-link-inputs : build_run_core.SourceToolLinkInputs]
     [_catalog-deps : load.CompilerPkgDepList]
     [_producer-identity : String]
-    [_announce : bool]) : i64
+    [_announce : bool])
+    (:cold) : i64
     (io.print-error
       "build: package emission requires checked frontend surface support")
     1))
 
-(define (build-package-dependency-catalog-finish [status : i64]) : i64
+(define (build-package-dependency-catalog-finish [status : i64])
+  (:cold) : i64
   (let
     [state : load.CompilerLoadSessionState
       (load.compiler-load-serial-test-session-state)]
@@ -7425,12 +7704,14 @@
           1
           status)])))
 
-(define (build-package-worker-unified-cli?) : bool
+(define (build-package-worker-unified-cli?)
+  (:cold) : bool
   (and
     (> (io.arg-count) 1)
     (or (string.eq (io.arg 1) "build") (string.eq (io.arg 1) "run"))))
 
-(define (build-package-worker-command-prefix [args : process.ProcessStringList]) : process.ProcessStringList
+(define (build-package-worker-command-prefix [args : process.ProcessStringList])
+  (:cold) : process.ProcessStringList
   (if (build-package-worker-unified-cli?)
     (build_run_core.source-tool-args-append args "build")
     args))
@@ -7438,7 +7719,8 @@
 (define (build-package-worker-append-option
   [args : process.ProcessStringList]
   [flag : String]
-  [value : String]) : process.ProcessStringList
+  [value : String])
+  (:cold) : process.ProcessStringList
   (build_run_core.source-tool-args-append
     (build_run_core.source-tool-args-append args flag)
     value))
@@ -7446,7 +7728,8 @@
 (define (build-package-worker-append-values
   [args : process.ProcessStringList]
   [roots : (& roots cli_svec.Vec)]
-  [flag : String]) : process.ProcessStringList
+  [flag : String])
+  (:cold) : process.ProcessStringList
   (let
     [n : i64 (cli_svec.len (& roots))]
     [out : process.ProcessStringList args]
@@ -7462,7 +7745,8 @@
 (define (build-package-worker-append-resolved-deps
   [args : process.ProcessStringList]
   [deps : load.CompilerPkgDepList]
-  [index : i64]) : process.ProcessStringList
+  [index : i64])
+  (:cold) : process.ProcessStringList
   (if (>= index (load.compiler-pkg-dep-list-count deps))
     args
     (let
@@ -7486,7 +7770,8 @@
   [lock-policy : BuildPackageLockPolicy]
   [resolved-deps : load.CompilerPkgDepList]
   [stdlib-roots : (& stdlib-roots cli_svec.Vec)]
-  [cfg-names : (& cfg-names cli_svec.Vec)]) : process.ProcessStringList
+  [cfg-names : (& cfg-names cli_svec.Vec)])
+  (:cold) : process.ProcessStringList
   (let
     [args0 : process.ProcessStringList
       (build-package-worker-command-prefix (process.args-empty))]
@@ -7547,7 +7832,8 @@
   [mode : be_state.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : (& stdlib-roots cli_svec.Vec)]
-  [cfg-names : (& cfg-names cli_svec.Vec)]) : process.ProcessStringList
+  [cfg-names : (& cfg-names cli_svec.Vec)])
+  (:cold) : process.ProcessStringList
   (build-package-worker-args-with-flag
     "--package-worker"
     manifest-path
@@ -7568,7 +7854,8 @@
   [mode : be_state.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : (& stdlib-roots cli_svec.Vec)]
-  [cfg-names : (& cfg-names cli_svec.Vec)]) : process.ProcessCommand
+  [cfg-names : (& cfg-names cli_svec.Vec)])
+  (:cold) : process.ProcessCommand
   (process.command
     (io.arg 0)
     (build-package-worker-args
@@ -7590,7 +7877,8 @@
   [lock-policy : BuildPackageLockPolicy]
   [resolved-deps : load.CompilerPkgDepList]
   [stdlib-roots : (& stdlib-roots cli_svec.Vec)]
-  [cfg-names : (& cfg-names cli_svec.Vec)]) : process.ProcessCommand
+  [cfg-names : (& cfg-names cli_svec.Vec)])
+  (:cold) : process.ProcessCommand
   (process.command
     (io.arg 0)
     (build-package-worker-args-with-flag
@@ -7605,7 +7893,8 @@
       stdlib-roots
       (& cfg-names))))
 
-(define (build-package-worker-spawn-supported?) : bool
+(define (build-package-worker-spawn-supported?)
+  (:cold) : bool
   (match (process.output
     (process.command
       (io.arg 0)
@@ -7627,7 +7916,8 @@
   [stdlib-roots : cli_svec.Vec]
   [cfg-names : (& cfg-names cli_svec.Vec)]
   [manifest-dir : String]
-  [emit-entry : bool]) : i64
+  [emit-entry : bool])
+  (:cold) : i64
   (match (process.output
     (build-package-doctest-worker-command
       manifest-path
@@ -7670,7 +7960,8 @@
 (define (build-package-worker-run-from
   [idx : i64]
   [count : i64]
-  [producer-identity : String]) : i64
+  [producer-identity : String])
+  (:cold) : i64
   (match (build-package-worker-config-from idx count)
     [(Err message)
       (io.print-error message)
@@ -7729,7 +8020,8 @@
                         "build: package worker can only build staticlib packages")
                       1))]))]))]))
 
-(define (build-package-doctest-worker-run-from [idx : i64] [count : i64]) : i64
+(define (build-package-doctest-worker-run-from [idx : i64] [count : i64])
+  (:cold) : i64
   (match (build-package-worker-config-from idx count)
     [(Err message)
       (io.print-error message)
@@ -7785,13 +8077,15 @@
                       resolved-manifest.deps
                       (build-package-kind-entry? kind)))]))]))]))
 
-(define (build-package-async-process-supported?) : bool
+(define (build-package-async-process-supported?)
+  (:cold) : bool
   (not (string.eq (env.path-list-separator) ";")))
 
 (define (build-package-deps-built?
   [manifest-dir : String]
   [deps : load.CompilerPkgDepList]
-  [built : (& built build_string_i64_map.Map)]) : bool
+  [built : (& built build_string_i64_map.Map)])
+  (:cold) : bool
   (for [index (iterator.range 0 (load.compiler-pkg-dep-list-count deps))]
     (let
       [dep-manifest-path : String
@@ -7805,7 +8099,8 @@
 
 (define (build-package-node-ready?
   [node : BuildPackageGraphNode]
-  [built : (& built build_string_i64_map.Map)]) : bool
+  [built : (& built build_string_i64_map.Map)])
+  (:cold) : bool
   (let
     [manifest-path : String node.manifest-path]
     [manifest-dir : String (load.compiler-load-dirname manifest-path)]
@@ -7817,20 +8112,23 @@
 
 (define (build-package-node-scheduled?
   [scheduled : (& scheduled build_string_i64_map.Map)]
-  [manifest-path : String]) : bool
+  [manifest-path : String])
+  (:cold) : bool
   (match (build_string_i64_map.get (& scheduled) manifest-path)
     [(LookupFound _) true]
     [(LookupMissing) false]))
 
 (define (build-package-graph-worker-list-empty?
-  [items : (& items BuildPackageGraphWorkerList)]) : bool
+  [items : (& items BuildPackageGraphWorkerList)])
+  (:cold) : bool
   (match items
     [(Empty) true]
     [(More _ _) false]))
 
 (define (build-package-graph-worker-list-reverse-with
   [remaining : BuildPackageGraphWorkerList]
-  [out : BuildPackageGraphWorkerList]) : BuildPackageGraphWorkerList
+  [out : BuildPackageGraphWorkerList])
+  (:cold) : BuildPackageGraphWorkerList
   (match remaining
     [(Empty) out]
     [(More worker tail)
@@ -7839,7 +8137,8 @@
         (More worker (box out)))]))
 
 (define (build-package-graph-worker-list-reverse
-  [workers : BuildPackageGraphWorkerList]) : BuildPackageGraphWorkerList
+  [workers : BuildPackageGraphWorkerList])
+  (:cold) : BuildPackageGraphWorkerList
   (build-package-graph-worker-list-reverse-with workers (Empty)))
 
 (define (build-package-start-worker
@@ -7850,7 +8149,8 @@
   [mode : be_state.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : (& stdlib-roots cli_svec.Vec)]
-  [cfg-names : (& cfg-names cli_svec.Vec)]) : ResultBuildPackageGraphWorker
+  [cfg-names : (& cfg-names cli_svec.Vec)])
+  (:cold) : ResultBuildPackageGraphWorker
   (let
     [manifest-path : String
       (owned_view.compiler-owned-shared-view node.manifest-path)]
@@ -7900,7 +8200,8 @@
   [cfg-names : (& cfg-names cli_svec.Vec)]
   [workers : BuildPackageGraphWorkerList]
   [index : i64]
-  [count : i64]) : ResultBuildPackageSchedulePass
+  [count : i64])
+  (:cold) : ResultBuildPackageSchedulePass
   (if (>= index count)
     (Ok
       (BuildPackageSchedulePass
@@ -7971,7 +8272,8 @@
   [mode : be_state.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
-  [cfg-names : (& cfg-names cli_svec.Vec)]) : ResultBuildPackageSchedulePass
+  [cfg-names : (& cfg-names cli_svec.Vec)])
+  (:cold) : ResultBuildPackageSchedulePass
   (let
     [count : i64 (build-package-graph-node-vec-len nodes)]
     (build-package-schedule-pass-with
@@ -7991,7 +8293,8 @@
 
 (define (build-package-all-built?
   [nodes : BuildPackageGraphNodeVec]
-  [built : (& built build_string_i64_map.Map)]) : bool
+  [built : (& built build_string_i64_map.Map)])
+  (:cold) : bool
   (let
     [index : i64 0]
     [count : i64 (build-package-graph-node-vec-len nodes)]
@@ -8007,7 +8310,8 @@
         (+= index 1)))
     all-built))
 
-(define (build-package-failure-status [failed-status : i64] [status : i64]) : i64
+(define (build-package-failure-status [failed-status : i64] [status : i64])
+  (:cold) : i64
   (if (= failed-status 0)
     status
     failed-status))
@@ -8016,7 +8320,8 @@
   [worker : (&mut worker BuildPackageGraphWorker)]
   [built : (&mut built build_string_i64_map.Map)]
   [announce : bool]
-  [failed-status : (&mut failed-status i64)]) : unit
+  [failed-status : (&mut failed-status i64)])
+  (:cold) : unit
   (let
     [manifest-path : String (string.copy (& worker.node.manifest-path))]
     [name : String (string.copy (& worker.node.manifest.name))]
@@ -8088,7 +8393,8 @@
   [workers : BuildPackageGraphWorkerList]
   [built : build_string_i64_map.Map]
   [announce : bool]
-  [failed-status : i64]) : ResultBuildPackageWait
+  [failed-status : i64])
+  (:cold) : ResultBuildPackageWait
   (match workers
     [(Empty)
       (if (= failed-status 0)
@@ -8112,7 +8418,8 @@
 (define (build-package-wait-workers
   [workers : BuildPackageGraphWorkerList]
   [built : build_string_i64_map.Map]
-  [announce : bool]) : ResultBuildPackageWait
+  [announce : bool])
+  (:cold) : ResultBuildPackageWait
   (build-package-wait-workers-with workers built announce 0))
 
 (define (build-package-emit-graph-nodes-parallel-loop
@@ -8126,7 +8433,8 @@
   [cfg-names : (& cfg-names cli_svec.Vec)]
   [announce : bool]
   [scheduled : build_string_i64_map.Map]
-  [built : build_string_i64_map.Map]) : i64
+  [built : build_string_i64_map.Map])
+  (:cold) : i64
   (if (build-package-all-built?
     (owned_view.compiler-owned-shared-view nodes)
     built)
@@ -8176,7 +8484,8 @@
   [lock-policy : BuildPackageLockPolicy]
   [announce : bool]
   [stdlib-roots : cli_svec.Vec]
-  [cfg-names : (& cfg-names cli_svec.Vec)]) : i64
+  [cfg-names : (& cfg-names cli_svec.Vec)])
+  (:cold) : i64
   (build-package-emit-graph-nodes-parallel-loop
     nodes
     target
@@ -8201,7 +8510,8 @@
   [cfg-names : (& cfg-names cli_svec.Vec)]
   [producer-identity : String]
   [announce : bool]
-  [interface-only : bool]) : i64
+  [interface-only : bool])
+  (:cold) : i64
   (let
     [index : i64 0]
     [count : i64 (build-package-graph-node-vec-len nodes)]
@@ -8258,7 +8568,8 @@
   [stdlib-roots : cli_svec.Vec]
   [cfg-names : (& cfg-names cli_svec.Vec)]
   [producer-identity : String]
-  [announce : bool]) : i64
+  [announce : bool])
+  (:cold) : i64
   (build-package-emit-graph-nodes-serial-mode
     nodes
     target
@@ -8282,7 +8593,8 @@
   [stdlib-roots : cli_svec.Vec]
   [cfg-names : (& cfg-names cli_svec.Vec)]
   [producer-identity : String]
-  [announce : bool]) : i64
+  [announce : bool])
+  (:cold) : i64
   (if (and
     (build-package-async-process-supported?)
     (build-package-worker-spawn-supported?))
@@ -8317,7 +8629,8 @@
   [cfg-names : cli_svec.Vec]
   [opt-level : i64]
   [mode : be_state.CompilerBackendMode]
-  [link-inputs : build_run_core.SourceToolLinkInputs]) : i64
+  [link-inputs : build_run_core.SourceToolLinkInputs])
+  (:cold) : i64
   (let
     [doctest-status : i64
       (doc_test.doc-test-report-status
@@ -8365,7 +8678,8 @@
   [stdlib-roots : cli_svec.Vec]
   [cfg-names : (& cfg-names cli_svec.Vec)]
   [producer-identity : String]
-  [announce : bool]) : i64
+  [announce : bool])
+  (:cold) : i64
   (match (build_run_core.source-tool-parse-target target-text)
     [(Err message)
       (io.print-error message)
@@ -8453,7 +8767,8 @@
   [stdlib-roots : cli_svec.Vec]
   [cfg-names : (& cfg-names cli_svec.Vec)]
   [producer-identity : String]
-  [announce : bool]) : i64
+  [announce : bool])
+  (:cold) : i64
   (build-package-dependency-catalog-finish
     (build-package-emit-owned
       manifest-path
@@ -8480,7 +8795,8 @@
   [stdlib-roots : cli_svec.Vec]
   [cfg-names : (& cfg-names cli_svec.Vec)]
   [producer-identity : String]
-  [announce : bool]) : i64
+  [announce : bool])
+  (:cold) : i64
   (match (build_run_core.source-tool-parse-backend-mode mode)
     [(Err message)
       (io.print-error message)
@@ -8516,7 +8832,8 @@
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
   [cfg-names : (& cfg-names cli_svec.Vec)]
-  [producer-identity : String]) : i64
+  [producer-identity : String])
+  (:cold) : i64
   (build-package-from-path-announce
     manifest-path
     target-text
@@ -8530,7 +8847,8 @@
     producer-identity
     true))
 
-(define (build-package [config : BuildConfig] [producer-identity : String]) : i64
+(define (build-package [config : BuildConfig] [producer-identity : String])
+  (:cold) : i64
   (match config
     [(Package
         manifest-path
@@ -8568,7 +8886,8 @@
               producer-identity)]))]
     [_ 1]))
 
-(define (build-main-from [idx : i64] [producer-identity : String]) : i64
+(define (build-main-from [idx : i64] [producer-identity : String])
+  (:cold) : i64
   (match (build-config-from idx (io.arg-count))
     [(Ok config)
       (match (owned_view.compiler-owned-shared-view config)
@@ -8579,7 +8898,8 @@
       (io.print-error message)
       1]))
 
-(define (build-args-contain-manifest? [idx : i64] [count : i64]) : bool
+(define (build-args-contain-manifest? [idx : i64] [count : i64])
+  (:cold) : bool
   (if (>= idx count)
     false
     (if (string.eq (io.arg idx) "--manifest-path")
@@ -8587,12 +8907,14 @@
       (build-args-contain-manifest? (+ idx 1) count))))
 
 ;; Native link options only source builds accept.
-(define (build-link-cli-options) : String
+(define (build-link-cli-options)
+  (:cold) : String
   "--link-lib <name> --link-search <dir> --link-arg <arg>")
 
 ;; Whether the arguments name a source file: the first argument that is neither
 ;; a build option, an option value, nor another flag.
-(define (build-args-have-source? [idx : i64] [count : i64]) : bool
+(define (build-args-have-source? [idx : i64] [count : i64])
+  (:cold) : bool
   (let
     [specs : String
       (str_cat.str-cat (build-package-cli-options) " " (build-link-cli-options))]
@@ -8609,7 +8931,8 @@
               (set! found true))])))
     found))
 
-(define (build-cli-config-from [idx : i64] [count : i64]) : ResultBuildCliConfig
+(define (build-cli-config-from [idx : i64] [count : i64])
+  (:cold) : ResultBuildCliConfig
   (let
     [args : cli_option.CliArgs
       (cli_option.cli-args
@@ -8720,7 +9043,8 @@
 ;; Build a source file directly. Manifest builds go through the package parser
 ;; (`build-main-from`) so `typelisp build` discovers `typelisp.pkg` from the
 ;; working tree.
-(define (build-source-direct-from [idx : i64] [count : i64]) : i64
+(define (build-source-direct-from [idx : i64] [count : i64])
+  (:cold) : i64
   (match (build-cli-config-from idx count)
     [(Ok config)
       (match config
@@ -8752,7 +9076,8 @@
 (define (build-direct-from
   [start : i64]
   [count : i64]
-  [producer-identity : String]) : i64
+  [producer-identity : String])
+  (:cold) : i64
   (if (or
     (build-args-contain-manifest? start count)
     (not (build-args-have-source? start count)))
@@ -8768,7 +9093,8 @@
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
   [cfg-names : (& cfg-names cli_svec.Vec)]
-  [producer-identity : String]) : i64
+  [producer-identity : String])
+  (:cold) : i64
   (match (build_run_core.source-tool-parse-backend-mode mode)
     [(Err message)
       (io.print-error message)
@@ -8831,7 +9157,8 @@
 (define (build-package-deps-only-run-from
   [idx : i64]
   [count : i64]
-  [producer-identity : String]) : i64
+  [producer-identity : String])
+  (:cold) : i64
   (match (build-config-from idx count)
     [(Err message)
       (io.print-error message)
@@ -8881,7 +9208,8 @@
 (define (build-run-from
   [start : i64]
   [count : i64]
-  [producer-identity : String]) : i64
+  [producer-identity : String])
+  (:cold) : i64
   (tli_cli.tli-reset-active-sysroot-options!)
   (ir.compiler-debug-info-set-enabled! false)
   (ir.compiler-debug-path-remap-clear!)

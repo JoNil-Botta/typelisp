@@ -115477,6 +115477,9 @@
                     (set! (array-ref state 8) 1))]
                 [_ (set! (array-ref state 8) 1)])]
             [(No) (set! (array-ref state 8) 1)])]
+        ;; A tail call returns its callee's result, even without descriptor operands.
+        [(or (TailCall _ _ _) (TailCallIndirect _ _ _))
+          (set! (array-ref state 8) 1)]
         [(Call dst name args ty)
           (if (and
             (ir.compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)

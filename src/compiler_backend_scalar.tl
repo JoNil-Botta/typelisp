@@ -4036,7 +4036,7 @@
                 (compiler_abi.compiler-abi-register-spelling home)
                 ty
                 reg)]
-            [(Spill offset)
+            [(or (Spill offset) (SpillPair offset _))
               (compiler-backend-emit-load-memory-to-reg
                 type-segment-bases
                 (be_operand.compiler-backend-frame-offset-with-backend-state
@@ -4415,7 +4415,7 @@
                 value
                 (compiler_abi.compiler-abi-register-spelling home)
                 backend-state)]
-            [(Spill offset)
+            [(or (Spill offset) (SpillPair offset _))
               (Some
                 (str_cat.str-cat
                   "    movq "
@@ -4862,6 +4862,22 @@
                   w1-sse
                   instr-diag
                   backend-state)]
+              [(SpillPair off0 off1)
+                (compiler-backend-emit-pack-words
+                  type-segment-bases
+                  assignments
+                  w0
+                  w1
+                  (be_operand.compiler-backend-frame-offset-with-backend-state
+                    backend-state
+                    off0)
+                  (be_operand.compiler-backend-frame-offset-with-backend-state
+                    backend-state
+                    off1)
+                  w0-sse
+                  w1-sse
+                  instr-diag
+                  backend-state)]
               [(Spill offset)
                 ;; spilled group: words at [offset] and [offset-8].
                 (compiler-backend-emit-pack-words
@@ -5042,6 +5058,13 @@
                 (if (= index 0)
                   reg-a
                   reg-b)))]
+          [(SpillPair off0 off1)
+            (Ok
+              (be_operand.compiler-backend-frame-offset-with-backend-state
+                backend-state
+                (if (= index 0)
+                  off0
+                  off1)))]
           [(Spill offset)
             (if (be_facts.compiler-backend-group-var? backend-state var)
               (Ok
@@ -5164,24 +5187,35 @@
                   1
                   vars
                   backend-state))]
+            [sse0? : bool
+              (be_facts.compiler-backend-group-word-sse?
+                type-segment-bases
+                program-index
+                ty
+                0)]
+            [sse1? : bool
+              (be_facts.compiler-backend-group-word-sse?
+                type-segment-bases
+                program-index
+                ty
+                1)]
             (Ok
-              (str_cat.str-cat
-                (compiler-backend-emit-group-word-move
-                  word0
-                  reg0
-                  (be_facts.compiler-backend-group-word-sse?
-                    type-segment-bases
-                    program-index
-                    ty
-                    0))
-                (compiler-backend-emit-group-word-move
-                  word1
-                  reg1
-                  (be_facts.compiler-backend-group-word-sse?
-                    type-segment-bases
-                    program-index
-                    ty
-                    1)))))])]
+              (cond
+                [(and
+                    (not sse0?)
+                    (not sse1?)
+                    (string.eq word1 reg0)
+                    (string.eq word0 reg1)
+                    (not (string.eq reg0 reg1)))
+                  (str_cat.str-cat "    xchgq " reg0 ", " reg1 "\n")]
+                [(and (string.eq word1 reg0) (not (string.eq word0 reg0)))
+                  (str_cat.str-cat
+                    (compiler-backend-emit-group-word-move word1 reg1 sse1?)
+                    (compiler-backend-emit-group-word-move word0 reg0 sse0?))]
+                [else
+                  (str_cat.str-cat
+                    (compiler-backend-emit-group-word-move word0 reg0 sse0?)
+                    (compiler-backend-emit-group-word-move word1 reg1 sse1?))])))])]
     [_
       (Err
         (box
@@ -5218,24 +5252,35 @@
           1
           vars
           backend-state))]
+    [sse0? : bool
+      (be_facts.compiler-backend-group-word-sse?
+        type-segment-bases
+        program-index
+        ty
+        0)]
+    [sse1? : bool
+      (be_facts.compiler-backend-group-word-sse?
+        type-segment-bases
+        program-index
+        ty
+        1)]
     (Ok
-      (str_cat.str-cat
-        (compiler-backend-emit-group-word-move
-          reg0
-          word0
-          (be_facts.compiler-backend-group-word-sse?
-            type-segment-bases
-            program-index
-            ty
-            0))
-        (compiler-backend-emit-group-word-move
-          reg1
-          word1
-          (be_facts.compiler-backend-group-word-sse?
-            type-segment-bases
-            program-index
-            ty
-            1))))))
+      (cond
+        [(and
+            (not sse0?)
+            (not sse1?)
+            (string.eq reg1 word0)
+            (string.eq reg0 word1)
+            (not (string.eq word0 word1)))
+          (str_cat.str-cat "    xchgq " word0 ", " word1 "\n")]
+        [(and (string.eq reg1 word0) (not (string.eq reg0 word0)))
+          (str_cat.str-cat
+            (compiler-backend-emit-group-word-move reg1 word1 sse1?)
+            (compiler-backend-emit-group-word-move reg0 word0 sse0?))]
+        [else
+          (str_cat.str-cat
+            (compiler-backend-emit-group-word-move reg0 word0 sse0?)
+            (compiler-backend-emit-group-word-move reg1 word1 sse1?))]))))
 
 (define (compiler-backend-group-return-reg
   [type-segment-bases : i64]

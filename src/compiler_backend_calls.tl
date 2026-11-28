@@ -2460,6 +2460,9 @@
   ;; marks an f32. GP and XMM moves never share a register, so one move list
   ;; carries both classes and their moves stay independent.
   (BackendArgMoveFloatValue compiler_ir_types.CompilerIrValue bool)
+  ;; A memory-homed register-group word `(var, word-index, vars, sse?)`, bound
+  ;; for an argument register; its source is memory (never blocks another move).
+  (BackendArgMoveGroupWord i64 i64 i64 bool)
   (BackendArgMoveReg i64)
   ;; The register-free cycle break: the move's source value was saved in the
   ;; reserved cycle-temp frame slot and is loaded into `dest` here. Behaves like
@@ -2518,6 +2521,7 @@
   (match source
     [(BackendArgMoveReg r) r]
     [(BackendArgMoveStackPop) compiler_abi.compiler-reg-id-invalid]
+    [(BackendArgMoveGroupWord _ _ _ _) compiler_abi.compiler-reg-id-invalid]
     [(BackendArgMoveValue value)
       (compiler-backend-arg-value-source-reg backend-state assignments value)]
     [(BackendArgMoveFloatValue value _)
@@ -2746,11 +2750,30 @@
             (Ok "")
             (Ok
               (str_cat.str-cat
-                (compiler-backend-arg-move-mnemonic dest)
+                (if (and
+                  (compiler_abi.compiler-abi-xmm-register-id? r)
+                  (compiler_abi.compiler-abi-xmm-register-id? dest))
+                  "    movsd "
+                  "    movq ")
                 (compiler_abi.compiler-abi-register-spelling r)
                 ", "
                 (compiler_abi.compiler-abi-register-spelling dest)
                 "\n")))]
+        [(BackendArgMoveGroupWord var word-index vars sse?)
+          (let
+            [operand
+              (try
+                (be_scalar.compiler-backend-group-word-operand-with-backend-state
+                  assignments
+                  var
+                  word-index
+                  vars
+                  backend-state))]
+            (Ok
+              (be_scalar.compiler-backend-emit-group-word-move
+                operand
+                (compiler_abi.compiler-abi-register-spelling dest)
+                sse?)))]
         [(BackendArgMoveStackPop)
           (Ok
             (str_cat.str-cat
@@ -2808,7 +2831,7 @@
 (define (compiler-backend-arg-move-list-exclude-mask
   [backend-state : be_state.CompilerBackendState]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [moves : CompilerBackendArgMoveSeq]) : i64
+  [moves : (& CompilerBackendArgMoveSeq)]) : i64
   (let
     [mask : i64 0]
     (for [i (iterator.range 0 moves.len)]
@@ -2827,19 +2850,51 @@
                     source)))))]))
     mask))
 
-;; Scavenge a GP register for the arg parallel-move cycle-break Temp rather than
-;; hardcoding one that could hold a live value: free in the occupancy mask at
-;; the call-setup point and not a dest/source of any pending arg move (mirrors
-;; phi-temp-pick-reg). Invalid if none, in which case the caller breaks the
-;; cycle through a reserved frame temp -- a sound register-free swap. In practice
-;; the pool always has a free scratch here (%r10/%r11 are caller-saved and never
-;; participate in a gp-parallel arg cycle nor hold a call-survivor), so invalid is
-;; a saturation guard.
+(define (compiler-backend-entry-temp-pick-reg
+  [backend-state : be_state.CompilerBackendState]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [moves : (& CompilerBackendArgMoveSeq)]
+  [all : (& CompilerBackendArgMoveSeq)]) : i64
+  (let
+    [exclude-mask : i64
+      (bit-or
+        (compiler-backend-arg-move-list-exclude-mask
+          backend-state
+          assignments
+          moves)
+        (compiler-backend-arg-move-list-exclude-mask
+          backend-state
+          assignments
+          all))]
+    (cond
+      [(=
+          (bit-and
+            exclude-mask
+            (be_operand.compiler-backend-scavenge-reg-id-bit
+              compiler_abi.compiler-reg-id-r10))
+          0)
+        compiler_abi.compiler-reg-id-r10]
+      [(=
+          (bit-and
+            exclude-mask
+            (be_operand.compiler-backend-scavenge-reg-id-bit
+              compiler_abi.compiler-reg-id-r11))
+          0)
+        compiler_abi.compiler-reg-id-r11]
+      [(=
+          (bit-and
+            exclude-mask
+            (be_operand.compiler-backend-scavenge-reg-id-bit
+              compiler_abi.compiler-reg-id-rax))
+          0)
+        compiler_abi.compiler-reg-id-rax]
+      [else compiler_abi.compiler-reg-id-invalid])))
+
 (define (compiler-backend-arg-temp-pick-reg
   [backend-state : be_state.CompilerBackendState]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [moves : CompilerBackendArgMoveSeq]
-  [all : CompilerBackendArgMoveSeq]) : i64
+  [moves : (& CompilerBackendArgMoveSeq)]
+  [all : (& CompilerBackendArgMoveSeq)]) : i64
   (let
     [function-state : be_state.CompilerBackendFunctionState
       (be_state.compiler-backend-state-function-state backend-state)]
@@ -2884,7 +2939,21 @@
     assignments
     (be_state.compiler-backend-global-shared-view moves)
     moves
+    false
     backend-state))
+
+(define (compiler-backend-emit-entry-reg-moves
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [moves : CompilerBackendArgMoveSeq]
+  [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
+  (if (= moves.len 0)
+    (Ok "")
+    (compiler-backend-emit-arg-move-list-with-all
+      assignments
+      (be_state.compiler-backend-global-shared-view moves)
+      moves
+      true
+      backend-state)))
 
 ;; `all` is the ORIGINAL (top-level) move list, carried unchanged through the
 ;; recursion so the cycle-break Temp pick can exclude every destination register
@@ -2894,6 +2963,7 @@
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [moves : CompilerBackendArgMoveSeq]
   [all : CompilerBackendArgMoveSeq]
+  [entry-mode? : bool]
   [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
   (match (compiler-backend-arg-move-decision
     backend-state
@@ -2920,6 +2990,7 @@
                       assignments
                       (compiler-backend-arg-move-list-remove moves dest)
                       all
+                      entry-mode?
                       backend-state))]
                 (Ok (str_cat.str-cat head tail)))])]
         [(BackendNoArgMove)
@@ -2953,6 +3024,7 @@
                           assignments
                           (compiler-backend-arg-move-list-remove moves dest)
                           all
+                          entry-mode?
                           backend-state))]
                     (Ok (str_cat.str-cat head tail)))
                   (let
@@ -2961,11 +3033,17 @@
                     [picked : i64
                       (if (compiler_abi.compiler-abi-xmm-register-id? srcreg)
                         compiler_abi.compiler-reg-id-invalid
-                        (compiler-backend-arg-temp-pick-reg
-                          backend-state
-                          assignments
-                          (be_state.compiler-backend-global-shared-view moves)
-                          (be_state.compiler-backend-global-shared-view all)))]
+                        (if entry-mode?
+                          (compiler-backend-entry-temp-pick-reg
+                            backend-state
+                            assignments
+                            (& moves)
+                            (& all))
+                          (compiler-backend-arg-temp-pick-reg
+                            backend-state
+                            assignments
+                            (& moves)
+                            (& all))))]
                     (if (= picked compiler_abi.compiler-reg-id-invalid)
                       ;; No free scratch register at saturation: break the cycle
                       ;; through the reserved frame temp. This saves `srcreg`
@@ -2983,6 +3061,7 @@
                                 moves
                                 srcreg)
                               all
+                              entry-mode?
                               backend-state))]
                         (Ok
                           (str_cat.str-cat
@@ -3002,6 +3081,7 @@
                                 srcreg
                                 picked)
                               all
+                              entry-mode?
                               backend-state))]
                         (Ok
                           (str_cat.str-cat
@@ -4290,6 +4370,540 @@
           backend-state))]
     (Ok (be_state.compiler-backend-asm-buf-finish (& out)))))
 
+(define compiler-backend-group-word-class-gp : i64
+  0)
+(define compiler-backend-group-word-class-f32 : i64
+  1)
+(define compiler-backend-group-word-class-f64 : i64
+  2)
+(define compiler-backend-group-word-class-group-gp : i64
+  3)
+(define compiler-backend-group-word-class-group-sse : i64
+  4)
+(define compiler-backend-group-word-class-sysv-mem : i64
+  5)
+
+(defstruct CompilerBackendGroupCallPlan
+  (word-count i64)
+  (arg-indices (__tl_dyn-array i64))
+  (sub-indices (__tl_dyn-array i64))
+  (dests (__tl_dyn-array i64))
+  (stack-slots (__tl_dyn-array i64))
+  (classes (__tl_dyn-array i64))
+  (sources (__tl_dyn-array i64))
+  (mem-sizes (__tl_dyn-array i64)))
+
+(define (compiler-backend-call-args-group-parallel-eligible?
+  [type-segment-bases : i64]
+  [target : be_state.CompilerBackendTarget]
+  [args : (& args compiler_ir_types.CompilerIrCallArgs)]
+  [types : (& types compiler_ast_types.AstTypeList)]
+  [c-abi? : bool]
+  [program-index : be_state.CompilerBackendProgramIndex]) : bool
+  (let
+    [count : i64 (compiler_ir_types.compiler-ir-call-args-count args)]
+    [has-group? : bool false]
+    [ok : bool true]
+    [index : i64 0]
+    (while (and ok (< index count))
+      (let
+        [ty : compiler_ast_types.AstType
+          (compiler-backend-call-arg-type-at type-segment-bases types index)]
+        [is-group? : bool
+          (be_facts.compiler-backend-group-type?
+            type-segment-bases
+            program-index
+            (& ty))]
+        [mem-agg? : bool
+          (compiler-backend-c-memory-aggregate-type?
+            type-segment-bases
+            target
+            c-abi?
+            ty)]
+        (cond
+          [mem-agg? (set! ok false)]
+          [is-group?
+            (match (be_facts.compiler-backend-call-arg-at args index)
+              [(Var _) (set! has-group? true)]
+              [_ (set! ok false)])]
+          [else unit]))
+      (set! index (+ index 1)))
+    (and ok has-group?)))
+
+(define (compiler-backend-group-word-source-reg
+  [backend-state : be_state.CompilerBackendState]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [var : i64]
+  [word-index : i64]) : i64
+  (match (be_facts.compiler-backend-const-pack-word
+    backend-state
+    var
+    word-index)
+    [(Some _) compiler_abi.compiler-reg-id-invalid]
+    [(No)
+      (match (be_operand.compiler-backend-emit-assignment-lookup
+        backend-state
+        assignments
+        var)
+        [(Some location)
+          (match location
+            [(RegisterPair r0 r1)
+              (if (= word-index 0)
+                r0
+                r1)]
+            [_ compiler_abi.compiler-reg-id-invalid])]
+        [(No) compiler_abi.compiler-reg-id-invalid])]))
+
+(define (compiler-backend-group-call-plan
+  [type-segment-bases : i64]
+  [target : be_state.CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [args : (& args compiler_ir_types.CompilerIrCallArgs)]
+  [types : (& types compiler_ast_types.AstTypeList)]
+  [c-abi? : bool]
+  [int-idx : i64]
+  [float-idx : i64]
+  [position : i64]
+  [stack-idx : i64]
+  [program-index : be_state.CompilerBackendProgramIndex]
+  [backend-state : be_state.CompilerBackendState]) : CompilerBackendGroupCallPlan
+  (let
+    [count : i64 (compiler_ir_types.compiler-ir-call-args-count args)]
+    [cap : i64 (* 2 count)]
+    [arg-indices : (__tl_dyn-array i64) (__tl_make-array i64 cap)]
+    [sub-indices : (__tl_dyn-array i64) (__tl_make-array i64 cap)]
+    [dests : (__tl_dyn-array i64) (__tl_make-array i64 cap)]
+    [stack-slots : (__tl_dyn-array i64) (__tl_make-array i64 cap)]
+    [classes : (__tl_dyn-array i64) (__tl_make-array i64 cap)]
+    [sources : (__tl_dyn-array i64) (__tl_make-array i64 cap)]
+    [mem-sizes : (__tl_dyn-array i64) (__tl_make-array i64 cap)]
+    [w : i64 0]
+    [ints : i64 int-idx]
+    [floats : i64 float-idx]
+    [pos : i64 position]
+    [stack : i64 stack-idx]
+    [index : i64 0]
+    (while (< index count)
+      (let
+        [ty : compiler_ast_types.AstType
+          (compiler-backend-call-arg-type-at type-segment-bases types index)]
+        [private-memory-size : i64
+          (if (not c-abi?)
+            (be_facts.compiler-backend-abi-memory-size
+              type-segment-bases
+              (compiler-backend-call-arg-type-at type-segment-bases types index))
+            0)]
+        (cond
+          [(and
+            (be_state.compiler-backend-target-sysv-aggregates?
+              target
+              convention)
+            (> private-memory-size 0))
+            (set! (array-ref arg-indices w) index)
+            (set! (array-ref sub-indices w) -2)
+            (set! (array-ref dests w) compiler_abi.compiler-reg-id-invalid)
+            (set! (array-ref stack-slots w) stack)
+            (set!
+              (array-ref classes w)
+              compiler-backend-group-word-class-sysv-mem)
+            (set! (array-ref sources w) compiler_abi.compiler-reg-id-invalid)
+            (set! (array-ref mem-sizes w) private-memory-size)
+            (set! w (+ w 1))
+            (set! pos (+ pos 1))
+            (set!
+              stack
+              (+
+                stack
+                (compiler-backend-stack-slots-for-size private-memory-size)))]
+          [(be_facts.compiler-backend-group-type?
+              type-segment-bases
+              program-index
+              (& ty))
+            (let
+              [var-id : i64
+                (match (be_facts.compiler-backend-call-arg-at args index)
+                  [(Var v) v]
+                  [_ -1])]
+              [linux-group-fits : bool
+                (compiler-backend-linux-group-register-banks-fit?
+                  type-segment-bases
+                  target
+                  convention
+                  program-index
+                  (compiler-backend-call-arg-type-at
+                    type-segment-bases
+                    types
+                    index)
+                  ints
+                  floats
+                  pos)]
+              [atomic-stack? : bool
+                (and
+                  (be_state.compiler-backend-target-sysv-aggregates?
+                    target
+                    convention)
+                  (not linux-group-fits))]
+              (for [sub (iterator.range 0 2)]
+                (let
+                  [sse? : bool
+                    (be_facts.compiler-backend-group-word-sse?
+                      type-segment-bases
+                      program-index
+                      (& ty)
+                      sub)]
+                  [to-stack? : bool
+                    (or
+                      atomic-stack?
+                      (be_scalar.compiler-backend-stack-call-arg-for-banks?
+                        target
+                        convention
+                        sse?
+                        ints
+                        floats
+                        pos))]
+                  (set! (array-ref arg-indices w) index)
+                  (set! (array-ref sub-indices w) sub)
+                  (set!
+                    (array-ref classes w)
+                    (if sse?
+                      compiler-backend-group-word-class-group-sse
+                      compiler-backend-group-word-class-group-gp))
+                  (set!
+                    (array-ref sources w)
+                    (compiler-backend-group-word-source-reg
+                      backend-state
+                      assignments
+                      var-id
+                      sub))
+                  (set! (array-ref mem-sizes w) 0)
+                  (if to-stack?
+                    (begin
+                      (set!
+                        (array-ref dests w)
+                        compiler_abi.compiler-reg-id-invalid)
+                      (set! (array-ref stack-slots w) stack)
+                      (set! stack (+ stack 1)))
+                    (begin
+                      (set!
+                        (array-ref dests w)
+                        (if sse?
+                          (compiler_abi.compiler-abi-float-arg-register-id
+                            (be_state.compiler-backend-target-abi target)
+                            convention
+                            (be_facts.compiler-backend-call-bank-index
+                              target
+                              convention
+                              floats
+                              pos))
+                          (compiler_abi.compiler-abi-gp-arg-register-id
+                            (be_state.compiler-backend-target-abi target)
+                            convention
+                            (be_facts.compiler-backend-call-bank-index
+                              target
+                              convention
+                              ints
+                              pos))))
+                      (set! (array-ref stack-slots w) -1)))
+                  (if atomic-stack?
+                    unit
+                    (if sse?
+                      (set! floats (+ floats 1))
+                      (set! ints (+ ints 1))))
+                  (set! pos (+ pos 1))
+                  (set! w (+ w 1)))))]
+          [else
+            (let
+              [is-float : bool (be_operand.compiler-backend-float-type? (& ty))]
+              (set! (array-ref arg-indices w) index)
+              (set! (array-ref sub-indices w) -1)
+              (set!
+                (array-ref classes w)
+                (match ty
+                  [(F32) compiler-backend-group-word-class-f32]
+                  [(F64) compiler-backend-group-word-class-f64]
+                  [_ compiler-backend-group-word-class-gp]))
+              (set!
+                (array-ref sources w)
+                (compiler-backend-arg-value-source-reg
+                  backend-state
+                  assignments
+                  (be_facts.compiler-backend-call-arg-at args index)))
+              (set! (array-ref mem-sizes w) 0)
+              (if (be_scalar.compiler-backend-stack-call-arg-for-banks?
+                target
+                convention
+                is-float
+                ints
+                floats
+                pos)
+                (begin
+                  (set!
+                    (array-ref dests w)
+                    compiler_abi.compiler-reg-id-invalid)
+                  (set! (array-ref stack-slots w) stack)
+                  (set! stack (+ stack 1)))
+                (begin
+                  (set!
+                    (array-ref dests w)
+                    (if is-float
+                      (compiler_abi.compiler-abi-float-arg-register-id
+                        (be_state.compiler-backend-target-abi target)
+                        convention
+                        (be_facts.compiler-backend-call-bank-index
+                          target
+                          convention
+                          floats
+                          pos))
+                      (compiler_abi.compiler-abi-gp-arg-register-id
+                        (be_state.compiler-backend-target-abi target)
+                        convention
+                        (be_facts.compiler-backend-call-bank-index
+                          target
+                          convention
+                          ints
+                          pos))))
+                  (set! (array-ref stack-slots w) -1)))
+              (if is-float
+                (set! floats (+ floats 1))
+                (set! ints (+ ints 1)))
+              (set! pos (+ pos 1))
+              (set! w (+ w 1)))]))
+      (set! index (+ index 1)))
+    (CompilerBackendGroupCallPlan
+      w
+      arg-indices
+      sub-indices
+      dests
+      stack-slots
+      classes
+      sources
+      mem-sizes)))
+
+(define (compiler-backend-group-call-plan-moves
+  [backend-state : be_state.CompilerBackendState]
+  [args : (& args compiler_ir_types.CompilerIrCallArgs)]
+  [plan : (& plan CompilerBackendGroupCallPlan)]
+  [vars : i64]) : CompilerBackendArgMoveSeq
+  (let
+    [out : CompilerBackendArgMoveSeq
+      (compiler-backend-arg-move-seq-with-capacity plan.word-count)]
+    (for [i (iterator.range 0 plan.word-count)]
+      (let
+        [dest : i64 (array-ref plan.dests i)]
+        [sub : i64 (array-ref plan.sub-indices i)]
+        [cls : i64 (array-ref plan.classes i)]
+        [src-reg : i64 (array-ref plan.sources i)]
+        [arg-idx : i64 (array-ref plan.arg-indices i)]
+        (if (= dest compiler_abi.compiler-reg-id-invalid)
+          unit
+          (compiler-backend-arg-move-push!
+            (&mut out)
+            (BackendArgMove
+              dest
+              (cond
+                [(>= sub 0)
+                  (if (not (= src-reg compiler_abi.compiler-reg-id-invalid))
+                    (BackendArgMoveReg src-reg)
+                    (let
+                      [var-id : i64
+                        (match (be_facts.compiler-backend-call-arg-at
+                          args
+                          arg-idx)
+                          [(Var v) v]
+                          [_ -1])]
+                      (match (be_facts.compiler-backend-const-pack-word
+                        backend-state
+                        var-id
+                        sub)
+                        [(Some const-val) (BackendArgMoveValue const-val)]
+                        [(No)
+                          (BackendArgMoveGroupWord
+                            var-id
+                            sub
+                            vars
+                            (= cls compiler-backend-group-word-class-group-sse))])))]
+                [(= cls compiler-backend-group-word-class-gp)
+                  (BackendArgMoveValue
+                    (be_facts.compiler-backend-call-arg-at args arg-idx))]
+                [else
+                  (BackendArgMoveFloatValue
+                    (be_facts.compiler-backend-call-arg-at args arg-idx)
+                    (= cls compiler-backend-group-word-class-f32))]))))))
+    out))
+
+(define (compiler-backend-group-call-plan-hazard?
+  [backend-state : be_state.CompilerBackendState]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [args : (& args compiler_ir_types.CompilerIrCallArgs)]
+  [plan : (& plan CompilerBackendGroupCallPlan)]
+  [vars : i64]) : bool
+  (let
+    [reg-stack-or-mem? : bool false]
+    (for [i (iterator.range 0 plan.word-count)]
+      (when
+        (or
+          (=
+            (array-ref plan.classes i)
+            compiler-backend-group-word-class-sysv-mem)
+          (and
+            (>= (array-ref plan.stack-slots i) 0)
+            (not
+              (=
+                (array-ref plan.sources i)
+                compiler_abi.compiler-reg-id-invalid))))
+        (set! reg-stack-or-mem? true)))
+    (or
+      reg-stack-or-mem?
+      (compiler-backend-arg-moves-conflict?
+        backend-state
+        assignments
+        (compiler-backend-group-call-plan-moves backend-state args plan vars)))))
+
+(define (compiler-backend-emit-group-call-plan-into
+  [out : (&mut out be_state.CompilerBackendAsmBuf)]
+  [area : CompilerBackendStackArgArea]
+  [type-segment-bases : i64]
+  [target : be_state.CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [args : (& args compiler_ir_types.CompilerIrCallArgs)]
+  [types : (& types compiler_ast_types.AstTypeList)]
+  [plan : (& plan CompilerBackendGroupCallPlan)]
+  [vars : i64]
+  [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
+  ;; Step 1: emit SysV private-memory copies and all register-sourced stack
+  ;; words before any argument register is overwritten.
+  (for [i (iterator.range 0 plan.word-count)]
+    (let
+      [cls : i64 (array-ref plan.classes i)]
+      [slot : i64 (array-ref plan.stack-slots i)]
+      [source : i64 (array-ref plan.sources i)]
+      [arg-idx : i64 (array-ref plan.arg-indices i)]
+      (cond
+        [(= cls compiler-backend-group-word-class-sysv-mem)
+          (let
+            [head
+              (try
+                (be_scalar.compiler-backend-emit-c-memory-stack-arg
+                  type-segment-bases
+                  target
+                  convention
+                  assignments
+                  (be_facts.compiler-backend-call-arg-at args arg-idx)
+                  slot
+                  (array-ref plan.mem-sizes i)
+                  backend-state))]
+            (be_state.compiler-backend-asm-append out head))]
+        [(and (>= slot 0) (not (= source compiler_abi.compiler-reg-id-invalid)))
+          (be_state.compiler-backend-asm-append5
+            out
+            (cond
+              [(not (compiler_abi.compiler-abi-xmm-register-id? source))
+                "    movq "]
+              [(= cls compiler-backend-group-word-class-f32) "    movss "]
+              [(= cls compiler-backend-group-word-class-f64) "    movsd "]
+              [else "    movq "])
+            (compiler_abi.compiler-abi-register-spelling source)
+            ", "
+            (compiler-backend-stack-arg-area-slot
+              area
+              target
+              convention
+              slot
+              backend-state)
+            "\n")]
+        [else unit])))
+  ;; Step 2: fill all GP and XMM argument registers (scalars and group words)
+  ;; via the parallel-move scheduler.
+  (let
+    [moves
+      (try
+        (compiler-backend-emit-arg-move-list
+          assignments
+          (compiler-backend-group-call-plan-moves backend-state args plan vars)
+          backend-state))]
+    (be_state.compiler-backend-asm-append out moves))
+  ;; Step 3: emit all memory-, immediate-, and const-pack-sourced stack words.
+  (for [i (iterator.range 0 plan.word-count)]
+    (let
+      [cls : i64 (array-ref plan.classes i)]
+      [slot : i64 (array-ref plan.stack-slots i)]
+      [source : i64 (array-ref plan.sources i)]
+      [sub : i64 (array-ref plan.sub-indices i)]
+      [arg-idx : i64 (array-ref plan.arg-indices i)]
+      (if (or
+        (< slot 0)
+        (= cls compiler-backend-group-word-class-sysv-mem)
+        (not (= source compiler_abi.compiler-reg-id-invalid)))
+        unit
+        (if (>= sub 0)
+          (let
+            [var-id : i64
+              (match (be_facts.compiler-backend-call-arg-at args arg-idx)
+                [(Var v) v]
+                [_ -1])]
+            [slot-str : String
+              (compiler-backend-stack-arg-area-slot
+                area
+                target
+                convention
+                slot
+                backend-state)]
+            [scratch : String
+              (be_scalar.compiler-backend-stack-call-arg-stage backend-state)]
+            (match (be_facts.compiler-backend-const-pack-word
+              backend-state
+              var-id
+              sub)
+              [(Some const-val)
+                (let
+                  [asm
+                    (try
+                      (be_scalar.compiler-backend-emit-const-pack-stack-word
+                        assignments
+                        (& const-val)
+                        scratch
+                        slot-str
+                        backend-state))]
+                  (be_state.compiler-backend-asm-append out asm))]
+              [(No)
+                (let
+                  [operand
+                    (try
+                      (be_scalar.compiler-backend-group-word-operand-with-backend-state
+                        assignments
+                        var-id
+                        sub
+                        vars
+                        backend-state))]
+                  (be_state.compiler-backend-asm-append
+                    out
+                    (be_scalar.compiler-backend-emit-group-stack-word-copy
+                      operand
+                      scratch
+                      slot-str)))]))
+          (let
+            [_
+              (try
+                (compiler-backend-emit-stack-arg-to-area-into
+                  out
+                  area
+                  type-segment-bases
+                  target
+                  convention
+                  assignments
+                  (be_facts.compiler-backend-call-arg-at args arg-idx)
+                  (compiler-backend-call-arg-type-at
+                    type-segment-bases
+                    types
+                    arg-idx)
+                  (not (= cls compiler-backend-group-word-class-gp))
+                  slot
+                  backend-state))]
+            unit)))))
+  (Ok ""))
+
 (define (compiler-backend-emit-call-args-into
   [out : (&mut out be_state.CompilerBackendAsmBuf)]
   [type-segment-bases : i64]
@@ -4338,39 +4952,40 @@
           int-idx
           position)
         (compiler-backend-arg-move-seq-with-capacity 0))]
-    (if (and
-      parallel?
-      (compiler-backend-arg-moves-conflict?
-        backend-state
-        assignments
-        (be_state.compiler-backend-global-shared-view arg-moves)))
-      (let
-        [moves
-          (try
-            (compiler-backend-emit-arg-move-list
-              assignments
-              arg-moves
-              backend-state))]
-        (be_state.compiler-backend-asm-append out moves)
-        (Ok ""))
+    (cond
+      [(and
+          parallel?
+          (compiler-backend-arg-moves-conflict?
+            backend-state
+            assignments
+            (be_state.compiler-backend-global-shared-view arg-moves)))
+        (let
+          [moves
+            (try
+              (compiler-backend-emit-arg-move-list
+                assignments
+                arg-moves
+                backend-state))]
+          (be_state.compiler-backend-asm-append out moves)
+          (Ok ""))]
       ;; The same interception one arity up: an all-GP call that OVERFLOWS its
       ;; argument registers and whose stack args or register prefix read a
       ;; register. Its overflow is stored before any argument register is written
       ;; (compiler-backend-emit-call-args-parallel-into).
-      (if (and
-        (= arg-index 0)
-        (compiler-backend-call-args-gp-stack-first?
-          type-segment-bases
-          target
-          convention
-          assignments
-          (be_state.compiler-backend-global-shared-view args)
-          types
-          c-abi?
-          program-index
-          int-idx
-          position
-          backend-state))
+      [(and
+          (= arg-index 0)
+          (compiler-backend-call-args-gp-stack-first?
+            type-segment-bases
+            target
+            convention
+            assignments
+            (be_state.compiler-backend-global-shared-view args)
+            types
+            c-abi?
+            program-index
+            int-idx
+            position
+            backend-state))
         (compiler-backend-emit-call-args-parallel-into
           out
           (OutgoingStackArgArea)
@@ -4384,7 +4999,69 @@
           float-idx
           position
           stack-idx
-          backend-state)
+          backend-state)]
+      [(and
+          (= arg-index 0)
+          (compiler-backend-call-args-group-parallel-eligible?
+            type-segment-bases
+            target
+            (& args)
+            (& types)
+            c-abi?
+            program-index))
+        (let
+          [group-plan : CompilerBackendGroupCallPlan
+            (compiler-backend-group-call-plan
+              type-segment-bases
+              target
+              convention
+              assignments
+              (& args)
+              (& types)
+              c-abi?
+              int-idx
+              float-idx
+              position
+              stack-idx
+              program-index
+              backend-state)]
+          (if (compiler-backend-group-call-plan-hazard?
+            backend-state
+            assignments
+            (& args)
+            (& group-plan)
+            vars)
+            (compiler-backend-emit-group-call-plan-into
+              out
+              (OutgoingStackArgArea)
+              type-segment-bases
+              target
+              convention
+              assignments
+              (& args)
+              (& types)
+              (& group-plan)
+              vars
+              backend-state)
+            (compiler-backend-emit-call-args-with-assignments-into
+              out
+              type-segment-bases
+              target
+              convention
+              assignments
+              args
+              types
+              c-abi?
+              arg-index
+              int-idx
+              float-idx
+              position
+              stack-idx
+              func-diag
+              program-index
+              vars
+              backend-state)))]
+      [else
         (compiler-backend-emit-call-args-with-assignments-into
           out
           type-segment-bases
@@ -4402,7 +5079,7 @@
           func-diag
           program-index
           vars
-          backend-state)))))
+          backend-state)])))
 
 ;; String-returning shim for the call emitters that still hand their argument
 ;; block back as text: one sequence buffer for the whole marshalling block
@@ -4837,7 +5514,8 @@
       (match location
         [(or (Register reg) (RegisterPair reg _))
           (compiler-backend-parallel-reg-id-resource reg)]
-        [(Spill offset) (compiler-backend-parallel-spill-resource offset)]
+        [(or (Spill offset) (SpillPair offset _))
+          (compiler-backend-parallel-spill-resource offset)]
         [(Remat _) 0])]
     [(No) (+ 1000000 var)]))
 
@@ -4853,6 +5531,11 @@
       (match location
         [(RegisterPair _ second)
           (compiler-backend-parallel-reg-id-resource second)]
+        [(SpillPair _ off1) (compiler-backend-parallel-spill-resource off1)]
+        [(Spill offset)
+          (if (be_facts.compiler-backend-group-var? backend-state var)
+            (compiler-backend-parallel-spill-resource (- offset 8))
+            0)]
         [_ 0])]
     [(No) 0]))
 
@@ -5254,7 +5937,7 @@
         (match location
           [(or (Register home) (RegisterPair home _))
             (Ok (compiler_abi.compiler-abi-register-spelling home))]
-          [(Spill offset)
+          [(or (Spill offset) (SpillPair offset _))
             (Ok
               (be_operand.compiler-backend-frame-offset-with-backend-state
                 backend-state
@@ -5974,7 +6657,7 @@
                         "\n"))]
                   ;; Remat src: no slot/register to copy from -> defer to the
                   ;; load-store fallback, which recomputes it.
-                  [(or (RegisterPair _ _) (Remat _)) (No)])]
+                  [(or (RegisterPair _ _) (SpillPair _ _) (Remat _)) (No)])]
               [(No)
                 (Some
                   (str_cat.str-cat
@@ -6026,6 +6709,47 @@
                                   dst-hi)
                                 "\n"))]
                           (str_cat.str-cat lo-move hi-move))))]
+                  [(SpillPair src-off0 src-off1)
+                    (Some
+                      (str_cat.str-cat
+                        "    movq "
+                        (be_operand.compiler-backend-frame-offset-with-backend-state
+                          backend-state
+                          src-off0)
+                        ", "
+                        (compiler_abi.compiler-abi-register-spelling dst-lo)
+                        "\n    movq "
+                        (be_operand.compiler-backend-frame-offset-with-backend-state
+                          backend-state
+                          src-off1)
+                        ", "
+                        (compiler_abi.compiler-abi-register-spelling dst-hi)
+                        "\n"))]
+                  [_ (No)])]
+              [(No) (No)])]
+          [(SpillPair dst-off0 dst-off1)
+            (match (be_operand.compiler-backend-emit-assignment-lookup
+              backend-state
+              assignments
+              src-id)
+              [(Some src-location)
+                (match src-location
+                  [(RegisterPair src-lo src-hi)
+                    (Some
+                      (str_cat.str-cat
+                        "    movq "
+                        (compiler_abi.compiler-abi-register-spelling src-lo)
+                        ", "
+                        (be_operand.compiler-backend-frame-offset-with-backend-state
+                          backend-state
+                          dst-off0)
+                        "\n    movq "
+                        (compiler_abi.compiler-abi-register-spelling src-hi)
+                        ", "
+                        (be_operand.compiler-backend-frame-offset-with-backend-state
+                          backend-state
+                          dst-off1)
+                        "\n"))]
                   [_ (No)])]
               [(No) (No)])]
           [(Remat _) (No)]
@@ -8103,6 +8827,50 @@
                   (& args)
                   (& param-types)
                   backend-state)]
+              [(and
+                  (> tail-stack-count 0)
+                  (compiler-backend-call-args-group-parallel-eligible?
+                    type-segment-bases
+                    target
+                    (& args)
+                    (& param-types)
+                    c-abi?
+                    program-index))
+                (let
+                  [group-plan : CompilerBackendGroupCallPlan
+                    (compiler-backend-group-call-plan
+                      type-segment-bases
+                      target
+                      convention
+                      assignments
+                      (& args)
+                      (& param-types)
+                      c-abi?
+                      0
+                      0
+                      0
+                      0
+                      program-index
+                      backend-state)]
+                  [out : be_state.CompilerBackendAsmBuf
+                    (be_state.compiler-backend-asm-buf-with-capacity
+                      be_state.compiler-backend-asm-seq-capacity)]
+                  [_
+                    (try
+                      (compiler-backend-emit-group-call-plan-into
+                        (&mut out)
+                        (IncomingStackArgArea)
+                        type-segment-bases
+                        target
+                        convention
+                        assignments
+                        (& args)
+                        (& param-types)
+                        (& group-plan)
+                        vars
+                        backend-state))]
+                  (be_state.ResultCompilerBackend.Ok
+                    (be_state.compiler-backend-asm-buf-finish (& out))))]
               [(= tail-stack-count 0)
                 (compiler-backend-emit-call-args
                   type-segment-bases

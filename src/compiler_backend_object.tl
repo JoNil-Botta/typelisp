@@ -2941,7 +2941,8 @@
             (be_facts.compiler-backend-group-vars-enable!
               program-index.backend-state
               (be_state.compiler-backend-global-shared-view groups)
-              (compiler_liveness.compiler-live-set-empty)))]
+              (compiler_liveness.compiler-live-set-empty)
+              (compiler_regalloc.compiler-reg-assignment-table-empty)))]
         [emitted : object_target.CompilerBackendObjectTargetParts
           (compiler-backend-object-blocks
             type-segment-bases

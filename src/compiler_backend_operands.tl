@@ -299,7 +299,7 @@
               "backend: vector spills are not implemented for "
               role))]
         ;; A rematerialised value is an i64-class constant/address, never a vector.
-        [(or (RegisterPair _ _) (Remat _))
+        [(or (RegisterPair _ _) (SpillPair _ _) (Remat _))
           (Err (compiler-backend-vector-home-unavailable role))])]
     [(No) (Err (compiler-backend-vector-home-unavailable role))]))
 
@@ -348,7 +348,7 @@
               "backend: mask spills are not implemented for "
               role))]
         ;; A rematerialised value is i64-class, never a mask register.
-        [(or (RegisterPair _ _) (Remat _))
+        [(or (RegisterPair _ _) (SpillPair _ _) (Remat _))
           (Err (compiler-backend-mask-home-unavailable role))])]
     [(No) (Err (compiler-backend-mask-home-unavailable role))]))
 
@@ -1048,7 +1048,7 @@
             ;; here) group paths.
             [(or (Register home) (RegisterPair home _))
               (compiler-backend-emit-register-home-into! out home reg)]
-            [(Spill offset)
+            [(or (Spill offset) (SpillPair offset _))
               (be_state.compiler-backend-asm-append5
                 out
                 "    movq "
@@ -1102,7 +1102,7 @@
                 ", "
                 home-name
                 "\n")))]
-        [(Spill offset)
+        [(or (Spill offset) (SpillPair offset _))
           (be_state.compiler-backend-asm-append5
             out
             "    movq "
@@ -1228,7 +1228,7 @@
           ;; A register-group var is never float-class; unreachable.
           ;; A rematerialisable value is a constant/address (i64-class), never a
           ;; float; unreachable here.
-          [(or (RegisterPair _ _) (Remat _)) ""])]
+          [(or (RegisterPair _ _) (SpillPair _ _) (Remat _)) ""])]
       [(No)
         (str_cat.str-cat
           "    "
@@ -1278,7 +1278,7 @@
               "\n")]
           ;; A register-group var is never float-class; unreachable.
           ;; A rematerialised value is never float-class; unreachable.
-          [(or (RegisterPair _ _) (Remat _)) ""])]
+          [(or (RegisterPair _ _) (SpillPair _ _) (Remat _)) ""])]
       [(No)
         (str_cat.str-cat
           "    "
@@ -2614,7 +2614,7 @@
             ", "
             (compiler_abi.compiler-abi-register-spelling home)
             "\n")]
-        [(Spill offset)
+        [(or (Spill offset) (SpillPair offset _))
           (str_cat.str-cat
             "    "
             mnemonic
@@ -3708,23 +3708,40 @@
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [src : i64]
   [backend-state : be_state.CompilerBackendState]) : i64
-  (if (compiler-backend-addressable-group-var? backend-state src)
-    (compiler-backend-group-word0-slot
-      src
-      (be_state.compiler-backend-function-state-i64
-        (be_state.compiler-backend-state-function-state backend-state)
-        be_state.compiler-backend-function-i64-current-slot-vars)
-      assignments
-      backend-state)
-    (match (compiler-backend-emit-assignment-lookup
-      backend-state
-      assignments
-      src)
-      [(Some location)
-        (match location
-          [(Spill offset) offset]
-          [_ (- 0 (* 8 (+ src 1)))])]
-      [(No) (- 0 (* 8 (+ src 1)))])))
+  (match (compiler-backend-emit-assignment-lookup backend-state assignments src)
+    [(Some location)
+      (match location
+        [(SpillPair off0 _) off0]
+        [(Spill offset)
+          (if (compiler-backend-addressable-group-var? backend-state src)
+            (compiler-backend-group-word0-slot
+              src
+              (be_state.compiler-backend-function-state-i64
+                (be_state.compiler-backend-state-function-state backend-state)
+                be_state.compiler-backend-function-i64-current-slot-vars)
+              assignments
+              backend-state)
+            offset)]
+        [_
+          (if (compiler-backend-addressable-group-var? backend-state src)
+            (compiler-backend-group-word0-slot
+              src
+              (be_state.compiler-backend-function-state-i64
+                (be_state.compiler-backend-state-function-state backend-state)
+                be_state.compiler-backend-function-i64-current-slot-vars)
+              assignments
+              backend-state)
+            (- 0 (* 8 (+ src 1))))])]
+    [(No)
+      (if (compiler-backend-addressable-group-var? backend-state src)
+        (compiler-backend-group-word0-slot
+          src
+          (be_state.compiler-backend-function-state-i64
+            (be_state.compiler-backend-state-function-state backend-state)
+            be_state.compiler-backend-function-i64-current-slot-vars)
+          assignments
+          backend-state)
+        (- 0 (* 8 (+ src 1))))]))
 
 ;; True when the addressed object has a frame slot home this pass renders
 ;; through the frame-offset formatter: an addressable group, or a spilled var.
@@ -3742,7 +3759,7 @@
       src)
       [(Some location)
         (match location
-          [(Spill _) true]
+          [(or (Spill _) (SpillPair _ _)) true]
           [_ false])]
       [(No) false])))
 
@@ -4009,7 +4026,7 @@
                 (compiler_abi.compiler-abi-register-spelling home)]
               (str_cat.str-cat "    testq " home-name ", " home-name "\n"))]
           [(RegisterPair _ _) ""]
-          [(Spill offset)
+          [(or (Spill offset) (SpillPair offset _))
             (str_cat.str-cat
               "    cmpq $0, "
               (compiler-backend-frame-offset-with-backend-state

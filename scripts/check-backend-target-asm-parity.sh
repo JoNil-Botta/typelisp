@@ -490,41 +490,69 @@ check_register_group_phi_return_opt2_shapes() {
     _linux="$LINUX_NORM_DIR/opt2_register_group_phi_return.norm"
     _windows="$WINDOWS_NORM_DIR/opt2_register_group_phi_return.norm"
 
-    # Both match arms are terminal after trivial-phi folding. Pin the live
-    # two-word returns instead of an unreachable merge block: CFG cleanup may
-    # (and should) delete that block once both arms return directly. The
-    # normalizer rewrites every stack slot to a per-function SLOTn token and
-    # gives a red-zone leaf the teardown token the framed side spells, so this
-    # shape is identical on both targets -- and the two returned words must
-    # come from DISTINCT slots.
-    for _assembly in "$_linux" "$_windows"; do
-        if ! awk '
-            function slot_of(s,    t) {
-                t = s
-                sub(/^movq /, "", t)
-                sub(/\(%rsp\).*$/, "", t)
-                return t
+    # Both match arms are terminal after trivial-phi folding and both incoming
+    # Pair params now stay register-resident in GP RegisterPairs with zero stack
+    # slots on both targets:
+    # - Linux SysV: `p` pins in place in `%rsi:%rdx` (word 1 is already in `%rdx`,
+    #   so arm 0 returns via `movq %rsi, %rax; ret`), and `q` (`%rcx:%r8`) is
+    #   shrink-wrapped into `%r12:%r13` and returned in `%rax:%rdx`.
+    # - Win64: `p` arrives in `%rdx:%r8` (`%r8` is reserved scratch), moves at
+    #   entry to `%rdi:%r12`, and returns in `%rax:%rdx`; `q` pins in place in
+    #   `%r9:%rsi` and returns in `%rax:%rdx`.
+    # Pin both targets' exact two-word GP-pair return shapes and reject stack
+    # slot spills so neither word can be dropped or regressed back to memory.
+    if ! awk '
+        BEGIN { arm_ok = 0; next_ok = 0; saw_slot = 0 }
+        /SLOT[0-9]+\(%rsp\)/ { saw_slot = 1 }
+        /^\.LfN_match_arm\.[0-9]+:$/ {
+            if ((getline l1) > 0 && (getline l2) > 0 &&
+                    l1 == "movq %rsi, %rax" && l2 == "ret") {
+                arm_ok = 1
             }
-            function group_return_ok(    word0, word1, teardown, terminator) {
-                if ((getline word0) <= 0) return 0
-                if ((getline word1) <= 0) return 0
-                if ((getline teardown) <= 0) return 0
-                if ((getline terminator) <= 0) return 0
-                return (word0 ~ /^movq SLOT[0-9]+\(%rsp\), %rax$/ &&
-                        word1 ~ /^movq SLOT[0-9]+\(%rsp\), %rdx$/ &&
-                        slot_of(word0) != slot_of(word1) &&
-                        teardown == "FRAME_TEARDOWN" &&
-                        terminator == "ret")
+        }
+        /^\.LfN_match_next\.[0-9]+:$/ {
+            if ((getline l1) > 0 && (getline l2) > 0 &&
+                    (getline l3) > 0 && (getline l4) > 0 &&
+                    (getline l5) > 0 && (getline l6) > 0 &&
+                    (getline l7) > 0 && (getline l8) > 0 &&
+                    (getline l9) > 0 &&
+                    l1 == "pushq %r12" && l2 == "pushq %r13" &&
+                    l3 == "movq %rcx, %r12" && l4 == "movq %r8, %r13" &&
+                    l5 == "movq %r12, %rax" && l6 == "movq %r13, %rdx" &&
+                    l7 == "popq %r13" && l8 == "popq %r12" && l9 == "ret") {
+                next_ok = 1
             }
-            BEGIN { arm_ok = 0; next_ok = 0 }
-            /^\.LfN_match_arm\.[0-9]+:$/ { arm_ok = group_return_ok() }
-            /^\.LfN_match_next\.[0-9]+:$/ { next_ok = group_return_ok() }
-            END { exit (arm_ok && next_ok) ? 0 : 1 }
-        ' "$_assembly"; then
-            echo "register_group_phi_return opt2 lost a live two-word group return: $_assembly" >&2
-            return 1
-        fi
-    done
+        }
+        END { exit (arm_ok && next_ok && !saw_slot) ? 0 : 1 }
+    ' "$_linux"; then
+        echo "register_group_phi_return Linux opt2 lost a live two-word GP-pair return: $_linux" >&2
+        return 1
+    fi
+
+    if ! awk '
+        BEGIN { arm_ok = 0; next_ok = 0; saw_slot = 0 }
+        /SLOT[0-9]+\(%rsp\)/ { saw_slot = 1 }
+        /^\.LfN_match_arm\.[0-9]+:$/ {
+            if ((getline l1) > 0 && (getline l2) > 0 && (getline l3) > 0 &&
+                    l1 == "movq %rdi, %rax" && l2 == "movq %r12, %rdx" &&
+                    l3 ~ /^jmp \.L_tl_register_group_phi_return_pick_address_taken_return$/) {
+                arm_ok = 1
+            }
+        }
+        /^\.LfN_match_next\.[0-9]+:$/ {
+            if ((getline l1) > 0 && (getline l2) > 0 &&
+                    (getline l3) > 0 && (getline l4) > 0 && (getline l5) > 0 &&
+                    l1 == "movq %r9, %rax" && l2 == "movq %rsi, %rdx" &&
+                    l3 == ".L_tl_register_group_phi_return_pick_address_taken_return:" &&
+                    l4 == "popq %r12" && l5 == "ret") {
+                next_ok = 1
+            }
+        }
+        END { exit (arm_ok && next_ok && !saw_slot) ? 0 : 1 }
+    ' "$_windows"; then
+        echo "register_group_phi_return Windows opt2 lost a live two-word GP-pair return: $_windows" >&2
+        return 1
+    fi
 }
 
 # Classify one raw (un-normalized) function body as "CLASS BELOW_RSP":
@@ -641,10 +669,17 @@ expected_target_asm_mismatch() {
     # red-zone leaf the teardown token the framed side spells, so the SysV and
     # Win64 forms compare on their bodies. check_frame_form_parity pins
     # the frame forms themselves.
+    # RegisterGroup GP-pair param pinning + Win64 GP-pair allocation: both
+    # incoming Pair params of `pick-address-taken` now stay register-resident on
+    # both targets, but in different ABI register banks (SysV pins `p` in
+    # `%rsi:%rdx` and shrink-wraps `q` into `%r12:%r13`; Win64 moves `p` off
+    # scratch `%r8` into `%rdi:%r12` and pins `q` in `%r9:%rsi`). Both exact
+    # two-word return shapes are pinned by check_register_group_phi_return_opt2_shapes.
     case "${_etm_opt}:${_etm_name}" in
         2:functions) return 0 ;;
         2:lambda_capture_struct_enum) return 0 ;;
         2:many_args) return 0 ;;
+        2:register_group_phi_return) return 0 ;;
         2:target_asm_loop_divmod_parity) return 0 ;;
     esac
     return 1

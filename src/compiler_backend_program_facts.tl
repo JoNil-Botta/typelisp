@@ -1276,14 +1276,16 @@
 (define (compiler-backend-group-vars-enable!
   [backend-state : be_state.CompilerBackendState]
   [vars : compiler_liveness.CompilerLiveI64Set]
-  [addressable : compiler_liveness.CompilerLiveI64Set]) : unit
+  [addressable : compiler_liveness.CompilerLiveI64Set]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : unit
   (let
     [function-state : be_state.CompilerBackendFunctionState
       (be_state.compiler-backend-state-function-state backend-state)]
-    ;; The dense pair index: rank(var) counts the group vars below var in
-    ;; ascending id order, so the pair region holds exactly one (or two) words
-    ;; per group var instead of two per var. Sized past the highest group bit
-    ;; so a lookup is total; an id without a pair reads -1.
+    ;; Only group vars without an assigned physical location (`RegisterPair` or
+    ;; `SpillPair`) need slots in the fallback pair region below `frame-slots`.
+    ;; When stack coloring ran, every non-const-pack, non-register-pair group
+    ;; carries an explicit `SpillPair`, so `fallback-count` and
+    ;; `group-pair-reserve` are both 0.
     [slot-vars : i64
       (be_state.compiler-backend-function-state-i64
         function-state
@@ -1298,20 +1300,39 @@
           set-bits
           slot-vars))]
     [group-count : i64 (compiler_liveness.compiler-live-set-count vars)]
-    ;; Only a function that HAS a group var pays for the rank table; every other
-    ;; function keeps the state's empty array, so the table costs nothing in the
-    ;; common case.
-    [ranks : (__tl_dyn-array i64)
-      (if (> group-count 0)
-        (__tl_make-array i64 rank-slots)
-        (be_state.compiler-backend-function-state-i64-array
-          function-state
-          be_state.compiler-backend-function-i64-array-group-ranks))]
-    [ranked : i64 0]
-    [_ranks : unit
+    [fallback-count : i64 0]
+    [fallback-addr-count : i64 0]
+    [_count-fallback : unit
       (if (> group-count 0)
         (for [var (iterator.range 0 rank-slots)]
-          (if (compiler_liveness.compiler-live-set-contains? vars var)
+          (when
+            (and
+              (compiler_liveness.compiler-live-set-contains? vars var)
+              (match (compiler_regalloc.compiler-reg-assignment-table-lookup
+                assignments
+                var)
+                [(Some _) false]
+                [(No) true]))
+            (set! fallback-count (+ fallback-count 1))
+            (when
+              (compiler_liveness.compiler-live-set-contains? addressable var)
+              (set! fallback-addr-count (+ fallback-addr-count 1)))))
+        unit)]
+    [ranks : (__tl_dyn-array i64)
+      (if (> fallback-count 0)
+        (__tl_make-array i64 rank-slots)
+        (__tl_make-array i64 0))]
+    [ranked : i64 0]
+    [_ranks : unit
+      (if (> fallback-count 0)
+        (for [var (iterator.range 0 rank-slots)]
+          (if (and
+            (compiler_liveness.compiler-live-set-contains? vars var)
+            (match (compiler_regalloc.compiler-reg-assignment-table-lookup
+              assignments
+              var)
+              [(Some _) false]
+              [(No) true]))
             (begin
               (set! (array-ref ranks var) ranked)
               (set! ranked (+ ranked 1)))
@@ -1326,9 +1347,9 @@
         (be_state.compiler-backend-function-state-set-i64!
           function-state
           be_state.compiler-backend-function-i64-group-pair-reserve
-          (if (> (compiler_liveness.compiler-live-set-count addressable) 0)
-            (* 2 group-count)
-            group-count)))]
+          (if (> fallback-addr-count 0)
+            (* 2 fallback-count)
+            fallback-count)))]
     (be_state.compiler-backend-function-state-set-live-set!
       function-state
       be_state.compiler-backend-function-live-set-group-vars

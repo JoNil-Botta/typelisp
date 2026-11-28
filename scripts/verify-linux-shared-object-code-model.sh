@@ -5,8 +5,8 @@ set -eu
 # code model (#8257).
 #
 # Every Linux row of tests/integration/manifest.d/*.manifest, at its default level,
-# is staged like scripts/verify-integration.sh stages it and compiled in one
-# `compile --batch` run with TYPELISP_BACKEND_CODE_MODEL=shared-object. Each
+# is staged like scripts/verify-integration.sh stages it. Cases using raw
+# threads must fail with the thread admission diagnostic. Each accepted
 # object is assembled and linked with both `cc -shared` and `ld -shared`, and
 # readelf must show:
 #   - no R_X86_64_TPOFF32 (local-exec TLS) relocation in the object;
@@ -83,6 +83,26 @@ NORMALIZED="$WORKDIR/manifest.normalized"
 awk -v host=linux -f "$ROOT/scripts/expand-integration-manifest.awk" \
     "$COMBINED_MANIFEST" > "$NORMALIZED"
 
+EXPECTED_RAW_THREADS="$ROOT/tests/shared-object/raw-thread-cases.expected"
+REJECTED="$WORKDIR/rejected.txt"
+: > "$REJECTED"
+thread_diagnostic='error: backend: raw TypeLisp thread creation is unsupported in the shared-object code model; use host-created threads'
+
+expect_thread_diagnostic() {
+    _output=$1
+    shift
+    if TYPELISP_BACKEND_CODE_MODEL=shared-object "$COMPILER" compile "$@" \
+        --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" \
+        > "$_output.stdout" 2> "$_output.stderr"; then
+        fail "expected shared-object thread rejection for $*"
+    fi
+    grep -Fxq "$thread_diagnostic" "$_output.stderr" || {
+        cat "$_output.stderr" >&2
+        fail "missing thread diagnostic for $*"
+    }
+    [ ! -e "$_output" ] && [ ! -e "$_output.fixups" ] || fail "published rejected output $_output"
+}
+
 BATCH="$WORKDIR/batch.txt"
 NAMES="$WORKDIR/names.txt"
 : > "$BATCH"
@@ -113,9 +133,57 @@ while IFS='|' read -r name source _want _stdout _args deps extra _suite || [ -n 
             done
             ;;
     esac
+    if grep -Fxq "$name" "$EXPECTED_RAW_THREADS"; then
+        expect_thread_diagnostic "$case_dir/$name.s" "$case_dir/$name.tl" -o "$case_dir/$name.s"
+        printf '%s\n' "$name" >> "$REJECTED"
+        continue
+    fi
     printf '%s|%s\n' "$case_dir/$name.tl" "$case_dir/$name.s" >> "$BATCH"
     printf '%s\n' "$name" >> "$NAMES"
 done < "$NORMALIZED"
+
+LC_ALL=C sort "$REJECTED" > "$REJECTED.sorted"
+cmp "$EXPECTED_RAW_THREADS" "$REJECTED.sorted" || fail "stale shared-object thread expectation"
+echo "[shared-object] $(wc -l < "$REJECTED") programs rejected for reachable raw thread creation"
+
+# Exercise CLI routes and reference forms that the linked corpus cannot cover.
+PROBES="$WORKDIR/admission"
+mkdir -p "$PROBES"
+for level in 0 1 2; do
+    for source in \
+        tests/shared-object/thread-init-tail.tl \
+        tests/shared-object/thread-init-stored.tl \
+        "$WORKDIR/cases/thread_runtime/thread_runtime.tl" \
+        "$WORKDIR/cases/thread_safe_i64/thread_safe_i64.tl"; do
+        out="$PROBES/$(basename "$source" .tl)-$level.s"
+        expect_thread_diagnostic "$out" "$source" --opt-level "$level" -o "$out"
+    done
+    for mode in no-entry pic; do
+        out="$PROBES/library-$mode-$level.s"
+        expect_thread_diagnostic "$out" "$ROOT/tests/shared-object/thread-init-library.tl" "--$mode" --opt-level "$level" -o "$out"
+    done
+    for source in tests/shared-object/thread-unused.tl tests/shared-object/thread-shadow.tl; do
+        TYPELISP_BACKEND_CODE_MODEL=shared-object "$COMPILER" compile "$source" \
+            --stdlib-root "$ROOT/stdlib" --opt-level "$level" -o "$PROBES/$(basename "$source" .tl)-$level.s"
+    done
+done
+
+for order in before after; do
+    out="$PROBES/batch-$order.s"
+    good="$ROOT/tests/shared-object/thread-unused.tl|$out.good"
+    bad="$ROOT/tests/shared-object/thread-init-stored.tl|$out"
+    if [ "$order" = before ]; then
+        printf '%s\n' "$good" "$bad" > "$out.batch"
+    else
+        printf '%s\n' "$bad" "$good" > "$out.batch"
+    fi
+    expect_thread_diagnostic "$out" --batch "$out.batch"
+    if [ "$order" = before ]; then
+        [ -s "$out.good" ] || fail "missing successful batch output before rejection"
+    else
+        [ ! -e "$out.good" ] || fail "unexpected output after batch rejection"
+    fi
+done
 
 echo "[shared-object] compile $(wc -l < "$NAMES" | tr -d ' ') programs with the shared-object code model"
 COMPILE_POOL_DIR="$WORKDIR/compile-pool"

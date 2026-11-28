@@ -185,8 +185,9 @@ executable one as follows:
 The rewrite runs on the final assembly, after the template catalog has checked
 the runtime bytes it pins, so executable output is unchanged byte for byte.
 [`scripts/verify-linux-shared-object-code-model.sh`](../scripts/verify-linux-shared-object-code-model.sh)
-links every Linux integration program as a DSO with `cc -shared` and
-`ld -shared`. With `readelf`, it checks for:
+checks the raw-thread diagnostic for the pinned spawn cases and links the
+remaining Linux integration programs as DSOs with `cc -shared` and `ld -shared`.
+With `readelf`, it checks for:
 - no text relocation;
 - no local-exec TLS;
 - `DF_STATIC_TLS` set;
@@ -199,8 +200,8 @@ Limits:
   TypeLisp code. The test's hand-written shim does this; #8260 owns the real
   lifecycle.
 - Exports come from a hand-written shim until the export policy (#8263) lands.
-- Raw thread spawn inside a DSO is unsupported. `tl_thread_init` installs its
-  own FS base
+- Program emission rejects reachable references to `tl_thread_init`, including
+  aliases and function values. This initializer installs its own FS base
   ([#8762](https://github.com/JoNil-Botta/typelisp/issues/8762)).
 
 `compiler_module_name.tl` owns the complete dotted import-name contract used by

@@ -43,6 +43,10 @@ retain the surface in the driver arena under the
 per-pass native mappings and generation-checked handles remain independent.
 
 Compilation deduplicates the import graph for one whole program per executable.
+For Linux shared objects, program emission resolves reachable calls and function
+references through the backend symbol index. A reference to the freestanding
+`tl_thread_init` initializer is a compile error because the host owns the
+thread pointer. Host-created threads can enter the shared object.
 Package dependencies can be compiled into archives. Batch and LSP paths reuse
 session state only within its owner and invalidation contracts.
 Prebuilt `.tli` interfaces, their `.tlci` companion and the archive layout are

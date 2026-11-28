@@ -26941,6 +26941,67 @@ tl_shared_object_init:
     program
     (be_state.CompilerBackendTarget.Linux)))
 
+(define (compiler-backend-thread-init-use-id
+  [name : i64]
+  [plan : be_state.CompilerBackendRuntimePlan]
+  [index : be_state.CompilerBackendProgramIndex]) : i64
+  ;; A logical extern may itself be named tl_thread_init but link elsewhere.
+  ;; Match the callee the emitter would use. -1 is not an IR symbol.
+  (if (string.eq
+    (be_operand.compiler-backend-call-symbol-index name plan index)
+    "tl_thread_init")
+    name
+    -1))
+
+(define (compiler-backend-references-thread-init?
+  [externs : (& compiler_ir_types.CompilerIrExternSeq)]
+  [plan : be_state.CompilerBackendRuntimePlan]
+  [index : be_state.CompilerBackendProgramIndex]
+  [runtime-index : (& be_state.CompilerBackendRuntimeIndex)]
+  [collections : (& be_state.CompilerBackendProgramCollections)]) : bool
+  (let
+    [native : i64 cbi.compiler-builtin-id-tl-thread-init]
+    (when
+      (and
+        (or
+          (be_data.compiler-backend-runtime-index-calls? runtime-index native)
+          (be_state.compiler-backend-symbol-list-contains-id?
+            (& collections.references.items)
+            native))
+        (= (compiler-backend-thread-init-use-id native plan index) native))
+      (return true)))
+  (for [i (iterator.range 0 externs.len)]
+    (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs i)
+      [(Extern name source _ _ abi link _ _ _ _ _ _)
+        (when
+          (string.eq
+            (be_operand.compiler-backend-link-symbol-id
+              link
+              plan
+              index.backend-state
+              (compiler_ast_types.ast-extern-abi-c? abi))
+            "tl_thread_init")
+          (let
+            [logical-id (compiler-backend-thread-init-use-id name plan index)]
+            [source-id (compiler-backend-thread-init-use-id source plan index)]
+            [link-id (compiler-backend-thread-init-use-id link plan index)]
+            (when
+              (or
+                (be_facts.compiler-backend-extern-symbol-referenced?
+                  runtime-index
+                  (& collections.references.items)
+                  logical-id
+                  source-id
+                  link-id)
+                (be_facts.compiler-backend-extern-symbol-referenced?
+                  runtime-index
+                  (& collections.functions.items)
+                  logical-id
+                  source-id
+                  link-id))
+              (return true))))]))
+  false)
+
 (define (compiler-backend-emit-program-buffer-after-index
   [type-segment-bases : i64]
   [_program : compiler_ir_types.CompilerIrProgram]
@@ -26957,6 +27018,21 @@ tl_shared_object_init:
   [collections : be_state.CompilerBackendProgramCollections]
   [emit-entry : bool]
   [crt-entry : bool]) : be_state.ResultCompilerBackendBuffer
+  (when
+    (and
+      target-policy.shared-object
+      (compiler-backend-references-thread-init?
+        (& externs)
+        plan
+        program-index
+        (& runtime-index)
+        (& collections)))
+    (return
+      (Err
+        (box
+          (compiler_diagnostic.compiler-diagnostic-at-start
+            ""
+            "backend: raw TypeLisp thread creation is unsupported in the shared-object code model; use host-created threads")))))
   (let
     [target : be_state.CompilerBackendTarget target-policy.target]
     [_arg-entries : unit

@@ -1,10 +1,10 @@
 ;# stdlib/thread.tl - Native thread primitives and checked task wrappers.
 ;#
-;# Provides a narrow cross-target raw thread surface: spawn a `(-> i64 i64)`
-;# entry with one raw integer context, observe completion with a bounded
-;# non-consuming wait, join it, use a counting semaphore, and query a default
-;# worker count. Linux uses raw `clone`/`futex`/`eventfd2` syscalls. Windows
-;# uses kernel32 `CreateThread`, `WaitForSingleObject`, and semaphores.
+;# Spawn a `(-> i64 i64)` entry with a raw integer context, observe completion
+;# with a bounded non-consuming wait, join, use counting semaphores, or query
+;# the default worker count. Linux executables use raw
+;# `clone`/`futex`/`eventfd2`. Linux shared objects require host-created
+;# threads. Windows uses kernel32 `CreateThread`, `WaitForSingleObject`, and semaphores.
 ;#
 ;# Each thread has its own default arena. The raw `i64` context/result surface
 ;# does not transfer ownership; callers that smuggle addresses through those

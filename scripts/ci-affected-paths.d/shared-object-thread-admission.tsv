@@ -1,0 +1,3 @@
+path	required	advisory	reason
+tests/shared-object/thread-*.tl	stage2-linux-shared-object-code-model,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Thread admission fixture input in verify-linux-shared-object-code-model.sh.
+tests/shared-object/raw-thread-cases.expected	stage2-linux-shared-object-code-model	@corpus	Pinned expected rejections in the shared-object corpus.

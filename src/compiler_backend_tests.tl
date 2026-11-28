@@ -47034,6 +47034,47 @@ user_fn:
       (asm-lacks? rewritten "@tpoff" "ERR"))))
 
 (test
+  backend-shared-object-thread-init-tail-call
+  (let
+    [program : ir.CompilerIrProgram
+      (irt.program
+        "extern @initialize symbol \"tl_thread_init\" : (-> unit) abi c
+function @worker() -> unit vars 0 {
+entry:
+  tailcall initialize() : unit
+}")]
+    [spans : ir.CompilerSourceSpans (ir.compiler-source-spans-empty)]
+    [state : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    (for [i (iterator.range 0 3)]
+      (let
+        [shared : bool (!= i 1)]
+        (be_state.compiler-backend-state-set-shared-object-code-model!
+          state
+          shared)
+        (match (compiler-backend-test-emit-program-with-state
+          state
+          (be_state.CompilerBackendTarget.Linux)
+          (& program)
+          (& spans)
+          false)
+          [(Ok _)
+            (when
+              shared
+              (io.panic
+                "admitted shared-object tail call to thread initializer"))]
+          [(Err diag)
+            (unless
+              (and
+                shared
+                (string.eq
+                  (cdiag.compiler-diagnostic-message (& (deref diag)))
+                  "backend: raw TypeLisp thread creation is unsupported in the shared-object code model; use host-created threads"))
+              (io.panic (cdiag.compiler-diagnostic-message (& (deref diag)))))])))
+    (backend.compiler-backend-state-release-final-arenas! state)))
+
+(test
   backend-shared-object-code-model
   (unless
     (and

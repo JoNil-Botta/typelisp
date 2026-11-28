@@ -633,7 +633,14 @@
   [type-segment-bases : i64]
   [pass : String]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
-  (match (& func)
+  (compiler-opt-debug-observe-function! type-segment-bases pass (& func))
+  func)
+
+(define (compiler-opt-debug-observe-function!
+  [type-segment-bases : i64]
+  [pass : String]
+  [func : (& ir.CompilerIrFunction)]) : unit
+  (match func
     [(Function name _ _ _ blocks _ _)
       (if (and
         compiler-opt-debug-trace-passes
@@ -675,9 +682,8 @@
                 (ir.compiler-ir-function-render
                   state.structural-session
                   type-segment-bases
-                  (& func)))))
-          unit))
-      func]))
+                  func))))
+          unit))]))
 
 (defenum OptMaybeAggregateAlloc
   (No)
@@ -102876,6 +102882,21 @@
                 (opt-cfg-entry-label original-blocks)))))
         (set! (array-ref functions.slots index) converted))
       (+= index 1))
+    ;; Observe the converted sequence before indexing or inlining can change
+    ;; it. Only diagnostics traverse the sequence a second time.
+    (when
+      (and
+        (not compiler-opt-debug-suppressed?)
+        (or
+          compiler-opt-debug-trace-passes
+          (compiler-opt-debug-pass-selected?
+            (& compiler-opt-owned-state.debug-state)
+            "tailrec")))
+      (for [slot (iterator.range 0 functions.len)]
+        (compiler-opt-debug-observe-function!
+          type-segment-bases
+          "tailrec"
+          (ir.compiler-ir-function-seq-borrow (& functions) slot))))
     functions))
 
 (define (opt-devirt-known-function-seq [functions : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq

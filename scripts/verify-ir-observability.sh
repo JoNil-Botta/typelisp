@@ -131,6 +131,50 @@ grep -F "function @main()" "$WORKDIR/optimizer_fold.final.ir" >/dev/null
 grep -F "optimizer-pass|main|licm|blocks=" "$TRACE" >/dev/null
 grep -F "after licm @main" "$WORKDIR/optimizer_fold.after-licm.ir" >/dev/null
 
+# Tailrec is a whole-program boundary before inlining and per-function SSA.
+# The golden captures the loop's parameter copies and backedge, as well as
+# main's unchanged call. The trace must visit every snapshot exactly once.
+TAILREC_SOURCE="$ROOT/tests/golden/optimizer_tailrec.tl"
+TAILREC_IR="$WORKDIR/optimizer_tailrec.after-tailrec.ir"
+TAILREC_TRACE="$WORKDIR/tailrec.stderr"
+"$COMPILER" compile "$TAILREC_SOURCE" \
+    --dump-ir after-tailrec --trace-passes --verify-ir --opt-level 2 \
+    -o "$TAILREC_IR" >"$WORKDIR/tailrec.stdout" 2>"$TAILREC_TRACE"
+tr -d '\r' <"$ROOT/tests/golden/optimizer_tailrec.after-tailrec.ir" >"$WORKDIR/tailrec.expected"
+tr -d '\r' <"$TAILREC_IR" >"$WORKDIR/tailrec.actual"
+diff -u "$WORKDIR/tailrec.expected" "$WORKDIR/tailrec.actual"
+sed -n 's/^after tailrec @//p' "$WORKDIR/tailrec.actual" >"$WORKDIR/tailrec.dump-names"
+awk -F'|' '
+    $1 == "optimizer-pass" {
+        if ($3 == "tailrec") {
+            if (other_pass) exit 1
+            print $2
+        } else {
+            other_pass = 1
+        }
+    }
+' "$TAILREC_TRACE" >"$WORKDIR/tailrec.trace-names"
+diff -u "$WORKDIR/tailrec.dump-names" "$WORKDIR/tailrec.trace-names"
+
+"$COMPILER" compile "$TAILREC_SOURCE" --opt-level 2 \
+    -o "$WORKDIR/tailrec.s" >"$WORKDIR/tailrec-quiet.stdout" 2>"$WORKDIR/tailrec-quiet.stderr"
+test ! -s "$WORKDIR/tailrec-quiet.stderr"
+for opt in 0 1; do
+    if "$COMPILER" compile "$TAILREC_SOURCE" \
+        --dump-ir after-tailrec --trace-passes --opt-level "$opt" \
+        -o "$WORKDIR/tailrec-opt$opt.ir" \
+        >"$WORKDIR/tailrec-opt$opt.stdout" 2>"$WORKDIR/tailrec-opt$opt.stderr"; then
+        echo "tailrec unexpectedly ran at opt level $opt" >&2
+        exit 1
+    fi
+    grep -F "optimizer pass 'tailrec' did not run" "$WORKDIR/tailrec-opt$opt.stderr" >/dev/null
+    if grep -E '^optimizer-pass\|[^|]*\|tailrec\|' "$WORKDIR/tailrec-opt$opt.stderr" >/dev/null; then
+        echo "tailrec unexpectedly traced at opt level $opt" >&2
+        exit 1
+    fi
+    test ! -e "$WORKDIR/tailrec-opt$opt.ir"
+done
+
 # Compiler AST pool initializers retain nested, macro-local type variables.
 # Dumping them must resolve syntax IDs through their owner, never as pool indexes.
 STRUCTURAL_SOURCE="$ROOT/tests/golden/ir_structural_names.tl"

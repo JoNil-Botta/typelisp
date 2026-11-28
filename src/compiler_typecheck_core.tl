@@ -61700,28 +61700,43 @@
         (set! schedule? (and (>= index 0) (< bound.previous-bound 0)))))
     (Ok (tc-lifetime-subst-push-bound subst from to code index schedule?))))
 
+(defenum TcCallLifetimeChoice
+  (Fits i64)
+  (Conflict i64))
+
 ;; Prefer the longest required lower bound, then the shortest admitted upper
 ;; bound. Each candidate must satisfy every retained occurrence. If none fits,
 ;; the ordinary substituted argument check diagnoses the incompatible argument.
 (define (tc-call-lifetime-choice
   [env : TcTypeEnv]
   [subst : TcLifetimeSubst]
-  [head : i64]) : TcMaybeNameId
+  [head : i64]) : TcCallLifetimeChoice
   (let
     [index : i64 head]
-    [upper : TcMaybeNameId TcMaybeNameId.No]
+    [choice : TcCallLifetimeChoice
+      (Conflict (tc-lifetime-subst-bound-at subst head).to)]
     (while (>= index 0)
       (let
         [bound : TcLifetimeSubstNode (tc-lifetime-subst-bound-at subst index)]
-        (when
-          (tc-lifetime-bounds-allow? env subst head bound.to)
+        (if (tc-lifetime-bounds-allow? env subst head bound.to)
           (if (= bound.variance (tc-variance-code (TcVarianceContravariant)))
-            (return (Some bound.to))
-            (set! upper (Some bound.to))))
+            (return (Fits bound.to))
+            (set! choice (Fits bound.to)))
+          ;; Diagnose against the earliest non-invariant bound so a conflict
+          ;; identifies the occurrence that cannot coerce to it.
+          (match choice
+            [(Conflict _)
+              (unless
+                (= bound.variance (tc-variance-code (TcVarianceInvariant)))
+                (set! choice (Conflict bound.to)))]
+            [_ unit]))
         (set! index bound.previous-bound)))
-    upper))
+    choice))
 
-(define (tc-call-lifetime-resolve [env : TcTypeEnv] [subst : TcLifetimeSubst]) : TcLifetimeSubst
+(define (tc-call-lifetime-resolve
+  [env : TcTypeEnv]
+  [subst : TcLifetimeSubst]
+  [fits? : (&mut bool)]) : TcLifetimeSubst
   (match subst
     [(Dense _ _ _ pending)
       ;; A formal enters this worklist only on acquiring a second independent
@@ -61737,9 +61752,11 @@
             (when
               (>= (tc-lifetime-subst-bound-at subst head).previous-bound 0)
               (match (tc-call-lifetime-choice env subst head)
-                [(Some choice)
+                [(Fits choice)
                   (set! out (tc-lifetime-subst-push out entry.from choice))]
-                [(No) unit]))
+                [(Conflict diagnostic)
+                  (set! (deref fits?) false)
+                  (set! out (tc-lifetime-subst-push out entry.from diagnostic))]))
             (set! index entry.previous-pending)))
         out)]
     [_ subst]))
@@ -62781,7 +62798,30 @@
   [remember? : bool]) : ResultTcLifetimeSubst
   (if (>= index args.len)
     (if (>= index (ast.ast-type-list-len params))
-      (Ok (tc-call-lifetime-resolve env subst))
+      (let
+        [fits? : bool true]
+        [resolved : TcLifetimeSubst
+          (tc-call-lifetime-resolve env subst (&mut fits?))]
+        (if fits?
+          (Ok resolved)
+          ;; Replay only an unsatisfiable call with concrete formals to locate
+          ;; the mismatch. A failed hidden-constructor attempt can then retry.
+          (match (tc-infer-call-lifetime-subst
+            ctx
+            env
+            func
+            all-args
+            (tc-lifetime-subst-type-list resolved all-params)
+            (ast.ast-lifetime-list-new)
+            Nil
+            evidence
+            false)
+            [(Err message) (Err message)]
+            [(Ok _)
+              (Err
+                (cdiag.compiler-diagnostic-typecheck-tagged
+                  (LifetimeMismatch)
+                  "typecheck: call arguments have inconsistent lifetime constraints"))])))
       (Err
         (tc-call-arity-message
           (tc-context-expr-segment-bases ctx)
@@ -62908,9 +62948,10 @@
                           (tc-canonicalize-inferred-type ctx want)]
                         [canonical-got : ast.AstType
                           (tc-canonicalize-inferred-type ctx got)]
+                        [fits? : bool true]
                         [required-want : ast.AstType
                           (tc-lifetime-subst-type
-                            (tc-call-lifetime-resolve env subst)
+                            (tc-call-lifetime-resolve env subst (&mut fits?))
                             canonical-want)]
                         (Err
                           (tc-locate-error-at-expr
@@ -94113,7 +94154,9 @@
             (let
               [head : i64 (tc-lifetime-subst-find subst lifetime)]
               (if (>= head 0)
-                (tc-call-lifetime-choice env subst head)
+                (match (tc-call-lifetime-choice env subst head)
+                  [(Fits choice) (Some choice)]
+                  [(Conflict _) (No)])
                 (Some lifetime)))]
           [(Err _) (No)]))]
     [_ (No)]))

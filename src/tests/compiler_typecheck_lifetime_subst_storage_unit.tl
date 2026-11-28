@@ -183,7 +183,7 @@
     (while (< index (array-length names))
       (let
         [name : i64 (array-ref names index)]
-        [key : i64 (tc_core.tc-lifetime-subst-pin-key name)]
+        [key : i64 (tc_core.tc-lifetime-subst-variance-key name)]
         [pinned : tc_core.TcLifetimeSubst
           (tc_core.tc-lifetime-subst-push-for-variance
             root
@@ -195,9 +195,9 @@
         (unless
           (and
             (< key 0)
-            (tc_core.tc-lifetime-subst-pinned? pinned name)
-            (not (tc_core.tc-lifetime-subst-pinned? root name))
-            (not (tc_core.tc-lifetime-subst-pinned? sibling name))
+            (tc-lifetime-subst-lookup-eq? pinned key 777)
+            (tc-lifetime-subst-lookup-missing? root key)
+            (tc-lifetime-subst-lookup-missing? sibling key)
             (tc-lifetime-subst-lookup-eq? pinned name 777)
             (tc-lifetime-subst-lookup-missing? root name)
             (tc-lifetime-subst-lookup-eq? pinned 10 110)
@@ -212,3 +212,49 @@
   (unless
     (tc-lifetime-subst-storage-ok?)
     (io.panic "typecheck: dense lifetime-substitution storage failed")))
+
+(test
+  compiler-typecheck-lifetime-subst-lower-bound-retry
+  (let
+    [env : tc_core.TcTypeEnv (tc_core.tc-empty-env)]
+    [lower : i64 (tc_core.tc-call-temporary-lifetime-id)]
+    [longer : i64 (tc_core.tc-unconstrained-lifetime-id)]
+    [root : tc_core.TcLifetimeSubst
+      (tc_core.tc-lifetime-subst-push-for-variance
+        Nil
+        10
+        lower
+        (tc_core.TcVariance.TcVarianceContravariant))]
+    ;; An equal covariant occurrence still restricts the upper bound in this branch.
+    [restricted : tc_core.TcLifetimeSubst
+      (match (tc_core.tc-lifetime-subst-bind-for-variance
+        env
+        root
+        10
+        lower
+        (tc_core.TcVariance.TcVarianceCovariant))
+        [(Ok next) next]
+        [(Err message) (io.panic message)])]
+    (match (tc_core.tc-lifetime-subst-bind-for-variance
+      env
+      restricted
+      10
+      longer
+      (tc_core.TcVariance.TcVarianceInvariant))
+      [(Ok _)
+        (io.panic "typecheck: invariant exceeded earlier covariant bound")]
+      [(Err _) unit])
+    (match (tc_core.tc-lifetime-subst-bind-for-variance
+      env
+      root
+      10
+      longer
+      (tc_core.TcVariance.TcVarianceInvariant))
+      [(Ok pinned)
+        (unless
+          (and
+            (tc-lifetime-subst-lookup-eq? pinned 10 longer)
+            (tc-lifetime-subst-lookup-eq? root 10 lower)
+            (tc-lifetime-subst-lookup-eq? restricted 10 lower))
+          (io.panic "typecheck: substituted lifetime escaped its snapshot"))]
+      [(Err message) (io.panic message)])))

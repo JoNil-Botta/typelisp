@@ -1,0 +1,2 @@
+call_lifetime_consumer_order_ok|run-exit|tests/safety/call_lifetime_consumer_order_ok.tl|56|-
+call_lifetime_consumer_upper_conflict_reject|check-fail|tests/safety/call_lifetime_consumer_upper_conflict_reject.tl|-|error[E0206]: typecheck: call `take` argument 4 (parameter `target`) type mismatch

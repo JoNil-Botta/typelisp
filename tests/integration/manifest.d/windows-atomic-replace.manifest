@@ -1,0 +1,2 @@
+# Windows ambient filesystem publication and reader compatibility.
+windows_atomic_replace|windows|-|tests/integration/windows_atomic_replace.tl|42|-|-|stdlib/byte_buf.tl stdlib/fs.tl stdlib/io.tl stdlib/str_cat.tl stdlib/string.tl stdlib/test.tl|stage-stdlib

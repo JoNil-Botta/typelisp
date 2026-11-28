@@ -21513,6 +21513,135 @@
         (set! (array-ref st.order p) b)
         (set! (array-ref st.pos b) p)))))
 
+(define compiler-backend-empty-i64-array : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
+(define compiler-backend-empty-bool-array : (__tl_dyn-array bool)
+  (__tl_make-array bool 0))
+
+(define (compiler-backend-placement-plan-for-seq-body
+  [seq : compiler_ir_types.CompilerIrBlockSeq]
+  [n : i64]
+  [term-kind : (__tl_dyn-array i64)]
+  [succ-off : (__tl_dyn-array i64)]
+  [succ-buf : (__tl_dyn-array i64)]
+  [ids : backend_label_i64_map.Map]
+  [sink? : bool]
+  [pinned : i64]
+  [keep-tail? : bool]
+  [cold-start : i64]
+  [is-cold : (& (__tl_dyn-array bool))]
+  [has-cold? : bool]) : CompilerBackendMaybePlacement
+  (let
+    [shape : i64
+      (compiler-backend-placement-fill-succ!
+        (&mut term-kind)
+        (&mut succ-off)
+        (&mut succ-buf)
+        ids
+        seq)]
+    [terminated? : bool
+      (compiler-backend-placement-terminated? (& term-kind) n)]
+    [cold-sinking? : bool (and has-cold? terminated?)]
+    [sinking? : bool
+      (and sink? (= compiler-backend-placement-mode 1) (>= n 3) terminated?)]
+    ;; No backward edge means no cycle, and most functions are that: stop
+    ;; here rather than build a loop nest whose answer is already known.
+    ;; Only return-arm sinking and cold-block sinking have anything to do in
+    ;; such a function, and neither needs a variable table.
+    (if (= shape 0)
+      (let
+        [return-sink? : bool
+          (and
+            sinking?
+            (not keep-tail?)
+            (compiler-backend-placement-guard-return? (& term-kind) n pinned))]
+        (if (or return-sink? cold-sinking?)
+          (let
+            [st : CompilerBackendPlacement
+              (compiler-backend-placement-state
+                n
+                term-kind
+                succ-off
+                succ-buf
+                (CompilerBackendPlacementVars
+                  (backend_label_i64_map.with-capacity
+                    (compiler_regalloc.compiler-reg-bits-map-capacity 0))
+                  0))]
+            (when
+              return-sink?
+              (compiler-backend-placement-sink-returns!
+                (&mut st)
+                (& seq)
+                (&mut (__tl_make-array i64 n))
+                pinned))
+            (when
+              cold-sinking?
+              (compiler-backend-placement-sink-cold!
+                (&mut st)
+                is-cold
+                cold-start))
+            (if (compiler-backend-placement-identity? st.order n)
+              (No)
+              (Some st)))
+          (No)))
+      (let
+        [nest : compiler_regalloc.CompilerRegLoopNest
+          (compiler_regalloc.compiler-reg-loop-nest-build-seq seq)]
+        [header-count : i64
+          (compiler_regalloc.compiler-reg-loop-nest-header-count nest)]
+        (if (= header-count 0)
+          (if cold-sinking?
+            (let
+              [st : CompilerBackendPlacement
+                (compiler-backend-placement-state
+                  n
+                  term-kind
+                  succ-off
+                  succ-buf
+                  (CompilerBackendPlacementVars
+                    (backend_label_i64_map.with-capacity
+                      (compiler_regalloc.compiler-reg-bits-map-capacity 0))
+                    0))]
+              (compiler-backend-placement-sink-cold!
+                (&mut st)
+                is-cold
+                cold-start)
+              (if (compiler-backend-placement-identity? st.order n)
+                (No)
+                (Some st)))
+            (No))
+          (let
+            [st : CompilerBackendPlacement
+              (compiler-backend-placement-state
+                n
+                term-kind
+                succ-off
+                succ-buf
+                (compiler-backend-placement-vars seq))]
+            (compiler-backend-placement-plan!
+              (be_state.compiler-backend-global-shared-view st)
+              nest
+              header-count
+              (& seq)
+              (and (= compiler-backend-placement-mode 1) (>= n 3) (= shape 1))
+              sinking?
+              pinned
+              keep-tail?)
+            (when
+              (and sinking? (not keep-tail?))
+              (compiler-backend-placement-sink-returns!
+                (&mut st)
+                (& seq)
+                (&mut (__tl_make-array i64 n))
+                pinned))
+            (when
+              cold-sinking?
+              (compiler-backend-placement-sink-cold!
+                (&mut st)
+                is-cold
+                cold-start))
+            (Some st)))))))
+
 ;; The state this pass builds for one block sequence, or `No` when the sequence
 ;; contains no loops and no sinkable blocks. Shared by the production entry and
 ;; by the unit tests, which read the chosen order out of `st.order` rather than
@@ -21543,14 +21672,10 @@
           (if (< pinned 1)
             1
             pinned)]
-        [is-cold : (__tl_dyn-array bool)
-          (if (> cold-len 0)
-            (__tl_make-array bool n)
-            (__tl_make-array bool 0))]
-        [has-cold? : bool false]
-        [_mark-cold : unit
-          (when
-            (and (> cold-len 0) (>= n 3) (< cold-start (- n 1)))
+        (if (and (> cold-len 0) (>= n 3) (< cold-start (- n 1)))
+          (let
+            [is-cold : (__tl_dyn-array bool) (__tl_make-array bool n)]
+            [has-cold? : bool false]
             (for [k (iterator.range 0 cold-len)]
               (let
                 [idx : i64
@@ -21560,122 +21685,33 @@
                 (when
                   (and (>= idx 0) (< idx n))
                   (set! (array-ref is-cold idx) true)
-                  (when (>= idx cold-start) (set! has-cold? true))))))]
-        [shape : i64
-          (compiler-backend-placement-fill-succ!
-            (&mut term-kind)
-            (&mut succ-off)
-            (&mut succ-buf)
+                  (when (>= idx cold-start) (set! has-cold? true)))))
+            (compiler-backend-placement-plan-for-seq-body
+              seq
+              n
+              term-kind
+              succ-off
+              succ-buf
+              ids
+              sink?
+              pinned
+              keep-tail?
+              cold-start
+              (& is-cold)
+              has-cold?))
+          (compiler-backend-placement-plan-for-seq-body
+            seq
+            n
+            term-kind
+            succ-off
+            succ-buf
             ids
-            seq)]
-        [terminated? : bool
-          (compiler-backend-placement-terminated? (& term-kind) n)]
-        [cold-sinking? : bool (and has-cold? terminated?)]
-        [sinking? : bool
-          (and sink? (= compiler-backend-placement-mode 1) (>= n 3) terminated?)]
-        ;; No backward edge means no cycle, and most functions are that: stop
-        ;; here rather than build a loop nest whose answer is already known.
-        ;; Only return-arm sinking and cold-block sinking have anything to do in
-        ;; such a function, and neither needs a variable table.
-        (if (= shape 0)
-          (let
-            [return-sink? : bool
-              (and
-                sinking?
-                (not keep-tail?)
-                (compiler-backend-placement-guard-return?
-                  (& term-kind)
-                  n
-                  pinned))]
-            (if (or return-sink? cold-sinking?)
-              (let
-                [st : CompilerBackendPlacement
-                  (compiler-backend-placement-state
-                    n
-                    term-kind
-                    succ-off
-                    succ-buf
-                    (CompilerBackendPlacementVars
-                      (backend_label_i64_map.with-capacity
-                        (compiler_regalloc.compiler-reg-bits-map-capacity 0))
-                      0))]
-                (when
-                  return-sink?
-                  (compiler-backend-placement-sink-returns!
-                    (&mut st)
-                    (& seq)
-                    (&mut (__tl_make-array i64 n))
-                    pinned))
-                (when
-                  cold-sinking?
-                  (compiler-backend-placement-sink-cold!
-                    (&mut st)
-                    (& is-cold)
-                    cold-start))
-                (if (compiler-backend-placement-identity? st.order n)
-                  (No)
-                  (Some st)))
-              (No)))
-          (let
-            [nest : compiler_regalloc.CompilerRegLoopNest
-              (compiler_regalloc.compiler-reg-loop-nest-build-seq seq)]
-            [header-count : i64
-              (compiler_regalloc.compiler-reg-loop-nest-header-count nest)]
-            (if (= header-count 0)
-              (if cold-sinking?
-                (let
-                  [st : CompilerBackendPlacement
-                    (compiler-backend-placement-state
-                      n
-                      term-kind
-                      succ-off
-                      succ-buf
-                      (CompilerBackendPlacementVars
-                        (backend_label_i64_map.with-capacity
-                          (compiler_regalloc.compiler-reg-bits-map-capacity 0))
-                        0))]
-                  (compiler-backend-placement-sink-cold!
-                    (&mut st)
-                    (& is-cold)
-                    cold-start)
-                  (if (compiler-backend-placement-identity? st.order n)
-                    (No)
-                    (Some st)))
-                (No))
-              (let
-                [st : CompilerBackendPlacement
-                  (compiler-backend-placement-state
-                    n
-                    term-kind
-                    succ-off
-                    succ-buf
-                    (compiler-backend-placement-vars seq))]
-                (compiler-backend-placement-plan!
-                  (be_state.compiler-backend-global-shared-view st)
-                  nest
-                  header-count
-                  (& seq)
-                  (and
-                    (= compiler-backend-placement-mode 1)
-                    (>= n 3)
-                    (= shape 1))
-                  sinking?
-                  pinned
-                  keep-tail?)
-                (when
-                  (and sinking? (not keep-tail?))
-                  (compiler-backend-placement-sink-returns!
-                    (&mut st)
-                    (& seq)
-                    (&mut (__tl_make-array i64 n))
-                    pinned))
-                (when
-                  cold-sinking?
-                  (compiler-backend-placement-sink-cold!
-                    (&mut st)
-                    (& is-cold)
-                    cold-start))
-                (Some st)))))))))
+            sink?
+            pinned
+            keep-tail?
+            cold-start
+            (& compiler-backend-empty-bool-array)
+            false))))))
 
 ;; The nest and the placement order use original block indices. Compact the
 ;; finished membership array into labels so it also describes the emitted
@@ -24512,31 +24548,40 @@
         ;; Exit and return-arm sinking are full-speed only (not -O1, not -Os),
         ;; and never move the prefix the early-exit shrink-wrap renders by
         ;; index. Scalar registers are on exactly at the full levels.
-        [cold-placement-labels : (__tl_dyn-array i64)
+        [emit-blocks-list : compiler_ir_types.CompilerIrBlockList
           (if (and
             compiler-backend-program-has-cold?
             scalar-registers-enabled
             (not
               (be_state.compiler-backend-state-optimize-for-size? backend-state))
             (not cold?))
-            (compiler-backend-cold-block-labels (& colored-blocks))
-            (__tl_make-array i64 0))]
-        [emit-blocks-list : compiler_ir_types.CompilerIrBlockList
-          (compiler-backend-placement-blocks
-            function-state
-            colored-blocks
-            (and
-              scalar-registers-enabled
-              (not
-                (or
-                  (be_state.compiler-backend-state-optimize-for-size?
-                    backend-state)
-                  cold?)))
-            (compiler_regalloc.compiler-reg-early-exit-prefix-count-current)
-            (be_operand.compiler-backend-plan-uses-callee-regs?
-              assignments
-              backend-state)
-            (& cold-placement-labels))]
+            (let
+              [cold-placement-labels : (__tl_dyn-array i64)
+                (compiler-backend-cold-block-labels (& colored-blocks))]
+              (compiler-backend-placement-blocks
+                function-state
+                colored-blocks
+                true
+                (compiler_regalloc.compiler-reg-early-exit-prefix-count-current)
+                (be_operand.compiler-backend-plan-uses-callee-regs?
+                  assignments
+                  backend-state)
+                (& cold-placement-labels)))
+            (compiler-backend-placement-blocks
+              function-state
+              colored-blocks
+              (and
+                scalar-registers-enabled
+                (not
+                  (or
+                    (be_state.compiler-backend-state-optimize-for-size?
+                      backend-state)
+                    cold?)))
+              (compiler_regalloc.compiler-reg-early-exit-prefix-count-current)
+              (be_operand.compiler-backend-plan-uses-callee-regs?
+                assignments
+                backend-state)
+              (& compiler-backend-empty-i64-array)))]
         [symbol : String
           (be_operand.compiler-backend-function-symbol-index program-index name)]
         [inline-memory-name : String
@@ -26455,6 +26500,10 @@
   (__tl_make-array (backend_label_i64_map.with-capacity 0)))
 (define compiler-backend-cold-outline-count : i64
   0)
+(define compiler-backend-cold-outline-cap : i64
+  0)
+(define compiler-backend-cold-outline-labels-active? : bool
+  false)
 (define compiler-backend-cold-outline-chunk-starts : (__tl_dyn-array i64)
   (__tl_make-array i64 0))
 (define compiler-backend-cold-outline-chunk-ends : (__tl_dyn-array i64)
@@ -26471,13 +26520,24 @@
 
 (define (compiler-backend-cold-outline-reset!) : unit
   (when
-    (> compiler-backend-cold-outline-count 0)
+    (or
+      (> compiler-backend-cold-outline-count 0)
+      (> compiler-backend-cold-outline-cap 0))
     (set! compiler-backend-cold-outline-count 0)
+    (set! compiler-backend-cold-outline-cap 0)
     (set! compiler-backend-cold-outline-chunk-starts (__tl_make-array i64 0))
     (set! compiler-backend-cold-outline-chunk-ends (__tl_make-array i64 0))
     (set! compiler-backend-cold-outline-starts (__tl_make-array i64 0))
     (set! compiler-backend-cold-outline-ends (__tl_make-array i64 0))
-    (set! compiler-backend-cold-outline-modes (__tl_make-array i64 0))
+    (set! compiler-backend-cold-outline-modes (__tl_make-array i64 0)))
+  (when
+    (or
+      compiler-backend-cold-outline-labels-active?
+      (>
+        (backend_label_i64_map.len
+          (& (array-ref compiler-backend-cold-outline-labels 0)))
+        0))
+    (set! compiler-backend-cold-outline-labels-active? false)
     (set!
       (array-ref compiler-backend-cold-outline-labels 0)
       (backend_label_i64_map.with-capacity 0))))
@@ -26486,15 +26546,15 @@
   [home-handle : i64]
   [need : i64]) : unit
   (when
-    (> need (array-length compiler-backend-cold-outline-starts))
+    (> need compiler-backend-cold-outline-cap)
     (unsafe
       (in-arena
         (arena.from-raw-handle home-handle)
         (let
           [cap : i64
-            (if (= (array-length compiler-backend-cold-outline-starts) 0)
+            (if (= compiler-backend-cold-outline-cap 0)
               16
-              (* 2 (array-length compiler-backend-cold-outline-starts)))]
+              (* 2 compiler-backend-cold-outline-cap))]
           [cstarts : (__tl_dyn-array i64) (__tl_make-array i64 cap)]
           [cends : (__tl_dyn-array i64) (__tl_make-array i64 cap)]
           [starts : (__tl_dyn-array i64) (__tl_make-array i64 cap)]
@@ -26520,7 +26580,8 @@
           (set! compiler-backend-cold-outline-chunk-ends cends)
           (set! compiler-backend-cold-outline-starts starts)
           (set! compiler-backend-cold-outline-ends ends)
-          (set! compiler-backend-cold-outline-modes modes))))))
+          (set! compiler-backend-cold-outline-modes modes)
+          (set! compiler-backend-cold-outline-cap cap))))))
 
 (define (compiler-backend-cold-outline-record!
   [home-handle : i64]
@@ -26563,30 +26624,13 @@
   [functions : (& compiler_ir_types.CompilerIrFunctionSeq)]
   [externs : (& compiler_ir_types.CompilerIrExternSeq)]) : unit
   (let
-    [fcount : i64 (compiler_ir_types.compiler-ir-function-seq-count functions)]
-    [ecount : i64 (compiler_ir_types.compiler-ir-extern-seq-count externs)]
-    [found : i64 0]
-    (for [i (iterator.range 0 fcount)]
-      (match (compiler_ir_types.compiler-ir-function-seq-borrow functions i)
-        [(Function _ _ _ _ _ _ cold?) (when cold? (+= found 1))]))
-    (for [i (iterator.range 0 ecount)]
-      (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs i)
-        [(Extern _ _ _ _ _ _ _ _ _ _ _ cold?) (when cold? (+= found 1))]))
-    (if (= found 0)
-      (set! compiler-backend-program-has-cold? false)
-      (let
-        [out : backend_label_i64_map.Map
-          (backend_label_i64_map.with-capacity (+ (* found 2) 1))]
-        (for [i (iterator.range 0 fcount)]
-          (match (compiler_ir_types.compiler-ir-function-seq-borrow functions i)
-            [(Function name _ _ _ _ _ cold?)
-              (when cold? (backend_label_i64_map.insert-ref! (&mut out) name 1))]))
-        (for [i (iterator.range 0 ecount)]
-          (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs i)
-            [(Extern name _ _ _ _ _ _ _ _ _ _ cold?)
-              (when cold? (backend_label_i64_map.insert-ref! (&mut out) name 1))]))
+    [out : backend_label_i64_map.Map
+      (compiler_ir_types.compiler-ir-cold-callees-build functions externs)]
+    (if (> (backend_label_i64_map.len (& out)) 0)
+      (begin
         (set! compiler-backend-program-has-cold? true)
-        (set! (array-ref compiler-backend-cold-callees 0) out)))))
+        (set! (array-ref compiler-backend-cold-callees 0) out))
+      (set! compiler-backend-program-has-cold? false))))
 
 (define (compiler-backend-cold-callees-clear!) : unit
   (when
@@ -26596,167 +26640,11 @@
       (array-ref compiler-backend-cold-callees 0)
       (backend_label_i64_map.with-capacity 0))))
 
-(define (compiler-backend-cold-abort-callee? [cname : i64]) : bool
-  (or
-    (compiler_ir_types.compiler-ir-runtime-control-flow-id? cname)
-    (let
-      [text : String (compiler_ir_types.compiler-ir-symbol-text cname)]
-      (or
-        (string.eq (& text) "tl_oob_abort")
-        (string.eq (& text) "tl_div_abort")
-        (string.eq (& text) "tl_shift_abort")
-        (string.eq (& text) ".L_tl_abort")
-        (string.eq (& text) "stdlib/io.tl::stdlib.io/panic")
-        (string.eq (& text) "stdlib\\io.tl::stdlib.io/panic")
-        (string.eq (& text) "stdlib.io/panic")
-        (string.eq (& text) "_tl_stdlib_io_stdlib_io_panic")))))
-
-(define (compiler-backend-cold-callee-seed?
-  [cname : i64]
-  [cold-callees : (& backend_label_i64_map.Map)]) : bool
-  (or
-    (compiler-backend-cold-abort-callee? cname)
-    (backend_label_i64_map.contains? cold-callees cname)))
-
-(define (compiler-backend-instr-cold-seed?
-  [instr : (& compiler_ir_types.CompilerIrInstr)]
-  [cold-callees : (& backend_label_i64_map.Map)]) : bool
-  (match instr
-    [(Call _ cname _ _) (compiler-backend-cold-callee-seed? cname cold-callees)]
-    [(TailCall cname _ _)
-      (compiler-backend-cold-callee-seed? cname cold-callees)]
-    [(CallCAbiStoreResult payload-box)
-      (compiler-backend-cold-callee-seed? (deref payload-box).name cold-callees)]
-    [_ false]))
-
-(define (compiler-backend-block-cold-seed?
-  [instrs : (& compiler_ir_types.CompilerIrInstrSeq)]
-  [cold-callees : (& backend_label_i64_map.Map)]) : bool
-  (let
-    [m : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
-    (for [j (iterator.range 0 m)]
-      (when
-        (compiler-backend-instr-cold-seed?
-          (compiler_ir_types.compiler-ir-instr-seq-borrow instrs j)
-          cold-callees)
-        (return true)))
-    false))
-
-(define (compiler-backend-cold-target-is-cold?
-  [label : i64]
-  [label-idx : (& backend_label_i64_map.Map)]
-  [cold : (& (__tl_dyn-array bool))]) : bool
-  (let
-    [idx : i64 (backend_label_i64_map.get-value-or label-idx label -1)]
-    (and (>= idx 0) (array-ref cold idx))))
-
-(define (compiler-backend-cold-switch-cases-all-cold?
-  [cases : (& compiler_ir_types.CompilerIrSwitchCaseSeq)]
-  [label-idx : (& backend_label_i64_map.Map)]
-  [cold : (& (__tl_dyn-array bool))]) : bool
-  (for [k (iterator.range 0 cases.len)]
-    (match (compiler_ir_types.compiler-ir-switch-case-seq-borrow cases k)
-      [(Case _ target)
-        (unless
-          (compiler-backend-cold-target-is-cold? target label-idx cold)
-          (return false))]))
-  true)
-
-(define (compiler-backend-block-all-succs-cold?
-  [instrs : (& compiler_ir_types.CompilerIrInstrSeq)]
-  [label-idx : (& backend_label_i64_map.Map)]
-  [cold : (& (__tl_dyn-array bool))]) : bool
-  (let
-    [m : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
-    (if (= m 0)
-      false
-      (match (compiler_ir_types.compiler-ir-instr-seq-borrow instrs (- m 1))
-        [(Jump target)
-          (compiler-backend-cold-target-is-cold? target label-idx cold)]
-        [(or (Branch _ t f) (TotalEnumBranch _ t f))
-          (and
-            (compiler-backend-cold-target-is-cold? t label-idx cold)
-            (compiler-backend-cold-target-is-cold? f label-idx cold))]
-        [(Switch _ _ cases default-label)
-          (and
-            (compiler-backend-cold-target-is-cold? default-label label-idx cold)
-            (compiler-backend-cold-switch-cases-all-cold? cases label-idx cold))]
-        [(TotalEnumSwitch _ _ cases default-label trap-label)
-          (and
-            (compiler-backend-cold-target-is-cold? default-label label-idx cold)
-            (compiler-backend-cold-switch-cases-all-cold? cases label-idx cold)
-            (if (compiler_ir_types.compiler-ir-label-some? trap-label)
-              (compiler-backend-cold-target-is-cold? trap-label label-idx cold)
-              true))]
-        [_ false]))))
-
-(define (compiler-backend-cold-block-labels-with-callees
-  [blocks : (& compiler_ir_types.CompilerIrBlockList)]
-  [cold-callees : (& backend_label_i64_map.Map)]) : (__tl_dyn-array i64)
-  (match blocks
-    [(Array seq)
-      (let
-        [n : i64 (compiler_ir_types.compiler-ir-block-seq-count seq)]
-        [any-seed? : bool false]
-        (for [i (iterator.range 0 n)]
-          (match (compiler_ir_types.compiler-ir-block-seq-borrow seq i)
-            [(Block _ instrs)
-              (when
-                (compiler-backend-block-cold-seed? instrs cold-callees)
-                (set! any-seed? true))]))
-        (if (not any-seed?)
-          (__tl_make-array i64 0)
-          (let
-            [label-idx : backend_label_i64_map.Map
-              (backend_label_i64_map.with-capacity (+ (* n 2) 1))]
-            [cold : (__tl_dyn-array bool) (__tl_make-array bool n)]
-            [changed? : bool true]
-            [cold-count : i64 0]
-            (for [i (iterator.range 0 n)]
-              (match (compiler_ir_types.compiler-ir-block-seq-borrow seq i)
-                [(Block label instrs)
-                  (backend_label_i64_map.insert-ref! (&mut label-idx) label i)
-                  (when
-                    (compiler-backend-block-cold-seed? instrs cold-callees)
-                    (set! (array-ref cold i) true)
-                    (+= cold-count 1))]))
-            (while changed?
-              (set! changed? false)
-              (let
-                [i : i64 (- n 1)]
-                (while (>= i 0)
-                  (when
-                    (not (array-ref cold i))
-                    (match (compiler_ir_types.compiler-ir-block-seq-borrow
-                      seq
-                      i)
-                      [(Block _ instrs)
-                        (when
-                          (compiler-backend-block-all-succs-cold?
-                            instrs
-                            (& label-idx)
-                            (& cold))
-                          (set! (array-ref cold i) true)
-                          (+= cold-count 1)
-                          (set! changed? true))]))
-                  (-= i 1))))
-            (let
-              [out : (__tl_dyn-array i64) (__tl_make-array i64 cold-count)]
-              [write : i64 0]
-              (for [i (iterator.range 0 n)]
-                (when
-                  (array-ref cold i)
-                  (match (compiler_ir_types.compiler-ir-block-seq-borrow seq i)
-                    [(Block label _)
-                      (set! (array-ref out write) label)
-                      (+= write 1)])))
-              out))))]))
-
 (define (compiler-backend-cold-block-labels
   [blocks : (& compiler_ir_types.CompilerIrBlockList)]) : (__tl_dyn-array i64)
   (if (not compiler-backend-program-has-cold?)
     (__tl_make-array i64 0)
-    (compiler-backend-cold-block-labels-with-callees
+    (compiler_ir_types.compiler-ir-cold-block-labels
       blocks
       (& (array-ref compiler-backend-cold-callees 0)))))
 
@@ -26804,6 +26692,14 @@
                             (be_operand.compiler-backend-asm-label
                               (string.copy (& scope))
                               lbl)]
+                          (unless
+                            compiler-backend-cold-outline-labels-active?
+                            (set!
+                              (array-ref compiler-backend-cold-outline-labels 0)
+                              (backend_label_i64_map.with-capacity 16))
+                            (set!
+                              compiler-backend-cold-outline-labels-active?
+                              true))
                           (backend_label_i64_map.insert-ref!
                             (&mut
                               (array-ref compiler-backend-cold-outline-labels 0))
@@ -27649,7 +27545,12 @@ tl_shared_object_init:
           (compiler-backend-copy-thunk-size-counts-collect!
             (& functions)
             program-index.backend-state)
-          (compiler-backend-cold-outline-reset!)
+          (unsafe
+            (in-arena
+              (arena.from-raw-handle
+                (be_state.compiler-backend-state-emission-arena
+                  program-index.backend-state))
+              (compiler-backend-cold-outline-reset!)))
           (compiler-backend-cold-callees-install! (& functions) (& externs))
           (match (compiler-backend-emit-functions-buffer-into
             type-segment-bases
@@ -27773,6 +27674,12 @@ tl_shared_object_init:
                               buf)))))]
                   [(Err message)
                     (begin
+                      (unsafe
+                        (in-arena
+                          (arena.from-raw-handle
+                            (be_state.compiler-backend-state-emission-arena
+                              program-index.backend-state))
+                          (compiler-backend-cold-outline-reset!)))
                       (cfg
                         compile-profile
                         (be_state.compiler-backend-profile-finish
@@ -27782,7 +27689,12 @@ tl_shared_object_init:
             [(Err message)
               (begin
                 (compiler-backend-cold-callees-clear!)
-                (compiler-backend-cold-outline-reset!)
+                (unsafe
+                  (in-arena
+                    (arena.from-raw-handle
+                      (be_state.compiler-backend-state-emission-arena
+                        program-index.backend-state))
+                    (compiler-backend-cold-outline-reset!)))
                 (cfg
                   compile-profile
                   (be_state.compiler-backend-profile-finish
@@ -28701,30 +28613,40 @@ tl_shared_object_init:
                   backend-state)
                 (cond
                   [(be_state.compiler-backend-state-emission-target-policy
-                      backend-state).shared-object
+                    backend-state).shared-object
+                    (compiler-backend-cold-outline-reset!)
                     (be_data.compiler-backend-shared-object-assembly
                       (text_buf.render final))]
+                  [(be_state.compiler-backend-state-closed-executable?
+                      backend-state)
+                    (Ok
+                      (text_buf.append
+                        (text_buf.empty)
+                        (compiler-backend-closed-executable-finish
+                          backend-state
+                          target
+                          emit-entry
+                          (text_buf.render final))))]
                   [(and
-                      emit-entry
-                      (be_state.compiler-backend-state-tail-merging-enabled?
-                        backend-state)
-                      (not
-                        (be_state.compiler-backend-state-optimize-for-size?
-                          backend-state))
-                      (not (compiler_ir_types.compiler-debug-info-enabled?))
-                      (= compiler-backend-cold-outline-count 0)
-                      (or
-                        (be_state.compiler-backend-target-coff? target)
-                        (be_state.compiler-backend-state-closed-executable?
-                          backend-state)))
+                    emit-entry
+                    (be_state.compiler-backend-state-tail-merging-enabled?
+                      backend-state)
+                    (not
+                      (be_state.compiler-backend-state-optimize-for-size?
+                        backend-state))
+                    (not (compiler_ir_types.compiler-debug-info-enabled?))
+                    (be_state.compiler-backend-target-coff? target))
+                    (compiler-backend-cold-outline-reset!)
                     (Ok
                       (text_buf.append
                         (text_buf.empty)
                         (be_peephole.compiler-backend-machine-outline
                           (text_buf.render final)
-                          (be_state.compiler-backend-target-coff? target)
+                          true
                           false)))]
-                  [else (Ok final)]))]
+                  [else
+                    (compiler-backend-cold-outline-reset!)
+                    (Ok final)]))]
             [(Err message)
               (let
                 [owned-message : (Box compiler_diagnostic.CompilerDiagnostic)
@@ -28742,6 +28664,8 @@ tl_shared_object_init:
                   (arena.set! home-arena))
                 (unsafe
                   (arena.destroy peephole-arena))
+                (compiler-backend-cold-callees-clear!)
+                (compiler-backend-cold-outline-reset!)
                 (compiler-backend-clear-scratch-escaped-emit-state!
                   backend-state)
                 (Err owned-message))]))))))
@@ -28822,13 +28746,7 @@ tl_shared_object_init:
           emit-entry
           crt-entry
           profile-state))]
-    [asm : String (text_buf.render buf)]
-    (Ok
-      (if (be_state.compiler-backend-state-closed-executable? backend-state)
-        (compiler-backend-closed-executable-finish backend-state target asm)
-        (begin
-          (compiler-backend-cold-outline-reset!)
-          asm)))))
+    (Ok (text_buf.render buf))))
 
 ;; The closed program is the whole text, so only now are helper fragments
 ;; known dead and every surviving return tail known. Size-mode epilogue
@@ -28840,28 +28758,36 @@ tl_shared_object_init:
 (define (compiler-backend-closed-executable-finish
   [backend-state : be_state.CompilerBackendState]
   [target : be_state.CompilerBackendTarget]
+  [emit-entry : bool]
   [asm : String]) : String
   (let
     [coff? : bool (be_state.compiler-backend-target-coff? target)]
     [opt-size? : bool
       (be_state.compiler-backend-state-optimize-for-size? backend-state)]
+    [debug-info? : bool (compiler_ir_types.compiler-debug-info-enabled?)]
     [cold-outline? : bool
       (and
         (not opt-size?)
-        (not (compiler_ir_types.compiler-debug-info-enabled?))
+        (not debug-info?)
         (be_state.compiler-backend-state-scalar-registers-enabled?
           backend-state)
         (> compiler-backend-cold-outline-count 0))]
-    [anchor : i64
-      (if cold-outline?
-        (array-ref compiler-backend-cold-outline-starts 0)
-        0)]
-    [pruned : (Tuple String i64)
+    [tail-merge? : bool
+      (and
+        emit-entry
+        (not opt-size?)
+        (not debug-info?)
+        (be_state.compiler-backend-state-tail-merging-enabled? backend-state))]
+    [kept : String
       (if (be_state.compiler-backend-state-archive-runtime? backend-state)
-        (tuple asm 0)
-        (runtime_prune.prune-with-prefix-shift asm anchor))]
-    [kept : String (tuple-ref pruned 0)]
-    [shift : i64 (tuple-ref pruned 1)]
+        asm
+        (runtime_prune.prune-with-ranges!
+          asm
+          (if cold-outline?
+            compiler-backend-cold-outline-count
+            0)
+          (&mut compiler-backend-cold-outline-starts)
+          (&mut compiler-backend-cold-outline-ends)))]
     (cond
       [cold-outline?
         (let
@@ -28873,16 +28799,16 @@ tl_shared_object_init:
               (& compiler-backend-cold-outline-starts)
               (& compiler-backend-cold-outline-ends)
               (& compiler-backend-cold-outline-modes)
-              shift
               (& (array-ref compiler-backend-cold-outline-labels 0)))]
           (compiler-backend-cold-outline-reset!)
-          (if (be_state.compiler-backend-state-tail-merging-enabled?
-            backend-state)
+          (if tail-merge?
             (be_peephole.compiler-backend-machine-outline outlined coff? false)
             outlined))]
-      [(or (not opt-size?) (compiler_ir_types.compiler-debug-info-enabled?))
+      [(or (not opt-size?) debug-info?)
         (compiler-backend-cold-outline-reset!)
-        kept]
+        (if tail-merge?
+          (be_peephole.compiler-backend-machine-outline kept coff? false)
+          kept)]
       [else
         (compiler-backend-cold-outline-reset!)
         (be_peephole.compiler-backend-machine-outline

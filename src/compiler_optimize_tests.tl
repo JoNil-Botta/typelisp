@@ -92059,12 +92059,12 @@ inl.entry.0.cont:
       [(Program _ fns externs _)
         (let
           [callees : opt_i64_i64_map.Map
-            (opt.opt-cold-callees-build fns externs)]
+            (ir.compiler-ir-cold-callees-build fns externs)]
           (match (ir.compiler-ir-function-seq-borrow fns 1)
             [(Function _ _ _ _ blocks _ _)
               (let
                 [cold-labels : opt_i64_i64_map.Map
-                  (opt.opt-cold-block-labels blocks (& callees))]
+                  (ir.compiler-ir-cold-block-label-set blocks (& callees))]
                 (test.assert-true
                   (opt_i64_i64_map.contains?
                     (& cold-labels)
@@ -92184,3 +92184,51 @@ inl.entry.0.cont:
                 (test.assert-true
                   (string.contains (& main-text) "warm_medium")
                   "cold block inside warm caller applies -Os budget and keeps medium callee out-of-line")))])])))
+
+(test
+  c60-cold-inliner-retains-library-helper-at-o2
+  ;; Without `main` (library build), a single-call-site helper is retained for
+  ;; external callers and must not be absorbed into a cold caller at -O2.
+  (let
+    [prog : ir.CompilerIrProgram
+      (irt.program
+        "function @lib_helper(x=%0:i64) -> i64 vars 8 {
+         entry:
+           %1 = add %0, 1 : i64
+           %2 = mul %1, 3 : i64
+           %3 = add %2, 5 : i64
+           %4 = mul %3, 7 : i64
+           %5 = add %4, 9 : i64
+           %6 = mul %5, 11 : i64
+           %7 = add %6, 13 : i64
+           return %7
+         }
+         function @cold_caller(x=%0:i64) -> i64 vars 3 cold {
+         entry:
+           %1 = call lib_helper(%0) : i64
+           %2 = add %1, 1 : i64
+           return %2
+         }")]
+    (match (opt.optimize-program-with-spans-and-level
+      (& prog)
+      (ir.compiler-source-spans-empty)
+      2)
+      [(opt.CompilerOptimizedProgram.Program opt-prog _)
+        (match (& opt-prog)
+          [(Program _ opt-fns _ _)
+            (let
+              [caller-sym : i64
+                (ir.compiler-ir-symbol-id (opt-test-symbol "cold_caller"))]
+              [caller-idx : i64 (opt-lga-find (& opt-fns) caller-sym)]
+              (test.assert-true
+                (>= caller-idx 0)
+                "cold_caller present after -O2 optimization")
+              (let
+                [caller-text : String
+                  (ir.compiler-ir-function-render
+                    (cis.InternStructuralSessionHandle 0)
+                    (ast.ast-node-pool-reader-type-segment-bases)
+                    (& (array-ref opt-fns.slots caller-idx)))]
+                (test.assert-true
+                  (string.contains (& caller-text) "lib_helper")
+                  "single-call-site library helper is not absorbed into cold caller at -O2")))])])))

@@ -403,9 +403,101 @@
         (ptr-write! (ptr-offset out kept-length) 0)
         (string-from-bytes (ptr-cast out : (Ptr u8)) kept-length)))))
 
-(define (prune-with-prefix-shift [asm : String] [anchor : i64]) : (Tuple
-    String
-    i64)
+(define (prune-skip-fragment?
+  [ranges : (& fragment_vec.Vec)]
+  [live : (MutPtr u8)]
+  [f : i64]
+  [pos : i64]) : bool
+  (or
+    (!=
+      (unsafe
+        (ptr-read (ptr-offset live f)))
+      0)
+    (let
+      [frag : RuntimeFragment (array-ref (fragment_vec.slots ranges) f)]
+      (<= frag.end pos))))
+
+(define (prune-map-offset
+  [ranges : (& fragment_vec.Vec)]
+  [live : (MutPtr u8)]
+  [count : i64]
+  [f : i64]
+  [removed : i64]
+  [pos : i64]) : i64
+  (if (and
+    (< f count)
+    (=
+      (unsafe
+        (ptr-read (ptr-offset live f)))
+      0))
+    (let
+      [frag : RuntimeFragment (array-ref (fragment_vec.slots ranges) f)]
+      (if (< frag.start pos)
+        (- frag.start removed)
+        (- pos removed)))
+    (- pos removed)))
+
+;; Updates sorted, non-overlapping [start, end) byte ranges in place for the
+;; text produced by deleting every fragment in `ranges` whose `live` byte is 0.
+;; Ranges completely contained inside deleted fragments collapse to [0, 0).
+(define (remap-ranges-after-prune!
+  [ranges : (& fragment_vec.Vec)]
+  [live : (MutPtr u8)]
+  [range-count : i64]
+  [range-starts : (&mut (__tl_dyn-array i64))]
+  [range-ends : (&mut (__tl_dyn-array i64))]) : unit
+  (let
+    [count : i64 (fragment_vec.len ranges)]
+    [f : i64 0]
+    [removed : i64 0]
+    (for [r (iterator.range 0 range-count)]
+      (let
+        [rs : i64 (array-ref range-starts r)]
+        [re : i64 (array-ref range-ends r)]
+        (if (<= re rs)
+          (begin
+            (set! (array-ref range-starts r) 0)
+            (set! (array-ref range-ends r) 0))
+          (begin
+            (while (and (< f count) (prune-skip-fragment? ranges live f rs))
+              (when
+                (=
+                  (unsafe
+                    (ptr-read (ptr-offset live f)))
+                  0)
+                (let
+                  [frag : RuntimeFragment
+                    (array-ref (fragment_vec.slots ranges) f)]
+                  (+= removed (- frag.end frag.start))))
+              (+= f 1))
+            (let
+              [new-rs : i64 (prune-map-offset ranges live count f removed rs)]
+              (while (and (< f count) (prune-skip-fragment? ranges live f re))
+                (when
+                  (=
+                    (unsafe
+                      (ptr-read (ptr-offset live f)))
+                    0)
+                  (let
+                    [frag : RuntimeFragment
+                      (array-ref (fragment_vec.slots ranges) f)]
+                    (+= removed (- frag.end frag.start))))
+                (+= f 1))
+              (let
+                [new-re : i64 (prune-map-offset ranges live count f removed re)]
+                (if (< new-rs new-re)
+                  (begin
+                    (set! (array-ref range-starts r) new-rs)
+                    (set! (array-ref range-ends r) new-re))
+                  (begin
+                    (set! (array-ref range-starts r) 0)
+                    (set! (array-ref range-ends r) 0)))))))))))
+
+(define (prune-with-ranges!
+  [asm : String]
+  [range-count : i64]
+  [range-starts : (&mut (__tl_dyn-array i64))]
+  [range-ends : (&mut (__tl_dyn-array i64))]) : String
   (let
     [data : (Ptr u8)
       (unsafe
@@ -415,7 +507,7 @@
     [closed : bool (find-ranges! data length (&mut ranges))]
     [count : i64 (fragment_vec.len (& ranges))]
     (if (or (not closed) (= count 0))
-      (tuple asm 0)
+      asm
       (let
         [live : (MutPtr u8) (runtime.runtime-alloc count)]
         (for [index (iterator.range 0 count)]
@@ -427,27 +519,23 @@
               scratch
               (reachable-fragments data length (& ranges) live))]
           (if (= kept count)
-            (tuple asm 0)
-            (let
-              [shift : i64 0]
+            asm
+            (begin
               (when
-                (> anchor 0)
-                (for [index (iterator.range 0 count)]
-                  (when
-                    (=
-                      (unsafe
-                        (ptr-read (ptr-offset live index)))
-                      0)
-                    (let
-                      [range : RuntimeFragment
-                        (array-ref (fragment_vec.slots (& ranges)) index)]
-                      (when
-                        (<= range.end anchor)
-                        (+= shift (- range.end range.start)))))))
-              (tuple (render-kept data length (& ranges) live) shift))))))))
+                (> range-count 0)
+                (remap-ranges-after-prune!
+                  (& ranges)
+                  live
+                  range-count
+                  range-starts
+                  range-ends))
+              (render-kept data length (& ranges) live))))))))
 
 (define (prune [asm : String]) : String
-  (tuple-ref (prune-with-prefix-shift asm 0) 0))
+  (let
+    [empty-starts : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [empty-ends : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    (prune-with-ranges! asm 0 (&mut empty-starts) (&mut empty-ends))))
 
 ;; -Os cross-function epilogue interning. A return tail is the run of
 ;; stack-releasing instructions (`addq $N, %rsp`, `popq %reg`, `leave`) that

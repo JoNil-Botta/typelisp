@@ -20995,14 +20995,13 @@
   [range-starts : (& (__tl_dyn-array i64))]
   [range-ends : (& (__tl_dyn-array i64))]
   [range-modes : (& (__tl_dyn-array i64))]
-  [shift : i64]
   [cold-labels : (& backend_label_i64_map.Map)]) : unit
   (let
     [cursor : i64 0]
     (for [r (iterator.range 0 range-count)]
       (let
-        [rs : i64 (- (array-ref range-starts r) shift)]
-        [re : i64 (- (array-ref range-ends r) shift)]
+        [rs : i64 (array-ref range-starts r)]
+        [re : i64 (array-ref range-ends r)]
         (when
           (and (>= rs cursor) (< rs re) (<= re length))
           (when (< cursor rs) (compiler-backend-outline-push-gap! st cursor))
@@ -22292,7 +22291,6 @@
   [range-starts : (& (__tl_dyn-array i64))]
   [range-ends : (& (__tl_dyn-array i64))]
   [range-modes : (& (__tl_dyn-array i64))]
-  [shift : i64]
   [cold-labels : (& backend_label_i64_map.Map)]) : CompilerBackendOutline
   (let
     [st : CompilerBackendOutline (compiler-backend-outline-empty)]
@@ -22304,7 +22302,6 @@
       range-starts
       range-ends
       range-modes
-      shift
       cold-labels)
     (compiler-backend-outline-plan-finish! (&mut st) data length coff? true)
     st))
@@ -22358,7 +22355,6 @@
   [range-starts : (& (__tl_dyn-array i64))]
   [range-ends : (& (__tl_dyn-array i64))]
   [range-modes : (& (__tl_dyn-array i64))]
-  [shift : i64]
   [cold-labels : (& backend_label_i64_map.Map)]) : String
   (if (= range-count 0)
     asm
@@ -22380,7 +22376,6 @@
               range-starts
               range-ends
               range-modes
-              shift
               cold-labels)))]
       [result : String
         (compiler-backend-outline-materialize asm data length coff? (& plan))]
@@ -22714,7 +22709,6 @@ k:
         (& starts)
         (& ends)
         (& modes)
-        0
         (& cold-labels))]
     (test.assert-true
       (string.contains

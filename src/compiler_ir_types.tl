@@ -12639,3 +12639,203 @@
         [(ast.AstType.Never) true]
         [_ false])]
     [_ false]))
+
+;; Canonical IR-level CFG coldness analysis shared by the optimizer and backend.
+;; Least fixed point over direct calls/tail calls to `is_cold` functions/externs
+;; and proven terminal aborts, propagating backward to predecessors whose every
+;; successor is cold.
+(define (compiler-ir-cold-callees-build
+  [functions : (& CompilerIrFunctionSeq)]
+  [externs : (& CompilerIrExternSeq)]) : ir_i64_i64_map.Map
+  (let
+    [fcount : i64 (compiler-ir-function-seq-count functions)]
+    [ecount : i64 (compiler-ir-extern-seq-count externs)]
+    [found : i64 0]
+    (for [i (iterator.range 0 fcount)]
+      (match (compiler-ir-function-seq-borrow functions i)
+        [(Function _ _ _ _ _ _ cold?) (when cold? (+= found 1))]))
+    (for [i (iterator.range 0 ecount)]
+      (match (compiler-ir-extern-seq-borrow externs i)
+        [(Extern _ _ _ _ _ _ _ _ _ _ _ cold?) (when cold? (+= found 1))]))
+    (if (= found 0)
+      (ir_i64_i64_map.with-capacity 0)
+      (let
+        [out : ir_i64_i64_map.Map
+          (ir_i64_i64_map.with-capacity (+ (* found 2) 1))]
+        (for [i (iterator.range 0 fcount)]
+          (match (compiler-ir-function-seq-borrow functions i)
+            [(Function name _ _ _ _ _ cold?)
+              (when cold? (ir_i64_i64_map.insert-ref! (&mut out) name 1))]))
+        (for [i (iterator.range 0 ecount)]
+          (match (compiler-ir-extern-seq-borrow externs i)
+            [(Extern name _ _ _ _ _ _ _ _ _ _ cold?)
+              (when cold? (ir_i64_i64_map.insert-ref! (&mut out) name 1))]))
+        out))))
+
+(define (compiler-ir-cold-abort-callee? [cname : i64]) : bool
+  (or
+    (compiler-ir-runtime-control-flow-id? cname)
+    (let
+      [text : String (compiler-ir-symbol-text cname)]
+      (or
+        (string.eq (& text) "tl_oob_abort")
+        (string.eq (& text) "tl_div_abort")
+        (string.eq (& text) "tl_shift_abort")
+        (string.eq (& text) ".L_tl_abort")
+        (string.eq (& text) "stdlib/io.tl::stdlib.io/panic")
+        (string.eq (& text) "stdlib\\io.tl::stdlib.io/panic")
+        (string.eq (& text) "stdlib.io/panic")
+        (string.eq (& text) "_tl_stdlib_io_stdlib_io_panic")))))
+
+(define (compiler-ir-cold-callee-seed?
+  [cname : i64]
+  [cold-callees : (& ir_i64_i64_map.Map)]) : bool
+  (or
+    (compiler-ir-cold-abort-callee? cname)
+    (ir_i64_i64_map.contains? cold-callees cname)))
+
+(define (compiler-ir-instr-cold-seed?
+  [instr : (& CompilerIrInstr)]
+  [cold-callees : (& ir_i64_i64_map.Map)]) : bool
+  (match instr
+    [(Call _ cname _ _) (compiler-ir-cold-callee-seed? cname cold-callees)]
+    [(TailCall cname _ _) (compiler-ir-cold-callee-seed? cname cold-callees)]
+    [(CallCAbiStoreResult payload-box)
+      (compiler-ir-cold-callee-seed? (deref payload-box).name cold-callees)]
+    [_ false]))
+
+(define (compiler-ir-block-cold-seed?
+  [instrs : (& CompilerIrInstrSeq)]
+  [cold-callees : (& ir_i64_i64_map.Map)]) : bool
+  (let
+    [m : i64 (compiler-ir-instr-seq-count instrs)]
+    (for [j (iterator.range 0 m)]
+      (when
+        (compiler-ir-instr-cold-seed?
+          (compiler-ir-instr-seq-borrow instrs j)
+          cold-callees)
+        (return true)))
+    false))
+
+(define (compiler-ir-cold-target-is-cold?
+  [label : i64]
+  [label-idx : (& ir_i64_i64_map.Map)]
+  [cold : (& (__tl_dyn-array bool))]) : bool
+  (let
+    [idx : i64 (ir_i64_i64_map.get-value-or label-idx label -1)]
+    (and (>= idx 0) (array-ref cold idx))))
+
+(define (compiler-ir-cold-switch-cases-all-cold?
+  [cases : (& CompilerIrSwitchCaseSeq)]
+  [label-idx : (& ir_i64_i64_map.Map)]
+  [cold : (& (__tl_dyn-array bool))]) : bool
+  (for [k (iterator.range 0 cases.len)]
+    (match (compiler-ir-switch-case-seq-borrow cases k)
+      [(Case _ target)
+        (unless
+          (compiler-ir-cold-target-is-cold? target label-idx cold)
+          (return false))]))
+  true)
+
+(define (compiler-ir-block-all-succs-cold?
+  [instrs : (& CompilerIrInstrSeq)]
+  [label-idx : (& ir_i64_i64_map.Map)]
+  [cold : (& (__tl_dyn-array bool))]) : bool
+  (let
+    [m : i64 (compiler-ir-instr-seq-count instrs)]
+    (if (= m 0)
+      false
+      (match (compiler-ir-instr-seq-borrow instrs (- m 1))
+        [(Jump target) (compiler-ir-cold-target-is-cold? target label-idx cold)]
+        [(or (Branch _ t f) (TotalEnumBranch _ t f))
+          (and
+            (compiler-ir-cold-target-is-cold? t label-idx cold)
+            (compiler-ir-cold-target-is-cold? f label-idx cold))]
+        [(Switch _ _ cases default-label)
+          (and
+            (compiler-ir-cold-target-is-cold? default-label label-idx cold)
+            (compiler-ir-cold-switch-cases-all-cold? cases label-idx cold))]
+        [(TotalEnumSwitch _ _ cases default-label trap-label)
+          (and
+            (compiler-ir-cold-target-is-cold? default-label label-idx cold)
+            (compiler-ir-cold-switch-cases-all-cold? cases label-idx cold)
+            (if (compiler-ir-label-some? trap-label)
+              (compiler-ir-cold-target-is-cold? trap-label label-idx cold)
+              true))]
+        [_ false]))))
+
+(define (compiler-ir-cold-block-labels
+  [blocks : (& CompilerIrBlockList)]
+  [cold-callees : (& ir_i64_i64_map.Map)]) : (__tl_dyn-array i64)
+  (match blocks
+    [(Array seq)
+      (let
+        [n : i64 (compiler-ir-block-seq-count seq)]
+        [any-seed? : bool false]
+        (for [i (iterator.range 0 n)]
+          (match (compiler-ir-block-seq-borrow seq i)
+            [(Block _ instrs)
+              (when
+                (compiler-ir-block-cold-seed? instrs cold-callees)
+                (set! any-seed? true))]))
+        (if (not any-seed?)
+          (__tl_make-array i64 0)
+          (let
+            [label-idx : ir_i64_i64_map.Map
+              (ir_i64_i64_map.with-capacity (+ (* n 2) 1))]
+            [cold : (__tl_dyn-array bool) (__tl_make-array bool n)]
+            [changed? : bool true]
+            [cold-count : i64 0]
+            (for [i (iterator.range 0 n)]
+              (match (compiler-ir-block-seq-borrow seq i)
+                [(Block label instrs)
+                  (ir_i64_i64_map.insert-ref! (&mut label-idx) label i)
+                  (when
+                    (compiler-ir-block-cold-seed? instrs cold-callees)
+                    (set! (array-ref cold i) true)
+                    (+= cold-count 1))]))
+            (while changed?
+              (set! changed? false)
+              (let
+                [i : i64 (- n 1)]
+                (while (>= i 0)
+                  (when
+                    (not (array-ref cold i))
+                    (match (compiler-ir-block-seq-borrow seq i)
+                      [(Block _ instrs)
+                        (when
+                          (compiler-ir-block-all-succs-cold?
+                            instrs
+                            (& label-idx)
+                            (& cold))
+                          (set! (array-ref cold i) true)
+                          (+= cold-count 1)
+                          (set! changed? true))]))
+                  (-= i 1))))
+            (let
+              [out : (__tl_dyn-array i64) (__tl_make-array i64 cold-count)]
+              [write : i64 0]
+              (for [i (iterator.range 0 n)]
+                (when
+                  (array-ref cold i)
+                  (match (compiler-ir-block-seq-borrow seq i)
+                    [(Block label _)
+                      (set! (array-ref out write) label)
+                      (+= write 1)])))
+              out))))]))
+
+(define (compiler-ir-cold-block-label-set
+  [blocks : (& CompilerIrBlockList)]
+  [cold-callees : (& ir_i64_i64_map.Map)]) : ir_i64_i64_map.Map
+  (let
+    [labels : (__tl_dyn-array i64)
+      (compiler-ir-cold-block-labels blocks cold-callees)]
+    [count : i64 (array-length (& labels))]
+    (if (= count 0)
+      (ir_i64_i64_map.with-capacity 0)
+      (let
+        [out : ir_i64_i64_map.Map
+          (ir_i64_i64_map.with-capacity (+ (* count 2) 1))]
+        (for [i (iterator.range 0 count)]
+          (ir_i64_i64_map.insert-ref! (&mut out) (array-ref labels i) 1))
+        out))))

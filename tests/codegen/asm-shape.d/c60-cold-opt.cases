@@ -39,3 +39,14 @@ opt 2
 in fn _tl_c60_cold_opt_cold_loop
 not-contains __unroll
 not-contains _rot
+
+case cold-opt-closed-executable-buffer-outline
+source tests/integration/c60_cold_opt.tl
+args --cfg closed-executable-image
+target linux-x86_64
+opt 2
+assemble
+in fn _tl_c60_cold_opt_cold_shared_a
+contains _tl_outline_
+in fn _tl_c60_cold_opt_warm_not_outlined
+not-contains _tl_outline_

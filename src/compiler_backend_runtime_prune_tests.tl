@@ -229,3 +229,60 @@ m:
     (test.assert-true
       (string.contains (& output) "m:\n    popq %r12\n    ret\n")
       "a tail no longer than a jmp stays in place")))
+
+(test
+  compiler-backend-runtime-prune-mid-stream-ranges
+  (let
+    [dead-prefix : String (prune.optional-fragment "dead_pre:\n    ret\n")]
+    [cold-a : String "cold_a:\n    movl $1, %eax\n    ret\n"]
+    [dead-mid : String
+      (prune.optional-fragment "dead_mid:\n    movl $99, %eax\n    ret\n")]
+    [cold-b : String "cold_b:\n    movl $2, %eax\n    ret\n"]
+    [warm-c : String "warm_c:\n    movl $3, %eax\n    ret\n"]
+    [asm : String (str_cat.str-cat dead-prefix cold-a dead-mid cold-b warm-c)]
+    [p-len : i64 (string.string-length (& dead-prefix))]
+    [a-len : i64 (string.string-length (& cold-a))]
+    [m-len : i64 (string.string-length (& dead-mid))]
+    [b-len : i64 (string.string-length (& cold-b))]
+    [a-start : i64 p-len]
+    [a-end : i64 (+ a-start a-len)]
+    [m-start : i64 a-end]
+    [m-end : i64 (+ m-start m-len)]
+    [b-start : i64 m-end]
+    [b-end : i64 (+ b-start b-len)]
+    [starts : (__tl_dyn-array i64) (__tl_make-array a-start m-start b-start)]
+    [ends : (__tl_dyn-array i64) (__tl_make-array a-end m-end b-end)]
+    [pruned : String (prune.prune-with-ranges! asm 3 (&mut starts) (&mut ends))]
+    (test.assert-true
+      (not (string.contains (& pruned) "dead_pre:"))
+      "unreachable prefix fragment is pruned")
+    (test.assert-true
+      (not (string.contains (& pruned) "dead_mid:"))
+      "unreachable mid-stream fragment is pruned")
+    (test.assert-i64-eq
+      (array-ref starts 0)
+      0
+      "cold_a start shifts by pruned prefix")
+    (test.assert-i64-eq
+      (array-ref ends 0)
+      a-len
+      "cold_a end shifts by pruned prefix")
+    (test.assert-i64-eq
+      (array-ref starts 1)
+      0
+      "cold range contained inside pruned mid-stream fragment collapses to 0")
+    (test.assert-i64-eq
+      (array-ref ends 1)
+      0
+      "cold range contained inside pruned mid-stream fragment collapses to empty")
+    (test.assert-i64-eq
+      (array-ref starts 2)
+      a-len
+      "cold_b start shifts by both prefix and mid-stream pruned fragments")
+    (test.assert-i64-eq
+      (array-ref ends 2)
+      (+ a-len b-len)
+      "cold_b end aligns exactly before warm_c")
+    (test.assert-true
+      (string.contains (& pruned) (& warm-c))
+      "warm_c remains intact after mid-stream pruning")))

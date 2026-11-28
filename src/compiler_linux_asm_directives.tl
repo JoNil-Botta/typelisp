@@ -1,3 +1,4 @@
+(import stdlib.arena)
 (import compiler_linux_asm_layout as asm)
 (import compiler_linux_asm_symbols as sym)
 (import compiler_x64_encode_operands as op)
@@ -43,10 +44,11 @@
   [image : (&mut asm.Image)]
   [name : (& str)]
   [args : (& str)]
-  [i : i64]) : asm.Status
+  [i : i64]
+  [scratch : arena.Arena]) : asm.Status
   (let
-    [flags (unquoted (argument args (&mut i)))]
-    [selection (argument args (&mut i))]
+    [flags (in-arena scratch (unquoted (argument args (&mut i))))]
+    [selection (in-arena scratch (argument args (&mut i)))]
     [kind : i64
       (match selection
         ["" 0]
@@ -67,7 +69,11 @@
         [else (return (Err "unsupported COFF section flags"))])]
     (when
       (> kind 0)
-      (set! group (sym.named! (&mut image.table) (& (argument args (&mut i)))))
+      (set!
+        group
+        (sym.named!
+          (&mut image.table)
+          (& (in-arena scratch (argument args (&mut i))))))
       (when (< group 0) (return (Err "missing COMDAT key"))))
     (when
       (<= i (string.string-length args))
@@ -83,10 +89,13 @@
       group
       "")))
 
-(define (section! [image : (&mut asm.Image)] [args : (& src str)]) : asm.Status
+(define (section!
+  [image : (&mut asm.Image)]
+  [args : (& src str)]
+  [scratch : arena.Arena]) : asm.Status
   (let
     [i : i64 0]
-    [name : String (unquoted (argument args (&mut i)))]
+    [name : String (in-arena scratch (unquoted (argument args (&mut i))))]
     (when
       (= (string.string-length (& name)) 0)
       (return (Err "missing section name")))
@@ -96,12 +105,13 @@
         (or
           (<= i (string.string-length args))
           (< (asm.section-index image (& name)) 0)))
-      (return (coff-section! image (& name) args i)))
+      (return (coff-section! image (& name) args i scratch)))
     (when
       (> i (string.string-length args))
       (return (asm.select-section! image (& name) 0 0 0 -1 "")))
     (let
-      [flags-text : String (unquoted (argument args (&mut i)))]
+      [flags-text : String
+        (in-arena scratch (unquoted (argument args (&mut i))))]
       [type-text : String (argument args (&mut i))]
       [ty : i64
         (cond
@@ -132,7 +142,9 @@
         (+= j 1))
       (when
         (!= 0 (bit-and flags 16))
-        (set! ent (try (number (& (argument args (&mut i)))))))
+        (set!
+          ent
+          (try (number (& (in-arena scratch (argument args (&mut i))))))))
       (let
         [link : String
           (if (!= 0 (bit-and flags 128))
@@ -142,7 +154,9 @@
           (!= 0 (bit-and flags 512))
           (set!
             group
-            (sym.intern! (&mut image.table) (& (argument args (&mut i)))))
+            (sym.intern!
+              (&mut image.table)
+              (& (in-arena scratch (argument args (&mut i))))))
           (let
             [group-kind (argument args (&mut i))]
             (unless
@@ -311,15 +325,16 @@
 (define (directive!
   [image : (&mut img asm.Image)]
   [dir : (& str)]
-  [args : (& src str)]) : asm.Status
+  [args : (& src str)]
+  [scratch : arena.Arena]) : asm.Status
   (cond
-    [(string.eq dir ".section") (section! image args)]
+    [(string.eq dir ".section") (section! image args scratch)]
     [(or
         (string.eq dir ".text")
         (string.eq dir ".data")
         (string.eq dir ".bss")
         (string.eq dir ".rodata"))
-      (section! image dir)]
+      (section! image dir scratch)]
     ;; GNU as ignores .extern; a reference to an undefined name creates the
     ;; corresponding external symbol.
     [(string.eq dir ".extern") (Ok unit)]
@@ -346,8 +361,9 @@
               (string.eq dir ".balign")
               (string.eq dir ".p2align"))
             (let
-              [align (try (number (& (argument args (&mut i)))))]
-              [fill-text : String (argument args (&mut i))]
+              [align
+                (try (number (& (in-arena scratch (argument args (&mut i))))))]
+              [fill-text : String (in-arena scratch (argument args (&mut i)))]
               [fill : i64
                 (if (= 0 (string.string-length (& fill-text)))
                   (if (!= 0 (bit-and s.flags 4))
@@ -356,7 +372,7 @@
                   (bit-and 255 (try (number (& fill-text)))))]
               [maximum : i64
                 (if (<= i n)
-                  (try (number (& (argument args (&mut i)))))
+                  (try (number (& (in-arena scratch (argument args (&mut i))))))
                   0)]
               (when
                 (string.eq dir ".p2align")
@@ -367,10 +383,11 @@
               (asm.alignment! s align fill maximum))]
           [(or (string.eq dir ".zero") (string.eq dir ".space"))
             (let
-              [size (try (number (& (argument args (&mut i)))))]
+              [size
+                (try (number (& (in-arena scratch (argument args (&mut i))))))]
               [fill : i64
                 (if (<= i n)
-                  (try (number (& (argument args (&mut i)))))
+                  (try (number (& (in-arena scratch (argument args (&mut i))))))
                   0)]
               (when
                 (or (< size 0) (and (= s.ty 8) (!= fill 0)))
@@ -383,7 +400,10 @@
             (string.eq dir ".string"))
             (when (= s.ty 8) (return (Err "string in NOBITS section")))
             (while (<= i n)
-              (try (literal! (&mut s.raw) (& (argument args (&mut i)))))
+              (try
+                (literal!
+                  (&mut s.raw)
+                  (& (in-arena scratch (argument args (&mut i))))))
               (unless
                 (string.eq dir ".ascii")
                 (buf.byte-buf-builder-push (&mut s.raw) (cast 0 : u8))))
@@ -391,7 +411,7 @@
           [else
             (let
               [width : i64
-                (match (string.copy dir)
+                (match (in-arena scratch (string.copy dir))
                   [".byte" 1]
                   [".short" 2]
                   [".word" 2]
@@ -410,28 +430,14 @@
               (while (<= i n)
                 (let
                   [end (op.delimiter-before args i n ',')]
-                  (let
-                    [before s.fixups.len]
-                    (try
-                      (asm.data-field! s (&mut image.table) args i end width))
-                    (when
-                      (string.eq dir ".rva")
-                      (unless
-                        (and
-                          (> s.fixups.len before)
-                          (>=
-                            (array-ref s.fixups.slots before).expression.positive
-                            0)
-                          (=
-                            (array-ref s.fixups.slots before).expression.negative
-                            -1)
-                          (string.eq
-                            (&
-                              (array-ref s.fixups.slots before).expression.modifier)
-                            ""))
-                        (return (Err "expected RVA symbol")))
-                      (set!
-                        (array-ref s.fixups.slots before).expression.modifier
-                        "IMGREL")))
+                  (try
+                    (asm.data-field!
+                      s
+                      (&mut image.table)
+                      args
+                      i
+                      end
+                      width
+                      (string.eq dir ".rva")))
                   (set! i (+ end 1))))
               (Ok unit))]))]))

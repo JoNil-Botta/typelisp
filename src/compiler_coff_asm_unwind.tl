@@ -1,3 +1,5 @@
+(import stdlib.arena)
+
 ;; Record anchors while parsing. Relaxation fixes their byte offsets before
 ;; UNWIND_INFO and RUNTIME_FUNCTION rows are appended to their sections.
 (import compiler_linux_asm_directives as dir)
@@ -64,7 +66,8 @@
   [state : (&mut u Unwind)]
   [image : (&mut img asm.Image)]
   [word : (& str)]
-  [args : (& str)]) : asm.Status
+  [args : (& str)]
+  [scratch : arena.Arena]) : asm.Status
   (let
     [section image.current]
     [at (asm.position (& (array-ref image.items.slots section)) section)]
@@ -127,8 +130,8 @@
         (return (Ok unit)))
       (let
         [i : i64 0]
-        [first (dir.argument args (&mut i))]
-        [reg (op.register (& first))]
+        [first (in-arena scratch (dir.argument args (&mut i)))]
+        [reg (in-arena scratch (op.register (& first)))]
         [opcode : i64 0]
         [operand : i64 0]
         [extra : i64 0]
@@ -163,7 +166,10 @@
             (if (string.eq word ".seh_pushreg")
               (set! opcode (shl reg.number 4))
               (let
-                [n (try (dir.number (& (dir.argument args (&mut i)))))]
+                [n
+                  (try
+                    (dir.number
+                      (& (in-arena scratch (dir.argument args (&mut i))))))]
                 (cond
                   [(string.eq word ".seh_setframe")
                     (unless

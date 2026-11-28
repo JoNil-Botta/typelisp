@@ -479,18 +479,22 @@
   [link-name : (& str)]) : Status
   (unless
     (object_layout.compiler-object-layout-name-valid? name)
-    (return (Err "invalid ELF section name")))
+    (return (Err "invalid assembly section name")))
   (let
+    [simple (and (< group 0) (string.eq link-name ""))]
     [key
-      (if (and (< group 0) (string.eq link-name ""))
-        (string.copy name)
+      (if simple
+        ""
         (str_cat.str-cat
           (string.copy name)
           "|"
           (string.int->string group)
           "|"
           (string.copy link-name)))]
-    [i (section-index image (& key))]
+    [i
+      (if simple
+        (section-index image name)
+        (section-index image (& key)))]
     (when
       (>= i 0)
       (let
@@ -503,7 +507,12 @@
       (set! image.current i)
       (return (Ok unit)))
     (set! image.current image.items.len)
-    (section_map.insert-ref! (&mut image.index) key image.current)
+    (section_map.insert-ref!
+      (&mut image.index)
+      (if simple
+        (string.copy name)
+        key)
+      image.current)
     (sections.push-ref!
       (&mut image.items)
       (new-section
@@ -523,9 +532,19 @@
   [text : (& str)]
   [start : i64]
   [end : i64]
-  [width : i64]) : Status
+  [width : i64]
+  [rva : bool]) : Status
   (let
     [expr (try (sym.parse-expression-range! table text start end))]
+    (when
+      rva
+      (unless
+        (and
+          (>= expr.positive 0)
+          (= expr.negative -1)
+          (string.eq (& expr.modifier) ""))
+        (return (Err "expected RVA symbol")))
+      (set! expr.modifier "IMGREL"))
     (if (and (= expr.positive -1) (= expr.negative -1))
       (if (= s.ty 8)
         (if (= expr.constant 0)

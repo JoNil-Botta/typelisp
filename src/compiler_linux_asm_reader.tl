@@ -292,7 +292,8 @@
                 (&mut reader.codeview)
                 (&mut reader.image)
                 (& word)
-                (& args)))]
+                (& args)
+                scratch))]
           [(and
               reader.image.coff
               (string.is-string-prefix-at (& word) ".seh_" 0))
@@ -301,7 +302,8 @@
                 (&mut reader.unwind)
                 (&mut reader.image)
                 (& word)
-                (& args)))]
+                (& args)
+                scratch))]
           [(or
             (string.eq (& word) ".loc")
             (string.eq (& word) ".file")
@@ -319,7 +321,7 @@
                 (& args)))]
           [(string.eq (& word) ".pushsection")
             (ints.push-ref! (&mut reader.stack) reader.image.current)
-            (try (dir.section! (&mut reader.image) (& args)))]
+            (try (dir.section! (&mut reader.image) (& args) scratch))]
           [(string.eq (& word) ".popsection")
             (when (= reader.stack.len 0) (return (Err "unmatched .popsection")))
             (-= reader.stack.len 1)
@@ -357,7 +359,8 @@
                 (+= i 1))
               (unless
                 found
-                (try (dir.directive! (&mut reader.image) (& word) (& args)))))]
+                (try
+                  (dir.directive! (&mut reader.image) (& word) (& args) scratch))))]
           [else
             (let
               [tail : String

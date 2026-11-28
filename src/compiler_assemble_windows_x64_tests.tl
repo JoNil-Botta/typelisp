@@ -197,3 +197,75 @@ ret
   (test.assert-true
     (rejected? ".cv_loc 0 1 9 0\n")
     "unknown CodeView function and file"))
+
+(test
+  windows-assembler-codeview-subsections
+  (let
+    [obj
+      (assemble
+        ".section .debug$S,\"dr\"
+.long 4
+.cv_stringtable
+.cv_file 1 \"a.tl\"
+.cv_func_id 0
+.cv_func_id 1
+.text
+f:
+.cv_loc 0 1 100 2
+jmp 1f
+.space 128
+1:
+.cv_loc 0 1 101 8
+ret
+e:
+g: ret
+h:
+.section .debug$S,\"dr\"
+.cv_filechecksums
+.cv_linetable 0, f, e
+.cv_linetable 1, g, h
+")]
+    [section (header (& obj) ".debug$S" false)]
+    [start (layout.compiler-object-layout-u32-at (& obj) (+ section 20))]
+    [relocs (layout.compiler-object-layout-u32-at (& obj) (+ section 24))]
+    [lines (+ start 36)]
+    (test.assert-i64-eq
+      (layout.compiler-object-layout-u32-at (& obj) (+ start 4))
+      0xf3
+      "string table")
+    (test.assert-i64-eq
+      (layout.compiler-object-layout-u32-at (& obj) (+ start 20))
+      0xf4
+      "file checksums")
+    (test.assert-i64-eq
+      (layout.compiler-object-layout-u32-at (& obj) lines)
+      0xf2
+      "lines")
+    (test.assert-i64-eq
+      (layout.compiler-object-layout-u32-at (& obj) (+ lines 16))
+      134
+      "code size after branch relaxation")
+    (test.assert-i64-eq
+      (layout.compiler-object-layout-u32-at (& obj) (+ lines 40))
+      133
+      "second instruction offset")
+    (test.assert-i64-eq
+      (layout.compiler-object-layout-u32-at (& obj) (+ lines 52))
+      8
+      "second column")
+    (test.assert-i64-eq
+      (layout.compiler-object-layout-u32-at (& obj) (+ lines 60))
+      12
+      "empty function line table")
+    (test.assert-i64-eq
+      (layout.compiler-object-layout-u16-at (& obj) (+ section 32))
+      4
+      "two relocations per function")
+    (test.assert-i64-eq
+      (layout.compiler-object-layout-u16-at (& obj) (+ relocs 8))
+      11
+      "SECREL")
+    (test.assert-i64-eq
+      (layout.compiler-object-layout-u16-at (& obj) (+ relocs 18))
+      10
+      "SECTION")))

@@ -1,3 +1,5 @@
+(import stdlib.arena)
+
 ;; CodeView C13 records for the final .cv_file, .cv_loc and .cv_linetable
 ;; dialect. Keep locations as fragment anchors until branches are relaxed.
 (import compiler_linux_asm_directives as dir)
@@ -55,7 +57,8 @@
   [debug : (&mut cv Debug)]
   [image : (&mut asm.Image)]
   [word : (& str)]
-  [args : (& str)]) : asm.Status
+  [args : (& str)]
+  [scratch : arena.Arena]) : asm.Status
   (let
     [i : i64 0]
     [n (string.string-length args)]
@@ -129,11 +132,18 @@
             (set! debug.checksums true)]
           [(string.eq word ".cv_linetable")
             (let
-              [id (try (dir.number (& (dir.argument args (&mut i)))))]
+              [id
+                (try
+                  (dir.number
+                    (& (in-arena scratch (dir.argument args (&mut i))))))]
               [start
-                (sym.named! (&mut image.table) (& (dir.argument args (&mut i))))]
+                (sym.named!
+                  (&mut image.table)
+                  (& (in-arena scratch (dir.argument args (&mut i)))))]
               [end
-                (sym.named! (&mut image.table) (& (dir.argument args (&mut i))))]
+                (sym.named!
+                  (&mut image.table)
+                  (& (in-arena scratch (dir.argument args (&mut i)))))]
               (unless
                 (and
                   debug.checksums
@@ -156,7 +166,6 @@
   [values : (& vals resolve.Values)]
   [f : (& cv Function)]
   [out : (&mut buf.ByteBufBuilder)]) : asm.Status
-  (when (= f.rows.len 0) (return (Ok unit)))
   (let
     [start : (& vals resolve.Value) (& (array-ref values.items f.begin-id))]
     [end : (& vals resolve.Value) (& (array-ref values.items f.end-id))]

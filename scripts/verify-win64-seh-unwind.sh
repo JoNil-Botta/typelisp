@@ -70,6 +70,10 @@ unwind_rows "$WORK/oracle.obj" > "$WORK/oracle.rows"
 tr -d '\r' < "$FIXTURES/savereg-oracle.expected" > "$WORK/oracle.expected"
 diff -u "$WORK/oracle.expected" "$WORK/oracle.rows" \
     || fail "win64 SEH savereg oracle rows differ from tests/fixtures/win64-seh/savereg-oracle.expected"
+"$COMPILER" assemble "$WORK/oracle.s" -o "$WORK/oracle-typelisp.obj" --target windows-x86_64
+unwind_rows "$WORK/oracle-typelisp.obj" > "$WORK/oracle-typelisp.rows"
+diff -u "$WORK/oracle.rows" "$WORK/oracle-typelisp.rows" \
+    || fail "TypeLisp and clang disagree on savereg unwind actions"
 echo "win64 SEH savereg oracle rows match"
 
 "$COMPILER" compile "$FIXTURES/win64_seh_unwind.tl" \
@@ -79,7 +83,7 @@ echo "win64 SEH savereg oracle rows match"
     --no-prebuilt-stdlib \
     -o "$WORK/fixture.s"
 cp "$FIXTURES/driver.s.in" "$WORK/driver.s"
-clang --target=x86_64-pc-windows-msvc -c "$WORK/fixture.s" -o "$WORK/fixture.obj"
+"$COMPILER" assemble "$WORK/fixture.s" -o "$WORK/fixture.obj" --target windows-x86_64
 clang --target=x86_64-pc-windows-msvc -c "$WORK/driver.s" -o "$WORK/driver.obj"
 unwind_rows "$WORK/fixture.obj" > "$WORK/fixture.rows"
 

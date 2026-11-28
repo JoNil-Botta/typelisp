@@ -4271,7 +4271,7 @@
 ;; rejects trailing tokens and a malformed expression. Mirrors the Rust
 ;; parser's `parse_repl_item` tests.
 (define (compiler-parse-repl-decl-ok? [src : String]) : bool
-  (match (parser.parse-ast-repl-source (& src))
+  (match (parser.parse-ast-repl-source (& src) (sym_i64_env.sym-i64-empty))
     [(Ok item)
       (match item
         [(AstReplDecl _) true]
@@ -4279,7 +4279,7 @@
     [(Err _) false]))
 
 (define (compiler-parse-repl-expr-ok? [src : String]) : bool
-  (match (parser.parse-ast-repl-source (& src))
+  (match (parser.parse-ast-repl-source (& src) (sym_i64_env.sym-i64-empty))
     [(Ok item)
       (match item
         [(AstReplExpr _) true]
@@ -4290,7 +4290,7 @@
   [src : String]
   [expected : String]
   [code : String]) : bool
-  (match (parser.parse-ast-repl-source (& src))
+  (match (parser.parse-ast-repl-source (& src) (sym_i64_env.sym-i64-empty))
     [(Ok _) false]
     [(Err diag)
       (let
@@ -4301,7 +4301,7 @@
           (>= (cdiag.compiler-diagnostic-line error) 1)))]))
 
 (define (compiler-parse-repl-error-at? [src : String] [line : i64] [col : i64]) : bool
-  (match (parser.parse-ast-repl-source (& src))
+  (match (parser.parse-ast-repl-source (& src) (sym_i64_env.sym-i64-empty))
     [(Ok _) false]
     [(Err diag)
       (let
@@ -4689,7 +4689,7 @@
 (define (compiler-parse-source-symbol-ids-preserved-ok?) : bool
   (let
     ;; Prime the fixed dispatch-name ids before measuring source parsing.
-    [_dispatch : sym_i64_env.SymI64Env (parser.parse-ast-program-dispatch)]
+    [_dispatch : sym_i64_env.SymI64Env (parser.compiler-parse-dispatch-env)]
     (match (lexer.spanned-result "(define (f [x : User]) : User x)")
       [(Ok toks)
         (let

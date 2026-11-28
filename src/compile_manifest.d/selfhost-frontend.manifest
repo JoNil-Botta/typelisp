@@ -14,7 +14,7 @@ case|selfhost_compiler_intern|src/compiler_intern.tl|assembly|none|direct
 end
 
 case|selfhost_compiler_parse_core|src/compiler_parse_core.tl|assembly|none|direct
-count-at-least|call _tl_parse_ast_program_dispatch|1
+count-at-least|call _tl_parse_ast_program_dispatch_with_cfg|1
 end
 
 case|selfhost_compiler_specialize|src/compiler_specialize.tl|assembly|none|direct

@@ -256,6 +256,67 @@
       "negative index")))
 
 (test
+  tli-projects-opaque-field-markers-independently-of-unsafe
+  (let
+    [facts : hydrate.TliHydratedFacts (hydrate.tli-hydrated-facts-new 0)]
+    [decls : ast.AstDeclList (ast.ast-decl-list-new)]
+    [paths : ast.AstDeclPathList (ast.ast-decl-path-list-new)]
+    [modules : ast.AstDeclModuleList (ast.ast-decl-module-list-new)]
+    (for [i (iterator.range 0 3)]
+      (let
+        [unsafe? : bool (= i 2)]
+        [row : tli.TliTypeDecl
+          (tli.TliTypeDecl
+            "Record"
+            ""
+            (if unsafe?
+              8
+              1)
+            0
+            0
+            0
+            0
+            (tli.TliCleanup.No)
+            (if (= i 1)
+              (__tl_make-array "a")
+              (__tl_make-array String 0))
+            (tli.TliTypeBody.Struct
+              (__tl_make-array
+                (tli.TliField
+                  "field"
+                  (tli.TliType.I64)
+                  (tli.TliCleanup.No)
+                  0
+                  0
+                  (not unsafe?)))))]
+        (hydrate.tli-hydrate-project-type!
+          (&mut facts)
+          (&mut decls)
+          (&mut paths)
+          (&mut modules)
+          (& row)
+          ""
+          0
+          0)
+        (let
+          [decl : ast.AstDecl
+            (ast.ast-decl-list-get (& decls) i (ast.ast-decl-fallback))]
+          (test.assert-i64-eq
+            (ast.ast-decl-aggregate-markers (& decl))
+            (if unsafe?
+              0
+              1)
+            "preserved aggregate markers")
+          (test.assert-true
+            (= (ast.ast-decl-has-opaque-field? (& decl)) (not unsafe?))
+            "opaque fields set the AST marker")
+          (test.assert-true
+            (match (& decl)
+              [(Unsafe _) unsafe?]
+              [_ (not unsafe?)])
+            "only the wire unsafe flag sets the unsafe wrapper"))))))
+
+(test
   tli-registers-hydrated-invalidate-types
   (let
     [before : i64 ast.ast-invalidate-type-count]
@@ -731,6 +792,80 @@
       tli-job
       (unsafe
         (tli-test-lazy-open-and-archive-startup (& wire) (& cfg-digest))))))
+
+(test
+  tli-single-file-attachment-reuses-probed-record-storage
+  (let
+    [bundle : tli.TliBundle (tli-test-extract-io)]
+    [cfg-digest : (Array u8 32)
+      (array-ref bundle.modules 0).cfg-fingerprint-sha256]
+    [wire : (__tl_dyn-array u8) (codec.tli-encode-bundle (& bundle))]
+    [tli-arena : i64 (arena.tl_arena_make)]
+    [catalog : hydrate.TliCatalog
+      (in-arena
+        (unsafe
+          (arena.from-raw-handle tli-arena))
+        (match (hydrate.tli-catalog-open-lazy
+          (& wire)
+          "build"
+          "target"
+          (& cfg-digest))
+          [(Ok catalog)
+            (match (hydrate.tli-catalog-hydrate! (&mut catalog) "stdlib.io")
+              [(Ok _) catalog]
+              [(Err error) (io.panic (& error.message))])]
+          [(Err error) (io.panic (& error.message))]))]
+    [budget : i64 catalog.owned-bytes]
+    [state : load.CompilerLoadSessionState
+      (load.compiler-load-session-state-new)]
+    (load.compiler-load-session-state-tli-attach!
+      (& state)
+      tli-arena
+      "/sysroot"
+      "/sysroot/libstdlib.a"
+      catalog
+      (sym_i64_env.sym-i64-empty))
+    (test.assert-true
+      (load.compiler-load-session-state-tli-active? (& state))
+      "attached stdlib")
+    (unsafe
+      (let
+        [holder : load.CompilerLoadTliCatalogBox
+          (ptr-read
+            (int->ptr
+              (cast (array-ref state.tli-catalog-ptr 0) : u64)
+              : (Ptr load.CompilerLoadTliCatalogBox)))]
+        [gid : i64
+          (hydrate.tli-multi-catalog-find-module (& holder.multi) "stdlib.io")]
+        (test.assert-i64-eq
+          holder.multi.startup-order.len
+          0
+          "probe does not mark modules visited")
+        (match (hydrate.tli-multi-catalog-hydrate-gid! (&mut holder.multi) gid)
+          [(Err error) (io.panic (& error.message))]
+          [(Ok _)
+            (test.assert-i64-eq
+              (array-ref
+                (array-ref holder.multi.bundles.slots 0).owned-bytes-cell
+                0)
+              budget
+              "verified probe records did not need decoding again")
+            (let
+              [inits : (__tl_dyn-array String)
+                (hydrate.tli-multi-startup-archive-symbols (& holder.multi))]
+              (test.assert-i64-eq
+                (array-length inits)
+                2
+                "startup wrappers in the closure")
+              (test.assert-owned-string-eq
+                (string.copy (& (array-ref inits 0)))
+                "_tl___tl_mod_init_stdlib_format_writer_core"
+                "dependency starts first")
+              (test.assert-owned-string-eq
+                (string.copy (& (array-ref inits 1)))
+                "_tl___tl_mod_init_stdlib_format"
+                "importer starts second"))])))
+    (load.compiler-load-session-state-tli-release! (& state))))
 
 ;; Find where `text` starts in the encoded string pool (count, then u32 length
 ;; and bytes per entry).
@@ -1799,9 +1934,10 @@
           (unsafe
             (ptr-read
               (int->ptr (cast box-addr : u64) : (Ptr TliTestBorrowedBundleBox))))]
-        (match (hydrate.tli-multi-catalog-attach-borrowed-stdlib-bundle!
+        (match (hydrate.tli-multi-catalog-attach-stdlib-bundle!
           (&mut m1)
           shared-arena
+          false
           "/sysroot/libstdlib.a"
           view1.directory
           (& cfg-digest)
@@ -1836,9 +1972,10 @@
           (unsafe
             (ptr-read
               (int->ptr (cast box-addr : u64) : (Ptr TliTestBorrowedBundleBox))))]
-        (match (hydrate.tli-multi-catalog-attach-borrowed-stdlib-bundle!
+        (match (hydrate.tli-multi-catalog-attach-stdlib-bundle!
           (&mut m2)
           shared-arena
+          false
           "/sysroot/libstdlib.a"
           view2.directory
           (& cfg-digest)

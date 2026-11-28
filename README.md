@@ -185,13 +185,15 @@ The following parts are implemented and actively tested:
 - SPMD `foreach`, `spmd-reduce`, `spmd-scan`, `spmd-compact`, `spmd-broadcast`, and
   `spmd-shuffle`, plus `program-index` / `program-count` lane identity, with
   scalar reference lowering and native AVX2/AVX-512 lowering for eligible
-  shapes. `foreach-active` serializes a gang's active lanes; it has scalar
-  reference lowering only so far.
+  shapes. `foreach-active` visits active lanes in increasing order. It uses
+  a one-lane gang in scalar mode and native mask iteration on SSE2, AVX2,
+  and AVX-512.
   `foreach` can use ordinary `stdlib.math` calls such as `f64-abs`,
   `f32-sqrt`, and the float bit conversions. Loops that reach these float
   intrinsics can use scalar-reference lowering in every backend mode. In
   SIMD modes the compiler diagnoses combinations with gang identity,
-  collectives, or imported SPMD specializations that require a gang.
+  `foreach-active`, lane collectives, or imported SPMD specializations that
+  require a gang.
 
 Some capabilities remain restricted or experimental:
 

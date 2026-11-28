@@ -16806,6 +16806,14 @@
       (be_state.compiler-backend-state-data state)]
     data.copy-thunk-bodies))
 
+(define (compiler-backend-state-set-copy-thunk-bodies!
+  [state : be_state.CompilerBackendState]
+  [bodies : (__tl_dyn-array String)]) : unit
+  (unsafe
+    (set!
+      (deref (be_state.compiler-backend-state-ptr state)).copy-thunk-bodies
+      bodies)))
+
 (define (compiler-backend-state-copy-thunk-count
   [state : be_state.CompilerBackendState]) : i64
   (let
@@ -17015,7 +17023,11 @@
             (compiler-backend-state-copy-thunk-bodies backend-state)]
           (if (< index (array-length bodies))
             (set! (array-ref bodies index) body)
-            (__tl_array-push! bodies body))
+            (begin
+              (__tl_array-push! bodies body)
+              (compiler-backend-state-set-copy-thunk-bodies!
+                backend-state
+                bodies)))
           (backend_string_i64_map.insert-ref! (&mut seen) key index)
           (compiler-backend-state-set-copy-thunks! backend-state seen)
           (compiler-backend-state-set-copy-thunk-count!

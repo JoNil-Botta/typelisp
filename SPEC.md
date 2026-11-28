@@ -405,12 +405,13 @@ Unsized public `(Array T)` — written without a size — is rejected. Compiler
 and stdlib implementation code names the corresponding private dynamic buffer
 `(__tl_dyn-array T)` for vector backing storage, SPMD lane and result
 buffers behind the vector/slice surface, FFI/runtime buffers, and
-compiler-internal pools. Its value is a pointer to inline fat storage
-`(data_ptr : u64, length : i64)`; the stored length is always non-negative;
-allocation rejects negative lengths, traps if `length * sizeof(type)` would
-overflow an `i64` byte count, and initializes every live element with the
-zero value of its type (section 5.12.1). It is not valid as a global
-initializer, and public APIs must not expose it as a growable collection
+compiler-internal pools. Its storage is an inline 16-byte, 8-byte-aligned
+memory-class descriptor `(data_ptr : u64, length : i64)` updated in place by
+`__tl_array-push!`; all-zero `{null, 0}` is the valid empty buffer (ZII,
+section 5.12.1), the stored length is always non-negative, allocation rejects
+negative lengths, traps if `length * sizeof(type)` would overflow an `i64` byte
+count, and initializes every live element with the zero value of its type
+(section 5.12.1). Public APIs must not expose it as a growable collection
 type. `__tl_dyn-array` is accepted only as the private transitional spelling;
 there is no public unsized `Array` alias.
 
@@ -809,12 +810,19 @@ Both `defstruct` and `defenum` may carry the type-level declaration marker
 `(:must-use)` before their first field or variant. It takes no arguments and
 may appear only once. It is stored as nominal compile-time metadata: it does
 not alter value layout, ABI classification, construction, copying, ownership,
-or cleanup. It is not a warning or discard rule by itself. The marker may
-compose with valid `:lifetimes`, `:repr c` (structs), and `:cleanup` metadata;
-existing restrictions between those forms still apply. The canonical order
+or cleanup. The marker may compose with valid `:lifetimes`, `:repr c` (structs),
+and `:cleanup` metadata. Existing restrictions between those forms still apply. The canonical order
 for new declarations and emitted source is `:lifetimes`, `:repr`, `:align`,
 `:cleanup`, then zero-argument markers (`:must-use`, then `:opaque`; see
 section 3.5.4). Existing valid metadata orders remain accepted.
+
+The `typelisp lint` correctness rule `unused-must-use-value` warns by default
+when a sequence discards a direct value of a marked type. It reports the
+outer expression that produced the discarded value. Returning a value,
+passing it to another operation, or binding it counts as use. Bind a value
+to an underscore-prefixed name such as `_ignored` to acknowledge a deliberate
+discard. A reference or container is eligible according to its own direct
+type.
 
 ```lisp test=ignore name=must-use-aggregate-metadata reason="declaration metadata only"
 (defstruct Receipt
@@ -4323,9 +4331,9 @@ production modules without inline tests remain outside the checked entry
 closure, as with package `check`/`build`. `--list` only lists tests and does not
 perform the production preflight.
 
-`--backend-mode scalar|avx2|avx512` selects one code-generation mode for every
+`--backend-mode scalar|sse2|avx2|avx512` selects one code-generation mode for every
 harness of the invocation: a source file, each `--batch` entry, package inline
-tests, and package integration tests. The default is `scalar`. A SIMD request
+tests, and package integration tests. The default follows the [command defaults table](#command-defaults). A SIMD request
 lowers and emits that mode as one selection and never falls back to scalar, so
 `(program-count)` and the other lane identity forms observe the requested gang
 shape. `--check` and `--list` accept every mode on every host because they
@@ -5721,8 +5729,8 @@ guards.
 - The place is evaluated first, left-to-right through its receiver and
   projections, retaining each receiver and index value before evaluating
   `expr` once. Rebinding a receiver or changing an index does not retarget the
-  store: a reference, slice, Box or dynamic-array receiver keeps the storage it
-  selected. A by-value array, struct or tuple receiver is its variable's own
+  store: a reference, slice, or Box receiver keeps the storage it selected. A
+  by-value array, dynamic-array, struct or tuple receiver is its variable's own
   storage, so assigning that variable in `expr` writes the same storage the
   store then updates, and the two variables never share storage afterwards.
   An array-element place denotes that logical index in the selected
@@ -5754,10 +5762,11 @@ guards.
   its value there. An initialized inline aggregate local, parameter, or global
   retains its storage home when assigned a new value, so an already selected
   field still names that field of the same binding.
-  For a dynamic-array element, capture the descriptor identity and index, then
-  resolve its current backing buffer after the right-hand side. Growth of that
-  descriptor preserves the selected element; rebinding the array variable does
-  not change the captured descriptor. Check the captured index against the
+  For a dynamic-array element, capture the descriptor storage address and index,
+  then resolve its current backing buffer after the right-hand side. In-place
+  growth of that descriptor preserves the selected element; assigning a by-value
+  dynamic-array variable updates its inline descriptor storage home just like
+  any other inline aggregate. Check the captured index against the
   descriptor's current live extent before storing; a removed element traps,
   even when an intermediate check passed before the right-hand side. Nested
   inline projections, including an element of an inline array field, retain
@@ -5870,7 +5879,7 @@ a stable reason, and make-array typechecking and lowering share it.
 | Default-layout `defstruct` without cleanup | every field zero | when every field type is ZII |
 | `defenum` without cleanup | tag 0, which is the first declared variant, with its payload fields zero; payload bytes past those fields are don't-care | when every payload field type of the first variant is ZII; a fieldless first variant always is |
 | `String` | `""` (`{null, 0}`) | yes |
-| `(__tl_dyn-array T)` | none | no: `dynamic-buffer` (until dynamic buffers use inline descriptors, #7963) |
+| `(__tl_dyn-array T)` | empty buffer (`{null, 0}`) | yes |
 | `(Box T)` | none | no: `box` |
 | function and closure values | none | no: `function` |
 | references `(& r T)`, `(&mut r T)` | none | no: `reference` |
@@ -5881,15 +5890,14 @@ a stable reason, and make-array typechecking and lowering share it.
 | any other shape, including opaque aggregates outside their module family and layouts that fail finite-layout analysis | none | no: `unsupported` |
 
 An aggregate that is not ZII reports the reason of one of its parts. A part
-make-array rejects (any reason but `dynamic-buffer` or `box`) takes precedence
-over `box` and `dynamic-buffer`. `make-array` and `__tl_make-array` reject an
-element type with any other reason, and the diagnostic names it:
+make-array rejects (any reason but `box`) takes precedence over `box`.
+`make-array` and `__tl_make-array` reject an element type with any other
+reason, and the diagnostic names it:
 `make-array element type T is not zero-initializable (reason: function)`.
-Until #7963, element types whose only reasons are `dynamic-buffer` or `box` are
-still accepted: in each element, a dynamic-buffer part starts as an empty
-buffer, a box part as its own allocation holding contents initialized the same
-way, and every other part (including `String`, which is ZII as `{null, 0}`) as
-zero.
+Until #7961, element types whose only reason is `box` are still accepted: in
+each element, a box part starts as its own allocation holding contents
+initialized the same way, and every other part (including `String` and
+`(__tl_dyn-array T)`, which are ZII as `{null, 0}`) as zero.
 
 ### 5.13 `(match scrutinee [pattern body...] ...)` — pattern matching
 
@@ -6267,7 +6275,8 @@ flattened, and the two coordinate names must differ.
   - A body no gang plan covers, such as one with atomic effects or other
     memory shapes, runs each row as the scalar reference, where
     `program-index` is 0 and `program-count` is 1, rather than being
-    diagnosed. `foreach-active` keeps its own SIMD rule (#8307).
+    diagnosed. A row containing `foreach-active` follows the serialized-lane
+    rules in this section.
 
   Rank-1 `foreach` is unchanged.
 
@@ -6425,8 +6434,8 @@ Lane identity forms:
   do not evaluate these forms retain scalar equivalence.
 - Ordinary float bit conversions and square root reached through a `foreach`
   body or its source helpers can use scalar-reference lowering. In SIMD
-  modes this route requires a body independent of gang identity, lane
-  collectives, and imported SPMD specializations. Combining these operations
+  modes this route requires a body independent of gang identity, `foreach-active`,
+  lane collectives, and imported SPMD specializations. Combining these operations
   with a call that requires this route produces a compile-time diagnostic.
 - In `spmd-reduce`, lane identity forms are allowed only in the `value`
   expression. Such a value is pure but backend-mode-observable, so the
@@ -6902,10 +6911,18 @@ Serialized lanes:
   nested in the gang.
 - Cost: one scalar iteration of the body per active lane.
 - Scalar backend modes run the body once per logical index with `lane` `0`.
-  AVX2 and AVX-512 modes reject a `foreach` whose body contains
-  `foreach-active` with `foreach-active is not yet lowered for AVX2` (or
-  `AVX-512`) until its SIMD lowering lands (#8307); there is no scalar
-  fallback.
+  SSE2, AVX2 and AVX-512 run native gangs for an `i64` range whose
+  surrounding gang expressions support masked lowering at one element
+  width. Those expressions determine the gang width. A body consisting only
+  of serialized work uses the backend's `i64` gang width (2, 4 or 8).
+  In a rank-2 row, a contiguous array access may add a row-stable signed
+  offset to the inner index. Only active elements undergo bounds checks.
+  The backend visits set bits from lowest to highest, using constant bits for
+  a full range, low bits for a short tail, or the bits of a branch predicate.
+  It may evaluate independent, nontrapping gang expressions together. Reads
+  that can observe an earlier lane's writes and expressions that can trap
+  run in logical index order, including when they precede `foreach-active`.
+  A lane's checked reads and scalar calls retain their source order.
 
 Runtime-dispatched SIMD variants:
 
@@ -10244,10 +10261,10 @@ ordered or non-canonical execution; it is not an unsupported fallback.
 | `spmd-reduce` | Supported: reference semantics | Supported: native eligible folds; scalar reference for other supported value shapes | Supported: native eligible folds; scalar reference for other supported value shapes | Reduction-matrix and gather-reduce gates; direct byte-product results receive the specified unsupported sum-result type diagnostic |
 | `spmd-scan` | Supported: reference semantics | Supported: native canonical range-wide prefixes; scalar reference for other supported shapes | Supported: native canonical range-wide prefixes; scalar reference for other supported shapes | AVX2 and AVX-512 prefix-shape gates |
 | `spmd-compact` | Supported: ordered scalar reference | Supported: ordered scalar reference | Supported: ordered scalar reference | Cross-mode runtime, overflow-order, and destination-proof gates |
-| Rank-2 `foreach` domains | Supported: ordered scalar reference | Supported: row-local native gangs over row-origin views; scalar reference rows for other bodies | Supported: row-local native gangs over row-origin views; scalar reference rows for other bodies | `tests/integration/spmd_foreach_2d.tl`, `tests/spmd/foreach_2d_native.tl` and the rest of the SPMD same-exit corpus, the `foreach-2d-*` shape and row-range trap cases, `lane-identity-2d`, and the `spmd_foreach2_*` safety rows; `foreach-active` inside the body follows its own row (#8307) |
+| Rank-2 `foreach` domains | Supported: ordered scalar reference | Supported: row-local native gangs over row-origin views; scalar reference rows for other bodies | Supported: row-local native gangs over row-origin views; scalar reference rows for other bodies | `tests/integration/spmd_foreach_2d.tl`, `tests/spmd/foreach_2d_native.tl` and the rest of the SPMD same-exit corpus, the `foreach-2d-*` shape and row-range trap cases, `lane-identity-2d`, and the `spmd_foreach2_*` safety rows; `foreach-active` inside the body follows its own row |
 | `spmd-broadcast` | Supported: one-lane reference | Supported: gang-width semantics | Supported: gang-width semantics | `tests/spmd/gang-width.cases` (broadcast cases) |
 | `spmd-shuffle` | Supported: one-lane reference | Supported: native numeric permutations | Supported: native numeric permutations | Shuffle differential, trap, and shape gates |
-| `foreach-active` / `lane-value` | Supported: one-lane reference | Rejected: not yet lowered (#8307) | Rejected: not yet lowered (#8307) | `tests/integration/spmd_foreach_active.tl`, `tests/spmd/foreach_active_simd_reject.tl` |
+| `foreach-active` / `lane-value` | Supported: one-lane reference | Supported: ordered set-bit iteration | Supported: ordered set-bit iteration | SSE2 also uses native set-bit iteration. See `tests/spmd/simd.d/foreach-active.cases`. |
 | `program-index` / `program-count` | Supported: `0` / `1` | Supported: backend gang identity | Supported: backend gang identity | `tests/spmd/gang-width.cases` (lane-identity cases) |
 | Same-program private out-of-line varying helpers | Supported: scalar ABI | Supported: native AVX2 private ABI | Supported: native AVX-512 private ABI | Private-helper differential/shape gates; imported package helpers retain the separately specified scalar/AVX-512 `spmd-call-v1` catalog ABI |
 | `defdispatch` | Supported: scalar variant | Supported: cached runtime AVX2 selection | Supported: cached runtime AVX-512 selection | Runtime-dispatch gate |
@@ -10570,7 +10587,7 @@ Global Options:
 
 Common Command Options:
   --target <target>              linux-x86_64 or windows-x86_64
-  --backend-mode <mode>          scalar, avx2, or avx512
+  --backend-mode <mode>          scalar, sse2, avx2, or avx512
   --manifest-path <file>         Package manifest path
   --stdlib-root <dir>            Search root for stdlib/... imports
   --opt-level <0|1|2|s>|-Os            Select optimizer level
@@ -10599,6 +10616,43 @@ Selected Command Forms:
 
 `typelisp <command> --help` is the source of truth for command-specific usage
 forms. `--version` prints the compiler build git hash and date.
+
+### Command defaults
+
+The host target is `linux-x86_64` for the Linux compiler and
+`windows-x86_64` for the Windows compiler. The target selects the aliases
+listed in §4.4.9. The table gives the effective settings when no override is
+supplied. A dash means that the command does not apply that setting.
+
+| Command | Target | Optimization | Backend | Debug | Active cfgs |
+| --- | --- | --- | --- | --- | --- |
+| `compile` (assembly or IR, including batch) | Host | 1 | SSE2 | Off | Target aliases |
+| `compile --emit-tli` | Host | — | — | — | Target aliases |
+| `build`, `run` (source file) | Host | 1 | SSE2 | Off | Target aliases |
+| `build`, `run` (package) | Host | Release 2, dev 0 | SSE2 | Off | Target aliases |
+| `test` (source file, package or batch) | Host | 1 | SSE2 | Off | Target aliases and `test` while checking or compiling tests |
+| `check` (source file, package or batch) | Host | — | — | — | Target aliases |
+| `lint` (source files or package) | Host | — | — | — | Target aliases |
+| `expand` | Host | — | — | — | Target aliases |
+| `lsp` | Host | — | — | — | Target aliases |
+| `repl` | Host | 1 | Scalar | Off | Target aliases |
+| `doc --test` | Host | 1 for runnable examples | Scalar for runnable examples | Off for runnable examples | Target aliases |
+| `doc --load`, `doc <input.tl> -o <output.md>` | Host | — | — | — | Target aliases |
+| Other documentation rendering, `fmt` | — | — | — | — | — |
+| `inspect sysroot` | Host | — | — | — | — |
+| `clean`, `explain`, `init`, `inspect <file>`, `new` | — | — | — | — | — |
+
+There are no user-supplied cfg names by default. The `compiler-backtrace`
+predicate is enabled by debug selection in commands that emit debug info.
+Package builds and runs select release by default. An explicit optimization
+level overrides the profile's level. Selecting size optimization (`-Os` or
+`--opt-level s`) selects scalar emission unless a backend mode is explicit.
+
+Where supported, `--target` overrides the host and selects the corresponding
+target aliases. For example, `typelisp compile main.tl --target linux-x86_64`
+emits Linux assembly on either host. LSP overrides are sent as `target` and
+`cfg` in `initializationOptions.typelisp` (or directly in
+`initializationOptions`).
 
 Shared compile options use the same value validation and diagnostic wording
 wherever a command accepts them. `--target`, `--backend-mode`, `--opt-level`

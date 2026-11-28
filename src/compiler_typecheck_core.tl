@@ -322,11 +322,16 @@
 ;; Keep both its traversal selectors and retained block records in that
 ;; typecheck job: another compiler job may reset or destroy its own state while
 ;; this collection is active.
+(defenum TcUnusedUnsafeExcludedFunctions
+  (None)
+  (Some tc_i64_i64_map.Map))
+
 (defstruct TcUnusedUnsafeStateData
   (enabled bool)
   (current-block i64)
   (current-path String)
   (target-path String)
+  (excluded-functions TcUnusedUnsafeExcludedFunctions)
   (block-len i64)
   (block-spans (__tl_dyn-array ast.AstSourceSpan))
   (block-paths (__tl_dyn-array String))
@@ -921,6 +926,7 @@
         -1
         ""
         ""
+        TcUnusedUnsafeExcludedFunctions.None
         0
         (__tl_make-array ast.AstSourceSpan 0)
         (__tl_make-array String 0)
@@ -3437,7 +3443,7 @@
   (address i64))
 
 (defenum TcSemanticEvent
-  (ExpansionEnter i64 i64 ast.AstSourceSpan)
+  (ExpansionEnter i64 i64 i64)
   (ExpansionLeave)
   (ResolvedMember i64)
   (Reference i64 bool)
@@ -3447,9 +3453,10 @@
   (SpmdLeave)
   (ExpressionEnter i64)
   (Expression i64 ResultTcType bool)
+  (SequenceResult i64 bool bool)
   (Declaration i64 i64 String ast.AstDecl)
   (FunctionEnter i64 i64 ast.AstParamList ast.AstMaybeType)
-  (FunctionLeave ResultTcType)
+  (FunctionLeave bool ast.AstMaybeType)
   (Binding i64 i64 i64 i64 i64 ast.AstType)
   (BindingSite TcMaybeAstSourceSpan)
   (BindingMaterialized i64 i64 i64 i64 i64)
@@ -3481,7 +3488,8 @@
 (defstruct TcSemanticObserverData
   (context i64)
   (callback (-> i64 TcContext TcTypeEnv TcSemanticEvent unit))
-  (active-context TcContext))
+  (active-context TcContext)
+  (source-path String))
 
 (define (tc-semantic-observer-new
   [context : i64]
@@ -3497,12 +3505,42 @@
         (TcSemanticObserverData
           context
           callback
-          (TcContext 0 (TcJobState 0) 0 0 0 0 0))))
+          (TcContext 0 (TcJobState 0) 0 0 0 0 0)
+          "")))
     (TcSemanticObserver
       (cast
         (unsafe
           (ptr->int (__tl_array-data cell)))
         : i64))))
+
+(define (tc-semantic-observer-limit-to-source!
+  [observer : TcSemanticObserver]
+  [path : String]) : unit
+  (unsafe
+    (let
+      [cell
+        (int->ptr
+          (cast observer.address : u64)
+          : (MutPtr TcSemanticObserverData))]
+      (set! (deref cell).source-path path))))
+
+(define (tc-semantic-observer-full-prefix? [observer : TcSemanticObserver]) : bool
+  (and
+    (!= observer.address 0)
+    (let
+      [data (tc-state-cell-read observer.address TcSemanticObserverData)]
+      (string.eq (& data.source-path) ""))))
+
+(define (tc-semantic-observer-skips-source?
+  [observer : TcSemanticObserver]
+  [path : (& path str)]) : bool
+  (and
+    (!= observer.address 0)
+    (let
+      [data (tc-state-cell-read observer.address TcSemanticObserverData)]
+      (and
+        (not (string.eq (& data.source-path) ""))
+        (not (string.eq (& data.source-path) path))))))
 
 (define (tc-semantic-observer-send!
   [observer : TcSemanticObserver]
@@ -3512,13 +3550,13 @@
   (let
     [data : TcSemanticObserverData
       (tc-state-cell-read observer.address TcSemanticObserverData)]
-    (set! data.active-context ctx)
     (unsafe
-      (ptr-write!
-        (int->ptr
-          (cast observer.address : u64)
-          : (MutPtr TcSemanticObserverData))
-        data))
+      (let
+        [cell
+          (int->ptr
+            (cast observer.address : u64)
+            : (MutPtr TcSemanticObserverData))]
+        (set! (deref cell).active-context ctx)))
     (data.callback data.context ctx env event)))
 
 (define (tc-context-set-semantic-observer!
@@ -5022,6 +5060,15 @@
     (> tc-semantic-observed-jobs 0)
     (!= (__tl-project-field (tc-context-semantic-observer ,ctx) address) 0)))
 
+(defmacro (tc-semantic-require-unit! [ctx : Expr] [env : Expr] [id : Expr]) : Expr
+  `(when
+    (tc-semantic-observer-active? ,ctx)
+    (tc-semantic-observer-send!
+      (tc-context-semantic-observer ,ctx)
+      ,ctx
+      ,env
+      (SequenceResult ,id true true))))
+
 (defmacro (tc-infer-id-checked
   [ctx : Expr]
   [env : Expr]
@@ -5343,7 +5390,7 @@
               expanded-id
               provenance-id
               macro-name-id
-              ,at
+              (TcMaybeAstSourceSpan.Some ,at)
               ,syntax
               ,expected
               ,source
@@ -6186,39 +6233,19 @@
     [(ast.AstExpr.Call func-id args)
       (tc-infer-selected-call ctx env func-id args syntax expected source sink)]
     [(ast.AstExpr.MacroExpansion expanded provenance-id macro-name-id)
-      (match (deref span)
-        [(TcMaybeAstSourceSpan.Some at)
-          (tc-infer-selected-expansion
-            ctx
-            env
-            expanded
-            provenance-id
-            macro-name-id
-            at
-            syntax
-            expected
-            source
-            allow-mut-by-value-borrow
-            ordinary?
-            sink)]
-        [(TcMaybeAstSourceSpan.No)
-          (match (tc-macro-unsafe-enter-expansion! ctx env macro-name-id)
-            [(TcMacroUnsafeEnterResult inner-env unsafe-save)
-              (let
-                [result
-                  (tc-infer-selected-transparent-id
-                    ctx
-                    inner-env
-                    expanded
-                    TcMaybeAstSourceSpan.No
-                    syntax
-                    expected
-                    source
-                    allow-mut-by-value-borrow
-                    ordinary?
-                    sink)]
-                (tc-macro-unsafe-leave! ctx unsafe-save)
-                result)])])]
+      (tc-infer-selected-expansion
+        ctx
+        env
+        expanded
+        provenance-id
+        macro-name-id
+        (deref span)
+        syntax
+        expected
+        source
+        allow-mut-by-value-borrow
+        ordinary?
+        sink)]
     [(ast.AstExpr.Match match-box)
       (tc-infer-selected-match ctx env match-box syntax expected source sink)]
     ;; Outside a call argument a borrow keeps its own type, like the legacy
@@ -6534,7 +6561,7 @@
   [id : i64]
   [provenance-id : i64]
   [macro-name-id : i64]
-  [span : ast.AstSourceSpan]
+  [span : TcMaybeAstSourceSpan]
   [syntax : typed.TypedSyntax]
   [expected : ast.AstMaybeType]
   [source : ownership.OwnershipSource]
@@ -6555,7 +6582,7 @@
         (tc-context-semantic-observer ctx)
         ctx
         env
-        (ExpansionEnter origin-path-id macro-name-id span)))
+        (ExpansionEnter origin-path-id macro-name-id id)))
     (match (tc-macro-unsafe-enter-expansion! ctx env macro-name-id)
       [(TcMacroUnsafeEnterResult inner-env unsafe-save)
         (let
@@ -6565,18 +6592,24 @@
               inner-env
               id
               (if compact?
-                (tc-infer-needed-span (& (tc-context-expr-get ctx id)) span)
+                (match (& span)
+                  [(TcMaybeAstSourceSpan.Some at)
+                    (tc-infer-needed-span (& (tc-context-expr-get ctx id)) at)]
+                  [_ TcMaybeAstSourceSpan.No])
                 TcMaybeAstSourceSpan.No)
               syntax
               expected
               (match (& sink)
                 [(TcSelectedSink.Query) source]
                 [_
-                  (tc-selected-expansion-source
-                    (& source)
-                    span
-                    provenance-id
-                    macro-name-id)])
+                  (match (& span)
+                    [(TcMaybeAstSourceSpan.Some at)
+                      (tc-selected-expansion-source
+                        (& source)
+                        at
+                        provenance-id
+                        macro-name-id)]
+                    [_ source])])
               allow-mut-by-value-borrow
               ordinary?
               sink)]
@@ -6590,24 +6623,27 @@
               ExpansionLeave))
           (match result
             [(TcSelectedResult.Err message next)
-              (tc-selected-unrepresented
-                (tc-macro-expansion-result-with-frame
-                  ctx
-                  id
-                  compact?
-                  (macro-expansion-invocation-path-id provenance-id)
-                  origin-path-id
-                  macro-name-id
-                  span
-                  (if compact?
-                    (tc-locate-spanned-error-with-context
+              (match span
+                [(TcMaybeAstSourceSpan.Some at)
+                  (tc-selected-unrepresented
+                    (tc-macro-expansion-result-with-frame
                       ctx
-                      env
-                      (tc-context-expr-get ctx id)
-                      span
-                      message)
-                    (ResultTcType.Err message)))
-                next)]
+                      id
+                      compact?
+                      (macro-expansion-invocation-path-id provenance-id)
+                      origin-path-id
+                      macro-name-id
+                      at
+                      (if compact?
+                        (tc-locate-spanned-error-with-context
+                          ctx
+                          env
+                          (tc-context-expr-get ctx id)
+                          at
+                          message)
+                        (ResultTcType.Err message)))
+                    next)]
+                [_ (TcSelectedResult.Err message next)])]
             [(TcSelectedResult.Ok ty occurrence next)
               (TcSelectedResult.Ok ty occurrence next)]))])))
 
@@ -29741,20 +29777,44 @@
     (ptr-read ,cache-ptr)))
 
 ;; Physical byte offsets in TcTypeEnvCache after the four-word chain prefix:
-;; ids=32 (the map is inline and 24 bytes), values=56, sidecar arrays=64/72,
-;; flags=80/81, and rest/below=88/96. Keep these literals paired with the
-;; raw-layout smoke and
-;; cache behavior tests; `offset-of` currently treats the inline map as one word
-;; and therefore under-reports every following field.
+;; `ids` is an inline `tc_i64_i64_map.Map` (1 DynArray + 2 i64 = dyn + 16 bytes),
+;; followed by three DynArray fields (`values`, `unsafe-flags`, `shadow-flags`),
+;; three bool flags (`scan-through`, `partial`, `has-region-activation`), and
+;; two i64 heads (`rest`, `below`). Compute each offset from
+;; `(size-of (type (__tl_dyn-array i64)))` so both stage0 (8B) and stage1+ (16B)
+;; agree with the actual struct layout while `offset-of` still under-reports the
+;; inline map field.
 (defmacro (tc-type-env-cache-field-at
   [cache-ptr : comptime.Expr]
-  [byte-offset : comptime.Expr]
+  [field : comptime.Expr]
   [_T : type]) : comptime.Expr
-  `(unsafe
-    (ptr-read
-      (ptr-cast
-        (ptr-offset (ptr-cast ,cache-ptr : (Ptr u8)) ,byte-offset)
-        : (Ptr ,_T)))))
+  (let
+    [dyn-size : i64 (size-of (type (__tl_dyn-array i64)))]
+    [byte-offset : i64
+      (match field
+        [(comptime.Expr.Var name)
+          (match name
+            ["ids" 32]
+            ["values" (+ 48 dyn-size)]
+            ["unsafe-flags" (+ 48 (* dyn-size 2))]
+            ["shadow-flags" (+ 48 (* dyn-size 3))]
+            ["scan-through" (+ 48 (* dyn-size 4))]
+            ["partial" (+ 49 (* dyn-size 4))]
+            ["rest" (+ 56 (* dyn-size 4))]
+            ["below" (+ 64 (* dyn-size 4))]
+            [_
+              (comptime.comptime-error
+                (comptime.string-append "unknown TcTypeEnvCache field: " name))])]
+        [_
+          (comptime.comptime-error
+            "tc-type-env-cache-field-at expects a field name")])]
+    `(unsafe
+      (ptr-read
+        (ptr-cast
+          (ptr-offset
+            (ptr-cast ,cache-ptr : (Ptr u8))
+            ,(comptime.expr-int byte-offset))
+          : (Ptr ,_T))))))
 
 (define (tc-type-env-store-push-binding!
   [store-handle : i64]
@@ -29883,15 +29943,15 @@
             (tc-type-env-cache-ptr store-handle (tc-type-env-cache-index head))]
           (Cache
             cache-ptr
-            (tc-type-env-cache-field-at cache-ptr 80 bool)
-            (tc-type-env-cache-field-at cache-ptr 81 bool)
+            (tc-type-env-cache-field-at cache-ptr scan-through bool)
+            (tc-type-env-cache-field-at cache-ptr partial bool)
             (TcTypeEnv
               store-handle
-              (tc-type-env-cache-field-at cache-ptr 88 i64)
+              (tc-type-env-cache-field-at cache-ptr rest i64)
               env.abi-pad)
             (TcTypeEnv
               store-handle
-              (tc-type-env-cache-field-at cache-ptr 96 i64)
+              (tc-type-env-cache-field-at cache-ptr below i64)
               env.abi-pad)))])))
 
 (define (tc-empty-env) : TcTypeEnv
@@ -30321,7 +30381,10 @@
     [(Cache cache-ptr scan-through partial _ below)
       (let
         [values : (__tl_dyn-array ast.AstType)
-          (tc-type-env-cache-field-at cache-ptr 56 (__tl_dyn-array ast.AstType))]
+          (tc-type-env-cache-field-at
+            cache-ptr
+            values
+            (__tl_dyn-array ast.AstType))]
         (if (and scan-through partial)
           (+
             (/ (array-length values) 2)
@@ -32494,8 +32557,18 @@
       (ptr-offset (int->ptr (cast ,addr : u64) : (Ptr u64)) ,word-offset))))
 
 (define (tc-chain-array-length [array-address : u64]) : i64
-  (unsafe
-    (ptr-read (ptr-offset (int->ptr array-address : (Ptr i64)) 1))))
+  (if (= array-address 0)
+    0
+    (unsafe
+      (ptr-read (ptr-offset (int->ptr array-address : (Ptr i64)) 1)))))
+
+(define (tc-chain-alloc-array-descriptor [data-address : u64] [len : i64]) : u64
+  (let
+    [desc : (__tl_dyn-array u64) (__tl_make-array u64 2)]
+    (set! (array-ref desc 0) data-address)
+    (set! (array-ref desc 1) (cast len : u64))
+    (unsafe
+      (ptr->int (__tl_array-data desc)))))
 
 (define (tc-chain-array-ref [array-address : u64] [index : i64]) : i64
   (let
@@ -32778,8 +32851,18 @@
                 (tc-global-shared-view tc-chain-empty-i64-array)
                 (__tl_make-array i64 levels))]
             [prev : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
-            [jumps-address : u64 (tc-array-address jumps)]
-            [prev-address : u64 (tc-array-address prev)]
+            [jumps-address : u64
+              (if (= levels 0)
+                0
+                (tc-chain-alloc-array-descriptor
+                  (unsafe
+                    (ptr->int (__tl_array-data jumps)))
+                  levels))]
+            [prev-address : u64
+              (tc-chain-alloc-array-descriptor
+                (unsafe
+                  (ptr->int (__tl_array-data prev)))
+                capacity)]
             [seq : i64
               (let
                 [state : TcChainIndex (tc-chain-state-read state-addr)]
@@ -34123,6 +34206,43 @@
           (set! (deref data).block-paths (__tl_make-array String 128))
           (set! (deref data).block-used (__tl_make-array bool 128)))))))
 
+(define (tc-unused-unsafe-exclude-functions!
+  [state : TcUnusedUnsafeState]
+  [functions : TcUnusedUnsafeExcludedFunctions]) : unit
+  (unsafe
+    (set!
+      (deref (tc-unused-unsafe-state-ptr state)).excluded-functions
+      functions)))
+
+(define (tc-unused-unsafe-tracking-enabled? [state : TcUnusedUnsafeState]) : bool
+  (unsafe
+    (deref (tc-unused-unsafe-state-view state)).enabled))
+
+(define (tc-unused-unsafe-suspend-function!
+  [state : TcUnusedUnsafeState]
+  [function : i64]) : bool
+  (and
+    (tc-unused-unsafe-tracking-enabled? state)
+    (let
+      [tracking : TcUnusedUnsafeStateData (tc-unused-unsafe-state-data state)]
+      (match (& tracking.excluded-functions)
+        [(TcUnusedUnsafeExcludedFunctions.Some functions)
+          (if (= (tc_i64_i64_map.get-value-or functions function 0) 1)
+            (begin
+              (unsafe
+                (set! (deref (tc-unused-unsafe-state-ptr state)).enabled false))
+              true)
+            false)]
+        [_ false]))))
+
+(define (tc-unused-unsafe-resume-function!
+  [state : TcUnusedUnsafeState]
+  [suspended? : bool]) : unit
+  (when
+    suspended?
+    (unsafe
+      (set! (deref (tc-unused-unsafe-state-ptr state)).enabled true))))
+
 (define (tc-unused-unsafe-tracking-reset!
   [state : TcUnusedUnsafeState]
   [path : String]) : unit
@@ -34140,6 +34260,9 @@
   (let
     [data : (MutPtr TcUnusedUnsafeStateData) (tc-unused-unsafe-state-ptr state)]
     (unsafe
+      (set!
+        (deref data).excluded-functions
+        TcUnusedUnsafeExcludedFunctions.None)
       (set! (deref data).enabled false)
       (set! (deref data).current-block -1)
       (set! (deref data).current-path "")
@@ -35165,6 +35288,8 @@
                             index
                             (tc-global-shared-view resolved-index-ty))]
                         [body-ty (try (tc-expr-id ctx body-env body-box))]
+                        [_unit-use : unit
+                          (tc-semantic-require-unit! ctx body-env body-box)]
                         [_
                           (try
                             (tc-expect
@@ -35226,6 +35351,7 @@
                       ctx
                       (tc-bind-id (tc-bind-id env outer (I64)) inner (I64))
                       body-box))]
+                [_unit-use : unit (tc-semantic-require-unit! ctx env body-box)]
                 [_
                   (try
                     (tc-expect
@@ -35461,6 +35587,7 @@
     [(ForeachActive lane body-box)
       (let
         [body-ty (try (tc-expr-id ctx (tc-bind-id env lane (I64)) body-box))]
+        [_unit-use : unit (tc-semantic-require-unit! ctx env body-box)]
         [_
           (try
             (tc-expect
@@ -38995,7 +39122,7 @@
     [(Cache cache-ptr scan-through _ rest _)
       (let
         [ids : tc_i64_i64_map.Map
-          (tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
+          (tc-type-env-cache-field-at cache-ptr ids tc_i64_i64_map.Map)]
         ;; A module's explicit cache now contains only imported aliases. Those
         ;; aliases still shadow a declaration owned by the current module, even
         ;; though marker scans stop at this cache boundary.
@@ -40240,9 +40367,12 @@
     [(Cache cache-ptr _ partial _ below)
       (let
         [ids : tc_i64_i64_map.Map
-          (tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
+          (tc-type-env-cache-field-at cache-ptr ids tc_i64_i64_map.Map)]
         [sidecar-flags : (__tl_dyn-array i64)
-          (tc-type-env-cache-field-at cache-ptr 72 (__tl_dyn-array i64))]
+          (tc-type-env-cache-field-at
+            cache-ptr
+            shadow-flags
+            (__tl_dyn-array i64))]
         (match (tc_i64_i64_map.get (& ids) name-id)
           [(LookupFound index)
             (not (= (bit-and (array-ref sidecar-flags index) sidecar-flag) 0))]
@@ -40657,11 +40787,11 @@
   [lifetime-id : i64]) : i64
   (let
     [ids : tc_i64_i64_map.Map
-      (tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
+      (tc-type-env-cache-field-at cache-ptr ids tc_i64_i64_map.Map)]
     [sidecar-flags : (__tl_dyn-array i64)
-      (tc-type-env-cache-field-at cache-ptr 72 (__tl_dyn-array i64))]
+      (tc-type-env-cache-field-at cache-ptr shadow-flags (__tl_dyn-array i64))]
     [values : (__tl_dyn-array ast.AstType)
-      (tc-type-env-cache-field-at cache-ptr 56 (__tl_dyn-array ast.AstType))]
+      (tc-type-env-cache-field-at cache-ptr values (__tl_dyn-array ast.AstType))]
     [ordinary-index : i64 (tc_i64_i64_map.get-value-or (& ids) lifetime-id -1)]
     [marker-index : i64
       (tc_i64_i64_map.get-value-or
@@ -40747,11 +40877,17 @@
     [(Cache cache-ptr scan-through partial rest below)
       (let
         [ids : tc_i64_i64_map.Map
-          (tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
+          (tc-type-env-cache-field-at cache-ptr ids tc_i64_i64_map.Map)]
         [values : (__tl_dyn-array ast.AstType)
-          (tc-type-env-cache-field-at cache-ptr 56 (__tl_dyn-array ast.AstType))]
+          (tc-type-env-cache-field-at
+            cache-ptr
+            values
+            (__tl_dyn-array ast.AstType))]
         [sidecar-flags : (__tl_dyn-array i64)
-          (tc-type-env-cache-field-at cache-ptr 72 (__tl_dyn-array i64))]
+          (tc-type-env-cache-field-at
+            cache-ptr
+            shadow-flags
+            (__tl_dyn-array i64))]
         (if scan-through
           (match (tc_i64_i64_map.get (& ids) name-id)
             [(LookupFound index)
@@ -59004,6 +59140,7 @@
           sink)])
     (let
       [last? : bool (= (+ index 1) exprs.len)]
+      [id : i64 (ast.ast-expr-list-get exprs index 0)]
       [want : ast.AstMaybeType
         (if last?
           (tc-global-shared-view expected)
@@ -59013,7 +59150,7 @@
         env
         (& syntax)
         last?
-        (ast.ast-expr-list-get exprs index 0)
+        id
         want
         (tc-global-shared-view source)
         represented?
@@ -59021,6 +59158,13 @@
         [(TcSelectedResult.Err message next)
           (TcSelectedResult.Err message next)]
         [(TcSelectedResult.Ok ty child next)
+          (when
+            (tc-semantic-observer-active? ctx)
+            (tc-semantic-observer-send!
+              (tc-context-semantic-observer ctx)
+              ctx
+              env
+              (SequenceResult id last? unit-each?)))
           (let
             [selected? : bool (tc-selected-represented? (& child))]
             [children : TcSelectedChildren
@@ -59677,9 +59821,12 @@
     [(Cache cache-ptr _ partial _ below)
       (let
         [ids : tc_i64_i64_map.Map
-          (tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
+          (tc-type-env-cache-field-at cache-ptr ids tc_i64_i64_map.Map)]
         [shadow-flags : (__tl_dyn-array i64)
-          (tc-type-env-cache-field-at cache-ptr 72 (__tl_dyn-array i64))]
+          (tc-type-env-cache-field-at
+            cache-ptr
+            shadow-flags
+            (__tl_dyn-array i64))]
         (match (tc_i64_i64_map.get (& ids) name-id)
           [(LookupFound index)
             (=
@@ -59721,8 +59868,8 @@
         (let
           [cache-ptr : (Ptr TcTypeEnvCache)
             (tc-type-env-cache-ptr store-handle (tc-type-env-cache-index head))]
-          (if (tc-type-env-cache-field-at cache-ptr 80 bool)
-            (set! head (tc-type-env-cache-field-at cache-ptr 88 i64))
+          (if (tc-type-env-cache-field-at cache-ptr scan-through bool)
+            (set! head (tc-type-env-cache-field-at cache-ptr rest i64))
             (set! head -1)))))
     found))
 
@@ -78629,10 +78776,10 @@
     [(or (I8) (U8) (Bool) (Char)) (Ok (tc-inline-aggregate-layout-info 1 1))]
     [(or (Unit) (Never) (Expr) (ExprList))
       (Ok (tc-inline-aggregate-zero-layout-info))]
-    [(or (Func _ _) (DynArray _) (Box _) (CFunc _ _) (Ptr _) (MutPtr _) (Str)
-         (Var _) (VarArgs _ _))
+    [(or (Func _ _) (Box _) (CFunc _ _) (Ptr _) (MutPtr _) (Str) (Var _)
+         (VarArgs _ _))
       (Ok (tc-inline-aggregate-pointer-layout-info))]
-    [(String) (Ok (tc-inline-aggregate-layout-info 16 8))]
+    [(or (String) (DynArray _)) (Ok (tc-inline-aggregate-layout-info 16 8))]
     [(Slice _)
       (Err
         "typecheck: slice has no by-value layout; use a borrowed slice reference")]
@@ -87800,7 +87947,6 @@
 ;; Why a storage shape has no zero value, as the ZII classifier below reports
 ;; it. The tokens are stable: diagnostics and fixtures name them.
 (defenum TcNotZiiReason
-  (DynBuffer)
   (Box)
   (Function)
   (Reference)
@@ -87814,7 +87960,6 @@
 ;; The stable reason token diagnostics and tests name.
 (define (tc-not-zii-reason-text [reason : TcNotZiiReason]) : String
   (match reason
-    [(DynBuffer) "dynamic-buffer"]
     [(Box) "box"]
     [(Function) "function"]
     [(Reference) "reference"]
@@ -88106,10 +88251,10 @@
   (NotZii TcNotZiiReason))
 
 ;; An aggregate reports its highest-ranked reason. 1: its value fill allocates
-;; (a box, a dynamic buffer); 2: make-array cannot initialize it.
+;; (a box); 2: make-array cannot initialize it.
 (define (tc-not-zii-reason-rank [reason : TcNotZiiReason]) : i64
   (match reason
-    [(or (DynBuffer) (Box)) 1]
+    [(Box) 1]
     [_ 2]))
 
 (define (tc-not-zii-reason-rejects? [reason : TcNotZiiReason]) : bool
@@ -88160,13 +88305,12 @@
               (Zii)
               (NotZii (Unsupported)))]
           [(or (I64) (I32) (I16) (I8) (U64) (U32) (U16) (U8) (F64) (F32) (Bool)
-               (Char) (Unit) (Ptr _) (MutPtr _) (String))
+               (Char) (Unit) (Ptr _) (MutPtr _) (String) (DynArray _))
             (Zii)]
           [(CFunc _ mode)
             (if (ast.ast-c-function-mode-nullable? mode)
               (Zii)
               (NotZii (NonNullCFunc)))]
-          [(DynArray _) (NotZii (DynBuffer))]
           [(Box _) (NotZii (Box))]
           [(Func _ _) (NotZii (Function))]
           [(or (Ref _ _) (MutRef _ _)) (NotZii (Reference))]
@@ -89314,9 +89458,11 @@
         env
         (FunctionEnter
           -1
-          (match (tc-global-shared-view body)
-            [(ast.AstExpr.Spanned inner _) inner]
-            [_ -1])
+          (if (>= body-id 0)
+            body-id
+            (match (tc-global-shared-view body)
+              [(ast.AstExpr.Spanned inner _) inner]
+              [_ -1]))
           (tc-global-shared-view params)
           (tc-global-shared-view ret))))
     (let
@@ -89369,14 +89515,19 @@
               (tc-context-semantic-observer ctx)
               ctx
               env
-              (FunctionLeave (ResultTcType.Ok (tc-global-shared-view ty))))
+              (FunctionLeave
+                true
+                (match (tc-type-strip-region (ast.clone-ast-type (& ty)))
+                  [(ast.AstType.Func _ return-box)
+                    (ast.AstMaybeType.Some (tc-context-type-get ctx return-box))]
+                  [_ ast.AstMaybeType.No])))
             (TcSelectedResult.Ok ty occurrence next)]
           [(TcSelectedResult.Err message next)
             (tc-semantic-observer-send!
               (tc-context-semantic-observer ctx)
               ctx
               env
-              (FunctionLeave (ResultTcType.Err (tc-global-shared-view message))))
+              (FunctionLeave false ast.AstMaybeType.No))
             (TcSelectedResult.Err message next)])
         result))))
 
@@ -93321,30 +93472,43 @@
           (+ index 1)
           (tc-string-list-add names (tc-env-key-name-text param-name)))])))
 
-;; Types a transformer body under the rules of macro transformer evaluation
-;; (#9628): see `defmacro-transformer-active`. The enclosing setting is restored
-;; afterwards, so the scope is exactly this body.
-(define (tc-defmacro-transformer-body-expr
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [params : (& params ast.AstMacroParamList)]
-  [body : ast.AstExpr]) : ResultTcType
+(defstruct TcDefmacroTransformerScope
+  (active bool)
+  (operands TcStringList))
+
+(define (tc-defmacro-transformer-enter!
+  [state : TcMacroState]
+  [params : (& ast.AstMacroParamList)]) : TcDefmacroTransformerScope
   (let
-    [state : TcMacroState (tc-context-macro-state ctx)]
-    [saved-active : bool
-      (tc-macro-walk-field state defmacro-transformer-active)]
-    [saved-operands : TcStringList
-      (tc-macro-walk-field state defmacro-transformer-operands)]
+    [saved : TcDefmacroTransformerScope
+      (TcDefmacroTransformerScope
+        (tc-macro-walk-field state defmacro-transformer-active)
+        (tc-macro-walk-field state defmacro-transformer-operands))]
     (tc-macro-walk-set! state defmacro-transformer-active true)
     (tc-macro-walk-set!
       state
       defmacro-transformer-operands
       (tc-macro-param-names-at params 0 Nil))
-    (let
-      [result : ResultTcType (tc-expr ctx env body)]
-      (tc-macro-walk-set! state defmacro-transformer-active saved-active)
-      (tc-macro-walk-set! state defmacro-transformer-operands saved-operands)
-      result)))
+    saved))
+
+(define (tc-defmacro-transformer-leave!
+  [state : TcMacroState]
+  [saved : TcDefmacroTransformerScope]) : unit
+  (tc-macro-walk-set! state defmacro-transformer-active saved.active)
+  (tc-macro-walk-set! state defmacro-transformer-operands saved.operands))
+
+(define (tc-defmacro-transformer-body-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [params : (& ast.AstMacroParamList)]
+  [body : ast.AstExpr]) : ResultTcType
+  (let
+    [state : TcMacroState (tc-context-macro-state ctx)]
+    [saved : TcDefmacroTransformerScope
+      (tc-defmacro-transformer-enter! state params)]
+    [result : ResultTcType (tc-expr ctx env body)]
+    (tc-defmacro-transformer-leave! state saved)
+    result))
 
 ;; Whether a `(comptime inner)` that did not fold at definition time belongs to
 ;; the transformer being checked: it names one of the transformer's operands,
@@ -118022,15 +118186,13 @@
               tc-dependency-tlci-interpreted-fallbacks)
             No)
           (begin
-            (embedded_tlci.compiler-comptime-host-session-open-with-macro-state!
+            (embedded_tlci.compiler-comptime-host-session-open-with-env!
               host-pools
               (& operands)
               count
               (ctfe_support.ctfe-fuel-limit)
               (macro-stdlib-tlci-native-cookie)
-              (ctfe_support.ctfe-env-reflections env)
-              (ctfe_support.ctfe-env-source-names env)
-              (ctfe_support.ctfe-env-macro-state env))
+              env)
             (cfg
               compile-profile
               (if (macro-tlci-resolved-catalog-dependency? catalog)
@@ -118058,6 +118220,16 @@
                       tc-profile-stdlib-entry-invoke-start-ns
                       tc-profile-stdlib-entry-invoke-ns
                       tc-profile-stdlib-entry-invoke-calls)))
+                ;; A native callback declined a protected representation.
+                ;; Let the interpreter produce E0221 at the exact operand.
+                (when
+                  embedded_tlci.compiler-comptime-host-reflection-denied?
+                  (embedded_tlci.compiler-comptime-host-session-close!)
+                  (macro-dependency-tlci-note-if!
+                    route-state
+                    catalog
+                    tc-dependency-tlci-interpreted-fallbacks)
+                  (return No))
                 (match dispatch-result
                   [(Err message)
                     (begin
@@ -118501,7 +118673,7 @@
                     ctx
                     fallback-module
                     fallback-module-id
-                    (tc-global-shared-view params)))
+                    (& params)))
                 (macro-hygiene-produced-eval-start-with-pools!
                   (tc-context-macro-state ctx)
                   syntax-pools)
@@ -119008,6 +119180,26 @@
                               (macro-type-literal-body-id (& decl))))
                           (Unavailable unavailable)))])]))])))))
 
+;; Expand executable transformer code with the definition module's macro
+;; namespace and the syntax-value types of its operands.
+(define (macro-expand-transformer-body
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [decls : (& ast.AstDeclList)]
+  [params : (& ast.AstMacroParamList)]
+  [body-id : i64]
+  [depth : i64]) : ResultMacroExpr
+  (let
+    [env : TcTypeEnv
+      (tc-bind-macro-params ctx (tc-macro-helper-env top-env) params)]
+    [state : TcMacroState (tc-context-macro-state ctx)]
+    [saved : TcDefmacroTransformerScope
+      (tc-defmacro-transformer-enter! state params)]
+    [result : ResultMacroExpr
+      (macro-expand-firing-node ctx env decls depth body-id)]
+    (tc-defmacro-transformer-leave! state saved)
+    result))
+
 (define (macro-eval-transformer-interpreted-with-env
   [ctx : TcContext]
   [fallback-module-id : i64]
@@ -119016,19 +119208,14 @@
   [macro-name-id : i64]
   ;; lint-allow: unused-variable -- used by compile-profile builds.
   [macro-name : String]
+  [params : (& ast.AstMacroParamList)]
   [body : ast.AstExpr]
+  [depth : i64]
   [captured-body? : bool]
   ;; lint-allow: unused-variable -- used by compile-profile builds.
   [expanded-args : ast.AstExprList]
   [env : ctfe_support.CtfeEnv]) : ResultMacroValueEnv
   (begin
-    (ctfe_support.ctfe-begin-macro-expansion!
-      (tc-context-ctfe-macro-state ctx)
-      (tc-context-module-id ctx))
-    (macro-result-provenance-reset-with-captured-body!
-      (tc-context-ctfe-macro-state ctx)
-      captured-body?)
-    (macro-hygiene-produced-eval-start! (tc-context-macro-state ctx) env)
     (cfg compile-profile (compiler-tc-macro-profile-start))
     (let
       [fallback : MacroTliFallbackBody
@@ -119069,17 +119256,72 @@
               fallback-module-id
               declaration-id
               env)])]
-      [eval-body : ast.AstExpr
+      [source-body : ast.AstExpr
         (match fallback
-          [(Source source-body _)
-            ;; Any AST nodes parsed while resolving the fallback body must stay
-            ;; below the expansion's produced-node floor so cached template
-            ;; nodes are never rewritten in place by hygiene.
-            (macro-hygiene-produced-eval-start-with-pools!
-              (tc-context-macro-state ctx)
-              (tc-context-pools ctx))
-            source-body]
+          [(Source source-body _) source-body]
           [_ body])]
+      [eval-body : ast.AstExpr
+        (if (macro-expr-might-fire-uncounted?
+          (tc-context-macro-state ctx)
+          (tc-context-expr-bases ctx)
+          (& source-body))
+          (let
+            [module : String (macro-decl-module-display fallback-module-id)]
+            [def-ctx : TcContext
+              (tc-context-with-module-id ctx (& module) fallback-module-id)]
+            ;; The name-set probe admits ordinary calls with colliding base
+            ;; names. Resolve candidates before building the transformer env.
+            (match (tc-context-program ctx)
+              [(Program decls)
+                (if (macro-expr-uses-macro?
+                  def-ctx
+                  (tc-context-expr-bases def-ctx)
+                  (deref decls)
+                  (& source-body)
+                  true)
+                  (let
+                    [def-env : TcTypeEnv
+                      (match (tc-hygiene-definition-env-id-inner
+                        def-ctx
+                        module
+                        fallback-module-id)
+                        [(Ok env) env]
+                        [(Err message)
+                          (return
+                            (Err
+                              (box
+                                (ctfe_support.ctfe-diagnostic-at-expr
+                                  (MacroUse)
+                                  (& source-body)
+                                  message))))])]
+                    [id : i64
+                      (try
+                        (match (tc-context-program def-ctx)
+                          [(Program definition-decls)
+                            (macro-expand-transformer-body
+                              def-ctx
+                              def-env
+                              (& (deref definition-decls))
+                              params
+                              (ast.ast-node-push source-body)
+                              (+ depth 1))]))]
+                    (tc-context-capture-active-pools! ctx)
+                    (ctfe_support.ctfe-env-adopt-active-pools! (& literal-env))
+                    (ctfe_support.ctfe-env-publish-owning-pools!
+                      (& literal-env))
+                    (tc-context-expr-get ctx id))
+                  source-body)]))
+          source-body)]
+      (ctfe_support.ctfe-begin-macro-expansion!
+        (tc-context-ctfe-macro-state ctx)
+        (tc-context-module-id ctx))
+      (macro-result-provenance-reset-with-captured-body!
+        (tc-context-ctfe-macro-state ctx)
+        captured-body?)
+      ;; Parsed fallback bodies and their expanded code are both templates.
+      (macro-hygiene-produced-eval-start-with-pools!
+        (tc-context-macro-state ctx)
+        (tc-context-pools ctx))
       (match (ctfe_support.ctfe-eval-node
         (& eval-body)
         (ctfe_support.ctfe-env-extend-id
@@ -119167,6 +119409,7 @@
   [params : ast.AstMacroParamList]
   [ret : ast.AstType]
   [body : ast.AstExpr]
+  [depth : i64]
   [expanded-args : ast.AstExprList]
   [call-expr : ast.AstExpr]) : ResultMacroValueEnv
   (let
@@ -119196,7 +119439,7 @@
           ctx
           (tc-global-shared-view fallback-module)
           fallback-module-id
-          (tc-global-shared-view params)))
+          (& params)))
       (macro-hygiene-produced-eval-start! (tc-context-macro-state ctx) env)
       (cfg compile-profile (compiler-tc-macro-profile-start))
       (match (let
@@ -119244,12 +119487,14 @@
             declaration-id
             macro-name-id
             macro-name
+            (& params)
             body
+            depth
             (macro-binding-prefix-transformer?
               ctx
               fallback-module
               fallback-module-id
-              params)
+              (& params))
             expanded-args
             env)]))))
 
@@ -119267,6 +119512,7 @@
   [params : ast.AstMacroParamList]
   [ret : ast.AstType]
   [body : ast.AstExpr]
+  [depth : i64]
   [expanded-args : ast.AstExprList]
   [call-expr : ast.AstExpr]) : ResultMacroValue
   ;; The shared expansion environment lives in the pool's base arena. Its
@@ -119298,6 +119544,7 @@
         params
         ret
         body
+        depth
         expanded-args
         call-expr)]
     (when env-ready? (ctfe_support.ctfe-env-release-bindings-to! (& env) mark))
@@ -119315,6 +119562,7 @@
   [params : ast.AstMacroParamList]
   [ret : ast.AstType]
   [body : ast.AstExpr]
+  [depth : i64]
   [expanded-args : ast.AstExprList]
   [call-expr : ast.AstExpr]) : ResultMacroValue
   (macro-prepare-transformer-pools! ctx)
@@ -119340,12 +119588,14 @@
         declaration-id
         macro-name-id
         macro-name
+        (& params)
         body
+        depth
         (macro-binding-prefix-transformer?
           ctx
           fallback-module
           fallback-module-id
-          params)
+          (& params))
         expanded-args
         env)
         [(Ok value _) (Ok value)]
@@ -119371,12 +119621,14 @@
           declaration-id
           macro-name-id
           macro-name
+          (& params)
           body
+          depth
           (macro-binding-prefix-transformer?
             ctx
             fallback-module
             fallback-module-id
-            params)
+            (& params))
           expanded-args
           env)
           [(Ok value _) (Ok value)]
@@ -119394,6 +119646,7 @@
         params
         ret
         body
+        depth
         expanded-args
         call-expr)
         [(Ok value _) (Ok value)]
@@ -119548,22 +119801,22 @@
   [ctx : TcContext]
   [fallback-module : String]
   [fallback-module-id : i64]
-  [params : ast.AstMacroParamList]) : bool
+  [params : (& ast.AstMacroParamList)]) : bool
   ;; Most macros fail the in-place shape test; only a two-parameter,
   ;; all-variadic signature reaches the typed parameter checks.
   (if (not
     (and
-      (= (ast.ast-macro-param-list-len (& params)) 2)
-      (macro-param-variadic-at? (& params) 0)
-      (macro-param-variadic-at? (& params) 1)))
+      (= (ast.ast-macro-param-list-len params) 2)
+      (macro-param-variadic-at? params 0)
+      (macro-param-variadic-at? params 1)))
     false
     (match (ast.ast-macro-param-list-get
-      (& params)
+      params
       0
       (ast.ast-macro-param-fallback))
       [(Param _ binding-ty _ _)
         (match (ast.ast-macro-param-list-get
-          (& params)
+          params
           1
           (ast.ast-macro-param-fallback))
           [(Param _ body-ty _ _)
@@ -119608,7 +119861,7 @@
           ctx
           (tc-global-shared-view fallback-module)
           fallback-module-id
-          (tc-global-shared-view params))
+          (& params))
           (macro-expand-binding-prefix-args
             ctx
             type-env
@@ -119628,6 +119881,7 @@
       params
       ret
       body
+      depth
       expanded-args
       call-expr)))
 
@@ -123070,8 +123324,28 @@
       (Ok expr-id)
       (macro-expand-node-fire-expected ctx env decls depth expr-id expected))))
 
-;; Non-tail node entry: save and restore `scratch-without-expected-count` so
-;; scratch forms in non-tail positions never trigger retries in enclosing forms.
+;; The caller has already checked whether the tree can fire. Save and restore
+;; the scratch count so a non-tail form cannot trigger retries in enclosing forms.
+(define (macro-expand-firing-node
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : (& decls ast.AstDeclList)]
+  [depth : i64]
+  [expr-id : i64]) : ResultMacroExpr
+  (let
+    [state : TcMacroState (tc-context-macro-state ctx)]
+    [scratch-mark : i64 (tc-macro-scratch-without-expected-count state)]
+    [result : ResultMacroExpr
+      (macro-expand-node-fire-expected
+        ctx
+        env
+        decls
+        depth
+        expr-id
+        (ast.AstMaybeType.No))]
+    (tc-macro-scratch-without-expected-restore! state scratch-mark)
+    result))
+
 (define (macro-expand-node
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -123085,21 +123359,9 @@
         macro-state
         (tc-context-expr-bases ctx)
         (tc-context-expr-get ctx expr-id))]
-    (if (not fires)
-      (Ok expr-id)
-      (let
-        [scratch-mark : i64
-          (tc-macro-scratch-without-expected-count macro-state)]
-        [result : ResultMacroExpr
-          (macro-expand-node-fire-expected
-            ctx
-            env
-            decls
-            depth
-            expr-id
-            (ast.AstMaybeType.No))]
-        (tc-macro-scratch-without-expected-restore! macro-state scratch-mark)
-        result))))
+    (if fires
+      (macro-expand-firing-node ctx env decls depth expr-id)
+      (Ok expr-id))))
 
 ;; One subtree scan per visit: the caller's single `fires` answer both picks
 ;; the no-fire arm and gates this call.
@@ -124161,6 +124423,18 @@
           [nbody : i64 (try nbody-result)]
           (Ok
             (ast.ast-decl-def-fn-metadata-id name params ret nbody (& metadata))))]
+      [(DefMacro decl-meta name params ret body-id)
+        (let
+          [expanded : i64
+            (try
+              (macro-expand-transformer-body
+                ctx
+                top-env
+                (& decls)
+                (& params)
+                body-id
+                0))]
+          (Ok (DefMacro decl-meta name params ret expanded)))]
       [(Test _ _ _ _) (Ok decl)]
       [(Import decl-meta (Spec kind _ _ _ _))
         (match kind
@@ -125336,6 +125610,7 @@
                                   (tc-global-shared-view params)
                                   ret
                                   body
+                                  0
                                   expanded-args
                                   (tc-global-shared-view call-expr))
                                   [(Ok value macro-env)
@@ -125660,6 +125935,7 @@
                                         (tc-global-shared-view params)
                                         ret
                                         body
+                                        0
                                         expanded-args
                                         (tc-global-shared-view call-expr))
                                         [(Ok value macro-env)
@@ -126561,68 +126837,79 @@
     ctx
     expr-bases
     decls
-    (ast.ast-expr-segment-bases-get expr-bases id)))
+    (& (ast.ast-expr-segment-bases-get expr-bases id))
+    false))
 
 (define (macro-exprs-use-macro?
   [ctx : TcContext]
   [expr-bases : i64]
   [decls : ast.AstDeclList]
-  [exprs : ast.AstExprList]) : bool
-  (macro-exprs-use-macro-at? ctx expr-bases decls (& exprs) 0))
-
-(define (macro-exprs-use-macro-at?
-  [ctx : TcContext]
-  [expr-bases : i64]
-  [decls : ast.AstDeclList]
   [exprs : (& exprs ast.AstExprList)]
-  [index : i64]) : bool
-  (if (>= index exprs.len)
-    false
-    (or
-      (macro-node-uses-macro?
+  [transformer? : bool]) : bool
+  (for [index (iterator.range 0 exprs.len)]
+    (when
+      (macro-expr-uses-macro?
         ctx
         expr-bases
         (tc-global-shared-view decls)
-        (ast.ast-expr-list-get exprs index 0))
-      (macro-exprs-use-macro-at? ctx expr-bases decls exprs (+ index 1)))))
+        (&
+          (ast.ast-expr-segment-bases-get
+            expr-bases
+            (ast.ast-expr-list-get exprs index 0)))
+        transformer?)
+      (return true)))
+  false)
 
 (define (macro-expr-uses-macro?
   [ctx : TcContext]
   [expr-bases : i64]
   [decls : ast.AstDeclList]
-  [expr : ast.AstExpr]) : bool
-  (match (tc-global-shared-view expr)
-    [(Call func-box args)
-      (let
-        [func : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases func-box)]
-        (or
-          (macro-call-is-expandable?
-            ctx
-            (tc-global-shared-view decls)
-            (tc-global-shared-view func)
-            expr)
-          (macro-expr-uses-macro?
-            ctx
-            expr-bases
-            (tc-global-shared-view decls)
-            func)
-          (macro-exprs-use-macro? ctx expr-bases decls args)))]
-    ;; The index is a literal integer, not an expression.
-    [(TupleRef a _) (macro-node-uses-macro? ctx expr-bases decls a)]
-    ;; These forms are conservatively assumed to use a macro. A scratch form
-    ;; takes its clone-out step from expansion.
-    [(or (Break) (Continue) (SpmdReduce _) (SpmdScan _) (SpmdCompact _)
-         (SpmdBroadcast _ _) (SpmdShuffle _ _) (WithRegion _ _) (WithResource _)
-         (Quote _) (Quasiquote _) (Unquote _) (UnquoteSplicing _)
-         (ForOwnedState _) (ForOwnedStep _) (WithEscape _ _) (WithScratch _))
-      true]
-    [_
-      (macro-exprs-use-macro?
-        ctx
-        expr-bases
-        decls
-        (ast.ast-expr-child-ids expr))]))
+  [expr : (& ast.AstExpr)]
+  [transformer? : bool]) : bool
+  (let
+    [node : ast.AstExpr (owned_view.compiler-owned-reference-shared-view expr)]
+    (match expr
+      [(Call func-box args)
+        (let
+          [func : ast.AstExpr
+            (ast.ast-expr-segment-bases-get expr-bases func-box)]
+          (or
+            (macro-call-is-expandable?
+              ctx
+              (tc-global-shared-view decls)
+              (tc-global-shared-view func)
+              node)
+            (macro-expr-uses-macro?
+              ctx
+              expr-bases
+              (tc-global-shared-view decls)
+              (& func)
+              transformer?)
+            (macro-exprs-use-macro? ctx expr-bases decls args transformer?)))]
+      ;; The index is a literal integer, not an expression.
+      [(TupleRef a _)
+        (macro-expr-uses-macro?
+          ctx
+          expr-bases
+          decls
+          (& (ast.ast-expr-segment-bases-get expr-bases a))
+          transformer?)]
+      [(or (Quote _) (Quasiquote _) (Unquote _) (UnquoteSplicing _))
+        (not transformer?)]
+      ;; These forms are conservatively assumed to use a macro. A scratch form
+      ;; takes its clone-out step from expansion.
+      [(or (Break) (Continue) (SpmdReduce _) (SpmdScan _) (SpmdCompact _)
+           (SpmdBroadcast _ _) (SpmdShuffle _ _) (WithRegion _ _)
+           (WithResource _) (ForOwnedState _) (ForOwnedStep _) (WithEscape _ _)
+           (WithScratch _))
+        true]
+      [_
+        (macro-exprs-use-macro?
+          ctx
+          expr-bases
+          decls
+          (& (ast.ast-expr-child-ids node))
+          transformer?)])))
 
 (define (macro-decl-uses-macro?
   [ctx : TcContext]
@@ -126632,6 +126919,19 @@
   (match decl
     [(or (Def _ _ _ expr-box) (DefFn _ _ _ _ expr-box _))
       (macro-node-uses-macro? ctx expr-bases decls expr-box)]
+    [(DefMacro _ _ _ _ expr-box)
+      ;; The transformer check treats quoted templates as leaves.
+      (and
+        (macro-expr-id-might-fire?
+          (tc-context-macro-state ctx)
+          expr-bases
+          expr-box)
+        (macro-expr-uses-macro?
+          ctx
+          expr-bases
+          decls
+          (& (ast.ast-expr-segment-bases-get expr-bases expr-box))
+          true))]
     [(Test _ _ _ _) true]
     [(Import decl-meta (Spec kind _ _ _ _))
       (match kind
@@ -126652,7 +126952,7 @@
 ;; detach.
 (define (macro-decl-expansion-can-change-program? [decl : (& decl ast.AstDecl)]) : bool
   (match decl
-    [(or (Def _ _ _ _) (DefFn _ _ _ _ _ _)) true]
+    [(or (Def _ _ _ _) (DefFn _ _ _ _ _ _) (DefMacro _ _ _ _ _)) true]
     [(Import _ (Spec kind _ _ _ _))
       (match kind
         [(or (Macro _ _) (MacroDecls _ _)) true]
@@ -126707,7 +127007,7 @@
         (let
           [body : ast.AstExpr
             (ast.ast-expr-segment-bases-get expr-bases body-box)]
-          (if (macro-expr-might-fire-uncounted? state expr-bases body)
+          (if (macro-expr-might-fire-uncounted? state expr-bases (& body))
             index
             (macro-match-arms-first-fire-index-at
               state
@@ -126719,7 +127019,7 @@
   [state : TcMacroState]
   [expr-bases : i64]
   [expr : ast.AstExpr]) : bool
-  (macro-expr-might-fire-uncounted? state expr-bases expr))
+  (macro-expr-might-fire-uncounted? state expr-bases (& expr)))
 
 (define (macro-expr-id-might-fire?
   [state : TcMacroState]
@@ -126728,7 +127028,7 @@
   (macro-expr-might-fire-uncounted?
     state
     expr-bases
-    (ast.ast-expr-segment-bases-get expr-bases expr-id)))
+    (& (ast.ast-expr-segment-bases-get expr-bases expr-id))))
 
 (define (macro-expr-list-might-fire?
   [state : TcMacroState]
@@ -126742,9 +127042,10 @@
       (if (macro-expr-might-fire-uncounted?
         state
         expr-bases
-        (ast.ast-expr-segment-bases-get
-          expr-bases
-          (ast.ast-expr-list-get exprs index 0)))
+        (&
+          (ast.ast-expr-segment-bases-get
+            expr-bases
+            (ast.ast-expr-list-get exprs index 0))))
         (set! found true)
         (set! index (+ index 1))))
     found))
@@ -126766,7 +127067,7 @@
           (if (macro-expr-might-fire-uncounted?
             state
             expr-bases
-            (ast.ast-expr-segment-bases-get expr-bases init-box))
+            (& (ast.ast-expr-segment-bases-get expr-bases init-box)))
             (set! found true)
             (set! index (+ index 1)))]))
     found))
@@ -126774,29 +127075,28 @@
 (define (macro-expr-might-fire-uncounted?
   [state : TcMacroState]
   [expr-bases : i64]
-  [expr : ast.AstExpr]) : bool
-  (match (& expr)
+  [expr : (& ast.AstExpr)]) : bool
+  (match expr
     [(Spanned inner-box _)
       (macro-expr-might-fire-uncounted?
         state
         expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
+        (& (ast.ast-expr-segment-bases-get expr-bases inner-box)))]
     [(or (Literal _) (Var _) (CloneOut _ _) (TypeLiteral _) (PtrNull _)
          (BinaryData _) (ProgramArgc) (ProgramArgv) (ProgramEnvp)
-         (SpmdProgramIndex) (SpmdProgramCount))
+         (SpmdProgramIndex) (SpmdProgramCount) (Quote _) (Quasiquote _)
+         (Unquote _) (UnquoteSplicing _))
       false]
     ;; Expansion gives every scratch form its clone-out step, once.
-    ;; Quoted templates and loop-control forms stay on the conservative path.
-    [(or (WithScratch _) (WithEscape _ _) (Quote _) (Quasiquote _) (Unquote _)
-         (UnquoteSplicing _) (Break) (Continue))
-      true]
+    ;; Loop-control forms stay on the conservative path.
+    [(or (WithScratch _) (WithEscape _ _) (Break) (Continue)) true]
     [(Call func-box args)
       (let
         [func : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases func-box)]
         (or
           (macro-call-callee-maybe-macro-ref? expr-bases state (& func))
-          (macro-expr-might-fire-uncounted? state expr-bases func)
+          (macro-expr-might-fire-uncounted? state expr-bases (& func))
           (macro-expr-list-might-fire? state expr-bases args)))]
     [(or (Begin items) (Unsafe items) (Tuple items) (Array items)
          (DynArray items) (BracketClause items) (WithRegion _ items)
@@ -127811,6 +128111,44 @@
     [(Some _ _ _ _ _ _) true]
     [(No) false]))
 
+;; A generated body can hit reflection before source policy has checked its
+;; storage declarations. If both reject opaque access, report the source
+;; declaration error from the materialized program.
+(define (macro-generated-opacity-diagnostic
+  [ctx : TcContext]
+  [decl : (& ast.AstDecl)]
+  [diag : (Box cdiag.CompilerDiagnostic)]) : (Box cdiag.CompilerDiagnostic)
+  (match (ast.ast-decl-generated-meta decl)
+    [(No) diag]
+    [(Some _ _ _ _)
+      (let
+        [opaque-code : String
+          (cdiag.compiler-diagnostic-code-typecheck-opaque-representation)]
+        (if (string.eq
+          (cdiag.compiler-diagnostic-code-or-empty (& (deref diag)))
+          opaque-code)
+          (let
+            [job : TcJobState (tc-context-job-state ctx)]
+            [saved-opacity : i64 (tc-job-state-field job opaque-program i64)]
+            [flat : MacroSegmentedProgramFlatView
+              (macro-segmented-program-flatten-raw job)]
+            [source-policy : ResultTcSourcePolicyDiagnostic
+              (tc-program-source-types-policy-ok
+                ctx
+                (ast.ast-program flat.decls)
+                flat.paths)]
+            (tc-job-state-set-opaque-program! job saved-opacity)
+            (match source-policy
+              [(Ok) diag]
+              [(Err source-diag)
+                (if (string.eq
+                  (cdiag.compiler-diagnostic-code-or-empty
+                    (& (deref source-diag)))
+                  opaque-code)
+                  source-diag
+                  diag)]))
+          diag))]))
+
 ;; The single demand-driven expansion walk. Every macro placeholder is expanded
 ;; and its splice forced inline: the walk rebuilds the whole-program
 ;; symbols/env over the spliced view (macro-expand-rebuild-context-for-splice)
@@ -128551,7 +128889,15 @@
                               (tc-global-shared-view out-rev)
                               (tc-global-shared-view out-paths-rev))]
                           [(Err diag)
-                            (set! result (Err diag))
+                            (set!
+                              result
+                              (Err
+                                (macro-generated-opacity-diagnostic
+                                  cur-ctx
+                                  (&
+                                    (macro-segmented-program-current-decl
+                                      walk-state))
+                                  diag)))
                             (set! done true)]))])]))])))
     (macro-segmented-program-end! walk-state)
     (tc-context-restore-provider! ctx prev-provider prev-prov-id)
@@ -135376,7 +135722,7 @@
               semantic-observer
               ctx
               global-env
-              (FunctionLeave (ResultTcType.Err (tc-global-shared-view message))))
+              (FunctionLeave false ast.AstMaybeType.No))
             (tc-scoped-state-set-semantic-observer!
               (tc-job-state-type-env-scoped-state (tc-context-job-state ctx))
               (TcSemanticObserver 0)))
@@ -135409,7 +135755,7 @@
                 semantic-observer
                 ctx
                 env
-                (FunctionLeave (ResultTcType.Err (tc-selected-error error))))
+                (FunctionLeave false ast.AstMaybeType.No))
               (tc-scoped-state-set-semantic-observer!
                 (tc-job-state-type-env-scoped-state (tc-context-job-state ctx))
                 (TcSemanticObserver 0)))
@@ -135433,19 +135779,15 @@
           [(TcSelectedClosedResult.Ok ty root)
             (set! selected-root root)
             (ResultTcType.Ok ty)]))]
-    [_semantic-function-leave : unit
+    [_semantic-body-checked : unit
       (when
         (!= semantic-observer.address 0)
-        (tc-semantic-observer-send!
-          semantic-observer
-          ctx
-          env
-          (FunctionLeave (tc-global-shared-view typed-result)))
         (tc-scoped-state-set-semantic-observer!
           (tc-job-state-type-env-scoped-state (tc-context-job-state ctx))
           (TcSemanticObserver 0))
         (tc-context-set-semantic-observer! ctx (TcSemanticObserver 0)))]
     [_scoped-restored : unit (tc-type-env-scoped-runtime-restore! scoped-save)]
+    [return-compatible? : bool false]
     [result : ResultTcUnit
       (match typed-result
         [(ResultTcType.Ok inferred)
@@ -135462,7 +135804,9 @@
                 [(TcInferredTypeMatch.Mismatch actual) actual])]
             [expect-result : ResultTcUnit
               (match matched-got
-                [(TcInferredTypeMatch.Compatible _) ResultTcUnit.Ok]
+                [(TcInferredTypeMatch.Compatible _)
+                  (set! return-compatible? true)
+                  ResultTcUnit.Ok]
                 [(TcInferredTypeMatch.Mismatch actual)
                   ;; A mismatch only in region tags is the value's region
                   ;; escaping, named at the value (#9604). Only this error
@@ -135543,6 +135887,11 @@
     (typed.typed-store-retire! (&mut store))
     (when
       (!= semantic-observer.address 0)
+      (tc-semantic-observer-send!
+        semantic-observer
+        ctx
+        env
+        (FunctionLeave return-compatible? ast.AstMaybeType.No))
       (tc-context-set-semantic-observer! ctx semantic-observer))
     result))
 
@@ -135624,6 +135973,10 @@
   (let
     [scratch-state : TcScratchArenaState
       (tc-job-state-scratch-arenas (tc-context-job-state ctx))]
+    [unsafe-tracking : TcUnusedUnsafeState
+      (tc-job-state-unused-unsafe (tc-context-job-state ctx))]
+    [suspended? : bool
+      (tc-unused-unsafe-suspend-function! unsafe-tracking name)]
     [enclosing : i64 (arena.tl_arena_current)]
     [scratch : i64 (tc-fn-scratch-arena-get scratch-state)]
     (unsafe
@@ -135646,13 +135999,19 @@
           (match raw
             [(Ok) Ok]
             [(Err message)
-              (Err
-                (stdlib.string.copy (tc-unbound-finalize-located-error message)))])]
+              ;; Lint adds private test bodies to the shared check. The
+              ;; runtime-only unsafe fallback treats those bodies as absent.
+              (if suspended?
+                Ok
+                (Err
+                  (stdlib.string.copy
+                    (tc-unbound-finalize-located-error message))))])]
         [new-enclosing : i64 (arena.tl_arena_current)]
         (unsafe
           (arena.tl_arena_set scratch-head)
           (arena.tl_region_reset mark)
           (arena.tl_arena_set new-enclosing))
+        (tc-unused-unsafe-resume-function! unsafe-tracking suspended?)
         (tc-type-env-retire-function-store! (tc-context-job-state ctx))
         escaped))))
 
@@ -136533,16 +136892,13 @@
   [stdlib-roots : svec.Vec]
   [cache-scope : String]) : ResultCompilerTypecheck
   (tc-arena-store-begin-final! ctx)
-  ;; A cached prefix contains only its summary, not semantic observations from
-  ;; the declarations it skipped. Consumers requiring complete let facts take
-  ;; the ordinary walk. Lowering may infer missing facts after trusted surface
-  ;; hydration.
+  ;; Cached prefixes end before entry bodies. Full observation and complete
+  ;; let facts require walking those prefixes as well.
   (cond
     [(or
-        (not
-          (or
-            (= tc-semantic-observed-jobs 0)
-            (= (tc-context-semantic-observer ctx).address 0)))
+        (and
+          (> tc-semantic-observed-jobs 0)
+          (tc-semantic-observer-full-prefix? (tc-context-semantic-observer ctx)))
         (tc-checked-let-binding-facts-complete-required?
           (tc-job-state-checked-let-binding-facts (tc-context-job-state ctx))))
       (tc-check-decls-with-paths-cold ctx top-env decls paths summary)]
@@ -137090,6 +137446,15 @@
                     (tc-selected-source-path-set!
                       decl-ctx
                       (tc-global-shared-view decl-path))]
+                  [observer : TcSemanticObserver
+                    (tc-context-semantic-observer decl-ctx)]
+                  [skip-observation? : bool
+                    (tc-semantic-observer-skips-source? observer (& decl-path))]
+                  (when
+                    skip-observation?
+                    (tc-context-set-semantic-observer!
+                      decl-ctx
+                      (TcSemanticObserver 0)))
                   (tc-context-capture-active-pools! decl-ctx)
                   (tc-poison-observation-reset!)
                   (when
@@ -137113,6 +137478,9 @@
                         cur-local-env
                         cur-global-env
                         (tc-global-shared-view decl))]
+                    (when
+                      skip-observation?
+                      (tc-context-set-semantic-observer! decl-ctx observer))
                     (tc-global-effect-bind-query-path!
                       decl-ctx
                       (tc-global-shared-view decl-path))

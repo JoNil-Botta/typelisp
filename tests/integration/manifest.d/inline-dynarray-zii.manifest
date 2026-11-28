@@ -1,0 +1,4 @@
+# Native integration cases: inline 16-byte DynArray representation and ZII (#7963).
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+inline_dynarray_zii|all|0,1,2|tests/integration/inline_dynarray_zii.tl|42|-|-|stdlib/string.tl stdlib/iterator.tl|-

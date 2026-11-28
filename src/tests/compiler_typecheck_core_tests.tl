@@ -2893,11 +2893,11 @@
     [(Cache cache-ptr _ partial _ below)
       (let
         [ids : tc_i64_i64_map.Map
-          (tc_core.tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
+          (tc_core.tc-type-env-cache-field-at cache-ptr ids tc_i64_i64_map.Map)]
         [values : (__tl_dyn-array ast.AstType)
           (tc_core.tc-type-env-cache-field-at
             cache-ptr
-            56
+            values
             (__tl_dyn-array ast.AstType))]
         (match (tc_i64_i64_map.get (& ids) name-id)
           [(LookupFound index)
@@ -2921,14 +2921,17 @@
     [(Cache cache-ptr _ partial _ below)
       (let
         [ids : tc_i64_i64_map.Map
-          (tc_core.tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
+          (tc_core.tc-type-env-cache-field-at cache-ptr ids tc_i64_i64_map.Map)]
         [values : (__tl_dyn-array ast.AstType)
           (tc_core.tc-type-env-cache-field-at
             cache-ptr
-            56
+            values
             (__tl_dyn-array ast.AstType))]
         [unsafe-flags : (__tl_dyn-array i64)
-          (tc_core.tc-type-env-cache-field-at cache-ptr 64 (__tl_dyn-array i64))]
+          (tc_core.tc-type-env-cache-field-at
+            cache-ptr
+            unsafe-flags
+            (__tl_dyn-array i64))]
         (match (tc_i64_i64_map.get (& ids) name-id)
           [(LookupFound index)
             ;; AstType read must stay `array-ref`; the unsafe flag is a
@@ -4368,18 +4371,23 @@
         (tc_core.tc-type-env-cache-index env.head))]
     [cache : tc_core.TcTypeEnvCache (tc_core.tc-type-env-cache-at cache-ptr)]
     [raw-shadow : (__tl_dyn-array i64)
-      (tc_core.tc-type-env-cache-field-at cache-ptr 72 (__tl_dyn-array i64))]
+      (tc_core.tc-type-env-cache-field-at
+        cache-ptr
+        shadow-flags
+        (__tl_dyn-array i64))]
     (and
       (unsafe
         (=
           (ptr->int (__tl_array-data raw-shadow))
           (ptr->int (__tl_array-data cache.shadow-flags))))
       (=
-        (tc_core.tc-type-env-cache-field-at cache-ptr 80 bool)
+        (tc_core.tc-type-env-cache-field-at cache-ptr scan-through bool)
         cache.scan-through)
-      (= (tc_core.tc-type-env-cache-field-at cache-ptr 81 bool) cache.partial)
-      (= (tc_core.tc-type-env-cache-field-at cache-ptr 88 i64) cache.rest)
-      (= (tc_core.tc-type-env-cache-field-at cache-ptr 96 i64) cache.below))))
+      (=
+        (tc_core.tc-type-env-cache-field-at cache-ptr partial bool)
+        cache.partial)
+      (= (tc_core.tc-type-env-cache-field-at cache-ptr rest i64) cache.rest)
+      (= (tc_core.tc-type-env-cache-field-at cache-ptr below i64) cache.below))))
 
 (define (tc-type-env-cache-raw-fields-smoke?) : bool
   (let
@@ -18035,6 +18043,7 @@
         [recorder : facts.CompilerSemanticFactRecorder
           (facts.compiler-semantic-fact-recorder-new
             (string.copy (& path))
+            false
             false)]
         (tc_core.tc-job-state-set-parser-control!
           job

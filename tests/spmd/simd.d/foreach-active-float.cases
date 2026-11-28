@@ -1,0 +1,32 @@
+target -
+opt 0 1 2
+
+file active_float.tl
+(import stdlib.math)
+
+(define (main) : i64
+  (let
+    [sum : i64 0]
+    (foreach
+      ([i : i64 0 4])
+      (foreach-active
+        [lane : i64]
+        (set! sum (+ sum (+ (cast (math.f64-sqrt 81.0) : i64) (lane-value i))))))
+    sum))
+end-file
+
+case foreach-active-float-scalar
+source {{work}}/active_float.tl
+mode scalar
+do link-run
+exit 42
+in stderr
+empty
+
+case foreach-active-float-simd
+source {{work}}/active_float.tl
+mode sse2 avx2 avx512
+do compile
+exit 1
+in stderr
+contains SPMD float intrinsic requires scalar-reference foreach lowering, which cannot preserve foreach-active or lane-value

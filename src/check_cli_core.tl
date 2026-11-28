@@ -62,8 +62,7 @@
     [batch-path : String ""]
     [has-batch : bool false]
     [sysroot : tli_cli.TliSysrootOptions (tli_cli.tli-sysroot-options)]
-    [options : cli_option.CliCompileOptions
-      (cli_option.cli-compile-options (target_cfg.compiler-target-cfg-host) 1)]
+    [options : cli_option.CliCompileOptions (cli_option.cli-compile-options)]
     (tli_cli.tli-reset-active-sysroot-options!)
     (while (cli_option.cli-args-next! (&mut args))
       (cond

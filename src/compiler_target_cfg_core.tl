@@ -17,9 +17,6 @@
   (Ok CompilerTargetCfg)
   (Err String))
 
-(define (compiler-target-cfg-default) : CompilerTargetCfg
-  Linux)
-
 (define (compiler-target-cfg-host) : CompilerTargetCfg
   (cfg windows Windows Linux))
 

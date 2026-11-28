@@ -146,9 +146,10 @@
 ;; Postorder DFS over the directory. Pending rows are never exposed, even
 ;; when their own digest and cfg have already passed. The directory bounds
 ;; the explicit stack regardless of import depth in the input.
-(define (tli-catalog-hydrate!
+(define (tli-catalog-hydrate-inner!
   [catalog : (&mut catalog TliCatalog)]
-  [name : (& name str)]) : TliHydrateResult
+  [name : (& name str)]
+  [check-cfg? : bool]) : TliHydrateResult
   (when
     catalog.failed
     (return
@@ -187,10 +188,13 @@
                 (set! catalog.failed true)
                 (return (Err failure))]
               [(Ok record used)
-                (unless
-                  (codec.tli-digest-eq?
-                    (& record.cfg-fingerprint-sha256)
-                    (& catalog.cfg-digest))
+                (when
+                  (and
+                    check-cfg?
+                    (not
+                      (codec.tli-digest-eq?
+                        (& record.cfg-fingerprint-sha256)
+                        (& catalog.cfg-digest))))
                   (return
                     (tli-catalog-fail!
                       (&mut catalog.failed)
@@ -258,6 +262,27 @@
   (:lifetimes catalog)
   (Some (& catalog tli.TliModuleRecord))
   (None))
+
+(define (tli-catalog-hydrate!
+  [catalog : (&mut catalog TliCatalog)]
+  [name : (& name str)]) : TliHydrateResult
+  (tli-catalog-hydrate-inner! catalog name true))
+
+;; CLI preflight precedes the compile job's effective cfg selection. Consume
+;; this catalog so records verified here never enter the job's cfg cache.
+(define (tli-catalog-check-prelude [catalog : TliCatalog]) : TliHydrateResult
+  (tli-catalog-hydrate-inner! (&mut catalog) "stdlib.core_macros" false))
+
+;; Transfer decoded storage without pre-marking any multi-catalog traversal
+;; states. The multi-catalog still walks pins and computes its own postorder.
+(define (tli-catalog-decoded-flags [catalog : (& TliCatalog)]) : (__tl_dyn-array
+    bool)
+  (let
+    [count : i64 (array-length catalog.states)]
+    [decoded : (__tl_dyn-array bool) (__tl_make-array bool count)]
+    (for [i (iterator.range 0 count)]
+      (set! (array-ref decoded i) (= (array-ref catalog.states i) 2)))
+    decoded))
 
 (define (tli-catalog-record [catalog : (& catalog TliCatalog)] [index : i64]) : (TliCatalogRecord
     catalog)
@@ -462,7 +487,8 @@
   (type-id i64)
   (cleanup TliHydratedCleanup)
   (byte-offset i64)
-  (explicit-align i64))
+  (explicit-align i64)
+  (opaque? bool))
 
 (define (tli-hydrate-field [row : (& tli.TliField)]) : TliHydratedField
   (TliHydratedField
@@ -470,7 +496,8 @@
     (tli-hydrate-type-id (& row.ty))
     (tli-hydrate-cleanup (& row.cleanup))
     row.byte-offset
-    row.explicit-align))
+    row.explicit-align
+    row.opaque?))
 
 (defstruct TliHydratedPayload
   (type-id i64)
@@ -974,18 +1001,12 @@
     [(> (string.string-length source-path) 0)
       (let
         [qualified : String
-          (str_cat.str-cat
-            (string.copy source-path)
-            "::"
-            (string.copy link-symbol))]
+          (string.concat3-borrowed source-path "::" link-symbol)]
         (tli-hydrate-archive-user-symbol (& qualified)))]
     [(> (string.string-length module-name) 0)
       (let
         [qualified : String
-          (str_cat.str-cat
-            (string.copy module-name)
-            "/"
-            (string.copy link-symbol))]
+          (string.concat3-borrowed module-name "/" link-symbol)]
         (tli-hydrate-archive-user-symbol (& qualified)))]
     [else (tli-hydrate-archive-user-symbol link-symbol)]))
 
@@ -1131,6 +1152,7 @@
 (import (vector.vector TliHydratedSpmdInline core) as spmd_inline_vec)
 (import (vector.vector TliHydratedMacroEntry core) as macro_vec)
 (import (vector.vector TliHydratedTypeLayout core) as layout_vec)
+(import (vector.vector (__tl_dyn-array i64) core) as archive_symbols_vec)
 
 (defstruct TliHydratedFacts
   (owner-arena i64)
@@ -1142,6 +1164,9 @@
   (fn-summary-slots tli_i64_map.Map)
   (fn-summary-by-link-slots tli_i64_map.Map)
   (fn-summaries fn_summary_vec.Vec)
+  ;; In projection order, matching the multi-catalog's startup order.
+  ;; Each array stores function, value, and dispatch archive IDs in row order.
+  (archive-symbols archive_symbols_vec.Vec)
   (spmd-inline-slots tli_i64_map.Map)
   (spmd-inline-entries spmd_inline_vec.Vec)
   (macro-slots tli_i64_map.Map)
@@ -1160,6 +1185,7 @@
     (tli_i64_map.with-capacity 256)
     (tli_i64_map.with-capacity 256)
     (fn_summary_vec.new)
+    (archive_symbols_vec.new)
     (tli_i64_map.with-capacity 8)
     (spmd_inline_vec.new)
     (tli_i64_map.with-capacity 64)
@@ -1475,7 +1501,6 @@
         (!= (bit-and row.flags 4) 0)
         (not (string.eq (& row.module-name) "stdlib.comptime")))]
     [unsafe-decl : bool (!= (bit-and row.flags 8) 0)]
-    [meta : ast.AstDeclMeta (tli-hydrate-decl-meta comptime-only markers)]
     [lifetimes : ast.AstLifetimeList (tli-hydrate-lifetimes (& row.lifetimes))]
     (match (& row.body)
       [(Struct fields)
@@ -1485,19 +1510,27 @@
             (__tl_make-array ast.AstFieldDef fcount)]
           [fnames : (__tl_dyn-array i64) (__tl_make-array i64 fcount)]
           [foffsets : (__tl_dyn-array i64) (__tl_make-array i64 fcount)]
+          [struct-markers : i64 markers]
           (for [i (iterator.range 0 fcount)]
             (let
               [fname-id : i64 (tli-hydrate-name (& (array-ref fields i).name))]
               [fty-id : i64 (tli-hydrate-type-id (& (array-ref fields i).ty))]
-              (set! (array-ref fnames i) fname-id)
-              (set! (array-ref foffsets i) (array-ref fields i).byte-offset)
-              (set!
-                (array-ref fslots i)
-                (ast.ast-field-def-id
+              [field : ast.AstFieldDef
+                (ast.ast-field-def-with-opacity-id
                   (intern.intern-syntax-id-from-raw fname-id)
                   (ast.ty-node-get fty-id)
-                  (tli-hydrate-field-cleanup (& (array-ref fields i).cleanup))))))
+                  (tli-hydrate-field-cleanup (& (array-ref fields i).cleanup))
+                  (array-ref fields i).opaque?)]
+              ;; AST bit 3 summarizes the fields. TLI flag bit 3 is unsafe.
+              (set!
+                struct-markers
+                (ast.ast-struct-markers-with-field struct-markers (& field)))
+              (set! (array-ref fnames i) fname-id)
+              (set! (array-ref foffsets i) (array-ref fields i).byte-offset)
+              (set! (array-ref fslots i) field)))
           (let
+            [meta : ast.AstDeclMeta
+              (tli-hydrate-decl-meta comptime-only struct-markers)]
             [repr : ast.AstStructRepr
               (if (= row.repr-kind 1)
                 (ast.AstStructRepr.C
@@ -1563,6 +1596,8 @@
               (array-ref vslots i)
               (tli-hydrate-variant-def (& (array-ref variants i)))))
           (let
+            [meta : ast.AstDeclMeta
+              (tli-hydrate-decl-meta comptime-only markers)]
             [cleanup : ast.AstEnumCleanup
               (tli-hydrate-enum-cleanup (& row.cleanup))]
             [vlist : ast.AstVariantDefList
@@ -1923,7 +1958,7 @@
   [mod-id : i64]
   [prov-id : i64]
   [record-index : i64]
-  [fn-index : i64]) : unit
+  [fn-index : i64]) : i64
   (let
     [fn-info : TliHydratedFunction (tli-hydrate-function row)]
     [eflags : i64 row.summary.effect-flags]
@@ -1996,7 +2031,10 @@
           (tli_i64_map.insert-ref!
             (&mut facts.fn-summary-by-link-slots)
             archive-sym-id
-            slot))))))
+            slot))))
+    (if row.is-extern
+      -1
+      archive-sym-id)))
 
 (define (tli-hydrate-fn-params-shadow-program?
   [params : (& (__tl_dyn-array tli.TliParam))]) : bool
@@ -2059,7 +2097,7 @@
   [package-version : (& str)]
   [source-path : (& str)]
   [mod-id : i64]
-  [prov-id : i64]) : unit
+  [prov-id : i64]) : i64
   (let
     [name-id : i64 (tli-hydrate-name (& row.name))]
     [unsafe-decl : bool (!= (bit-and row.flags 1) 0)]
@@ -2134,7 +2172,8 @@
         (tli_i64_map.insert-ref!
           (&mut facts.fn-summary-by-link-slots)
           archive-sym-id
-          slot)))))
+          slot)))
+    archive-sym-id))
 
 (define (tli-hydrate-project-value-with-mode!
   [pools : ast.AstNodePoolContext]
@@ -2145,7 +2184,7 @@
   [is-stdlib : bool]
   [source-path : (& str)]
   [mod-id : i64]
-  [prov-id : i64]) : unit
+  [prov-id : i64]) : i64
   (let
     [val-info : TliHydratedValue (tli-hydrate-value row)]
     [comptime-only : bool (!= (bit-and row.flags 1) 0)]
@@ -2171,7 +2210,14 @@
           decl
           source-path
           mod-id
-          prov-id))
+          prov-id)
+        ;; Startup ownership also includes comptime constants.
+        (tli-hydrate-name
+          (&
+            (tli-hydrate-archive-value-symbol-with-mode
+              is-stdlib
+              source-path
+              row))))
       (let
         [archive-sym : String
           (tli-hydrate-archive-value-symbol-with-mode is-stdlib source-path row)]
@@ -2211,7 +2257,8 @@
           decl
           source-path
           mod-id
-          prov-id)))))
+          prov-id)
+        archive-sym-id))))
 
 (define (tli-hydrate-project-value!
   [pools : ast.AstNodePoolContext]
@@ -2231,7 +2278,8 @@
     true
     source-path
     mod-id
-    prov-id))
+    prov-id)
+  unit)
 
 (define (tli-hydrate-macro-param [p : (& tli.TliMacroParam)]) : ast.AstMacroParam
   (let
@@ -2455,6 +2503,15 @@
     [prov-path : String
       (tli-hydrate-provenance-path is-stdlib (& physical-path))]
     [prov-id : i64 (tli-hydrate-name (& prov-path))]
+    [fn-count : i64 (array-length record.functions)]
+    [val-count : i64 (array-length record.values)]
+    [archive-symbols : (__tl_dyn-array i64)
+      (in-arena
+        (unsafe
+          (arena.from-raw-handle facts.owner-arena))
+        (__tl_make-array
+          i64
+          (+ fn-count val-count (array-length record.dispatches))))]
     (in-arena
       (unsafe
         (arena.from-raw-handle facts.owner-arena))
@@ -2487,45 +2544,57 @@
         mod-id
         prov-id))
     (for [i (iterator.range 0 (array-length record.functions))]
-      (tli-hydrate-project-fn-with-context!
-        facts
-        decls
-        paths
-        modules
-        (& (array-ref record.functions i))
-        is-stdlib
-        package-name
-        package-version
-        spmd-callables
-        (& physical-path)
-        mod-id
-        prov-id
-        slot-index
-        i))
+      (set!
+        (array-ref archive-symbols i)
+        (tli-hydrate-project-fn-with-context!
+          facts
+          decls
+          paths
+          modules
+          (& (array-ref record.functions i))
+          is-stdlib
+          package-name
+          package-version
+          spmd-callables
+          (& physical-path)
+          mod-id
+          prov-id
+          slot-index
+          i)))
     (for [i (iterator.range 0 (array-length record.dispatches))]
-      (tli-hydrate-project-dispatch!
-        facts
-        decls
-        paths
-        modules
-        (& (array-ref record.dispatches i))
-        is-stdlib
-        package-name
-        package-version
-        (& physical-path)
-        mod-id
-        prov-id))
+      (set!
+        (array-ref archive-symbols (+ fn-count val-count i))
+        (tli-hydrate-project-dispatch!
+          facts
+          decls
+          paths
+          modules
+          (& (array-ref record.dispatches i))
+          is-stdlib
+          package-name
+          package-version
+          (& physical-path)
+          mod-id
+          prov-id)))
     (for [i (iterator.range 0 (array-length record.values))]
-      (tli-hydrate-project-value-with-mode!
-        pools
-        decls
-        paths
-        modules
-        (& (array-ref record.values i))
-        is-stdlib
-        (& physical-path)
-        mod-id
-        prov-id))
+      (set!
+        (array-ref archive-symbols (+ fn-count i))
+        (tli-hydrate-project-value-with-mode!
+          pools
+          decls
+          paths
+          modules
+          (& (array-ref record.values i))
+          is-stdlib
+          (& physical-path)
+          mod-id
+          prov-id)))
+    (in-arena
+      (unsafe
+        (arena.from-raw-handle facts.owner-arena))
+      (archive_symbols_vec.push-ref!
+        (&mut facts.archive-symbols)
+        archive-symbols))
     (for [i (iterator.range 0 (array-length record.macros))]
       (tli-hydrate-project-macro!
         facts
@@ -2899,11 +2968,12 @@
     record-decoded
     owned-bytes-cell))
 
-;; Attach a batch-cached stdlib bundle whose arena and decoded-record cache are
-;; owned by the enclosing batch rather than this session's multi-catalog.
-(define (tli-multi-catalog-attach-borrowed-stdlib-bundle!
+;; Attach stdlib with its already-probed records. The bundle can be owned by
+;; this catalog or borrowed from the enclosing batch.
+(define (tli-multi-catalog-attach-stdlib-bundle!
   [multi : (&mut TliMultiCatalog)]
   [bundle-arena : i64]
+  [owns-arena : bool]
   [archive-path : String]
   [directory : codec.TliDirectory]
   [cfg-digest : (& (Array u8 32))]
@@ -2911,14 +2981,16 @@
   [records : (__tl_dyn-array tli.TliModuleRecord)]
   [record-decoded : (__tl_dyn-array bool)]
   [owned-bytes-cell : (__tl_dyn-array i64)]) : TliMultiAttachResult
-  (tli-multi-catalog-attach-borrowed-bundle!
+  (tli-multi-catalog-attach-bundle-with-storage!
     multi
     bundle-arena
+    owns-arena
     true
     ""
     ""
     ""
     archive-path
+    (tlci.tlci-spmd-callables-empty)
     directory
     cfg-digest
     cfgs

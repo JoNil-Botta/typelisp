@@ -341,37 +341,39 @@
     [out : (__tl_dyn-array tli.TliField)
       (__tl_make-array tli.TliField items.len)]
     (for [index (iterator.range 0 items.len)]
-      (match (ast.ast-field-def-list-get
-        items
-        index
-        (ast.ast-field-def-fallback))
-        [(Def name ty cleanup _)
-          (let
-            [offset : i64
-              (if (< index (array-length offsets.slots))
-                (match (& (array-ref offsets.slots index))
-                  [(Field _ _ n) n])
-                0)]
-            [alignment : i64
-              (if (< index (array-length aligns.slots))
-                (array-ref aligns.slots index)
-                0)]
-            (set!
-              (array-ref out index)
-              (tli.TliField
-                (intern.intern-syntax-id-text name)
-                (tli-extract-type-in ctx sources root-type-slots ty)
-                (match cleanup
-                  [(Fn fn-name)
-                    (tli-extract-cleanup-symbol
-                      ctx
-                      sources
-                      root-origins
-                      fn-name)]
-                  [(Owned) (tli.TliCleanup.Owned)]
-                  [(No) (tli.TliCleanup.No)])
-                offset
-                alignment)))]))
+      (let
+        [field : ast.AstFieldDef
+          (ast.ast-field-def-list-get items index (ast.ast-field-def-fallback))]
+        [opaque? : bool (ast.ast-field-def-opaque? (& field))]
+        (match field
+          [(Def name ty cleanup _)
+            (let
+              [offset : i64
+                (if (< index (array-length offsets.slots))
+                  (match (& (array-ref offsets.slots index))
+                    [(Field _ _ n) n])
+                  0)]
+              [alignment : i64
+                (if (< index (array-length aligns.slots))
+                  (array-ref aligns.slots index)
+                  0)]
+              (set!
+                (array-ref out index)
+                (tli.TliField
+                  (intern.intern-syntax-id-text name)
+                  (tli-extract-type-in ctx sources root-type-slots ty)
+                  (match cleanup
+                    [(Fn fn-name)
+                      (tli-extract-cleanup-symbol
+                        ctx
+                        sources
+                        root-origins
+                        fn-name)]
+                    [(Owned) (tli.TliCleanup.Owned)]
+                    [(No) (tli.TliCleanup.No)])
+                  offset
+                  alignment
+                  opaque?)))])))
     (tli.TliTypeBody.Struct out)))
 
 (define (tli-extract-variants

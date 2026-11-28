@@ -27,7 +27,8 @@ safe program and [SPEC.md](../SPEC.md) section 6.5 for the model. The
 
 Task threading creates independently scheduled workers; SPMD is
 data-parallel lowering inside one task. `compile`, `run`, and `build` accept
-`--backend-mode scalar|avx2|avx512` (default `scalar`).
+`--backend-mode scalar|sse2|avx2|avx512`. The default follows the
+[command defaults table](../SPEC.md#command-defaults).
 
 - Every SPMD form has scalar reference lowering; backend modes must preserve
   its semantics.
@@ -49,8 +50,9 @@ data-parallel lowering inside one task. `compile`, `run`, and `build` accept
 - `(foreach-active [lane : i64] body...)` runs its body once per active lane,
   one lane at a time in lane order, so a masked branch or a colliding update
   can be written as scalar code; `(lane-value v)` reads the running lane's
-  value of a varying `v`. It has scalar reference lowering only for now:
-  AVX2 and AVX-512 reject it with a diagnostic until #8307.
+  value of a varying `v`. SSE2, AVX2 and AVX-512 visit the set bits of
+  the current mask in increasing order. The scalar backend runs one lane
+  per gang. See SPEC §5.15 for the native gang shapes.
 - Masked varying `if` (including nested masks and value-producing selects),
   varying `while` with loop-carried active masks, and varying `match`
   (including AVX2/AVX-512 enum tags and scalar-lane payload bindings) run in the

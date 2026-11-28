@@ -10,8 +10,11 @@
     [base : i64 (string-length seed)]
     [mark : arena.ArenaMark (arena.mark)]
     ;; lint-allow: single-element-array-cell
-    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-    (set! (array-ref items 0) (+ base 33))
+    [items : (__tl_dyn-array (__tl_dyn-array i64))
+      (__tl_make-array (__tl_dyn-array i64) 1)]
+    [inner : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    (set! (array-ref inner 0) (+ base 33))
+    (set! (array-ref items 0) inner)
     (unsafe
       (arena.rewind mark))
-    (array-ref items 0)))
+    (array-ref (array-ref items 0) 0)))

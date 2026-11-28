@@ -83,7 +83,7 @@
       (__tl_make-array tli.TliVariant 1)]
     (set!
       (array-ref fields 0)
-      (tli.TliField "high" (tli.TliType.I64) (tli.TliCleanup.Owned) 0 16))
+      (tli.TliField "high" (tli.TliType.I64) (tli.TliCleanup.Owned) 0 16 true))
     (set!
       (array-ref fields 1)
       (tli.TliField
@@ -91,7 +91,8 @@
         (tli.TliType.Ref "z-life" (box (tli.TliType.Str)))
         (tli.TliCleanup.Fn "cleanup.field")
         16
-        0))
+        0
+        false))
     (set!
       (array-ref payloads 0)
       (tli.TliPayload (tli.TliType.I32) (tli.TliCleanup.Owned)))
@@ -484,6 +485,8 @@
         "dispatch tie-break")
       (match (& (array-ref module.types 1).body)
         [(tli.TliTypeBody.Struct fields)
+          (test.assert-true (array-ref fields 0).opaque? "opaque field")
+          (test.assert-true (not (array-ref fields 1).opaque?) "public field")
           (test.assert-i64-eq
             (array-ref fields 0).explicit-align
             16
@@ -605,6 +608,35 @@
     (le.set-u64! (&mut bytes) (+ entry 16) -1)
     (tli-test-refresh-content! (&mut bytes))
     (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.OffsetOutOfRange))))
+
+(test
+  tli-lazy-record-cursor-is-bounded-by-its-snapshot
+  (let
+    [bytes : (__tl_dyn-array u8) (tli-test-encode-plain (tli.TliType.I64))]
+    [start : i64 (tli-test-record (& bytes))]
+    [short-digest : (Array u8 32) (codec.tli-module-digest (& bytes) start 4)]
+    (match (codec.tli-decode-directory-for-lazy
+      (& bytes)
+      "build"
+      "linux-x86_64")
+      [(Err error) (io.panic (& error.message))]
+      [(Ok directory)
+        (set! (array-ref bytes start) (cast 255 : u8))
+        (match (codec.tli-decode-module-at (& directory) 0)
+          [(Err error) (io.panic (& error.message))]
+          [(Ok _) unit])
+        ;; The digest passes for the short record, but the source path ID
+        ;; begins beyond its range, even though it exists in the snapshot.
+        (set! (array-ref directory.entries 0).record-len 4)
+        (set! (array-ref directory.entries 0).module-sha256 short-digest)
+        (match (codec.tli-decode-module-at (& directory) 0)
+          [(Err error)
+            (tli-test-error! (& error) (tli.TliDecodeError.Truncated))
+            (test.assert-i64-eq
+              error.offset
+              (+ start 4)
+              "absolute short-record offset")]
+          [(Ok _) (io.panic "record cursor read past the declared record")])])))
 
 (test
   tli-full-open-checks-index-digest-and-lazy-checks-module-digest
@@ -742,7 +774,7 @@
     (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.UnknownTag))))
 
 (test
-  tli-v3-wire-tags-and-digests
+  tli-v5-wire-tags-and-digests
   (let
     [wire : (__tl_dyn-array u8) (tli-test-encode-plain (tli.TliType.I64))]
     [bundle : tli.TliBundle (tli-test-bundle false)]
@@ -751,11 +783,11 @@
       (codec.tli-write-context-new
         (codec.tli-collect-pool (& bundle))
         (__tl_make-array codec.TliCompactBodyMeta 0))]
-    (test.assert-i64-eq (array-length wire) 411 "v3 exemplar length")
+    (test.assert-i64-eq (array-length wire) 411 "v5 exemplar length")
     (test.assert-i64-eq
       (tli-test-record (& wire))
       284
-      "v3 exemplar record offset")
+      "v5 exemplar record offset")
     (match (codec.tli-decode-directory (& wire))
       [(codec.TliDirectoryResult.Err error)
         (test.assert-true false error.message)]
@@ -764,7 +796,7 @@
           [entry (& (array-ref directory.entries 0))]
           (test.assert-owned-string-eq
             (sha256.to-hex (& (sha256.Sha256Digest directory.content-sha256)))
-            "e7536133d1a5164e54b3fb72548127f0f6e6cf837dc6de4751341cada60a4115"
+            "eab219c4934b239a82e13aea7d1661fe3fc33d13017a73115b6f3c34ecb04ed2"
             "independently computed content digest")
           (let
             [index : (Array u8 32) (make-array u8 32)]
@@ -774,7 +806,7 @@
                 (array-ref wire (+ tli.tli-index-digest-offset byte))))
             (test.assert-owned-string-eq
               (sha256.to-hex (& (sha256.Sha256Digest index)))
-              "db63901cfd1e18468408a1d6ec675752725f73e5b05882f96a20a35dfde6fb9d"
+              "ca5b9490efe4e6e6ad1335af50903a080d8f30d3195acb9a5c45ad4dfce44183"
               "independently computed index digest"))
           (test.assert-owned-string-eq
             (sha256.to-hex (& (sha256.Sha256Digest entry.module-sha256)))
@@ -801,8 +833,12 @@
     [first-type : i64 (+ first-import (* 6 45) 12 4)]
     [repr : i64 (+ first-type 29)]
     [cleanup : i64 (+ first-type 38)]
-    ;; Enum (63 bytes), struct (112 bytes), then the function count.
-    [first-fn : i64 (+ first-type 63 112 4)]
+    ;; Enum (63 bytes), struct (114 bytes), then the function count.
+    [first-struct : i64 (+ first-type 63)]
+    [first-fn : i64 (+ first-struct 114 4)]
+    ;; Struct metadata and field count (59 bytes), then the first field's
+    ;; 22 bytes before its boolean opacity tag.
+    [field-opacity : i64 (+ first-struct 59 22)]
     [first-name : i64 (le.read-u32 (& bytes) dir)]
     [second-name : i64 (le.read-u32 (& bytes) (+ dir 56))]
     (le.set-u32! (&mut bytes) dir second-name)
@@ -823,6 +859,10 @@
     (tli-test-refresh-module! (&mut bytes) 0)
     (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.UnknownTag))
     (set! (array-ref bytes cleanup) (cast 0 : u8))
+    (set! (array-ref bytes field-opacity) (cast 2 : u8))
+    (tli-test-refresh-module! (&mut bytes) 0)
+    (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.UnknownTag))
+    (set! (array-ref bytes field-opacity) (cast 1 : u8))
     (set! (array-ref bytes (+ first-fn 12)) (cast 4 : u8))
     (tli-test-refresh-module! (&mut bytes) 0)
     (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.UnknownTag))
@@ -1377,9 +1417,15 @@
     (set!
       (array-ref too-big.compact-bodies 2).body.spmd-expr
       (tli.TliSpmdExpr.Literal (tli.TliSpmdLiteral.Char 1114112)))
-    (tli-test-invalid-bundle!
-      (& (codec.tli-encode-bundle (& surrogate)))
-      (tli.TliDecodeError.UnknownTag))
+    (let
+      [bytes : (__tl_dyn-array u8) (codec.tli-encode-bundle (& surrogate))]
+      (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.UnknownTag))
+      (tli-test-invalid-directory!
+        (codec.tli-decode-directory-for-lazy
+          (& bytes)
+          "test-build"
+          "linux-x86_64")
+        (tli.TliDecodeError.UnknownTag)))
     (tli-test-invalid-bundle!
       (& (codec.tli-encode-bundle (& too-big)))
       (tli.TliDecodeError.UnknownTag))))

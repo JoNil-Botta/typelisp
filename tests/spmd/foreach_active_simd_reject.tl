@@ -1,6 +1,4 @@
-;; foreach-active has only its scalar reference lowering until #8307. Both SIMD
-;; modes must reject it with the focused diagnostic, never run the gang through
-;; a scalar fallback; the scalar run checks the serialized result.
+;; Collision histogram under a varying mask, shared by all backend modes.
 (define (main) : i64
   (let
     [idx : (Array i64 8) (array 2 0 2 5 2 0 7 2)]

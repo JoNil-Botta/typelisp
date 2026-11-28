@@ -7,11 +7,12 @@ set -eu
 # sides to an executable the way the benchmark harnesses do: TypeLisp `build`
 # at --opt-level 1 and 2, clang with -std=c11 -DNDEBUG at -O0 and -O2. Each leg
 # runs --runs times; its cell is the fastest build and the smallest peak RSS
-# observed through GNU time -f '%M'. Writes
-# target/compile-vs-clang/results.tsv, then prints the geomean TypeLisp/clang
-# wall-time and peak-memory ratios for opt1:-O0 and opt2:-O2. A pair whose build
-# fails is skipped with a note on stderr; the script is a local measurement, not
-# a CI gate.
+# observed through GNU time -f '%M'. On Linux with a usable perf it also counts
+# exact user-space instructions (instructions:u) for one extra build per leg.
+# Writes target/compile-vs-clang/results.tsv, then prints the geomean
+# TypeLisp/clang wall-time, peak-memory and, when counted, instruction ratios for
+# opt1:-O0 and opt2:-O2. A pair whose build fails is skipped with a note on
+# stderr; the script is a local measurement, not a CI gate.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -23,18 +24,21 @@ usage: scripts/benchmark-compile-vs-clang.sh [options] [typelisp-compiler]
 Options:
   --runs N        Build repetitions per leg; each cell is the fastest (default: 3)
   --only NAME     Measure only benchmarks/NAME
+  --no-perf       Skip the exact instructions:u counts (they are n/a)
   -h, --help      Show this help
 
 Environment:
   TYPELISP_COMPILE_VS_CLANG_OUT       Output root (default target/compile-vs-clang)
   TYPELISP_COMPILE_VS_CLANG_RUNS      Default for --runs
-  TYPELISP_COMPILE_VS_CLANG_TIME_BIN  GNU time binary for peak RSS (default /usr/bin/time)
+  TYPELISP_COMPILE_VS_CLANG_TIME_BIN  GNU time binary for peak RSS
+                                      (default /usr/bin/time, then ~/.local/bin/time)
 EOF
 }
 
 COMPILER=
 RUNS=${TYPELISP_COMPILE_VS_CLANG_RUNS:-3}
 ONLY=
+PERF_WANTED=1
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --runs)
@@ -52,6 +56,10 @@ while [ "$#" -gt 0 ]; do
             }
             ONLY=$2
             shift 2
+            ;;
+        --no-perf)
+            PERF_WANTED=0
+            shift
             ;;
         -h | --help)
             usage
@@ -116,9 +124,17 @@ case "$(uname -s)" in
         ;;
 esac
 
-TIME_BIN=${TYPELISP_COMPILE_VS_CLANG_TIME_BIN:-/usr/bin/time}
-if [ ! -x "$TIME_BIN" ]; then
-    echo "GNU time is required for peak RSS: $TIME_BIN" >&2
+TIME_BIN=${TYPELISP_COMPILE_VS_CLANG_TIME_BIN:-}
+if [ -z "$TIME_BIN" ]; then
+    for _tb_candidate in /usr/bin/time "$HOME/.local/bin/time"; do
+        if [ -x "$_tb_candidate" ]; then
+            TIME_BIN=$_tb_candidate
+            break
+        fi
+    done
+fi
+if [ -z "$TIME_BIN" ] || [ ! -x "$TIME_BIN" ]; then
+    echo "GNU time is required for peak RSS: ${TIME_BIN:-/usr/bin/time}" >&2
     echo "install it (pacman -S time, apt install time) or set TYPELISP_COMPILE_VS_CLANG_TIME_BIN" >&2
     exit 1
 fi
@@ -141,7 +157,7 @@ BUILDDIR="$WORKDIR/build"
 LOGDIR="$WORKDIR/log"
 rm -rf "$WORKDIR"
 mkdir -p "$BUILDDIR" "$LOGDIR"
-printf 'name\ttl_opt1_ms\ttl_opt1_kib\tclang_O0_ms\tclang_O0_kib\ttl_opt2_ms\ttl_opt2_kib\tclang_O2_ms\tclang_O2_kib\n' > "$RESULTS"
+printf 'name\ttl_opt1_ms\ttl_opt1_kib\tclang_O0_ms\tclang_O0_kib\ttl_opt2_ms\ttl_opt2_kib\tclang_O2_ms\tclang_O2_kib\ttl_opt1_insns\tclang_O0_insns\ttl_opt2_insns\tclang_O2_insns\n' > "$RESULTS"
 
 now_ms() {
     value=$(date +%s%3N 2>/dev/null || true)
@@ -159,6 +175,55 @@ first_log_line() {
     awk 'NF { print substr($0, 1, 300); exit }' "$1" 2>/dev/null || true
 }
 
+# perf_insns STAT_FILE COMMAND...
+#   Run COMMAND once under perf's instructions:u counter, writing the -x, report
+#   to STAT_FILE. Print the exact user-space instruction count, or fail when
+#   perf reports no single positive, fully scheduled instructions:u event.
+perf_insns() {
+    _pi_stat=$1
+    shift
+    rm -f "$_pi_stat"
+    set +e
+    "$PERF_BIN" stat --no-big-num -x ',' -e instructions:u -o "$_pi_stat" -- "$@" \
+        >"$_pi_stat.stdout" 2>"$_pi_stat.stderr"
+    _pi_status=$?
+    set -e
+    [ "$_pi_status" -eq 0 ] || return 1
+    LC_ALL=C awk -F ',' '
+        $3 == "instructions:u" {
+            if (++events != 1 || $1 !~ /^[0-9]+$/ || $1 + 0 <= 0 ||
+                $5 !~ /^[0-9]+([.][0-9]+)?$/ || $5 + 0 != 100) {
+                invalid = 1
+            }
+            count = $1
+        }
+        END {
+            if (events != 1 || invalid) exit 1
+            print count
+        }
+    ' "$_pi_stat"
+}
+
+# Probe once: the four *_insns columns stay n/a when perf cannot count a
+# user-space-only instruction event on this host.
+PERF_BIN=
+PERF_ENABLED=0
+if [ "$PERF_WANTED" -eq 1 ]; then
+    PERF_BIN=$(command -v perf 2>/dev/null || true)
+    if [ -n "$PERF_BIN" ] && _probe_insns=$(perf_insns "$WORKDIR/perf-probe.stat" true 2>/dev/null); then
+        PERF_ENABLED=1
+    else
+        PERF_BIN=
+    fi
+fi
+if [ "$PERF_ENABLED" -eq 0 ]; then
+    if [ "$PERF_WANTED" -eq 1 ]; then
+        echo "[compile-vs-clang] perf instructions:u unavailable; instruction columns will be n/a" >&2
+    else
+        echo "[compile-vs-clang] perf instructions:u disabled; instruction columns will be n/a" >&2
+    fi
+fi
+
 # measure_build BIN STEM COMMAND...
 #   Build COMMAND $RUNS times with its logs on STEM, each under GNU time's
 #   peak-RSS report. Sets BEST_MS and BEST_KIB to the smallest observed wall
@@ -169,6 +234,7 @@ measure_build() {
     shift 2
     BEST_MS=
     BEST_KIB=
+    BEST_INSNS=n/a
     _mbb_run=1
     while [ "$_mbb_run" -le "$RUNS" ]; do
         rm -f "$_mbb_bin" "$_mbb_stem.rss"
@@ -210,6 +276,15 @@ measure_build() {
         fi
         _mbb_run=$((_mbb_run + 1))
     done
+    # One extra build under perf, separate from GNU time so neither measures the
+    # other. Instruction counts are exact and do not need a best-of.
+    if [ "$PERF_ENABLED" -eq 1 ]; then
+        if _mbb_insns=$(perf_insns "$_mbb_stem.insns.stat" "$@"); then
+            BEST_INSNS=$_mbb_insns
+        else
+            echo "[compile-vs-clang] no instructions:u for $_mbb_stem; column is n/a" >&2
+        fi
+    fi
 }
 
 # record_leg LABEL BIN STEM COMMAND...
@@ -228,18 +303,22 @@ record_leg() {
         tl-opt1)
             TL1_MS=$BEST_MS
             TL1_KIB=$BEST_KIB
+            TL1_INSNS=$BEST_INSNS
             ;;
         clang-O0)
             CLANG_O0_MS=$BEST_MS
             CLANG_O0_KIB=$BEST_KIB
+            CLANG_O0_INSNS=$BEST_INSNS
             ;;
         tl-opt2)
             TL2_MS=$BEST_MS
             TL2_KIB=$BEST_KIB
+            TL2_INSNS=$BEST_INSNS
             ;;
         clang-O2)
             CLANG_O2_MS=$BEST_MS
             CLANG_O2_KIB=$BEST_KIB
+            CLANG_O2_INSNS=$BEST_INSNS
             ;;
     esac
 }
@@ -248,7 +327,7 @@ record_leg() {
 #   Print the geometric mean of A/B over the measured rows of results.tsv.
 geomean_ratio() {
     awk -F '\t' -v a="$1" -v b="$2" '
-        NR > 1 {
+        NR > 1 && $a ~ /^[0-9]+$/ && $b ~ /^[0-9]+$/ && $a + 0 > 0 && $b + 0 > 0 {
             total += log($a / $b)
             rows++
         }
@@ -286,12 +365,14 @@ for case_dir in "$ROOT"/benchmarks/*/; do
         record_leg clang-O2 "$CLANG_O2_BIN" "$LOGDIR/$name.clang-O2" \
             clang -O2 -std=c11 -DNDEBUG "$case_dir/baseline.c" -o "$CLANG_O2_BIN"
     then
-        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
             "$name" \
             "$TL1_MS" "$TL1_KIB" \
             "$CLANG_O0_MS" "$CLANG_O0_KIB" \
             "$TL2_MS" "$TL2_KIB" \
-            "$CLANG_O2_MS" "$CLANG_O2_KIB" >> "$RESULTS"
+            "$CLANG_O2_MS" "$CLANG_O2_KIB" \
+            "$TL1_INSNS" "$CLANG_O0_INSNS" \
+            "$TL2_INSNS" "$CLANG_O2_INSNS" >> "$RESULTS"
         measured=$((measured + 1))
     else
         echo "[compile-vs-clang] skip $name: $SKIP_REASON" >&2
@@ -306,9 +387,17 @@ fi
 
 printf '[compile-vs-clang] %s pairs measured, %s skipped, best of %s builds\n' \
     "$measured" "$skipped" "$RUNS"
-printf '[compile-vs-clang] headline: time TL/clang opt1:-O0 %sx, opt2:-O2 %sx; peak RSS TL/clang opt1:-O0 %sx, opt2:-O2 %sx\n' \
+INSNS_OPT1=$(geomean_ratio 10 11)
+INSNS_OPT2=$(geomean_ratio 12 13)
+INSNS_PARTS=
+[ "$INSNS_OPT1" = n/a ] || INSNS_PARTS="opt1:-O0 ${INSNS_OPT1}x"
+[ "$INSNS_OPT2" = n/a ] || INSNS_PARTS="${INSNS_PARTS:+$INSNS_PARTS, }opt2:-O2 ${INSNS_OPT2}x"
+INSNS_SUMMARY=
+[ -z "$INSNS_PARTS" ] || INSNS_SUMMARY="; insns TL/clang $INSNS_PARTS"
+printf '[compile-vs-clang] headline: time TL/clang opt1:-O0 %sx, opt2:-O2 %sx; peak RSS TL/clang opt1:-O0 %sx, opt2:-O2 %sx%s\n' \
     "$(geomean_ratio 2 4)" \
     "$(geomean_ratio 6 8)" \
     "$(geomean_ratio 3 5)" \
-    "$(geomean_ratio 7 9)"
+    "$(geomean_ratio 7 9)" \
+    "$INSNS_SUMMARY"
 echo "[compile-vs-clang] results: $RESULTS"

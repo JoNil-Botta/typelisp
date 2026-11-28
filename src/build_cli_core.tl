@@ -44,7 +44,6 @@
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (import compiler_opt_level as opt_level))
-(import compiler_optimize as opt)
 (import compiler_object as cobj)
 (import linker_archive_core as archive)
 (import linker_ar_dialect_reader as ar)
@@ -509,10 +508,8 @@
     [has-profile : bool false]
     [lock-policy : BuildPackageLockPolicy (Default)]
     [sysroot : tli_cli.TliSysrootOptions (tli_cli.tli-sysroot-options)]
-    [options : cli_option.CliCompileOptions
-      (cli_option.cli-compile-options
-        (target_cfg.compiler-target-cfg-host)
-        (build-package-default-opt-level))]
+    [options : cli_option.CliCompileOptions (cli_option.cli-compile-options)]
+    (set! options.opt-level (build-package-default-opt-level))
     (while (cli_option.cli-args-next! (&mut args))
       (cond
         [(tli_cli.tli-sysroot-option! (&mut sysroot) (&mut args)) unit]
@@ -625,10 +622,8 @@
     [lock-policy : BuildPackageLockPolicy (Default)]
     [resolved-deps : load.CompilerPkgDepList (load.compiler-pkg-dep-list-empty)]
     [sysroot : tli_cli.TliSysrootOptions (tli_cli.tli-sysroot-options)]
-    [options : cli_option.CliCompileOptions
-      (cli_option.cli-compile-options
-        (target_cfg.compiler-target-cfg-host)
-        (build-package-default-opt-level))]
+    [options : cli_option.CliCompileOptions (cli_option.cli-compile-options)]
+    (set! options.opt-level (build-package-default-opt-level))
     (while (cli_option.cli-args-next! (&mut args))
       (cond
         [(tli_cli.tli-sysroot-option! (&mut sysroot) (&mut args)) unit]
@@ -7210,7 +7205,7 @@
               (let
                 [metadata-link-inputs : build_run_core.SourceToolLinkInputs
                   (build_run_core.source-tool-link-inputs-from-decls
-                    (owned_view.compiler-owned-shared-view decls)
+                    (& decls)
                     (build_run_core.source-tool-link-inputs-empty))]
                 ;; The dependency section keeps each package's raw arguments.
                 [effective-link-inputs : build_run_core.SourceToolLinkInputs
@@ -8760,10 +8755,7 @@
     [link-inputs : build_run_core.SourceToolLinkInputs
       (build_run_core.source-tool-link-inputs-empty)]
     [sysroot : tli_cli.TliSysrootOptions (tli_cli.tli-sysroot-options)]
-    [options : cli_option.CliCompileOptions
-      (cli_option.cli-compile-options
-        (target_cfg.compiler-target-cfg-host)
-        (opt.compiler-optimize-default-level))]
+    [options : cli_option.CliCompileOptions (cli_option.cli-compile-options)]
     (while (cli_option.cli-args-next! (&mut args))
       (cond
         [(tli_cli.tli-sysroot-option! (&mut sysroot) (&mut args)) unit]

@@ -17,6 +17,7 @@
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
+(import stdlib.text_buf)
 (import source_text_core as source_text)
 (import stdlib.vector)
 
@@ -395,6 +396,151 @@
     [n : i64 (string.string-length signature)]
     [open-idx : i64 (doc-decl-next-token signature 0 n)]
     (doc-decl-info-at-list signature open-idx)))
+
+;; The extractor keeps the written signature for module pages and doc
+;; expansion. Public renderers scan only immediate metadata forms, so
+;; parentheses in a field type or comments cannot act as opacity markers.
+(define (doc-list-start? [src : (& src str)] [start : i64] [end : i64]) : bool
+  (and
+    (< start end)
+    (let
+      [c : char (string.string-ref src start)]
+      (or (= c '(') (= c '[')))))
+
+(define (doc-opaque-form? [src : (& src str)] [start : i64] [end : i64]) : bool
+  (let
+    [head : i64 (doc-decl-next-token src (+ start 1) end)]
+    [after : i64 (+ head 7)]
+    (and
+      (< after end)
+      (= (string.string-ref src start) '(')
+      (string.is-string-prefix-at src ":opaque" head)
+      (= (doc-decl-next-token src after end) (- end 1))
+      (= (string.string-ref src (- end 1)) ')'))))
+
+(define (doc-field-opaque? [src : (& src str)] [start : i64] [end : i64]) : bool
+  (let
+    [name : i64 (doc-decl-next-token src (+ start 1) end)]
+    [ty : i64 (doc-decl-next-token src (doc-decl-symbol-end src name end) end)]
+    [i : i64
+      (doc-decl-next-token
+        src
+        (if (doc-list-start? src ty end)
+          (doc-scan-form-end src ty end)
+          (doc-decl-symbol-end src ty end))
+        end)]
+    (while (doc-list-start? src i end)
+      (let
+        [next : i64 (doc-scan-form-end src i end)]
+        (when (doc-opaque-form? src i next) (return true))
+        (set! i (doc-decl-next-token src next end))))
+    false))
+
+(defenum DocAggregateOpacity
+  (NoOpacity)
+  (OpaqueAggregate)
+  (OpaqueField i64 i64))
+
+(define (doc-next-aggregate-opacity
+  [src : (& src str)]
+  [start : i64]
+  [end : i64]
+  [struct? : bool]) : DocAggregateOpacity
+  (let
+    [previous-end : i64 start]
+    [i : i64 (doc-decl-next-token src start end)]
+    (while (doc-list-start? src i end)
+      (let
+        [next : i64 (doc-scan-form-end src i end)]
+        (when (doc-opaque-form? src i next) (return OpaqueAggregate))
+        (when
+          (and struct? (doc-field-opaque? src i next))
+          (return (OpaqueField previous-end next)))
+        (set! previous-end next)
+        (set! i (doc-decl-next-token src next end))))
+    NoOpacity))
+
+(define (doc-struct-constructor-restricted?
+  [src : (& src str)]
+  [name-end : i64]
+  [end : i64]) : bool
+  (match (doc-next-aggregate-opacity src name-end end true)
+    [(NoOpacity) false]
+    [_ true]))
+
+(define (doc-field-inline-comment-end
+  [src : (& src str)]
+  [after-field : i64]
+  [end : i64]) : i64
+  (let
+    [i : i64 after-field]
+    (while (and (< i end) (doc-inline-space? (string.string-ref src i)))
+      (+= i 1))
+    (if (and (< i end) (= (string.string-ref src i) ';'))
+      (source_text.line-end src i)
+      after-field)))
+
+(define (doc-public-aggregate-signature
+  [signature : String]
+  [head : String]
+  [name : String]
+  [struct? : bool]) : String
+  (let
+    [n : i64 (string.string-length signature)]
+    [open : i64 (doc-decl-next-token (& signature) 0 n)]
+    [form-head : i64 (doc-decl-next-token (& signature) (+ open 1) n)]
+    [name-start : i64
+      (doc-decl-next-token
+        (& signature)
+        (doc-decl-symbol-end (& signature) form-head n)
+        n)]
+    [prefix-end : i64 (doc-decl-symbol-end (& signature) name-start n)]
+    [copy-start : i64 0]
+    [out : text_buf.TextBuf (text_buf.empty)]
+    [opacity : DocAggregateOpacity
+      (doc-next-aggregate-opacity (& signature) prefix-end n struct?)]
+    (while true
+      (match opacity
+        [(OpaqueAggregate)
+          (return (str_cat.str-cat "(" head " " name " (:opaque))"))]
+        [(OpaqueField previous-end next)
+          (text_buf.append!
+            out
+            (string.substring
+              (& signature)
+              copy-start
+              (- previous-end copy-start)))
+          (set! copy-start (doc-field-inline-comment-end (& signature) next n))
+          (set!
+            opacity
+            (doc-next-aggregate-opacity (& signature) copy-start n struct?))]
+        [(NoOpacity)
+          (return
+            (if (> copy-start 0)
+              (text_buf.render
+                (text_buf.append
+                  out
+                  (string.substring (& signature) copy-start (- n copy-start))))
+              signature))]))
+    signature))
+
+(define (doc-item-public-signature [item : (& item DocItem)]) : String
+  (match item
+    [(Item kind name _ signature _)
+      (match kind
+        [(DefStruct)
+          (doc-public-aggregate-signature
+            (string.copy signature)
+            "defstruct"
+            (string.copy name)
+            true)]
+        [(DefEnum)
+          (doc-public-aggregate-signature
+            (string.copy signature)
+            "defenum"
+            (string.copy name)
+            false)]
+        [_ (string.copy signature)])]))
 
 (define (doc-source-line-at [src : (& src str)] [offset : i64]) : i64
   (let

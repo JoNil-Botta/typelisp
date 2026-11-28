@@ -1,0 +1,40 @@
+target -
+opt 0 1 2
+mode scalar sse2 avx2 avx512
+do link-run
+
+case foreach-active-dependent-guard
+source tests/spmd/foreach_active_{{each}}.tl
+each dependent_guard guard_call
+exit 8
+in stderr
+empty
+
+case foreach-active-capture-fault
+source tests/spmd/foreach_active_capture_fault.tl
+exit 134
+in stdout
+order 1 || 2 || 3 || 4 || 5
+count = 5 ^[1-5]$
+count = 5 ^
+in stderr
+is tl: {{root}}/tests/spmd/foreach_active_capture_fault.tl:9:32: array index out of bounds: index=5 length=5
+
+case foreach-active-range-bits
+source tests/spmd/foreach_active_histogram.tl
+opt 2
+mode sse2 avx2 avx512
+do compile
+in fn _tl_foreach_active_histogram_histogram
+contains active_tail
+contains bsrq
+not-contains _tail_skip_
+if-mode sse2
+contains $3,
+end-if
+if-mode avx2
+contains $15,
+end-if
+if-mode avx512
+contains $255,
+end-if

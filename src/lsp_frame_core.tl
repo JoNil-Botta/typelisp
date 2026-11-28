@@ -25,6 +25,7 @@
 (import compiler_check_core)
 (import compiler_expand_query as expand)
 (import compiler_semantic_index)
+(import doc_extract)
 (import compiler_ast_types as ast)
 (import compiler_ctfe as ctfe)
 (import compiler_diagnostic as cdiag)
@@ -1299,6 +1300,12 @@
 (define (lsp-document-semantic-symbol-query
   [doc : (& doc lsp_vector_families.LspDocument)]
   [byte-position : i64]) : LspSemanticSymbolQuery
+  (lsp-document-semantic-symbol-query-with-hover doc byte-position false))
+
+(define (lsp-document-semantic-symbol-query-with-hover
+  [doc : (& doc lsp_vector_families.LspDocument)]
+  [byte-position : i64]
+  [hover? : bool]) : LspSemanticSymbolQuery
   (match (lsp-document-semantic-snapshot-status doc)
     [(Current _ _)
       (let
@@ -1331,7 +1338,16 @@
                 definition-index)]
             (if (and
               (lsp-semantic-record-exact-editable? cursor)
-              (lsp-semantic-record-exact-editable? definition))
+              (or
+                (lsp-semantic-record-exact-editable? definition)
+                (and
+                  hover?
+                  (not
+                    (string.eq
+                      (compiler_semantic_index.compiler-semantic-representation-signature
+                        (& index)
+                        (& definition))
+                      "")))))
               (Found cursor definition)
               Missing))))]
     [_ Missing]))
@@ -5969,6 +5985,8 @@
 
 (define (lsp-completion-collect-workspace-module-decls!
   [results : (&mut results LspCompletionResults)]
+  [index : (& index compiler_semantic_index.CompilerSemanticSourceIndex)]
+  [query : compiler_semantic_index.CompilerSemanticVisibleBindingQuery]
   [workspace : (& workspace lsp_vector_families.LspWorkspaceIndex)]
   [module : String]
   [prefix : String]
@@ -5994,7 +6012,14 @@
                 [allowed : bool
                   (if type-context
                     (or (= decl.symbol-kind 23) (= decl.symbol-kind 10))
-                    (not (= decl.symbol-kind 10)))]
+                    (and
+                      (not (= decl.symbol-kind 10))
+                      (or
+                        (not decl.restricted-constructor?)
+                        (compiler_semantic_index.compiler-semantic-path-family-visible?
+                          index
+                          query
+                          (& source.path)))))]
                 (if allowed
                   (lsp-completion-add-workspace-decl!
                     results
@@ -6007,6 +6032,7 @@
 
 (define (lsp-completion-collect-owned-members!
   [results : (&mut results LspCompletionResults)]
+  [query : compiler_semantic_index.CompilerSemanticVisibleBindingQuery]
   [index : (& index compiler_semantic_index.CompilerSemanticSourceIndex)]
   [owner-index : i64]
   [prefix : String]) : unit
@@ -6028,6 +6054,10 @@
               record-index)]
           (if (and
             (lsp-completion-record-definition? (& record))
+            (compiler_semantic_index.compiler-semantic-representation-visible?
+              index
+              query
+              (& record))
             (lsp-completion-record-kind-allowed? record.kind false true)
             (compiler_semantic_index.compiler-semantic-member-symbol-owned-by?
               (& owner.symbol)
@@ -6042,6 +6072,7 @@
 
 (define (lsp-completion-collect-module-records!
   [results : (&mut results LspCompletionResults)]
+  [query : compiler_semantic_index.CompilerSemanticVisibleBindingQuery]
   [index : (& index compiler_semantic_index.CompilerSemanticSourceIndex)]
   [module-id : i64]
   [module : (& module str)]
@@ -6059,6 +6090,12 @@
       (if (and
         (= record.module-id module-id)
         (lsp-completion-record-definition? (& record))
+        (or
+          type-context
+          (compiler_semantic_index.compiler-semantic-representation-visible?
+            index
+            query
+            (& record)))
         (lsp-completion-record-kind-allowed? record.kind type-context false))
         (lsp-completion-add-record!
           results
@@ -6077,6 +6114,13 @@
   (let
     [index : compiler_semantic_index.CompilerSemanticSourceIndex
       doc.semantic.index]
+    [query
+      (match (compiler_semantic_index.compiler-semantic-source-index-query
+        (& index)
+        (string.copy (& doc.path))
+        context.cursor-byte)
+        [(Some query) query]
+        [(None) (return unit)])]
     [receiver-end : i64 (- context.replace-start 1)]
     [point-index : i64
       (if (> receiver-end context.token-start)
@@ -6115,12 +6159,14 @@
     (if (>= member-owner-index 0)
       (lsp-completion-collect-owned-members!
         results
+        query
         (& index)
         member-owner-index
         (string.copy (& context.prefix)))
       (if (or local-receiver (>= visible-owner-index 0))
         (lsp-completion-collect-owned-members!
           results
+          query
           (& index)
           (if local-receiver
             (lsp-completion-find-type-owner (& index) point.resolved-type)
@@ -6147,12 +6193,15 @@
               (if workspace-backed
                 (lsp-completion-collect-workspace-module-decls!
                   results
+                  (& index)
+                  query
                   workspace
                   module
                   (string.copy (& context.prefix))
                   type-context)
                 (lsp-completion-collect-module-records!
                   results
+                  query
                   (& index)
                   module-record.module-id
                   module
@@ -6169,6 +6218,7 @@
                   [_ false])))
               (lsp-completion-collect-owned-members!
                 results
+                query
                 (& index)
                 point-index
                 (string.copy (& context.prefix)))
@@ -6181,6 +6231,13 @@
   (let
     [index : compiler_semantic_index.CompilerSemanticSourceIndex
       doc.semantic.index]
+    [query
+      (match (compiler_semantic_index.compiler-semantic-source-index-query
+        (& index)
+        (string.copy (& doc.path))
+        context.cursor-byte)
+        [(Some query) query]
+        [(None) (return unit)])]
     [receiver-index : i64
       (lsp-completion-find-field-receiver
         (& index)
@@ -6193,6 +6250,7 @@
     (if (>= receiver-index 0)
       (lsp-completion-collect-owned-members!
         results
+        query
         (& index)
         (lsp-completion-find-type-owner (& index) receiver.resolved-type)
         (string.copy (& context.prefix)))
@@ -7015,10 +7073,49 @@
     (lsp-offset-range-json text start end)))
 
 (define (lsp-semantic-hover-body
-  [record : compiler_semantic_index.CompilerSemanticRecord]) : String
+  [doc : (& doc lsp_vector_families.LspDocument)]
+  [offset : i64]
+  [record : (& record compiler_semantic_index.CompilerSemanticRecord)]) : String
   (let
-    [name : String record.display-name]
-    [resolved-type : String record.resolved-type]
+    [name : String (string.copy (& record.display-name))]
+    [resolved-type : String (string.copy (& record.resolved-type))]
+    [index : (& doc compiler_semantic_index.CompilerSemanticSourceIndex)
+      (& doc.semantic.index)]
+    [signature : String
+      (compiler_semantic_index.compiler-semantic-representation-signature
+        index
+        record)]
+    (when
+      (not (string.eq signature ""))
+      (let
+        [family? : bool
+          (match (compiler_semantic_index.compiler-semantic-source-index-query
+            index
+            (string.copy (& doc.path))
+            offset)
+            [(Some query)
+              (compiler_semantic_index.compiler-semantic-representation-visible?
+                index
+                query
+                record)]
+            [(None) false])]
+        (return
+          (if family?
+            signature
+            (match record.kind
+              [(Struct)
+                (doc_extract.doc-public-aggregate-signature
+                  signature
+                  "defstruct"
+                  name
+                  true)]
+              [(Enum)
+                (doc_extract.doc-public-aggregate-signature
+                  signature
+                  "defenum"
+                  name
+                  false)]
+              [_ signature])))))
     (match record.kind
       [(Struct)
         (if (string.eq resolved-type "")
@@ -7250,7 +7347,7 @@
         [line0 : i64 (lsp-json-int-field-default position "line" 0)]
         [char0 : i64 (lsp-json-int-field-default position "character" 0)]
         [off : i64 (lsp-offset-at-position text line0 char0)]
-        (match (lsp-document-semantic-symbol-query doc off)
+        (match (lsp-document-semantic-symbol-query-with-hover doc off true)
           [(Found cursor definition)
             (let
               [cursor-span : compiler_semantic_index.CompilerSemanticSpan
@@ -7259,8 +7356,7 @@
                 id
                 (lsp-hover-result
                   (lsp-hover-markdown
-                    (lsp-semantic-hover-body
-                      (owned_view.compiler-owned-shared-view definition))
+                    (lsp-semantic-hover-body doc off (& definition))
                     definition.documentation)
                   text
                   cursor-span.start-byte
@@ -7418,7 +7514,7 @@
       [(JsonMissing) unit])))
 
 (define (lsp-decl-entry-fallback) : lsp_vector_families.LspDeclEntry
-  (lsp_vector_families.LspDeclEntry "" "" 0 0 0 0 0 0 0 13))
+  (lsp_vector_families.LspDeclEntry "" "" 0 0 0 0 0 0 0 13 false))
 
 (define (lsp-decl-kind-at [text : (& text str)] [i : i64] [n : i64]) : String
   (let
@@ -7501,6 +7597,13 @@
                         (&mut lc-cache)
                         text
                         form-end)]
+                    [restricted-constructor? : bool
+                      (and
+                        (= symbol-kind 23)
+                        (doc_extract.doc-struct-constructor-restricted?
+                          (& text)
+                          (+ name-off (string.string-length (& name)))
+                          form-end))]
                     (lsp_decl_vec.push-ref!
                       (&mut result)
                       (lsp_vector_families.LspDeclEntry
@@ -7513,7 +7616,8 @@
                         form-start-lc.col
                         form-end-lc.line
                         form-end-lc.col
-                        symbol-kind)))
+                        symbol-kind
+                        restricted-constructor?)))
                   unit))
               unit)
             (+= i 1)]
@@ -14321,8 +14425,7 @@
         "--stdlib-root <dir> --prefix-cache-stats --transcript-batch <manifest>"
         idx
         count)]
-    [options : cli_option.CliCompileOptions
-      (cli_option.cli-compile-options (target_cfg.compiler-target-cfg-host) 1)]
+    [options : cli_option.CliCompileOptions (cli_option.cli-compile-options)]
     [prefix-cache-stats : bool false]
     [manifest : String ""]
     [has-manifest : bool false]

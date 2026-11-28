@@ -461,7 +461,8 @@
           cbi.compiler-builtin-id-fix-x
           (ast.ast-param-list-new)
           (I64)
-          (Literal (ast.ast-lit-int 1))))]
+          (Literal (ast.ast-lit-int 1))
+          false))]
     [_second : unit
       (spec.spec-template-list-push
         (&mut items)
@@ -471,7 +472,8 @@
           cbi.compiler-builtin-id-fix-second
           (ast.ast-param-list-new)
           (I64)
-          (Literal (ast.ast-lit-int 2))))]
+          (Literal (ast.ast-lit-int 2))
+          false))]
     [base : spec.SpecTemplateEnv (spec.spec-template-env-from-list (& items))]
     [shadow-x : spec.SpecTemplateEnv
       (spec.spec-template-env-shadow-name base cbi.compiler-builtin-id-fix-x)]
@@ -1186,7 +1188,8 @@
             cbi.compiler-builtin-id-fix-x
             (ast.ast-param-list-new)
             (I64)
-            (Literal (ast.ast-lit-int 1))))
+            (Literal (ast.ast-lit-int 1))
+            false))
         (spec.spec-template-list-push
           (&mut out)
           (Item
@@ -1195,7 +1198,8 @@
             cbi.compiler-builtin-id-fix-second
             (ast.ast-param-list-new)
             (Bool)
-            (Literal (Bool true))))
+            (Literal (Bool true))
+            false))
         out)]
     [template-env : spec.SpecTemplateEnv
       (spec.spec-template-env-from-list (& templates))]
@@ -1237,7 +1241,8 @@
         cbi.compiler-builtin-id-fix-second)
         [(Some template)
           (match template
-            [(Item _ _ name _ _ _) (= name cbi.compiler-builtin-id-fix-second)])]
+            [(Item _ _ name _ _ _ _)
+              (= name cbi.compiler-builtin-id-fix-second)])]
         [(None) false])
       (match (spec-cache-lookup cache cbi.compiler-builtin-id-fix-second)
         [(Some name-id) (= name-id cbi.compiler-builtin-id-fix-second)]

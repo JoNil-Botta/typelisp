@@ -1,0 +1,5 @@
+# Native integration cases: inline 16B DynArray mut-ref push and nested disjointness.
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+inline_dynarray_mutref_push|all|0,1,2|tests/integration/inline_dynarray_mutref_push.tl|42|-|-|-|-
+inline_dynarray_nested_disjoint|all|0,1,2|tests/integration/inline_dynarray_nested_disjoint.tl|42|-|-|-|-

@@ -130,8 +130,10 @@ in fn _tl_tail_call_frame_provenance_heap_slice
 match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_slice$
 not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_slice$
 in fn _tl_tail_call_frame_provenance_handle_borrow
-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_handle$
-not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_handle$
+# Inline 16-byte DynArray (#7963) lives in the caller's frame, so (& xs)
+# borrows this frame and cannot tail-call.
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_handle$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_handle$
 in fn _tl_tail_call_frame_provenance_string_borrow
 # Inline 16-byte String (#7962) lives in the caller's frame, so (& s str)
 # borrows this frame and cannot tail-call until #8090 passes (& r str) by value.

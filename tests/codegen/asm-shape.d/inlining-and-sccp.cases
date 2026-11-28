@@ -64,7 +64,11 @@ not-match ^_tl_global_cursor_helper_gc_next:$
 in fn main
 count = 5 ^\.[A-Za-z0-9_.]*inl\.[A-Za-z0-9_.]*bounds_ok(\.[0-9]+|[A-Za-z0-9_]+)*:$
 count = 5 ^\.[A-Za-z0-9_.]*inl\.[A-Za-z0-9_.]*bounds_ok(\.[0-9]+|[A-Za-z0-9_]+)*\.cold:$
-count = 2 ^[[:space:]]+movq _tl_global_cursor_helper_gc_tokens\(%rip\), %r
+# Inline 16-byte global DynArray (#7963): loop preheader takes its address via
+# leaq and the straight-line tail reads data_ptr and length directly.
+match ^[[:space:]]+leaq _tl_global_cursor_helper_gc_tokens\(%rip\), %r
+count = 1 ^[[:space:]]+movq _tl_global_cursor_helper_gc_tokens\(%rip\), %r
+count = 1 ^[[:space:]]+movq _tl_global_cursor_helper_gc_tokens\+8\(%rip\), %r
 count = 5 ^[[:space:]]+movq %r[a-z0-9]+, _tl_global_cursor_helper_gc_cursor\(%rip\)$
 count = 3 ^[[:space:]]+movq _tl_global_cursor_helper_gc_cursor\(%rip\), %r
 
@@ -81,7 +85,7 @@ count = 3 ^\.[A-Za-z0-9_.]*inl\.[A-Za-z0-9_.]*bounds_ok(\.[0-9]+|[A-Za-z0-9_]+)*
 count = 3 ^\.[A-Za-z0-9_.]*inl\.[A-Za-z0-9_.]*bounds_ok(\.[0-9]+|[A-Za-z0-9_]+)*\.cold:$
 count = 3 ^[[:space:]]+movq %r[a-z0-9]+, _tl_global_cursor_guarded_gcg_cursor\(%rip\)$
 count = 3 ^[[:space:]]+movq _tl_global_cursor_guarded_gcg_cursor\(%rip\), %r
-count = 1 ^[[:space:]]+movq _tl_global_cursor_guarded_gcg_tokens\(%rip\), %r
+count = 1 ^[[:space:]]+leaq _tl_global_cursor_guarded_gcg_tokens\(%rip\), %r
 
 # The asm_render benchmark's fold accumulator is never homed in a frame slot.
 case asm-render-fold-accumulator

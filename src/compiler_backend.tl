@@ -168,6 +168,8 @@
                 data.representations.word-counts
                 data.representations.class-masks
                 data.representations.stable-word-masks
+                data.representations.header-word-masks
+                data.representations.header-free-word-masks
                 (compiler_ir_types.compiler-ir-return-storage-index-authorized
                   pools
                   interns
@@ -5057,6 +5059,12 @@
                 (be_simd.compiler-backend-var-single-use?
                   ctx.use-counts
                   gep-dst2)
+                ;; Slot coloring can remap `load-dst` onto `base`'s own var id
+                ;; when `base` dies at the first load; a subsequent gep off
+                ;; `load-dst` then looks like `base2 == base` even though it is
+                ;; a pointer chase, not a second read off the original base.
+                (not
+                  (be_operand.compiler-backend-branch-uses-var? base load-dst))
                 (compiler_optimize.opt-value-eq (& base2) (& base)))
                 (match (be_operand.compiler-backend-value-as-i64 offset2)
                   [(Some _) (No)]
@@ -7142,7 +7150,13 @@
                   (be_state.compiler-backend-global-shared-view ctx)
                   staged-value
                   (if (string.eq addr "")
-                    staged-base
+                    (if staged-scavenged?
+                      (compiler-backend-gep-load-cmp-scavenged-staging-base
+                        (be_state.compiler-backend-global-shared-view ctx)
+                        (be_state.compiler-backend-global-shared-view instrs)
+                        index
+                        true)
+                      staged-base)
                     "")
                   cmp-asm
                   true-jcc
@@ -7992,6 +8006,59 @@
             index
             out)])]))
 
+(define (compiler-backend-rest-starts-load-alu-fold?
+  [backend-state : be_state.CompilerBackendState]
+  [type-segment-bases : i64]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [use-counts : (& use-counts (__tl_dyn-array i64))]
+  [base : (& compiler_ir_types.CompilerIrValue)]
+  [offset : (& compiler_ir_types.CompilerIrValue)]
+  [load-dst : i64]
+  [load-ty : (& compiler_ast_types.AstType)]
+  [instrs : (& compiler_ir_types.CompilerIrInstrSeq)]
+  [index : i64]) : bool
+  (if (or
+    (not (compiler-backend-load-compare-type? type-segment-bases load-ty))
+    (not (be_simd.compiler-backend-var-single-use? use-counts load-dst))
+    (>= index instrs.len))
+    false
+    (match (compiler_ir_types.compiler-ir-instr-seq-borrow instrs index)
+      [(BinOp dst op lhs rhs ty)
+        (let
+          [mnem : String (compiler-backend-gep-load-alu-mnemonic op)]
+          [mem-is-rhs? : bool
+            (and
+              (be_operand.compiler-backend-branch-uses-var? rhs load-dst)
+              (not (be_operand.compiler-backend-branch-uses-var? lhs load-dst)))]
+          [mem-is-lhs? : bool
+            (and
+              (be_operand.compiler-backend-commutative-binop? op)
+              (be_operand.compiler-backend-branch-uses-var? lhs load-dst)
+              (not (be_operand.compiler-backend-branch-uses-var? rhs load-dst)))]
+          [dst-home : String
+            (be_scalar.compiler-backend-var-register-home
+              backend-state
+              assignments
+              dst)]
+          [base-home : String
+            (be_operand.compiler-backend-value-scalar-register
+              backend-state
+              assignments
+              base)]
+          [offset-home : String
+            (be_operand.compiler-backend-value-scalar-register
+              backend-state
+              assignments
+              offset)]
+          (and
+            (not (string.eq mnem ""))
+            (or mem-is-rhs? mem-is-lhs?)
+            (compiler-backend-load-compare-type? type-segment-bases ty)
+            (not (string.eq dst-home ""))
+            (not (string.eq dst-home base-home))
+            (not (string.eq dst-home offset-home))))]
+      [_ false])))
+
 (define (compiler-backend-emit-fused-gep-load-plain-rest
   [ctx : be_state.CompilerBackendEmissionContext]
   [fallthrough : be_state.CompilerBackendMaybeLabel]
@@ -8026,6 +8093,12 @@
                 (be_simd.compiler-backend-var-single-use?
                   ctx.use-counts
                   gep-dst2)
+                ;; Slot coloring can remap `load-dst` onto `base`'s own var id
+                ;; when `base` dies at the first load; a subsequent gep off
+                ;; `load-dst` then looks like `base2 == base` even though it is
+                ;; a pointer chase, not a second read off the original base.
+                (not
+                  (be_operand.compiler-backend-branch-uses-var? base load-dst))
                 (compiler_optimize.opt-value-eq (& base2) (& base)))
                 (match (be_operand.compiler-backend-value-as-i64 offset2)
                   [(Some n2)
@@ -8093,14 +8166,16 @@
                                         instrs)
                                       after-load2)))))
                               (let
-                                ;; GAP9: the pair consumes a SECOND gep;
-                                ;; advance its ordinal before either pair path.
+                                ;; GAP9: peek the second gep's folded
+                                ;; displacement so we only consume its ordinal
+                                ;; when a pair path actually claims `gep2`.
                                 [gep-fold-disp2 : i64
-                                  (compiler-backend-gep-fold-next!
+                                  (compiler-backend-gep-fold-peek
                                     ctx.function-state
                                     ctx.type-segment-bases
-                                    offset2
-                                    elem-ty2)]
+                                    0
+                                    (& offset2)
+                                    (& elem-ty2))]
                                 (match (compiler-backend-gep-load-pair-alu-probe
                                   ctx.backend-state
                                   ctx.type-segment-bases
@@ -8128,41 +8203,91 @@
                                     instrs)
                                   after-load2)
                                   [(Some mnem alu-dst addr0 addr1 after-binop)
-                                    (compiler-backend-emit-fused-result-rest
-                                      (be_state.compiler-backend-global-shared-view
-                                        ctx)
-                                      fallthrough
-                                      (compiler-backend-emit-gep-load-pair-alu
-                                        ctx.backend-state
-                                        ctx.assignments
-                                        mnem
-                                        alu-dst
-                                        addr0
-                                        addr1)
-                                      instrs
-                                      after-binop
-                                      out)]
+                                    (let
+                                      [_g2 : i64
+                                        (compiler-backend-gep-fold-next!
+                                          ctx.function-state
+                                          ctx.type-segment-bases
+                                          offset2
+                                          elem-ty2)]
+                                      [pair-alu-res
+                                        (compiler-backend-emit-gep-load-pair-alu
+                                          ctx.backend-state
+                                          ctx.assignments
+                                          mnem
+                                          alu-dst
+                                          addr0
+                                          addr1)]
+                                      (compiler-backend-emit-fused-result-rest
+                                        ctx
+                                        fallthrough
+                                        pair-alu-res
+                                        instrs
+                                        after-binop
+                                        out))]
                                   [(No)
-                                    (compiler-backend-emit-fused-result-rest
-                                      (be_state.compiler-backend-global-shared-view
-                                        ctx)
-                                      fallthrough
-                                      (be_scalar.compiler-backend-emit-load-from-gep-pair
-                                        ctx.type-segment-bases
-                                        ctx.assignments
-                                        base
-                                        offset
-                                        elem-ty
-                                        load-dst
-                                        load-ty
-                                        offset2
-                                        elem-ty2
-                                        load-dst2
-                                        load-ty2
-                                        ctx.backend-state)
-                                      instrs
-                                      after-load2
-                                      out)]))
+                                    ;; Do not absorb a second load that GAP8
+                                    ;; can fold straight into a following ALU
+                                    ;; instruction (e.g. non-commutative `sub`),
+                                    ;; which would split 2 instructions into 3.
+                                    (if (compiler-backend-rest-starts-load-alu-fold?
+                                      ctx.backend-state
+                                      ctx.type-segment-bases
+                                      ctx.assignments
+                                      ctx.use-counts
+                                      (& base)
+                                      (& offset2)
+                                      load-dst2
+                                      (& load-ty2)
+                                      (& instrs)
+                                      after-load2)
+                                      (let
+                                        [single-res
+                                          (be_scalar.compiler-backend-emit-load-from-gep
+                                            ctx.type-segment-bases
+                                            ctx.assignments
+                                            load-dst
+                                            base
+                                            offset
+                                            elem-ty
+                                            load-ty
+                                            gep-fold-disp
+                                            ctx.backend-state)]
+                                        (compiler-backend-emit-fused-result-rest
+                                          ctx
+                                          fallthrough
+                                          single-res
+                                          instrs
+                                          index
+                                          out))
+                                      (let
+                                        [_g2 : i64
+                                          (compiler-backend-gep-fold-next!
+                                            ctx.function-state
+                                            ctx.type-segment-bases
+                                            offset2
+                                            elem-ty2)]
+                                        [pair-res
+                                          (be_scalar.compiler-backend-emit-load-from-gep-pair
+                                            ctx.type-segment-bases
+                                            ctx.assignments
+                                            base
+                                            offset
+                                            elem-ty
+                                            load-dst
+                                            load-ty
+                                            offset2
+                                            elem-ty2
+                                            load-dst2
+                                            load-ty2
+                                            ctx.backend-state)]
+                                        (compiler-backend-emit-fused-result-rest
+                                          ctx
+                                          fallthrough
+                                          pair-res
+                                          instrs
+                                          after-load2
+                                          out)))]))
                               (compiler-backend-emit-fused-result-rest
                                 (be_state.compiler-backend-global-shared-view
                                   ctx)
@@ -10749,6 +10874,44 @@
           out))]
     [_ (No)]))
 
+;; A bare `Load` off a pointer is semantically identical to a zero-offset
+;; `Gep base 0 u8` followed by `Load`. After `zero_gep_elim` removes identity
+;; offset-0 GEPs, delegating non-remat scalar loads to
+;; `compiler-backend-emit-fused-gep-load-rest` preserves M6 compare/bounds
+;; folding, GAP8 ALU memory-operand folding, load-pair sharing, and IAG-1
+;; direct RIP-relative loads without needing a redundant GEP instruction.
+(define (compiler-backend-emit-load-step-fallback
+  [ctx : be_state.CompilerBackendEmissionContext]
+  [fallthrough : be_state.CompilerBackendMaybeLabel]
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [load-dst : i64]
+  [ptr : compiler_ir_types.CompilerIrValue]
+  [load-ty : compiler_ast_types.AstType]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [out : (&mut out be_state.CompilerBackendAsmBuf)]) : be_state.ResultCompilerBackend
+  (if (and
+    (not
+      (be_scalar.compiler-backend-var-remat-home?
+        ctx.backend-state
+        ctx.assignments
+        load-dst))
+    (compiler-backend-load-compare-type? ctx.type-segment-bases load-ty))
+    (compiler-backend-emit-fused-gep-load-rest
+      ctx
+      fallthrough
+      (- 0 1)
+      0
+      ptr
+      (I64 0)
+      (U8)
+      load-dst
+      load-ty
+      instrs
+      index
+      out)
+    (compiler-backend-emit-instrs-normal ctx fallthrough instr instrs index out)))
+
 (define (compiler-backend-emit-load-step
   [ctx : be_state.CompilerBackendEmissionContext]
   [fallthrough : be_state.CompilerBackendMaybeLabel]
@@ -10786,10 +10949,13 @@
                 instrs
                 after-cmp
                 out)
-              (compiler-backend-emit-instrs-normal
+              (compiler-backend-emit-load-step-fallback
                 ctx
                 fallthrough
                 instr
+                load-dst
+                ptr
+                load-ty
                 instrs
                 index
                 out))]
@@ -10837,51 +11003,78 @@
                           instrs
                           after-branch
                           out)
-                        (compiler-backend-emit-instrs-normal
+                        (compiler-backend-emit-load-step-fallback
                           ctx
                           fallthrough
                           instr
+                          load-dst
+                          ptr
+                          load-ty
                           instrs
                           index
                           out))]
                     [_
-                      (compiler-backend-emit-instrs-normal
+                      (compiler-backend-emit-load-step-fallback
                         ctx
                         fallthrough
                         instr
+                        load-dst
+                        ptr
+                        load-ty
                         instrs
                         index
                         out)]))
-                (compiler-backend-emit-instrs-normal
+                (compiler-backend-emit-load-step-fallback
                   ctx
                   fallthrough
                   instr
+                  load-dst
+                  ptr
+                  load-ty
                   instrs
                   index
                   out))
-              (compiler-backend-emit-instrs-normal
+              (compiler-backend-emit-load-step-fallback
                 ctx
                 fallthrough
                 instr
+                load-dst
+                ptr
+                load-ty
                 instrs
                 index
                 out))]
           [_
-            (compiler-backend-emit-instrs-normal
+            (compiler-backend-emit-load-step-fallback
               ctx
               fallthrough
               instr
+              load-dst
+              ptr
+              load-ty
               instrs
               index
               out)]))
-      (compiler-backend-emit-instrs-normal
+      (compiler-backend-emit-load-step-fallback
         ctx
         fallthrough
         instr
+        load-dst
+        ptr
+        load-ty
         instrs
         index
         out))
-    (compiler-backend-emit-instrs-normal ctx fallthrough instr instrs index out)))
+    (compiler-backend-emit-load-step-fallback
+      ctx
+      fallthrough
+      instr
+      load-dst
+      ptr
+      load-ty
+      instrs
+      index
+      out)))
 
 (define (compiler-backend-emit-store-ptr-step
   [ctx : be_state.CompilerBackendEmissionContext]
@@ -14890,14 +15083,9 @@
         vars
         (& all-blocks)
         (& use-counts))]
-    ;; The frame-escape answer is per function too; see
-    ;; compiler-backend-blocks-expose-frame-at?.
-    [_frame-may-escape-clear : unit
-      (be_state.compiler-backend-function-state-set-i64!
-        (be_state.compiler-backend-state-function-state
-          program-index.backend-state)
-        be_state.compiler-backend-function-i64-frame-may-escape
-        0)]
+    ;; `compiler-backend-emit-function` seeds `frame-may-escape` from the
+    ;; pre-coloring blocks so dead stack-slot var-id reuse cannot cause false
+    ;; frame-escape aliasing at -O0; leave any seeded value intact here.
     [out : be_state.CompilerBackendAsmBuf
       (be_state.compiler-backend-asm-buf-with-capacity
         (+
@@ -24126,6 +24314,14 @@
                 emit-vars
                 (compiler_regalloc.compiler-reg-plan-assignments
                   (& rewritten-reg-plan)))])]
+        ;; Compute whole-function frame escape on pre-coloring blocks so
+        ;; stack-slot var-id remapping cannot alias unrelated pointers with dead
+        ;; `AddrOf` slots at -O0.
+        [frame-may-escape-known : i64
+          (if (compiler_ir_types.compiler-ir-blocks-frame-may-escape?
+            (& rewritten-blocks))
+            2
+            1)]
         [colored-blocks : compiler_ir_types.CompilerIrBlockList
           (match (be_state.compiler-backend-global-shared-view coloring)
             [(None) rewritten-blocks]
@@ -24730,7 +24926,11 @@
                       (+
                         (be_scalar.compiler-backend-cycle-temp-frame-extra
                           (be_scalar.compiler-backend-cycle-temp-max-slots))
-                        (be_scalar.compiler-backend-emergency-slot-size))))))]
+                        (be_scalar.compiler-backend-emergency-slot-size)))))
+                (be_state.compiler-backend-function-state-set-i64!
+                  function-state
+                  be_state.compiler-backend-function-i64-frame-may-escape
+                  frame-may-escape-known))]
             (match (compiler-backend-emit-blocks
               type-segment-bases
               (be_state.compiler-backend-global-shared-view label-scope)

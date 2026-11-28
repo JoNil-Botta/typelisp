@@ -2255,22 +2255,21 @@
 (define (file-seek [handle : FileHandle] [offset : i64]) : ResultIoUnit
   (let
     [raw : i64 handle.id]
-    (unless
-      (valid-handle? raw)
-      (return (ErrIoUnit (IoUnsupported (file-handle-invalid-message)))))
-    (unsafe
-      (let
-        [fd : i64 (io_core.io-file-i64-ref (io_core.io-file-fds-ptr) raw)]
-        [position : i64 (platform-lseek fd offset 0)]
-        (if (< position 0)
-          (ErrIoUnit (error-from-label "file-seek" (last-error-code)))
-          (begin
-            (io_core.io-file-bool-set! (io_core.io-file-eofs-ptr) raw false)
-            (io_core.io-file-bool-set!
-              (io_core.io-file-last-ready-ptr)
-              raw
-              false)
-            OkIoUnit))))))
+    (if (valid-handle? raw)
+      (unsafe
+        (let
+          [fd : i64 (io_core.io-file-i64-ref (io_core.io-file-fds-ptr) raw)]
+          [position : i64 (platform-lseek fd offset 0)]
+          (if (< position 0)
+            (ErrIoUnit (error-from-label "file-seek" (last-error-code)))
+            (begin
+              (io_core.io-file-bool-set! (io_core.io-file-eofs-ptr) raw false)
+              (io_core.io-file-bool-set!
+                (io_core.io-file-last-ready-ptr)
+                raw
+                false)
+              OkIoUnit))))
+      (ErrIoUnit (IoUnsupported (file-handle-invalid-message))))))
 
 ;: Return the owned buffer captured by a streaming file read.
 (define (file-read-bytes [read : FileRead]) : byte_buf.ByteBuf

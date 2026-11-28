@@ -632,7 +632,7 @@
                         "")))]
                 ;; The address-of result is defined by CompilerIrInstr.AddrOf, never a remat
                 ;; Mov; unreachable.
-                [(Remat _) ""])]
+                [(or (SpillPair _ _) (Remat _)) ""])]
             [(No)
               (let
                 [addr-reg : String
@@ -9125,7 +9125,7 @@
       target
       (Internal)
       assignments
-      args
+      (be_state.compiler-backend-global-shared-view args)
       param-types
       false
       0
@@ -9141,6 +9141,14 @@
         (let
           [clo-reg : String
             (compiler-backend-scavenge-tail-call-target-reg backend-state)]
+          [overlap : bool
+            (compiler-backend-indirect-call-callee-arg-overlap?
+              target
+              (Internal)
+              assignments
+              (be_state.compiler-backend-global-shared-view func)
+              args
+              backend-state)]
           (match (be_operand.compiler-backend-emit-load-value
             assignments
             func
@@ -9155,20 +9163,40 @@
                   (let
                     [target-addr : String
                       (str_cat.str-cat "*(" clo-reg ")" "" "")]
-                    [descriptor-asm : String
+                    [env-asm : String
                       (str_cat.str-cat
-                        func-asm
                         "    movq 8("
                         clo-reg
                         "), "
                         env-reg
                         "\n"
                         "")]
+                    [body-asm : String
+                      (if overlap
+                        (let
+                          [slot : String
+                            (be_scalar.compiler-backend-cycle-temp-slot-with-backend-state
+                              backend-state
+                              1)]
+                          (str_cat.str-cat
+                            func-asm
+                            "    movq "
+                            clo-reg
+                            ", "
+                            slot
+                            "\n"
+                            args-asm
+                            "    movq "
+                            slot
+                            ", "
+                            clo-reg
+                            "\n"
+                            env-asm))
+                        (str_cat.str-cat args-asm func-asm env-asm))]
                     (if register-only
                       (Ok
                         (str_cat.str-cat
-                          args-asm
-                          descriptor-asm
+                          body-asm
                           (be_scalar.compiler-backend-tail-jump-tail
                             assignments
                             vars
@@ -9178,8 +9206,7 @@
                         (str_cat.str-cat
                           (be_operand.compiler-backend-emit-call-space-sub
                             call-space)
-                          args-asm
-                          descriptor-asm
+                          body-asm
                           (str_cat.str-cat
                             "    call "
                             target-addr
@@ -16348,7 +16375,7 @@
       assignments
       (match coloring
         [(None) assignments]
-        [(Remap remap _)
+        [(Remap remap _ _ _)
           (let
             [out : compiler_regalloc.CompilerRegAssignmentTable assignments]
             (for [v (iterator.range 0 n)]
@@ -16364,13 +16391,133 @@
                       (Spill off))))))
             out)]))))
 
-(define (compiler-backend-emit-param-spills-from
+(define (compiler-backend-emit-param-spills-collect-group-word!
   [entry : (&mut entry be_state.CompilerBackendAsmBuf)]
+  [phase1 : (&mut phase1 be_state.CompilerBackendAsmBuf)]
+  [phase2 : (&mut phase2 be_calls.CompilerBackendArgMoveSeq)]
+  [phase3 : (&mut phase3 be_state.CompilerBackendAsmBuf)]
   [type-segment-bases : i64]
   [target : be_state.CompilerBackendTarget]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [all-params : compiler_ir_types.CompilerIrParamSeq]
-  [params : compiler_ir_types.CompilerIrParamSeq]
+  [var-id : i64]
+  [word-index : i64]
+  [int-idx : i64]
+  [float-idx : i64]
+  [position : i64]
+  [stack-idx : i64]
+  [vars : i64]
+  [ty : compiler_ast_types.AstType]
+  [program-index : be_state.CompilerBackendProgramIndex]
+  [param-exclude : (__tl_dyn-array String)]
+  [param-exclude-n : i64]
+  [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
+  (let
+    [sse? : bool
+      (be_facts.compiler-backend-group-word-sse?
+        type-segment-bases
+        program-index
+        (& ty)
+        word-index)]
+    (if (be_scalar.compiler-backend-stack-call-arg-for-banks?
+      target
+      (Internal)
+      sse?
+      int-idx
+      float-idx
+      position)
+      (let
+        [asm
+          (try
+            (be_scalar.compiler-backend-emit-group-word-stack-param
+              entry
+              type-segment-bases
+              target
+              assignments
+              var-id
+              word-index
+              stack-idx
+              vars
+              ty
+              program-index
+              param-exclude
+              param-exclude-n
+              backend-state))]
+        (be_state.compiler-backend-asm-append phase3 asm)
+        (Ok ""))
+      (let
+        [src-reg : i64
+          (if sse?
+            (compiler_abi.compiler-abi-float-arg-register-id
+              (be_state.compiler-backend-target-abi target)
+              (Internal)
+              (be_facts.compiler-backend-call-bank-index
+                target
+                (Internal)
+                float-idx
+                position))
+            (compiler_abi.compiler-abi-gp-arg-register-id
+              (be_state.compiler-backend-target-abi target)
+              (Internal)
+              (be_facts.compiler-backend-call-bank-index
+                target
+                (Internal)
+                int-idx
+                position)))]
+        (if (= src-reg compiler_abi.compiler-reg-id-invalid)
+          (Err
+            (box
+              (compiler_diagnostic.compiler-diagnostic-at-start
+                ""
+                "backend: too many params")))
+          (let
+            [dst-reg : i64
+              (match (be_operand.compiler-backend-emit-assignment-lookup
+                backend-state
+                assignments
+                var-id)
+                [(Some location)
+                  (match location
+                    [(RegisterPair r0 r1)
+                      (if (= word-index 0)
+                        r0
+                        r1)]
+                    [_ compiler_abi.compiler-reg-id-invalid])]
+                [(No) compiler_abi.compiler-reg-id-invalid])]
+            (if (not (= dst-reg compiler_abi.compiler-reg-id-invalid))
+              (begin
+                (be_calls.compiler-backend-arg-move-push!
+                  phase2
+                  (be_calls.CompilerBackendArgMove.BackendArgMove
+                    dst-reg
+                    (be_calls.CompilerBackendArgMoveSource.BackendArgMoveReg
+                      src-reg)))
+                (Ok ""))
+              (let
+                [asm
+                  (try
+                    (be_scalar.compiler-backend-emit-group-word-store
+                      type-segment-bases
+                      assignments
+                      var-id
+                      word-index
+                      (compiler_abi.compiler-abi-register-spelling src-reg)
+                      vars
+                      ty
+                      program-index
+                      backend-state))]
+                (be_state.compiler-backend-asm-append phase1 asm)
+                (Ok "")))))))))
+
+(define (compiler-backend-emit-param-spills-from
+  [entry : (&mut entry be_state.CompilerBackendAsmBuf)]
+  [phase1 : (&mut phase1 be_state.CompilerBackendAsmBuf)]
+  [phase2 : (&mut phase2 be_calls.CompilerBackendArgMoveSeq)]
+  [phase3 : (&mut phase3 be_state.CompilerBackendAsmBuf)]
+  [type-segment-bases : i64]
+  [target : be_state.CompilerBackendTarget]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [all-params : (& compiler_ir_types.CompilerIrParamSeq)]
+  [params : (& compiler_ir_types.CompilerIrParamSeq)]
   [param-index : i64]
   [int-idx : i64]
   [float-idx : i64]
@@ -16384,7 +16531,7 @@
     (match (compiler_ir_types.compiler-ir-param-seq-ref params param-index)
       [(Param _ ty var-id)
         (let
-          [is-float : bool (be_operand.compiler-backend-float-type? ty)]
+          [is-float : bool (be_operand.compiler-backend-float-type? (& ty))]
           [next-int : i64
             (if is-float
               int-idx
@@ -16396,55 +16543,50 @@
           [private-memory-size : i64
             (be_facts.compiler-backend-abi-memory-size
               type-segment-bases
-              (be_state.compiler-backend-global-shared-view ty))]
-          ;; A register-group parameter occupies two eightbytes.
-          ;; INTEGER words advance the integer bank; SSE words advance the float
-          ;; bank. This mirrors emit-call-args so self-calls agree on register vs
-          ;; stack placement for mixed-bank aggregate words.
+              (compiler_ast_types.clone-ast-type (& ty)))]
           (cond
             [(and
-                (be_state.compiler-backend-target-sysv-aggregates?
-                  target
-                  (Internal))
-                (> private-memory-size 0))
-              (let
-                [tail
-                  (try
-                    (compiler-backend-emit-param-spills-from
-                      entry
-                      type-segment-bases
+              (be_state.compiler-backend-target-sysv-aggregates?
+                target
+                (Internal))
+              (> private-memory-size 0))
+              (be_state.compiler-backend-asm-append
+                phase3
+                (compiler-backend-emit-private-memory-param-address
+                  assignments
+                  (owned_view.compiler-owned-reference-shared-view all-params)
+                  var-id
+                  (be_operand.compiler-backend-frame-offset-with-backend-state
+                    backend-state
+                    (be_facts.compiler-backend-incoming-stack-arg-offset
                       target
-                      assignments
-                      (be_state.compiler-backend-global-shared-view all-params)
-                      params
-                      (+ param-index 1)
-                      int-idx
-                      float-idx
-                      (+ position 1)
-                      (+
-                        stack-idx
-                        (be_calls.compiler-backend-stack-slots-for-size
-                          private-memory-size))
-                      program-index
-                      vars
-                      backend-state))]
-                (Ok
-                  (str_cat.str-cat
-                    tail
-                    (compiler-backend-emit-private-memory-param-address
-                      assignments
-                      all-params
-                      var-id
-                      (be_operand.compiler-backend-frame-offset-with-backend-state
-                        backend-state
-                        (be_facts.compiler-backend-incoming-stack-arg-offset
-                          target
-                          stack-idx))
-                      backend-state))))]
+                      stack-idx))
+                  backend-state))
+              (compiler-backend-emit-param-spills-from
+                entry
+                phase1
+                phase2
+                phase3
+                type-segment-bases
+                target
+                assignments
+                all-params
+                params
+                (+ param-index 1)
+                int-idx
+                float-idx
+                (+ position 1)
+                (+
+                  stack-idx
+                  (be_calls.compiler-backend-stack-slots-for-size
+                    private-memory-size))
+                program-index
+                vars
+                backend-state)]
             [(be_facts.compiler-backend-group-type?
                 type-segment-bases
                 program-index
-                ty)
+                (& ty))
               (let
                 [linux-group-fits : bool
                   (be_calls.compiler-backend-linux-group-register-banks-fit?
@@ -16452,25 +16594,25 @@
                     target
                     (Internal)
                     program-index
-                    (be_state.compiler-backend-global-shared-view ty)
+                    (compiler_ast_types.clone-ast-type (& ty))
                     int-idx
                     float-idx
                     position)]
                 [param-exclude : (__tl_dyn-array String)
                   (be_scalar.compiler-backend-param-register-exclude
                     backend-state
-                    (be_state.compiler-backend-global-shared-view all-params)
+                    (owned_view.compiler-owned-reference-shared-view all-params)
                     assignments)]
                 [param-exclude-n : i64
                   (be_scalar.compiler-backend-param-register-exclude-count
                     backend-state
-                    (be_state.compiler-backend-global-shared-view all-params)
+                    (owned_view.compiler-owned-reference-shared-view all-params)
                     assignments)]
                 [w0-sse : bool
                   (be_facts.compiler-backend-group-word-sse?
                     type-segment-bases
                     program-index
-                    ty
+                    (& ty)
                     0)]
                 [w0-stack : bool
                   (be_scalar.compiler-backend-stack-call-arg-for-banks?
@@ -16496,7 +16638,7 @@
                   (be_facts.compiler-backend-group-word-sse?
                     type-segment-bases
                     program-index
-                    ty
+                    (& ty)
                     1)]
                 [w1-stack : bool
                   (be_scalar.compiler-backend-stack-call-arg-for-banks?
@@ -16523,10 +16665,10 @@
                           0
                           stack-idx
                           vars
-                          (be_state.compiler-backend-global-shared-view ty)
+                          (compiler_ast_types.clone-ast-type (& ty))
                           program-index
-                          (be_state.compiler-backend-global-shared-view
-                            param-exclude)
+                          (owned_view.compiler-owned-reference-shared-view
+                            (& param-exclude))
                           param-exclude-n
                           backend-state))]
                     [head1
@@ -16540,34 +16682,39 @@
                           1
                           (+ stack-idx 1)
                           vars
-                          (be_state.compiler-backend-global-shared-view ty)
+                          ty
                           program-index
                           param-exclude
                           param-exclude-n
                           backend-state))]
-                    [tail
-                      (try
-                        (compiler-backend-emit-param-spills-from
-                          entry
-                          type-segment-bases
-                          target
-                          assignments
-                          all-params
-                          params
-                          (+ param-index 1)
-                          int-idx
-                          float-idx
-                          (+ position 2)
-                          (+ stack-idx 2)
-                          program-index
-                          vars
-                          backend-state))]
-                    (Ok (str_cat.str-cat tail head0 head1)))
+                    (be_state.compiler-backend-asm-append phase3 head0)
+                    (be_state.compiler-backend-asm-append phase3 head1)
+                    (compiler-backend-emit-param-spills-from
+                      entry
+                      phase1
+                      phase2
+                      phase3
+                      type-segment-bases
+                      target
+                      assignments
+                      all-params
+                      params
+                      (+ param-index 1)
+                      int-idx
+                      float-idx
+                      (+ position 2)
+                      (+ stack-idx 2)
+                      program-index
+                      vars
+                      backend-state))
                   (let
-                    [head0
+                    [_w0
                       (try
-                        (be_scalar.compiler-backend-emit-group-word-param
+                        (compiler-backend-emit-param-spills-collect-group-word!
                           entry
+                          phase1
+                          phase2
+                          phase3
                           type-segment-bases
                           target
                           assignments
@@ -16578,16 +16725,19 @@
                           position
                           stack-idx
                           vars
-                          (be_state.compiler-backend-global-shared-view ty)
+                          (compiler_ast_types.clone-ast-type (& ty))
                           program-index
-                          (be_state.compiler-backend-global-shared-view
-                            param-exclude)
+                          (owned_view.compiler-owned-reference-shared-view
+                            (& param-exclude))
                           param-exclude-n
                           backend-state))]
-                    [head1
+                    [_w1
                       (try
-                        (be_scalar.compiler-backend-emit-group-word-param
+                        (compiler-backend-emit-param-spills-collect-group-word!
                           entry
+                          phase1
+                          phase2
+                          phase3
                           type-segment-bases
                           target
                           assignments
@@ -16598,35 +16748,35 @@
                           (+ position 1)
                           stack1
                           vars
-                          (be_state.compiler-backend-global-shared-view ty)
+                          ty
                           program-index
                           param-exclude
                           param-exclude-n
                           backend-state))]
-                    [tail
-                      (try
-                        (compiler-backend-emit-param-spills-from
-                          entry
-                          type-segment-bases
-                          target
-                          assignments
-                          all-params
-                          params
-                          (+ param-index 1)
-                          (if w1-sse
-                            int1
-                            (+ int1 1))
-                          (if w1-sse
-                            (+ float1 1)
-                            float1)
-                          (+ position 2)
-                          (if w1-stack
-                            (+ stack1 1)
-                            stack1)
-                          program-index
-                          vars
-                          backend-state))]
-                    (Ok (str_cat.str-cat head0 head1 tail)))))]
+                    (compiler-backend-emit-param-spills-from
+                      entry
+                      phase1
+                      phase2
+                      phase3
+                      type-segment-bases
+                      target
+                      assignments
+                      all-params
+                      params
+                      (+ param-index 1)
+                      (if w1-sse
+                        int1
+                        (+ int1 1))
+                      (if w1-sse
+                        (+ float1 1)
+                        float1)
+                      (+ position 2)
+                      (if w1-stack
+                        (+ stack1 1)
+                        stack1)
+                      program-index
+                      vars
+                      backend-state))))]
             [else
               (if (be_scalar.compiler-backend-stack-call-arg-for-banks?
                 target
@@ -16651,152 +16801,156 @@
                           [_ false])]
                       [(No) false])]
                   (if direct-home?
-                    (compiler-backend-emit-param-spills-from
-                      entry
-                      type-segment-bases
-                      target
-                      assignments
-                      all-params
-                      params
-                      (+ param-index 1)
-                      next-int
-                      next-float
-                      (+ position 1)
-                      (+ stack-idx 1)
-                      program-index
-                      vars
-                      backend-state)
+                    unit
                     (let
                       [addr : String
                         (be_operand.compiler-backend-frame-offset-with-backend-state
                           backend-state
                           incoming-offset)]
-                      ;; A float with a register home loads straight into it
-                      ;; below.
                       [entry-copy? : bool
                         (compiler-backend-param-entry-float-copy?
                           is-float
                           assignments
                           var-id
                           backend-state)]
-                      [_entry-copy : unit
-                        (when
-                          entry-copy?
-                          (compiler-backend-param-entry-float-copy!
-                            entry
-                            target
-                            assignments
-                            var-id
-                            addr
-                            ty
-                            backend-state))]
-                      [tail
-                        (try
-                          (compiler-backend-emit-param-spills-from
-                            entry
-                            type-segment-bases
-                            target
-                            assignments
-                            (be_state.compiler-backend-global-shared-view
-                              all-params)
-                            params
-                            (+ param-index 1)
-                            next-int
-                            next-float
-                            (+ position 1)
-                            (+ stack-idx 1)
-                            program-index
-                            vars
-                            backend-state))]
-                      (Ok
+                      (if entry-copy?
+                        (compiler-backend-param-entry-float-copy!
+                          entry
+                          target
+                          assignments
+                          var-id
+                          addr
+                          ty
+                          backend-state)
                         (let
                           [exclude-n : i64
                             (be_scalar.compiler-backend-param-register-exclude-count
                               backend-state
-                              (be_state.compiler-backend-global-shared-view
+                              (owned_view.compiler-owned-reference-shared-view
                                 all-params)
                               assignments)]
                           [exclude : (__tl_dyn-array String)
                             (be_scalar.compiler-backend-param-register-exclude
                               backend-state
-                              all-params
+                              (owned_view.compiler-owned-reference-shared-view
+                                all-params)
                               assignments)]
-                          (str_cat.str-cat
-                            (cond
-                              [entry-copy? ""]
-                              [is-float
-                                (be_scalar.compiler-backend-emit-load-float-address-to-var
-                                  assignments
-                                  var-id
-                                  addr
-                                  ty
-                                  backend-state)]
-                              [else
-                                (be_scalar.compiler-backend-emit-load-scalar-address-to-var
-                                  type-segment-bases
-                                  assignments
-                                  var-id
-                                  addr
-                                  ty
-                                  (be_state.compiler-backend-global-shared-view
-                                    exclude)
+                          (be_state.compiler-backend-asm-append
+                            phase3
+                            (if is-float
+                              (be_scalar.compiler-backend-emit-load-float-address-to-var
+                                assignments
+                                var-id
+                                addr
+                                ty
+                                backend-state)
+                              (be_scalar.compiler-backend-emit-load-scalar-address-to-var
+                                type-segment-bases
+                                assignments
+                                var-id
+                                addr
+                                ty
+                                (owned_view.compiler-owned-reference-shared-view
+                                  (& exclude))
+                                exclude-n
+                                (be_operand.compiler-backend-scavenge-pick-with-mask
+                                  (be_state.compiler-backend-state-function-state
+                                    backend-state)
+                                  true
+                                  0
+                                  0
+                                  exclude
                                   exclude-n
-                                  (be_operand.compiler-backend-scavenge-pick-with-mask
-                                    (be_state.compiler-backend-state-function-state
-                                      backend-state)
-                                    true
-                                    0
-                                    0
-                                    exclude
-                                    exclude-n
-                                    "%r8")
-                                  backend-state)])
-                            tail))))))
-                (match (if is-float
-                  (be_facts.compiler-backend-target-float-arg-reg-for-banks
+                                  "%r8")
+                                backend-state)))))))
+                  (compiler-backend-emit-param-spills-from
+                    entry
+                    phase1
+                    phase2
+                    phase3
+                    type-segment-bases
                     target
-                    (Internal)
-                    float-idx
-                    position)
-                  (be_facts.compiler-backend-target-arg-reg-for-banks
-                    target
-                    (Internal)
-                    int-idx
-                    position))
-                  [(Ok reg)
-                    (let
-                      [tail
-                        (try
-                          (compiler-backend-emit-param-spills-from
-                            entry
-                            type-segment-bases
-                            target
-                            assignments
-                            all-params
-                            params
-                            (+ param-index 1)
-                            next-int
-                            next-float
-                            (+ position 1)
-                            stack-idx
-                            program-index
-                            vars
-                            backend-state))]
-                      (Ok
-                        (str_cat.str-cat
-                          (be_operand.compiler-backend-emit-store-typed-var
-                            assignments
-                            var-id
-                            reg
-                            ty
-                            backend-state)
-                          tail)))]
-                  [(Err _)
+                    assignments
+                    all-params
+                    params
+                    (+ param-index 1)
+                    next-int
+                    next-float
+                    (+ position 1)
+                    (+ stack-idx 1)
+                    program-index
+                    vars
+                    backend-state))
+                (let
+                  [src-reg : i64
+                    (if is-float
+                      (compiler_abi.compiler-abi-float-arg-register-id
+                        (be_state.compiler-backend-target-abi target)
+                        (Internal)
+                        (be_facts.compiler-backend-call-bank-index
+                          target
+                          (Internal)
+                          float-idx
+                          position))
+                      (compiler_abi.compiler-abi-gp-arg-register-id
+                        (be_state.compiler-backend-target-abi target)
+                        (Internal)
+                        (be_facts.compiler-backend-call-bank-index
+                          target
+                          (Internal)
+                          int-idx
+                          position)))]
+                  (if (= src-reg compiler_abi.compiler-reg-id-invalid)
                     (Err
                       (box
                         (compiler_diagnostic.compiler-diagnostic-at-start
                           ""
-                          "backend: too many params")))]))]))])))
+                          "backend: too many params")))
+                    (let
+                      [dst-reg : i64
+                        (match (be_operand.compiler-backend-emit-assignment-lookup
+                          backend-state
+                          assignments
+                          var-id)
+                          [(Some location)
+                            (match location
+                              [(Register home) home]
+                              [_ compiler_abi.compiler-reg-id-invalid])]
+                          [(No) compiler_abi.compiler-reg-id-invalid])]
+                      (if (not (= dst-reg compiler_abi.compiler-reg-id-invalid))
+                        (be_calls.compiler-backend-arg-move-push!
+                          phase2
+                          (be_calls.CompilerBackendArgMove.BackendArgMove
+                            dst-reg
+                            (be_calls.CompilerBackendArgMoveSource.BackendArgMoveReg
+                              src-reg)))
+                        (be_state.compiler-backend-asm-append
+                          phase1
+                          (be_operand.compiler-backend-emit-store-typed-var
+                            assignments
+                            var-id
+                            (compiler_abi.compiler-abi-register-spelling
+                              src-reg)
+                            ty
+                            backend-state)))
+                      (compiler-backend-emit-param-spills-from
+                        entry
+                        phase1
+                        phase2
+                        phase3
+                        type-segment-bases
+                        target
+                        assignments
+                        all-params
+                        params
+                        (+ param-index 1)
+                        next-int
+                        next-float
+                        (+ position 1)
+                        stack-idx
+                        program-index
+                        vars
+                        backend-state)))))]))])))
 
 (define (compiler-backend-emit-param-spills
   [type-segment-bases : i64]
@@ -16812,19 +16966,30 @@
   [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
   (let
     ;; The walk's entry copies (compiler-backend-param-entry-memory-copy) run
-    ;; ahead of every other parameter copy. Most functions have none, so the
-    ;; buffer starts at the minimum size and grows on demand.
+    ;; ahead of every other parameter copy. Then Phase 1 saves incoming register
+    ;; params destined for memory slots, Phase 2 moves incoming register params
+    ;; destined for registers/pairs via the parallel-move scheduler, and Phase 3
+    ;; loads incoming stack params and private-memory param addresses.
     [entry : be_state.CompilerBackendAsmBuf
       (be_state.compiler-backend-asm-buf-with-capacity 0)]
-    [copies
+    [phase1 : be_state.CompilerBackendAsmBuf
+      (be_state.compiler-backend-asm-buf-with-capacity 0)]
+    [phase2 : be_calls.CompilerBackendArgMoveSeq
+      (be_calls.compiler-backend-arg-move-seq-with-capacity 0)]
+    [phase3 : be_state.CompilerBackendAsmBuf
+      (be_state.compiler-backend-asm-buf-with-capacity 0)]
+    [_collected
       (try
         (compiler-backend-emit-param-spills-from
           (&mut entry)
+          (&mut phase1)
+          (&mut phase2)
+          (&mut phase3)
           type-segment-bases
           target
           assignments
-          (be_state.compiler-backend-global-shared-view params)
-          params
+          (& params)
+          (& params)
           0
           int-idx
           float-idx
@@ -16833,10 +16998,18 @@
           program-index
           vars
           backend-state))]
+    [phase2-asm
+      (try
+        (be_calls.compiler-backend-emit-entry-reg-moves
+          assignments
+          phase2
+          backend-state))]
     (Ok
       (str_cat.str-cat
         (be_state.compiler-backend-asm-buf-finish (& entry))
-        copies))))
+        (be_state.compiler-backend-asm-buf-finish (& phase1))
+        phase2-asm
+        (be_state.compiler-backend-asm-buf-finish (& phase3))))))
 
 (define (compiler-backend-emit-windows-main-argv-capture
   [target : be_state.CompilerBackendTarget]
@@ -24122,7 +24295,7 @@
         ;; Computed once per function: the gate below, the coloring pass, and
         ;; the frame layout all consume it (the per-block fixpoint scan is too
         ;; costly to repeat).
-        [fn-group-vars : compiler_liveness.CompilerLiveI64Set
+        [fn-group-vars-raw : compiler_liveness.CompilerLiveI64Set
           (compiler_regalloc.compiler-reg-function-group-vars
             type-segment-bases
             (&
@@ -24134,6 +24307,15 @@
                 (be_state.compiler-backend-global-shared-view rewritten-blocks)
                 (be_state.compiler-backend-global-shared-view function-abi)))
             plan-types)]
+        [fn-group-vars : compiler_liveness.CompilerLiveI64Set
+          (compiler_regalloc.compiler-reg-group-vars-fixpoint
+            (&
+              (be_calls.compiler-backend-late-group-vars-blocks
+                type-segment-bases
+                program-index
+                fn-group-vars-raw
+                (be_state.compiler-backend-global-shared-view rewritten-blocks)))
+            (& rewritten-blocks))]
         ;; Address temps the gep fusion peepholes fold into their consumer.
         ;; Computed on the exact blocks and assignments the coloring pass reads,
         ;; so the ids line up; see compiler-backend-gep-fusion-pinned-vars.
@@ -24226,7 +24408,7 @@
             ;; the real rewritten var count so scratch ids cannot grow the
             ;; frame merely by numbering temporary register intervals.
             [(None) rewritten-vars]
-            [(Remap _ slots) slots])]
+            [(Remap _ slots _ _) slots])]
         ;; Wide stack ranges can place remapped ids beyond the original plan.
         ;; Register-only ids can remain beyond the compacted frame. Every
         ;; final-IR side table must contain both domains.
@@ -24235,7 +24417,7 @@
         [emit-spans : compiler_ir_types.CompilerSourceSpans
           (match (be_state.compiler-backend-global-shared-view coloring)
             [(None) (owned_view.compiler-owned-shared-view coloring-spans)]
-            [(Remap remap _)
+            [(Remap remap _ _ _)
               (if (>
                 (compiler_liveness.compiler-live-set-word-count
                   source-span-pinned-vars)
@@ -24251,9 +24433,11 @@
               [(None)
                 (compiler_regalloc.compiler-reg-plan-assignments
                   (& rewritten-reg-plan))]
-              [(Remap remap _)
+              [(Remap remap _ group-off0 group-off1)
                 (compiler_regalloc.compiler-reg-color-rebuild-assignments
                   (& remap)
+                  (& group-off0)
+                  (& group-off1)
                   emit-vars
                   (compiler_regalloc.compiler-reg-plan-assignments
                     (& rewritten-reg-plan)))])
@@ -24308,9 +24492,11 @@
             [(None)
               (compiler_regalloc.compiler-reg-plan-assignments
                 (& rewritten-reg-plan))]
-            [(Remap remap _)
+            [(Remap remap _ group-off0 group-off1)
               (compiler_regalloc.compiler-reg-color-rebuild-assignments
                 (& remap)
+                (& group-off0)
+                (& group-off1)
                 emit-vars
                 (compiler_regalloc.compiler-reg-plan-assignments
                   (& rewritten-reg-plan)))])]
@@ -24325,7 +24511,7 @@
         [colored-blocks : compiler_ir_types.CompilerIrBlockList
           (match (be_state.compiler-backend-global-shared-view coloring)
             [(None) rewritten-blocks]
-            [(Remap remap _)
+            [(Remap remap _ _ _)
               (compiler_regalloc.compiler-reg-remap-blocks
                 (& remap)
                 (& rewritten-blocks))])]
@@ -24377,7 +24563,7 @@
         [emit-params : compiler_ir_types.CompilerIrParamSeq
           (match (be_state.compiler-backend-global-shared-view coloring)
             [(None) params]
-            [(Remap remap _)
+            [(Remap remap _ _ _)
               (compiler_regalloc.compiler-reg-remap-params (& remap) (& params))])]
         ;; RG-1: the registers the FINAL body can name (see
         ;; compiler-backend-plan-body-reg-mask). Computed on the emitted IR and
@@ -24460,7 +24646,7 @@
         [types : compiler_regalloc.CompilerRegVarTypes
           (match (be_state.compiler-backend-global-shared-view coloring)
             [(None) plan-types]
-            [(Remap remap _)
+            [(Remap remap _ _ _)
               (compiler_regalloc.compiler-reg-color-rebuild-types
                 (& remap)
                 emit-vars
@@ -24468,7 +24654,7 @@
         [emit-group-vars-base : compiler_liveness.CompilerLiveI64Set
           (match coloring
             [(None) fn-group-vars]
-            [(Remap remap _)
+            [(Remap remap _ _ _)
               (compiler-backend-remap-group-vars fn-group-vars remap)])]
         [emit-group-vars : compiler_liveness.CompilerLiveI64Set
           (compiler_regalloc.compiler-reg-group-vars-fixpoint
@@ -24503,7 +24689,8 @@
             (be_facts.compiler-backend-group-vars-enable!
               program-index.backend-state
               emit-group-vars-filtered
-              addressable-group-vars))]
+              addressable-group-vars
+              assignments))]
         [label-scope : String
           (be_facts.compiler-backend-function-label-scope program-index name)]
         [use-counts : (__tl_dyn-array i64) (__tl_make-array i64 emit-vars)]
@@ -24772,68 +24959,6 @@
                 (compiler-backend-blocks-have-returning-call?
                   (compiler_ir_types.compiler-ir-block-list-view
                     emit-blocks-list)))]
-            [spills
-              (try
-                (if identity-tail-forwarder?
-                  (be_state.ResultCompilerBackend.Ok "")
-                  (if (compiler-backend-spmd-private-function?
-                    program-index.backend-state
-                    name)
-                    (compiler-backend-emit-spmd-private-param-spills
-                      type-segment-bases
-                      target
-                      assignments
-                      (be_state.compiler-backend-global-shared-view emit-params)
-                      slot-vars
-                      program-index.backend-state)
-                    (compiler-backend-emit-param-spills
-                      type-segment-bases
-                      target
-                      assignments
-                      (be_state.compiler-backend-global-shared-view emit-params)
-                      0
-                      0
-                      0
-                      0
-                      program-index
-                      slot-vars
-                      program-index.backend-state))))]
-            [_addr-forward : unit
-              (compiler-backend-addr-of-forwarding-enable!
-                program-index.backend-state
-                emit-vars
-                (& emit-params)
-                (be_state.compiler-backend-global-shared-view emit-blocks-list)
-                (be_state.compiler-backend-global-shared-view use-counts))]
-            [_fuse-need : unit
-              (compiler-backend-fuse-need-enable!
-                program-index.backend-state
-                (be_state.compiler-backend-global-shared-view use-counts)
-                fuse-free-counts)]
-            [_shift-count-bounds : unit
-              (be_state.compiler-backend-function-state-set-i64-array!
-                (be_state.compiler-backend-state-function-state
-                  program-index.backend-state)
-                be_state.compiler-backend-function-i64-array-shift-count-bounds
-                (be_scalar.compiler-backend-shift-count-bounds
-                  emit-vars
-                  emit-params
-                  (be_state.compiler-backend-global-shared-view
-                    emit-blocks-list)))]
-            [_identity-tail-forwarder : unit
-              (be_state.compiler-backend-function-state-set-bool!
-                (be_state.compiler-backend-state-function-state
-                  program-index.backend-state)
-                be_state.compiler-backend-function-bool-identity-tail-forwarder-active
-                identity-tail-forwarder?)]
-            [_shrinkwrap-return : unit
-              (be_state.compiler-backend-function-state-set-string!
-                (be_state.compiler-backend-state-function-state
-                  program-index.backend-state)
-                be_state.compiler-backend-function-string-shrinkwrap-bare-label
-                (if shrinkwrap-active?
-                  shrinkwrap-bare-label
-                  ""))]
             [outgoing-frame-space : i64
               (be_calls.compiler-backend-outgoing-frame-space
                 type-segment-bases
@@ -24844,17 +24969,9 @@
                 program-index)]
             ;; The base the dynamic bottom-of-frame slots (cycle temps,
             ;; emergency spill) count down from: the maximum callee-save
-            ;; area, and NOTHING else. The outgoing stack-arg area is
-            ;; addressed from %rsp (0(%rsp) upward) and therefore occupies
-            ;; the very bottom of the frame, so adding it here would push
-            ;; the dynamic slots INTO it -- with the max emergency depth
-            ;; the last slot landed exactly on outgoing argument 0, and an
-            ;; emergency save taken while marshalling a call with stack
-            ;; args was then overwritten by the argument it was protecting.
-            ;; The frame total below still accounts for the outgoing area
-            ;; separately, so the layout from the bottom is
-            ;; [outgoing][cycle temps + emergency][slots] and the frame
-            ;; SIZE is unchanged.
+            ;; area, and NOTHING else. Initialized before parameter spills so
+            ;; entry parallel-move XMM cycle breaks have a valid cycle-temp base
+            ;; and their slot usage is preserved in the final frame size.
             [dynamic-frame-base : i64
               (be_facts.compiler-backend-frame-size
                 (+
@@ -24931,6 +25048,68 @@
                   function-state
                   be_state.compiler-backend-function-i64-frame-may-escape
                   frame-may-escape-known))]
+            [spills
+              (try
+                (if identity-tail-forwarder?
+                  (be_state.ResultCompilerBackend.Ok "")
+                  (if (compiler-backend-spmd-private-function?
+                    program-index.backend-state
+                    name)
+                    (compiler-backend-emit-spmd-private-param-spills
+                      type-segment-bases
+                      target
+                      assignments
+                      (be_state.compiler-backend-global-shared-view emit-params)
+                      slot-vars
+                      program-index.backend-state)
+                    (compiler-backend-emit-param-spills
+                      type-segment-bases
+                      target
+                      assignments
+                      (be_state.compiler-backend-global-shared-view emit-params)
+                      0
+                      0
+                      0
+                      0
+                      program-index
+                      slot-vars
+                      program-index.backend-state))))]
+            [_addr-forward : unit
+              (compiler-backend-addr-of-forwarding-enable!
+                program-index.backend-state
+                emit-vars
+                (& emit-params)
+                (be_state.compiler-backend-global-shared-view emit-blocks-list)
+                (be_state.compiler-backend-global-shared-view use-counts))]
+            [_fuse-need : unit
+              (compiler-backend-fuse-need-enable!
+                program-index.backend-state
+                (be_state.compiler-backend-global-shared-view use-counts)
+                fuse-free-counts)]
+            [_shift-count-bounds : unit
+              (be_state.compiler-backend-function-state-set-i64-array!
+                (be_state.compiler-backend-state-function-state
+                  program-index.backend-state)
+                be_state.compiler-backend-function-i64-array-shift-count-bounds
+                (be_scalar.compiler-backend-shift-count-bounds
+                  emit-vars
+                  emit-params
+                  (be_state.compiler-backend-global-shared-view
+                    emit-blocks-list)))]
+            [_identity-tail-forwarder : unit
+              (be_state.compiler-backend-function-state-set-bool!
+                (be_state.compiler-backend-state-function-state
+                  program-index.backend-state)
+                be_state.compiler-backend-function-bool-identity-tail-forwarder-active
+                identity-tail-forwarder?)]
+            [_shrinkwrap-return : unit
+              (be_state.compiler-backend-function-state-set-string!
+                (be_state.compiler-backend-state-function-state
+                  program-index.backend-state)
+                be_state.compiler-backend-function-string-shrinkwrap-bare-label
+                (if shrinkwrap-active?
+                  shrinkwrap-bare-label
+                  ""))]
             (match (compiler-backend-emit-blocks
               type-segment-bases
               (be_state.compiler-backend-global-shared-view label-scope)
@@ -26490,7 +26669,8 @@
         (be_facts.compiler-backend-group-vars-enable!
           program-index.backend-state
           groups
-          (compiler_liveness.compiler-live-set-empty)))]
+          (compiler_liveness.compiler-live-set-empty)
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
     [frame : i64
       (+
         (be_facts.compiler-backend-frame-size

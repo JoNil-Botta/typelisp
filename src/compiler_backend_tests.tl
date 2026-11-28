@@ -7707,7 +7707,8 @@ high:
         (be_facts.compiler-backend-group-vars-enable!
           backend-state
           (compiler_liveness.compiler-live-set1 0)
-          (compiler_liveness.compiler-live-set-empty)))]
+          (compiler_liveness.compiler-live-set-empty)
+          (regalloc.compiler-reg-assignment-table-empty)))]
     [sparse : regalloc.CompilerRegAssignmentTable
       (compiler-backend-win64-xmm-sparse-assignments)]
     [full : regalloc.CompilerRegAssignmentTable
@@ -9672,7 +9673,8 @@ high:
         (be_facts.compiler-backend-group-vars-enable!
           index.backend-state
           (compiler_liveness.compiler-live-set1 0)
-          (compiler_liveness.compiler-live-set-empty)))]
+          (compiler_liveness.compiler-live-set-empty)
+          (regalloc.compiler-reg-assignment-table-empty)))]
     [packed : be_state.ResultCompilerBackend
       (be_scalar.compiler-backend-emit-pack
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -9740,7 +9742,8 @@ high:
           (compiler_liveness.compiler-live-set-insert
             (compiler_liveness.compiler-live-set1 0)
             3)
-          (compiler_liveness.compiler-live-set-empty)))]
+          (compiler_liveness.compiler-live-set-empty)
+          (regalloc.compiler-reg-assignment-table-empty)))]
     [packed : be_state.ResultCompilerBackend
       (be_scalar.compiler-backend-emit-pack
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -16201,7 +16204,8 @@ f:
           (compiler_liveness.compiler-live-set-insert
             (compiler_liveness.compiler-live-set1 0)
             1)
-          (compiler_liveness.compiler-live-set-empty)))]
+          (compiler_liveness.compiler-live-set-empty)
+          (regalloc.compiler-reg-assignment-table-empty)))]
     [copied : be_state.ResultCompilerBackend
       (be_calls.compiler-backend-emit-phi-edge-copies
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -16248,7 +16252,8 @@ f:
         (be_facts.compiler-backend-group-vars-enable!
           backend-state
           group-vars
-          (compiler_liveness.compiler-live-set-empty)))]
+          (compiler_liveness.compiler-live-set-empty)
+          (regalloc.compiler-reg-assignment-table-empty)))]
     [copied : be_state.ResultCompilerBackend
       (be_calls.compiler-backend-emit-phi-edge-copies
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -34139,7 +34144,8 @@ entry:
         (be_facts.compiler-backend-group-vars-enable!
           index.backend-state
           (compiler_liveness.compiler-live-set1 0)
-          (compiler_liveness.compiler-live-set-empty)))]
+          (compiler_liveness.compiler-live-set-empty)
+          (regalloc.compiler-reg-assignment-table-empty)))]
     [memory-param-result : be_state.ResultCompilerBackend
       (backend.compiler-backend-emit-param-spills
         bases
@@ -34458,7 +34464,8 @@ entry:
         (be_facts.compiler-backend-group-vars-enable!
           state
           (owned_view.compiler-owned-shared-view groups)
-          addressable)
+          addressable
+          (regalloc.compiler-reg-assignment-table-empty))
         (for [index (iterator.range 0 16)]
           (match (be_scalar.compiler-backend-group-word-operand-with-backend-state
             (regalloc.compiler-reg-assignment-table-empty)
@@ -41562,11 +41569,13 @@ b_keep:
         (be_facts.compiler-backend-group-vars-enable!
           state-a
           (compiler_liveness.compiler-live-set1 4)
-          (compiler_liveness.compiler-live-set-empty))
+          (compiler_liveness.compiler-live-set-empty)
+          (regalloc.compiler-reg-assignment-table-empty))
         (be_facts.compiler-backend-group-vars-enable!
           state-b
           (compiler_liveness.compiler-live-set-empty)
-          (compiler_liveness.compiler-live-set-empty))
+          (compiler_liveness.compiler-live-set-empty)
+          (regalloc.compiler-reg-assignment-table-empty))
         (set-state-addr-of-forwarding-enabled! state-a true)
         (set-state-addr-of-forwarding-enabled! state-b false)
         (set-state-addr-of-forwarding-src! state-a forward-a)
@@ -48862,7 +48871,8 @@ user_fn:
         (be_facts.compiler-backend-group-vars-enable!
           state
           (compiler_liveness.compiler-live-set1 0)
-          (compiler_liveness.compiler-live-set-empty))
+          (compiler_liveness.compiler-live-set-empty)
+          (regalloc.compiler-reg-assignment-table-empty))
         (backend.compiler-backend-set-scavenge-ctx-ready!
           function-state
           (__tl_make-array 0)
@@ -50594,3 +50604,337 @@ user_fn:
         [(Eligible) true]
         [_ false])
       "non-archive-runtime TypeLisp extern call stays eligible for library extraction")))
+
+(test
+  backend-group-spillpair-and-addr-of-homes
+  ;; When all group vars have explicit RegisterPair or SpillPair homes,
+  ;; group-vars-enable! reserves 0 fallback pair slots, group-word-operand
+  ;; resolves SpillPair offsets directly, and addr-of resolves to word0's offset.
+  (let
+    [index : be_state.CompilerBackendProgramIndex
+      (compiler-backend-register-group-test-index)]
+    [state : be_state.CompilerBackendState index.backend-state]
+    [groups : compiler_liveness.CompilerLiveI64Set
+      (compiler_liveness.compiler-live-set-insert
+        (compiler_liveness.compiler-live-set1 0)
+        1)]
+    [addressable : compiler_liveness.CompilerLiveI64Set
+      (compiler_liveness.compiler-live-set1 1)]
+    [assignments : regalloc.CompilerRegAssignmentTable
+      (regalloc.compiler-reg-assignment-table-insert
+        (regalloc.compiler-reg-assignment-table-insert
+          (regalloc.compiler-reg-assignment-table-with-min-capacity
+            (regalloc.compiler-reg-assignment-table-empty)
+            2)
+          0
+          (regalloc.CompilerRegLocation.RegisterPair
+            compiler_abi.compiler-reg-id-r12
+            compiler_abi.compiler-reg-id-r13))
+        1
+        (regalloc.CompilerRegLocation.SpillPair -16 -8))]
+    [_enable : unit
+      (begin
+        (be_facts.compiler-backend-current-slot-vars-set! state 2)
+        (be_facts.compiler-backend-group-vars-enable!
+          state
+          groups
+          addressable
+          assignments))]
+    (test.assert-true
+      (= (be_scalar.compiler-backend-group-pair-reserve state) 0)
+      "RegisterPair and SpillPair groups must reserve zero fallback pair slots")
+    (test.assert-true
+      (and
+        (be_operand.compiler-backend-addr-of-source-frame-homed?
+          assignments
+          1
+          state)
+        (=
+          (be_operand.compiler-backend-addr-of-source-rbp-offset
+            assignments
+            1
+            state)
+          -16))
+      "AddrOf addressable SpillPair group must resolve to word0 offset -16")
+    (test.assert-true
+      (and
+        (match (be_scalar.compiler-backend-group-word-operand-with-backend-state
+          assignments
+          1
+          0
+          2
+          state)
+          [(Ok op) (string.eq op "-16(%rbp)")]
+          [(Err _) false])
+        (match (be_scalar.compiler-backend-group-word-operand-with-backend-state
+          assignments
+          1
+          1
+          2
+          state)
+          [(Ok op) (string.eq op "-8(%rbp)")]
+          [(Err _) false])
+        (match (be_scalar.compiler-backend-group-word-operand-with-backend-state
+          assignments
+          0
+          0
+          2
+          state)
+          [(Ok op) (string.eq op "%r12")]
+          [(Err _) false])
+        (match (be_scalar.compiler-backend-group-word-operand-with-backend-state
+          assignments
+          0
+          1
+          2
+          state)
+          [(Ok op) (string.eq op "%r13")]
+          [(Err _) false]))
+      "group-word-operand must resolve SpillPair and RegisterPair words directly")))
+
+(test
+  backend-group-parallel-entry-call-and-win64-split
+  ;; 1) Win64 3-phase parallel entry marshalling: swapped RegisterPair param
+  ;;    (%rcx/%rdx -> %rdx/%rcx) + spilled RegisterGroup param (%r8/%r9 ->
+  ;;    SpillPair -8/-16) + split reg+stack group param (word0 in %rdi, word1
+  ;;    on stack -> RegisterPair %r12/%r13) must spill before reg-reg swap and
+  ;;    load stack word last without clobbering unread incoming regs.
+  ;; 2) Two-word parallel call marshalling with swapped RegisterPair group args
+  ;;    must break the register cycle via scratch without clobbering either half.
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [index : be_state.CompilerBackendProgramIndex
+      (compiler-backend-register-group-test-index)]
+    [state : be_state.CompilerBackendState index.backend-state]
+    [params : ir.CompilerIrParamSeq
+      (irt.params
+        "p0=%0:BackendGroupTest, p1=%1:BackendGroupTest, p2=%2:i64, p3=%3:BackendGroupTest")]
+    [entry-assignments : regalloc.CompilerRegAssignmentTable
+      (regalloc.compiler-reg-assignment-table-insert
+        (regalloc.compiler-reg-assignment-table-insert
+          (regalloc.compiler-reg-assignment-table-insert
+            (regalloc.compiler-reg-assignment-table-insert
+              (regalloc.compiler-reg-assignment-table-with-min-capacity
+                (regalloc.compiler-reg-assignment-table-empty)
+                4)
+              0
+              (regalloc.CompilerRegLocation.RegisterPair
+                compiler_abi.compiler-reg-id-rdx
+                compiler_abi.compiler-reg-id-rcx))
+            1
+            (regalloc.CompilerRegLocation.SpillPair -8 -16))
+          2
+          (regalloc.CompilerRegLocation.Spill -24))
+        3
+        (regalloc.CompilerRegLocation.RegisterPair
+          compiler_abi.compiler-reg-id-r12
+          compiler_abi.compiler-reg-id-r13))]
+    [entry-asm : be_state.ResultCompilerBackend
+      (backend.compiler-backend-emit-param-spills
+        bases
+        (be_state.CompilerBackendTarget.Windows)
+        entry-assignments
+        params
+        0
+        0
+        0
+        0
+        index
+        4
+        state)]
+    [call-assignments : regalloc.CompilerRegAssignmentTable
+      (regalloc.compiler-reg-assignment-table-insert
+        (regalloc.compiler-reg-assignment-table-insert
+          (regalloc.compiler-reg-assignment-table-with-min-capacity
+            (regalloc.compiler-reg-assignment-table-empty)
+            2)
+          0
+          (regalloc.CompilerRegLocation.RegisterPair
+            compiler_abi.compiler-reg-id-r8
+            compiler_abi.compiler-reg-id-r9))
+        1
+        (regalloc.CompilerRegLocation.RegisterPair
+          compiler_abi.compiler-reg-id-rcx
+          compiler_abi.compiler-reg-id-rdx))]
+    [call-types : ast.AstTypeList
+      (let
+        [out : ast.AstTypeList (ast.ast-type-list-with-capacity 2)]
+        [gt : i64
+          (ast.ast-node-pool-reader-type-push
+            (& (compiler-backend-register-group-test-type)))]
+        (ast.ast-type-list-push (&mut out) gt)
+        (ast.ast-type-list-push (&mut out) gt)
+        out)]
+    [call-bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [call-args : ir.CompilerIrCallArgs
+      (ir.compiler-ir-call-args-from-seq
+        (&
+          (ir.compiler-ir-value-seq2
+            (ir.CompilerIrValue.Var 0)
+            (ir.CompilerIrValue.Var 1))))]
+    [call-asm : be_state.ResultCompilerBackend
+      (be_calls.compiler-backend-emit-call-args
+        call-bases
+        (be_state.CompilerBackendTarget.Windows)
+        (compiler_abi.CompilerCallConvention.Internal)
+        call-assignments
+        call-args
+        call-types
+        false
+        0
+        0
+        0
+        0
+        0
+        (& (compiler_diagnostic.compiler-diagnostic-at-start "" ""))
+        index
+        2
+        state)]
+    (test.assert-true
+      (match entry-asm
+        [(Ok text)
+          (let
+            [spill-r8 : i64
+              (backend.compiler-backend-string-find-from
+                text
+                "    movq %r8, -8(%rbp)\n"
+                0)]
+            [spill-r9 : i64
+              (backend.compiler-backend-string-find-from
+                text
+                "    movq %r9, -16(%rbp)\n"
+                0)]
+            [cycle-break : i64
+              (backend.compiler-backend-string-find-from text ", %r10\n" 0)]
+            [split-w0 : i64
+              (backend.compiler-backend-string-find-from
+                text
+                "    movq %rdi, %r12\n"
+                0)]
+            [split-w1 : i64
+              (backend.compiler-backend-string-find-from
+                text
+                "    movq 16(%rbp), %r13\n"
+                0)]
+            (and
+              (>= spill-r8 0)
+              (>= spill-r9 0)
+              (> cycle-break spill-r9)
+              (> split-w0 spill-r9)
+              (> split-w1 cycle-break)))]
+        [(Err _) false])
+      "Win64 parallel entry marshalling must spill first, break swap cycle via %r10, and load split stack word last")
+    (test.assert-true
+      (match call-asm
+        [(Ok text)
+          (and
+            (or
+              (asm-has? text "    movq %r8, " "    movq %rcx, %r8\n")
+              (asm-has? text "    movq %rcx, " "    movq %r8, %rcx\n"))
+            (or
+              (asm-has? text "    movq %r9, " "    movq %rdx, %r9\n")
+              (asm-has? text "    movq %rdx, " "    movq %r9, %rdx\n"))
+            (asm-has? text ", %rcx\n")
+            (asm-has? text ", %rdx\n")
+            (asm-has? text ", %r8\n")
+            (asm-has? text ", %r9\n"))]
+        [(Err _) false])
+      "Win64 parallel call marshalling must swap RegisterPair group args cleanly")))
+
+(test
+  backend-win64-group-pair-internal-platform-and-seh
+  ;; End-to-end Win64 opt2 emission covering:
+  ;; - GP-pair RegisterGroup live across an Internal call + matching SEH unwind
+  ;; - GP-pair RegisterGroup live across a Platform extern C call + shadow space
+  ;; - Indirect closure tail call carrying a String
+  ;; - Disjoint non-addressable Strings vs escaping addressable String
+  (let
+    [src : String
+      "(defstruct Pair (a i64) (b i64))
+(extern (ext_c_touch [x : i64]) : i64)
+(define (peek_pair [p : (& p Pair)] [n : i64]) : i64
+  (if (<= n 0)
+    (+ (ext_c_touch p.a) p.b)
+    (+ 1 (peek_pair p (- n 1)))))
+(define (int_sink [s : Pair] [k : i64]) : i64
+  (if (<= k 0)
+    (+ s.a s.b)
+    (+ 1 (int_sink s (- k 1)))))
+(define (w64_int [a : Pair] [b : Pair]) : i64
+  (let
+    [n1 : i64 (int_sink a 1)]
+    [n2 : i64 (int_sink b n1)]
+    (+ n2 (+ a.a (+ a.b (+ b.a b.b))))))
+(define (w64_plat [a : Pair] [k : i64]) : i64
+  (let
+    [c : i64 (ext_c_touch k)]
+    (+ c (+ a.a a.b))))
+(define (w64_tail [f : (-> Pair i64 i64)] [s : Pair] [k : i64]) : i64
+  (f s k))
+(define (w64_addr [s : Pair]) : i64
+  (let
+    [local : Pair s]
+    (peek_pair (& local) 2)))
+(define keep_int : (-> Pair Pair i64) w64_int)
+(define keep_plat : (-> Pair i64 i64) w64_plat)
+(define keep_tail : (-> (-> Pair i64 i64) Pair i64 i64) w64_tail)
+(define keep_addr : (-> Pair i64) w64_addr)
+(define (main) : i64
+  (+ (w64_int (Pair 1 2) (Pair 3 4))
+     (+ (w64_plat (Pair 5 6) 7)
+        (w64_addr (Pair 8 9)))))"]
+    (match (compiler-backend-emit-source-opt2-for-target
+      src
+      (be_state.CompilerBackendTarget.Windows))
+      [(Err _)
+        (test.assert-true false "Win64 GP-pair end-to-end source must emit")]
+      [(Ok asm)
+        (let
+          [fn-int : String
+            (compiler-backend-asm-function-body asm "_tl_w64_int")]
+          [fn-plat : String
+            (compiler-backend-asm-function-body asm "_tl_w64_plat")]
+          [fn-tail : String
+            (compiler-backend-asm-function-body asm "_tl_w64_tail")]
+          [fn-addr : String
+            (compiler-backend-asm-function-body asm "_tl_w64_addr")]
+          (test.assert-true
+            (and
+              (asm-has?
+                fn-int
+                "call _tl_int_sink"
+                ".seh_pushreg %r12"
+                ".seh_pushreg %r13"
+                ".seh_pushreg %r14"
+                ".seh_pushreg %r15"
+                ".seh_endprologue"
+                ".seh_endproc"))
+            "Win64 Pair live across Internal call must use CSR GP-pair with valid SEH unwind directives")
+          (test.assert-true
+            (and
+              (asm-has?
+                fn-plat
+                "call ext_c_touch"
+                ".seh_pushreg %r13"
+                ".seh_pushreg %r14"
+                ".seh_stackalloc 48"
+                ".seh_endprologue"
+                ".seh_endproc"))
+            "Win64 Pair live across Platform extern call must keep CSR GP-pair and SEH unwind directives")
+          (test.assert-true
+            (and
+              (asm-has?
+                fn-tail
+                ".seh_pushreg %r12"
+                ".seh_pushreg %r13"
+                ".seh_endproc")
+              (or (asm-has? fn-tail "jmp *(") (asm-has? fn-tail "call *(")))
+            "Win64 indirect tail call carrying Pair must emit valid SEH and closure dispatch")
+          (test.assert-true
+            (and
+              (asm-has?
+                fn-addr
+                "leaq 0(%rsp), "
+                "call _tl_peek_pair"
+                ".seh_endproc"))
+            "Win64 escaping addressable Pair must emit leaq of its contiguous frame home"))])))

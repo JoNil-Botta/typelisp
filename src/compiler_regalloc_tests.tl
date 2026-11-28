@@ -7726,11 +7726,13 @@
             [set-empty-2 (live.compiler-live-set-empty)]
             (reg.compiler-reg-assign-group-pair-component
               ast-node-pool-reader-type-segment-bases
+              (cabi.CompilerRegTargetAbi.Linux)
               0
               vars
               coalesce-test-i64-types
               set1
               set-empty
+              (& (live.compiler-live-set-empty))
               set-empty-b
               interval-index.starts
               interval-index.ends
@@ -7757,11 +7759,13 @@
             [set-empty-2 (live.compiler-live-set-empty)]
             (reg.compiler-reg-assign-group-pair-component
               ast-node-pool-reader-type-segment-bases
+              (cabi.CompilerRegTargetAbi.Linux)
               0
               vars
               coalesce-test-i64-types
               set1
               set-empty
+              (& (live.compiler-live-set-empty))
               set1-b
               interval-index.starts
               interval-index.ends
@@ -7788,11 +7792,13 @@
             [set-empty-2 (live.compiler-live-set-empty)]
             (reg.compiler-reg-assign-group-pair-component
               ast-node-pool-reader-type-segment-bases
+              (cabi.CompilerRegTargetAbi.Linux)
               0
               vars
               coalesce-test-i64-types
               set1
               set-empty
+              (& (live.compiler-live-set-empty))
               set-empty-b
               interval-index.starts
               interval-index.ends
@@ -7805,19 +7811,45 @@
               set-empty-2
               (& empty-split)))]
         (and
-          (= (reg.compiler-reg-group-pair-candidate-count true) 7)
           (=
-            (reg.compiler-reg-group-pair-candidate true 0)
+            (reg.compiler-reg-group-pair-candidate-count
+              (cabi.CompilerRegTargetAbi.Linux)
+              true
+              false)
+            7)
+          (=
+            (reg.compiler-reg-group-pair-candidate
+              (cabi.CompilerRegTargetAbi.Linux)
+              true
+              false
+              0)
             cabi.compiler-reg-id-r8)
           (=
-            (reg.compiler-reg-group-pair-candidate true 1)
+            (reg.compiler-reg-group-pair-candidate
+              (cabi.CompilerRegTargetAbi.Linux)
+              true
+              false
+              1)
             cabi.compiler-reg-id-r9)
           (=
-            (reg.compiler-reg-group-pair-candidate true 2)
+            (reg.compiler-reg-group-pair-candidate
+              (cabi.CompilerRegTargetAbi.Linux)
+              true
+              false
+              2)
             cabi.compiler-reg-id-r12)
-          (= (reg.compiler-reg-group-pair-candidate-count false) 5)
           (=
-            (reg.compiler-reg-group-pair-candidate false 0)
+            (reg.compiler-reg-group-pair-candidate-count
+              (cabi.CompilerRegTargetAbi.Linux)
+              false
+              false)
+            5)
+          (=
+            (reg.compiler-reg-group-pair-candidate
+              (cabi.CompilerRegTargetAbi.Linux)
+              false
+              false
+              0)
             cabi.compiler-reg-id-r12)
           (let
             [interval-index-copy
@@ -7826,6 +7858,7 @@
             (reg.compiler-reg-group-pair-component-clobber-free?
               (& interval-index-copy)
               set-empty
+              (& (live.compiler-live-set-empty))
               members
               1))
           (not
@@ -7834,6 +7867,7 @@
               (reg.compiler-reg-group-pair-component-clobber-free?
                 (& interval-index)
                 set1
+                (& (live.compiler-live-set-empty))
                 members
                 1)))
           (not (live.compiler-live-set-contains? phi-excluded 0))
@@ -8339,9 +8373,9 @@
   test
   (define (compiler-reg-color-phi-web-slot-sharing-ok?) : bool
     (match (compiler-reg-color-phi-web-coloring false)
-      [(Remap share-remap share-slots)
+      [(Remap share-remap share-slots _ _)
         (match (compiler-reg-color-phi-web-coloring true)
-          [(Remap live-remap live-slots)
+          [(Remap live-remap live-slots _ _)
             (and
               (= share-slots 1)
               (= (array-ref share-remap 0) (array-ref share-remap 1))
@@ -8440,9 +8474,9 @@
   test
   (define (compiler-reg-color-web-merge-ok?) : bool
     (match (compiler-reg-color-web-merge-coloring false)
-      [(Remap merged-remap merged-slots)
+      [(Remap merged-remap merged-slots _ _)
         (match (compiler-reg-color-web-merge-coloring true)
-          [(Remap overlap-remap overlap-slots)
+          [(Remap overlap-remap overlap-slots _ _)
             (and
               ;; Disjoint chain: entry constant, header phi, mid phi and latch
               ;; phi all share ONE slot.
@@ -8532,9 +8566,9 @@
   test
   (define (compiler-reg-color-step-witness-ok?) : bool
     (match (compiler-reg-color-step-witness-coloring false)
-      [(Remap step-remap step-slots)
+      [(Remap step-remap step-slots _ _)
         (match (compiler-reg-color-step-witness-coloring true)
-          [(Remap live-remap live-slots)
+          [(Remap live-remap live-slots _ _)
             (and
               ;; Counter, its step and the entry seed all share ONE slot, so the
               ;; back-edge phi copy is a same-home no-op.
@@ -8638,9 +8672,9 @@
   test
   (define (compiler-reg-color-witness-chain-ok?) : bool
     (match (compiler-reg-color-witness-chain-coloring false)
-      [(Remap chain-remap chain-slots)
+      [(Remap chain-remap chain-slots _ _)
         (match (compiler-reg-color-witness-chain-coloring true)
-          [(Remap live-remap live-slots)
+          [(Remap live-remap live-slots _ _)
             (and
               ;; Seed, carry, both steps and the back-edge copy share ONE slot.
               (= chain-slots 1)
@@ -8716,7 +8750,7 @@
   test
   (define (compiler-reg-color-carry-priority-ok?) : bool
     (match (compiler-reg-color-carry-priority-coloring)
-      [(Remap remap _)
+      [(Remap remap _ _ _)
         (and
           ;; The merge phi lands in the loop carry's web ...
           (= (array-ref remap 2) (array-ref remap 0))
@@ -13009,7 +13043,7 @@
     3
     3
     (live.compiler-live-set-empty))
-    [(Remap share-remap share-slots)
+    [(Remap share-remap share-slots _ _)
       (match (compiler-reg-color-stack-slots
         (ast.ast-node-pool-reader-type-segment-bases)
         (Plan
@@ -13024,7 +13058,7 @@
         2
         2
         (live.compiler-live-set-empty))
-        [(Remap split-remap split-slots)
+        [(Remap split-remap split-slots _ _)
           (and
             (= share-slots 2)
             (= (array-ref share-remap 0) (array-ref share-remap 1))
@@ -13074,10 +13108,10 @@
 ;; pair keeps sharing exactly as it did before.
 (define (compiler-reg-color-fusion-pin-slots-ok?) : bool
   (match (compiler-reg-color-fusion-pin-coloring (live.compiler-live-set-empty))
-    [(Remap merged-remap merged-slots)
+    [(Remap merged-remap merged-slots _ _)
       (match (compiler-reg-color-fusion-pin-coloring
         (live_tests.compiler-live-set2 0 1))
-        [(Remap pin-remap pin-slots)
+        [(Remap pin-remap pin-slots _ _)
           (and
             (= merged-slots 1)
             (= (array-ref merged-remap 0) (array-ref merged-remap 1))
@@ -13110,7 +13144,7 @@
     3
     3
     (live.compiler-live-set-empty))
-    [(Remap remap slots)
+    [(Remap remap slots _ _)
       (and
         (= slots 2)
         (= (array-ref remap 1) 1)
@@ -13150,13 +13184,18 @@
       (& (live.compiler-live-set-empty))
       (& (__tl_make-array i64 0))
       false)
-      [(Remap remap slots)
+      [(Remap remap slots group-off0 group-off1)
         (let
           [active : i64 (array-ref remap 0)]
           [varying : i64 (array-ref remap 1)]
           [uniform : i64 (array-ref remap 2)]
           [rebuilt : reg.CompilerRegAssignmentTable
-            (reg.compiler-reg-color-rebuild-assignments (& remap) 3 assignments)]
+            (reg.compiler-reg-color-rebuild-assignments
+              (& remap)
+              (& group-off0)
+              (& group-off1)
+              3
+              assignments)]
           [rebuilt-index : reg.CompilerRegAssignmentTable
             (reg.compiler-reg-assignment-table-with-min-capacity rebuilt 3)]
           (compiler-regalloc-self-test-require!
@@ -13218,7 +13257,7 @@
            return
          }"
       (= index 0))
-      [(Remap remap slots)
+      [(Remap remap slots _ _)
         (unless (= slots 12) (return false))
         (for [a (iterator.range 0 3)]
           ;; The remapped id names the high word of a four-word home.
@@ -13240,7 +13279,7 @@
             "function @unused_scalar(x=%0:i64) -> unit vars 1 {\nentry:\nreturn\n}")
           (= index 0))
           [(None) true]
-          [(Remap _ _) false])
+          [(Remap _ _ _ _) false])
         (return false))))
   true)
 
@@ -13363,7 +13402,7 @@
                   vars
                   vars
                   (live.compiler-live-set-empty))
-                  [(Remap remap slots)
+                  [(Remap remap slots _ _)
                     (for [var (iterator.range 0 4)]
                       (let
                         [end : i64 (array-ref remap var)]
@@ -13434,7 +13473,7 @@
     10
     10
     (live.compiler-live-set-empty))
-    [(Remap remap slots)
+    [(Remap remap slots _ _)
       (and
         (= slots 1)
         (= (array-ref remap 0) 0)
@@ -13463,7 +13502,7 @@
       2
       1
       (live.compiler-live-set-empty))
-      [(Remap remap slots)
+      [(Remap remap slots _ _)
         (and (= slots 1) (= (array-ref remap 0) 0) (= (array-ref remap 1) 1))]
       [(None) false])))
 
@@ -13502,7 +13541,7 @@
         vars
         vars
         (live.compiler-live-set-empty))
-        [(Remap remap slots)
+        [(Remap remap slots _ _)
           (and
             (= (array-ref remap 0) 3)
             (= (array-ref remap 1) 11)
@@ -13612,7 +13651,7 @@
         vars
         vars
         (live.compiler-live-set-empty))
-        [(Remap remap slots)
+        [(Remap remap slots _ _)
           (and
             (= slots 2)
             (= (array-ref remap 0) 0)
@@ -14335,7 +14374,7 @@
           vars
           vars
           (live.compiler-live-set-empty))
-          [(Remap remap slots)
+          [(Remap remap slots _ _)
             (and
               (= assignment-count 0)
               (= ineligible-count 4)
@@ -14372,7 +14411,7 @@
           (& (live.compiler-live-set-empty))
           (& (__tl_make-array i64 0))
           true)
-          [(Remap remap slots)
+          [(Remap remap slots _ _)
             (let
               [private? : bool true]
               (for [var (iterator.range 0 vars)]
@@ -14455,7 +14494,7 @@
           vars
           vars
           (live.compiler-live-set-empty))
-          [(Remap remap _)
+          [(Remap remap _ _ _)
             (and
               (= assignment-count 0)
               (= interval-count vars)
@@ -14466,11 +14505,13 @@
 (define (compiler-reg-color-stack-group-ok?) : bool
   (let
     [group-var : i64 7]
+    [base-assignments : reg.CompilerRegAssignmentTable
+      (compiler-reg-color-register-assignments-to (- group-var 1))]
     [coloring : reg.CompilerRegColoring
       (compiler-reg-color-stack-slots
         (ast.ast-node-pool-reader-type-segment-bases)
         (Plan
-          (compiler-reg-color-register-assignments-to (- group-var 1))
+          base-assignments
           (live.compiler-live-set-empty)
           (reg.compiler-reg-interval-seq-prepend
             (reg.CompilerRegInterval group-var 0 2)
@@ -14487,11 +14528,27 @@
         (+ group-var 1)
         (live.compiler-live-set-empty))]
     (match coloring
-      [(Remap remap slots)
-        (and
-          (= slots 1)
-          (= (array-ref remap group-var) 0)
-          (<= (+ (array-ref remap group-var) 1) slots))]
+      [(Remap remap slots group-off0 group-off1)
+        (let
+          [rebuilt : reg.CompilerRegAssignmentTable
+            (reg.compiler-reg-color-rebuild-assignments
+              (& remap)
+              (& group-off0)
+              (& group-off1)
+              (+ group-var 1)
+              (compiler-reg-color-register-assignments-to (- group-var 1)))]
+          [mapped-id : i64 (array-ref remap group-var)]
+          (and
+            (= slots 2)
+            (= (array-ref group-off0 group-var) -8)
+            (= (array-ref group-off1 group-var) -16)
+            (>= mapped-id 0)
+            (match (reg.compiler-reg-assignment-table-lookup rebuilt mapped-id)
+              [(Some location)
+                (match location
+                  [(SpillPair off0 off1) (and (= off0 -8) (= off1 -16))]
+                  [_ false])]
+              [(No) false])))]
       [(None) false])))
 
 ;; Image-scoped program-map suppression, the contract a STANDALONE plan runs
@@ -17722,7 +17779,7 @@
           (& (live.compiler-live-set-empty))
           (& direct)
           false)
-          [(Remap remap slots)
+          [(Remap remap slots _ _)
             (let
               [r6 : i64 (array-ref remap 6)]
               [r7 : i64 (array-ref remap 7)]
@@ -17794,7 +17851,7 @@
           (& (live.compiler-live-set-empty))
           (& direct)
           false)
-          [(Remap remap slots)
+          [(Remap remap slots _ _)
             (let
               [r0 : i64 (array-ref remap 0)]
               [r6 : i64 (array-ref remap 6)]
@@ -17805,3 +17862,545 @@
             (test.assert-true
               false
               "expected coloring remap for >16-slot direct stack param test")])])))
+
+(test
+  regalloc-group-disjoint-reuse-and-const-pack
+  ;; 1) Two non-addressable spilled RegisterGroup vars with disjoint live ranges
+  ;;    must share BOTH spill slots (slots == 2), while overlapping spilled
+  ;;    groups must get 4 distinct slots (slots == 4).
+  ;; 2) A pure-constant const-pack String reserves 0 stack slots and no GP pair.
+  ;; 3) A RegisterPair-allocated group reserves 0 stack slots.
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [disjoint-intervals : reg.CompilerRegIntervalSeq
+      (reg.compiler-reg-interval-seq-prepend
+        (reg.CompilerRegInterval 0 0 2)
+        (&
+          (reg.compiler-reg-interval-seq-prepend
+            (reg.CompilerRegInterval 1 4 6)
+            (& (reg.compiler-reg-interval-seq-empty)))))]
+    [overlap-intervals : reg.CompilerRegIntervalSeq
+      (reg.compiler-reg-interval-seq-prepend
+        (reg.CompilerRegInterval 0 0 5)
+        (&
+          (reg.compiler-reg-interval-seq-prepend
+            (reg.CompilerRegInterval 1 2 6)
+            (& (reg.compiler-reg-interval-seq-empty)))))]
+    [gtypes : reg.CompilerRegVarTypes
+      (reg.compiler-reg-var-types-insert
+        (reg.compiler-reg-var-types-insert
+          (reg.compiler-reg-var-types-empty)
+          0
+          (ast.AstType.String))
+        1
+        (ast.AstType.String))]
+    [gset : live.CompilerLiveI64Set
+      (live.compiler-live-set-insert (live.compiler-live-set1 0) 1)]
+    [disjoint-coloring : reg.CompilerRegColoring
+      (reg.compiler-reg-color-stack-slots-with-stack-only
+        bases
+        (&
+          (reg.CompilerRegPlan.Plan
+            (reg.compiler-reg-assignment-table-empty)
+            (live.compiler-live-set-empty)
+            disjoint-intervals
+            (reg.compiler-reg-var-types-insert
+              (reg.compiler-reg-var-types-insert
+                (reg.compiler-reg-var-types-empty)
+                0
+                (ast.AstType.String))
+              1
+              (ast.AstType.String))
+            (reg.compiler-reg-call-split-empty)))
+        (& gset)
+        (& (ir.compiler-ir-param-seq-empty))
+        (& (ir.compiler-ir-block-list-empty))
+        2
+        2
+        (& (live.compiler-live-set-empty))
+        (& (__tl_make-array i64 0))
+        false)]
+    [overlap-coloring : reg.CompilerRegColoring
+      (reg.compiler-reg-color-stack-slots-with-stack-only
+        bases
+        (&
+          (reg.CompilerRegPlan.Plan
+            (reg.compiler-reg-assignment-table-empty)
+            (live.compiler-live-set-empty)
+            overlap-intervals
+            gtypes
+            (reg.compiler-reg-call-split-empty)))
+        (& gset)
+        (& (ir.compiler-ir-param-seq-empty))
+        (& (ir.compiler-ir-block-list-empty))
+        2
+        2
+        (& (live.compiler-live-set-empty))
+        (& (__tl_make-array i64 0))
+        false)]
+    [regpair-coloring : reg.CompilerRegColoring
+      (reg.compiler-reg-color-stack-slots-with-stack-only
+        bases
+        (&
+          (reg.CompilerRegPlan.Plan
+            (reg.compiler-reg-assignment-table-insert
+              (reg.compiler-reg-assignment-table-with-min-capacity
+                (reg.compiler-reg-assignment-table-empty)
+                1)
+              0
+              (reg.CompilerRegLocation.RegisterPair
+                cabi.compiler-reg-id-r12
+                cabi.compiler-reg-id-r13))
+            (live.compiler-live-set-empty)
+            (reg.compiler-reg-interval-seq-prepend
+              (reg.CompilerRegInterval 0 0 4)
+              (& (reg.compiler-reg-interval-seq-empty)))
+            (reg.compiler-reg-var-types-insert
+              (reg.compiler-reg-var-types-empty)
+              0
+              (ast.AstType.String))
+            (reg.compiler-reg-call-split-empty)))
+        (& (live.compiler-live-set1 0))
+        (& (ir.compiler-ir-param-seq-empty))
+        (& (ir.compiler-ir-block-list-empty))
+        1
+        1
+        (& (live.compiler-live-set-empty))
+        (& (__tl_make-array i64 0))
+        false)]
+    [ib : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity 2)]
+    [_ib : unit
+      (begin
+        (ir.compiler-ir-instr-builder-push!
+          (&mut ib)
+          (ir.CompilerIrInstr.Pack
+            0
+            (ir.compiler-ir-value-seq2
+              (ir.CompilerIrValue.I64 11)
+              (ir.CompilerIrValue.I64 22))
+            (ast.AstType.String)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut ib)
+          (ir.CompilerIrInstr.Return
+            (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))))]
+    [bb : ir.CompilerIrBlockBuilder
+      (ir.compiler-ir-block-builder-with-capacity 1)]
+    [_bb : unit
+      (ir.compiler-ir-block-builder-push!
+        (&mut bb)
+        (ir.CompilerIrBlock.Block 0 (ir.compiler-ir-instr-builder-to-seq ib)))]
+    [const-blocks : ir.CompilerIrBlockList
+      (ir.compiler-ir-block-builder-to-list bb)]
+    [const-func : ir.CompilerIrFunction
+      (ir.CompilerIrFunction.Function
+        (ci.intern "const_pack_zero_slots")
+        (ir.compiler-ir-param-seq-empty)
+        (ast.AstType.String)
+        1
+        const-blocks
+        ir.CompilerIrFunctionAbi.Ordinary)]
+    [const-plan : reg.CompilerRegPlan
+      (reg.compiler-reg-plan-function-scalar-for-abi
+        (cabi.CompilerRegTargetAbi.Linux)
+        (& const-func))]
+    (match disjoint-coloring
+      [(Remap _ slots off0 off1)
+        (test.assert-true
+          (and
+            (= slots 2)
+            (= (array-ref off0 0) (array-ref off0 1))
+            (= (array-ref off1 0) (array-ref off1 1))
+            (< (array-ref off0 0) 0)
+            (< (array-ref off1 0) 0)
+            (not (= (array-ref off0 0) (array-ref off1 0))))
+          "disjoint non-addressable spilled groups must reuse both spill slots")]
+      [(None)
+        (test.assert-true false "expected remap for disjoint group coloring")])
+    (match overlap-coloring
+      [(Remap _ slots off0 off1)
+        (test.assert-true
+          (and
+            (= slots 4)
+            (not (= (array-ref off0 0) (array-ref off0 1)))
+            (not (= (array-ref off0 0) (array-ref off1 1)))
+            (not (= (array-ref off1 0) (array-ref off0 1)))
+            (not (= (array-ref off1 0) (array-ref off1 1))))
+          "overlapping spilled groups must receive four distinct slots")]
+      [(None)
+        (test.assert-true false "expected remap for overlapping group coloring")])
+    (match regpair-coloring
+      [(Remap _ slots off0 off1)
+        (test.assert-true
+          (and (= slots 0) (= (array-length off0) 0) (= (array-length off1) 0))
+          "RegisterPair-allocated group must reserve zero stack slots")]
+      [(None)
+        (test.assert-true
+          false
+          "expected remap for RegisterPair group coloring")])
+    (test.assert-true
+      (match (reg.compiler-reg-assignment-table-lookup
+        (reg.compiler-reg-plan-assignments (& const-plan))
+        0)
+        [(Some (RegisterPair _ _)) false]
+        [_ true])
+      "const-pack String literal must not consume a GP RegisterPair")
+    (match const-func
+      [(Function _ pseq _ vars blocks _)
+        (match (reg.compiler-reg-color-stack-slots-with-stack-only
+          bases
+          (& const-plan)
+          (& (live.compiler-live-set1 0))
+          (& pseq)
+          (& blocks)
+          vars
+          vars
+          (& (live.compiler-live-set-empty))
+          (& (__tl_make-array i64 0))
+          false)
+          [(Remap _ slots off0 off1)
+            (test.assert-true
+              (and
+                (= slots 0)
+                (= (array-length off0) 0)
+                (= (array-length off1) 0))
+              "const-pack String literal must reserve zero stack slots")]
+          [(None)
+            (test.assert-true
+              false
+              "expected remap for const-pack zero-slot check")])])))
+
+(test
+  regalloc-group-addressable-contiguity-and-escape
+  ;; Addressable groups must receive contiguous 16B pairs (off1 == off0 + 8).
+  ;; Escaping AddrOf (passed to Call) keeps its contiguous pair private and
+  ;; distinct from any other addressable group.
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [sink-sym : i64 (ci.intern "addr_escape_sink")]
+    [ib : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity 7)]
+    [_ib : unit
+      (begin
+        (ir.compiler-ir-instr-builder-push!
+          (&mut ib)
+          (ir.CompilerIrInstr.Pack
+            0
+            (ir.compiler-ir-value-seq2
+              (ir.CompilerIrValue.Var 4)
+              (ir.CompilerIrValue.I64 1))
+            (ast.AstType.String)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut ib)
+          (ir.CompilerIrInstr.AddrOf 2 0 2))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut ib)
+          (ir.CompilerIrInstr.Call
+            5
+            sink-sym
+            (ir.compiler-ir-call-args-from-seq
+              (& (ir.compiler-ir-value-seq1 (ir.CompilerIrValue.Var 2))))
+            (ast.AstType.I64)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut ib)
+          (ir.CompilerIrInstr.Pack
+            1
+            (ir.compiler-ir-value-seq2
+              (ir.CompilerIrValue.Var 5)
+              (ir.CompilerIrValue.I64 2))
+            (ast.AstType.String)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut ib)
+          (ir.CompilerIrInstr.AddrOf 3 1 2))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut ib)
+          (ir.CompilerIrInstr.Call
+            6
+            sink-sym
+            (ir.compiler-ir-call-args-from-seq
+              (& (ir.compiler-ir-value-seq1 (ir.CompilerIrValue.Var 3))))
+            (ast.AstType.I64)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut ib)
+          (ir.CompilerIrInstr.Return
+            (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 6)))))]
+    [bb : ir.CompilerIrBlockBuilder
+      (ir.compiler-ir-block-builder-with-capacity 1)]
+    [_bb : unit
+      (ir.compiler-ir-block-builder-push!
+        (&mut bb)
+        (ir.CompilerIrBlock.Block 0 (ir.compiler-ir-instr-builder-to-seq ib)))]
+    [blocks : ir.CompilerIrBlockList (ir.compiler-ir-block-builder-to-list bb)]
+    [params : ir.CompilerIrParamSeq
+      (ir.compiler-ir-param-seq-prepend
+        (ir.CompilerIrParam.Param "x" (ast.AstType.I64) 4)
+        (ir.compiler-ir-param-seq-empty))]
+    [func : ir.CompilerIrFunction
+      (ir.CompilerIrFunction.Function
+        (ci.intern "addr_escape_groups")
+        params
+        (ast.AstType.I64)
+        7
+        blocks
+        ir.CompilerIrFunctionAbi.Ordinary)]
+    [plan : reg.CompilerRegPlan
+      (reg.compiler-reg-plan-function-scalar-for-abi
+        (cabi.CompilerRegTargetAbi.Linux)
+        (& func))]
+    [gvars : live.CompilerLiveI64Set
+      (live.compiler-live-set-insert (live.compiler-live-set1 0) 1)]
+    (match func
+      [(Function _ pseq _ vars fblocks _)
+        (match (reg.compiler-reg-color-stack-slots-with-stack-only
+          bases
+          (& plan)
+          (& gvars)
+          (& pseq)
+          (& fblocks)
+          vars
+          vars
+          (& (live.compiler-live-set-empty))
+          (& (__tl_make-array i64 0))
+          false)
+          [(Remap _ _ off0 off1)
+            (let
+              [a0 : i64 (array-ref off0 0)]
+              [a1 : i64 (array-ref off1 0)]
+              [b0 : i64 (array-ref off0 1)]
+              [b1 : i64 (array-ref off1 1)]
+              (test.assert-true
+                (and
+                  (< a0 0)
+                  (= a1 (+ a0 8))
+                  (< b0 0)
+                  (= b1 (+ b0 8))
+                  (not (= a0 b0))
+                  (not (= a0 b1))
+                  (not (= a1 b0))
+                  (not (= a1 b1)))
+                "escaping addressable groups must have distinct contiguous 16B pairs"))]
+          [(None)
+            (test.assert-true
+              false
+              "expected remap for addressable group escape test")])])))
+
+(test
+  regalloc-group-phi-and-param-homes
+  ;; 1) Clobber-free GP RegisterGroup param pins in place on Linux (%rdi/%rsi)
+  ;;    and Win64 (%rcx/%rdx).
+  ;; 2) Phi-edge conflict guard keeps a spilled group phi dst off a live-in
+  ;;    phi input's slots in the same block.
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [ib : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity 2)]
+    [_ib : unit
+      (begin
+        (ir.compiler-ir-instr-builder-push!
+          (&mut ib)
+          (ir.CompilerIrInstr.Word
+            1
+            (ir.CompilerIrValue.Var 0)
+            1
+            (ast.AstType.I64)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut ib)
+          (ir.CompilerIrInstr.Return
+            (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))))]
+    [bb : ir.CompilerIrBlockBuilder
+      (ir.compiler-ir-block-builder-with-capacity 1)]
+    [_bb : unit
+      (ir.compiler-ir-block-builder-push!
+        (&mut bb)
+        (ir.CompilerIrBlock.Block 0 (ir.compiler-ir-instr-builder-to-seq ib)))]
+    [func : ir.CompilerIrFunction
+      (ir.CompilerIrFunction.Function
+        (ci.intern "group_param_len")
+        (ir.compiler-ir-param-seq-prepend
+          (ir.CompilerIrParam.Param "s" (ast.AstType.String) 0)
+          (ir.compiler-ir-param-seq-empty))
+        (ast.AstType.I64)
+        2
+        (ir.compiler-ir-block-builder-to-list bb)
+        ir.CompilerIrFunctionAbi.Ordinary)]
+    [linux-plan : reg.CompilerRegPlan
+      (reg.compiler-reg-plan-function-scalar-for-abi
+        (cabi.CompilerRegTargetAbi.Linux)
+        (& func))]
+    [win-plan : reg.CompilerRegPlan
+      (reg.compiler-reg-plan-function-scalar-for-abi
+        (cabi.CompilerRegTargetAbi.Windows)
+        (& func))]
+    (test.assert-true
+      (match (reg.compiler-reg-assignment-table-lookup
+        (reg.compiler-reg-plan-assignments (& linux-plan))
+        0)
+        [(Some (RegisterPair r0 r1))
+          (and (= r0 cabi.compiler-reg-id-rdi) (= r1 cabi.compiler-reg-id-rsi))]
+        [_ false])
+      "Linux clobber-free String param must pin to RegisterPair %rdi/%rsi")
+    (test.assert-true
+      (match (reg.compiler-reg-assignment-table-lookup
+        (reg.compiler-reg-plan-assignments (& win-plan))
+        0)
+        [(Some (RegisterPair r0 r1))
+          (and (= r0 cabi.compiler-reg-id-rcx) (= r1 cabi.compiler-reg-id-rdx))]
+        [_ false])
+      "Win64 clobber-free String param must pin to RegisterPair %rcx/%rdx")
+    ;; Spilled group phi destination must not reuse a slot held by a same-block
+    ;; phi input (avoids partial-overlap phi cycle).
+    (let
+      [phi-blocks : ir.CompilerIrBlockList
+        (irt.blocks
+          "entry:
+             %1 = add %0, 1 : i64
+             jump merge
+           merge:
+             %2 = phi [%1, entry] : i64
+             return %2")]
+      [gtypes : reg.CompilerRegVarTypes
+        (reg.compiler-reg-var-types-insert
+          (reg.compiler-reg-var-types-insert
+            (reg.compiler-reg-var-types-empty)
+            1
+            (ast.AstType.String))
+          2
+          (ast.AstType.String))]
+      [intervals : reg.CompilerRegIntervalSeq
+        (reg.compiler-reg-interval-seq-prepend
+          (reg.CompilerRegInterval 1 0 1)
+          (&
+            (reg.compiler-reg-interval-seq-prepend
+              (reg.CompilerRegInterval 2 2 3)
+              (& (reg.compiler-reg-interval-seq-empty)))))]
+      [gset : live.CompilerLiveI64Set
+        (live.compiler-live-set-insert (live.compiler-live-set1 1) 2)]
+      (match (reg.compiler-reg-color-stack-slots-with-stack-only
+        bases
+        (&
+          (reg.CompilerRegPlan.Plan
+            (reg.compiler-reg-assignment-table-empty)
+            (live.compiler-live-set-empty)
+            intervals
+            gtypes
+            (reg.compiler-reg-call-split-empty)))
+        (& gset)
+        (& (ir.compiler-ir-param-seq-empty))
+        (& phi-blocks)
+        3
+        3
+        (& (live.compiler-live-set-empty))
+        (& (__tl_make-array i64 0))
+        false)
+        [(Remap _ _ off0 off1)
+          (test.assert-true
+            (and
+              (< (array-ref off0 1) 0)
+              (< (array-ref off0 2) 0)
+              (not (= (array-ref off0 1) (array-ref off0 2)))
+              (not (= (array-ref off0 1) (array-ref off1 2)))
+              (not (= (array-ref off1 1) (array-ref off0 2)))
+              (not (= (array-ref off1 1) (array-ref off1 2))))
+            "spilled group phi dst must not collide with same-block phi input slots")]
+        [(None)
+          (test.assert-true false "expected remap for group phi home test")]))))
+
+(test
+  regalloc-win64-group-pair-allocation
+  ;; Win64 GP-pair allocator must be enabled (not bypassed), expose
+  ;; {%rsi,%rdi,%r9,%r8} for non-params and {%rsi,%rdi,%r9} for params
+  ;; (excluding %r8 scratch), and allocate CSR RegisterPairs across calls.
+  (let
+    [win-abi : cabi.CompilerRegTargetAbi (cabi.CompilerRegTargetAbi.Windows)]
+    [helper-sym : i64 (ci.intern "win64_pair_callee")]
+    [ib : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity 5)]
+    [_ib : unit
+      (begin
+        (ir.compiler-ir-instr-builder-push!
+          (&mut ib)
+          (ir.CompilerIrInstr.Pack
+            2
+            (ir.compiler-ir-value-seq2
+              (ir.CompilerIrValue.Var 0)
+              (ir.CompilerIrValue.Var 1))
+            (ast.AstType.String)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut ib)
+          (ir.CompilerIrInstr.Call
+            3
+            helper-sym
+            (ir.compiler-ir-call-args-from-seq
+              (& (ir.compiler-ir-value-seq1 (ir.CompilerIrValue.Var 0))))
+            (ast.AstType.I64)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut ib)
+          (ir.CompilerIrInstr.Word
+            4
+            (ir.CompilerIrValue.Var 2)
+            1
+            (ast.AstType.I64)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut ib)
+          (ir.CompilerIrInstr.BinOp
+            5
+            (ir.CompilerIrBinOp.Add)
+            (ir.CompilerIrValue.Var 3)
+            (ir.CompilerIrValue.Var 4)
+            (ast.AstType.I64)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut ib)
+          (ir.CompilerIrInstr.Return
+            (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 5)))))]
+    [bb : ir.CompilerIrBlockBuilder
+      (ir.compiler-ir-block-builder-with-capacity 1)]
+    [_bb : unit
+      (ir.compiler-ir-block-builder-push!
+        (&mut bb)
+        (ir.CompilerIrBlock.Block 0 (ir.compiler-ir-instr-builder-to-seq ib)))]
+    [func : ir.CompilerIrFunction
+      (ir.CompilerIrFunction.Function
+        (ci.intern "win64_live_group_across_call")
+        (ir.compiler-ir-param-seq-prepend
+          (ir.CompilerIrParam.Param "a" (ast.AstType.I64) 0)
+          (ir.compiler-ir-param-seq-prepend
+            (ir.CompilerIrParam.Param "b" (ast.AstType.I64) 1)
+            (ir.compiler-ir-param-seq-empty)))
+        (ast.AstType.I64)
+        6
+        (ir.compiler-ir-block-builder-to-list bb)
+        ir.CompilerIrFunctionAbi.Ordinary)]
+    [win-plan : reg.CompilerRegPlan
+      (reg.compiler-reg-plan-function-scalar-for-abi win-abi (& func))]
+    (test.assert-true
+      (and
+        (= (reg.compiler-reg-group-pair-candidate-count win-abi true false) 9)
+        (=
+          (reg.compiler-reg-group-pair-candidate win-abi true false 0)
+          cabi.compiler-reg-id-rsi)
+        (=
+          (reg.compiler-reg-group-pair-candidate win-abi true false 1)
+          cabi.compiler-reg-id-rdi)
+        (=
+          (reg.compiler-reg-group-pair-candidate win-abi true false 2)
+          cabi.compiler-reg-id-r9)
+        (=
+          (reg.compiler-reg-group-pair-candidate win-abi true false 3)
+          cabi.compiler-reg-id-r8)
+        (= (reg.compiler-reg-group-pair-candidate-count win-abi true true) 8)
+        (=
+          (reg.compiler-reg-group-pair-candidate win-abi true true 3)
+          cabi.compiler-reg-id-r12)
+        (= (reg.compiler-reg-group-pair-candidate-count win-abi false false) 5))
+      "Win64 GP-pair candidate pools must match Win64 ABI and exclude %r8 for params")
+    (test.assert-true
+      (match (reg.compiler-reg-assignment-table-lookup
+        (reg.compiler-reg-plan-assignments (& win-plan))
+        2)
+        [(Some (RegisterPair r0 r1))
+          (and
+            (not (= r0 r1))
+            (not (= r0 cabi.compiler-reg-id-rax))
+            (not (= r1 cabi.compiler-reg-id-rax)))]
+        [_ false])
+      "Win64 String live across a call must receive a GP RegisterPair")))

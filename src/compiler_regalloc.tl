@@ -80,6 +80,11 @@
   ;; word at offset-8 using the program word-count map).
   (RegisterPair i64 i64)
   (Spill i64)
+  ;; A spilled 2-word register-group homed at two explicit rbp-relative stack
+  ;; offsets (word0, word1). Addressable groups keep word1 == word0 + 8;
+  ;; non-addressable spilled groups color both words independently across
+  ;; disjoint live ranges alongside scalar spills.
+  (SpillPair i64 i64)
   ;; Rematerialization: a single-def value whose definition is a cheap static
   ;; recompute (a constant or an address materialization `leaq label(%rip)`) is
   ;; not spilled to a slot under pressure -- it is RECOMPUTED at each use and its
@@ -281,6 +286,7 @@
     [(Register reg) (Register reg)]
     [(RegisterPair word0 word1) (RegisterPair word0 word1)]
     [(Spill offset) (Spill offset)]
+    [(SpillPair off0 off1) (SpillPair off0 off1)]
     [(Remat inner) (Remat (ir.compiler-ir-clone-value inner))]))
 
 (define (clone-compiler-reg-id-seq [value : (& value CompilerRegIdSeq)]) : CompilerRegIdSeq
@@ -2610,7 +2616,7 @@
         (compiler-reg-assignment-table-has-spill-from? assignments (+ index 1))]
       [else
         (match (owned_view.compiler-owned-element-view items index)
-          [(Spill _) true]
+          [(or (Spill _) (SpillPair _ _)) true]
           [_
             (compiler-reg-assignment-table-has-spill-from?
               assignments
@@ -5559,7 +5565,7 @@
   (and
     (not (live.compiler-live-set-contains? base-ineligible var))
     (match (compiler-reg-interval-index-lookup interval-index var)
-      [(Some interval)
+      [(Some _)
         (not
           (compiler-reg-assignment-table-location-conflicts?
             assignments
@@ -5568,6 +5574,46 @@
             (- 0 1)
             (& (Register reg))))]
       [(No) false])))
+
+(define (compiler-reg-param-pair-pin-safe?
+  [assignments : CompilerRegAssignmentTable]
+  [interval-index : (& interval-index CompilerRegIntervalIndex)]
+  [var : i64]
+  [reg0 : i64]
+  [reg1 : i64]) : bool
+  (and
+    (not (= reg0 reg1))
+    (match (compiler-reg-interval-index-lookup interval-index var)
+      [(Some _)
+        (not
+          (compiler-reg-assignment-table-location-conflicts?
+            assignments
+            interval-index
+            var
+            (- 0 1)
+            (& (RegisterPair reg0 reg1))))]
+      [(No) false])))
+
+(define (compiler-reg-type-register-group-word-sse?
+  [type-segment-bases : i64]
+  [representations : (& ir.CompilerIrRepresentationIndex)]
+  [ty : (& ast.AstType)]
+  [word-index : i64]) : bool
+  (match ty
+    [(or (String) (Ref _ _) (MutRef _ _)) false]
+    [(Region _ inner)
+      (compiler-reg-type-register-group-word-sse?
+        type-segment-bases
+        representations
+        (& (ast.ast-type-segment-bases-get type-segment-bases inner))
+        word-index)]
+    [_
+      (match (ir.compiler-ir-representation-index-kind
+        type-segment-bases
+        representations
+        ty)
+        [(RegisterGroup _ mask) (not (= (bit-and mask (shl 1 word-index)) 0))]
+        [_ false])]))
 
 (define (compiler-reg-param-assign-walk
   [type-segment-bases : i64]
@@ -5578,177 +5624,289 @@
   [assignments : CompilerRegAssignmentTable]
   [ineligible : live.CompilerLiveI64Set]
   [blocked : live.CompilerLiveI64Set]
+  [group-pin-excluded : (& live.CompilerLiveI64Set)]
+  [param-index : i64]
   [int-idx : i64]
   [float-idx : i64]
-  [position : i64]
+  [abi-position : i64]
   [pins-ok? : bool]
   [call-points : (& live.CompilerLiveI64Set)]
   [div-points : (& live.CompilerLiveI64Set)]
   [shift-points : (& live.CompilerLiveI64Set)]) : CompilerRegParamAssignPlan
-  (if (>= position params.len)
+  (if (>= param-index params.len)
     (Plan assignments ineligible blocked)
-    (match (ir.compiler-ir-param-seq-borrow params position)
+    (match (ir.compiler-ir-param-seq-borrow params param-index)
       [(Param _ ty var-id)
         (let
-          [is-float : bool (compiler-reg-float-type? ty)]
-          [is-opaque : bool
-            (compiler-reg-param-abi-opaque?
+          [is-group? : bool
+            (compiler-reg-type-register-group?
               type-segment-bases
               representations
               (& ty))]
-          [next-int : i64
-            (if is-float
-              int-idx
-              (+ int-idx 1))]
-          [next-float : i64
-            (if is-float
-              (+ float-idx 1)
-              float-idx)]
-          [next-position : i64 (+ position 1)]
-          ;; This walk's bank accounting models one ABI slot per position, which
-          ;; is false for BOTH opaque shapes (compiler-reg-param-abi-opaque?): a
-          ;; register group occupies TWO positions, and a Linux by-memory ABI
-          ;; transport occupies NONE.
-          ;;
-          ;; FLT-1. For a transport, the backend's private-memory arm leaves
-          ;; int-idx and float-idx untouched and reads the incoming stack area,
-          ;; while this walk would advance int-idx for it (the transport type is
-          ;; a nominal Struct, so it is register-eligible and not a register
-          ;; group -- it passes compiler-reg-integer-param-type? outright).
-          ;; Every parameter after such a transport would then be pinned to the
-          ;; incoming register of its SUCCESSOR, and the prologue's
-          ;; position-ordered entry copies would destroy each source before the
-          ;; next copy read it. At --opt-level 2 (only the scalar-opt2 stage
-          ;; reaches the pin path)
-          ;;     (define (f [v (Array i64 3)] [a i64] [b i64] [c i64]) ...)
-          ;; would emit
-          ;;     movq %rdi, %rsi ; movq %rsi, %rdx ; movq %rdx, %rcx
-          ;;     leaq 8(%rsp), %rdi
-          ;; giving a == b == c. tests/integration/param_memory_transport_abi.tl
-          ;; is the regression fixture.
-          ;;
-          ;; Fail closed for both shapes: an opaque parameter never pins, and
-          ;; every pin PAST one is disabled, so the stale bank index is inert.
-          ;; compiler-reg-param-entry-simple-shape? refuses the same two shapes
-          ;; for the other consumer of the same map.
-          [tail-pins-ok? : bool (and pins-ok? (not is-opaque))]
-          [reg : CompilerRegMaybeId
-            (if (and pins-ok? (not is-opaque))
-              (if is-float
-                (compiler-reg-param-float-reg target-abi float-idx position)
-                (if (compiler-reg-integer-param-type?
+          [is-transport? : bool
+            (ir.compiler-ir-representation-internal-transport?
+              type-segment-bases
+              (& ty))]
+          (if is-group?
+            ;; A two-word register group advances the ABI bank cursors in exact
+            ;; lockstep with `compiler-backend-emit-param-spills-from` on both
+            ;; SysV (atomic bank fit) and Win64 (shared positional slots).
+            ;; Non-SSE GP-pair parameters that arrive in two non-scratch GP
+            ;; registers and are clobber-free can be pinned directly in place;
+            ;; all group params stay in `ineligible`/`blocked` so the scalar
+            ;; greedy allocator never treats them as 1-word values.
+            (let
+              [w0-sse : bool
+                (compiler-reg-type-register-group-word-sse?
                   type-segment-bases
                   representations
-                  (& ty))
-                  (compiler-reg-param-int-reg target-abi int-idx position)
-                  No))
-              No)]
-          (match reg
-            [(Some home)
-              ;; GAP3c: the pin gate is PER-INTERVAL and per-register (a
-              ;; function-global clobber gate would revoke every pin on any
-              ;; call/div/shift anywhere, even one on an arm the pinned value
-              ;; never reaches). The pinned
-              ;; var is deliberately NOT inserted into `blocked`: the greedy
-              ;; skips already-assigned vars, and plan-from's coalesce-hull
-              ;; validation (compiler-reg-param-pins-demote!) may still
-              ;; revoke the pin, after which the param must compete as an
-              ;; ordinary callee-saved greedy candidate.
-              (if (and
-                (compiler-reg-param-pin-clobber-free?
-                  interval-index
-                  call-points
-                  div-points
-                  shift-points
-                  var-id
-                  home)
-                (compiler-reg-param-pin-safe?
-                  assignments
-                  interval-index
-                  ineligible
-                  var-id
-                  home))
-                (compiler-reg-param-assign-walk
+                  (& ty)
+                  0)]
+              [w1-sse : bool
+                (compiler-reg-type-register-group-word-sse?
                   type-segment-bases
                   representations
+                  (& ty)
+                  1)]
+              [w0-stack : bool
+                (cabi.compiler-abi-stack-call-arg-for-banks?
                   target-abi
-                  params
-                  interval-index
-                  (compiler-reg-assignment-table-insert
-                    assignments
-                    var-id
-                    (Register home))
-                  ineligible
-                  blocked
-                  next-int
-                  next-float
-                  next-position
-                  tail-pins-ok?
-                  call-points
-                  div-points
-                  shift-points)
-                ;; Pin-unsafe scalar param: integer and float scalar params
-                ;; are greedy-eligible -- leave it out of
-                ;; ineligible/blocked so the greedy may home it callee-saved.
-                (compiler-reg-param-assign-walk
-                  type-segment-bases
-                  representations
+                  (Internal)
+                  w0-sse
+                  int-idx
+                  float-idx
+                  abi-position)]
+              [int1 : i64
+                (if w0-sse
+                  int-idx
+                  (+ int-idx 1))]
+              [float1 : i64
+                (if w0-sse
+                  (+ float-idx 1)
+                  float-idx)]
+              [w1-stack : bool
+                (cabi.compiler-abi-stack-call-arg-for-banks?
                   target-abi
-                  params
-                  interval-index
-                  assignments
-                  ineligible
-                  blocked
-                  next-int
-                  next-float
-                  next-position
-                  tail-pins-ok?
-                  call-points
-                  div-points
-                  shift-points))]
-            [(No)
-              ;; No ABI pin available (skipped arg register, stack-passed
-              ;; position, post-group position, or non-pinnable type). A
-              ;; greedy-eligible param stays unblocked (M-A candidate);
-              ;; group/otherwise-ineligible params keep a
-              ;; stack home. base-ineligible members (address-taken, stack
-              ;; call args, ...) are already in both sets and stay excluded.
-              (if (compiler-reg-param-greedy-eligible?
+                  (Internal)
+                  w1-sse
+                  int1
+                  float1
+                  (+ abi-position 1))]
+              [sysv-no-fit : bool
+                (and
+                  (cabi.compiler-abi-aggregate-eightbyte-classes?
+                    target-abi
+                    (Internal))
+                  (or w0-stack w1-stack))]
+              [next-int : i64
+                (if sysv-no-fit
+                  int-idx
+                  (if w1-sse
+                    int1
+                    (+ int1 1)))]
+              [next-float : i64
+                (if sysv-no-fit
+                  float-idx
+                  (if w1-sse
+                    (+ float1 1)
+                    float1))]
+              [next-abi-pos : i64 (+ abi-position 2)]
+              [next-assignments : CompilerRegAssignmentTable
+                (if (and
+                  pins-ok?
+                  (not sysv-no-fit)
+                  (not w0-sse)
+                  (not w1-sse)
+                  (not w0-stack)
+                  (not w1-stack)
+                  (not
+                    (live.compiler-live-set-contains? group-pin-excluded var-id)))
+                  (match (compiler-reg-param-int-reg
+                    target-abi
+                    int-idx
+                    abi-position)
+                    [(Some reg0)
+                      (match (compiler-reg-param-int-reg
+                        target-abi
+                        int1
+                        (+ abi-position 1))
+                        [(Some reg1)
+                          (if (and
+                            (compiler-reg-param-pin-clobber-free?
+                              interval-index
+                              call-points
+                              div-points
+                              shift-points
+                              var-id
+                              reg0)
+                            (compiler-reg-param-pin-clobber-free?
+                              interval-index
+                              call-points
+                              div-points
+                              shift-points
+                              var-id
+                              reg1)
+                            (compiler-reg-param-pair-pin-safe?
+                              assignments
+                              interval-index
+                              var-id
+                              reg0
+                              reg1))
+                            (compiler-reg-assignment-table-insert
+                              assignments
+                              var-id
+                              (RegisterPair reg0 reg1))
+                            assignments)]
+                        [(No) assignments])]
+                    [(No) assignments])
+                  assignments)]
+              (compiler-reg-param-assign-walk
                 type-segment-bases
                 representations
-                (& ty))
-                (compiler-reg-param-assign-walk
-                  type-segment-bases
-                  representations
-                  target-abi
-                  params
-                  interval-index
-                  assignments
-                  ineligible
-                  blocked
-                  next-int
-                  next-float
-                  next-position
-                  tail-pins-ok?
-                  call-points
-                  div-points
-                  shift-points)
-                (compiler-reg-param-assign-walk
-                  type-segment-bases
-                  representations
-                  target-abi
-                  params
-                  interval-index
-                  assignments
-                  (live.compiler-live-set-insert ineligible var-id)
-                  (live.compiler-live-set-insert blocked var-id)
-                  next-int
-                  next-float
-                  next-position
-                  tail-pins-ok?
-                  call-points
-                  div-points
-                  shift-points))]))])))
+                target-abi
+                params
+                interval-index
+                next-assignments
+                (live.compiler-live-set-insert ineligible var-id)
+                (live.compiler-live-set-insert blocked var-id)
+                group-pin-excluded
+                (+ param-index 1)
+                next-int
+                next-float
+                next-abi-pos
+                pins-ok?
+                call-points
+                div-points
+                shift-points))
+            (let
+              [is-float : bool (compiler-reg-float-type? ty)]
+              [next-int : i64
+                (if is-float
+                  int-idx
+                  (+ int-idx 1))]
+              [next-float : i64
+                (if is-float
+                  (+ float-idx 1)
+                  float-idx)]
+              [next-param : i64 (+ param-index 1)]
+              [next-abi-pos : i64 (+ abi-position 1)]
+              ;; FLT-1: a Linux by-memory ABI transport consumes no register
+              ;; bank slots. Fail closed for transports and every pin past one
+              ;; so stale bank indices stay inert.
+              [tail-pins-ok? : bool (and pins-ok? (not is-transport?))]
+              [reg : CompilerRegMaybeId
+                (if (and pins-ok? (not is-transport?))
+                  (if is-float
+                    (compiler-reg-param-float-reg
+                      target-abi
+                      float-idx
+                      abi-position)
+                    (if (compiler-reg-integer-param-type?
+                      type-segment-bases
+                      representations
+                      (& ty))
+                      (compiler-reg-param-int-reg
+                        target-abi
+                        int-idx
+                        abi-position)
+                      No))
+                  No)]
+              (match reg
+                [(Some home)
+                  (if (and
+                    (compiler-reg-param-pin-clobber-free?
+                      interval-index
+                      call-points
+                      div-points
+                      shift-points
+                      var-id
+                      home)
+                    (compiler-reg-param-pin-safe?
+                      assignments
+                      interval-index
+                      ineligible
+                      var-id
+                      home))
+                    (compiler-reg-param-assign-walk
+                      type-segment-bases
+                      representations
+                      target-abi
+                      params
+                      interval-index
+                      (compiler-reg-assignment-table-insert
+                        assignments
+                        var-id
+                        (Register home))
+                      ineligible
+                      blocked
+                      group-pin-excluded
+                      next-param
+                      next-int
+                      next-float
+                      next-abi-pos
+                      tail-pins-ok?
+                      call-points
+                      div-points
+                      shift-points)
+                    (compiler-reg-param-assign-walk
+                      type-segment-bases
+                      representations
+                      target-abi
+                      params
+                      interval-index
+                      assignments
+                      ineligible
+                      blocked
+                      group-pin-excluded
+                      next-param
+                      next-int
+                      next-float
+                      next-abi-pos
+                      tail-pins-ok?
+                      call-points
+                      div-points
+                      shift-points))]
+                [(No)
+                  (if (compiler-reg-param-greedy-eligible?
+                    type-segment-bases
+                    representations
+                    (& ty))
+                    (compiler-reg-param-assign-walk
+                      type-segment-bases
+                      representations
+                      target-abi
+                      params
+                      interval-index
+                      assignments
+                      ineligible
+                      blocked
+                      group-pin-excluded
+                      next-param
+                      next-int
+                      next-float
+                      next-abi-pos
+                      tail-pins-ok?
+                      call-points
+                      div-points
+                      shift-points)
+                    (compiler-reg-param-assign-walk
+                      type-segment-bases
+                      representations
+                      target-abi
+                      params
+                      interval-index
+                      assignments
+                      (live.compiler-live-set-insert ineligible var-id)
+                      (live.compiler-live-set-insert blocked var-id)
+                      group-pin-excluded
+                      next-param
+                      next-int
+                      next-float
+                      next-abi-pos
+                      tail-pins-ok?
+                      call-points
+                      div-points
+                      shift-points))]))))])))
 
 (define (compiler-reg-param-assign-plan
   [type-segment-bases : i64]
@@ -5760,10 +5918,34 @@
   [vars : i64]
   [ignore-single-cold-call? : bool]) : CompilerRegParamAssignPlan
   (match func
-    [(Function _ params _ _ _ _)
+    [(Function _ params _ _ blocks _)
       (let
         [assignments : CompilerRegAssignmentTable
           (compiler-reg-assignment-table-make vars)]
+        [group-param-vars : live.CompilerLiveI64Set
+          (let
+            [out : live.CompilerLiveI64Set (live.compiler-live-set-empty)]
+            (for [i (iterator.range 0 params.len)]
+              (match (ir.compiler-ir-param-seq-borrow (& params) i)
+                [(Param _ ty pvar)
+                  (when
+                    (compiler-reg-type-register-group?
+                      type-segment-bases
+                      representations
+                      (& ty))
+                    (set! out (live.compiler-live-set-insert out pvar)))]))
+            out)]
+        [group-pin-excluded : live.CompilerLiveI64Set
+          (if (> (live.compiler-live-set-count group-param-vars) 0)
+            (compiler-reg-ineligible-memory
+              (& blocks)
+              (compiler-reg-group-pair-caller-unsafe-blocks
+                (compiler-reg-group-pair-excluded-blocks
+                  (live.compiler-live-set-empty)
+                  (& blocks)
+                  (& group-param-vars))
+                (& blocks)))
+            (live.compiler-live-set-empty))]
         ;; M-A (RC1): the walk always runs -- non-pinned greedy-eligible
         ;; params stay out of ineligible/blocked in ALL functions and compete
         ;; in the greedy for a callee-saved home. GAP3c applies its per-var,
@@ -5777,6 +5959,8 @@
           assignments
           (owned_view.compiler-owned-reference-shared-view base-ineligible)
           (owned_view.compiler-owned-reference-shared-view base-ineligible)
+          (& group-pin-excluded)
+          0
           0
           0
           0
@@ -6966,6 +7150,11 @@
       (match right
         [(Spill right-offset) (= left-offset right-offset)]
         [_ false])]
+    [(SpillPair left-a left-b)
+      (match right
+        [(SpillPair right-a right-b)
+          (and (= left-a right-a) (= left-b right-b))]
+        [_ false])]
     ;; Conservative: distinct rematerialised values never alias, and treating two
     ;; equal ones as different only forgoes a copy elision (never unsound).
     [(Remat _) false]))
@@ -7003,6 +7192,19 @@
     [(Spill left-offset)
       (match right
         [(Spill right-offset) (= left-offset right-offset)]
+        [(SpillPair right-a right-b)
+          (or (= left-offset right-a) (= left-offset right-b))]
+        [_ false])]
+    [(SpillPair left-a left-b)
+      (match right
+        [(Spill right-offset)
+          (or (= left-a right-offset) (= left-b right-offset))]
+        [(SpillPair right-a right-b)
+          (or
+            (= left-a right-a)
+            (= left-a right-b)
+            (= left-b right-a)
+            (= left-b right-b))]
         [_ false])]
     [(Remat _) false]))
 
@@ -7015,7 +7217,7 @@
       (or
         (compiler-reg-registers-overlap? a reg)
         (compiler-reg-registers-overlap? b reg))]
-    [(or (Spill _) (Remat _)) false]))
+    [(or (Spill _) (SpillPair _ _) (Remat _)) false]))
 
 (define (compiler-reg-location-primary-register
   [location : (& CompilerRegLocation)]) : i64
@@ -15596,7 +15798,7 @@
         ;; A rematerialised value is recomputed at each use and has no spill
         ;; store at all, so the split achieved what it was selected for.
         [(or (Register _) (RegisterPair _ _) (Remat _)) true]
-        [(Spill _) false])]))
+        [(or (Spill _) (SpillPair _ _)) false])]))
 
 ;; Drop every selection the replan did not improve: a memory candidate the
 ;; replan still put in memory, or a csr candidate it homed callee-saved again.
@@ -22514,7 +22716,7 @@
         var
         (compiler-reg-greedy-pool-index occupancy first)
         (compiler-reg-greedy-pool-index occupancy second))]
-    [(or (Spill _) (Remat _)) unit]))
+    [(or (Spill _) (SpillPair _ _) (Remat _)) unit]))
 
 ;; `interval-index` seeds the per-register union. Every query against the
 ;; returned occupancy MUST pass the same index: the union is a materialised view
@@ -22830,7 +23032,7 @@
                       reg-index))
                     reg-index
                     -1))]
-              [(or (RegisterPair _ _) (Spill _) (Remat _)) -1])]
+              [(or (RegisterPair _ _) (Spill _) (SpillPair _ _) (Remat _)) -1])]
           [(No) -1])))))
 
 ;; RAGreedy Component 1 cascade cap (LLVM canEvictInterference / cascade number).
@@ -25135,6 +25337,154 @@
 ;; compiler-reg-vars-interfere-segmented-index? the greedy trusts) against
 ;; every var holding the probed register (scalar home or either pair half),
 ;; including pairs this pass already placed.
+(define (compiler-reg-const-pack-word-ok? [value : (& ir.CompilerIrValue)]) : bool
+  (match value
+    [(or (I64 _) (Bool _) (Char _) (String _) (StrDesc _) (Bytes _)
+         (GlobalAddr _) (Function _) (Unit))
+      true]
+    [_ false]))
+
+(define (compiler-reg-const-pack-reject-value!
+  [ok : (&mut ok (__tl_dyn-array i64))]
+  [value : (& ir.CompilerIrValue)]) : unit
+  (match value
+    [(Var v)
+      (when (and (>= v 0) (< v (array-length ok))) (set! (array-ref ok v) 0))]
+    [_ unit]))
+
+(define (compiler-reg-addressable-group-vars
+  [group-vars : (& live.CompilerLiveI64Set)]
+  [blocks : (& ir.CompilerIrBlockList)]) : live.CompilerLiveI64Set
+  (if (= (live.compiler-live-set-word-count group-vars) 0)
+    (live.compiler-live-set-empty)
+    (let
+      [out : live.CompilerLiveI64Set (live.compiler-live-set-empty)]
+      (match blocks
+        [(Array seq)
+          (for [bi (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+            (match (ir.compiler-ir-block-seq-borrow seq bi)
+              [(Block _ instrs)
+                (for [ii
+                  (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+                  (match (ir.compiler-ir-instr-seq-borrow instrs ii)
+                    [(AddrOf _ src _)
+                      (when
+                        (live.compiler-live-set-contains? group-vars src)
+                        (set! out (live.compiler-live-set-insert out src)))]
+                    [_ unit]))]))])
+      out)))
+
+;; Identify pure-constant non-SSE 2-word `Pack` vars (such as `String` literals)
+;; whose only uses are Call/TailCall/CallIndirect/TailCallIndirect args or
+;; Return values. Shared between GP-pair allocation (so literal packs never
+;; consume a register pair) and stack-slot coloring (so they reserve zero stack
+;; slots).
+(define (compiler-reg-const-pack-vars
+  [type-segment-bases : i64]
+  [params : (& ir.CompilerIrParamSeq)]
+  [blocks : (& ir.CompilerIrBlockList)]
+  [type-info : CompilerRegVarTypes]
+  [group-vars : (& live.CompilerLiveI64Set)]
+  [addressable : (& live.CompilerLiveI64Set)]
+  [vars : i64]) : live.CompilerLiveI64Set
+  (if (or (<= vars 0) (= (live.compiler-live-set-word-count group-vars) 0))
+    (live.compiler-live-set-empty)
+    (let
+      [defs : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+      [ok : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+      [pack-count : i64 0]
+      (for [pi (iterator.range 0 (ir.compiler-ir-param-seq-count params))]
+        (match (ir.compiler-ir-param-seq-borrow params pi)
+          [(Param _ _ pvar)
+            (when
+              (and (>= pvar 0) (< pvar vars))
+              (set! (array-ref defs pvar) 2))]))
+      (match blocks
+        [(Array seq)
+          (for [bi (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+            (match (ir.compiler-ir-block-seq-borrow seq bi)
+              [(Block _ instrs)
+                (for [ii
+                  (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+                  (let
+                    [dst : i64
+                      (ir.compiler-ir-instr-dst-or
+                        (ir.compiler-ir-instr-seq-borrow instrs ii)
+                        -1)]
+                    (when
+                      (and (>= dst 0) (< dst vars))
+                      (+= (array-ref defs dst) 1))
+                    (match (ir.compiler-ir-instr-seq-borrow instrs ii)
+                      [(Pack pdst words _)
+                        (when
+                          (and
+                            (>= pdst 0)
+                            (< pdst vars)
+                            (live.compiler-live-set-contains? group-vars pdst)
+                            (not
+                              (live.compiler-live-set-contains?
+                                addressable
+                                pdst))
+                            (= (ir.compiler-ir-value-seq-count (& words)) 2)
+                            (compiler-reg-const-pack-word-ok?
+                              (ir.compiler-ir-value-seq-borrow (& words) 0))
+                            (compiler-reg-const-pack-word-ok?
+                              (ir.compiler-ir-value-seq-borrow (& words) 1))
+                            (not
+                              (compiler-reg-var-register-group-has-sse?
+                                type-segment-bases
+                                type-info
+                                pdst)))
+                          (set! (array-ref ok pdst) 1)
+                          (+= pack-count 1))]
+                      [_ unit])))]))])
+      (if (= pack-count 0)
+        (live.compiler-live-set-empty)
+        (let
+          [uses : ir.CompilerIrIdList (ir.compiler-ir-id-list-new)]
+          [out : live.CompilerLiveI64Set (live.compiler-live-set-empty)]
+          (for [v (iterator.range 0 vars)]
+            (when
+              (and (= (array-ref ok v) 1) (!= (array-ref defs v) 1))
+              (set! (array-ref ok v) 0)))
+          (match blocks
+            [(Array seq)
+              (for [bi (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+                (match (ir.compiler-ir-block-seq-borrow seq bi)
+                  [(Block _ instrs)
+                    (for [ii
+                      (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+                      (match (ir.compiler-ir-instr-seq-borrow instrs ii)
+                        [(or (Call _ _ _ _) (TailCall _ _ _) (Return _)) unit]
+                        [(CallIndirect _ target _ _)
+                          (compiler-reg-const-pack-reject-value!
+                            (&mut ok)
+                            (& target))]
+                        [(TailCallIndirect target _ _)
+                          (compiler-reg-const-pack-reject-value!
+                            (&mut ok)
+                            (& target))]
+                        [(AddrOf _ src _)
+                          (when
+                            (and (>= src 0) (< src vars))
+                            (set! (array-ref ok src) 0))]
+                        [_
+                          (set! uses.len 0)
+                          (ir.compiler-ir-instr-use-var-ids-into!
+                            (ir.compiler-ir-instr-seq-borrow instrs ii)
+                            (&mut uses))
+                          (for [u (& uses)]
+                            (let
+                              [vid : i64 (deref u)]
+                              (when
+                                (and (>= vid 0) (< vid vars))
+                                (set! (array-ref ok vid) 0))))]))]))])
+          (for [v (iterator.range 0 vars)]
+            (when
+              (= (array-ref ok v) 1)
+              (set! out (live.compiler-live-set-insert out v))))
+          out)))))
+
 (define (compiler-reg-group-pair-add-value-var
   [set : live.CompilerLiveI64Set]
   [value : (& ir.CompilerIrValue)]) : live.CompilerLiveI64Set
@@ -25162,16 +25512,14 @@
             (compiler-reg-group-pair-add-value-var acc (& (array-ref arr i)))))
         acc)]))
 
-;; The ordinary call marshaller emits its group-word moves independently. A
-;; source already in r8:r9 can therefore overlap an earlier argument
-;; destination. Keep the affected component eligible for a CSR pair, but bar
-;; it from the caller-saved pair until call marshalling uses the pair
-;; parallel-move solver.
 (define (compiler-reg-group-pair-caller-unsafe-instr
   [set : live.CompilerLiveI64Set]
   [instr : (& ir.CompilerIrInstr)]) : live.CompilerLiveI64Set
   (match instr
-    [(or (Call _ _ args _) (CallIndirect _ _ args _) (CallIndirectC _ _ args _))
+    [(Call _ _ args _) (compiler-reg-group-pair-add-call-args set (& args))]
+    [(CallIndirect _ _ args _)
+      (compiler-reg-group-pair-add-call-args set (& args))]
+    [(CallIndirectC _ _ args _)
       (compiler-reg-group-pair-add-call-args set (& args))]
     [_ set]))
 
@@ -25273,27 +25621,67 @@
     [(= idx 3) cabi.compiler-reg-id-r15]
     [else cabi.compiler-reg-id-rbx]))
 
-;; The late pair pass reserves only the non-argument caller-saved pair. rax,
-;; rcx and rdx have fixed ABI or div/shift roles; r10/r11 are scavenger scratch;
-;; rsi/rdi stay with ordinary argument marshalling.
-(define (compiler-reg-group-pair-caller-saved [idx : i64]) : i64
-  (if (= idx 0)
-    cabi.compiler-reg-id-r8
-    cabi.compiler-reg-id-r9))
+;; Caller-saved pair candidates derived from the target Internal ABI:
+;;  * Linux Internal: {r8, r9} (highest arg regs; rax/rdx/rcx have fixed roles,
+;;    r10/r11 are fixed scratch).
+;;  * Win64 Internal: {rsi, rdi} first (args 4-5, untouched by Win64 Platform
+;;    calls and free of fixed-scratch roles), then {r9, r8} for non-param locals
+;;    (params exclude r8 to match compiler-reg-param-int-reg's fixed-scratch rule).
+(define (compiler-reg-group-pair-caller-saved-count
+  [target-abi : cabi.CompilerRegTargetAbi]
+  [has-param? : bool]) : i64
+  (match target-abi
+    [(Linux)
+      (if has-param?
+        0
+        2)]
+    [(Windows)
+      (if has-param?
+        3
+        4)]))
 
-(define (compiler-reg-group-pair-candidate-count [caller-saved-ok? : bool]) : i64
-  (if caller-saved-ok?
-    7
-    5))
+(define (compiler-reg-group-pair-caller-saved
+  [target-abi : cabi.CompilerRegTargetAbi]
+  [has-param? : bool]
+  [idx : i64]) : i64
+  (match target-abi
+    [(Linux)
+      (if (= idx 0)
+        cabi.compiler-reg-id-r8
+        cabi.compiler-reg-id-r9)]
+    [(Windows)
+      (cond
+        [(= idx 0) cabi.compiler-reg-id-rsi]
+        [(= idx 1) cabi.compiler-reg-id-rdi]
+        [(= idx 2) cabi.compiler-reg-id-r9]
+        [else
+          (if has-param?
+            cabi.compiler-reg-id-r9
+            cabi.compiler-reg-id-r8)])]))
+
+(define (compiler-reg-group-pair-candidate-count
+  [target-abi : cabi.CompilerRegTargetAbi]
+  [caller-saved-ok? : bool]
+  [has-param? : bool]) : i64
+  (+
+    5
+    (if caller-saved-ok?
+      (compiler-reg-group-pair-caller-saved-count target-abi has-param?)
+      0)))
 
 (define (compiler-reg-group-pair-candidate
+  [target-abi : cabi.CompilerRegTargetAbi]
   [caller-saved-ok? : bool]
+  [has-param? : bool]
   [idx : i64]) : i64
-  (if caller-saved-ok?
-    (if (< idx 2)
-      (compiler-reg-group-pair-caller-saved idx)
-      (compiler-reg-group-pair-csr (- idx 2)))
-    (compiler-reg-group-pair-csr idx)))
+  (let
+    [caller-count : i64
+      (if caller-saved-ok?
+        (compiler-reg-group-pair-caller-saved-count target-abi has-param?)
+        0)]
+    (if (< idx caller-count)
+      (compiler-reg-group-pair-caller-saved target-abi has-param? idx)
+      (compiler-reg-group-pair-csr (- idx caller-count)))))
 
 ;; A caller-saved pair must not overlap a scalar shadow that the per-call-region
 ;; rescue will materialise after this plan is built. The shadow table records
@@ -25378,18 +25766,26 @@
 (define (compiler-reg-group-pair-component-clobber-free?
   [interval-index : (& CompilerRegIntervalIndex)]
   [call-points : (& call-points live.CompilerLiveI64Set)]
+  [param-vars : (& param-vars live.CompilerLiveI64Set)]
   [members : (& members (__tl_dyn-array i64))]
   [count : i64]) : bool
   (let
     [i : i64 0]
     [ok : bool true]
     (while (and (< i count) ok)
-      (if (compiler-reg-greedy-var-spans-clobber?
-        interval-index
-        call-points
-        (array-ref members i))
-        (set! ok false)
-        unit)
+      (let
+        [member : i64 (array-ref members i)]
+        [spans? : bool
+          (if (live.compiler-live-set-contains? param-vars member)
+            (compiler-reg-param-pin-spans-clobber?
+              interval-index
+              call-points
+              member)
+            (compiler-reg-greedy-var-spans-clobber?
+              interval-index
+              call-points
+              member))]
+        (when spans? (set! ok false)))
       (+= i 1))
     ok))
 
@@ -25442,7 +25838,7 @@
                 (if (or (= first reg) (= second reg))
                   (set! blocked true)
                   unit)]
-              [(or (Spill _) (Remat _)) unit])]
+              [(or (Spill _) (SpillPair _ _) (Remat _)) unit])]
           [(No) unit])
         (+= i 1)))
     (if blocked
@@ -25710,6 +26106,7 @@
 
 (define (compiler-reg-assign-group-pairs
   [type-segment-bases : i64]
+  [target-abi : cabi.CompilerRegTargetAbi]
   [func : (& ir.CompilerIrFunction)]
   [type-info : CompilerRegVarTypes]
   [group-vars : (& live.CompilerLiveI64Set)]
@@ -25721,11 +26118,7 @@
   ;; A function with NO group values can never place a pair: every component
   ;; below is gated on `compiler-reg-group-pair-member-ok?`, whose first
   ;; conjunct is `group-vars` membership, so no component is entered and the
-  ;; incoming table is returned untouched. Everything the body computes first
-  ;; (the excluded / caller-unsafe point sets, the def counts, the Mov-edge
-  ;; union-find and the two per-var walks) writes only to locals, so returning
-  ;; `assignments` here yields the identical table by construction. Most
-  ;; functions are group-free.
+  ;; incoming table is returned untouched.
   (if (= (live.compiler-live-set-word-count group-vars) 0)
     assignments
     (match func
@@ -25738,15 +26131,30 @@
             (owned_view.compiler-owned-reference-shared-view
               (& interval-index.ends))]
           [vars : i64 (array-length starts)]
-          [excluded : live.CompilerLiveI64Set
-            (compiler-reg-group-pair-excluded-blocks
-              (compiler-reg-ineligible-memory
-                (& blocks)
-                (compiler-reg-ineligible-params
-                  (& params)
-                  (& (live.compiler-live-set-empty))))
+          [param-vars : live.CompilerLiveI64Set
+            (compiler-reg-ineligible-params
+              (& params)
+              (& (live.compiler-live-set-empty)))]
+          [addr-groups : live.CompilerLiveI64Set
+            (compiler-reg-addressable-group-vars group-vars (& blocks))]
+          [const-pack-vars : live.CompilerLiveI64Set
+            (compiler-reg-const-pack-vars
+              type-segment-bases
+              (& params)
               (& blocks)
-              group-vars)]
+              type-info
+              group-vars
+              (& addr-groups)
+              vars)]
+          [excluded : live.CompilerLiveI64Set
+            (live.compiler-live-set-union
+              const-pack-vars
+              (compiler-reg-group-pair-excluded-blocks
+                (compiler-reg-ineligible-memory
+                  (& blocks)
+                  (live.compiler-live-set-empty))
+                (& blocks)
+                group-vars))]
           [caller-unsafe : live.CompilerLiveI64Set
             (compiler-reg-group-pair-caller-unsafe-blocks
               (live.compiler-live-set-empty)
@@ -25781,10 +26189,12 @@
                 assignments))
               (compiler-reg-assign-group-pair-component
                 type-segment-bases
+                target-abi
                 v
                 vars
                 type-info
                 group-vars
+                (& param-vars)
                 excluded
                 caller-unsafe
                 starts
@@ -25808,10 +26218,12 @@
 ;; member and is demoted to its ordinary spill slot before the pair is assigned.
 (define (compiler-reg-assign-group-pair-component
   [type-segment-bases : i64]
+  [target-abi : cabi.CompilerRegTargetAbi]
   [r : i64]
   [vars : i64]
   [type-info : CompilerRegVarTypes]
   [group-vars : (& group-vars live.CompilerLiveI64Set)]
+  [param-vars : (& param-vars live.CompilerLiveI64Set)]
   [excluded : (& excluded live.CompilerLiveI64Set)]
   [caller-unsafe : (& caller-unsafe live.CompilerLiveI64Set)]
   [starts : (& starts (__tl_dyn-array i64))]
@@ -25852,6 +26264,8 @@
             unit))))
     (if (and ok (> component-weight 0) (> count 0))
       (let
+        [has-param? : bool
+          (compiler-reg-group-pair-component-contains? param-vars members count)]
         [caller-saved-ok? : bool
           (and
             (not
@@ -25862,10 +26276,18 @@
             (compiler-reg-group-pair-component-clobber-free?
               interval-index
               call-points
+              param-vars
               members
               count))]
+        [caller-count : i64
+          (if caller-saved-ok?
+            (compiler-reg-group-pair-caller-saved-count target-abi has-param?)
+            0)]
         [candidate-count : i64
-          (compiler-reg-group-pair-candidate-count caller-saved-ok?)]
+          (compiler-reg-group-pair-candidate-count
+            target-abi
+            caller-saved-ok?
+            has-param?)]
         ;; The member-interference scan is the same for every candidate
         ;; register, so collect the interfering vars once here.
         [conflicts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
@@ -25883,7 +26305,12 @@
         ;; and otherwise the coldest displaced scalar set wins.
         (for [i0 (iterator.range 0 candidate-count)]
           (let
-            [reg0 : i64 (compiler-reg-group-pair-candidate caller-saved-ok? i0)]
+            [reg0 : i64
+              (compiler-reg-group-pair-candidate
+                target-abi
+                caller-saved-ok?
+                has-param?
+                i0)]
             [cost0 : i64
               (compiler-reg-group-pair-component-register-cost
                 assignments
@@ -25894,14 +26321,18 @@
                 conflict-count
                 weights
                 component-weight
-                (and caller-saved-ok? (< i0 2))
+                (< i0 caller-count)
                 split
                 reg0)]
             (if (>= cost0 0)
               (for [i1 (iterator.range (+ i0 1) candidate-count)]
                 (let
                   [reg1 : i64
-                    (compiler-reg-group-pair-candidate caller-saved-ok? i1)]
+                    (compiler-reg-group-pair-candidate
+                      target-abi
+                      caller-saved-ok?
+                      has-param?
+                      i1)]
                   [cost1 : i64
                     (compiler-reg-group-pair-component-register-cost
                       assignments
@@ -25912,7 +26343,7 @@
                       conflict-count
                       weights
                       component-weight
-                      (and caller-saved-ok? (< i1 2))
+                      (< i1 caller-count)
                       split
                       reg1)]
                   (when
@@ -25926,9 +26357,17 @@
         (if (>= best0 0)
           (let
             [reg0 : i64
-              (compiler-reg-group-pair-candidate caller-saved-ok? best0)]
+              (compiler-reg-group-pair-candidate
+                target-abi
+                caller-saved-ok?
+                has-param?
+                best0)]
             [reg1 : i64
-              (compiler-reg-group-pair-candidate caller-saved-ok? best1)]
+              (compiler-reg-group-pair-candidate
+                target-abi
+                caller-saved-ok?
+                has-param?
+                best1)]
             [pair : CompilerRegLocation (RegisterPair reg0 reg1)]
             (compiler-reg-group-pair-evict-reg-conflicts!
               assignments
@@ -26002,6 +26441,34 @@
                       shift-points
                       var-id
                       home))
+                    unit
+                    (begin
+                      (compiler-reg-assignment-table-unassign
+                        assignments
+                        var-id)
+                      unit)))]
+              [(RegisterPair r0 r1)
+                (let
+                  [root : i64
+                    (if (and (>= var-id 0) (< var-id (array-length parents)))
+                      (array-ref parents var-id)
+                      var-id)]
+                  (if (and
+                    (= root var-id)
+                    (compiler-reg-param-pin-clobber-free?
+                      eff-index
+                      call-points
+                      div-points
+                      shift-points
+                      var-id
+                      r0)
+                    (compiler-reg-param-pin-clobber-free?
+                      eff-index
+                      call-points
+                      div-points
+                      shift-points
+                      var-id
+                      r1))
                     unit
                     (begin
                       (compiler-reg-assignment-table-unassign
@@ -26965,19 +27432,17 @@
         (compiler-reg-invariant-facts-build func type-info).cells-clean
         (array-length interval-index.starts))]
     [pair-assignments : CompilerRegAssignmentTable
-      (match target-abi
-        [(Linux)
-          (compiler-reg-assign-group-pairs
-            type-segment-bases
-            func
-            type-info
-            (& group-vars)
-            interval-index
-            final-assignments
-            base-eviction-ref-counts
-            call-points
-            (& call-save-split))]
-        [(Windows) final-assignments])]
+      (compiler-reg-assign-group-pairs
+        type-segment-bases
+        target-abi
+        func
+        type-info
+        (& group-vars)
+        interval-index
+        final-assignments
+        base-eviction-ref-counts
+        call-points
+        (& call-save-split))]
     [_trace-homes : unit
       (if (and
         compiler-reg-debug-trace-homes
@@ -27769,18 +28234,26 @@
 ;; var count in the backend's frame layout.
 (defenum CompilerRegColoring
   (None)
-  (Remap (__tl_dyn-array i64) i64))
+  (Remap (__tl_dyn-array i64) i64 (__tl_dyn-array i64) (__tl_dyn-array i64)))
+
+(define (clone-compiler-reg-i64-array [src : (& src (__tl_dyn-array i64))]) : (__tl_dyn-array
+    i64)
+  (let
+    [len : i64 (array-length src)]
+    [dst : (__tl_dyn-array i64) (__tl_make-array i64 len)]
+    (for [index (iterator.range 0 len)]
+      (set! (array-ref dst index) (array-ref src index)))
+    dst))
 
 (define (clone-compiler-reg-coloring [value : (& value CompilerRegColoring)]) : CompilerRegColoring
   (match value
     [(None) (None)]
-    [(Remap slots count)
-      (let
-        [len : i64 (array-length slots)]
-        [dst : (__tl_dyn-array i64) (__tl_make-array i64 len)]
-        (for [index (iterator.range 0 len)]
-          (set! (array-ref dst index) (array-ref slots index)))
-        (Remap dst count))]))
+    [(Remap slots count group-off0 group-off1)
+      (Remap
+        (clone-compiler-reg-i64-array (& slots))
+        count
+        (clone-compiler-reg-i64-array (& group-off0))
+        (clone-compiler-reg-i64-array (& group-off1)))]))
 
 ;; Per-var slot-colorability flags: only values the register allocator could
 ;; legally home in one 64-bit register (scalars and 8-byte handles) are known
@@ -28232,23 +28705,182 @@
 ;; compiler-backend-binop-operand-ty for bit ops), so merging an i64 with a
 ;; bool would emit `andb` for a 64-bit bit-and -- a miscompile. Only
 ;; type-identical variables may merge.
+(define (compiler-reg-color-phi-block-merge [cur : i64] [block-id : i64]) : i64
+  (cond [(< cur 0) block-id] [(= cur block-id) cur] [else (- 0 2)]))
+
+(define (compiler-reg-color-phi-blocks-match? [a : i64] [b : i64]) : bool
+  (and
+    (not (= a (- 0 1)))
+    (not (= b (- 0 1)))
+    (or (= a (- 0 2)) (= b (- 0 2)) (= a b))))
+
+(define (compiler-reg-color-collect-phi-blocks!
+  [blocks : (& ir.CompilerIrBlockList)]
+  [var-phi-dst-block : (&mut var-phi-dst-block (__tl_dyn-array i64))]
+  [var-phi-in-block : (&mut var-phi-in-block (__tl_dyn-array i64))]) : unit
+  (let
+    [vars : i64 (array-length var-phi-dst-block)]
+    (match blocks
+      [(Array seq)
+        (for [bi (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+          (match (ir.compiler-ir-block-seq-borrow seq bi)
+            [(Block _ instrs)
+              (for [ii
+                (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+                (match (ir.compiler-ir-instr-seq-borrow instrs ii)
+                  [(Phi dst inputs _)
+                    (when
+                      (and (>= dst 0) (< dst vars))
+                      (set!
+                        (array-ref var-phi-dst-block dst)
+                        (compiler-reg-color-phi-block-merge
+                          (array-ref var-phi-dst-block dst)
+                          bi)))
+                    (for [k (iterator.range 0 inputs.len)]
+                      (match (ir.compiler-ir-phi-input-seq-borrow (& inputs) k).value
+                        [(Var src)
+                          (when
+                            (and (>= src 0) (< src vars))
+                            (set!
+                              (array-ref var-phi-in-block src)
+                              (compiler-reg-color-phi-block-merge
+                                (array-ref var-phi-in-block src)
+                                bi)))]
+                        [_ unit]))]
+                  [_ (break)]))]))])))
+
+(define (compiler-reg-color-slot-phi-conflict?
+  [var : i64]
+  [is-group? : bool]
+  [slot : i64]
+  [var-phi-dst-block : (& (__tl_dyn-array i64))]
+  [var-phi-in-block : (& (__tl_dyn-array i64))]
+  [slot-phi-dst-block : (& (__tl_dyn-array i64))]
+  [slot-phi-in-block : (& (__tl_dyn-array i64))]
+  [slot-group-phi-dst : (& (__tl_dyn-array bool))]
+  [slot-group-phi-in : (& (__tl_dyn-array bool))]) : bool
+  (if (= (array-length var-phi-dst-block) 0)
+    false
+    (let
+      [vd : i64 (array-ref var-phi-dst-block var)]
+      [vi : i64 (array-ref var-phi-in-block var)]
+      (or
+        (and
+          (or is-group? (array-ref slot-group-phi-in slot))
+          (compiler-reg-color-phi-blocks-match?
+            vd
+            (array-ref slot-phi-in-block slot)))
+        (and
+          (or is-group? (array-ref slot-group-phi-dst slot))
+          (compiler-reg-color-phi-blocks-match?
+            vi
+            (array-ref slot-phi-dst-block slot)))))))
+
+(define (compiler-reg-color-slot-phi-note!
+  [var : i64]
+  [is-group? : bool]
+  [slot : i64]
+  [var-phi-dst-block : (& (__tl_dyn-array i64))]
+  [var-phi-in-block : (& (__tl_dyn-array i64))]
+  [slot-phi-dst-block : (&mut slot-phi-dst-block (__tl_dyn-array i64))]
+  [slot-phi-in-block : (&mut slot-phi-in-block (__tl_dyn-array i64))]
+  [slot-group-phi-dst : (&mut slot-group-phi-dst (__tl_dyn-array bool))]
+  [slot-group-phi-in : (&mut slot-group-phi-in (__tl_dyn-array bool))]) : unit
+  (when
+    (> (array-length var-phi-dst-block) 0)
+    (let
+      [vd : i64 (array-ref var-phi-dst-block var)]
+      [vi : i64 (array-ref var-phi-in-block var)]
+      (when
+        (not (= vd (- 0 1)))
+        (set!
+          (array-ref slot-phi-dst-block slot)
+          (if (= vd (- 0 2))
+            (- 0 2)
+            (compiler-reg-color-phi-block-merge
+              (array-ref slot-phi-dst-block slot)
+              vd)))
+        (when is-group? (set! (array-ref slot-group-phi-dst slot) true)))
+      (when
+        (not (= vi (- 0 1)))
+        (set!
+          (array-ref slot-phi-in-block slot)
+          (if (= vi (- 0 2))
+            (- 0 2)
+            (compiler-reg-color-phi-block-merge
+              (array-ref slot-phi-in-block slot)
+              vi)))
+        (when is-group? (set! (array-ref slot-group-phi-in slot) true))))))
+
 (define (compiler-reg-color-find-slot
   [type-segment-bases : i64]
+  [var : i64]
   [slot-ends : (& (__tl_dyn-array i64))]
+  [slot-has-scalar : (& (__tl_dyn-array bool))]
   [slot-tys : (& (__tl_dyn-array ast.AstType))]
   [ty : (& ast.AstType)]
+  [var-phi-dst-block : (& (__tl_dyn-array i64))]
+  [var-phi-in-block : (& (__tl_dyn-array i64))]
+  [slot-phi-dst-block : (& (__tl_dyn-array i64))]
+  [slot-phi-in-block : (& (__tl_dyn-array i64))]
+  [slot-group-phi-dst : (& (__tl_dyn-array bool))]
+  [slot-group-phi-in : (& (__tl_dyn-array bool))]
   [used : i64]
   [start : i64]) : i64
   (for [index (iterator.range 0 used)]
     (when
       (and
         (< (array-ref slot-ends index) start)
-        (ast.ast-type-eq-with-seg-bases?
-          type-segment-bases
-          (compiler-reg-global-array-element-shared-view
-            (owned_view.compiler-owned-reference-shared-view slot-tys)
-            index)
-          (owned_view.compiler-owned-reference-shared-view ty)))
+        (not
+          (compiler-reg-color-slot-phi-conflict?
+            var
+            false
+            index
+            var-phi-dst-block
+            var-phi-in-block
+            slot-phi-dst-block
+            slot-phi-in-block
+            slot-group-phi-dst
+            slot-group-phi-in))
+        (or
+          (not (array-ref slot-has-scalar index))
+          (ast.ast-type-eq-with-seg-bases?
+            type-segment-bases
+            (compiler-reg-global-array-element-shared-view
+              (owned_view.compiler-owned-reference-shared-view slot-tys)
+              index)
+            (owned_view.compiler-owned-reference-shared-view ty))))
+      (return index)))
+  used)
+
+(define (compiler-reg-color-find-group-slot
+  [var : i64]
+  [forbid : i64]
+  [slot-ends : (& (__tl_dyn-array i64))]
+  [var-phi-dst-block : (& (__tl_dyn-array i64))]
+  [var-phi-in-block : (& (__tl_dyn-array i64))]
+  [slot-phi-dst-block : (& (__tl_dyn-array i64))]
+  [slot-phi-in-block : (& (__tl_dyn-array i64))]
+  [slot-group-phi-dst : (& (__tl_dyn-array bool))]
+  [slot-group-phi-in : (& (__tl_dyn-array bool))]
+  [used : i64]
+  [start : i64]) : i64
+  (for [index (iterator.range 0 used)]
+    (when
+      (and
+        (not (= index forbid))
+        (< (array-ref slot-ends index) start)
+        (not
+          (compiler-reg-color-slot-phi-conflict?
+            var
+            true
+            index
+            var-phi-dst-block
+            var-phi-in-block
+            slot-phi-dst-block
+            slot-phi-in-block
+            slot-group-phi-dst
+            slot-group-phi-in)))
       (return index)))
   used)
 
@@ -28260,68 +28892,165 @@
   [pinned : (& pinned live.CompilerLiveI64Set)]
   [ineligible : (& ineligible live.CompilerLiveI64Set)]
   [colorable : (& (__tl_dyn-array bool))]
+  [group-colorable : (& (__tl_dyn-array bool))]
   [var-tys : (& (__tl_dyn-array ast.AstType))]
   [slot-ends : (__tl_dyn-array i64)]
+  [slot-has-scalar : (&mut slot-has-scalar (__tl_dyn-array bool))]
   [slot-tys : (__tl_dyn-array ast.AstType)]
+  [var-phi-dst-block : (& (__tl_dyn-array i64))]
+  [var-phi-in-block : (& (__tl_dyn-array i64))]
+  [slot-phi-dst-block : (&mut slot-phi-dst-block (__tl_dyn-array i64))]
+  [slot-phi-in-block : (&mut slot-phi-in-block (__tl_dyn-array i64))]
+  [slot-group-phi-dst : (&mut slot-group-phi-dst (__tl_dyn-array bool))]
+  [slot-group-phi-in : (&mut slot-group-phi-in (__tl_dyn-array bool))]
   [extent-ends : (& (__tl_dyn-array i64))]
   [used : i64]
-  [remap : (__tl_dyn-array i64)]) : i64
+  [remap : (__tl_dyn-array i64)]
+  [group-slot0 : (&mut group-slot0 (__tl_dyn-array i64))]
+  [group-slot1 : (&mut group-slot1 (__tl_dyn-array i64))]) : i64
   (for [index (iterator.range 0 count)]
     (let
       [interval : CompilerRegInterval (array-ref items index)]
       [var : i64 interval.var]
       [start : i64 interval.start]
       [end : i64 interval.end]
-      (if (or
-        ;; Already renumbered: parameter identity pins (the prologue's
-        ;; param spill targets the ORIGINAL id's formula slot, so a pinned
-        ;; id must never be reassigned mid-walk) and split intervals (the
-        ;; first interval wins; revisiting would leak the first slot).
-        (>= (array-ref remap var) 0)
-        (not (array-ref colorable var))
-        (live.compiler-live-set-contains? pinned var)
-        (live.compiler-live-set-contains? ineligible var)
-        ;; Spilled scalars are re-homed by the id remap (the stale
-        ;; assignment entry keyed by the old id is never queried);
-        ;; register-homed values keep their ids and homes.
-        (match (compiler-reg-assignment-table-lookup assignment-index var)
-          [(Some location)
-            (match location
-              [(Spill _) false]
-              [_ true])]
-          [(No) false]))
-        unit
-        (let
-          ;; Prefer the lowest SAME-TYPE scalar slot whose prior owner ended
-          ;; before this variable starts. Otherwise take a fresh slot,
-          ;; skipping param-pinned ids so sparse parameter ids leave no hole.
-          [ty : ast.AstType
-            (compiler-reg-global-array-element-shared-view
-              (owned_view.compiler-owned-reference-shared-view var-tys)
-              var)]
-          [found : i64
-            (compiler-reg-color-find-slot
-              type-segment-bases
-              (& slot-ends)
-              (& slot-tys)
-              (& ty)
-              used
-              start)]
-          [slot : i64
-            (if (>= found used)
-              (compiler-reg-color-next-free-slot slot-ends used)
-              found)]
-          [next-used : i64
-            (if (>= found used)
-              (+ slot 1)
-              used)]
-          [full-end : i64 (compiler-reg-max end (array-ref extent-ends var))]
-          (set! (array-ref slot-ends slot) full-end)
-          (if (< slot (array-length slot-tys))
-            (set! (array-ref slot-tys slot) ty)
-            unit)
-          (set! (array-ref remap var) slot)
-          (set! used next-used)))))
+      (if (and
+        (> (array-length group-colorable) 0)
+        (array-ref group-colorable var))
+        (when
+          (< (array-ref group-slot0 var) 0)
+          (let
+            [full-end : i64 (compiler-reg-max end (array-ref extent-ends var))]
+            [found0 : i64
+              (compiler-reg-color-find-group-slot
+                var
+                (- 0 1)
+                (& slot-ends)
+                var-phi-dst-block
+                var-phi-in-block
+                (& slot-phi-dst-block)
+                (& slot-phi-in-block)
+                (& slot-group-phi-dst)
+                (& slot-group-phi-in)
+                used
+                start)]
+            [s0 : i64
+              (if (>= found0 used)
+                (compiler-reg-color-next-free-slot slot-ends used)
+                found0)]
+            [used1 : i64
+              (if (>= found0 used)
+                (+ s0 1)
+                used)]
+            [found1 : i64
+              (compiler-reg-color-find-group-slot
+                var
+                s0
+                (& slot-ends)
+                var-phi-dst-block
+                var-phi-in-block
+                (& slot-phi-dst-block)
+                (& slot-phi-in-block)
+                (& slot-group-phi-dst)
+                (& slot-group-phi-in)
+                used1
+                start)]
+            [s1 : i64
+              (if (>= found1 used1)
+                (compiler-reg-color-next-free-slot
+                  slot-ends
+                  (if (= s0 used1)
+                    (+ s0 1)
+                    used1))
+                found1)]
+            [used2 : i64
+              (if (>= s1 used1)
+                (+ s1 1)
+                used1)]
+            (set! (array-ref slot-ends s0) full-end)
+            (set! (array-ref slot-ends s1) full-end)
+            (compiler-reg-color-slot-phi-note!
+              var
+              true
+              s0
+              var-phi-dst-block
+              var-phi-in-block
+              slot-phi-dst-block
+              slot-phi-in-block
+              slot-group-phi-dst
+              slot-group-phi-in)
+            (compiler-reg-color-slot-phi-note!
+              var
+              true
+              s1
+              var-phi-dst-block
+              var-phi-in-block
+              slot-phi-dst-block
+              slot-phi-in-block
+              slot-group-phi-dst
+              slot-group-phi-in)
+            (set! (array-ref group-slot0 var) s0)
+            (set! (array-ref group-slot1 var) s1)
+            (set! used used2)))
+        (if (or
+          (>= (array-ref remap var) 0)
+          (not (array-ref colorable var))
+          (live.compiler-live-set-contains? pinned var)
+          (live.compiler-live-set-contains? ineligible var)
+          (match (compiler-reg-assignment-table-lookup assignment-index var)
+            [(Some location)
+              (match location
+                [(or (Spill _) (SpillPair _ _)) false]
+                [_ true])]
+            [(No) false]))
+          unit
+          (let
+            [ty : ast.AstType
+              (compiler-reg-global-array-element-shared-view
+                (owned_view.compiler-owned-reference-shared-view var-tys)
+                var)]
+            [found : i64
+              (compiler-reg-color-find-slot
+                type-segment-bases
+                var
+                (& slot-ends)
+                (& slot-has-scalar)
+                (& slot-tys)
+                (& ty)
+                var-phi-dst-block
+                var-phi-in-block
+                (& slot-phi-dst-block)
+                (& slot-phi-in-block)
+                (& slot-group-phi-dst)
+                (& slot-group-phi-in)
+                used
+                start)]
+            [slot : i64
+              (if (>= found used)
+                (compiler-reg-color-next-free-slot slot-ends used)
+                found)]
+            [next-used : i64
+              (if (>= found used)
+                (+ slot 1)
+                used)]
+            [full-end : i64 (compiler-reg-max end (array-ref extent-ends var))]
+            (set! (array-ref slot-ends slot) full-end)
+            (set! (array-ref slot-has-scalar slot) true)
+            (if (< slot (array-length slot-tys))
+              (set! (array-ref slot-tys slot) ty)
+              unit)
+            (compiler-reg-color-slot-phi-note!
+              var
+              false
+              slot
+              var-phi-dst-block
+              var-phi-in-block
+              slot-phi-dst-block
+              slot-phi-in-block
+              slot-group-phi-dst
+              slot-group-phi-in)
+            (set! (array-ref remap var) slot)
+            (set! used next-used))))))
   used)
 
 (define (compiler-reg-color-fill-interval-bounds
@@ -29363,7 +30092,7 @@
           [location : CompilerRegLocation
             (compiler-reg-global-array-element-shared-view source-items var)]
           (match (& location)
-            [(Spill _) unit]
+            [(or (Spill _) (SpillPair _ _)) unit]
             [_
               (let
                 [new-id : i64 (compiler-reg-remap-id remap var)]
@@ -29375,23 +30104,40 @@
 
 (define (compiler-reg-color-rebuild-assignments
   [remap : (& (__tl_dyn-array i64))]
+  [group-off0 : (& (__tl_dyn-array i64))]
+  [group-off1 : (& (__tl_dyn-array i64))]
   [vars : i64]
   [assignments : CompilerRegAssignmentTable]) : CompilerRegAssignmentTable
-  ;; Stack-only plans have a genuinely empty table, not a vars-wide table of
-  ;; spills. Preserve that representation after coloring: otherwise every
-  ;; backend `plan-uses-reg?` query scans a vars-wide all-zero presence array.
-  (if (compiler-reg-assignment-table-empty? assignments)
+  ;; Stack-only plans with no colored spilled groups keep an empty table.
+  (if (and
+    (compiler-reg-assignment-table-empty? assignments)
+    (= (array-length group-off0) 0))
     (compiler-reg-assignment-table-empty)
     (let
       [present : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
       [items : (__tl_dyn-array CompilerRegLocation)
         (__tl_make-array CompilerRegLocation vars)]
       (compiler-reg-fill-location-array (&mut items) (Spill 0))
-      (compiler-reg-color-scatter-assignments
-        remap
-        (&mut present)
-        (&mut items)
-        assignments)
+      (unless
+        (compiler-reg-assignment-table-empty? assignments)
+        (compiler-reg-color-scatter-assignments
+          remap
+          (&mut present)
+          (&mut items)
+          assignments))
+      (for [var (iterator.range 0 (array-length group-off0))]
+        (let
+          [off0 : i64 (array-ref group-off0 var)]
+          (when
+            (< off0 0)
+            (let
+              [new-id : i64 (compiler-reg-remap-id remap var)]
+              (when
+                (and (>= new-id 0) (< new-id vars))
+                (set! (array-ref present new-id) 1)
+                (set!
+                  (array-ref items new-id)
+                  (SpillPair off0 (array-ref group-off1 var))))))))
       (compiler-reg-assignment-table-new present items))))
 
 ;; True when `var` is a read-only incoming stack parameter homed directly in
@@ -29404,21 +30150,30 @@
     (< var (array-length direct-stack-params))
     (> (array-ref direct-stack-params var) 0)))
 
-;; Identity-pin scalar parameter variables: the prologue's param spill writes
-;; each parameter to its remapped formula slot. Ordinary parameters keep
-;; private ids during coloring, then can move with the frame permutation.
-;; Wide private SPMD parameters need a complete YMM/ZMM range from the
-;; private-range pass, and direct-home incoming stack parameters stay in the
-;; caller's stack frame and consume no local formula slot.
+;; Reserve parameter stack homes: scalar parameters keep private ids during
+;; coloring; non-addressable spilled group parameters get two dedicated spill
+;; slots (word0/word1) in `group-slot0`/`group-slot1`; RegisterPair, const-pack,
+;; direct-stack, and addressable group parameters are skipped here (addressable
+;; group parameters receive contiguous 16-byte pairs below).
 (define (compiler-reg-color-param-pins
   [params : (& ir.CompilerIrParamSeq)]
+  [group-vars : (& live.CompilerLiveI64Set)]
+  [addr-groups : (& live.CompilerLiveI64Set)]
+  [const-pack-groups : (& live.CompilerLiveI64Set)]
+  [assignment-index : CompilerRegAssignmentTable]
   [direct-stack-params : (& (__tl_dyn-array i64))]
   [remap : (&mut remap (__tl_dyn-array i64))]
   [slot-ends : (&mut slot-ends (__tl_dyn-array i64))]
+  [slot-has-scalar : (&mut slot-has-scalar (__tl_dyn-array bool))]
+  [group-slot0 : (&mut group-slot0 (__tl_dyn-array i64))]
+  [group-slot1 : (&mut group-slot1 (__tl_dyn-array i64))]
   [ref-counts : (&mut ref-counts (__tl_dyn-array i64))]
   [highest : i64]) : i64
   (let
-    [compact? : bool (> (array-length direct-stack-params) 0)]
+    [compact? : bool
+      (or
+        (> (array-length direct-stack-params) 0)
+        (> (live.compiler-live-set-word-count group-vars) 0))]
     [out : i64 highest]
     (for [position (iterator.range 0 params.len)]
       (match (ir.compiler-ir-param-seq-borrow params position)
@@ -29430,19 +30185,53 @@
                 (compiler-reg-direct-stack-param? direct-stack-params var-id))]
             (unless
               skip?
-              (let
-                [pin-slot : i64
-                  (if compact?
-                    out
-                    var-id)]
-                (when
-                  (and
-                    (< var-id (array-length remap))
-                    (< pin-slot (array-length slot-ends)))
-                  (+= (array-ref ref-counts var-id) 1)
-                  (set! (array-ref remap var-id) pin-slot)
-                  (set! (array-ref slot-ends pin-slot) 9223372036854775807))
-                (set! out (compiler-reg-max out (+ pin-slot 1))))))]))
+              (if (live.compiler-live-set-contains? group-vars var-id)
+                (let
+                  [has-reg-home? : bool
+                    (match (compiler-reg-assignment-table-lookup
+                      assignment-index
+                      var-id)
+                      [(Some location)
+                        (match location
+                          [(or (Spill _) (SpillPair _ _)) false]
+                          [_ true])]
+                      [(No) false])]
+                  (unless
+                    (or
+                      has-reg-home?
+                      (live.compiler-live-set-contains?
+                        const-pack-groups
+                        var-id)
+                      (live.compiler-live-set-contains? addr-groups var-id))
+                    (when
+                      (and (>= var-id 0) (< var-id (array-length group-slot0)))
+                      (let
+                        [s0 : i64
+                          (compiler-reg-color-next-free-slot (& slot-ends) out)]
+                        [s1 : i64
+                          (compiler-reg-color-next-free-slot
+                            (& slot-ends)
+                            (+ s0 1))]
+                        (+= (array-ref ref-counts var-id) 1)
+                        (set! (array-ref slot-ends s0) 9223372036854775807)
+                        (set! (array-ref slot-ends s1) 9223372036854775807)
+                        (set! (array-ref group-slot0 var-id) s0)
+                        (set! (array-ref group-slot1 var-id) s1)
+                        (set! out (compiler-reg-max out (+ s1 1)))))))
+                (let
+                  [pin-slot : i64
+                    (if compact?
+                      (compiler-reg-color-next-free-slot (& slot-ends) out)
+                      var-id)]
+                  (when
+                    (and
+                      (< var-id (array-length remap))
+                      (< pin-slot (array-length slot-ends)))
+                    (+= (array-ref ref-counts var-id) 1)
+                    (set! (array-ref remap var-id) pin-slot)
+                    (set! (array-ref slot-ends pin-slot) 9223372036854775807)
+                    (set! (array-ref slot-has-scalar pin-slot) true))
+                  (set! out (compiler-reg-max out (+ pin-slot 1)))))))]))
     out))
 
 ;; --- M-B: stack-homed register-group Mov coalescing -------------------------
@@ -29812,7 +30601,7 @@
         (match (compiler-reg-assignment-table-lookup assignment-index i)
           [(Some location)
             (match location
-              [(Spill _) true]
+              [(or (Spill _) (SpillPair _ _)) true]
               [_ false])]
           [(No) true])))))
 
@@ -30759,18 +31548,21 @@
   [intervals : CompilerRegIntervalSeq]
   [items : (&mut items (__tl_dyn-array CompilerRegInterval))]
   [alias : (& alias (__tl_dyn-array i64))]
-  [slot-eligible : (& (__tl_dyn-array bool))]) : i64
+  [slot-eligible : (& (__tl_dyn-array bool))]
+  [group-eligible : (& (__tl_dyn-array bool))]) : i64
   (let
     [count : i64 (compiler-reg-interval-seq-count intervals)]
+    [has-groups? : bool (> (array-length group-eligible) 0)]
     [out-index : i64 0]
     (for [index (iterator.range 0 count)]
       (let
         [interval : CompilerRegInterval
           (compiler-reg-interval-seq-ref intervals index)]
+        [root : i64 (compiler-reg-color-group-alias-root alias interval.var)]
         (when
-          (array-ref
-            slot-eligible
-            (compiler-reg-color-group-alias-root alias interval.var))
+          (or
+            (array-ref slot-eligible root)
+            (and has-groups? (array-ref group-eligible root)))
           (set! (array-ref items out-index) interval)
           (+= out-index 1))))
     out-index))
@@ -30853,7 +31645,109 @@
         direct-stack-params
         stack-only?))))
 
-;; Only the result-owning wrapper above calls this analysis implementation.
+;; Allocate contiguous 16-byte pairs ONLY for addressable group vars, extending
+;; each addressable group's lifetime through all derived pointers (AddrOf/Gep/
+;; Mov/Cast/Phi) and pinning escaping or parameter addressable groups to private
+;; contiguous pairs. word0 sits at the lower address (slot+1 -> -8*(slot+2))
+;; and word1 sits at word0+8 (slot -> -8*(slot+1)).
+(define (compiler-reg-color-addressable-groups!
+  [blocks : (& ir.CompilerIrBlockList)]
+  [params : (& ir.CompilerIrParamSeq)]
+  [addr-groups : (& live.CompilerLiveI64Set)]
+  [hull-starts : (& (__tl_dyn-array i64))]
+  [hull-ends : (& (__tl_dyn-array i64))]
+  [slot-ends : (&mut slot-ends (__tl_dyn-array i64))]
+  [group-slot0 : (&mut group-slot0 (__tl_dyn-array i64))]
+  [group-slot1 : (&mut group-slot1 (__tl_dyn-array i64))]
+  [vars : i64]
+  [slot-candidate-vars : i64]
+  [from : i64]) : i64
+  (let
+    [addr-count : i64 (live.compiler-live-set-count addr-groups)]
+    (if (= addr-count 0)
+      from
+      (let
+        [range-of-var : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+        [range-var : (__tl_dyn-array i64) (__tl_make-array i64 addr-count)]
+        [range-starts : (__tl_dyn-array i64) (__tl_make-array i64 addr-count)]
+        [range-ends : (__tl_dyn-array i64) (__tl_make-array i64 addr-count)]
+        [invalid : (__tl_dyn-array bool) (__tl_make-array bool addr-count)]
+        [roots : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+        [is-param : (__tl_dyn-array bool) (__tl_make-array bool vars)]
+        [limit : i64
+          (if (< slot-candidate-vars vars)
+            slot-candidate-vars
+            vars)]
+        [n : i64 0]
+        [used : i64 from]
+        (compiler-reg-fill-i64-array (&mut range-of-var) (- 0 1))
+        (compiler-reg-fill-i64-array (&mut roots) (- 0 1))
+        (for [pi (iterator.range 0 params.len)]
+          (match (ir.compiler-ir-param-seq-borrow params pi)
+            [(Param _ _ pvar)
+              (when
+                (and (>= pvar 0) (< pvar vars))
+                (set! (array-ref is-param pvar) true))]))
+        (for [v (iterator.range 0 limit)]
+          (when
+            (live.compiler-live-set-contains? addr-groups v)
+            (set! (array-ref range-of-var v) n)
+            (set! (array-ref range-var n) v)
+            (let
+              [s : i64 (array-ref hull-starts v)]
+              [e : i64 (array-ref hull-ends v)]
+              (if (or (array-ref is-param v) (< s 0) (< e 0))
+                (begin
+                  (set! (array-ref range-starts n) 0)
+                  (set! (array-ref range-ends n) 9223372036854775807)
+                  (set! (array-ref invalid n) true))
+                (begin
+                  (set! (array-ref range-starts n) s)
+                  (set! (array-ref range-ends n) e))))
+            (+= n 1)))
+        (when
+          (> n 0)
+          (compiler-reg-color-propagate-roots
+            blocks
+            (& range-of-var)
+            (&mut roots)
+            (&mut invalid))
+          (compiler-reg-color-invalidate-blocks! blocks (& roots) (& invalid))
+          (compiler-reg-color-range-liveness!
+            (& roots)
+            hull-starts
+            hull-ends
+            (&mut range-starts)
+            (&mut range-ends))
+          (for [idx (iterator.range 0 n)]
+            (let
+              [v : i64 (array-ref range-var idx)]
+              [start : i64 (array-ref range-starts idx)]
+              [end : i64 (array-ref range-ends idx)]
+              [slot : i64
+                (if (or (array-ref invalid idx) (< end start))
+                  (compiler-reg-color-reserve-private-range! slot-ends used 2)
+                  (let
+                    [picked : i64
+                      (compiler-reg-color-next-free-range
+                        (& slot-ends)
+                        from
+                        2
+                        start)]
+                    (compiler-reg-color-set-range-ends! slot-ends picked 2 end)
+                    picked))]
+              (set! (array-ref group-slot0 v) (+ slot 1))
+              (set! (array-ref group-slot1 v) slot)
+              (when (> (+ slot 2) used) (set! used (+ slot 2))))))
+        used))))
+
+;; Total frame renumbering: colorable stack scalars and non-addressable spilled
+;; register-groups share slots in `[0, stack-prefix)` when their intervals are
+;; disjoint, colorable inline-storage ranges and addressable 16-byte group pairs
+;; occupy contiguous bands above that prefix, every remaining slot-resident
+;; variable gets a private dense slot, and register-homed/const-pack variables
+;; receive non-slot ids. Explicit SpillPair offsets for all spilled groups are
+;; returned alongside the remap.
 (define (compiler-reg-color-stack-slots-with-stack-only-in-current-arena
   [type-segment-bases : i64]
   [plan : (& CompilerRegPlan)]
@@ -30877,6 +31771,25 @@
       (let
         [has-group-vars? : bool
           (> (live.compiler-live-set-word-count group-vars) 0)]
+        [group-count : i64
+          (if has-group-vars?
+            (live.compiler-live-set-count group-vars)
+            0)]
+        [addr-groups : live.CompilerLiveI64Set
+          (if has-group-vars?
+            (compiler-reg-addressable-group-vars group-vars blocks)
+            (live.compiler-live-set-empty))]
+        [const-pack-groups : live.CompilerLiveI64Set
+          (if has-group-vars?
+            (compiler-reg-const-pack-vars
+              type-segment-bases
+              params
+              blocks
+              (compiler-reg-plan-types plan)
+              group-vars
+              (& addr-groups)
+              vars)
+            (live.compiler-live-set-empty))]
         [vector-stack-words : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         [_vector-stack-words : unit
           (begin
@@ -30892,14 +31805,15 @@
         [slots : i64
           (+
             (+
-              vars
-              (compiler-reg-vector-stack-extra-slots vector-stack-words 0))
+              (+
+                vars
+                (compiler-reg-vector-stack-extra-slots vector-stack-words 0))
+              group-count)
             8)]
         [slot-ends : (__tl_dyn-array i64) (__tl_make-array i64 slots)]
+        [slot-has-scalar : (__tl_dyn-array bool) (__tl_make-array bool slots)]
         [assignments : CompilerRegAssignmentTable
           (compiler-reg-plan-assignments plan)]
-        ;; Preserve a logically empty assignment table through coloring;
-        ;; indexed lookup already returns `No` for every variable in it.
         [empty-assignments? : bool
           (compiler-reg-assignment-table-empty? assignments)]
         [assignment-index : CompilerRegAssignmentTable
@@ -30910,61 +31824,95 @@
           (compiler-reg-plan-ineligible
             (owned_view.compiler-owned-reference-shared-view plan))]
         [colorable : (__tl_dyn-array bool) (__tl_make-array bool vars)]
-        ;; Boolean, not a count: the only question asked below is whether the
-        ;; variable is referenced at all (see compiler-reg-ref-marks-blocks!).
         [references : (__tl_dyn-array bool) (__tl_make-array bool vars)]
-        ;; Reference counts per value, filled by the same walk: the frame-order
-        ;; pass below ranks the frame colours by these totals.
         [ref-counts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-        ;; AddrOf's storage span per addressed value (see the frame-order pass).
         [addressed : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         [remap : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-        ;; `colorable` is not cleared here: `__tl_make-array` zero-fills its
-        ;; backing store (bool's default is the all-zero byte), so every element
-        ;; already reads `false`, and `compiler-reg-color-flags` below only
-        ;; overwrites the entries it decides. `references` above relies on the
-        ;; same zero-fill for its "no IR reference" default.
+        [group-slot0 : (__tl_dyn-array i64)
+          (__tl_make-array
+            i64
+            (if has-group-vars?
+              vars
+              0))]
+        [group-slot1 : (__tl_dyn-array i64)
+          (__tl_make-array
+            i64
+            (if has-group-vars?
+              vars
+              0))]
+        [var-phi-dst-block : (__tl_dyn-array i64)
+          (__tl_make-array
+            i64
+            (if has-group-vars?
+              vars
+              0))]
+        [var-phi-in-block : (__tl_dyn-array i64)
+          (__tl_make-array
+            i64
+            (if has-group-vars?
+              vars
+              0))]
+        [slot-phi-dst-block : (__tl_dyn-array i64)
+          (__tl_make-array
+            i64
+            (if has-group-vars?
+              slots
+              0))]
+        [slot-phi-in-block : (__tl_dyn-array i64)
+          (__tl_make-array
+            i64
+            (if has-group-vars?
+              slots
+              0))]
+        [slot-group-phi-dst : (__tl_dyn-array bool)
+          (__tl_make-array
+            bool
+            (if has-group-vars?
+              slots
+              0))]
+        [slot-group-phi-in : (__tl_dyn-array bool)
+          (__tl_make-array
+            bool
+            (if has-group-vars?
+              slots
+              0))]
         [_cleared : unit
           (begin
             (for [i (iterator.range 0 slots)]
               (set! (array-ref slot-ends i) (- 0 1)))
             (for [i (iterator.range 0 vars)]
-              (set! (array-ref remap i) (- 0 1))))]
+              (set! (array-ref remap i) (- 0 1)))
+            (when
+              has-group-vars?
+              (compiler-reg-fill-i64-array (&mut group-slot0) (- 0 1))
+              (compiler-reg-fill-i64-array (&mut group-slot1) (- 0 1))
+              (compiler-reg-fill-i64-array (&mut var-phi-dst-block) (- 0 1))
+              (compiler-reg-fill-i64-array (&mut var-phi-in-block) (- 0 1))
+              (compiler-reg-fill-i64-array (&mut slot-phi-dst-block) (- 0 1))
+              (compiler-reg-fill-i64-array (&mut slot-phi-in-block) (- 0 1))
+              (compiler-reg-color-collect-phi-blocks!
+                blocks
+                (&mut var-phi-dst-block)
+                (&mut var-phi-in-block))))]
         [_flagged : unit
           (begin
             (compiler-reg-color-flags
               (compiler-reg-plan-types plan)
               (&mut colorable))
-            ;; Scratch pseudo-vars are consumed through planned registers or
-            ;; the scavenger, never through formula stack slots.
             (for [i (iterator.range slot-candidate-vars vars)]
               (set! (array-ref colorable i) false))
-            ;; Clearing the colorable flag is exactly the "no shared slot"
-            ;; decision: it withdraws the variable from the scalar walk AND
-            ;; from the phi/mov web builder (the only two mechanisms that hand
-            ;; one slot to several variables), leaving the private-slot loop
-            ;; below to give it a fresh id of its own.
             (if (> (live.compiler-live-set-word-count identity-pinned) 0)
               (for [i (iterator.range 0 vars)]
                 (if (live.compiler-live-set-contains? identity-pinned i)
                   (set! (array-ref colorable i) false)
                   unit))
               unit))]
-        ;; Count direct IR uses and defs, not type-table membership: dead defs
-        ;; still emit a write, while raw-id holes and register-only scratch
-        ;; pseudo-vars have no instruction reference and need no formula slot.
         [_referenced : unit
           (begin
             (compiler-reg-color-reference-intervals!
               (compiler-reg-global-shared-view intervals)
               (&mut references))
-            ;; Stack-only plans are built on these final blocks and no
-            ;; allocation rewrite can have introduced an interval-less value,
-            ;; so the marks add nothing there. The walk exists for the counts
-            ;; and the AddrOf spans, which only the frame order reads, so a
-            ;; stack-only function whose slot region can fit in the red zone
-            ;; skips this walk along with slot ordering.
-            (if (or (not stack-only?) (> (* 8 slots) 128))
+            (if (or has-group-vars? (not stack-only?) (> (* 8 slots) 128))
               (compiler-reg-ref-walk-blocks!
                 (&mut references)
                 (&mut ref-counts)
@@ -30983,15 +31931,18 @@
         [param-floor : i64
           (compiler-reg-color-param-pins
             (compiler-reg-global-shared-view params)
+            group-vars
+            (& addr-groups)
+            (& const-pack-groups)
+            assignment-index
             direct-stack-params
             (&mut remap)
             (&mut slot-ends)
+            (&mut slot-has-scalar)
+            (&mut group-slot0)
+            (&mut group-slot1)
             (&mut ref-counts)
             0)]
-        ;; The scalar walk's per-variable admission test, decided once here --
-        ;; after the parameter pins are in `remap`, which is the last write
-        ;; before the walk itself starts filling it -- and read by the web
-        ;; builder and by the interval filter below.
         [slot-eligible : (__tl_dyn-array bool) (__tl_make-array bool vars)]
         [_slot-eligible : unit
           (compiler-reg-color-slot-eligible!
@@ -31004,9 +31955,6 @@
             vector-stack-words
             direct-stack-params
             remap)]
-        ;; Conservative per-var hulls of the plan intervals, shared by the
-        ;; scalar-web membership gate below and the group-Mov overlay further
-        ;; down (both only ever read them).
         [hull-starts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         [hull-ends : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         [_hull-bounds : unit
@@ -31017,15 +31965,67 @@
               (compiler-reg-global-shared-view intervals)
               (&mut hull-starts)
               (&mut hull-ends)))]
-        ;; M-B2: member -> web-root links for scalar phi/mov webs whose
-        ;; edge-precise hulls never overlap (see the header above). Applied by
-        ;; retargeting the members' intervals onto the root before the walk,
-        ;; and by handing each member the root's slot after it.
-        [scalar-alias
-          : (__tl_dyn-array i64)
-          ;; Scalar phi/mov web coalescing exists to repair register/spill webs
-          ;; after scalar allocation. Stack-only plans have no such homes, and
-          ;; ordinary interval coloring below already shares disjoint values.
+        [group-eligible : (__tl_dyn-array bool)
+          (__tl_make-array
+            bool
+            (if has-group-vars?
+              vars
+              0))]
+        [_group-eligible : unit
+          (when
+            has-group-vars?
+            (let
+              [limit : i64
+                (if (< slot-candidate-vars vars)
+                  slot-candidate-vars
+                  vars)]
+              (for [i (iterator.range 0 limit)]
+                (when
+                  (and
+                    (live.compiler-live-set-contains? group-vars i)
+                    (not (live.compiler-live-set-contains? addr-groups i))
+                    (not (live.compiler-live-set-contains? const-pack-groups i))
+                    (< (array-ref group-slot0 i) 0)
+                    (>= (array-ref hull-starts i) 0)
+                    (match (compiler-reg-assignment-table-lookup
+                      assignment-index
+                      i)
+                      [(Some location)
+                        (match location
+                          [(or (Spill _) (SpillPair _ _)) true]
+                          [_ false])]
+                      [(No) true]))
+                  (set! (array-ref group-eligible i) true)))))]
+        [group-alias : (__tl_dyn-array i64)
+          (let
+            [alias : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+            (compiler-reg-fill-i64-array (&mut alias) (- 0 1))
+            (when
+              has-group-vars?
+              (compiler-reg-color-group-mov-alias-blocks!
+                type-segment-bases
+                blocks
+                (&mut alias)
+                group-vars
+                (& ineligible)
+                assignment-index
+                (& var-tys)
+                (& remap)
+                (& hull-starts)
+                (& hull-ends))
+              (for [i (iterator.range 0 vars)]
+                (let
+                  [a : i64 (array-ref alias i)]
+                  (when
+                    (and
+                      (>= a 0)
+                      (or
+                        (not (array-ref group-eligible i))
+                        (not (array-ref group-eligible a))
+                        (not (= (array-ref var-phi-dst-block i) (- 0 1)))))
+                    (set! (array-ref alias i) (- 0 1))))))
+            alias)]
+        [scalar-alias : (__tl_dyn-array i64)
           (if stack-only?
             (let
               [alias : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
@@ -31038,25 +32038,35 @@
               slot-eligible
               (& var-tys)
               hull-starts))]
+        [walk-alias : (__tl_dyn-array i64)
+          (let
+            [merged : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+            (for [i (iterator.range 0 vars)]
+              (set!
+                (array-ref merged i)
+                (if (>= (array-ref scalar-alias i) 0)
+                  (array-ref scalar-alias i)
+                  (if has-group-vars?
+                    (array-ref group-alias i)
+                    (- 0 1)))))
+            merged)]
         [sorted : (__tl_dyn-array CompilerRegInterval)
           (__tl_make-array
             CompilerRegInterval
             (compiler-reg-interval-seq-count intervals))]
-        ;; Only the walk-eligible intervals land in `sorted`; `sorted-count`
-        ;; bounds them and everything downstream reads that bound instead of
-        ;; the array's capacity.
         [sorted-count : i64
           (compiler-reg-color-walk-interval-fill
             (compiler-reg-global-shared-view intervals)
             (&mut sorted)
-            scalar-alias
-            (& slot-eligible))]
+            (& walk-alias)
+            (& slot-eligible)
+            (& group-eligible))]
         [_sorted : unit (compiler-reg-color-heapsort (& sorted) sorted-count)]
         [_alias-intervals : unit
           (compiler-reg-color-alias-rewrite-intervals!
             (&mut sorted)
             sorted-count
-            scalar-alias)]
+            (& walk-alias))]
         [extent-ends : (__tl_dyn-array i64)
           (compiler-reg-color-extent-ends sorted sorted-count vars)]
         [stack-prefix : i64
@@ -31068,12 +32078,22 @@
             group-vars
             ineligible
             (& colorable)
+            (& group-eligible)
             (& var-tys)
             (compiler-reg-global-shared-view slot-ends)
+            (&mut slot-has-scalar)
             slot-tys
+            (& var-phi-dst-block)
+            (& var-phi-in-block)
+            (&mut slot-phi-dst-block)
+            (&mut slot-phi-in-block)
+            (&mut slot-group-phi-dst)
+            (&mut slot-group-phi-in)
             (& extent-ends)
             0
-            (compiler-reg-global-shared-view remap))]
+            (compiler-reg-global-shared-view remap)
+            (&mut group-slot0)
+            (&mut group-slot1))]
         [storage-prefix : i64
           (compiler-reg-color-inline-storage
             type-segment-bases
@@ -31086,107 +32106,119 @@
             (&mut remap)
             vars
             stack-prefix)]
+        [addr-group-prefix : i64
+          (if has-group-vars?
+            (compiler-reg-color-addressable-groups!
+              blocks
+              params
+              (& addr-groups)
+              (& hull-starts)
+              (& hull-ends)
+              (&mut slot-ends)
+              (&mut group-slot0)
+              (&mut group-slot1)
+              vars
+              slot-candidate-vars
+              storage-prefix)
+            storage-prefix)]
         [_alias-remap : unit
-          (compiler-reg-color-alias-propagate-remap!
-            (&mut remap)
-            (& scalar-alias)
-            vars)]
-        [group-alias
-          : (__tl_dyn-array i64)
-          ;; M-B: dst -> src alias links for coalescable group-typed Movs
-          ;; (see compiler-reg-color-group-mov-alias-instr!). Applied in the
-          ;; private-slot loop below: an aliased dst shares its root's slot
-          ;; pair instead of taking a fresh one.
+          (begin
+            (compiler-reg-color-alias-propagate-remap!
+              (&mut remap)
+              (& scalar-alias)
+              vars)
+            (when
+              has-group-vars?
+              (for [i (iterator.range 0 vars)]
+                (when
+                  (< (array-ref group-slot0 i) 0)
+                  (let
+                    [root : i64
+                      (compiler-reg-color-group-alias-root (& group-alias) i)]
+                    (when
+                      (and (not (= root i)) (>= (array-ref group-slot0 root) 0))
+                      (set!
+                        (array-ref group-slot0 i)
+                        (array-ref group-slot0 root))
+                      (set!
+                        (array-ref group-slot1 i)
+                        (array-ref group-slot1 root))))))))]
+        [slot-count : i64
           (let
-            [alias : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-            (compiler-reg-fill-i64-array (&mut alias) (- 0 1))
-            (if has-group-vars?
-              (compiler-reg-color-group-mov-alias-blocks!
-                type-segment-bases
-                blocks
-                (&mut alias)
-                group-vars
-                (& ineligible)
-                assignment-index
-                (& var-tys)
-                (& remap)
-                (& hull-starts)
-                (& hull-ends))
-              unit)
-            alias)]
-        [slot-count
-          : i64
-          ;; Private dense slots for final, real IR variables that the scalar
-          ;; and inline-storage walks skipped, one slot each. Raw-id holes and
-          ;; register-only scratch pseudo-vars have no frame demand. Group-
-          ;; mov-aliased dsts share their root's slot pair (word1 formula
-          ;; slots follow the id).
-          (let
-            [next : i64 storage-prefix]
+            [next : i64 addr-group-prefix]
             [i : i64 0]
             (while (and (< i vars) (< i slot-candidate-vars))
               (if (or
                 (not (array-ref references i))
                 (>= (array-ref remap i) 0)
+                (and has-group-vars? (>= (array-ref group-slot0 i) 0))
+                (and
+                  has-group-vars?
+                  (live.compiler-live-set-contains? const-pack-groups i))
                 (compiler-reg-direct-stack-param? direct-stack-params i))
                 unit
-                (let
-                  [root : i64
-                    (compiler-reg-color-group-alias-root group-alias i)]
-                  (if (not (= root i))
-                    (begin
-                      (if (< (array-ref remap root) 0)
-                        (let
-                          [words : i64
-                            (compiler-reg-vector-stack-words-for-var
-                              vector-stack-words
-                              root)]
-                          [slot : i64
-                            (compiler-reg-color-reserve-private-range!
-                              (&mut slot-ends)
-                              next
-                              words)]
-                          (set! (array-ref remap root) (+ slot (- words 1)))
-                          (set! next (+ slot words)))
-                        unit)
-                      (set! (array-ref remap i) (array-ref remap root)))
-                    (match (compiler-reg-assignment-table-lookup
-                      assignment-index
-                      i)
-                      [(Some location)
-                        (match location
-                          [(Spill _)
-                            (let
-                              [words : i64
-                                (compiler-reg-vector-stack-words-for-var
-                                  vector-stack-words
-                                  i)]
-                              [slot : i64
-                                (compiler-reg-color-reserve-private-range!
-                                  (&mut slot-ends)
-                                  next
-                                  words)]
-                              (set! (array-ref remap i) (+ slot (- words 1)))
-                              (set! next (+ slot words)))]
-                          [_ unit])]
-                      [(No)
-                        (let
-                          [words : i64
-                            (compiler-reg-vector-stack-words-for-var
-                              vector-stack-words
-                              i)]
-                          [slot : i64
-                            (compiler-reg-color-reserve-private-range!
-                              (&mut slot-ends)
-                              next
-                              words)]
-                          (set! (array-ref remap i) (+ slot (- words 1)))
-                          (set! next (+ slot words)))]))))
+                (if (and
+                  has-group-vars?
+                  (live.compiler-live-set-contains? group-vars i))
+                  (let
+                    [needs-spill? : bool
+                      (match (compiler-reg-assignment-table-lookup
+                        assignment-index
+                        i)
+                        [(Some location)
+                          (match location
+                            [(or (Spill _) (SpillPair _ _)) true]
+                            [_ false])]
+                        [(No) true])]
+                    (when
+                      needs-spill?
+                      (let
+                        [s0 : i64
+                          (compiler-reg-color-reserve-private-range!
+                            (&mut slot-ends)
+                            next
+                            1)]
+                        [s1 : i64
+                          (compiler-reg-color-reserve-private-range!
+                            (&mut slot-ends)
+                            (+ s0 1)
+                            1)]
+                        (set! (array-ref group-slot0 i) s0)
+                        (set! (array-ref group-slot1 i) s1)
+                        (set! next (+ s1 1)))))
+                  (match (compiler-reg-assignment-table-lookup
+                    assignment-index
+                    i)
+                    [(Some location)
+                      (match location
+                        [(or (Spill _) (SpillPair _ _))
+                          (let
+                            [words : i64
+                              (compiler-reg-vector-stack-words-for-var
+                                vector-stack-words
+                                i)]
+                            [slot : i64
+                              (compiler-reg-color-reserve-private-range!
+                                (&mut slot-ends)
+                                next
+                                words)]
+                            (set! (array-ref remap i) (+ slot (- words 1)))
+                            (set! next (+ slot words)))]
+                        [_ unit])]
+                    [(No)
+                      (let
+                        [words : i64
+                          (compiler-reg-vector-stack-words-for-var
+                            vector-stack-words
+                            i)]
+                        [slot : i64
+                          (compiler-reg-color-reserve-private-range!
+                            (&mut slot-ends)
+                            next
+                            words)]
+                        (set! (array-ref remap i) (+ slot (- words 1)))
+                        (set! next (+ slot words)))])))
               (+= i 1))
-            ;; Scratch pseudo-vars live above the real-IR watermark and are
-            ;; register-only. Preserve those already-disjoint ids instead
-            ;; of letting the generic free-id pass alias them onto a frame
-            ;; slot that belongs to a real value.
             (while (< i vars)
               (if (< (array-ref remap i) 0)
                 (set! (array-ref remap i) i)
@@ -31194,16 +32226,7 @@
               (+= i 1))
             next)]
         [frame-slots : i64 (compiler-reg-max slot-count param-floor)]
-        [_renumbered
-          : unit
-          ;; Register-homed and unmentioned variables take the remaining FREE
-          ;; ids of [0, vars), in var order (deterministic). Filling gaps
-          ;; keeps the renumbering a bijection into [0, vars): an id at or
-          ;; past vars would be silently dropped by the raw-var-sized rebuild
-          ;; arrays and side tables. A register-homed variable never touches
-          ;; its formula slot, so a free id below the watermark is safe.
-          ;; `taken` starts all-false from the zero-filled allocation, as
-          ;; `references` and `colorable` above do.
+        [_renumbered : unit
           (let
             [taken : (__tl_dyn-array bool) (__tl_make-array bool vars)]
             [free : i64 0]
@@ -31212,16 +32235,17 @@
               (if (and (>= (array-ref remap i) 0) (< (array-ref remap i) vars))
                 (set! (array-ref taken (array-ref remap i)) true)
                 unit))
-            ;; Place direct-home incoming stack params at free ids >= frame-slots
-            ;; when available so the slot-order pass leaves them outside the
-            ;; local frame slot domain.
             (when
-              (> (array-length direct-stack-params) 0)
+              (or (> (array-length direct-stack-params) 0) has-group-vars?)
               (for [i (iterator.range 0 vars)]
                 (when
                   (and
                     (< (array-ref remap i) 0)
-                    (compiler-reg-direct-stack-param? direct-stack-params i))
+                    (or
+                      (compiler-reg-direct-stack-param? direct-stack-params i)
+                      (and
+                        has-group-vars?
+                        (live.compiler-live-set-contains? group-vars i))))
                   (while (if (< free-high vars)
                     (array-ref taken free-high)
                     false)
@@ -31240,12 +32264,12 @@
                   (+= free 1))
                 (set! (array-ref remap i) free)
                 (+= free 1))))]
-        ;; Keep potentially red-zone slot regions in their original order.
         [_slot-order : unit
           (if (<= frame-slots 16)
             unit
             (compiler-reg-color-order-slot-ids-by-references
               group-vars
+              (& addr-groups)
               vector-stack-words
               assignment-index
               direct-stack-params
@@ -31253,11 +32277,41 @@
               (& ref-counts)
               (not empty-assignments?)
               (&mut remap)
+              (&mut group-slot0)
+              (&mut group-slot1)
               vars
               stack-prefix
               storage-prefix
               frame-slots))]
-        (Remap remap frame-slots)))))
+        [has-colored-groups? : bool
+          (let
+            [found : bool false]
+            (when
+              has-group-vars?
+              (for [i (iterator.range 0 vars)]
+                (when (>= (array-ref group-slot0 i) 0) (set! found true))))
+            found)]
+        [group-off0 : (__tl_dyn-array i64)
+          (if has-colored-groups?
+            (__tl_make-array i64 vars)
+            (__tl_make-array i64 0))]
+        [group-off1 : (__tl_dyn-array i64)
+          (if has-colored-groups?
+            (__tl_make-array i64 vars)
+            (__tl_make-array i64 0))]
+        [_group-offs : unit
+          (when
+            has-colored-groups?
+            (for [i (iterator.range 0 vars)]
+              (let
+                [s0 : i64 (array-ref group-slot0 i)]
+                (when
+                  (>= s0 0)
+                  (set! (array-ref group-off0 i) (- 0 (* 8 (+ s0 1))))
+                  (set!
+                    (array-ref group-off1 i)
+                    (- 0 (* 8 (+ (array-ref group-slot1 i) 1))))))))]
+        (Remap remap frame-slots group-off0 group-off1)))))
 
 ;; --- frame order: the hottest scalar slots closest to %rsp ------------------
 ;;
@@ -31365,6 +32419,7 @@
 
 (define (compiler-reg-color-order-slot-ids-by-references
   [group-vars : (& live.CompilerLiveI64Set)]
+  [addr-groups : (& live.CompilerLiveI64Set)]
   [vector-stack-words : (& vector-stack-words (__tl_dyn-array i64))]
   [assignment-index : CompilerRegAssignmentTable]
   [direct-stack-params : (& (__tl_dyn-array i64))]
@@ -31372,6 +32427,8 @@
   [ref-counts : (& ref-counts (__tl_dyn-array i64))]
   [has-assignments : bool]
   [remap : (&mut remap (__tl_dyn-array i64))]
+  [group-slot0 : (&mut group-slot0 (__tl_dyn-array i64))]
+  [group-slot1 : (&mut group-slot1 (__tl_dyn-array i64))]
   [vars : i64]
   [stack-prefix : i64]
   [storage-prefix : i64]
@@ -31382,41 +32439,65 @@
     [moved : (__tl_dyn-array i64) (__tl_make-array i64 slot-count)]
     [taken : (__tl_dyn-array bool) (__tl_make-array bool slot-count)]
     [has-groups? : bool (> (live.compiler-live-set-word-count group-vars) 0)]
+    [has-group-slots? : bool (> (array-length group-slot0) 0)]
     (compiler-reg-color-note-slot-band!
       (&mut band-ends)
       stack-prefix
       storage-prefix)
     (for [var (iterator.range 0 vars)]
-      (let
-        [id : i64 (array-ref remap var)]
+      (if (and has-groups? (live.compiler-live-set-contains? group-vars var))
         (when
-          (and
-            (>= id 0)
-            (< id slot-count)
-            (not (compiler-reg-direct-stack-param? direct-stack-params var)))
+          has-group-slots?
           (let
-            [span : i64 (array-ref addressed var)]
-            [words : i64 (array-ref vector-stack-words var)]
-            [width : i64 (compiler-reg-max span words)]
-            (when (> width (+ id 1)) (return unit))
+            [s0 : i64 (array-ref group-slot0 var)]
+            [s1 : i64 (array-ref group-slot1 var)]
             (when
-              (or
-                (> span 0)
-                (> words 1)
+              (and (>= s0 0) (< s0 slot-count) (>= s1 0) (< s1 slot-count))
+              (if (live.compiler-live-set-contains? addr-groups var)
+                (let
+                  [lo : i64
+                    (if (< s0 s1)
+                      s0
+                      s1)]
+                  [hi : i64
+                    (if (> s0 s1)
+                      s0
+                      s1)]
+                  (compiler-reg-color-note-slot-band!
+                    (&mut band-ends)
+                    lo
+                    (+ hi 1)))
+                (let
+                  [refs : i64 (array-ref ref-counts var)]
+                  (when
+                    (> refs 0)
+                    (+= (array-ref slot-references s0) refs)
+                    (+= (array-ref slot-references s1) refs)))))))
+        (let
+          [id : i64 (array-ref remap var)]
+          (when
+            (and
+              (>= id 0)
+              (< id slot-count)
+              (not (compiler-reg-direct-stack-param? direct-stack-params var)))
+            (let
+              [span : i64 (array-ref addressed var)]
+              [words : i64 (array-ref vector-stack-words var)]
+              [width : i64 (compiler-reg-max span words)]
+              (when (> width (+ id 1)) (return unit))
+              (when
+                (or (> span 0) (> words 1))
+                (compiler-reg-color-note-slot-band!
+                  (&mut band-ends)
+                  (- (+ id 1) (compiler-reg-max width 1))
+                  (+ id 1)))
+              (when
                 (and
-                  has-groups?
-                  (live.compiler-live-set-contains? group-vars var)))
-              (compiler-reg-color-note-slot-band!
-                (&mut band-ends)
-                (- (+ id 1) (compiler-reg-max width 1))
-                (+ id 1)))
-            (when
-              (and
-                (> (array-ref ref-counts var) 0)
-                (or
-                  (not has-assignments)
-                  (compiler-reg-color-var-lives-in-slot? assignment-index var)))
-              (+= (array-ref slot-references id) (array-ref ref-counts var)))))))
+                  (> (array-ref ref-counts var) 0)
+                  (or
+                    (not has-assignments)
+                    (compiler-reg-color-var-lives-in-slot? assignment-index var)))
+                (+= (array-ref slot-references id) (array-ref ref-counts var))))))))
     (when
       (compiler-reg-color-pack-slot-bands!
         (& band-ends)
@@ -31445,7 +32526,18 @@
           [id : i64 (array-ref remap var)]
           (when
             (and (>= id 0) (< id slot-count))
-            (set! (array-ref remap var) (- (array-ref moved id) 1))))))))
+            (set! (array-ref remap var) (- (array-ref moved id) 1))))
+        (when
+          has-group-slots?
+          (let
+            [s0 : i64 (array-ref group-slot0 var)]
+            [s1 : i64 (array-ref group-slot1 var)]
+            (when
+              (and (>= s0 0) (< s0 slot-count))
+              (set! (array-ref group-slot0 var) (- (array-ref moved s0) 1)))
+            (when
+              (and (>= s1 0) (< s1 slot-count))
+              (set! (array-ref group-slot1 var) (- (array-ref moved s1) 1)))))))))
 
 ;; Does this value live in a frame slot, rather than a register home or a
 ;; rematerialized definition? Only a frame value's references become memory
@@ -31456,7 +32548,7 @@
   (match (compiler-reg-assignment-table-lookup assignment-index var)
     [(Some location)
       (match location
-        [(Spill _) true]
+        [(or (Spill _) (SpillPair _ _)) true]
         [_ false])]
     [(No) true]))
 
@@ -32505,7 +33597,7 @@
       (match (compiler-reg-assignment-lookup assignments var)
         [(Some location)
           (match location
-            [(Spill _) true]
+            [(or (Spill _) (SpillPair _ _)) true]
             [_ false])]
         [(No) false])]
     [_ false]))

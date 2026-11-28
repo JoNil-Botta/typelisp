@@ -5530,6 +5530,105 @@
           (be_object.compiler-direct-object-fallback-transcript reason)))]
     [(Err message) (Err message)]))
 
+(defenum BuildPackageArchiveSymbols
+  (Ok (__tl_dyn-array String))
+  (Err String))
+
+(clone_gen.gen-clone BuildPackageArchiveSymbols)
+
+;; GNU ar and COFF libraries both publish the symbols used for archive lookup
+;; in their first linker member. Checking the index covers definitions in
+;; lazy members even when the consumer never imports their source module.
+(define (build-package-archive-symbols [path : (& str)]) : BuildPackageArchiveSymbols
+  (let
+    [data : String
+      (match (io.try-read-file path)
+        [(ErrIoBytes _)
+          (return
+            (Err (string.append "build: cannot read package archive " path)))]
+        [(OkIoBytes buffer) (byte_buf.to-string buffer)])]
+    [bytes (& data)]
+    [length : i64 (string.string-length bytes)]
+    [invalid : String
+      (str_cat.str-cat
+        "build: invalid package archive symbol index: "
+        (string.copy path))]
+    (unless
+      (string.is-string-prefix-at bytes "!<arch>\n" 0)
+      (return (Err invalid)))
+    (when (= length 8) (return (Ok (__tl_make-array String 0))))
+    (when (< length 68) (return (Err invalid)))
+    (let
+      [width : i64
+        (cond
+          [(string.is-string-prefix-at bytes "/               " 8) 4]
+          [(string.is-string-prefix-at bytes "/SYM64/         " 8) 8]
+          [else (return (Err invalid))])]
+      [profile : archive.ArchiveProfile (ar.profile (GnuSystemV))]
+      [size : i64
+        (match (archive.read-header bytes 8 (& profile))
+          [(Header size _) size]
+          [_ (return (Err invalid))])]
+      [end : i64 (+ 68 size)]
+      [check : ar.ArCheck
+        (ar.ArCheck
+          true
+          (ar.ArError (IndexSize) (archive.ArchiveIdentity 0 0) 0 0 0 0)
+          size
+          0)]
+      (when (> end length) (return (Err invalid)))
+      (let
+        [count : i64 (ar.word! (&mut check) bytes 68 end width false)]
+        (when
+          (or (not check.ok) (> count (/ (- size width) width)))
+          (return (Err invalid)))
+        (let
+          [start : i64 (+ 68 (* (+ count 1) width))]
+          [symbols : (__tl_dyn-array String) (__tl_make-array String count)]
+          (for [i (iterator.range 0 count)]
+            (let
+              [stop : i64 (ar.symbol-end! (&mut check) bytes start end)]
+              (unless check.ok (return (Err invalid)))
+              (set!
+                (array-ref symbols i)
+                (string.substring bytes start (- stop start)))
+              (set! start (+ stop 1))))
+          (Ok symbols))))))
+
+(define (build-package-check-archive-symbols
+  [paths : process.ProcessStringList]) : String
+  (let
+    [count : i64 (process.args-count paths)]
+    (when (< count 2) (return ""))
+    (let
+      [owners : build_string_i64_map.Map
+        (build_string_i64_map.with-capacity 64)]
+      (for [index (iterator.range 0 count)]
+        (let
+          [path : String (process.args-ref paths index)]
+          (match (with-scratch (build-package-archive-symbols (& path)))
+            [(Err message) (return message)]
+            [(Ok symbols)
+              (for [symbol (& symbols)]
+                (when
+                  (string.is-string-prefix-at symbol "_tl_" 0)
+                  (match (build_string_i64_map.get owners (string.copy symbol))
+                    [(LookupFound other)
+                      (return
+                        (str_cat.str-cat
+                          "build: conflicting package archive symbol "
+                          (string.copy symbol)
+                          " in "
+                          (process.args-ref paths other)
+                          " and "
+                          path))]
+                    [(LookupMissing)
+                      (build_string_i64_map.insert-ref!
+                        (&mut owners)
+                        (string.copy symbol)
+                        index)])))])))
+      "")))
+
 (define (build-package-elf-member-needs-runtime?
   [bytes : (& bytes str)]
   [request : (& elf.ElfReadRequest)]) : bool
@@ -5741,6 +5840,8 @@
             (build-package-archives-need-runtime? target (& link-inputs))))]
       ;; Capture hydrated archive paths BEFORE releasing the runtime scope,
       ;; which resets the driver file state.
+      [package-archives
+        (build_run_core.source-tool-link-inputs-archives (& link-inputs))]
       [final-link-inputs : build_run_core.SourceToolLinkInputs
         (build_run_core.source-tool-link-inputs-with-hydrated-archives
           link-inputs)]
@@ -5763,7 +5864,15 @@
               [(Ok text) text]
               [(Err _) ""])])]
       (build-package-finish-prepared-runtime
-        prepared
+        (match (& prepared)
+          [(Err _) prepared]
+          [_
+            (let
+              [error : String
+                (build-package-check-archive-symbols package-archives)]
+              (if (> (string.string-length (& error)) 0)
+                (Err error)
+                prepared))])
         name
         kind
         target

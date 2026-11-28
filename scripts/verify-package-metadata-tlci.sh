@@ -208,3 +208,53 @@ run_program_42 source
 
 echo "[package-metadata-tlci] trusted TLI / forced-source runtime parity passed"
 echo "[package-metadata-tlci] canonical pure-library bundles=3 tlci=0"
+
+# The producer names have identical archive manglings. Only the generated
+# drop-word is shared. Distinct field hooks expose which body actually ran.
+COLLISION="$WORKDIR/cleanup"
+mkdir -p "$COLLISION/src"
+for side in first second; do
+    case "$side" in
+        first) package=foo-bar ;;
+        second) package=foo_bar ;;
+    esac
+    mkdir -p "$COLLISION/$side/src"
+    cat > "$COLLISION/$side/typelisp.pkg" <<PKG
+(package (name "$package") (version "1.0.0") (kind staticlib))
+PKG
+    cat > "$COLLISION/$side/src/lib.tl" <<TL
+(import stdlib.io)
+(define (close-$side [_value : i64]) : unit (io.println "$side"))
+(defstruct Word (:cleanup drop-word) (x i64 (:cleanup close-$side)))
+TL
+done
+cat > "$COLLISION/typelisp.pkg" <<'PKG'
+(package (name "cleanup_pair") (version "1.0.0") (kind "bin")
+  (dependencies (foo-bar "first") (foo_bar "second")))
+PKG
+cat > "$COLLISION/src/main.tl" <<'TL'
+(import foo-bar.src.lib as a)
+(import foo_bar.src.lib as b)
+(define (main) : i64
+  (a.drop-word (a.Word 1))
+  (b.drop-word (b.Word 2))
+  0)
+TL
+if TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE=0 "$COMPILER" build \
+    --manifest-path "$COLLISION/typelisp.pkg" --target "$NL_BOOTSTRAP_TARGET" \
+    > "$COLLISION/trusted.out" 2> "$COLLISION/trusted.err"; then
+    fail "trusted build accepted colliding cleanup definitions"
+fi
+assert_contains "$COLLISION/trusted.err" "|tli-package-hits=2|tli-force-source=0"
+assert_contains "$COLLISION/trusted.err" "conflicting package archive symbol _tl_foo_bar_src_lib_drop_word"
+assert_contains "$COLLISION/trusted.err" "foo-bar."
+assert_contains "$COLLISION/trusted.err" "foo_bar."
+TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE=1 "$COMPILER" build \
+    --manifest-path "$COLLISION/typelisp.pkg" --target "$NL_BOOTSTRAP_TARGET" \
+    > "$COLLISION/source.out" 2> "$COLLISION/source.err"
+assert_contains "$COLLISION/source.err" "|tli-package-hits=0|tli-force-source=1"
+"$COLLISION/target/dev/cleanup_pair$NL_BIN_EXT" > "$COLLISION/program.out"
+printf 'first\nsecond\n' > "$COLLISION/expected.out"
+tr -d '\r' < "$COLLISION/program.out" | cmp "$COLLISION/expected.out" - ||
+    fail "forced-source cleanup bodies ran in the wrong order"
+echo "[package-metadata-tlci] conflicting cleanup definitions diagnosed on the trusted route"

@@ -182,7 +182,9 @@ c) `types` (`TliTypeDecl`): `u8 kind` (0 `Struct`, 1 `Enum`), `s:name`,
    verbatim: 0 `No`, 1 `Fn` + `s:cleanup_fn`, 2 `Owned` (tag 2 is valid only on
    struct fields and enum payloads; type-level `AstStructCleanup` /
    `AstEnumCleanup` allow only 0 and 1). Package interfaces retain the physical archive symbol for
-   a generated cleanup alongside its semantic name. `explicit_align` is `0` for a field that declares
+   a generated cleanup alongside its semantic name. Before linking multiple dependency archives,
+   the package builder checks their symbol indexes and reports an ambiguous TypeLisp definition
+   with its symbol and both archive paths. `explicit_align` is `0` for a field that declares
    none, matching `AstFieldAligns`. The field's `opaque` tag is 0 for a public field
    or 1 for a field declared `(:opaque)`. The interface retains the full representation
    for ABI and family access, while callers obey the opaque construction

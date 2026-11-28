@@ -48,7 +48,7 @@ file twice/src/main.tl
 end-file
 step build
 run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
-exec "{{dir}}/target/release/app{{exe}}"
+exec "{{dir}}/target/dev/app{{exe}}"
 exit 42
 step missing-discharge
 run build --manifest-path "{{dir}}/missing/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}

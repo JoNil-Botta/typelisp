@@ -106,7 +106,7 @@ tl_backtrace_stack_high:
   ;; and the space needed including the header and any alignment slack in %rsi.
   ;; Return the mapping in %rax and its exact page-rounded length in %rsi.
   ;; Return SF set on failure, so the caller can branch after restoring registers.
-  ;; Linux ignores the fd for MAP_ANONYMOUS, so %r8 keeps the caller's arena.
+  ;; Clobber %r8 with fd -1 for MAP_ANONYMOUS. Valgrind inspects the fd.
   ;; A successful mapping guarantees that the checked request and all header
   ;; and cursor addresses fit inside a zero-filled userspace range.
   ;; The implicit thread arena starts at its steady-state size. Explicit
@@ -115,25 +115,15 @@ tl_backtrace_stack_high:
   ;; The successful mmap length is below the userspace limit, so testing its
   ;; upper bits clears SF. The madvise syscall preserves the user flags.
   ".L_tl_arena_map_chunk:
-    movl $0x4000000, %eax
     testq %rdi, %rdi
-    jz .L_tl_arena_map_len
-    movq 24(%rdi), %rcx
-    subq %rdi, %rcx
-    cmpq $0x2000000, %rcx
-    jae .L_tl_arena_map_len
-    leaq (%rcx,%rcx), %rax
-.L_tl_arena_map_len:
-    cmpq %rax, %rsi
-    cmovbq %rax, %rsi
-    jbe .L_tl_arena_mmap
-    addq $4095, %rsi
-    jc .L_tl_arena_map_overflow
-    andq $-4096, %rsi
+    jnz .L_tl_arena_map_grow
+    cmpq $0x4000000, %rsi
+    ja .L_tl_arena_map_round
+    movl $0x4000000, %esi
 .L_tl_arena_mmap:
-    xorq %rdi, %rdi
     movq $3, %rdx
     movq $0x22, %r10
+    movq $-1, %r8
     xorq %r9, %r9
     movq $9, %rax
     syscall
@@ -148,6 +138,23 @@ tl_backtrace_stack_high:
     movq %rdi, %rax
 .L_tl_arena_map_done:
     ret
+.L_tl_arena_map_grow:
+    movl $0x4000000, %eax
+    movq 24(%rdi), %rcx
+    subq %rdi, %rcx
+    xorq %rdi, %rdi
+    cmpq $0x2000000, %rcx
+    jae .L_tl_arena_map_len
+    leaq (%rcx,%rcx), %rax
+.L_tl_arena_map_len:
+    cmpq %rax, %rsi
+    cmovbq %rax, %rsi
+    jbe .L_tl_arena_mmap
+.L_tl_arena_map_round:
+    addq $4095, %rsi
+    jc .L_tl_arena_map_overflow
+    andq $-4096, %rsi
+    jmp .L_tl_arena_mmap
 .L_tl_arena_map_overflow:
     orq $-1, %rax
     ret
@@ -287,6 +294,7 @@ tl_alloc:
     leaq (%rax,%rsi), %rcx
     pop %rsi
     js .L_tl_alloc_abort
+    movq %fs:tl_current_arena@tpoff, %r8
     movq 56(%r8), %r10
     testb $16, 48(%r8)
 "
@@ -523,6 +531,7 @@ tl_alloc_aligned:
     popq %r11
     popq %rdx
     js .L_tl_alloc_aligned_abort
+    movq %fs:tl_current_arena@tpoff, %r8
     leaq (%rax,%rsi), %rdi
     movq 56(%r8), %r9
     testb $16, 48(%r8)

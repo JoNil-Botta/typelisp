@@ -1,0 +1,1 @@
+scratch_register_pointer_store_reject|check-fail|tests/safety/scratch_register_pointer_store_reject.tl|-|cannot store region-tagged value into assignment

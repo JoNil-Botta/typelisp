@@ -5192,8 +5192,8 @@
                     fanout)))]
             (and
               (!= first second)
-              (= (ast.ty-node-dedup-table-capacity final.dedup-slots) 8)
-              (= final.dedup-count 4)
+              (= (ast_tests.ast-type-node-pool-test-dedup-capacity (& final)) 8)
+              (= (ast_tests.ast-type-node-pool-test-dedup-count (& final)) 4)
               (match finite
                 [(Ok) true]
                 [(Err _) false])
@@ -5219,22 +5219,7 @@
       (ast.ast-node-pool-context-new-with-capacities 8 8)]
     [state : ast.AstTypeNodePoolState
       (ast.ast-type-pool-cell-read pools.type-pool)]
-    [small : ast.AstTypeNodePoolState
-      (ast.AstTypeNodePoolState
-        state.segment-bases
-        state.count
-        state.base-arena
-        state.exhausted
-        (in-arena
-          (unsafe
-            (arena.from-raw-handle state.base-arena))
-          (ast.ty-node-dedup-slots-new 8))
-        state.dedup-count
-        state.storage-arena
-        state.segment-count
-        state.revision
-        state.revision-cell)]
-    (ast.ast-type-pool-cell-write! pools.type-pool small)
+    (ast_tests.ast-type-node-pool-test-set-dedup-capacity! (& state) 8)
     (ast.ast-node-pool-context-install! pools)
     (unsafe
       (ptr-write!

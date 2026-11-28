@@ -1488,10 +1488,7 @@
 (define (lower-spmd-source-type-id
   [pools : ast.AstNodePoolContext]
   [ty : (& ty ast.AstType)]) : i64
-  (ast.ast-node-pool-context-type-push-cells
-    (cast (ast.ast-node-pool-context-expr-cell-address pools) : u64)
-    (cast (ast.ast-node-pool-context-type-cell-address (& pools)) : u64)
-    ty))
+  (ast.ast-type-pool-cell-push! pools.type-pool ty))
 
 (define (lower-spmd-source-key
   [ctx : tc_core.TcContext]

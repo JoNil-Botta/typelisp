@@ -26544,17 +26544,10 @@
 (define (tc-context-install-pools! [ctx : TcContext]) : unit
   (if (ast.ast-node-pool-compat-context-active?)
     unit
-    (let
-      [pools : ast.AstNodePoolContext (tc-context-pools-live ctx)]
-      ;; Operand checks may append types through the installed snapshot
-      ;; while caller-origin wrappers advance this context's expression
-      ;; cell. Preserve both changes without rewinding the type prefix.
-      (ast.ast-node-pool-context-type-adopt-active! (& pools))
-      (ast.ast-node-pool-context-install! pools))))
+    (ast.ast-node-pool-context-install! (tc-context-pools-live ctx))))
 
-;; Install `ctx` after first adopting any pool the globals are further along.
-;; Use it where either side may be ahead, such as after a check that pushed
-;; through both `ctx` and the global pushers.
+;; Install `ctx` after reconciling the expression wrapper with installed writes.
+;; Type allocation state is already shared by wrappers over the same backing.
 (define (tc-context-publish-newer-pools! [ctx : TcContext]) : unit
   (ast.ast-node-pool-context-publish-newer! (tc-context-pools-live ctx)))
 
@@ -51057,18 +51050,17 @@
   (if ast.ast-node-pool-reader-explicit?
     (ast.ast-node-pool-context-type-stamp
       (& (ast.ast-node-pool-reader-context-current)))
-    (if (and
-      (> ast.ty-node-pool-revision 0)
-      (=
-        ast.ty-node-pool-revision
-        (ast.ast-type-pool-cursor-live-revision ast.ty-node-pool-revision-cell)))
-      (Some
-        (ast.AstTypePoolStamp
-          ast.ty-node-pool-revision-cell
-          ast.ty-node-pool-revision
-          ast.ty-node-pool-segment-bases
-          ast.ty-node-pool-count))
-      No)))
+    (let
+      [revision : i64
+        (ast.ast-type-pool-cursor-live-revision ast.ty-node-pool-revision-cell)]
+      (if (> revision 0)
+        (Some
+          (ast.AstTypePoolStamp
+            ast.ty-node-pool-revision-cell
+            revision
+            ast.ty-node-pool-segment-bases
+            (ast.ty-node-pool-len)))
+        No))))
 
 (define (tc-variance-epoch [ctx : TcContext]) : TcMaybeVarianceEpoch
   (cfg test (when (> tc-variance-test-mode 0) (return Missing)))
@@ -126353,7 +126345,7 @@
 ;;
 ;; Only the ambient arena changes. The node pools stay installed and shared, so
 ;; the type pool's hash-consing table keeps seeing every declaration -- and
-;; because `ast-type-node-pool-state-push-raw` persists a type node's payload
+;; because `ast-type-pool-append!` persists a type node's payload
 ;; into the pool's base arena BEFORE writing the row, a type node pushed while
 ;; the generation is current is already committed. The copy-out therefore shares
 ;; every type id and pushes no new type node at all; only expression rows, whose

@@ -5539,9 +5539,7 @@
     (unsafe
       ;; unsafe: installs global intern state; replaced before this arena ends
       (ci.intern-compat-state-install! interns))
-    (unsafe
-      ;; unsafe: installs global AST pool state; replaced before this arena ends
-      (compiler_ast_types.ast-node-pool-context-install! pools))
+    (compiler_ast_types.ast-node-pool-context-install! pools)
     (if (array-ref parent.intern-state-ready 0)
       (unsafe
         ;; unsafe: installs the global load session; replaced before this arena ends
@@ -5925,9 +5923,7 @@
           (compiler_load.compiler-load-session-state-new-for-package-child
             (& parent))]
         [_install-pools : unit
-          (unsafe
-            ;; unsafe: installs global AST pool state; replaced before this arena ends
-            (compiler_ast_types.ast-node-pool-context-install! pools))]
+          (compiler_ast_types.ast-node-pool-context-install! pools)]
         [_install-interns : unit
           (unsafe
             ;; unsafe: installs global intern state; replaced before this arena ends

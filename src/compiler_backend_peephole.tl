@@ -8557,12 +8557,11 @@
               (when
                 (and
                   (compiler-backend-cold-label-line? data start start last)
+                  ;; A numeric local such as BitLength's 2: can repeat and
+                  ;; cannot prefix a named assembler symbol.
                   (not
-                    (be_operand.compiler-backend-peephole-range-eq?
-                      data
-                      start
-                      last
-                      "1:")))
+                    (compiler-backend-outline-digit?
+                      (be_state.compiler-backend-peephole-byte-at data start))))
                 (set! result k))))
           (-= k 1))))
     result))

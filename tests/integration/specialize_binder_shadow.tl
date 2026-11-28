@@ -30,8 +30,8 @@
       (set! total (+ total n)))
     (+ total n)))
 
-;; A lane named like a type parameter: (0 + 0) + (1 + 0) + (2 + 0) + (3 + 0),
-;; then `(cast 1 : T)` after the loop.
+;; The lane shadows the type inside each gang. Correct lane IDs store 0..3
+;; for a sum of 6, then `(cast 1 : T)` uses the type again after the loop.
 (define (lane-type-shadow [comptime T : type]) : i64
   (let
     [out : (Array i64 4) (make-array i64 4)]
@@ -42,10 +42,14 @@
         [T : i64]
         (let
           [k : i64 (lane-value i)]
-          (set! (array-ref out k) (+ k T)))))
+          (set!
+            (array-ref out k)
+            (if (= T (% k (program-count)))
+              k
+              -1)))))
     (+ (spmd-reduce sum ([i : i64 0 4]) 0 (array-ref out i)) (cast 1 : T))))
 
-;; The same with a value parameter, which the lane already shadowed: 6, then 9.
+;; The lane also shadows a value parameter. Its outer value adds 9 after the sum.
 (define (lane-value-shadow [comptime m : i64]) : i64
   (let
     [out : (Array i64 4) (make-array i64 4)]
@@ -55,7 +59,11 @@
         [m : i64]
         (let
           [k : i64 (lane-value i)]
-          (set! (array-ref out k) (+ k m)))))
+          (set!
+            (array-ref out k)
+            (if (= m (% k (program-count)))
+              k
+              -1)))))
     (+ (spmd-reduce sum ([i : i64 0 4]) 0 (array-ref out i)) m)))
 
 (define (main) : i64

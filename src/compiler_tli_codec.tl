@@ -1672,9 +1672,7 @@
 (define tli-error-trailing : i64
   30)
 
-(define (tli-read-error
-  [rd : (& rd binary.CompilerIncrementalBinaryReader)]
-  [base : i64]) : tli.TliDecodeFailure
+(define (tli-read-error [rd : (& rd binary.CompilerIncrementalBinaryReader)]) : tli.TliDecodeFailure
   (tli.TliDecodeFailure
     (cond
       [(= rd.cursor.error-code cursor.error-truncated)
@@ -1695,7 +1693,7 @@
       [(= rd.cursor.error-code tli-error-trailing)
         (tli.TliDecodeError.TrailingBytes)]
       [else (tli.TliDecodeError.Limit)])
-    (+ base rd.cursor.error-offset)
+    rd.cursor.error-offset
     (string.copy (& rd.cursor.error-message))))
 
 (define (tli-fail!
@@ -1872,9 +1870,9 @@
 
 ;; A decoded string pool. An eager pool holds every string. A lazy pool leaves
 ;; `strings` empty and keeps where the pool's offset table and text lie in the
-;; file bytes that the enclosing `TliDirectory` owns (`base`);
-;; `tli-read-name!` reads an entry's two offsets, then validates, charges and
-;; copies its text only when a record uses it, so opening a file reads no entry.
+;; immutable snapshot owned by the enclosing directory. Each pool ID is
+;; validated on first access. Every returned string still charges the budget
+;; and is owned by the current decoding arena.
 (defstruct TliPool
   (strings (__tl_dyn-array String))
   (lazy? bool)
@@ -1882,7 +1880,8 @@
   (table i64)
   (text i64)
   (text-len i64)
-  (base (Ptr u8)))
+  (base (Ptr u8))
+  (utf8-checked (__tl_dyn-array bool)))
 
 (define (tli-pool-offset-at [pool : (& pool TliPool)] [id : i64]) : i64
   (let
@@ -1900,6 +1899,32 @@
               : i64)
             (* 8 byte)))))
     value))
+
+(define (tli-pool-utf8-valid?
+  [pool : (& TliPool)]
+  [id : i64]
+  [start : i64]
+  [length : i64]) : bool
+  (when (and pool.lazy? (array-ref pool.utf8-checked id)) (return true))
+  (let
+    [valid? : bool
+      (or
+        (tli-ascii-range? pool.base start length)
+        (with-scratch
+          (let
+            [text : (__tl_dyn-array u8) (__tl_make-array u8 length)]
+            (unsafe
+              (string.string-runtime-copy-bytes!
+                (__tl_array-data text)
+                (ptr-offset pool.base start)
+                length))
+            (tli-utf8-valid? (& text) 0 length))))]
+    (when
+      (and valid? pool.lazy?)
+      ;; Only successful validations of immutable snapshot bytes are cached.
+      (unsafe
+        (ptr-write! (ptr-offset (__tl_array-data pool.utf8-checked) id) true)))
+    valid?))
 
 (define (tli-read-lazy-name!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
@@ -1920,17 +1945,7 @@
       [(> length tli-max-string-bytes)
         (tli-fail! rd tli-error-limit "TLI string length limit exceeded")
         ""]
-      [(not
-        (or
-          (tli-ascii-range? pool.base start length)
-          (let
-            [text : (__tl_dyn-array u8) (__tl_make-array u8 length)]
-            (for [index (iterator.range 0 length)]
-              (set!
-                (array-ref text index)
-                (unsafe
-                  (ptr-read (ptr-offset pool.base (+ start index))))))
-            (tli-utf8-valid? (& text) 0 length))))
+      [(not (tli-pool-utf8-valid? pool id start length))
         (tli-fail! rd tli-error-utf8 "TLI text is not valid UTF-8")
         ""]
       [(not (tli-reserve! rd (+ 16 length))) ""]
@@ -2806,7 +2821,9 @@
   (compact-body-count i64)
   (entries (__tl_dyn-array tli.TliDirectoryEntry))
   (pool TliPool)
-  (bytes (__tl_dyn-array u8))
+  ;; The snapshot descriptor lives in an arena slot so bounded cursors can
+  ;; read it without moving the directory's owned array out of a borrow.
+  (snapshot (__tl_dyn-array (__tl_dyn-array u8)))
   (owned-bytes i64))
 
 (defenum TliDirectoryResult
@@ -2880,7 +2897,8 @@
         text
         0
         (unsafe
-          (ptr-cast (__tl_array-data rd.cursor.bytes) : (Ptr u8))))]
+          (ptr-cast (__tl_array-data rd.cursor.bytes) : (Ptr u8)))
+        (__tl_make-array bool 0))]
     (cond
       [(not rd.cursor.ok?) pool]
       [(or (= count 0) (> count tli-max-count))
@@ -2911,7 +2929,12 @@
 
 (define (tli-read-pool-lazy!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]) : TliPool
-  (tli-read-pool-header! rd true))
+  (let
+    [pool : TliPool (tli-read-pool-header! rd true)]
+    (when
+      (and rd.cursor.ok? (tli-reserve! rd (+ 16 pool.count)))
+      (set! pool.utf8-checked (__tl_make-array bool pool.count)))
+    pool))
 
 (define (tli-read-pool! [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]) : TliPool
   (let
@@ -2999,26 +3022,25 @@
         "TLI module records do not end where the next section begins"))
     entries))
 
-;; Open only the envelope, verifying its content hash (when requested) and all
-;; packed ranges. The snapshot cannot be changed through the original input array.
+(define (tli-file-limit-error) : TliDirectoryResult
+  (TliDirectoryResult.Err
+    (tli.TliDecodeFailure
+      (tli.TliDecodeError.Limit)
+      0
+      "TLI file limit exceeded")))
+
+;; Open the envelope over a private arena-owned snapshot.
 (define (tli-decode-directory-inner
-  [bytes : (& bytes (__tl_dyn-array u8))]
+  [bytes : (__tl_dyn-array u8)]
   [verify-content-digest? : bool]) : TliDirectoryResult
   (let
     [length : i64 (array-length bytes)]
-    (when
-      (> length tli-max-file-bytes)
-      (return
-        (TliDirectoryResult.Err
-          (tli.TliDecodeFailure
-            (tli.TliDecodeError.Limit)
-            0
-            "TLI file limit exceeded"))))
+    (when (> length tli-max-file-bytes) (return (tli-file-limit-error)))
     (let
       [rd : binary.CompilerIncrementalBinaryReader
-        (binary.compiler-incremental-binary-reader
-          bytes
-          tli-max-work
+        (binary.CompilerIncrementalBinaryReader
+          (cursor.new bytes tli-max-work)
+          length
           tli-max-owned-bytes
           tli-max-string-bytes)]
       [magic : i64 (cursor.read-u32! (&mut rd.cursor))]
@@ -3117,7 +3139,7 @@
               "TLI compact IR section overlaps the module directory"))
           (when
             (not rd.cursor.ok?)
-            (return (TliDirectoryResult.Err (tli-read-error (& rd) 0))))
+            (return (TliDirectoryResult.Err (tli-read-error (& rd)))))
           (when
             verify-content-digest?
             (unless
@@ -3129,7 +3151,7 @@
                 (&mut rd)
                 tli-error-digest
                 "TLI index SHA-256 mismatch")
-              (return (TliDirectoryResult.Err (tli-read-error (& rd) 0))))
+              (return (TliDirectoryResult.Err (tli-read-error (& rd)))))
             (let
               [computed : (Array u8 32)
                 (tli-content-digest (& rd.cursor.bytes))]
@@ -3139,7 +3161,7 @@
                   (&mut rd)
                   tli-error-digest
                   "TLI content SHA-256 mismatch")
-                (return (TliDirectoryResult.Err (tli-read-error (& rd) 0))))))
+                (return (TliDirectoryResult.Err (tli-read-error (& rd)))))))
           (set! rd.cursor.offset pool-start)
           (set! rd.cursor.end (+ pool-start pool-size))
           (let
@@ -3149,7 +3171,7 @@
                 (tli-read-pool-lazy! (&mut rd)))]
             (when
               (not rd.cursor.ok?)
-              (return (TliDirectoryResult.Err (tli-read-error (& rd) 0))))
+              (return (TliDirectoryResult.Err (tli-read-error (& rd)))))
             (set! rd.cursor.offset 72)
             (set! rd.cursor.end 80)
             (let
@@ -3191,9 +3213,9 @@
                       prefix.body-count
                       entries
                       pool
-                      rd.cursor.bytes
+                      (__tl_make-array rd.cursor.bytes)
                       rd.owned-bytes))
-                  (TliDirectoryResult.Err (tli-read-error (& rd) 0)))))))))))
+                  (TliDirectoryResult.Err (tli-read-error (& rd))))))))))))
 
 (defstruct TliCompactPrefix
   (bodies-start i64)
@@ -3213,7 +3235,7 @@
     (begin
       (set! rd.cursor.offset ir-start)
       (set! rd.cursor.end (+ ir-start ir-size))
-      (tli-read-compact-globals! rd pool)
+      (tli-read-compact-globals! rd pool false)
       (let
         [body-count : i64 (cursor.read-u32! (&mut rd.cursor))]
         [bodies-start : i64 (- rd.cursor.offset ir-start)]
@@ -3229,15 +3251,24 @@
             "TLI compact body count disagrees with the compact IR section length"))
         (TliCompactPrefix bodies-start body-count)))))
 
-(define (tli-decode-directory [bytes : (& bytes (__tl_dyn-array u8))]) : TliDirectoryResult
-  (tli-decode-directory-inner bytes true))
-
-(define (tli-decode-directory-for-inner
+;; Borrowed input arrays can be changed by the caller after opening.
+(define (tli-decode-directory-copy
   [bytes : (& bytes (__tl_dyn-array u8))]
-  [expected-build : (& expected-build str)]
-  [expected-target : (& expected-target str)]
   [verify-content-digest? : bool]) : TliDirectoryResult
-  (match (tli-decode-directory-inner bytes verify-content-digest?)
+  (if (> (array-length bytes) tli-max-file-bytes)
+    (tli-file-limit-error)
+    (tli-decode-directory-inner
+      (binary.compiler-incremental-binary-copy bytes)
+      verify-content-digest?)))
+
+(define (tli-decode-directory [bytes : (& bytes (__tl_dyn-array u8))]) : TliDirectoryResult
+  (tli-decode-directory-copy bytes true))
+
+(define (tli-check-directory-compatibility
+  [decoded : TliDirectoryResult]
+  [expected-build : (& expected-build str)]
+  [expected-target : (& expected-target str)]) : TliDirectoryResult
+  (match decoded
     [(TliDirectoryResult.Err error) (TliDirectoryResult.Err error)]
     [(TliDirectoryResult.Ok directory)
       (cond
@@ -3259,7 +3290,10 @@
   [bytes : (& bytes (__tl_dyn-array u8))]
   [expected-build : (& expected-build str)]
   [expected-target : (& expected-target str)]) : TliDirectoryResult
-  (tli-decode-directory-for-inner bytes expected-build expected-target true))
+  (tli-check-directory-compatibility
+    (tli-decode-directory-copy bytes true)
+    expected-build
+    expected-target))
 
 ;; Lazy open for compiler-job hydration: skips up-front index and content
 ;; SHA-256 hashing and decoding unused pool strings. Header fields, section
@@ -3270,7 +3304,45 @@
   [bytes : (& bytes (__tl_dyn-array u8))]
   [expected-build : (& expected-build str)]
   [expected-target : (& expected-target str)]) : TliDirectoryResult
-  (tli-decode-directory-for-inner bytes expected-build expected-target false))
+  (tli-check-directory-compatibility
+    (tli-decode-directory-copy bytes false)
+    expected-build
+    expected-target))
+
+;; The caller transfers its private file snapshot in the directory's arena.
+(define (tli-decode-directory-for-snapshot
+  [bytes : (__tl_dyn-array u8)]
+  [expected-build : (& expected-build str)]
+  [expected-target : (& expected-target str)]
+  [verify-content-digest? : bool]) : TliDirectoryResult
+  (tli-check-directory-compatibility
+    (tli-decode-directory-inner bytes verify-content-digest?)
+    expected-build
+    expected-target))
+
+;; A bounded cursor over the already-checked snapshot range. Offsets remain
+;; file-relative, including for errors. The cursor is used only while the
+;; caller borrows the directory, and it never writes the snapshot.
+(define (tli-section-reader
+  [directory : (& TliDirectory)]
+  [start : i64]
+  [length : i64]
+  [owned-bytes : i64]) : binary.CompilerIncrementalBinaryReader
+  (binary.CompilerIncrementalBinaryReader
+    (cursor.ByteReader
+      (unsafe
+        (ptr-read (__tl_array-data directory.snapshot)))
+      start
+      (+ start length)
+      true
+      0
+      0
+      ""
+      0
+      tli-max-work)
+    owned-bytes
+    tli-max-owned-bytes
+    tli-max-string-bytes))
 
 (define (tli-read-record!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
@@ -3324,22 +3396,23 @@
     [start : i64 entry.record-offset]
     [length : i64 entry.record-len]
     (cond
-      [(not (cursor.range-present? (array-length directory.bytes) start length))
+      [(not
+          (cursor.range-present?
+            (array-length (array-ref directory.snapshot 0))
+            start
+            length))
         (TliBudgetedModuleResult.Err
           (tli.TliDecodeFailure
             (tli.TliDecodeError.OffsetOutOfRange)
             start
             "TLI record lies outside the file"))]
-      [(> length (- tli-max-owned-bytes owned-bytes))
-        (TliBudgetedModuleResult.Err
-          (tli.TliDecodeFailure
-            (tli.TliDecodeError.Limit)
-            start
-            "TLI owned-byte limit exceeded"))]
       [else
         (let
           [computed : (Array u8 32)
-            (tli-module-digest (& directory.bytes) start length)]
+            (tli-module-digest
+              (& (array-ref directory.snapshot 0))
+              start
+              length)]
           (when
             (not (tli-digest-eq? (& computed) (& entry.module-sha256)))
             (return
@@ -3349,24 +3422,14 @@
                   start
                   "TLI module SHA-256 mismatch"))))
           (let
-            [record-bytes : (__tl_dyn-array u8) (__tl_make-array u8 length)]
-            (for [i (iterator.range 0 length)]
-              (set!
-                (array-ref record-bytes i)
-                (array-ref directory.bytes (+ start i))))
-            (let
-              [rd : binary.CompilerIncrementalBinaryReader
-                (binary.CompilerIncrementalBinaryReader
-                  (cursor.new record-bytes tli-max-work)
-                  (+ owned-bytes length)
-                  tli-max-owned-bytes
-                  tli-max-string-bytes)]
-              [record : tli.TliModuleRecord
-                (tli-read-record! (&mut rd) (& directory.pool) entry directory)]
-              (tli-check-end! (&mut rd))
-              (if rd.cursor.ok?
-                (TliBudgetedModuleResult.Ok record rd.owned-bytes)
-                (TliBudgetedModuleResult.Err (tli-read-error (& rd) start))))))])))
+            [rd : binary.CompilerIncrementalBinaryReader
+              (tli-section-reader directory start length owned-bytes)]
+            [record : tli.TliModuleRecord
+              (tli-read-record! (&mut rd) (& directory.pool) entry directory)]
+            (tli-check-end! (&mut rd))
+            (if rd.cursor.ok?
+              (TliBudgetedModuleResult.Ok record rd.owned-bytes)
+              (TliBudgetedModuleResult.Err (tli-read-error (& rd))))))])))
 
 ;; Read only the second u32 string-pool id (`source_path`) from record `index`
 ;; without decoding types, functions, or values.
@@ -3384,24 +3447,19 @@
       (or
         (< length 8)
         (not
-          (cursor.range-present? (array-length directory.bytes) start length)))
+          (cursor.range-present?
+            (array-length (array-ref directory.snapshot 0))
+            start
+            length)))
       (return ""))
     (let
-      [buf : (__tl_dyn-array u8) (__tl_make-array u8 8)]
-      (for [i (iterator.range 0 8)]
-        (set! (array-ref buf i) (array-ref directory.bytes (+ start i))))
-      (let
-        [rd : binary.CompilerIncrementalBinaryReader
-          (binary.CompilerIncrementalBinaryReader
-            (cursor.new buf tli-max-work)
-            0
-            tli-max-owned-bytes
-            tli-max-string-bytes)]
-        [_name : String (tli-read-name! (&mut rd) (& directory.pool))]
-        [source : String (tli-read-name! (&mut rd) (& directory.pool))]
-        (if rd.cursor.ok?
-          source
-          "")))))
+      [rd : binary.CompilerIncrementalBinaryReader
+        (tli-section-reader directory start 8 0)]
+      [_name : String (tli-read-name! (&mut rd) (& directory.pool))]
+      [source : String (tli-read-name! (&mut rd) (& directory.pool))]
+      (if rd.cursor.ok?
+        source
+        ""))))
 
 (define (tli-read-compact-value!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
@@ -4041,7 +4099,10 @@
 
 (define (tli-read-compact-global!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool TliPool)]) : tli.TliCompactGlobal
+  [pool : (& pool TliPool)]
+  [items : (&mut (__tl_dyn-array tli.TliCompactGlobal))]
+  [index : i64]
+  [previous : (& str)]) : String
   (let
     [sym : String (tli-read-name! rd pool)]
     [ty : tli.TliType (tli-read-type! rd pool false 1)]
@@ -4065,28 +4126,50 @@
         rd
         tli-error-tag
         "TLI compact global initializer must be literal"))
-    (tli.TliCompactGlobal sym ty flags init)))
+    (let
+      [materialize? : bool (< index (array-length items))]
+      (when
+        (> index 0)
+        (if materialize?
+          (tli-check-order!
+            rd
+            (& (array-ref (deref items) (- index 1)).symbol)
+            0
+            ""
+            (& sym)
+            0
+            "")
+          (tli-check-order! rd previous 0 "" (& sym) 0 "")))
+      (if materialize?
+        (begin
+          (set!
+            (array-ref (deref items) index)
+            (tli.TliCompactGlobal sym ty flags init))
+          "")
+        sym))))
 
 ;; The compact IR section prefix: `section_flags`, the sorted compact globals
 ;; and the body count. Leaves the cursor at the first body.
 (define (tli-read-compact-globals!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool TliPool)]) : (__tl_dyn-array tli.TliCompactGlobal)
+  [pool : (& pool TliPool)]
+  [materialize? : bool]) : (__tl_dyn-array tli.TliCompactGlobal)
   (let
     [_sec-flags : i64 (tli-read-flags! rd 0)]
     [gcount : i64
       (tli-read-count! rd 7 (comptime (size-of (type tli.TliCompactGlobal))))]
     [items : (__tl_dyn-array tli.TliCompactGlobal)
-      (__tl_make-array tli.TliCompactGlobal gcount)]
+      (__tl_make-array
+        tli.TliCompactGlobal
+        (if materialize?
+          gcount
+          0))]
+    [previous : String ""]
     [i : i64 0]
     (while (and rd.cursor.ok? (< i gcount))
-      (set! (array-ref items i) (tli-read-compact-global! rd pool))
-      (when
-        (> i 0)
-        (let
-          [prev (& (array-ref items (- i 1)))]
-          [cur (& (array-ref items i))]
-          (tli-check-order! rd (& prev.symbol) 0 "" (& cur.symbol) 0 "")))
+      (set!
+        previous
+        (tli-read-compact-global! rd pool (&mut items) i (& previous)))
       (+= i 1))
     items))
 
@@ -4101,7 +4184,7 @@
     (> length 0)
     (cursor.range-present? directory.compact-ir-len rel-offset length)))
 
-;; Copies only the globals prefix of the section, never the body region.
+;; Decode just the globals prefix, bounded by the first body.
 (define (tli-decode-compact-globals [directory : (& directory TliDirectory)]) : TliCompactGlobalsResult
   (when
     (= (bit-and directory.flags tli.tli-has-compact-ir) 0)
@@ -4110,32 +4193,15 @@
   (let
     [start : i64 directory.compact-ir-offset]
     [length : i64 directory.compact-bodies-start]
-    (when
-      (> length (- tli-max-owned-bytes directory.owned-bytes))
-      (return
-        (TliCompactGlobalsResult.Err
-          (tli.TliDecodeFailure
-            (tli.TliDecodeError.Limit)
-            start
-            "TLI owned-byte limit exceeded"))))
-    (let
-      [sec-bytes : (__tl_dyn-array u8) (__tl_make-array u8 length)]
-      (for [i (iterator.range 0 length)]
-        (set! (array-ref sec-bytes i) (array-ref directory.bytes (+ start i))))
-      (let
-        [rd : binary.CompilerIncrementalBinaryReader
-          (binary.CompilerIncrementalBinaryReader
-            (cursor.new sec-bytes tli-max-work)
-            (+ directory.owned-bytes length)
-            tli-max-owned-bytes
-            tli-max-string-bytes)]
-        [items : (__tl_dyn-array tli.TliCompactGlobal)
-          (tli-read-compact-globals! (&mut rd) (& directory.pool))]
-        (cursor.read-u32! (&mut rd.cursor))
-        (tli-check-end! (&mut rd))
-        (if rd.cursor.ok?
-          (TliCompactGlobalsResult.Ok items)
-          (TliCompactGlobalsResult.Err (tli-read-error (& rd) start)))))))
+    [rd : binary.CompilerIncrementalBinaryReader
+      (tli-section-reader directory start length directory.owned-bytes)]
+    [items : (__tl_dyn-array tli.TliCompactGlobal)
+      (tli-read-compact-globals! (&mut rd) (& directory.pool) true)]
+    (cursor.read-u32! (&mut rd.cursor))
+    (tli-check-end! (&mut rd))
+    (if rd.cursor.ok?
+      (TliCompactGlobalsResult.Ok items)
+      (TliCompactGlobalsResult.Err (tli-read-error (& rd))))))
 
 (define (tli-peek-compact-body-header
   [directory : (& directory TliDirectory)]
@@ -4153,7 +4219,7 @@
   (let
     [abs-start : i64 (+ directory.compact-ir-offset rel-offset)]
     [computed : (Array u8 32)
-      (tli-module-digest (& directory.bytes) abs-start length)]
+      (tli-module-digest (& (array-ref directory.snapshot 0)) abs-start length)]
     (unless
       (tli-digest-eq? (& computed) expected-sha)
       (return
@@ -4163,7 +4229,8 @@
             abs-start
             "TLI compact body SHA-256 mismatch"))))
     (let
-      [kind : i64 (cast (array-ref directory.bytes abs-start) : i64)]
+      [kind : i64
+        (cast (array-ref (array-ref directory.snapshot 0) abs-start) : i64)]
       (when
         (or (< kind 1) (> kind 3))
         (return
@@ -4181,9 +4248,11 @@
               "TLI compact IR body header is truncated"))
           (let
             [ir-flags : i64
-              (cast (array-ref directory.bytes (+ abs-start 1)) : i64)]
+              (cast
+                (array-ref (array-ref directory.snapshot 0) (+ abs-start 1))
+                : i64)]
             [instr-count : i64
-              (le.read-u32 (& directory.bytes) (+ abs-start 2))]
+              (le.read-u32 (& (array-ref directory.snapshot 0)) (+ abs-start 2))]
             (if (not
               (= ir-flags (bit-and ir-flags tli.tli-compact-ir-call-free)))
               (TliCompactBodyHeaderResult.Err
@@ -4211,7 +4280,7 @@
   (let
     [abs-start : i64 (+ directory.compact-ir-offset rel-offset)]
     [computed : (Array u8 32)
-      (tli-module-digest (& directory.bytes) abs-start length)]
+      (tli-module-digest (& (array-ref directory.snapshot 0)) abs-start length)]
     (unless
       (tli-digest-eq? (& computed) expected-sha)
       (return
@@ -4220,33 +4289,15 @@
             (tli.TliDecodeError.DigestMismatch)
             abs-start
             "TLI compact body SHA-256 mismatch"))))
-    (when
-      (> length (- tli-max-owned-bytes directory.owned-bytes))
-      (return
-        (TliCompactBodyResult.Err
-          (tli.TliDecodeFailure
-            (tli.TliDecodeError.Limit)
-            abs-start
-            "TLI owned-byte limit exceeded"))))
     (let
-      [body-bytes : (__tl_dyn-array u8) (__tl_make-array u8 length)]
-      (for [i (iterator.range 0 length)]
-        (set!
-          (array-ref body-bytes i)
-          (array-ref directory.bytes (+ abs-start i))))
-      (let
-        [rd : binary.CompilerIncrementalBinaryReader
-          (binary.CompilerIncrementalBinaryReader
-            (cursor.new body-bytes tli-max-work)
-            (+ directory.owned-bytes length)
-            tli-max-owned-bytes
-            tli-max-string-bytes)]
-        [body : tli.TliCompactBody
-          (tli-read-compact-body! (&mut rd) (& directory.pool))]
-        (tli-check-end! (&mut rd))
-        (if rd.cursor.ok?
-          (TliCompactBodyResult.Ok body)
-          (TliCompactBodyResult.Err (tli-read-error (& rd) abs-start)))))))
+      [rd : binary.CompilerIncrementalBinaryReader
+        (tli-section-reader directory abs-start length directory.owned-bytes)]
+      [body : tli.TliCompactBody
+        (tli-read-compact-body! (&mut rd) (& directory.pool))]
+      (tli-check-end! (&mut rd))
+      (if rd.cursor.ok?
+        (TliCompactBodyResult.Ok body)
+        (TliCompactBodyResult.Err (tli-read-error (& rd)))))))
 
 (define (tli-decode-module-at
   [directory : (& directory TliDirectory)]

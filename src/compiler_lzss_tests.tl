@@ -211,6 +211,34 @@
       (set! index (+ index 1)))
     (byte_buf_core.byte-buf-builder-to-string (& out))))
 
+(define (compiler-lzss-test-resumable?
+  [packed : (& packed (__tl_dyn-array u8))]
+  [text : (& text str)]
+  [model : (& model lzss.CompilerLzssModel)]) : bool
+  (let
+    [raw-len : i64 (string.string-length text)]
+    [reader : lzss.CompilerLzssReader
+      (lzss.compiler-lzss-reader 0 (array-length packed))]
+    [out : (__tl_dyn-array u8) (__tl_make-array u8 raw-len)]
+    (while (< reader.produced raw-len)
+      (let
+        [next : i64 (+ reader.produced 53)]
+        [needed : i64
+          (if (< next raw-len)
+            next
+            raw-len)]
+        [error : String
+          (lzss.compiler-lzss-decode-through!
+            packed
+            (&mut reader)
+            (&mut out)
+            needed
+            model)]
+        (when
+          (or (> (string.string-length (& error)) 0) (< reader.produced needed))
+          (return false))))
+    (compiler-lzss-test-same? (& out) text)))
+
 ;; The stored-model path: the same bytes decode through a model parsed from its
 ;; spec, and a prefix decode stops exactly at the requested length.
 (define (compiler-lzss-test-stored-model-ok?) : bool
@@ -232,6 +260,7 @@
         (lzss.compiler-lzss-spec-lengths (& lzss.compiler-lzss-fixed-spec))]
       (and
         (> (array-length tokens) 0)
+        (compiler-lzss-test-resumable? (& packed) (& text) (& stored))
         (match (lzss.compiler-lzss-decode-prefix (& packed) 0 half (& stored))
           [(Ok bytes)
             (and
@@ -353,6 +382,90 @@
     (set! (array-ref packed 0) (cast 88 : u8))
     (compiler-lzss-test-rejects? packed 268435456)))
 
+(define (compiler-lzss-test-stream-error?
+  [model : (& model lzss.CompilerLzssModel)]
+  [octet : u8]
+  [raw-len : i64]
+  [expected : (& expected str)]) : bool
+  (let
+    [packed : (__tl_dyn-array u8) (__tl_make-array u8 1)]
+    (set! (array-ref packed 0) octet)
+    (match (lzss.compiler-lzss-decode-stream (& packed) 0 raw-len model)
+      [(Ok _) false]
+      [(Err message) (string.eq (& message) expected)])))
+
+;; The same small codebook in every context: B=0, match=100, A=101000000000000.
+;; The length and distance tables each contain one code with an extra bit.
+(define (compiler-lzss-test-word-reader?) : bool
+  (let
+    [lengths : (__tl_dyn-array i64)
+      (__tl_make-array i64 (lzss.compiler-lzss-model-spec-bytes))]
+    [main-symbols : i64 (lzss.compiler-lzss-main-symbols)]
+    [length-start : i64 (* (lzss.compiler-lzss-contexts) main-symbols)]
+    [distance-start : i64 (+ length-start (lzss.compiler-lzss-length-symbols))]
+    [context : i64 0]
+    [text : String (string.copy "BBBBBABABABABABAB")]
+    [raw-len : i64 (string.string-length (& text))]
+    [writer : lzss.CompilerLzssWriter (lzss.compiler-lzss-writer)]
+    (while (< context length-start)
+      (set! (array-ref lengths (+ context 65)) 15)
+      (set! (array-ref lengths (+ context 66)) 1)
+      (set! (array-ref lengths (+ context 256)) 3)
+      (+= context main-symbols))
+    (set! (array-ref lengths (+ length-start 8)) 1)
+    (set!
+      (array-ref
+        lengths
+        (+ distance-start (* 2 (lzss.compiler-lzss-distance-symbols)) 4))
+      1)
+    (let
+      [model : lzss.CompilerLzssModel
+        (lzss.compiler-lzss-model-from-lengths lengths)]
+      [index : i64 0]
+      (while (< index raw-len)
+        (if (= (string.string-ref (& text) index) 'A')
+          (lzss.compiler-lzss-write-bits! (&mut writer) 20480 15)
+          (lzss.compiler-lzss-write-bits! (&mut writer) 0 1))
+        (+= index 1))
+      (let
+        [body : String (lzss.compiler-lzss-finish-writer (&mut writer))]
+        [packed : (__tl_dyn-array u8) (compiler-lzss-test-bytes-of (& body))]
+        (and
+          (match (lzss.compiler-lzss-decode-stream
+            (& packed)
+            0
+            raw-len
+            (& model))
+            [(Ok bytes) (compiler-lzss-test-same? (& bytes) (& text))]
+            [(Err _) false])
+          ;; A short primary hit and a long code each run out of bits.
+          (compiler-lzss-test-stream-error?
+            (& model)
+            1
+            8
+            "compiler lzss: truncated symbol")
+          (compiler-lzss-test-stream-error?
+            (& model)
+            160
+            1
+            "compiler lzss: truncated symbol")
+          ;; The extra length and distance bit, respectively, is missing.
+          (compiler-lzss-test-stream-error?
+            (& model)
+            8
+            12
+            "compiler lzss: truncated length")
+          (compiler-lzss-test-stream-error?
+            (& model)
+            32
+            13
+            "compiler lzss: truncated distance")
+          (compiler-lzss-test-stream-error?
+            (& model)
+            1
+            1
+            "compiler lzss: trailing compressed bytes"))))))
+
 (define (compiler-lzss-codec-status) : i64
   (let
     [noise : String (compiler-lzss-test-noise 4242 6000)]
@@ -388,6 +501,7 @@
               (compiler-lzss-test-bytes-of (& payload))]
             (compiler-lzss-test-rejects? packed 8)))
         15]
+      [(not (compiler-lzss-test-word-reader?)) 19]
       [else 0])))
 
 (test

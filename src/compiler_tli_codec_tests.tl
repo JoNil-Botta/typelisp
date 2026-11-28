@@ -610,6 +610,35 @@
     (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.OffsetOutOfRange))))
 
 (test
+  tli-lazy-record-cursor-is-bounded-by-its-snapshot
+  (let
+    [bytes : (__tl_dyn-array u8) (tli-test-encode-plain (tli.TliType.I64))]
+    [start : i64 (tli-test-record (& bytes))]
+    [short-digest : (Array u8 32) (codec.tli-module-digest (& bytes) start 4)]
+    (match (codec.tli-decode-directory-for-lazy
+      (& bytes)
+      "build"
+      "linux-x86_64")
+      [(Err error) (io.panic (& error.message))]
+      [(Ok directory)
+        (set! (array-ref bytes start) (cast 255 : u8))
+        (match (codec.tli-decode-module-at (& directory) 0)
+          [(Err error) (io.panic (& error.message))]
+          [(Ok _) unit])
+        ;; The digest passes for the short record, but the source path ID
+        ;; begins beyond its range, even though it exists in the snapshot.
+        (set! (array-ref directory.entries 0).record-len 4)
+        (set! (array-ref directory.entries 0).module-sha256 short-digest)
+        (match (codec.tli-decode-module-at (& directory) 0)
+          [(Err error)
+            (tli-test-error! (& error) (tli.TliDecodeError.Truncated))
+            (test.assert-i64-eq
+              error.offset
+              (+ start 4)
+              "absolute short-record offset")]
+          [(Ok _) (io.panic "record cursor read past the declared record")])])))
+
+(test
   tli-full-open-checks-index-digest-and-lazy-checks-module-digest
   (let
     [bytes : (__tl_dyn-array u8) (tli-test-encode-plain (tli.TliType.I64))]
@@ -1392,9 +1421,15 @@
     (set!
       (array-ref too-big.compact-bodies 2).body.spmd-expr
       (tli.TliSpmdExpr.Literal (tli.TliSpmdLiteral.Char 1114112)))
-    (tli-test-invalid-bundle!
-      (& (codec.tli-encode-bundle (& surrogate)))
-      (tli.TliDecodeError.UnknownTag))
+    (let
+      [bytes : (__tl_dyn-array u8) (codec.tli-encode-bundle (& surrogate))]
+      (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.UnknownTag))
+      (tli-test-invalid-directory!
+        (codec.tli-decode-directory-for-lazy
+          (& bytes)
+          "test-build"
+          "linux-x86_64")
+        (tli.TliDecodeError.UnknownTag)))
     (tli-test-invalid-bundle!
       (& (codec.tli-encode-bundle (& too-big)))
       (tli.TliDecodeError.UnknownTag))))

@@ -93472,30 +93472,43 @@
           (+ index 1)
           (tc-string-list-add names (tc-env-key-name-text param-name)))])))
 
-;; Types a transformer body under the rules of macro transformer evaluation
-;; (#9628): see `defmacro-transformer-active`. The enclosing setting is restored
-;; afterwards, so the scope is exactly this body.
-(define (tc-defmacro-transformer-body-expr
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [params : (& params ast.AstMacroParamList)]
-  [body : ast.AstExpr]) : ResultTcType
+(defstruct TcDefmacroTransformerScope
+  (active bool)
+  (operands TcStringList))
+
+(define (tc-defmacro-transformer-enter!
+  [state : TcMacroState]
+  [params : (& ast.AstMacroParamList)]) : TcDefmacroTransformerScope
   (let
-    [state : TcMacroState (tc-context-macro-state ctx)]
-    [saved-active : bool
-      (tc-macro-walk-field state defmacro-transformer-active)]
-    [saved-operands : TcStringList
-      (tc-macro-walk-field state defmacro-transformer-operands)]
+    [saved : TcDefmacroTransformerScope
+      (TcDefmacroTransformerScope
+        (tc-macro-walk-field state defmacro-transformer-active)
+        (tc-macro-walk-field state defmacro-transformer-operands))]
     (tc-macro-walk-set! state defmacro-transformer-active true)
     (tc-macro-walk-set!
       state
       defmacro-transformer-operands
       (tc-macro-param-names-at params 0 Nil))
-    (let
-      [result : ResultTcType (tc-expr ctx env body)]
-      (tc-macro-walk-set! state defmacro-transformer-active saved-active)
-      (tc-macro-walk-set! state defmacro-transformer-operands saved-operands)
-      result)))
+    saved))
+
+(define (tc-defmacro-transformer-leave!
+  [state : TcMacroState]
+  [saved : TcDefmacroTransformerScope]) : unit
+  (tc-macro-walk-set! state defmacro-transformer-active saved.active)
+  (tc-macro-walk-set! state defmacro-transformer-operands saved.operands))
+
+(define (tc-defmacro-transformer-body-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [params : (& ast.AstMacroParamList)]
+  [body : ast.AstExpr]) : ResultTcType
+  (let
+    [state : TcMacroState (tc-context-macro-state ctx)]
+    [saved : TcDefmacroTransformerScope
+      (tc-defmacro-transformer-enter! state params)]
+    [result : ResultTcType (tc-expr ctx env body)]
+    (tc-defmacro-transformer-leave! state saved)
+    result))
 
 ;; Whether a `(comptime inner)` that did not fold at definition time belongs to
 ;; the transformer being checked: it names one of the transformer's operands,
@@ -118660,7 +118673,7 @@
                     ctx
                     fallback-module
                     fallback-module-id
-                    (tc-global-shared-view params)))
+                    (& params)))
                 (macro-hygiene-produced-eval-start-with-pools!
                   (tc-context-macro-state ctx)
                   syntax-pools)
@@ -119167,6 +119180,26 @@
                               (macro-type-literal-body-id (& decl))))
                           (Unavailable unavailable)))])]))])))))
 
+;; Expand executable transformer code with the definition module's macro
+;; namespace and the syntax-value types of its operands.
+(define (macro-expand-transformer-body
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [decls : (& ast.AstDeclList)]
+  [params : (& ast.AstMacroParamList)]
+  [body-id : i64]
+  [depth : i64]) : ResultMacroExpr
+  (let
+    [env : TcTypeEnv
+      (tc-bind-macro-params ctx (tc-macro-helper-env top-env) params)]
+    [state : TcMacroState (tc-context-macro-state ctx)]
+    [saved : TcDefmacroTransformerScope
+      (tc-defmacro-transformer-enter! state params)]
+    [result : ResultMacroExpr
+      (macro-expand-firing-node ctx env decls depth body-id)]
+    (tc-defmacro-transformer-leave! state saved)
+    result))
+
 (define (macro-eval-transformer-interpreted-with-env
   [ctx : TcContext]
   [fallback-module-id : i64]
@@ -119175,19 +119208,14 @@
   [macro-name-id : i64]
   ;; lint-allow: unused-variable -- used by compile-profile builds.
   [macro-name : String]
+  [params : (& ast.AstMacroParamList)]
   [body : ast.AstExpr]
+  [depth : i64]
   [captured-body? : bool]
   ;; lint-allow: unused-variable -- used by compile-profile builds.
   [expanded-args : ast.AstExprList]
   [env : ctfe_support.CtfeEnv]) : ResultMacroValueEnv
   (begin
-    (ctfe_support.ctfe-begin-macro-expansion!
-      (tc-context-ctfe-macro-state ctx)
-      (tc-context-module-id ctx))
-    (macro-result-provenance-reset-with-captured-body!
-      (tc-context-ctfe-macro-state ctx)
-      captured-body?)
-    (macro-hygiene-produced-eval-start! (tc-context-macro-state ctx) env)
     (cfg compile-profile (compiler-tc-macro-profile-start))
     (let
       [fallback : MacroTliFallbackBody
@@ -119228,17 +119256,72 @@
               fallback-module-id
               declaration-id
               env)])]
-      [eval-body : ast.AstExpr
+      [source-body : ast.AstExpr
         (match fallback
-          [(Source source-body _)
-            ;; Any AST nodes parsed while resolving the fallback body must stay
-            ;; below the expansion's produced-node floor so cached template
-            ;; nodes are never rewritten in place by hygiene.
-            (macro-hygiene-produced-eval-start-with-pools!
-              (tc-context-macro-state ctx)
-              (tc-context-pools ctx))
-            source-body]
+          [(Source source-body _) source-body]
           [_ body])]
+      [eval-body : ast.AstExpr
+        (if (macro-expr-might-fire-uncounted?
+          (tc-context-macro-state ctx)
+          (tc-context-expr-bases ctx)
+          (& source-body))
+          (let
+            [module : String (macro-decl-module-display fallback-module-id)]
+            [def-ctx : TcContext
+              (tc-context-with-module-id ctx (& module) fallback-module-id)]
+            ;; The name-set probe admits ordinary calls with colliding base
+            ;; names. Resolve candidates before building the transformer env.
+            (match (tc-context-program ctx)
+              [(Program decls)
+                (if (macro-expr-uses-macro?
+                  def-ctx
+                  (tc-context-expr-bases def-ctx)
+                  (deref decls)
+                  (& source-body)
+                  true)
+                  (let
+                    [def-env : TcTypeEnv
+                      (match (tc-hygiene-definition-env-id-inner
+                        def-ctx
+                        module
+                        fallback-module-id)
+                        [(Ok env) env]
+                        [(Err message)
+                          (return
+                            (Err
+                              (box
+                                (ctfe_support.ctfe-diagnostic-at-expr
+                                  (MacroUse)
+                                  (& source-body)
+                                  message))))])]
+                    [id : i64
+                      (try
+                        (match (tc-context-program def-ctx)
+                          [(Program definition-decls)
+                            (macro-expand-transformer-body
+                              def-ctx
+                              def-env
+                              (& (deref definition-decls))
+                              params
+                              (ast.ast-node-push source-body)
+                              (+ depth 1))]))]
+                    (tc-context-capture-active-pools! ctx)
+                    (ctfe_support.ctfe-env-adopt-active-pools! (& literal-env))
+                    (ctfe_support.ctfe-env-publish-owning-pools!
+                      (& literal-env))
+                    (tc-context-expr-get ctx id))
+                  source-body)]))
+          source-body)]
+      (ctfe_support.ctfe-begin-macro-expansion!
+        (tc-context-ctfe-macro-state ctx)
+        (tc-context-module-id ctx))
+      (macro-result-provenance-reset-with-captured-body!
+        (tc-context-ctfe-macro-state ctx)
+        captured-body?)
+      ;; Parsed fallback bodies and their expanded code are both templates.
+      (macro-hygiene-produced-eval-start-with-pools!
+        (tc-context-macro-state ctx)
+        (tc-context-pools ctx))
       (match (ctfe_support.ctfe-eval-node
         (& eval-body)
         (ctfe_support.ctfe-env-extend-id
@@ -119326,6 +119409,7 @@
   [params : ast.AstMacroParamList]
   [ret : ast.AstType]
   [body : ast.AstExpr]
+  [depth : i64]
   [expanded-args : ast.AstExprList]
   [call-expr : ast.AstExpr]) : ResultMacroValueEnv
   (let
@@ -119355,7 +119439,7 @@
           ctx
           (tc-global-shared-view fallback-module)
           fallback-module-id
-          (tc-global-shared-view params)))
+          (& params)))
       (macro-hygiene-produced-eval-start! (tc-context-macro-state ctx) env)
       (cfg compile-profile (compiler-tc-macro-profile-start))
       (match (let
@@ -119403,12 +119487,14 @@
             declaration-id
             macro-name-id
             macro-name
+            (& params)
             body
+            depth
             (macro-binding-prefix-transformer?
               ctx
               fallback-module
               fallback-module-id
-              params)
+              (& params))
             expanded-args
             env)]))))
 
@@ -119426,6 +119512,7 @@
   [params : ast.AstMacroParamList]
   [ret : ast.AstType]
   [body : ast.AstExpr]
+  [depth : i64]
   [expanded-args : ast.AstExprList]
   [call-expr : ast.AstExpr]) : ResultMacroValue
   ;; The shared expansion environment lives in the pool's base arena. Its
@@ -119457,6 +119544,7 @@
         params
         ret
         body
+        depth
         expanded-args
         call-expr)]
     (when env-ready? (ctfe_support.ctfe-env-release-bindings-to! (& env) mark))
@@ -119474,6 +119562,7 @@
   [params : ast.AstMacroParamList]
   [ret : ast.AstType]
   [body : ast.AstExpr]
+  [depth : i64]
   [expanded-args : ast.AstExprList]
   [call-expr : ast.AstExpr]) : ResultMacroValue
   (macro-prepare-transformer-pools! ctx)
@@ -119499,12 +119588,14 @@
         declaration-id
         macro-name-id
         macro-name
+        (& params)
         body
+        depth
         (macro-binding-prefix-transformer?
           ctx
           fallback-module
           fallback-module-id
-          params)
+          (& params))
         expanded-args
         env)
         [(Ok value _) (Ok value)]
@@ -119530,12 +119621,14 @@
           declaration-id
           macro-name-id
           macro-name
+          (& params)
           body
+          depth
           (macro-binding-prefix-transformer?
             ctx
             fallback-module
             fallback-module-id
-            params)
+            (& params))
           expanded-args
           env)
           [(Ok value _) (Ok value)]
@@ -119553,6 +119646,7 @@
         params
         ret
         body
+        depth
         expanded-args
         call-expr)
         [(Ok value _) (Ok value)]
@@ -119707,22 +119801,22 @@
   [ctx : TcContext]
   [fallback-module : String]
   [fallback-module-id : i64]
-  [params : ast.AstMacroParamList]) : bool
+  [params : (& ast.AstMacroParamList)]) : bool
   ;; Most macros fail the in-place shape test; only a two-parameter,
   ;; all-variadic signature reaches the typed parameter checks.
   (if (not
     (and
-      (= (ast.ast-macro-param-list-len (& params)) 2)
-      (macro-param-variadic-at? (& params) 0)
-      (macro-param-variadic-at? (& params) 1)))
+      (= (ast.ast-macro-param-list-len params) 2)
+      (macro-param-variadic-at? params 0)
+      (macro-param-variadic-at? params 1)))
     false
     (match (ast.ast-macro-param-list-get
-      (& params)
+      params
       0
       (ast.ast-macro-param-fallback))
       [(Param _ binding-ty _ _)
         (match (ast.ast-macro-param-list-get
-          (& params)
+          params
           1
           (ast.ast-macro-param-fallback))
           [(Param _ body-ty _ _)
@@ -119767,7 +119861,7 @@
           ctx
           (tc-global-shared-view fallback-module)
           fallback-module-id
-          (tc-global-shared-view params))
+          (& params))
           (macro-expand-binding-prefix-args
             ctx
             type-env
@@ -119787,6 +119881,7 @@
       params
       ret
       body
+      depth
       expanded-args
       call-expr)))
 
@@ -123229,8 +123324,28 @@
       (Ok expr-id)
       (macro-expand-node-fire-expected ctx env decls depth expr-id expected))))
 
-;; Non-tail node entry: save and restore `scratch-without-expected-count` so
-;; scratch forms in non-tail positions never trigger retries in enclosing forms.
+;; The caller has already checked whether the tree can fire. Save and restore
+;; the scratch count so a non-tail form cannot trigger retries in enclosing forms.
+(define (macro-expand-firing-node
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : (& decls ast.AstDeclList)]
+  [depth : i64]
+  [expr-id : i64]) : ResultMacroExpr
+  (let
+    [state : TcMacroState (tc-context-macro-state ctx)]
+    [scratch-mark : i64 (tc-macro-scratch-without-expected-count state)]
+    [result : ResultMacroExpr
+      (macro-expand-node-fire-expected
+        ctx
+        env
+        decls
+        depth
+        expr-id
+        (ast.AstMaybeType.No))]
+    (tc-macro-scratch-without-expected-restore! state scratch-mark)
+    result))
+
 (define (macro-expand-node
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -123244,21 +123359,9 @@
         macro-state
         (tc-context-expr-bases ctx)
         (tc-context-expr-get ctx expr-id))]
-    (if (not fires)
-      (Ok expr-id)
-      (let
-        [scratch-mark : i64
-          (tc-macro-scratch-without-expected-count macro-state)]
-        [result : ResultMacroExpr
-          (macro-expand-node-fire-expected
-            ctx
-            env
-            decls
-            depth
-            expr-id
-            (ast.AstMaybeType.No))]
-        (tc-macro-scratch-without-expected-restore! macro-state scratch-mark)
-        result))))
+    (if fires
+      (macro-expand-firing-node ctx env decls depth expr-id)
+      (Ok expr-id))))
 
 ;; One subtree scan per visit: the caller's single `fires` answer both picks
 ;; the no-fire arm and gates this call.
@@ -124326,6 +124429,18 @@
               ret
               nbody
               (& metadata))))]
+      [(DefMacro decl-meta name params ret body-id)
+        (let
+          [expanded : i64
+            (try
+              (macro-expand-transformer-body
+                ctx
+                top-env
+                (& decls)
+                (& params)
+                body-id
+                0))]
+          (Ok (DefMacro decl-meta name params ret expanded)))]
       [(Test _ _ _ _) (Ok decl)]
       [(Import decl-meta (Spec kind _ _ _ _))
         (match kind
@@ -125501,6 +125616,7 @@
                                   (tc-global-shared-view params)
                                   ret
                                   body
+                                  0
                                   expanded-args
                                   (tc-global-shared-view call-expr))
                                   [(Ok value macro-env)
@@ -125825,6 +125941,7 @@
                                         (tc-global-shared-view params)
                                         ret
                                         body
+                                        0
                                         expanded-args
                                         (tc-global-shared-view call-expr))
                                         [(Ok value macro-env)
@@ -126726,68 +126843,79 @@
     ctx
     expr-bases
     decls
-    (ast.ast-expr-segment-bases-get expr-bases id)))
+    (& (ast.ast-expr-segment-bases-get expr-bases id))
+    false))
 
 (define (macro-exprs-use-macro?
   [ctx : TcContext]
   [expr-bases : i64]
   [decls : ast.AstDeclList]
-  [exprs : ast.AstExprList]) : bool
-  (macro-exprs-use-macro-at? ctx expr-bases decls (& exprs) 0))
-
-(define (macro-exprs-use-macro-at?
-  [ctx : TcContext]
-  [expr-bases : i64]
-  [decls : ast.AstDeclList]
   [exprs : (& exprs ast.AstExprList)]
-  [index : i64]) : bool
-  (if (>= index exprs.len)
-    false
-    (or
-      (macro-node-uses-macro?
+  [transformer? : bool]) : bool
+  (for [index (iterator.range 0 exprs.len)]
+    (when
+      (macro-expr-uses-macro?
         ctx
         expr-bases
         (tc-global-shared-view decls)
-        (ast.ast-expr-list-get exprs index 0))
-      (macro-exprs-use-macro-at? ctx expr-bases decls exprs (+ index 1)))))
+        (&
+          (ast.ast-expr-segment-bases-get
+            expr-bases
+            (ast.ast-expr-list-get exprs index 0)))
+        transformer?)
+      (return true)))
+  false)
 
 (define (macro-expr-uses-macro?
   [ctx : TcContext]
   [expr-bases : i64]
   [decls : ast.AstDeclList]
-  [expr : ast.AstExpr]) : bool
-  (match (tc-global-shared-view expr)
-    [(Call func-box args)
-      (let
-        [func : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases func-box)]
-        (or
-          (macro-call-is-expandable?
-            ctx
-            (tc-global-shared-view decls)
-            (tc-global-shared-view func)
-            expr)
-          (macro-expr-uses-macro?
-            ctx
-            expr-bases
-            (tc-global-shared-view decls)
-            func)
-          (macro-exprs-use-macro? ctx expr-bases decls args)))]
-    ;; The index is a literal integer, not an expression.
-    [(TupleRef a _) (macro-node-uses-macro? ctx expr-bases decls a)]
-    ;; These forms are conservatively assumed to use a macro. A scratch form
-    ;; takes its clone-out step from expansion.
-    [(or (Break) (Continue) (SpmdReduce _) (SpmdScan _) (SpmdCompact _)
-         (SpmdBroadcast _ _) (SpmdShuffle _ _) (WithRegion _ _) (WithResource _)
-         (Quote _) (Quasiquote _) (Unquote _) (UnquoteSplicing _)
-         (ForOwnedState _) (ForOwnedStep _) (WithEscape _ _) (WithScratch _))
-      true]
-    [_
-      (macro-exprs-use-macro?
-        ctx
-        expr-bases
-        decls
-        (ast.ast-expr-child-ids expr))]))
+  [expr : (& ast.AstExpr)]
+  [transformer? : bool]) : bool
+  (let
+    [node : ast.AstExpr (owned_view.compiler-owned-reference-shared-view expr)]
+    (match expr
+      [(Call func-box args)
+        (let
+          [func : ast.AstExpr
+            (ast.ast-expr-segment-bases-get expr-bases func-box)]
+          (or
+            (macro-call-is-expandable?
+              ctx
+              (tc-global-shared-view decls)
+              (tc-global-shared-view func)
+              node)
+            (macro-expr-uses-macro?
+              ctx
+              expr-bases
+              (tc-global-shared-view decls)
+              (& func)
+              transformer?)
+            (macro-exprs-use-macro? ctx expr-bases decls args transformer?)))]
+      ;; The index is a literal integer, not an expression.
+      [(TupleRef a _)
+        (macro-expr-uses-macro?
+          ctx
+          expr-bases
+          decls
+          (& (ast.ast-expr-segment-bases-get expr-bases a))
+          transformer?)]
+      [(or (Quote _) (Quasiquote _) (Unquote _) (UnquoteSplicing _))
+        (not transformer?)]
+      ;; These forms are conservatively assumed to use a macro. A scratch form
+      ;; takes its clone-out step from expansion.
+      [(or (Break) (Continue) (SpmdReduce _) (SpmdScan _) (SpmdCompact _)
+           (SpmdBroadcast _ _) (SpmdShuffle _ _) (WithRegion _ _)
+           (WithResource _) (ForOwnedState _) (ForOwnedStep _) (WithEscape _ _)
+           (WithScratch _))
+        true]
+      [_
+        (macro-exprs-use-macro?
+          ctx
+          expr-bases
+          decls
+          (& (ast.ast-expr-child-ids node))
+          transformer?)])))
 
 (define (macro-decl-uses-macro?
   [ctx : TcContext]
@@ -126797,6 +126925,19 @@
   (match decl
     [(or (Def _ _ _ expr-box) (DefFn _ _ _ _ expr-box _))
       (macro-node-uses-macro? ctx expr-bases decls expr-box)]
+    [(DefMacro _ _ _ _ expr-box)
+      ;; The transformer check treats quoted templates as leaves.
+      (and
+        (macro-expr-id-might-fire?
+          (tc-context-macro-state ctx)
+          expr-bases
+          expr-box)
+        (macro-expr-uses-macro?
+          ctx
+          expr-bases
+          decls
+          (& (ast.ast-expr-segment-bases-get expr-bases expr-box))
+          true))]
     [(Test _ _ _ _) true]
     [(Import decl-meta (Spec kind _ _ _ _))
       (match kind
@@ -126817,7 +126958,7 @@
 ;; detach.
 (define (macro-decl-expansion-can-change-program? [decl : (& decl ast.AstDecl)]) : bool
   (match decl
-    [(or (Def _ _ _ _) (DefFn _ _ _ _ _ _)) true]
+    [(or (Def _ _ _ _) (DefFn _ _ _ _ _ _) (DefMacro _ _ _ _ _)) true]
     [(Import _ (Spec kind _ _ _ _))
       (match kind
         [(or (Macro _ _) (MacroDecls _ _)) true]
@@ -126872,7 +127013,7 @@
         (let
           [body : ast.AstExpr
             (ast.ast-expr-segment-bases-get expr-bases body-box)]
-          (if (macro-expr-might-fire-uncounted? state expr-bases body)
+          (if (macro-expr-might-fire-uncounted? state expr-bases (& body))
             index
             (macro-match-arms-first-fire-index-at
               state
@@ -126884,7 +127025,7 @@
   [state : TcMacroState]
   [expr-bases : i64]
   [expr : ast.AstExpr]) : bool
-  (macro-expr-might-fire-uncounted? state expr-bases expr))
+  (macro-expr-might-fire-uncounted? state expr-bases (& expr)))
 
 (define (macro-expr-id-might-fire?
   [state : TcMacroState]
@@ -126893,7 +127034,7 @@
   (macro-expr-might-fire-uncounted?
     state
     expr-bases
-    (ast.ast-expr-segment-bases-get expr-bases expr-id)))
+    (& (ast.ast-expr-segment-bases-get expr-bases expr-id))))
 
 (define (macro-expr-list-might-fire?
   [state : TcMacroState]
@@ -126907,9 +127048,10 @@
       (if (macro-expr-might-fire-uncounted?
         state
         expr-bases
-        (ast.ast-expr-segment-bases-get
-          expr-bases
-          (ast.ast-expr-list-get exprs index 0)))
+        (&
+          (ast.ast-expr-segment-bases-get
+            expr-bases
+            (ast.ast-expr-list-get exprs index 0))))
         (set! found true)
         (set! index (+ index 1))))
     found))
@@ -126931,7 +127073,7 @@
           (if (macro-expr-might-fire-uncounted?
             state
             expr-bases
-            (ast.ast-expr-segment-bases-get expr-bases init-box))
+            (& (ast.ast-expr-segment-bases-get expr-bases init-box)))
             (set! found true)
             (set! index (+ index 1)))]))
     found))
@@ -126939,29 +127081,28 @@
 (define (macro-expr-might-fire-uncounted?
   [state : TcMacroState]
   [expr-bases : i64]
-  [expr : ast.AstExpr]) : bool
-  (match (& expr)
+  [expr : (& ast.AstExpr)]) : bool
+  (match expr
     [(Spanned inner-box _)
       (macro-expr-might-fire-uncounted?
         state
         expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
+        (& (ast.ast-expr-segment-bases-get expr-bases inner-box)))]
     [(or (Literal _) (Var _) (CloneOut _ _) (TypeLiteral _) (PtrNull _)
          (BinaryData _) (ProgramArgc) (ProgramArgv) (ProgramEnvp)
-         (SpmdProgramIndex) (SpmdProgramCount))
+         (SpmdProgramIndex) (SpmdProgramCount) (Quote _) (Quasiquote _)
+         (Unquote _) (UnquoteSplicing _))
       false]
     ;; Expansion gives every scratch form its clone-out step, once.
-    ;; Quoted templates and loop-control forms stay on the conservative path.
-    [(or (WithScratch _) (WithEscape _ _) (Quote _) (Quasiquote _) (Unquote _)
-         (UnquoteSplicing _) (Break) (Continue))
-      true]
+    ;; Loop-control forms stay on the conservative path.
+    [(or (WithScratch _) (WithEscape _ _) (Break) (Continue)) true]
     [(Call func-box args)
       (let
         [func : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases func-box)]
         (or
           (macro-call-callee-maybe-macro-ref? expr-bases state (& func))
-          (macro-expr-might-fire-uncounted? state expr-bases func)
+          (macro-expr-might-fire-uncounted? state expr-bases (& func))
           (macro-expr-list-might-fire? state expr-bases args)))]
     [(or (Begin items) (Unsafe items) (Tuple items) (Array items)
          (DynArray items) (BracketClause items) (WithRegion _ items)

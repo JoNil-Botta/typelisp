@@ -4003,8 +4003,7 @@
               rd
               6
               (comptime (size-of (type tli.TliSpmdLetBinding))))]
-          [bindings : (__tl_dyn-array tli.TliSpmdLetBinding)
-            (__tl_make-array tli.TliSpmdLetBinding 0)]
+          [bindings : (__tl_dyn-array tli.TliSpmdLetBinding) (__tl_make-array)]
           [i : i64 0]
           (while (and rd.cursor.ok? (< i bcount))
             (let

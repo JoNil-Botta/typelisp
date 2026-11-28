@@ -60,8 +60,9 @@ struct/enum fields, and (optionally) `let` bindings.
 `cast` supports the full scalar numeric matrix: integer/char widening,
 narrowing, and truncation; `f64` <-> `f32` precision changes; and
 integer/char <-> float conversions (float -> integer truncates toward zero).
-`(make-array T n)` hands out zeroed fixed-array storage; other values are
-written out with a `(T ...)` constructor or a literal.
+`(make-array T n)` supplies zeroed fixed-array storage for types with a valid
+all-zero representation. Use an `(array value ...)` literal for explicit
+elements.
 
 ### Types
 

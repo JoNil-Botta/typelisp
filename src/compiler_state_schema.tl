@@ -148,8 +148,7 @@
           `(set!
             (array-ref cells ,slot)
             (let
-              [cell : (__tl_dyn-array ,ty) (__tl_make-array ,ty 1)]
-              (set! (array-ref cell 0) ,init)
+              [cell : (__tl_dyn-array ,ty) (__tl_make-array ,init)]
               (cast
                 (unsafe
                   (ptr->int (ptr-cast (__tl_array-data cell) : (Ptr ,ty))))

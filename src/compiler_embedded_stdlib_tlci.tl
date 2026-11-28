@@ -2105,7 +2105,7 @@
 
 (define (compiler-comptime-host-callback-expr-array
   [session : i64]
-  [_arg-a : i64]
+  [dynamic : i64]
   [_arg-b : i64]
   [_arg-c : i64]) : i64
   (compiler-comptime-host-status-callback
@@ -2118,7 +2118,9 @@
             1
             (ast.ast-node-pool-context-expr-push
               (compiler-comptime-host-session-pools)
-              (Array items)))]
+              (if (= dynamic 1)
+                (DynArray items)
+                (Array items))))]
         [_ tlci.tlci-host-callback-status-bad-request]))))
 
 ;; Intrinsic two-operand place/array nodes: pop the second operand then the

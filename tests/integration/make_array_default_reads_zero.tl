@@ -1,21 +1,7 @@
-;# make-array must hand back default-valued elements without any explicit init.
-;#
-;# The compiler drops explicit "fill the array I just allocated with its own
-;# default" loops (packet Z1) because an allocation whose element type the ZII
-;# classifier (`tc-type-zii-class`) admits lowers to `tl_array_zero`, so the slots are already the
-;# all-zero default. This fixture pins that contract for the element shapes the
-;# dropped loops relied on -- i64, bool, a fieldless-tag-0 enum -- and for an
-;# enum whose tag-0 variant carries zero-default fields (an i64 and a struct of
-;# i32s; an f64, a char and a bool), which zero-fills too (#8520). Enums whose
-;# tag-0 field is a String or a Box keep the per-element init loop (a Box
-;# default is a live allocation, so a wrongly zeroed slot would read through a
-;# null box), and so does one whose tag-0 field is such an enum; their defaults
-;# must read back as well. It pins
-;# the contract in BOTH arena states: a virgin arena (where tl_array_zero is
-;# allowed to skip its fill) and a rewound one (where it must not).
-;#
-;# Sizes are past one 4 KiB page so a wrongly skipped fill cannot hide inside
-;# memory that happened to be zero anyway.
+;# Read zeroed dynamic-array elements in both virgin and rewound arenas.
+;# The arrays span more than one page to expose stale backing bytes. Tag-0
+;# enum payloads include scalar fields, inline structs and empty strings.
+;# Holder's boxes are constructed explicitly and checked separately.
 (import stdlib.arena)
 
 (defenum Slot
@@ -35,8 +21,8 @@
   (Anon))
 
 (defenum Holder
-  (Has (Box i64))
-  (Empty))
+  (Empty)
+  (Has (Box i64)))
 
 (defenum Mixed
   (Vals f64 char bool)
@@ -114,6 +100,15 @@
       (set! i (+ i 1)))
     bad))
 
+(define (construct-holders [n : i64]) : (__tl_dyn-array Holder)
+  (let
+    [items : (__tl_dyn-array Holder) (__tl_make-array Holder n)]
+    [i : i64 0]
+    (while (< i n)
+      (set! (array-ref items i) (Has (box 0)))
+      (set! i (+ i 1)))
+    items))
+
 (define (count-non-default-holder [items : (__tl_dyn-array Holder)] [n : i64]) : i64
   (let
     [i : i64 0]
@@ -168,7 +163,7 @@
           (+
             (count-non-default-named (__tl_make-array Named n) n)
             (+
-              (count-non-default-holder (__tl_make-array Holder n) n)
+              (count-non-default-holder (construct-holders n) n)
               (+
                 (count-non-default-mixed (__tl_make-array Mixed n) n)
                 (count-non-default-wrapped (__tl_make-array Wrapped n) n)))))))))

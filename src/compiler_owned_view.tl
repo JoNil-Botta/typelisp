@@ -14,8 +14,7 @@
 ;; shared reference (SPEC section 5.13); its copy is its own view.
 ;;
 ;; The reference is stored in a one-element array cell and read back through
-;; the cell's data pointer. A dynamic array or string reference carries the
-;; handle itself; any other reference carries the referent's address.
+;; the cell's data pointer. The cell holds the referent's address.
 (defmacro (compiler-owned-reference-shared-view [reference : Expr]) : Expr
   (let
     [reference-ty : comptime.Expr (comptime.expr-type reference)]
@@ -29,42 +28,12 @@
       (let
         [value-ty : comptime.Expr
           (comptime.reference-element-type reference-ty)]
-        (match (comptime.type-info value-ty)
-          [(comptime.TypeInfo.DynArray _)
-            (if (= (size-of (type (__tl_dyn-array u8))) 16)
-              `(unsafe
-                (ptr-read
-                  (ptr-read
-                    (ptr-cast
-                      (__tl_array-data (array ,reference))
-                      : (Ptr (Ptr ,value-ty))))))
-              `(unsafe
-                (ptr-read
-                  (ptr-cast
-                    (__tl_array-data (array ,reference))
-                    : (Ptr ,value-ty)))))]
-          [(comptime.TypeInfo.Builtin kind)
-            (if (if (string.eq kind "string")
-              (= (size-of (type String)) 8)
-              false)
-              `(unsafe
-                (ptr-read
-                  (ptr-cast
-                    (__tl_array-data (array ,reference))
-                    : (Ptr ,value-ty))))
-              `(unsafe
-                (ptr-read
-                  (ptr-read
-                    (ptr-cast
-                      (__tl_array-data (array ,reference))
-                      : (Ptr (Ptr ,value-ty)))))))]
-          [_
-            `(unsafe
-              (ptr-read
-                (ptr-read
-                  (ptr-cast
-                    (__tl_array-data (array ,reference))
-                    : (Ptr (Ptr ,value-ty))))))])))))
+        `(unsafe
+          (ptr-read
+            (ptr-read
+              (ptr-cast
+                (__tl_array-data (array ,reference))
+                : (Ptr (Ptr ,value-ty))))))))))
 
 (defmacro (compiler-owned-shared-view [place : Expr]) : Expr
   `(unsafe
@@ -92,18 +61,12 @@
     (set! (deref owned-box) ,value)))
 
 (defmacro (compiler-owned-string-place-shared-view [place : Expr]) : Expr
-  (if (= (size-of (type String)) 16)
-    `(let
-      [shared-ref (& ,place)]
-      (unsafe
-        (string-from-bytes
-          (string-data shared-ref)
-          (__tl_string_length shared-ref))))
-    `(let
-      [shared-ref (& ,place)]
-      (unsafe
-        (ptr-read
-          (ptr-cast (__tl_array-data (array shared-ref)) : (Ptr String)))))))
+  `(let
+    [shared-ref (& ,place)]
+    (unsafe
+      (string-from-bytes
+        (string-data shared-ref)
+        (__tl_string_length shared-ref)))))
 
 ;; Global and ordinary local places keep the direct shallow load used by the
 ;; bootstrap. A projected place rooted in an explicit reference is lifetime-

@@ -13,6 +13,7 @@
     [empty : (Array i64 0) (make-array i64 0)]
     [texts : (Array String 2) (make-array String 2)]
     [zii : (Array unit 4) (make-array unit 4)]
+    [initial-middle : i64 (array-ref items 1)]
     (set! (array-ref items 0) 40)
     (set! (array-ref items 2) 2)
     (if (and
@@ -23,6 +24,8 @@
       (= (array-length (&mut items)) 3)
       (= (array-length empty) 0)
       (= (length texts) 2)
+      (= (__tl_string_length (array-ref texts 1)) 0)
+      (= initial-middle 0)
       (= (length zii) 4)
       (= (+ (array-ref items 0) (array-ref items 2)) 42))
       42

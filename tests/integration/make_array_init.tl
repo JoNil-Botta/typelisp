@@ -9,8 +9,8 @@
   (items (__tl_dyn-array i64)))
 
 (defenum Maybe
-  (None)
-  (Some i64))
+  (Some i64)
+  (None))
 
 (define (score-bool [ok : bool]) : i64
   (if ok
@@ -19,8 +19,8 @@
 
 (define (maybe-score [value : Maybe]) : i64
   (match value
-    [(None) 1]
-    [(Some _) 0]))
+    [(None) 0]
+    [(Some value) (score-bool (= value 0))]))
 
 (define (point-score [value : Point]) : i64
   (+ value.x (score-bool (not value.flag))))
@@ -34,6 +34,23 @@
         (and (= (array-length first.items) 1) (= (array-ref first.items 0) 7)))]
     [second : (& bags Bag) (& (array-ref bags 1))]
     (score-bool (and first-ok (= (array-length second.items) 0)))))
+
+(define (record-value [trace : (&mut trace i64)] [value : i64]) : i64
+  (set! (deref trace) (+ (* (deref trace) 10) value))
+  value)
+
+(define (explicit-values-ok?) : bool
+  (let
+    [trace : i64 0]
+    [items : (__tl_dyn-array i64)
+      (__tl_make-array
+        (record-value (&mut trace) 4)
+        (record-value (&mut trace) 2))]
+    (and
+      (= trace 42)
+      (= (array-length items) 2)
+      (= (array-ref items 0) 4)
+      (= (array-ref items 1) 2))))
 
 (define (main) : i64
   (let
@@ -66,6 +83,6 @@
               (+
                 point-score-value
                 (+ maybe-score-value (+ bag-score-value empty-score)))))))]
-    (if (= score 8)
+    (if (and (= score 8) (explicit-values-ok?))
       42
       1)))

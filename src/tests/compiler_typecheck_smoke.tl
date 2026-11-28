@@ -672,7 +672,7 @@
     (tc_tests.compiler-typecheck-ok?
       "(defenum Loop (LoopBox (Box Loop)))
 (define (main) : unit
-  (let [items : (__tl_dyn-array Loop) (__tl_make-array Loop 0)] unit))")
+  (let [items : (__tl_dyn-array Loop) (__tl_make-array)] unit))")
     (tc_tests.compiler-typecheck-error-ok?
       "(define (main [n : i64]) : unit
   (let
@@ -686,7 +686,7 @@
     (tc_tests.compiler-typecheck-error-ok?
       "(define (main) : unit
   (let [items : (__tl_dyn-array (& n i64)) (__tl_make-array (& n i64) 0)] unit))"
-      "typecheck: __tl_make-array element type is not supported")))
+      "typecheck: make-array element type (& n i64) is not zero-initializable (reason: reference); construct the elements explicitly")))
 
 ;; An owned dynamic array is covariant in its element lifetimes (#8133): the
 ;; shortening moves the handle, and `&mut` keeps its referent invariant.

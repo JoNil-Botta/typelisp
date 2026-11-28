@@ -3634,7 +3634,6 @@
           (be_state.compiler-backend-symbol-text-index program-index link-id)]
         (or
           (string.eq sym "tl_memchr")
-          (string.eq sym "tl_array_fill8")
           (string.eq sym "tl_oob_abort")
           (string.eq sym "tl_div_abort")
           (string.eq sym "tl_shift_abort")

@@ -7240,7 +7240,7 @@
     (set! items.len (+ index 1))))
 
 (define (ast-spmd-specialization-list-with-capacity [_capacity : i64]) : AstSpmdSpecializationList
-  (AstSpmdSpecializationList (__tl_make-array AstSpmdSpecialization 0) 0))
+  (AstSpmdSpecializationList (__tl_make-array) 0))
 
 (define (ast-spmd-specialization-list-new) : AstSpmdSpecializationList
   (ast-spmd-specialization-list-with-capacity 0))

@@ -47,17 +47,6 @@ tl_oom_abort:
     movq $134, %rdi
     syscall
 
-    .globl tl_array_fill8
-tl_array_fill8:
-    testq %rsi, %rsi
-    jle .L_tl_array_fill8_done
-.L_tl_array_fill8_loop:
-    movq %rdx, (%rdi)
-    addq $8, %rdi
-    subq $1, %rsi
-    jg .L_tl_array_fill8_loop
-.L_tl_array_fill8_done:
-    ret
 end-file
 
 # Named TLS offsets and the FS:0 self pointer must survive every runtime layout.

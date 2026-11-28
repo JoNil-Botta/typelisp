@@ -9637,7 +9637,6 @@
       (= name cbi.compiler-builtin-id-tl-string-concat4)
       (= name cbi.compiler-builtin-id-tl-string-concat5)
       (= name cbi.compiler-builtin-id-tl-region-reset)
-      (= name cbi.compiler-builtin-id-tl-array-fill8)
       (= name cbi.compiler-builtin-id-tl-array-zero)
       (= name cbi.compiler-builtin-id-tl-mem-fill8)
       (= name cbi.compiler-builtin-id-tl-flush-stdout-label))))

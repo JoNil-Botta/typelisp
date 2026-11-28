@@ -91095,8 +91095,7 @@
   (budget (__tl_dyn-array i64))
   (mv-src (__tl_dyn-array i64))
   (mv-index (__tl_dyn-array i64))
-  (mv-dst (__tl_dyn-array i64))
-  (mv-slot (__tl_dyn-array i64)))
+  (mv-dst (__tl_dyn-array i64)))
 
 ;; Cheap block-local refusal: a definition read again inside its own block has
 ;; its own block as the nearest common dominator of its reads and can never
@@ -91391,10 +91390,11 @@
                   phi-end
                   (- instrs.len 1))
                 phi-end)])]
-        (match (opt-guard-sink-candidate-form
+        (match (opt-guard-sink-candidate
           st.frame
           (& st.ptr-kind)
           (& st.ptr-name)
+          (& st.ptr-root)
           (& instr))
           [(Yes (None)) reader]
           [(Yes mem)
@@ -91408,22 +91408,24 @@
 
 (define (opt-guard-sink-push-moved-in!
   [blocks : (& ir.CompilerIrBlockList)]
-  [st : (&mut st (OptGuardSinkState cells cfg))]
-  [moves : i64]
+  [st : (& st (OptGuardSinkState cells cfg))]
+  [moved-slots : (& moved-slots (__tl_dyn-array i64))]
   [target : i64]
   [slot : i64]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
-  (for [k (iterator.range 0 moves)]
+  (for [k (iterator.range 0 (array-length moved-slots))]
     (when
-      (and (= (array-ref st.mv-dst k) target) (= (array-ref st.mv-slot k) slot))
+      (and
+        (= (array-ref st.mv-dst k) target)
+        (= (array-ref moved-slots k) slot))
       (ir.compiler-ir-instr-builder-push!
         builder
         (opt-guard-sink-moved-instr blocks st k)))))
 
 (define (opt-guard-sink-rebuild-block
   [blocks : (& ir.CompilerIrBlockList)]
-  [st : (&mut st (OptGuardSinkState cells cfg))]
-  [moves : i64]
+  [st : (& st (OptGuardSinkState cells cfg))]
+  [moved-slots : (& moved-slots (__tl_dyn-array i64))]
   [id : i64]) : ir.CompilerIrBlock
   (match (opt-cfg-index-block-at blocks (& st.index) id)
     [(Block label instrs)
@@ -91439,9 +91441,15 @@
             (ir.compiler-ir-instr-seq-ref instrs slot))
           (+= slot 1))
         (while (< slot total)
-          (opt-guard-sink-push-moved-in! blocks st moves id slot (&mut builder))
+          (opt-guard-sink-push-moved-in!
+            blocks
+            st
+            moved-slots
+            id
+            slot
+            (&mut builder))
           (unless
-            (opt-guard-sink-moved-out? st moves id slot)
+            (opt-guard-sink-moved-out? st (array-length moved-slots) id slot)
             (ir.compiler-ir-instr-builder-push!
               (&mut builder)
               (ir.compiler-ir-instr-seq-ref instrs slot)))
@@ -91450,17 +91458,18 @@
 
 (define (opt-guard-sink-rebuild
   [blocks : (& ir.CompilerIrBlockList)]
-  [st : (&mut st (OptGuardSinkState cells cfg))]
+  [st : (& st (OptGuardSinkState cells cfg))]
   [moves : i64]) : ir.CompilerIrBlockList
   (let
     [slots : (__tl_dyn-array ir.CompilerIrBlock)
       (__tl_make-array ir.CompilerIrBlock st.count)]
+    [moved-slots : (__tl_dyn-array i64) (__tl_make-array i64 moves)]
     (for [k (iterator.range 0 moves)]
-      (set! (array-ref st.mv-slot k) (opt-guard-sink-moved-slot blocks st k)))
+      (set! (array-ref moved-slots k) (opt-guard-sink-moved-slot blocks st k)))
     (for [id (iterator.range 0 st.count)]
       (set!
         (array-ref slots id)
-        (opt-guard-sink-rebuild-block blocks st moves id)))
+        (opt-guard-sink-rebuild-block blocks st (& moved-slots) id)))
     (Array (ir.CompilerIrBlockSeq slots st.count))))
 
 (define (opt-guard-sink-state
@@ -91532,7 +91541,6 @@
       (__tl_make-array i64 8)
       (__tl_make-array i64 (opt-guard-sink-move-limit))
       (__tl_make-array i64 (opt-guard-sink-move-limit))
-      (__tl_make-array i64 (opt-guard-sink-move-limit))
       (__tl_make-array i64 (opt-guard-sink-move-limit)))))
 
 ;; Whole-function scans this pass may spend per round. The block-local refusal
@@ -91559,7 +91567,7 @@
         (if (= (array-ref mv-count 0) 0)
           (Result blocks false)
           (Result
-            (opt-guard-sink-rebuild (& blocks) (&mut st) (array-ref mv-count 0))
+            (opt-guard-sink-rebuild (& blocks) (& st) (array-ref mv-count 0))
             true))))))
 
 ;; How many guard-first clones one function may take. The shape is a property of
@@ -115069,7 +115077,6 @@
 ;;                     tl_region_reset / tl_arena_set is deliberately NOT
 ;;                     summarized, so any reuse of freed storage still wipes.)
 ;;   - tl_array_zero : writes only through its first parameter.
-;;   - tl_array_fill8: writes only through its first parameter.
 ;;   - tl_mem_fill8  : writes only through its first parameter (hand-asm
 ;;                     `rep stosq`; reads nothing but its own arguments).
 ;;
@@ -115092,7 +115099,6 @@
   (cbi.compiler-builtin-refresh!)
   (opt-call-memory-seed-builtin! out cbi.compiler-builtin-id-tl-alloc 0)
   (opt-call-memory-seed-builtin! out cbi.compiler-builtin-id-tl-array-zero 1)
-  (opt-call-memory-seed-builtin! out cbi.compiler-builtin-id-tl-array-fill8 1)
   (opt-call-memory-seed-builtin! out cbi.compiler-builtin-id-tl-mem-fill8 1))
 
 ;; --- the fixed point: one call-graph component at a time ---------------------

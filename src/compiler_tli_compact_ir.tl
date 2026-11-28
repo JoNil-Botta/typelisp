@@ -1981,8 +1981,7 @@
     [(tli.TliSpmdExpr.Let bindings body)
       (let
         [n : i64 (array-length bindings)]
-        [out : (__tl_dyn-array tli.TliSpmdLetBinding)
-          (__tl_make-array tli.TliSpmdLetBinding 0)]
+        [out : (__tl_dyn-array tli.TliSpmdLetBinding) (__tl_make-array)]
         (for [i (iterator.range 0 n)]
           (__tl_array-push!
             out

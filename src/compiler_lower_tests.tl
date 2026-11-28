@@ -2952,26 +2952,21 @@
       (set! (array-ref a 1) 2)
       (+ (array-length a) (+ (array-ref a 0) (array-ref a 1))))))")
 
-(define (compiler-lower-make-array-init-source) : String
+(define (compiler-lower-make-array-string-source) : String
   "(define (main [n : i64]) : i64
   (let
     [items : (__tl_dyn-array String) (__tl_make-array String n)]
     (array-length items)))")
 
-;; `make-array` builds each fixed element through the private init rules: a
-;; tuple element stores its fields inline, a box element allocates its own
-;; element, and an enum element stores tag 0.
+;; Both fixed arrays are zeroed inline, including tag and payload bytes.
 (define (compiler-lower-make-array-zero-source) : String
-  "(defstruct Point (x i64) (flag bool))
-(defenum Maybe (None) (Some i64))
+  "(defenum Maybe (Some i64) (None))
 (define (main) : i64
   (let
     [tuples : (Array (Tuple i64 String) 2) (make-array (Tuple i64 String) 2)]
-    [boxes : (Array (Box Point) 3) (make-array (Box Point) 3)]
-    [maybes : (Array Maybe 2) (make-array Maybe 2)]
+    [maybes : (Array Maybe 5) (make-array Maybe 5)]
     (+ (tuple-ref (array-ref tuples 0) 0)
-      (+ (match (array-ref maybes 0) [(Some v) v] [(None) 0])
-        (deref (array-ref boxes 0)).x))))")
+       (match (array-ref maybes 0) [(Some v) v] [(None) 1]))))")
 
 (define (compiler-lower-dyn-array-literal-source) : String
   "(define dyn-array-literal-trace : i64 0)
@@ -2987,7 +2982,7 @@
           (+ (array-ref items 1)
              (+ (array-ref items 2) dyn-array-literal-trace))))))")
 
-(define (compiler-lower-make-array-register-resident-fill8-source) : String
+(define (compiler-lower-make-array-register-resident-zero-fill-source) : String
   "(defstruct OneWord (value i64))
 (define (main [n : i64]) : i64
   (let
@@ -8416,29 +8411,25 @@
       0
       "every Bool-metadata comparison has Bool-typed operands")))
 
-(define (compiler-lower-make-array-init-shape-ok? [src : String]) : bool
+(define (compiler-lower-make-array-string-shape-ok? [src : String]) : bool
   (match (lower-test-functions (lower.lower-compiler-source src))
     [(Some functions)
       (and
         (= (lower-test-function-call-count functions "main" "tl_array_zero") 1)
-        (= (lower-test-function-call-count functions "main" "tl_array_fill8") 0)
         (>= (lower-test-count functions "main" (StorePtr)) 2)
         (> (lower-test-functions-call-count functions "tl_alloc") 0))]
     [_ false]))
 
-;; A `make-array` element that is not ZII is built element by element: two
-;; tuple elements store their fields, three box elements each get their own
-;; allocation, and the enum array alone zero-fills.
 (define (compiler-lower-make-array-zero-shape-ok?) : bool
   (match (lower-test-functions
     (lower.lower-compiler-source (compiler-lower-make-array-zero-source)))
     [(Some functions)
       (and
-        (= (lower-test-function-call-count functions "main" "tl_alloc") 3)
-        (= (lower-test-count functions "main" (CopyBytes)) 2)
+        (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
+        (= (lower-test-count functions "main" (CopyBytes)) 0)
         (= (lower-test-function-call-count functions "main" "tl_array_zero") 0)
-        (= (lower-test-function-call-count functions "main" "tl_array_fill8") 0)
-        (> (lower-test-count functions "main" (StorePtr)) 0))]
+        (>= (lower-test-count functions "main" (StorePtr)) 6)
+        (= (lower-test-function-call-count functions "main" "tl_mem_fill8") 1))]
     [_ false]))
 
 (define (compiler-lower-dyn-array-literal-shape-ok?) : bool
@@ -8452,16 +8443,12 @@
     [_ false]))
 
 (define (compiler-lower-make-array-register-resident-zero-fill-shape-ok?) : bool
-  ;; A one-word register-resident struct with an all-zero default takes the
-  ;; tl_array_zero path (the aggregate zero-fill supersedes fill8 for
-  ;; all-zero defaults; fill8 remains for non-zero defaults).
+  ;; Register-resident elements also use the single zero-fill operation.
   (match (lower-test-functions
     (lower.lower-compiler-source
-      (compiler-lower-make-array-register-resident-fill8-source)))
+      (compiler-lower-make-array-register-resident-zero-fill-source)))
     [(Some functions)
-      (and
-        (= (lower-test-function-call-count functions "main" "tl_array_zero") 1)
-        (= (lower-test-function-call-count functions "main" "tl_array_fill8") 0))]
+      (= (lower-test-function-call-count functions "main" "tl_array_zero") 1)]
     [_ false]))
 
 (define (compiler-lower-make-array-nullable-cfunc-zero-fill-source) : String
@@ -8479,9 +8466,7 @@
     (lower.lower-compiler-source
       (compiler-lower-make-array-nullable-cfunc-zero-fill-source)))
     [(Some functions)
-      (and
-        (= (lower-test-function-call-count functions "main" "tl_array_zero") 1)
-        (= (lower-test-function-call-count functions "main" "tl_array_fill8") 0))]
+      (= (lower-test-function-call-count functions "main" "tl_array_zero") 1)]
     [_ false]))
 
 (define (compiler-lower-string-runtime-shape-ok? [src : String]) : bool

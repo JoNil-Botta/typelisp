@@ -8,8 +8,8 @@ Thanks for your interest! This is a learning project — all contributions welco
 2. Fetch the published self-hosted stage0 compiler: `scripts/fetch-stage0.sh`
    (or `powershell -ep Bypass -f scripts\fetch-stage0.ps1` on Windows). It
    installs as `target/stage0/typelisp` (Linux) or `target/stage0/typelisp.exe`
-   (Windows). The minimum supported seed is a stage0 published on or after
-   2026-08-30; refetch if yours is older. The bootstrap has no compatibility
+   (Windows). The minimum supported seed is a stage0 built from `4d8ae5fc4`
+   or later. Refetch older stage0 binaries. The bootstrap has no compatibility
    bridges for older seeds.
 3. Linux builds use TypeLisp's assembler, GNU `ld` for linking, and `ar` for
    static libraries. A bootstrap seed published before the assembler needs

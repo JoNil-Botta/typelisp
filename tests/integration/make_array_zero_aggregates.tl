@@ -1,7 +1,4 @@
-;; `make-array` builds one zero element at a time through the private init
-;; rules: a tuple stores its fields inline, a box element gets its own
-;; allocation, an enum starts at tag 0, and a struct's fields are assigned in
-;; place.
+;; Fixed storage starts with zero bytes for every element, including aggregates.
 (defstruct Point
   (x i64)
   (flag bool))
@@ -11,8 +8,8 @@
   (right i64))
 
 (defenum Maybe
-  (None)
-  (Some i64))
+  (Some i64)
+  (None))
 
 (define (tuple-score) : i64
   (let
@@ -28,7 +25,8 @@
 
 (define (box-score) : i64
   (let
-    [boxes : (Array (Box Point) 3) (make-array (Box Point) 3)]
+    [boxes : (Array (Box Point) 3)
+      (array (box (Point 0 false)) (box (Point 0 false)) (box (Point 0 false)))]
     (begin
       (set! (deref (array-ref boxes 0)).x 40)
       (set! (deref (array-ref boxes 1)).x 2)
@@ -43,8 +41,8 @@
   (let
     [items : (Array Maybe 2) (make-array Maybe 2)]
     (match (array-ref items 1)
-      [(None) 42]
-      [(Some value) value])))
+      [(None) 0]
+      [(Some value) (- 42 value)])))
 
 (define (struct-score) : i64
   (let

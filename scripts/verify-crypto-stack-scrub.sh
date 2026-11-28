@@ -42,12 +42,22 @@ verify_rep_rejections() {
         block && /^    rep stosq$/ { found=1 }
         END { exit !found }
     ' "$input"; then return; fi
-    for mutation in unknown-count out-of-frame nonzero-value unknown-value unknown-destination wrong-slot changed-stack backwards missing-wipe; do
+    for mutation in unknown-count out-of-frame nonzero-value unknown-value unknown-destination wrong-slot changed-stack backwards missing-wipe \
+        octal-count nondecimal-count octal-frame octal-offset octal-spill octal-reload octal-chunks overwritten-spill preserved-spill; do
         output="$work/opt$opt_level-rep-$mutation"
         mkdir -p "$output"
-        awk -v mutation="$mutation" '
+        awk -v mutation="$mutation" -v target="$NL_BOOTSTRAP_TARGET" '
             /^_tl_stdlib_crypto_stack_scrub_stdlib_crypto_stack_scrub_block_bang:$/ { block=1 }
             /^ *\.(size|seh_endproc|globl)( |$)/ { block=0 }
+            block && mutation=="octal-frame" && /^    (subq|addq) \$[1-9][0-9]*, %rsp$/ {
+                sub(/\$/,"$0"); mutated=1
+            }
+            block && /^    leaq [0-9]+\(%rsp\), %r[a-z0-9]+$/ && !array_reg {
+                array_reg=$3
+                if (mutation=="octal-offset") {
+                    sub(/leaq /,"leaq 0"); mutated=1
+                }
+            }
             block && /^    rep stosq$/ {
                 if (mutation=="unknown-count") print "    movq %r10, %rcx"
                 if (mutation=="out-of-frame") print "    movl $2147483647, %ecx"
@@ -57,15 +67,36 @@ verify_rep_rejections() {
                 if (mutation=="wrong-slot") print "    leaq (%rsp), %rdi"
                 if (mutation=="changed-stack") print "    subq $8, %rsp"
                 if (mutation=="backwards") print "    std"
-                if (mutation!="missing-wipe") mutated=1
+                if (mutation=="octal-count") print "    movl $0102, %ecx"
+                if (mutation=="nondecimal-count") print "    movl $0x66, %ecx"
+                # 104 lies inside the emitted block fill but sorts below both
+                # of its current starting offsets (8 and 16) as a string.
+                if (mutation ~ /^(octal-spill|octal-reload|overwritten-spill|preserved-spill)$/) {
+                    slot=(mutation=="overwritten-spill" ? "104" : "0")
+                    print "    movq %rdi, " (mutation=="octal-spill" ? "0" : "") slot "(%rsp)"
+                }
+                if (mutation !~ /^(missing-wipe|octal-frame|octal-offset|octal-chunks)$/) mutated=1
                 filled=1
+            }
+            block && filled && mutation=="octal-chunks" && /^    movl \$1, %(esi|edx)$/ {
+                sub(/\$1,/,"$01,"); mutated=1
             }
             block && filled && mutation=="missing-wipe" && /^    callq? / {
                 print "    nop"; mutated=1; next
             }
+            block && filled && slot!="" && /^    callq? / {
+                arg=(target ~ /windows/ ? "%rcx" : $2 ~ /^"/ ? array_reg : "%rdi")
+                if (!arg) exit 1
+                print "    movq " (mutation=="octal-reload" ? "0" : "") slot "(%rsp), " arg
+                slot=""
+            }
             { print }
             END { if (!mutated) exit 1 }
         ' "$input" > "$output/input.s"
+        if [ "$mutation" = preserved-spill ]; then
+            scripts/check-crypto-stack-scrub.sh "$output/input.s" "$output" "$NL_BOOTSTRAP_TARGET" "$opt_level" 0 > "$output/stdout" 2> "$output/stderr"
+            continue
+        fi
         if scripts/check-crypto-stack-scrub.sh "$output/input.s" "$output" "$NL_BOOTSTRAP_TARGET" "$opt_level" 0 > "$output/stdout" 2> "$output/stderr" ||
             ! grep -Fq 'unproved REP STOSQ reclaim interval: block' "$output/stderr"; then
             echo "unproved REP STOSQ was not rejected: target=$NL_BOOTSTRAP_TARGET opt=$opt_level mutation=$mutation" >&2

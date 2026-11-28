@@ -49737,7 +49737,7 @@
           [else Ok])]
       [(Err message) (Err message)])))
 
-;; Check each field's declared alignment and return the total field bytes
+;; Check each field's declared alignment and return the largest field size
 ;; and the largest effective field alignment. Natural layouts are computed
 ;; only for fields that declare an alignment, or for every field when the
 ;; struct itself declares one.
@@ -49774,7 +49774,8 @@
                 (try
                   (tc-inline-aggregate-type-layout ctx (tc-resolve-type ctx ty)))]
               [natural : i64 (tc-layout-info-align info)]
-              [next-bytes : i64 (+ field-bytes (tc-layout-info-size info))]
+              [next-bytes : i64
+                (tc-max-i64 field-bytes (tc-layout-info-size info))]
               (cond
                 [(= declared 0)
                   (tc-repr-c-declared-field-align-ok
@@ -78024,13 +78025,41 @@
 (define (tc-inline-aggregate-zero-layout-info) : TcLayoutInfo
   (tc-inline-aggregate-layout-info 0 1))
 
-(define (tc-inline-aggregate-finish-layout [cursor : i64] [max-align : i64]) : TcLayoutInfo
+;; Leave room for lowering to round the byte size up to a whole stack slot.
+(define tc-inline-layout-max-size : i64
+  9223372036854775800)
+
+(define (tc-inline-layout-range-message) : String
+  (tc-kind-message
+    (ComptimeConstraint)
+    "typecheck: inline aggregate byte size exceeds the supported layout range"))
+
+(define (tc-fixed-array-layout-range-message) : String
+  (tc-kind-message
+    (ComptimeConstraint)
+    "typecheck: fixed array byte size exceeds the supported layout range"))
+
+;; The operands are nonnegative layout quantities, with -1 marking a failed
+;; offset computation. Check before adding so no wrapped cursor is published.
+(define (tc-inline-layout-add [offset : i64] [size : i64]) : i64
+  (if (or (< offset 0) (> size (- tc-inline-layout-max-size offset)))
+    -1
+    (+ offset size)))
+
+(define (tc-inline-layout-align-up [cursor : i64] [align : i64]) : i64
+  ;; Natural and declared alignments are powers of two.
+  (tc-inline-layout-add cursor (bit-and (neg cursor) (- align 1))))
+
+(define (tc-inline-aggregate-finish-layout [cursor : i64] [max-align : i64]) : ResultTcLayoutInfo
   (let
     [align : i64
       (if (= max-align 0)
         1
         max-align)]
-    (tc-inline-aggregate-layout-info (tc-align-up cursor align) align)))
+    [size : i64 (tc-inline-layout-align-up cursor align)]
+    (if (< size 0)
+      (Err (tc-inline-layout-range-message))
+      (Ok (tc-inline-aggregate-layout-info size align)))))
 
 (define (tc-inline-aggregate-field-defs-layout
   [ctx : TcContext]
@@ -78064,7 +78093,7 @@
   [stack : TcStringList]
   [layout : TcInlineFieldLayoutList]) : ResultTcInlineFieldsLayout
   (if (>= index fields.len)
-    (match (tc-inline-aggregate-finish-layout cursor max-align)
+    (match (try (tc-inline-aggregate-finish-layout cursor max-align))
       [(TcLayoutInfo size align) (Ok (Fields size align layout))])
     (match (ast.ast-field-def-list-get
       fields
@@ -78086,9 +78115,12 @@
               (tc-layout-info-align info)
               (ast.ast-struct-repr-field-declared-align repr index))]
           [field-size : i64 (tc-layout-info-size info)]
-          [offset : i64 (tc-align-up cursor field-align)]
-          [next-cursor : i64 (+ offset field-size)]
+          [offset : i64 (tc-inline-layout-align-up cursor field-align)]
+          [next-cursor : i64 (tc-inline-layout-add offset field-size)]
           [next-align : i64 (tc-max-i64 max-align field-align)]
+          (when
+            (< next-cursor 0)
+            (return (Err (tc-inline-layout-range-message))))
           (begin
             (cfg
               compile-profile
@@ -78136,7 +78168,7 @@
   [stack : TcStringList]
   [layout : TcInlinePayloadLayoutList]) : ResultTcInlinePayloadFieldsLayout
   (if (>= index (ast.ast-type-list-len types))
-    (match (tc-inline-aggregate-finish-layout cursor max-align)
+    (match (try (tc-inline-aggregate-finish-layout cursor max-align))
       [(TcLayoutInfo size align) (Ok (Fields size align layout))])
     (let
       [ty : ast.AstType
@@ -78151,9 +78183,10 @@
             (tc-global-shared-view stack)))]
       [field-align : i64 (tc-layout-info-align info)]
       [field-size : i64 (tc-layout-info-size info)]
-      [offset : i64 (tc-align-up cursor field-align)]
-      [next-cursor : i64 (+ offset field-size)]
+      [offset : i64 (tc-inline-layout-align-up cursor field-align)]
+      [next-cursor : i64 (tc-inline-layout-add offset field-size)]
       [next-align : i64 (tc-max-i64 max-align field-align)]
+      (when (< next-cursor 0) (return (Err (tc-inline-layout-range-message))))
       (begin
         (cfg
           compile-profile
@@ -78198,8 +78231,7 @@
   [max-align : i64]
   [stack : TcStringList]) : ResultTcLayoutInfo
   (if (>= index (ast.ast-type-list-len types))
-    (match (tc-inline-aggregate-finish-layout cursor max-align)
-      [(TcLayoutInfo size align) (Ok (TcLayoutInfo size align))])
+    (tc-inline-aggregate-finish-layout cursor max-align)
     (let
       [ty : ast.AstType
         (tc-context-type-get
@@ -78213,9 +78245,10 @@
             (tc-global-shared-view stack)))]
       [field-align : i64 (tc-layout-info-align info)]
       [field-size : i64 (tc-layout-info-size info)]
-      [offset : i64 (tc-align-up cursor field-align)]
-      [next-cursor : i64 (+ offset field-size)]
+      [offset : i64 (tc-inline-layout-align-up cursor field-align)]
+      [next-cursor : i64 (tc-inline-layout-add offset field-size)]
       [next-align : i64 (tc-max-i64 max-align field-align)]
+      (when (< next-cursor 0) (return (Err (tc-inline-layout-range-message))))
       (tc-inline-aggregate-type-list-layout-at
         ctx
         types
@@ -78351,7 +78384,8 @@
   [index : i64]
   [layout : TcInlineVariantLayoutList]) : ResultTcInlineAggregateLayout
   (if (>= index variants.len)
-    (Ok (Enum (tc-align-up max-size max-align) max-align layout))
+    (match (try (tc-inline-aggregate-finish-layout max-size max-align))
+      [(TcLayoutInfo size align) (Ok (Enum size align layout))])
     (match (ast.ast-variant-def-list-get
       variants
       index
@@ -78746,12 +78780,10 @@
               (tc-context-type-get ctx elem)
               stack))]
         [align : i64 (tc-layout-info-align elem-info)]
-        [stride : i64 (tc-align-up (tc-layout-info-size elem-info) align)]
-        (if (and (> stride 0) (> count (/ 9223372036854775800 stride)))
-          (Err
-            (tc-kind-message
-              (ComptimeConstraint)
-              "typecheck: fixed array byte size exceeds the supported layout range"))
+        ;; The element layout already includes its tail padding.
+        [stride : i64 (tc-layout-info-size elem-info)]
+        (if (and (> stride 0) (> count (/ tc-inline-layout-max-size stride)))
+          (Err (tc-fixed-array-layout-range-message))
           (Ok
             (TcLayoutInfo
               (*
@@ -79247,23 +79279,29 @@
     [(Enum size align _)
       (Info name false size align (ctfe_support.ctfe-layout-field-list-empty))]))
 
-(define (tc-ctfe-struct-layout-info
-  [ctx : TcContext]
-  [struct-name : String]
-  [struct-name-id : i64]) : ctfe_support.CtfeLayoutInfo
-  (match (tc-inline-aggregate-layout-for-id ctx struct-name-id)
-    [(Ok layout) (tc-ctfe-inline-aggregate-layout-info struct-name layout)]
-    [(Err _)
-      (Info struct-name false 8 8 (ctfe_support.ctfe-layout-field-list-empty))]))
-
 (define (tc-ctfe-type-layout-info
   [ctx : TcContext]
   [type-name : String]
   [type-name-id : i64]) : ctfe_support.CtfeLayoutInfo
   (match (tc-inline-aggregate-layout-for-id ctx type-name-id)
     [(Ok layout) (tc-ctfe-inline-aggregate-layout-info type-name layout)]
-    [(Err _)
-      (Info type-name false 8 8 (ctfe_support.ctfe-layout-field-list-empty))]))
+    [(Err message)
+      (let
+        [aggregate-range (tc-inline-layout-range-message)]
+        [array-range (tc-fixed-array-layout-range-message)]
+        ;; Size queries use -1 for a layout that cannot be represented.
+        [extent : i64
+          (if (or
+            (string.eq (& message) (& aggregate-range))
+            (string.eq (& message) (& array-range)))
+            -1
+            8)]
+        (Info
+          type-name
+          false
+          extent
+          extent
+          (ctfe_support.ctfe-layout-field-list-empty)))]))
 
 (define (tc-ctfe-layout-add-alias
   [layouts : ctfe_support.CtfeLayoutInfoList]
@@ -79311,7 +79349,7 @@
         name
         (tc-module-name-id-by-id module-id name))]
     [info : ctfe_support.CtfeLayoutInfo
-      (tc-ctfe-struct-layout-info ctx key key-id)]
+      (tc-ctfe-type-layout-info ctx key key-id)]
     (tc-ctfe-layout-add-names layouts info key-id name-str name module)))
 
 (define (tc-ctfe-layouts-add-enum

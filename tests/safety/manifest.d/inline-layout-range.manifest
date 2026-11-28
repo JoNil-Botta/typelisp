@@ -1,0 +1,5 @@
+inline_layout_struct_range_reject|check-fail|tests/safety/inline_layout_struct_range_reject.tl|-|inline aggregate byte size exceeds the supported layout range
+inline_layout_tuple_range_reject|check-fail|tests/safety/inline_layout_tuple_range_reject.tl|-|inline aggregate byte size exceeds the supported layout range
+inline_layout_payload_range_reject|check-fail|tests/safety/inline_layout_payload_range_reject.tl|-|inline aggregate byte size exceeds the supported layout range
+inline_layout_reflection_range_reject|check-fail|tests/safety/inline_layout_reflection_range_reject.tl|-|make-array length must be a non-negative compile-time integer
+inline_layout_edge_ok|check-ok|tests/safety/inline_layout_edge_ok.tl|-|-

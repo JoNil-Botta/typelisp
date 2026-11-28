@@ -16,6 +16,7 @@
 (import stdlib.vector)
 (import (vector.vector String) as lint_svec)
 (import compiler_check_core)
+(import compiler_semantic_lint_facts as semantic)
 (import compiler_ast_types as ast)
 (import compiler_target_cfg_core as target_cfg)
 (import compiler_load)
@@ -31,6 +32,7 @@
 (import source_text_core as source_text)
 (import sym_i64_env)
 (import tli_cli_core as tli_cli)
+(import test_cli_core as tltest)
 
 ;; Parsed lint CLI config: input paths, stdlib roots, whether `--check`
 ;; enforcing mode was requested (exit non-zero when findings are present), and
@@ -85,8 +87,7 @@
 ;; Parse the `lint` config from arguments starting at `start`.
 (define (selfhost-lint-config-from [start : i64] [count : i64]) : ResultSelfhostLintConfig
   (let
-    [options : cli_option.CliCompileOptions
-      (cli_option.cli-compile-options (target_cfg.compiler-target-cfg-host) 1)]
+    [options : cli_option.CliCompileOptions (cli_option.cli-compile-options)]
     [args : cli_option.CliArgs
       (begin
         (selfhost-lint-language-config-reset!)
@@ -185,7 +186,12 @@
     [fspan : ast.AstSourceSpan finding.span]
     [rule-id : String finding.rule-id]
     [suggestion : String
-      (lint_core.lint-rule-suggestion (string.copy (& rule-id)))]
+      (match (& finding.fix)
+        [(LintFixUnavailable reason help)
+          (if (string.eq reason "must-use-handling")
+            (string.copy help)
+            (lint_core.lint-rule-suggestion (string.copy (& rule-id))))]
+        [_ (lint_core.lint-rule-suggestion (string.copy (& rule-id)))])]
     [diagnostic : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-with-help
         (&
@@ -296,14 +302,12 @@
       start
       source-len)))
 
-(define (selfhost-lint-span-start-index
-  [source : (& source str)]
-  [span : ast.AstSourceSpan]) : i64
-  (+
-    (selfhost-lint-line-start-index
-      source
-      (ast.ast-source-span-start-line span))
-    (- (ast.ast-source-span-start-col span) 1)))
+(define (selfhost-lint-indexed-line-start
+  [source : (& source cdiag.CompilerDiagnosticSource)]
+  [line : i64]) : i64
+  (if (and (>= line 1) (<= line source.lines))
+    (array-ref source.line-starts (- line 1))
+    (string.string-length (& source.text))))
 
 (define (selfhost-lint-skip-ws-comments
   [source : (& source str)]
@@ -389,9 +393,8 @@
 
 (define (selfhost-lint-begin-source-form-count
   [source : (& source str)]
-  [span : ast.AstSourceSpan]) : i64
+  [start : i64]) : i64
   (let
-    [start : i64 (selfhost-lint-span-start-index source span)]
     [n : i64 (string.string-length source)]
     [needle : String "(begin"]
     [needle-len : i64 (string.string-length needle)]
@@ -416,18 +419,14 @@
         count)
       1)))
 
-;; True when line `line` (1-based) of `source` contains a `lint-allow: <rule-id>`
-;; directive (as in `;; lint-allow: nested-if-ladder`). Scans the single line and
-;; stops at its newline; `and`/`or` are not short-circuiting, so the `string.string-ref`
-;; is guarded by the loop's `stop` flag rather than the bounds test.
+;; Look for a lint-allow directive between line-start and the next newline.
 (define (selfhost-lint-line-allows?
   [source : (& source str)]
-  [line : i64]
+  [line-start : i64]
   [rule-id : String]) : bool
   (let
     [needle : String (str_cat.str-cat "lint-allow: " rule-id)]
     [source-len : i64 (string.string-length source)]
-    [line-start : i64 (selfhost-lint-line-start-index source line)]
     [found : bool false]
     [idx : i64 line-start]
     [stop : bool false]
@@ -453,41 +452,18 @@
     [rule-id : String finding.rule-id]
     (if (<= line 1)
       false
-      (selfhost-lint-line-allows? source (- line 1) rule-id))))
+      (selfhost-lint-line-allows?
+        source
+        (selfhost-lint-line-start-index source (- line 1))
+        rule-id))))
 
 (define (selfhost-lint-form-origin?
   [source : (& source str)]
-  [span : ast.AstSourceSpan]
-  [form-name : String]) : bool
-  (let
-    [line : i64 (ast.ast-source-span-start-line span)]
-    [col : i64 (ast.ast-source-span-start-col span)]
-    (if (or (<= line 0) (<= col 0))
-      false
-      (let
-        [needle : String (str_cat.str-cat "(" form-name)]
-        [line-start : i64 (selfhost-lint-line-start-index source line)]
-        [idx : i64 (+ line-start (- col 1))]
-        (and
-          (string.is-string-prefix-at source needle idx)
-          (selfhost-lint-form-delim?
-            source
-            (+ idx (string.string-length needle))))))))
-
-(define (selfhost-lint-derived-form-origin?
-  [source : (& source str)]
-  [span : ast.AstSourceSpan]) : bool
-  (or
-    (selfhost-lint-form-origin? source span "cond")
-    (selfhost-lint-form-origin? source span "when")
-    (selfhost-lint-form-origin? source span "unless")))
-
-(define (selfhost-lint-source-multiform-single-begin?
-  [source : (& source str)]
-  [finding : lint_core.LintFinding]) : bool
+  [start : i64]
+  [prefix : (& prefix str)]) : bool
   (and
-    (string.eq finding.rule-id (lint_core.lint-rule-single-begin-id))
-    (> (selfhost-lint-begin-source-form-count source finding.span) 1)))
+    (string.is-string-prefix-at source prefix start)
+    (selfhost-lint-form-delim? source (+ start (string.string-length prefix)))))
 
 (define (selfhost-lint-path-suffix-at?
   [path : (& path str)]
@@ -619,36 +595,47 @@
       "tools/embedded-stdlib-tlci/prelude_surface_producer.tl")))
 
 (define (selfhost-lint-filter-derived-origins-from
-  [path : (& path str)]
-  [source : (& source str)]
+  [source : (& source cdiag.CompilerDiagnosticSource)]
   [items : lint_core.LintFindings]
   [index : i64]
   [raw-arena-allowlisted : bool]
   [out : lint_core.LintFindings]) : lint_core.LintFindings
-  (if (>=
-    index
-    (lint_core.lint-findings-count
-      (owned_view.compiler-owned-shared-view items)))
+  (if (>= index items.len)
     out
     (let
       [finding : lint_core.LintFinding
         (lint_core.lint-findings-ref items index)]
+      [line : i64 (ast.ast-source-span-start-line finding.span)]
+      [col : i64 (ast.ast-source-span-start-col finding.span)]
+      [start : i64 (+ (selfhost-lint-indexed-line-start source line) (- col 1))]
       [next : lint_core.LintFindings
         (if (or
-          (selfhost-lint-derived-form-origin? source finding.span)
-          (selfhost-lint-source-multiform-single-begin?
-            source
-            (owned_view.compiler-owned-shared-view finding))
-          (selfhost-lint-suppressed?
-            source
-            (owned_view.compiler-owned-shared-view finding))
           (and
-            (string.eq finding.rule-id (lint_core.lint-rule-raw-arena-op-id))
-            raw-arena-allowlisted))
+            (> line 0)
+            (> col 0)
+            (or
+              (selfhost-lint-form-origin? (& source.text) start "(cond")
+              (selfhost-lint-form-origin? (& source.text) start "(when")
+              (selfhost-lint-form-origin? (& source.text) start "(unless")))
+          (and
+            (string.eq
+              (& finding.rule-id)
+              (lint_core.lint-rule-single-begin-id))
+            (> (selfhost-lint-begin-source-form-count (& source.text) start) 1))
+          (and
+            (> line 1)
+            (selfhost-lint-line-allows?
+              (& source.text)
+              (selfhost-lint-indexed-line-start source (- line 1))
+              (string.copy (& finding.rule-id))))
+          (and
+            raw-arena-allowlisted
+            (string.eq
+              (& finding.rule-id)
+              (lint_core.lint-rule-raw-arena-op-id))))
           out
           (lint_core.lint-findings-add finding out))]
       (selfhost-lint-filter-derived-origins-from
-        path
         source
         items
         (+ index 1)
@@ -672,20 +659,23 @@
   [path : (& path str)]
   [source : String]
   [items : lint_core.LintFindings]) : lint_core.LintFindings
-  (let
-    [raw-arena-allowlisted : bool
-      (and
-        (selfhost-lint-findings-have-rule-from?
-          (owned_view.compiler-owned-shared-view items)
-          (lint_core.lint-rule-raw-arena-op-id))
-        (selfhost-lint-raw-arena-op-allowlisted? path))]
-    (selfhost-lint-filter-derived-origins-from
-      path
-      source
-      items
-      0
-      raw-arena-allowlisted
-      (lint_core.lint-findings-empty))))
+  (if (= items.len 0)
+    items
+    (let
+      [raw-arena-allowlisted : bool
+        (and
+          (selfhost-lint-findings-have-rule-from?
+            (owned_view.compiler-owned-shared-view items)
+            (lint_core.lint-rule-raw-arena-op-id))
+          (selfhost-lint-raw-arena-op-allowlisted? path))]
+      [indexed : cdiag.CompilerDiagnosticSource
+        (cdiag.compiler-diagnostic-source-index source)]
+      (selfhost-lint-filter-derived-origins-from
+        (& indexed)
+        items
+        0
+        raw-arena-allowlisted
+        (lint_core.lint-findings-empty)))))
 
 ;; `(import m.item)` parses like the dotted module path `m.item`; the loader
 ;; tells them apart by resolving it. Selected items are rewritten to the
@@ -1273,63 +1263,201 @@
           out)]
       (selfhost-lint-unused-unsafe-findings-from state path (+ index 1) next))))
 
-(define (selfhost-lint-typed-unused-unsafe-findings
+(defstruct SelfhostLintMustUseFinding
+  (rule-id String)
+  (message String)
+  (concrete-type String)
+  (path String)
+  (span ast.AstSourceSpan)
+  (provenance semantic.CompilerSemanticFactProvenance)
+  (help semantic.CompilerSemanticMustUse))
+
+(defenum SelfhostLintMaybeMustUseFinding
+  (Missing)
+  (Found SelfhostLintMustUseFinding))
+
+(define (selfhost-lint-must-use-finding
+  [fact : semantic.CompilerSemanticExpressionFact]) : SelfhostLintMaybeMustUseFinding
+  (if (and
+    (= fact.expression fact.report-expression)
+    (semantic.compiler-semantic-fact-editable? (& fact))
+    (match (& fact.value-use)
+      [(Discarded) true]
+      [_ false])
+    (match (& fact.must-use)
+      [(Unmarked) false]
+      [_ true]))
+    (Found
+      (SelfhostLintMustUseFinding
+        (lint_core.lint-rule-unused-must-use-value-id)
+        (str_cat.str-cat
+          "unused must-use value of type "
+          (string.copy (& fact.must-use-type)))
+        fact.must-use-type
+        fact.path
+        fact.span
+        fact.provenance
+        fact.must-use))
+    Missing))
+
+(define (selfhost-lint-must-use-to-finding
+  [finding : SelfhostLintMustUseFinding]) : lint_core.LintFinding
+  (lint_core.LintFinding
+    finding.message
+    finding.rule-id
+    0
+    finding.span
+    (lint_core.LintFixUnavailable
+      "must-use-handling"
+      (match finding.help
+        [(or (Unmarked) (Marked))
+          (lint_core.lint-rule-unused-must-use-value-suggestion)]
+        [(Result) "match the result or bind it to an underscore-prefixed name"]
+        [(Propagate)
+          "propagate the failure with try, match the result, or bind it to an underscore-prefixed name"]))))
+
+(defstruct SelfhostLintMustUseBatch
+  (owner arena.Arena)
+  (path String)
+  (findings lint_core.LintFindings))
+
+(define (selfhost-lint-collect-must-use!
+  [address : i64]
+  [facts : (& facts semantic.CompilerSemanticFacts)]) : unit
+  (let
+    [batch : (MutPtr SelfhostLintMustUseBatch)
+      (unsafe
+        (int->ptr (cast address : u64) : (MutPtr SelfhostLintMustUseBatch)))]
+    [state : SelfhostLintMustUseBatch
+      (unsafe
+        (ptr-read (ptr-cast batch : (Ptr SelfhostLintMustUseBatch))))]
+    [owner : arena.Arena
+      (unsafe
+        (arena.from-raw-handle (arena.raw-handle state.owner)))]
+    [findings : lint_core.LintFindings state.findings]
+    (in-arena
+      owner
+      (for [index
+        (iterator.range
+          0
+          (semantic.compiler-semantic-facts-expression-count facts))]
+        (match (semantic.compiler-semantic-facts-expression-at facts index)
+          [(semantic.CompilerSemanticFactLookup.Found fact)
+            (match (selfhost-lint-must-use-finding fact)
+              [(Found finding)
+                (when
+                  (string.eq (& finding.path) (& state.path))
+                  (set!
+                    findings
+                    (lint_core.lint-findings-add
+                      (selfhost-lint-must-use-to-finding finding)
+                      findings)))]
+              [(Missing) unit])]
+          [(semantic.CompilerSemanticFactLookup.Missing) unit])))
+    (unsafe
+      (set! (deref batch).findings findings))))
+
+(define (selfhost-lint-typed-findings
   [path : String]
   [source : String]
   [stdlib-roots : lint_svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : lint_core.LintFindings
+  [cfgs : sym_i64_env.SymI64Env]
+  [track-unsafe? : bool]
+  [track-must-use? : bool]) : lint_core.LintFindings
   (let
     [job-state : tc.TcJobState (tc.tc-job-state-new)]
     [unused-unsafe : tc.TcUnusedUnsafeState
       (tc.tc-job-state-unused-unsafe job-state)]
     (set! selfhost-lint-typed-unused-unsafe-error "")
-    (tc.tc-unused-unsafe-tracking-reset!
-      unused-unsafe
-      (owned_view.compiler-owned-shared-view path))
-    ;; File/package lint parses into a destroyable, explicitly installed pool.
-    ;; Run the nested check on process pools and reinstall the lint pool before
-    ;; its caller resumes the AST walk.
-    (match (if (ast.ast-node-pool-compat-context-active?)
+    (when
+      track-unsafe?
+      (tc.tc-unused-unsafe-tracking-reset! unused-unsafe (string.copy (& path))))
+    (let
+      [lint-pool-active? : bool (ast.ast-node-pool-compat-context-active?)]
+      [lint-pools : ast.AstNodePoolContext
+        (ast.ast-node-pool-compat-context-current)]
+      [batch : (__tl_dyn-array SelfhostLintMustUseBatch)
+        (__tl_make-array
+          (SelfhostLintMustUseBatch
+            (arena.current)
+            (string.copy (& path))
+            (lint_core.lint-findings-empty)))]
+      (when lint-pool-active? (ast.ast-node-pool-compat-context-clear!))
       (let
-        [lint-pools : ast.AstNodePoolContext
-          (ast.ast-node-pool-compat-context-current)]
-        (ast.ast-node-pool-compat-context-clear!)
-        (let
-          [checked : compiler_check_core.ResultCompilerCheck
+        [checked : compiler_check_core.ResultCompilerCheck
+          (if track-must-use?
+            (let
+              [owner : arena.Arena (arena.make)]
+              [result : compiler_check_core.ResultCompilerCheck
+                (semantic.compiler-check-semantic-request
+                  (semantic.CompilerSemanticCheckRequest
+                    (compiler_check_core.CompilerSemanticCheckInput.PreparedSource
+                      (string.copy (& path))
+                      (string.copy (& source))
+                      (if (parser.compiler-cfg-enabled? cfgs (ci.intern "test"))
+                        (compiler_check_core.CompilerCheckPreparation.Prepare
+                          tltest.tltest-prepare-check-program)
+                        compiler_check_core.CompilerCheckPreparation.Unchanged))
+                    stdlib-roots
+                    cfgs
+                    job-state
+                    (unsafe
+                      (arena.from-raw-handle (arena.raw-handle owner)))
+                    false
+                    true
+                    (unsafe
+                      (cast (ptr->int (__tl_array-data batch)) : i64))
+                    selfhost-lint-collect-must-use!))]
+              (arena.destroy-safe! owner)
+              result)
             (compiler_check_core.compiler-check-source-with-roots-and-cfg-and-job-state
-              (owned_view.compiler-owned-shared-view path)
-              (owned_view.compiler-owned-shared-view source)
+              (string.copy (& path))
+              (string.copy (& source))
               stdlib-roots
               cfgs
-              job-state)]
-          (ast.ast-node-pool-compat-context-use! lint-pools)
-          checked))
-      (compiler_check_core.compiler-check-source-with-roots-and-cfg-and-job-state
-        (owned_view.compiler-owned-shared-view path)
-        (owned_view.compiler-owned-shared-view source)
-        stdlib-roots
-        cfgs
-        job-state))
-      [(Ok _ _)
-        (let
-          [unused-findings : lint_core.LintFindings
-            (selfhost-lint-unused-unsafe-findings-from
-              unused-unsafe
-              path
-              0
-              (lint_core.lint-findings-empty))]
-          [findings : lint_core.LintFindings
-            (selfhost-lint-filter-derived-origins path source unused-findings)]
-          (tc.tc-unused-unsafe-tracking-disable! unused-unsafe)
-          findings)]
-      [(Err diag _)
-        (set!
-          selfhost-lint-typed-unused-unsafe-error
-          (let
-            [diag-arg (cdiag.compiler-diagnostic-list-first (deref diag))]
-            (cdiag.compiler-diagnostic-render diag-arg)))
-        (tc.tc-unused-unsafe-tracking-disable! unused-unsafe)
-        (lint_core.lint-findings-empty)])))
+              job-state))]
+        [must-use : lint_core.LintFindings
+          (selfhost-lint-filter-derived-origins
+            (string.copy (& path))
+            (string.copy (& source))
+            (replace!
+              (array-ref batch 0)
+              (SelfhostLintMustUseBatch
+                (arena.current)
+                ""
+                (lint_core.lint-findings-empty))).findings)]
+        [findings : lint_core.LintFindings
+          (match checked
+            [(Ok _ _)
+              (let
+                [unused-findings : lint_core.LintFindings
+                  (selfhost-lint-unused-unsafe-findings-from
+                    unused-unsafe
+                    path
+                    0
+                    (lint_core.lint-findings-empty))]
+                [findings : lint_core.LintFindings
+                  (selfhost-lint-filter-derived-origins
+                    path
+                    source
+                    unused-findings)]
+                (selfhost-lint-findings-append findings must-use))]
+            [(Err diag _)
+              (when
+                track-unsafe?
+                (set!
+                  selfhost-lint-typed-unused-unsafe-error
+                  (let
+                    [diag-arg
+                      (cdiag.compiler-diagnostic-list-first (deref diag))]
+                    (cdiag.compiler-diagnostic-render diag-arg))))
+              must-use])]
+        (tc.tc-unused-unsafe-tracking-clear! unused-unsafe)
+        (tc.tc-job-state-retire-owned-storage! job-state)
+        (when
+          lint-pool-active?
+          (ast.ast-node-pool-compat-context-use! lint-pools))
+        findings))))
 
 (define (selfhost-lint-source-unused-unsafe-findings
   [path : String]
@@ -1340,7 +1468,7 @@
   (if (lint_core.lint-program-has-unused-unsafe-candidate? program)
     (begin
       (+= selfhost-lint-unused-unsafe-fallback-file-count 1)
-      (selfhost-lint-typed-unused-unsafe-findings path source stdlib-roots cfgs))
+      (selfhost-lint-typed-findings path source stdlib-roots cfgs true false))
     (lint_core.lint-findings-empty)))
 
 (define (selfhost-lint-findings-without-unused-unsafe-from
@@ -1426,13 +1554,25 @@
     [required-count : i64
       (lint_core.lint-unused-unsafe-classifier-required-count)]
     [unused-count : i64 (lint_core.lint-unused-unsafe-classifier-unused-count)]
+    [must-use? : bool
+      (lint_policy.lint-policy-rule-enabled?
+        (&
+          (selfhost-lint-compatibility-policy
+            deprecated-string-concat
+            redundant-function-name
+            redundant-begin
+            prefer-dotted-field
+            name-case))
+        "unused-must-use-value")]
     [typed : lint_core.LintFindings
-      (if (> unknown-count 0)
-        (selfhost-lint-typed-unused-unsafe-findings
+      (if (or must-use? (> unknown-count 0))
+        (selfhost-lint-typed-findings
           path
           source
           stdlib-roots
-          typed-cfgs)
+          typed-cfgs
+          (> unknown-count 0)
+          must-use?)
         (lint_core.lint-findings-empty))]
     [base : lint_core.LintFindings
       (if (> unknown-count 0)

@@ -273,9 +273,7 @@
             (+ input-idx 1)
             count)]
         [options : cli_option.CliCompileOptions
-          (cli_option.cli-compile-options
-            (Linux)
-            (opt.compiler-optimize-default-level))]
+          (cli_option.cli-compile-options)]
         [output-path : String
           (compile-cli-default-output (string.copy (& input-path)))]
         [has-output : bool false]
@@ -403,10 +401,7 @@
             (tli_cli.tli-sysroot-cli-options))
           (+ batch-path-idx 1)
           count)]
-      [options : cli_option.CliCompileOptions
-        (cli_option.cli-compile-options
-          (Linux)
-          (opt.compiler-optimize-default-level))]
+      [options : cli_option.CliCompileOptions (cli_option.cli-compile-options)]
       [emit-ir : bool false]
       [prefix-cache-stats : bool false]
       [has-windows-coff-plan : bool false]

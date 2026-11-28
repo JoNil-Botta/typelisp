@@ -662,7 +662,12 @@ Exact instruction counts guard performance instead. Use
 compile-time change, and `scripts/benchmark-compile-vs-clang.sh` for the
 compile-lane reference: it builds the benchmark pairs with the compiler at
 opt1/opt2 and clang at `-O0`/`-O2`, then reports the geomean TypeLisp/clang
-wall-time and peak-RSS ratios from `target/compile-vs-clang/results.tsv`.
+wall-time and peak-RSS ratios from `target/compile-vs-clang/results.tsv`. Where
+Linux perf can count `instructions:u`, it also runs one extra build per leg
+under `perf stat -x, -e instructions:u`, appends the exact counts as the
+`tl_opt1_insns`, `clang_O0_insns`, `tl_opt2_insns` and `clang_O2_insns`
+columns, and reports their geomeans in the headline. `--no-perf` (or a host
+without a usable counter) leaves those columns `n/a`.
 `scripts/benchmark-size-vs-clang.sh` is the size-lane reference: it builds the
 same pairs with the compiler at `--opt-level s` by default (`--opt-level LEVEL`
 accepts `0`, `1`, `2` or `s`) and clang at `-Os`/`-O2`, reads `.text`, user

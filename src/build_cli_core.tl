@@ -6259,7 +6259,8 @@
       (lower.compiler-lower-state-set-spmd-package!
         lower-state
         (string.copy (& request.manifest.name)))
-      (ast.ast-node-pool-context-install! pools)
+      (unsafe
+        (ast.ast-node-pool-context-install! pools))
       (let
         [lower-names : lower.LowerNameEnv
           (match (& checked-program)

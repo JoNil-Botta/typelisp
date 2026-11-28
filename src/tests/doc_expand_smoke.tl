@@ -184,7 +184,8 @@
     [decoy-types-before : i64 (ast.ast-node-pool-context-type-len pools-b)]
     [ok : bool false]
     (ci.intern-compat-state-install! intern-b)
-    (ast.ast-node-pool-context-install! pools-b)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools-b))
     (set!
       ok
       (and
@@ -207,7 +208,8 @@
           (ast.ast-node-pool-reader-type-segment-bases)
           (ast.ast-node-pool-context-type-segment-bases (& pools-b)))))
     (ci.intern-compat-state-install! home-intern)
-    (ast.ast-node-pool-context-install! home-pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! home-pools))
     (ast.ast-node-pool-context-destroy-storage! pools-a)
     (ast.ast-node-pool-context-destroy-storage! pools-b)
     (unless

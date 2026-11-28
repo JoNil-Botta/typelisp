@@ -26544,24 +26544,20 @@
 (define (tc-context-install-pools! [ctx : TcContext]) : unit
   (if (ast.ast-node-pool-compat-context-active?)
     unit
-    (let
-      [pools : ast.AstNodePoolContext (tc-context-pools-live ctx)]
-      ;; Operand checks may append types through the installed snapshot
-      ;; while caller-origin wrappers advance this context's expression
-      ;; cell. Preserve both changes without rewinding the type prefix.
-      (ast.ast-node-pool-context-type-adopt-active! (& pools))
-      (ast.ast-node-pool-context-install! pools))))
+    (unsafe
+      (ast.ast-node-pool-context-install! (tc-context-pools-live ctx)))))
 
-;; Install `ctx` after first adopting any pool the globals are further along.
-;; Use it where either side may be ahead, such as after a check that pushed
-;; through both `ctx` and the global pushers.
+;; Install `ctx` after reconciling the expression wrapper with installed writes.
+;; Type allocation state is already shared by wrappers over the same backing.
 (define (tc-context-publish-newer-pools! [ctx : TcContext]) : unit
-  (ast.ast-node-pool-context-publish-newer! (tc-context-pools-live ctx)))
+  (unsafe
+    (ast.ast-node-pool-context-publish-newer! (tc-context-pools-live ctx))))
 
 (define (tc-install-pools! [pools : ast.AstNodePoolContext]) : unit
   (if (ast.ast-node-pool-compat-context-active?)
     unit
-    (ast.ast-node-pool-context-install! pools)))
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))))
 
 (define (tc-context-type-get [ctx : TcContext] [id : i64]) : ast.AstType
   (let
@@ -51057,18 +51053,17 @@
   (if ast.ast-node-pool-reader-explicit?
     (ast.ast-node-pool-context-type-stamp
       (& (ast.ast-node-pool-reader-context-current)))
-    (if (and
-      (> ast.ty-node-pool-revision 0)
-      (=
-        ast.ty-node-pool-revision
-        (ast.ast-type-pool-cursor-live-revision ast.ty-node-pool-revision-cell)))
-      (Some
-        (ast.AstTypePoolStamp
-          ast.ty-node-pool-revision-cell
-          ast.ty-node-pool-revision
-          ast.ty-node-pool-segment-bases
-          ast.ty-node-pool-count))
-      No)))
+    (let
+      [revision : i64
+        (ast.ast-type-pool-cursor-live-revision ast.ty-node-pool-revision-cell)]
+      (if (> revision 0)
+        (Some
+          (ast.AstTypePoolStamp
+            ast.ty-node-pool-revision-cell
+            revision
+            ast.ty-node-pool-segment-bases
+            (ast.ty-node-pool-len)))
+        No))))
 
 (define (tc-variance-epoch [ctx : TcContext]) : TcMaybeVarianceEpoch
   (cfg test (when (> tc-variance-test-mode 0) (return Missing)))
@@ -108487,7 +108482,8 @@
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : parser.ResultAstMaybeDecl
       (parser.parse-ast-decl-maybe-with-pools dispatch pools form)]
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     (match result
       [(SomeDecl decl)
         (Ok (ast.ast-decl-cons (& decl) (& (ast.ast-decl-list-new))))]
@@ -108650,7 +108646,8 @@
         ;; Publish only at this durable output boundary so declaration and
         ;; expression consumers using legacy global getters see the
         ;; committed root and all of its children.
-        (ast.ast-node-pool-context-publish-to-compat! output-pools)
+        (unsafe
+          (ast.ast-node-pool-context-publish-to-compat! output-pools))
         (macro-hygiene-env-root-finish! state)
         out)]
     [_ value]))
@@ -112454,7 +112451,8 @@
           (set! (deref produced).active false))
         ;; The recursive walker uses one-node copy-on-write replacements. Keep
         ;; those transient cursors private and publish only the committed root.
-        (ast.ast-node-pool-context-publish-to-compat! env.pools)
+        (unsafe
+          (ast.ast-node-pool-context-publish-to-compat! env.pools))
         (cfg compile-profile (compiler-tc-walk-hygiene-finish!))
         result))))
 
@@ -126411,7 +126409,7 @@
 ;;
 ;; Only the ambient arena changes. The node pools stay installed and shared, so
 ;; the type pool's hash-consing table keeps seeing every declaration -- and
-;; because `ast-type-node-pool-state-push-raw` persists a type node's payload
+;; because `ast-type-pool-append!` persists a type node's payload
 ;; into the pool's base arena BEFORE writing the row, a type node pushed while
 ;; the generation is current is already committed. The copy-out therefore shares
 ;; every type id and pushes no new type node at all; only expression rows, whose
@@ -126608,8 +126606,9 @@
         (ast.ast-node-pool-context-capture-active!
           (ast.ast-node-pool-context-shared-view (& pools)))]
       [_install-stable : unit
-        (ast.ast-node-pool-context-install!
-          (ast.ast-node-pool-context-shared-view (& pools)))]
+        (unsafe
+          (ast.ast-node-pool-context-install!
+            (ast.ast-node-pool-context-shared-view (& pools))))]
       [_leave : unit
         (unsafe
           (arena.tl_arena_set enclosing))]
@@ -126679,7 +126678,8 @@
         (cfg compile-profile (counters.bump! tc-profile-decl-generations))
         (unsafe
           (arena.tl_arena_set enclosing))
-        (ast.ast-node-pool-context-install! pools)
+        (unsafe
+          (ast.ast-node-pool-context-install! pools))
         escaped))))
 
 (define (macro-module-generated-key? [key : (& str)]) : bool
@@ -130025,7 +130025,8 @@
         (tc-job-state-macro-state job-state))
       ;; Legacy macro expansion still reads compatibility globals; bridge the
       ;; compile-owned pool and interner state at the phase boundary.
-      (ast.ast-node-pool-context-install! pools)
+      (unsafe
+        (ast.ast-node-pool-context-install! pools))
       (ci.intern-compat-state-install! intern-state)
       (macro-expand-program-structural-change-reset!
         (tc-job-state-macro-state job-state))
@@ -130172,7 +130173,8 @@
                           owner)]
                       ;; Explicit normalization mutates owner cells directly;
                       ;; publish them before matching either result.
-                      (ast.ast-node-pool-context-install! pools)
+                      (unsafe
+                        (ast.ast-node-pool-context-install! pools))
                       (ci.intern-compat-state-install! intern-state)
                       (match normalized-result
                         [(Ok normalized normalized-paths)
@@ -137873,7 +137875,9 @@
   (let
     [intern-state : ci.InternCompatState intern-state-input]
     ;; Publish owner-generated IDs before the legacy body/typecheck state runs.
-    [_install-pools : unit (ast.ast-node-pool-context-install! pools)]
+    [_install-pools : unit
+      (unsafe
+        (ast.ast-node-pool-context-install! pools))]
     [_install-intern-state : unit
       (ci.intern-compat-state-install! intern-state)]
     [_bind-source-names : unit

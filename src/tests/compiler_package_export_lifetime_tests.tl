@@ -74,7 +74,7 @@
         [_install : unit
           (begin
             (unsafe
-              ;; unsafe: installs global AST pool state; replaced before this arena ends
+              ;; Restore home-pools before releasing this scratch arena.
               (ast.ast-node-pool-context-install! pools))
             (unsafe
               ;; unsafe: installs global intern state; replaced before this arena ends
@@ -132,7 +132,6 @@
             ;; unsafe: installs global intern state; replaced before this arena ends
             (ci.intern-compat-state-install! home-interns))
           (unsafe
-            ;; unsafe: installs global AST pool state; replaced before this arena ends
             (ast.ast-node-pool-context-install! home-pools))
           (tc.compiler-typecheck-reset-intern-owned-state!)
           (unsafe

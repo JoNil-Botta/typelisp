@@ -106,7 +106,8 @@
     [_restore : unit
       (unsafe
         (arena.tl_arena_set home))]
-    (compiler_ast_types.ast-node-pool-context-install! pools)
+    (unsafe
+      (compiler_ast_types.ast-node-pool-context-install! pools))
     0))
 
 (define (compiler-arena-debug-fixture-invalid-atomic) : i64

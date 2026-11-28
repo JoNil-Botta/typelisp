@@ -609,8 +609,9 @@
         (ast.ast-node-pool-context-capture-active)]
       [job : tc.TcJobState (tc.tc-job-state-new)]
       [outer : tc.TcTypeWalkBinding (tc.tc-type-walk-bind! job)]
-      (ast.ast-node-pool-context-install!
-        (ast.ast-node-pool-context-new-with-capacities 8 8))
+      (unsafe
+        (ast.ast-node-pool-context-install!
+          (ast.ast-node-pool-context-new-with-capacities 8 8)))
       (walk-boundary-test 1)
       (walk-dag-test 40)
       (walk-expect "erasure stamps" (>= (walk-erase-run job 40) 1))
@@ -630,14 +631,16 @@
       (tc.tc-walk-serial-limit-set! 1152921504606846976)
       (walk-expect "words idle after wrap" (walk-words-idle?))
       ;; REPL requests and a failing check, under the test job's binding.
-      (ast.ast-node-pool-context-install! installed)
+      (unsafe
+        (ast.ast-node-pool-context-install! installed))
       (walk-repl-test job)
       (walk-failing-check-test job)
       (walk-context-test)
       (walk-lifetime-test)
       (walk-arena-test)
-      (ast.ast-node-pool-context-install!
-        (ast.ast-node-pool-context-new-with-capacities 8 8))
+      (unsafe
+        (ast.ast-node-pool-context-install!
+          (ast.ast-node-pool-context-new-with-capacities 8 8)))
       ;; Release in between: the next walk starts a fresh table.
       (tc.tc-type-walk-restore! outer)
       (tc.tc-type-walk-table-release! job)
@@ -649,7 +652,8 @@
       ;; Unbound: no table, the plain walks stay exact (small depth only).
       (walk-boundary-test 0)
       (walk-expect "words idle at the end" (walk-words-idle?))
-      (ast.ast-node-pool-context-install! installed))))
+      (unsafe
+        (ast.ast-node-pool-context-install! installed)))))
 
 (test walk-stamps-controls (walk-stamps-self-test))
 

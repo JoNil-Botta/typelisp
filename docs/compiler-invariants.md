@@ -2497,12 +2497,19 @@ places the rel32 field at byte 2; ELF, COFF and native TLCI relocation use that
 same site. The object branch tests check all conditions, forward/backward
 targets, invalid codes and unresolved symbols across these serializers.
 
-Both installed and explicit type pools preserve canonical IDs while their
-private hash indexes grow. At half occupancy they rehash the immutable prefix
-in the pool's base arena, including when the pending push finds an existing ID.
-The replacement descriptor and backing storage survive caller scratch resets;
-index growth never changes node IDs or publishes into a different pool owner.
-At the maximum index capacity both append paths retain the raw-append fallback.
+One cursor per type backing store owns the live length, segment growth and
+canonical index. Installed and explicit writers over that storage share the
+cursor, even when their context cells differ. At half occupancy the index
+rehashes the immutable prefix in the pool's base arena. Every writer sees the
+replacement, and the pending push can still return an existing ID. Growth
+preserves IDs and revisions. Truncation clears the shared index, starts a
+new revision and refreshes installed wrappers that share the truncated
+cursor. Retirement is terminal, including for a reset to an empty pool.
+An independently allocated pool has its own cursor and index.
+At the maximum index capacity, pushes retain the raw-append fallback.
+
+Unscoped pool installation requires an unsafe call. The installing caller
+keeps the wrapper cells and backing arenas live until it replaces the pool.
 
 
 Expression node IDs belong to an AST pool. Literal analysis in

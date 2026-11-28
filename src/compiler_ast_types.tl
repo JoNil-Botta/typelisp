@@ -18,19 +18,21 @@
 (import stdlib.runtime)
 (import stdlib.string)
 
-;; Pool storage revisions are independent of the installed compatibility pool.
-;; Every value copy of one type pool's state, the global compatibility mirror,
-;; and each context cell aliasing the same segments share one cursor cell. It is
-;; the sole authority for the next id and the installed segment count; the
-;; `count`/`segment-count` fields of a state value are caches. An id is issued
-;; at most once per revision, so a stale copy can append but can never
-;; overwrite a newer node. Only an explicit truncation moves the cursor back,
-;; and it starts a new revision so evidence retained through any alias fails.
-;;   [0] live revision (0 once retired)
-;;   [1] next id, i.e. the logical length of the live revision
-;;   [2] number of installed backing segments
-;;   [3] address of the segment-base table this cursor governs
-;;   [4] diagnostic parse payload arena, or -1 for the pool base arena
+;; One cursor per backing store owns the append position, segment growth and
+;; canonical index. Installed and explicit handles share it, including after
+;; index growth or truncation. Fresh pools get independent cursors.
+(defstruct AstTypePoolCursor
+  (revision i64)
+  (count i64)
+  (segment-count i64)
+  (segment-bases i64)
+  (parse-arena i64)
+  (base-arena i64)
+  (storage-arena i64)
+  (dedup-slots (MutPtr i64))
+  (dedup-capacity i64)
+  (dedup-count i64))
+
 (define ast-type-pool-next-revision : i64
   1)
 
@@ -43,69 +45,69 @@
         (set! ast-type-pool-next-revision (+ next 1))
         next))))
 
-(define (ast-type-pool-revision-cell-new
+(define (ast-type-pool-cursor-new
   [revision : i64]
   [segment-bases : i64]
-  [segment-count : i64]) : u64
+  [segment-count : i64]
+  [base-arena : i64]
+  [storage-arena : i64]
+  [dedup-capacity : i64]) : u64
   (let
-    [cell : (__tl_dyn-array i64) (__tl_make-array i64 5)]
-    (set! (array-ref cell 4) -1)
-    (set! (array-ref cell 0) revision)
-    (set! (array-ref cell 2) segment-count)
-    (set! (array-ref cell 3) segment-bases)
+    [cell : (__tl_dyn-array AstTypePoolCursor)
+      (__tl_make-array
+        (AstTypePoolCursor
+          revision
+          0
+          segment-count
+          segment-bases
+          -1
+          base-arena
+          storage-arena
+          (ty-node-dedup-slots-new dedup-capacity)
+          dedup-capacity
+          0))]
     (unsafe
       (ptr->int (__tl_array-data cell)))))
 
-(define (ast-type-pool-revision-cell-get [cell : u64] [index : i64]) : i64
-  (unsafe
-    (ptr-read (ptr-offset (int->ptr cell : (Ptr i64)) index))))
-
-(define (ast-type-pool-revision-cell-set!
-  [cell : u64]
-  [index : i64]
-  [value : i64]) : unit
-  (unsafe
-    (ptr-write! (ptr-offset (int->ptr cell : (MutPtr i64)) index) value)))
+(defmacro (ast-type-pool-cursor-ptr [cell : Expr]) : Expr
+  `(int->ptr ,cell : (MutPtr AstTypePoolCursor)))
 
 (define (ast-type-pool-cursor-count [cell : u64]) : i64
-  (ast-type-pool-revision-cell-get cell 1))
+  (unsafe
+    (deref (ast-type-pool-cursor-ptr cell)).count))
 
 (define (ast-type-pool-cursor-segment-count [cell : u64]) : i64
-  (ast-type-pool-revision-cell-get cell 2))
+  (unsafe
+    (deref (ast-type-pool-cursor-ptr cell)).segment-count))
 
 (define (ast-type-pool-cursor-live-revision [cell : u64]) : i64
-  (ast-type-pool-revision-cell-get cell 0))
+  (unsafe
+    (deref (ast-type-pool-cursor-ptr cell)).revision))
 
-;; Start a new revision whose logical length is `mark`. A mark beyond the live
-;; length would expose never-written slots, so it is an invariant failure.
+(define (ast-type-pool-cursor-storage-arena [cell : u64]) : i64
+  (unsafe
+    (deref (ast-type-pool-cursor-ptr cell)).storage-arena))
+
+;; Start a new revision whose logical length is `mark`. Retirement is terminal.
+;; A mark beyond the live length would expose never-written slots.
 (define (ast-type-pool-revision-truncate! [cell : u64] [mark : i64]) : i64
+  (when
+    (= (ast-type-pool-cursor-live-revision cell) 0)
+    (ci.intern-runtime-abort-string "tl: truncate retired type pool\n"))
   (if (or (< mark 0) (> mark (ast-type-pool-cursor-count cell)))
     (ci.intern-runtime-abort-string
       "tl: type pool truncate mark outside the live length\n")
     (let
       [revision : i64 (ast-type-pool-revision-fresh!)]
-      (ast-type-pool-revision-cell-set! cell 0 revision)
-      (ast-type-pool-revision-cell-set! cell 1 mark)
+      (unsafe
+        (set! (deref (ast-type-pool-cursor-ptr cell)).revision revision)
+        (set! (deref (ast-type-pool-cursor-ptr cell)).count mark))
       revision)))
 
 ;; Invalidate retained evidence without changing the length (a base-arena
 ;; rebinding changes payload ownership, not node identity).
 (define (ast-type-pool-revision-invalidate! [cell : u64]) : i64
   (ast-type-pool-revision-truncate! cell (ast-type-pool-cursor-count cell)))
-
-;; Issue the next id from the shared cursor. The caller's cached length is not
-;; consulted, so appends through any alias are totally ordered.
-(define (ast-type-pool-cursor-claim! [cell : u64] [segment-bases : i64]) : i64
-  (let
-    [id : i64 (ast-type-pool-cursor-count cell)]
-    (if (= (ast-type-pool-cursor-live-revision cell) 0)
-      (ci.intern-runtime-abort-string "tl: append to retired type pool\n")
-      (if (not (= (ast-type-pool-revision-cell-get cell 3) segment-bases))
-        (ci.intern-runtime-abort-string
-          "tl: type pool cursor used with a foreign segment table\n")
-        (begin
-          (ast-type-pool-revision-cell-set! cell 1 (+ id 1))
-          id)))))
 
 (defmacro (ast-global-shared-view [place : Expr]) : Expr
   `(unsafe
@@ -2119,8 +2121,6 @@
   node-pool-base-arena)
 (define ast-node-pool-storage-arena : i64
   0)
-(define ty-node-pool-storage-arena : i64
-  0)
 (define ast-node-pool-count : i64
   0)
 
@@ -3542,42 +3542,30 @@
       : i64)
     (* segment-index ast-type-node-pool-segment-bytes)))
 
-;; Install backing segments until `id` is addressable, using the shared
-;; cursor's segment count so a stale alias can never replace an installed
-;; segment's base. Returns the storage arena holding the segments.
-(define (ast-type-pool-cursor-cover!
-  [cell : u64]
-  [segment-bases : i64]
-  [storage-arena : i64]
-  [id : i64]) : i64
-  (let
-    [storage-root : i64 storage-arena]
-    (while (>=
-      id
-      (*
-        (ast-type-pool-cursor-segment-count cell)
-        ast-type-node-pool-segment-size))
+;; The append cursor only ever needs the next segment. Its storage arena and
+;; segment table are shared by every writer.
+(define (ast-type-pool-cursor-cover! [cursor : (MutPtr AstTypePoolCursor)]) : unit
+  (unsafe
+    (let
+      [segment-index : i64 (deref cursor).segment-count]
+      (when
+        (>= segment-index ast-node-pool-max-segments)
+        (ci.intern-runtime-abort-string
+          "tl: type pool segment table exhausted\n"))
+      (when
+        (= (deref cursor).storage-arena 0)
+        (set! (deref cursor).storage-arena (arena.tl_arena_make)))
       (let
-        [segment-index : i64 (ast-type-pool-cursor-segment-count cell)]
-        (if (>= segment-index ast-node-pool-max-segments)
-          (ci.intern-runtime-abort-string
-            "tl: type pool segment table exhausted\n")
-          unit)
-        (if (= storage-root 0)
-          (set! storage-root (arena.tl_arena_make))
-          unit)
-        (let
-          [new-segment : (__tl_dyn-array AstType)
-            (in-arena
-              (unsafe
-                (arena.from-raw-handle storage-root))
-              (__tl_make-array AstType ast-type-node-pool-segment-size))]
-          (unsafe
-            (ptr-write!
-              (ptr-offset (int->ptr segment-bases : (MutPtr i64)) segment-index)
-              (ast-type-node-pool-biased-segment-base new-segment segment-index)))
-          (ast-type-pool-revision-cell-set! cell 2 (+ segment-index 1)))))
-    storage-root))
+        [new-segment : (__tl_dyn-array AstType)
+          (in-arena
+            (arena.from-raw-handle (deref cursor).storage-arena)
+            (__tl_make-array AstType ast-type-node-pool-segment-size))]
+        (ptr-write!
+          (ptr-offset
+            (int->ptr (deref cursor).segment-bases : (MutPtr i64))
+            segment-index)
+          (ast-type-node-pool-biased-segment-base new-segment segment-index))
+        (set! (deref cursor).segment-count (+ segment-index 1))))))
 
 (define ty-node-pool-first-segment : (__tl_dyn-array AstType)
   (__tl_make-array AstType ast-type-node-pool-segment-size))
@@ -3593,17 +3581,14 @@
       (unsafe
         (ptr->int (ptr-cast (__tl_array-data bases) : (Ptr u8))))
       : i64)))
-(define ty-node-pool-segment-count : i64
-  1)
-(define ty-node-pool-count : i64
-  0)
-(define ty-node-pool-revision : i64
-  (ast-type-pool-revision-fresh!))
 (define ty-node-pool-revision-cell : u64
-  (ast-type-pool-revision-cell-new
-    ty-node-pool-revision
+  (ast-type-pool-cursor-new
+    (ast-type-pool-revision-fresh!)
     ty-node-pool-segment-bases
-    ty-node-pool-segment-count))
+    1
+    node-pool-base-arena
+    0
+    131072))
 (define ty-node-pool-exhausted : bool
   false)
 
@@ -3681,38 +3666,30 @@
       [(Slice elem) (Slice elem)]
       [_ fallback])))
 
-;; State-owned type node pools mirror the global type-node backing store while
-;; keeping each worker's ids, reset marks, and hash-consing table independent.
-;; The compiler hot path still uses the process-global compatibility wrappers
-;; until parser/typechecker/driver state is threaded through every call.
+;; State values retain a revision for stamping facts. The live append state
+;; resides in the cursor, so copying this handle does not fork the index.
 (defstruct AstTypeNodePoolState
   (segment-bases i64)
-  (count i64)
   (base-arena i64)
   (exhausted bool)
-  (dedup-slots (__tl_dyn-array i64))
-  (dedup-count i64)
-  (storage-arena i64)
-  (segment-count i64)
   (revision i64)
   (revision-cell u64))
 
 (define (ast-type-node-pool-state-with-base-arena
   [pool : AstTypeNodePoolState]
   [base-arena : i64]) : AstTypeNodePoolState
-  (AstTypeNodePoolState
-    pool.segment-bases
-    pool.count
-    base-arena
-    pool.exhausted
-    pool.dedup-slots
-    pool.dedup-count
-    pool.storage-arena
-    pool.segment-count
-    (if (= base-arena pool.base-arena)
-      pool.revision
-      (ast-type-pool-revision-invalidate! pool.revision-cell))
-    pool.revision-cell))
+  (unless
+    (=
+      base-arena
+      (unsafe
+        (deref (ast-type-pool-cursor-ptr pool.revision-cell)).base-arena))
+    (set! pool.revision (ast-type-pool-revision-invalidate! pool.revision-cell))
+    (unsafe
+      (set!
+        (deref (ast-type-pool-cursor-ptr pool.revision-cell)).base-arena
+        base-arena)))
+  (set! pool.base-arena base-arena)
+  pool)
 
 (defenum AstTypeNodePoolPushResult
   (AstTypeNodePoolPushOk AstTypeNodePoolState i64))
@@ -3744,24 +3721,22 @@
         (unsafe
           (arena.from-raw-handle base-arena))
         (ast-node-pool-segment-base-table-new))]
-    [dedup-slots : (__tl_dyn-array i64)
-      (in-arena
-        (unsafe
-          (arena.from-raw-handle base-arena))
-        (ty-node-dedup-slots-new dedup-cap))]
+    [base-address : i64
+      (unsafe
+        (cast (ptr->int (__tl_array-data segment-bases)) : i64))]
     [revision : i64 (ast-type-pool-revision-fresh!)]
+    [storage-root : i64 (ast-node-pool-arena-make)]
     [revision-cell : u64
       (in-arena
         (unsafe
           (arena.from-raw-handle base-arena))
-        (ast-type-pool-revision-cell-new
+        (ast-type-pool-cursor-new
           revision
-          (cast
-            (unsafe
-              (ptr->int (ptr-cast (__tl_array-data segment-bases) : (Ptr u8))))
-            : i64)
-          segment-count))]
-    [storage-root : i64 (ast-node-pool-arena-make)]
+          base-address
+          segment-count
+          base-arena
+          storage-root
+          dedup-cap))]
     (for [segment-index (iterator.range 0 segment-count)]
       (let
         [segment : (__tl_dyn-array AstType)
@@ -3772,20 +3747,7 @@
         (set!
           (array-ref segment-bases segment-index)
           (ast-type-node-pool-biased-segment-base (& segment) segment-index))))
-    (AstTypeNodePoolState
-      (cast
-        (unsafe
-          (ptr->int (ptr-cast (__tl_array-data segment-bases) : (Ptr u8))))
-        : i64)
-      0
-      base-arena
-      false
-      dedup-slots
-      0
-      storage-root
-      segment-count
-      revision
-      revision-cell)))
+    (AstTypeNodePoolState base-address base-arena false revision revision-cell)))
 
 (define (ast-type-node-pool-state-create [capacity : i64]) : AstTypeNodePoolState
   (ast-type-node-pool-state-init capacity (arena.tl_arena_current)))
@@ -3793,222 +3755,67 @@
 (define (ast-type-node-pool-state-len [pool : (& pool AstTypeNodePoolState)]) : i64
   (ast-type-pool-cursor-count pool.revision-cell))
 
-(define (ast-type-node-pool-state-dedup-clear [pool : AstTypeNodePoolState]) : AstTypeNodePoolState
-  (let
-    [slots : (__tl_dyn-array i64) pool.dedup-slots]
-    (ty-node-dedup-slots-clear! (ast-place-shared-view slots))
-    (set! pool.dedup-slots slots)
-    (set! pool.dedup-count 0)
-    pool))
-
 (define (ast-type-node-pool-state-reset-to
   [pool : AstTypeNodePoolState]
   [mark : i64]) : AstTypeNodePoolState
-  ;; Reset truncates the node prefix. Clear, rather than rebuild, the dedup
-  ;; table so no entry can point at an id >= mark; later pushes repopulate it.
-  (ast-type-node-pool-state-dedup-clear
-    (AstTypeNodePoolState
-      pool.segment-bases
-      mark
-      pool.base-arena
-      false
-      pool.dedup-slots
-      pool.dedup-count
-      pool.storage-arena
-      pool.segment-count
-      (ast-type-pool-revision-truncate! pool.revision-cell mark)
-      pool.revision-cell)))
+  (set! pool.revision (ast-type-pool-truncate! pool.revision-cell mark))
+  (set! pool.exhausted false)
+  pool)
 
-(define (ast-type-node-pool-state-push-raw
-  [pool : AstTypeNodePoolState]
-  [node : AstType]) : AstTypeNodePoolPushResult
-  (let
-    [segment-bases : i64 pool.segment-bases]
-    [cell : u64 pool.revision-cell]
-    [id : i64 (ast-type-pool-cursor-claim! cell segment-bases)]
-    [storage-arena : i64
-      (ast-type-pool-cursor-cover! cell segment-bases pool.storage-arena id)]
-    [biased-base : i64
-      (unsafe
-        (ptr-read (ptr-offset (int->ptr segment-bases : (Ptr i64)) (shr id 10))))]
-    [base-arena : i64 pool.base-arena]
-    [parse-arena : i64 (ast-type-pool-revision-cell-get cell 4)]
-    [persistent : AstType
-      (in-arena
-        (unsafe
-          (arena.from-raw-handle
-            (if (= parse-arena -1)
-              base-arena
-              parse-arena)))
-        (ty-node-persist (& node)))]
-    [dest : (MutPtr i64)
-      (unsafe
-        (int->ptr (+ biased-base (* id (ast-type-node-bytes))) : (MutPtr i64)))]
-    [source : (Ptr i64)
-      (unsafe
-        (ptr-cast (ptr-addr-of persistent) : (Ptr i64)))]
-    (unsafe
-      (ptr-write! dest (ptr-read source))
-      (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
-      (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2))))
-    (AstTypeNodePoolPushOk
-      (AstTypeNodePoolState
-        segment-bases
-        (+ id 1)
-        base-arena
-        pool.exhausted
-        pool.dedup-slots
-        pool.dedup-count
-        storage-arena
-        (ast-type-pool-cursor-segment-count cell)
-        (ast-type-pool-cursor-live-revision cell)
-        cell)
-      id)))
-
-(define (ast-type-node-pool-state-push-dedup
-  [pool : AstTypeNodePoolState]
-  [node : (& AstType)]
-  [dedup-slots : (__tl_dyn-array i64)]
-  [dedup-count : i64]
-  [idx : i64]
-  [mask : i64]) : AstTypeNodePoolPushResult
-  (let
-    [slot : i64 (array-ref dedup-slots idx)]
-    (if (= slot 0)
-      (match (ast-type-node-pool-state-push-raw
-        pool
-        (owned_view.compiler-owned-reference-shared-view node))
-        [(AstTypeNodePoolPushOk next id)
-          (set! (array-ref dedup-slots idx) (+ id 1))
-          (ty-node-dedup-note-filled!
-            (unsafe
-              (__tl_array-data dedup-slots))
-            (+ mask 1)
-            idx)
-          (AstTypeNodePoolPushOk
-            (AstTypeNodePoolState
-              next.segment-bases
-              next.count
-              next.base-arena
-              next.exhausted
-              dedup-slots
-              (+ dedup-count 1)
-              next.storage-arena
-              next.segment-count
-              next.revision
-              next.revision-cell)
-            id)])
-      (if (and
-        (< (- slot 1) (ast-type-node-pool-state-len pool))
-        (ty-node-shallow-value-eq?
-          (ast-type-node-pool-state-get pool (- slot 1))
-          (owned_view.compiler-owned-reference-shared-view node)))
-        (AstTypeNodePoolPushOk pool (- slot 1))
-        (ast-type-node-pool-state-push-dedup
-          pool
-          node
-          dedup-slots
-          dedup-count
-          (bit-and (+ idx 1) mask)
-          mask)))))
+(define (ast-type-pool-append!
+  [cursor : (MutPtr AstTypePoolCursor)]
+  [node : (& AstType)]) : i64
+  (unsafe
+    (let
+      [id : i64 (deref cursor).count]
+      (when
+        (= (deref cursor).revision 0)
+        (ci.intern-runtime-abort-string "tl: append to retired type pool\n"))
+      (when
+        (>= (shr id 10) (deref cursor).segment-count)
+        (ast-type-pool-cursor-cover! cursor))
+      (let
+        [biased-base : i64
+          (ptr-read
+            (ptr-offset
+              (int->ptr (deref cursor).segment-bases : (Ptr i64))
+              (shr id 10)))]
+        [parse-arena : i64 (deref cursor).parse-arena]
+        [persistent : AstType
+          (in-arena
+            (arena.from-raw-handle
+              (if (= parse-arena -1)
+                (deref cursor).base-arena
+                parse-arena))
+            (ty-node-persist node))]
+        [dest : (MutPtr i64)
+          (int->ptr (+ biased-base (* id (ast-type-node-bytes))) : (MutPtr i64))]
+        [source : (Ptr i64) (ptr-cast (ptr-addr-of persistent) : (Ptr i64))]
+        (ptr-write! dest (ptr-read source))
+        (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
+        (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2)))
+        (set! (deref cursor).count (+ id 1))
+        id))))
 
 (define (ast-type-node-pool-state-push
   [pool : AstTypeNodePoolState]
   [node : (& AstType)]) : AstTypeNodePoolPushResult
   (let
-    [dedup-slots : (__tl_dyn-array i64)
-      (ast-place-shared-view pool.dedup-slots)]
-    [dedup-cap : i64 (ty-node-dedup-table-capacity dedup-slots)]
-    [dedup-count : i64 pool.dedup-count]
-    (if (>= (* dedup-count 2) dedup-cap)
-      (if (>= dedup-cap ty-node-dedup-max-capacity)
-        (ast-type-node-pool-state-push-raw
-          pool
-          (owned_view.compiler-owned-reference-shared-view node))
-        (in-arena
-          (unsafe
-            (arena.from-raw-handle pool.base-arena))
-          (let
-            [grown-slots : (__tl_dyn-array i64)
-              (ast-type-dedup-grow-slots
-                pool.segment-bases
-                (& dedup-slots)
-                pool.base-arena)]
-            [grown : AstTypeNodePoolState
-              (AstTypeNodePoolState
-                pool.segment-bases
-                pool.count
-                pool.base-arena
-                pool.exhausted
-                grown-slots
-                pool.dedup-count
-                pool.storage-arena
-                pool.segment-count
-                pool.revision
-                pool.revision-cell)]
-            (ast-type-node-pool-state-push (ast-global-shared-view grown) node))))
-      (let
-        [mask : i64 (- dedup-cap 1)]
-        [idx : i64 (ty-node-dedup-slot-index (ty-node-hash-value node) mask)]
-        (ast-type-node-pool-state-push-dedup
-          pool
-          node
-          dedup-slots
-          dedup-count
-          idx
-          mask)))))
+    [id : i64 (ast-type-pool-push! pool.revision-cell node)]
+    (set! pool.revision (ast-type-pool-cursor-live-revision pool.revision-cell))
+    (AstTypeNodePoolPushOk pool id)))
 
 (define (ast-type-node-pool-state-get
   [pool : (& pool AstTypeNodePoolState)]
   [id : i64]) : AstType
-  (let
-    [biased-base : i64
-      (unsafe
-        (ptr-read
-          (ptr-offset (int->ptr pool.segment-bases : (Ptr i64)) (shr id 10))))]
-    (unsafe
-      (ptr-read
-        (int->ptr (+ biased-base (* id (ast-type-node-bytes))) : (Ptr AstType))))))
+  (ast-type-segment-bases-get pool.segment-bases id))
 
-;: Append `node` to the pool unconditionally and return its ty id.
+;: Append `node` to the installed pool unconditionally and return its type ID.
 (define (ty-node-push-raw [node : (& AstType)]) : i64
-  (let
-    [cell : u64 ty-node-pool-revision-cell]
-    [segment-bases : i64 ty-node-pool-segment-bases]
-    [id : i64 (ast-type-pool-cursor-claim! cell segment-bases)]
-    (set!
-      ty-node-pool-storage-arena
-      (ast-type-pool-cursor-cover!
-        cell
-        segment-bases
-        ty-node-pool-storage-arena
-        id))
-    (set! ty-node-pool-segment-count (ast-type-pool-cursor-segment-count cell))
-    (set! ty-node-pool-revision (ast-type-pool-cursor-live-revision cell))
-    (let
-      [biased-base : i64
-        (unsafe
-          (ptr-read
-            (ptr-offset (int->ptr segment-bases : (Ptr i64)) (shr id 10))))]
-      [base-arena : i64 node-pool-base-arena]
-      [persistent : AstType
-        (in-arena
-          (unsafe
-            (arena.from-raw-handle base-arena))
-          (ty-node-persist node))]
-      [dest : (MutPtr i64)
-        (unsafe
-          (int->ptr (+ biased-base (* id (ast-type-node-bytes))) : (MutPtr i64)))]
-      [source : (Ptr i64)
-        (unsafe
-          (ptr-cast (ptr-addr-of persistent) : (Ptr i64)))]
-      (unsafe
-        (ptr-write! dest (ptr-read source))
-        (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
-        (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2))))
-      (set! ty-node-pool-count (+ id 1))
-      (ast-node-pool-active-context-capture-type!)
-      id)))
+  (unsafe
+    (ast-type-pool-append!
+      (ast-type-pool-cursor-ptr ty-node-pool-revision-cell)
+      node)))
 
 ;; --- ty-node hash-consing ----------------------------------------------------
 ;; Type nodes are immutable and constructed
@@ -4042,11 +3849,12 @@
 (define ty-node-dedup-log-words : i64
   16385)
 
-(define (ty-node-dedup-slots-new [capacity : i64]) : (__tl_dyn-array i64)
-  (__tl_make-array i64 (+ capacity ty-node-dedup-log-words)))
-
-(defmacro (ty-node-dedup-table-capacity [slots : Expr]) : i64
-  `(- (array-length ,slots) ty-node-dedup-log-words))
+(define (ty-node-dedup-slots-new [capacity : i64]) : (MutPtr i64)
+  (let
+    [slots : (__tl_dyn-array i64)
+      (__tl_make-array i64 (+ capacity ty-node-dedup-log-words))]
+    (unsafe
+      (__tl_array-data slots))))
 
 ;; Log table slot IDX as filled. TABLE points at the first of CAPACITY table
 ;; slots; the log follows them.
@@ -4064,50 +3872,54 @@
           (ptr-write! count-cell (+ count 1)))
         (ptr-write! count-cell (+ ty-node-dedup-log-capacity 1))))))
 
-;; Empty every table slot filled since the last clear: the logged slots, or the
-;; whole table when the log overflowed. The table then holds no entry.
-(define (ty-node-dedup-slots-clear! [slots : (__tl_dyn-array i64)]) : unit
-  (let
-    [capacity : i64 (ty-node-dedup-table-capacity slots)]
-    [count : i64 (array-ref slots capacity)]
-    (if (> count ty-node-dedup-log-capacity)
-      (for [i (iterator.range 0 capacity)]
-        (set! (array-ref slots i) 0))
-      (for [i (iterator.range 1 (+ count 1))]
-        (set! (array-ref slots (array-ref slots (+ capacity i))) 0)))
-    (set! (array-ref slots capacity) 0)))
-
-;; A copy of SLOTS in the current arena. Unless the log overflowed, every
-;; filled table slot is logged, so copying those slots and the log into a fresh
-;; (all-empty) array reproduces the whole array.
-(define (ty-node-dedup-slots-copy [slots : (__tl_dyn-array i64)]) : (__tl_dyn-array
-    i64)
-  (let
-    [length : i64 (array-length slots)]
-    [capacity : i64 (ty-node-dedup-table-capacity slots)]
-    [copy : (__tl_dyn-array i64) (__tl_make-array i64 length)]
-    [count : i64 (array-ref slots capacity)]
-    (if (> count ty-node-dedup-log-capacity)
-      (for [i (iterator.range 0 length)]
-        (set! (array-ref copy i) (array-ref slots i)))
-      (begin
-        (for [i (iterator.range 1 (+ count 1))]
-          (let
-            [at : i64 (array-ref slots (+ capacity i))]
-            (set! (array-ref copy (+ capacity i)) at)
-            (set! (array-ref copy at) (array-ref slots at))))
-        (set! (array-ref copy capacity) count)))
-    copy))
-
-(define ty-node-dedup-capacity : i64
-  131072)
-(define ty-node-dedup-slots : (__tl_dyn-array i64)
-  (ty-node-dedup-slots-new 131072))
-(define ty-node-dedup-slots-data-address : u64
+;; Empty the logged slots, or the whole table when the log overflowed.
+(define (ast-type-pool-dedup-clear! [cell : u64]) : unit
   (unsafe
-    (ptr->int (__tl_array-data ty-node-dedup-slots))))
-(define ty-node-dedup-count : i64
-  0)
+    (let
+      [cursor : (MutPtr AstTypePoolCursor) (ast-type-pool-cursor-ptr cell)]
+      [slots : (MutPtr i64) (deref cursor).dedup-slots]
+      [capacity : i64 (deref cursor).dedup-capacity]
+      [log : (MutPtr i64) (ptr-offset slots capacity)]
+      [count : i64 (ptr-read log)]
+      (if (> count ty-node-dedup-log-capacity)
+        (for [i (iterator.range 0 capacity)]
+          (ptr-write! (ptr-offset slots i) 0))
+        (for [i (iterator.range 1 (+ count 1))]
+          (ptr-write! (ptr-offset slots (ptr-read (ptr-offset log i))) 0)))
+      (ptr-write! log 0)
+      (set! (deref cursor).dedup-count 0))))
+
+(define (ast-type-pool-truncate! [cell : u64] [mark : i64]) : i64
+  (let
+    [revision : i64 (ast-type-pool-revision-truncate! cell mark)]
+    (ast-type-pool-dedup-clear! cell)
+    revision))
+
+;; Copy the occupied slots and log into an independent pool's arena. When the
+;; log overflowed the full array is needed to retain every indexed ID.
+(define (ast-type-pool-dedup-copy! [source-cell : u64] [dest-cell : u64]) : unit
+  (unsafe
+    (let
+      [source : (MutPtr AstTypePoolCursor)
+        (ast-type-pool-cursor-ptr source-cell)]
+      [dest : (MutPtr AstTypePoolCursor) (ast-type-pool-cursor-ptr dest-cell)]
+      [slots : (MutPtr i64) (deref source).dedup-slots]
+      [capacity : i64 (deref source).dedup-capacity]
+      [copy : (MutPtr i64) (ty-node-dedup-slots-new capacity)]
+      [count : i64 (ptr-read (ptr-offset slots capacity))]
+      (if (> count ty-node-dedup-log-capacity)
+        (for [i (iterator.range 0 (+ capacity ty-node-dedup-log-words))]
+          (ptr-write! (ptr-offset copy i) (ptr-read (ptr-offset slots i))))
+        (begin
+          (for [i (iterator.range 1 (+ count 1))]
+            (let
+              [at : i64 (ptr-read (ptr-offset slots (+ capacity i)))]
+              (ptr-write! (ptr-offset copy (+ capacity i)) at)
+              (ptr-write! (ptr-offset copy at) (ptr-read (ptr-offset slots at)))))
+          (ptr-write! (ptr-offset copy capacity) count)))
+      (set! (deref dest).dedup-slots copy)
+      (set! (deref dest).dedup-capacity capacity)
+      (set! (deref dest).dedup-count (deref source).dedup-count))))
 
 ;; Upper bound on the doubling above: 2^24 slots indexes 8.4M distinct type
 ;; nodes for 128 MiB of table. No self-host workload comes within an order of
@@ -4116,13 +3928,8 @@
 (define ty-node-dedup-max-capacity : i64
   16777216)
 
-;; Clearing empties the index but KEEPS whatever capacity the table has grown
-;; to: the workload that forced the growth is about to be re-indexed, so
-;; shrinking would only re-pay the rehash. Read the extent off the array rather
-;; than the capacity global so a grown table can never be half-cleared.
 (define (ty-node-dedup-clear!) : unit
-  (ty-node-dedup-slots-clear! (ast-place-shared-view ty-node-dedup-slots))
-  (set! ty-node-dedup-count 0))
+  (ast-type-pool-dedup-clear! ty-node-pool-revision-cell))
 
 (define (ty-lifetime-list-hash-at
   [items : (& items AstLifetimeList)]
@@ -4226,146 +4033,99 @@
     (ty-node-get a-id)
     (owned_view.compiler-owned-reference-shared-view b)))
 
-;; Double the dedup table and reinsert every live entry, keeping the index
-;; effective for the whole compile instead of switching itself off at half load.
-;;
-;; ARENA OWNERSHIP: the slots array is POOL STATE -- `ty-node-pool-state-capture`
-;; hands it to every `AstTypeNodePoolState` and an install points the globals
-;; straight back at it -- so it lives in the arena that owns the pool
-;; (`node-pool-base-arena`), exactly like the segment tables and the persisted
-;; node payloads (see `ty-node-push-raw`). Allocating it in "whatever arena is
-;; current" would put a table that outlives every transient scratch arena inside
-;; one of them: a grow that fired during lowering or macro expansion would be
-;; freed under the pool. Arena handles are stable roots, so allocating through
-;; `in-arena` needs no post-allocation head recapture or republication.
-;;
-;; The reinsert needs no equality check: every entry already survived an
-;; equality probe when it was inserted, so the entries are pairwise distinct and
-;; the first free slot on the new probe path is the right one. Growth is decided
-;; purely by count against capacity, so it fires at the same push on every run.
-;; Rehash immutable prefix ids into a replacement index owned by the pool.
-;; Callers run in `base-arena` (or write through a pointer inside `base-arena`)
-;; so the returned dynamic array stays owned by the pool's arena across both
-;; 8B and 16B dynamic-array representations.
-(define (ast-type-dedup-grow-slots
-  [type-bases : i64]
-  [old-slots : (& old-slots (__tl_dyn-array i64))]
-  [base-arena : i64]) : (__tl_dyn-array i64)
+;; Rehash the immutable rows into a replacement index in the pool's base
+;; arena. Publish the pointer and capacity together in the shared cursor.
+(define (ast-type-pool-dedup-grow! [cursor : (MutPtr AstTypePoolCursor)]) : unit
   (in-arena
     (unsafe
-      (arena.from-raw-handle base-arena))
-    (let
-      [old-capacity : i64 (ty-node-dedup-table-capacity old-slots)]
-      [new-capacity : i64 (* old-capacity 2)]
-      [new-slots : (__tl_dyn-array i64) (ty-node-dedup-slots-new new-capacity)]
-      [mask : i64 (- new-capacity 1)]
-      (for [i (iterator.range 0 old-capacity)]
-        (let
-          [slot : i64 (array-ref old-slots i)]
-          (if (= slot 0)
-            unit
-            (let
-              [idx : i64
-                (ty-node-dedup-slot-index
-                  (ty-node-hash-value
-                    (& (ast-type-segment-bases-get type-bases (- slot 1))))
-                  mask)]
-              (while (not (= (array-ref new-slots idx) 0))
-                (set! idx (bit-and (+ idx 1) mask)))
-              (set! (array-ref new-slots idx) slot)))))
-      ;; The rehash fills slots it does not log.
-      (set! (array-ref new-slots new-capacity) (+ ty-node-dedup-log-capacity 1))
-      new-slots)))
+      (arena.from-raw-handle (deref cursor).base-arena))
+    (unsafe
+      (let
+        [old-slots : (MutPtr i64) (deref cursor).dedup-slots]
+        [old-capacity : i64 (deref cursor).dedup-capacity]
+        [new-capacity : i64 (* old-capacity 2)]
+        [new-slots : (MutPtr i64) (ty-node-dedup-slots-new new-capacity)]
+        [segment-bases : i64 (deref cursor).segment-bases]
+        [mask : i64 (- new-capacity 1)]
+        (for [i (iterator.range 0 old-capacity)]
+          (let
+            [slot : i64 (ptr-read (ptr-offset old-slots i))]
+            (unless
+              (= slot 0)
+              (let
+                [idx : i64
+                  (ty-node-dedup-slot-index
+                    (ty-node-hash-value
+                      (& (ast-type-segment-bases-get segment-bases (- slot 1))))
+                    mask)]
+                (while (not (= (ptr-read (ptr-offset new-slots idx)) 0))
+                  (set! idx (bit-and (+ idx 1) mask)))
+                (ptr-write! (ptr-offset new-slots idx) slot)))))
+        ;; The rehash fills slots it does not log.
+        (ptr-write!
+          (ptr-offset new-slots new-capacity)
+          (+ ty-node-dedup-log-capacity 1))
+        (set! (deref cursor).dedup-slots new-slots)
+        (set! (deref cursor).dedup-capacity new-capacity)))))
 
 (define (ty-node-dedup-grow!) : unit
-  (let
-    [new-capacity : i64
-      (* (ty-node-dedup-table-capacity ty-node-dedup-slots) 2)]
-    (in-arena
-      (unsafe
-        (arena.from-raw-handle node-pool-base-arena))
-      (let
-        [grown-slots : (__tl_dyn-array i64)
-          (ast-type-dedup-grow-slots
-            ty-node-pool-segment-bases
-            (& ty-node-dedup-slots)
-            node-pool-base-arena)]
-        (unsafe
-          (ptr-write! (ptr-addr-of ty-node-dedup-slots) grown-slots))))
-    (set!
-      ty-node-dedup-slots-data-address
-      (unsafe
-        (ptr->int (__tl_array-data ty-node-dedup-slots))))
-    (set! ty-node-dedup-capacity new-capacity)
-    ;; A grow can be followed by a hit, which never captures a raw append.
-    (ast-node-pool-active-context-capture-type!)))
+  (unsafe
+    (ast-type-pool-dedup-grow!
+      (ast-type-pool-cursor-ptr ty-node-pool-revision-cell))))
 
-;; Probe the dedup table for `node`, appending it only on a miss. Split out of
-;; `ty-node-push-active` so the loaded-table check there stays a single compare
-;; on the hot path.
-(define (ty-node-dedup-probe-push [node : (& AstType)]) : i64
-  (let
-    [mask : i64 (- ty-node-dedup-capacity 1)]
-    ;; Stable for the whole probe: this function cannot replace the table;
-    ;; grow/install boundaries republish it, while reset only clears in place.
-    ;; Using the pointer also removes a descriptor reload and a redundant
-    ;; bounds check for every collision step; `idx` is masked by capacity - 1.
-    [slots : (MutPtr i64)
-      (unsafe
-        (int->ptr ty-node-dedup-slots-data-address : (MutPtr i64)))]
-    [idx : i64 (ty-node-dedup-slot-index (ty-node-hash-value node) mask)]
-    [result : i64 (- 0 1)]
-    (while (< result 0)
-      (let
-        [slot : i64
-          (unsafe
-            (ptr-read (ptr-offset slots idx)))]
-        (if (= slot 0)
-          (let
-            [id : i64 (ty-node-push-raw node)]
-            (unsafe
-              (ptr-write! (ptr-offset slots idx) (+ id 1)))
-            (ty-node-dedup-note-filled! slots ty-node-dedup-capacity idx)
-            (+= ty-node-dedup-count 1)
-            ;; Raw append captured the cursor before this table insertion.
-            ;; Explicit writers must also observe the completed dedup
-            ;; transaction, otherwise alternating writers lose its count.
-            (ast-node-pool-active-context-capture-type!)
-            (set! result id))
-          ;; An entry at or beyond the live length is stale (an alias's table
-          ;; outlived a truncation); returning it would hand out an id the
-          ;; cursor will issue again.
-          (if (and
-            (< (- slot 1) (ty-node-pool-len))
-            (ty-node-shallow-eq? (- slot 1) node))
-            (set! result (- slot 1))
-            (set! idx (bit-and (+ idx 1) mask))))))
-    result))
+;; Probe before appending. Every indexed ID belongs to the live prefix because
+;; truncation clears the same index seen by all writers.
+(define (ast-type-pool-dedup-probe-push!
+  [cursor : (MutPtr AstTypePoolCursor)]
+  [node : (& AstType)]) : i64
+  (unsafe
+    (let
+      [capacity : i64 (deref cursor).dedup-capacity]
+      [mask : i64 (- capacity 1)]
+      [slots : (MutPtr i64) (deref cursor).dedup-slots]
+      [segment-bases : i64 (deref cursor).segment-bases]
+      [idx : i64 (ty-node-dedup-slot-index (ty-node-hash-value node) mask)]
+      [result : i64 -1]
+      (while (< result 0)
+        (let
+          [slot : i64 (ptr-read (ptr-offset slots idx))]
+          (if (= slot 0)
+            (let
+              [id : i64 (ast-type-pool-append! cursor node)]
+              (ptr-write! (ptr-offset slots idx) (+ id 1))
+              (ty-node-dedup-note-filled! slots capacity idx)
+              (set! (deref cursor).dedup-count (+ (deref cursor).dedup-count 1))
+              (set! result id))
+            (if (ty-node-shallow-value-eq?
+              (ast-type-segment-bases-get segment-bases (- slot 1))
+              (owned_view.compiler-owned-reference-shared-view node))
+              (set! result (- slot 1))
+              (set! idx (bit-and (+ idx 1) mask))))))
+      result)))
 
-;; Half load reached: grow and keep deduplicating. Only a table already at the
-;; 2^24-slot bound falls back to a plain append.
-(define (ty-node-push-loaded [node : (& AstType)]) : i64
-  (if (>= ty-node-dedup-capacity ty-node-dedup-max-capacity)
-    (ty-node-push-raw node)
-    (begin
-      (ty-node-dedup-grow!)
-      (ty-node-dedup-probe-push node))))
+(define (ast-type-pool-push! [cell : u64] [node : (& AstType)]) : i64
+  (unsafe
+    (let
+      [cursor : (MutPtr AstTypePoolCursor) (ast-type-pool-cursor-ptr cell)]
+      [capacity : i64 (deref cursor).dedup-capacity]
+      (when
+        (= (deref cursor).revision 0)
+        (ci.intern-runtime-abort-string "tl: append to retired type pool\n"))
+      (when
+        (>= (* (deref cursor).dedup-count 2) capacity)
+        (when
+          (>= capacity ty-node-dedup-max-capacity)
+          (return (ast-type-pool-append! cursor node)))
+        (ast-type-pool-dedup-grow! cursor))
+      (ast-type-pool-dedup-probe-push! cursor node))))
 
-;: Append `node` to the active pool, returning an existing id when an identical node
-;: was already pushed. The table is probed before appending so the common
-;: duplicate path does not churn the pool count or temporarily force growth.
-(define (ty-node-push-active [node : (& AstType)]) : i64
-  (if (>= (* ty-node-dedup-count 2) ty-node-dedup-capacity)
-    (ty-node-push-loaded node)
-    (ty-node-dedup-probe-push node)))
-
-;: Append `node` to the selected type pool.
+;: Append a type to the installed pool, reusing its canonical ID on a hit.
 (define (ty-node-push [node : (& AstType)]) : i64
   (if ast-node-pool-compat-context-explicit?
-    (ast-node-pool-context-type-push
-      (array-ref ast-node-pool-compat-context-cell 0)
-      (owned_view.compiler-owned-reference-shared-view node))
-    (ty-node-push-active node)))
+    (ast-type-pool-cell-push!
+      (array-ref ast-node-pool-compat-context-cell 0).type-pool
+      node)
+    (ast-type-pool-push! ty-node-pool-revision-cell node)))
 
 ;: Read the type node at `id` from the installed type pool.
 ;;
@@ -4397,13 +4157,10 @@
 ;; Dedup entries above `mark` would dangle, so the table is cleared; truncation
 ;; happens at most a few times per compile (parse rollback, per-compile reset).
 (define (ty-node-pool-truncate! [mark : i64]) : unit
-  (set!
-    ty-node-pool-revision
-    (ast-type-pool-revision-truncate! ty-node-pool-revision-cell mark))
-  (set! ty-node-pool-count mark)
-  (+= ty-node-pool-generation 1)
-  (ty-node-dedup-clear!)
-  (ast-node-pool-active-context-capture-type!))
+  (let
+    [revision : i64 (ast-type-pool-truncate! ty-node-pool-revision-cell mark)]
+    (+= ty-node-pool-generation 1)
+    (ast-node-pool-refresh-type-revision! ty-node-pool-revision-cell revision)))
 
 (define (ty-node-pool-reset-to! [mark : i64]) : unit
   (ty-node-pool-truncate! mark)
@@ -4416,21 +4173,12 @@
 (define (ty-node-pool-state-capture) : AstTypeNodePoolState
   (AstTypeNodePoolState
     ty-node-pool-segment-bases
-    ty-node-pool-count
-    node-pool-base-arena
-    ty-node-pool-exhausted
     (unsafe
-      (ptr-read (ptr-addr-of ty-node-dedup-slots)))
-    ty-node-dedup-count
-    ty-node-pool-storage-arena
-    ty-node-pool-segment-count
-    ty-node-pool-revision
+      (deref (ast-type-pool-cursor-ptr ty-node-pool-revision-cell)).base-arena)
+    ty-node-pool-exhausted
+    (ast-type-pool-cursor-live-revision ty-node-pool-revision-cell)
     ty-node-pool-revision-cell))
 
-;; Capturing through an owned aggregate return can materialize the nested
-;; `dedup-slots` descriptor in the caller's transient arena. These raw cell
-;; writers preserve the already-owned descriptor address and copy only scalar
-;; state, so retained contexts never acquire an intermediate aggregate owner.
 (define (ast-node-pool-state-capture-to-cell! [cell-address : u64]) : unit
   (let
     [cell : (MutPtr i64)
@@ -4447,119 +4195,28 @@
       (ptr-write! (ptr-offset cell 7) ast-node-respan-records))))
 
 (define (ty-node-pool-state-capture-to-cell! [cell-address : u64]) : unit
-  (let
-    [cell-bytes : (MutPtr u8)
-      (unsafe
-        (int->ptr cell-address : (MutPtr u8)))]
-    (unsafe
-      (ptr-write!
-        (ptr-cast
-          (ptr-offset
-            cell-bytes
-            (comptime (offset-of (type AstTypeNodePoolState) segment-bases)))
-          : (MutPtr i64))
-        ty-node-pool-segment-bases)
-      (ptr-write!
-        (ptr-cast
-          (ptr-offset
-            cell-bytes
-            (comptime (offset-of (type AstTypeNodePoolState) count)))
-          : (MutPtr i64))
-        ty-node-pool-count)
-      (ptr-write!
-        (ptr-cast
-          (ptr-offset
-            cell-bytes
-            (comptime (offset-of (type AstTypeNodePoolState) base-arena)))
-          : (MutPtr i64))
-        node-pool-base-arena)
-      (ptr-write!
-        (ptr-cast
-          (ptr-offset
-            cell-bytes
-            (comptime (offset-of (type AstTypeNodePoolState) exhausted)))
-          : (MutPtr bool))
-        ty-node-pool-exhausted)
-      (ptr-write!
-        (ptr-cast
-          (ptr-offset
-            cell-bytes
-            (comptime (offset-of (type AstTypeNodePoolState) dedup-slots)))
-          : (MutPtr (__tl_dyn-array i64)))
-        (ptr-read (ptr-addr-of ty-node-dedup-slots)))
-      (ptr-write!
-        (ptr-cast
-          (ptr-offset
-            cell-bytes
-            (comptime (offset-of (type AstTypeNodePoolState) dedup-count)))
-          : (MutPtr i64))
-        ty-node-dedup-count)
-      (ptr-write!
-        (ptr-cast
-          (ptr-offset
-            cell-bytes
-            (comptime (offset-of (type AstTypeNodePoolState) storage-arena)))
-          : (MutPtr i64))
-        ty-node-pool-storage-arena)
-      (ptr-write!
-        (ptr-cast
-          (ptr-offset
-            cell-bytes
-            (comptime (offset-of (type AstTypeNodePoolState) segment-count)))
-          : (MutPtr i64))
-        ty-node-pool-segment-count)
-      (ptr-write!
-        (ptr-cast
-          (ptr-offset
-            cell-bytes
-            (comptime (offset-of (type AstTypeNodePoolState) revision)))
-          : (MutPtr i64))
-        ty-node-pool-revision)
-      (ptr-write!
-        (ptr-cast
-          (ptr-offset
-            cell-bytes
-            (comptime (offset-of (type AstTypeNodePoolState) revision-cell)))
-          : (MutPtr u64))
-        ty-node-pool-revision-cell))))
+  (ast-type-pool-cell-write! cell-address (ty-node-pool-state-capture)))
 
-(define (ast-node-pools-state-install!
-  [expr-pool : (& expr-pool AstExprNodePoolState)]
-  [type-pool : (& type-pool AstTypeNodePoolState)]
-  [owner-arena : i64]) : unit
-  (set! ast-node-pool-segment-bases expr-pool.segment-bases)
-  (set! ast-node-pool-count expr-pool.count)
-  (set! ast-node-pool-storage-arena expr-pool.storage-arena)
-  (set! ast-node-pool-segment-count expr-pool.segment-count)
-  (set! ast-node-span-slot-segment-bases expr-pool.span-slot-segment-bases)
-  (set! ast-node-canonical-span-records expr-pool.canonical-span-records)
-  (set! ast-node-respan-records expr-pool.respan-records)
-  (set! ty-node-pool-segment-bases type-pool.segment-bases)
-  (set! ty-node-pool-count type-pool.count)
-  (set! ty-node-pool-storage-arena type-pool.storage-arena)
-  (set! ty-node-pool-segment-count type-pool.segment-count)
-  (set! ty-node-pool-revision type-pool.revision)
-  (set! ty-node-pool-revision-cell type-pool.revision-cell)
-  (+= ty-node-pool-generation 1)
-  (set! ty-node-pool-exhausted type-pool.exhausted)
-  (set!
-    ty-node-dedup-capacity
-    (ty-node-dedup-table-capacity type-pool.dedup-slots))
-  (set!
-    ty-node-dedup-slots
-    (owned_view.compiler-owned-reference-shared-view (& type-pool.dedup-slots)))
-  ;; A context install is the only generation boundary that can replace the
-  ;; table outside `ty-node-dedup-grow!`; derive the hot pointer from the
-  ;; newly installed descriptor while its base arena is still owned here.
-  (set!
-    ty-node-dedup-slots-data-address
-    (unsafe
-      (ptr->int (__tl_array-data ty-node-dedup-slots))))
-  (set! ty-node-dedup-count type-pool.dedup-count)
-  ;; Driver-created states allocate both pools in one persistent arena. Keep
-  ;; the shared compatibility grow/persist target there after both installs.
-  (set! node-pool-base-arena expr-pool.base-arena)
-  (set! node-pool-owner-arena owner-arena))
+(unsafe
+  (define (ast-node-pools-state-install!
+    [expr-pool : (& expr-pool AstExprNodePoolState)]
+    [type-pool : (& type-pool AstTypeNodePoolState)]
+    [owner-arena : i64]) : unit
+    (set! ast-node-pool-segment-bases expr-pool.segment-bases)
+    (set! ast-node-pool-count expr-pool.count)
+    (set! ast-node-pool-storage-arena expr-pool.storage-arena)
+    (set! ast-node-pool-segment-count expr-pool.segment-count)
+    (set! ast-node-span-slot-segment-bases expr-pool.span-slot-segment-bases)
+    (set! ast-node-canonical-span-records expr-pool.canonical-span-records)
+    (set! ast-node-respan-records expr-pool.respan-records)
+    (set! ty-node-pool-segment-bases type-pool.segment-bases)
+    (set! ty-node-pool-revision-cell type-pool.revision-cell)
+    (+= ty-node-pool-generation 1)
+    (set! ty-node-pool-exhausted type-pool.exhausted)
+    ;; Driver-created states allocate both pools in one persistent arena. Keep
+    ;; the shared compatibility grow/persist target there after both installs.
+    (set! node-pool-base-arena expr-pool.base-arena)
+    (set! node-pool-owner-arena owner-arena)))
 
 ;; A pool context names a pair of shared state cells; it does not own them.
 ;; Each cell is a one-element dynamic array allocated in the pool's owner arena
@@ -4607,57 +4264,35 @@
   `(unsafe
     (ptr->int (__tl_array-data ,cell))))
 
-(define (ast-node-pools-cells-install!
-  [expr-cell : u64]
-  [type-cell : u64]
-  [owner-arena : i64]) : unit
-  (let
-    [expr-pool : AstExprNodePoolState (ast-expr-pool-cell-read expr-cell)]
-    [type-pool : AstTypeNodePoolState (ast-type-pool-cell-read type-cell)]
-    (ast-node-pools-state-install! expr-pool type-pool owner-arena)))
+(unsafe
+  (define (ast-node-pools-cells-install!
+    [expr-cell : u64]
+    [type-cell : u64]
+    [owner-arena : i64]) : unit
+    (let
+      [expr-pool : AstExprNodePoolState (ast-expr-pool-cell-read expr-cell)]
+      [type-pool : AstTypeNodePoolState (ast-type-pool-cell-read type-cell)]
+      (unsafe
+        (ast-node-pools-state-install! expr-pool type-pool owner-arena)))))
 
 (define (ast-node-pool-context-shared-view
   [pools : (& pools AstNodePoolContext)]) : AstNodePoolContext
   (AstNodePoolContext pools.expr-pool pools.type-pool pools.owner-arena))
 
-(define (clone-ast-type-node-pool-state [pool : (& AstTypeNodePoolState)]) : AstTypeNodePoolState
-  (let
-    [count : i64 (array-length pool.dedup-slots)]
-    [dedup-slots : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    (for [index (iterator.range 0 count)]
-      (set! (array-ref dedup-slots index) (array-ref pool.dedup-slots index)))
-    (AstTypeNodePoolState
-      pool.segment-bases
-      pool.count
-      pool.base-arena
-      pool.exhausted
-      dedup-slots
-      pool.dedup-count
-      pool.storage-arena
-      pool.segment-count
-      pool.revision
-      pool.revision-cell)))
-
-;; Independent state cells holding deep copies of both states: what `clone`
-;; of a context produced while the context held its cells as dynamic arrays.
-;; Like a snapshot, the copy still shares the expression segments, span slots
-;; and span record tables, which the states reach through addresses.
+;; Clone the wrapper cells while retaining their backing storage and cursor.
 (define (ast-node-pool-context-clone [pools : AstNodePoolContext]) : AstNodePoolContext
   (let
     [expr-cell : (__tl_dyn-array AstExprNodePoolState)
       (__tl_make-array (ast-expr-pool-cell-read pools.expr-pool))]
     [type-cell : (__tl_dyn-array AstTypeNodePoolState)
-      (__tl_make-array
-        (clone-ast-type-node-pool-state
-          (& (ast-type-pool-cell-read pools.type-pool))))]
+      (__tl_make-array (ast-type-pool-cell-read pools.type-pool))]
     (AstNodePoolContext
       (ast-pool-cell-descriptor expr-cell)
       (ast-pool-cell-descriptor type-cell)
       pools.owner-arena)))
 
-;; Pool snapshots can retain different state cells while sharing the same
-;; stable segmented storage. Publish the newer cursor/dedup state between those
-;; cells without changing either context's stable arena root.
+;; Sibling wrappers over shared segments can adopt a refreshed revision
+;; snapshot. The append cursor and index are already shared.
 (define (ast-node-pool-context-adopt-newer-cells!
   [target-expr-cell-address : u64]
   [target-type-cell-address : u64]
@@ -4688,8 +4323,6 @@
     [source-type : AstTypeNodePoolState
       (unsafe
         (ptr-read source-type-cell))]
-    [target-dedup : (__tl_dyn-array i64) target-type.dedup-slots]
-    [source-dedup : (__tl_dyn-array i64) source-type.dedup-slots]
     (if (and
       (= target-expr.segment-bases source-expr.segment-bases)
       (> source-expr.count target-expr.count))
@@ -4697,32 +4330,14 @@
         (ptr-write! target-expr-cell source-expr))
       unit)
     (if (and
-      (= target-type.segment-bases source-type.segment-bases)
+      (= target-type.revision-cell source-type.revision-cell)
+      (not (= source-type.revision target-type.revision))
       (> source-type.revision 0)
       (=
         source-type.revision
-        (ast-type-pool-revision-cell-get source-type.revision-cell 0))
-      (or
-        (> source-type.count target-type.count)
-        (not (= source-type.revision target-type.revision))))
+        (ast-type-pool-cursor-live-revision source-type.revision-cell)))
       (unsafe
-        (ptr-write!
-          target-type-cell
-          (AstTypeNodePoolState
-            source-type.segment-bases
-            source-type.count
-            source-type.base-arena
-            source-type.exhausted
-            (if (or
-              (not (= source-type.revision target-type.revision))
-              (> (array-length source-dedup) (array-length target-dedup)))
-              source-dedup
-              target-dedup)
-            source-type.dedup-count
-            source-type.storage-arena
-            source-type.segment-count
-            source-type.revision
-            source-type.revision-cell)))
+        (ptr-write! target-type-cell source-type))
       unit)
     (ast-node-pool-compat-context-sync-installed!)))
 
@@ -4830,10 +4445,6 @@
         compile-profile
         (+= ast-node-pool-context-profile-allocations 1)
         unit)
-      ;; The cells and the state records already have their intended owners.
-      ;; Publish the records shallowly: an aggregate assignment would create a
-      ;; fresh nested dynamic-array descriptor for `dedup-slots` in whatever
-      ;; arena happens to be current.
       (unsafe
         (ptr-write!
           (ptr-cast (__tl_array-data expr-cell) : (MutPtr AstExprNodePoolState))
@@ -4871,8 +4482,6 @@
         node-pool-owner-arena)]
     (ast-node-pool-state-capture-to-cell!
       (ast-pool-cell-data captured.expr-pool))
-    (ty-node-pool-state-capture-to-cell!
-      (ast-pool-cell-data captured.type-pool))
     captured))
 
 ;; R3-P2c: THE BACKSTOP, and the answer to "what prevents the next one".
@@ -4914,7 +4523,9 @@
       [saved-witness : i64 ast-node-pool-context-transient-witness]
       [_clear : unit (set! ast-node-pool-context-transient-witness 0)]
       [fresh : AstNodePoolContext (ast-node-pool-context-capture-active-raw)]
-      [_install : unit (ast-node-pool-context-install! fresh)]
+      [_install : unit
+        (unsafe
+          (ast-node-pool-context-install! fresh))]
       (set! ast-node-pool-context-transient-witness saved-witness)
       (set! ast-node-pool-active-context-owner 0))))
 
@@ -4953,12 +4564,32 @@
         (__tl-project-field ast-node-pool-active-context expr-pool)))
     unit))
 
-(define (ast-node-pool-active-context-capture-type!) : unit
-  (if ast-node-pool-active-context-installed?
-    (ty-node-pool-state-capture-to-cell!
-      (ast-pool-cell-data
-        (__tl-project-field ast-node-pool-active-context type-pool)))
-    unit))
+;; Compatibility selection can point the globals at a different pool while
+;; leaving the active wrapper installed. Refresh the matching wrappers only.
+(define (ast-type-pool-cell-refresh-revision!
+  [type-cell : u64]
+  [cursor : u64]
+  [revision : i64]) : unit
+  (unsafe
+    (let
+      [state : (MutPtr AstTypeNodePoolState) (ast-type-pool-cell-ptr type-cell)]
+      (when
+        (= (deref state).revision-cell cursor)
+        (set! (deref state).revision revision)))))
+
+(define (ast-node-pool-refresh-type-revision! [cursor : u64] [revision : i64]) : unit
+  (when
+    ast-node-pool-compat-context-explicit?
+    (ast-type-pool-cell-refresh-revision!
+      (array-ref ast-node-pool-compat-context-cell 0).type-pool
+      cursor
+      revision))
+  (when
+    ast-node-pool-active-context-installed?
+    (ast-type-pool-cell-refresh-revision!
+      (__tl-project-field ast-node-pool-active-context type-pool)
+      cursor
+      revision)))
 
 (define ast-node-pool-reader-explicit? : bool
   false)
@@ -4972,29 +4603,36 @@
 (define (ast-node-pool-reader-clear!) : unit
   (set! ast-node-pool-reader-explicit? false))
 
-(define (ast-node-pool-compat-context-use! [pools : AstNodePoolContext]) : unit
-  (set!
-    (array-ref ast-node-pool-compat-saved-context-cell 0)
-    (ast-node-pool-context-capture-active-raw))
-  (set! (array-ref ast-node-pool-compat-context-cell 0) pools)
-  (set! ast-node-pool-compat-context-explicit? true)
-  (let
-    [context : AstNodePoolContext
-      (array-ref ast-node-pool-compat-context-cell 0)]
-    (ast-node-pools-cells-install!
-      context.expr-pool
-      context.type-pool
-      context.owner-arena)))
+;; The selected cells and backing arenas must stay live through
+;; ast-node-pool-compat-context-clear!, which restores the previous pool.
+(unsafe
+  (define (ast-node-pool-compat-context-use! [pools : AstNodePoolContext]) : unit
+    (set!
+      (array-ref ast-node-pool-compat-saved-context-cell 0)
+      (ast-node-pool-context-capture-active-raw))
+    (set! (array-ref ast-node-pool-compat-context-cell 0) pools)
+    (set! ast-node-pool-compat-context-explicit? true)
+    (let
+      [context : AstNodePoolContext
+        (array-ref ast-node-pool-compat-context-cell 0)]
+      (unsafe
+        (ast-node-pools-cells-install!
+          context.expr-pool
+          context.type-pool
+          context.owner-arena)))))
 
 (define (ast-node-pool-compat-context-clear!) : unit
-  (let
-    [context : AstNodePoolContext
-      (array-ref ast-node-pool-compat-saved-context-cell 0)]
-    (ast-node-pools-cells-install!
-      context.expr-pool
-      context.type-pool
-      context.owner-arena))
-  (set! ast-node-pool-compat-context-explicit? false))
+  (when
+    ast-node-pool-compat-context-explicit?
+    (let
+      [context : AstNodePoolContext
+        (array-ref ast-node-pool-compat-saved-context-cell 0)]
+      (unsafe
+        (ast-node-pools-cells-install!
+          context.expr-pool
+          context.type-pool
+          context.owner-arena)))
+    (set! ast-node-pool-compat-context-explicit? false)))
 
 (define (ast-node-pool-compat-context-active?) : bool
   ast-node-pool-compat-context-explicit?)
@@ -5007,10 +4645,11 @@
     (let
       [context : AstNodePoolContext
         (array-ref ast-node-pool-compat-context-cell 0)]
-      (ast-node-pools-cells-install!
-        context.expr-pool
-        context.type-pool
-        context.owner-arena))
+      (unsafe
+        (ast-node-pools-cells-install!
+          context.expr-pool
+          context.type-pool
+          context.owner-arena)))
     unit))
 
 (define (ast-node-pool-context-snapshot [pools : AstNodePoolContext]) : AstNodePoolContext
@@ -5027,33 +4666,23 @@
     (ast-node-pool-state-capture-to-cell! (ast-pool-cell-data pools.expr-pool))
     (ty-node-pool-state-capture-to-cell! (ast-pool-cell-data pools.type-pool))))
 
-;; Publish whichever of `pools` and the installed globals is longer, per pool.
-;; Explicit pushes through `pools` advance only its cells while global pushers
-;; advance only the globals, so either side can be ahead. Capturing
-;; unconditionally rolls back nodes pushed through the cells, and installing
-;; unconditionally rolls back nodes pushed globally; either lets a later push
-;; overwrite a live node behind its dedup entry.
-(define (ast-node-pool-context-publish-newer! [pools : AstNodePoolContext]) : unit
-  (if ast-node-pool-compat-context-explicit?
-    unit
-    (let
-      [expr-state : AstExprNodePoolState
-        (ast-expr-pool-cell-read pools.expr-pool)]
-      [type-state : AstTypeNodePoolState
-        (ast-type-pool-cell-read pools.type-pool)]
-      (if (and
-        (= expr-state.segment-bases ast-node-pool-segment-bases)
-        (< expr-state.count ast-node-pool-count))
-        (ast-node-pool-state-capture-to-cell!
-          (ast-pool-cell-data pools.expr-pool))
-        unit)
-      (if (and
-        (= type-state.segment-bases ty-node-pool-segment-bases)
-        (< type-state.count ty-node-pool-count))
-        (ty-node-pool-state-capture-to-cell!
-          (ast-pool-cell-data pools.type-pool))
-        unit)
-      (ast-node-pool-context-install! pools))))
+;; Reconcile the expression wrapper before installing it. Type appends
+;; already use the shared cursor regardless of the selected wrapper.
+(unsafe
+  (define (ast-node-pool-context-publish-newer! [pools : AstNodePoolContext]) : unit
+    (if ast-node-pool-compat-context-explicit?
+      unit
+      (let
+        [expr-state : AstExprNodePoolState
+          (ast-expr-pool-cell-read pools.expr-pool)]
+        (if (and
+          (= expr-state.segment-bases ast-node-pool-segment-bases)
+          (< expr-state.count ast-node-pool-count))
+          (ast-node-pool-state-capture-to-cell!
+            (ast-pool-cell-data pools.expr-pool))
+          unit)
+        (unsafe
+          (ast-node-pool-context-install! pools))))))
 
 (define (ast-node-pool-active-context-clear!) : unit
   (set! ast-node-pool-active-context-installed? false))
@@ -5064,9 +4693,8 @@
   ast-node-pool-active-context-installed?)
 
 ;: The installed pool context, SHARING its cells with the globals the pushers
-;: read. `ast-node-pool-context-capture-active` snapshots into fresh cells, so a
-;: push through it is invisible to the installed pool; a caller that must append
-;: to the live pool and then hand the result back to the walk needs these cells.
+;: read. `ast-node-pool-context-capture-active` snapshots into fresh wrapper
+;: cells over the same backing storage.
 ;: Only meaningful while `ast-node-pool-has-active-context?` holds.
 (define (ast-node-pool-context-active-live) : AstNodePoolContext
   ast-node-pool-active-context)
@@ -5094,40 +4722,47 @@
   ast-node-pool-storage-arena)
 
 (define (ast-node-pool-type-storage-arena-handle) : i64
-  ty-node-pool-storage-arena)
+  (ast-type-pool-cursor-storage-arena ty-node-pool-revision-cell))
 
-(define (ast-node-pool-context-install! [pools : AstNodePoolContext]) : unit
-  (if ast-node-pool-compat-context-explicit?
-    unit
-    (in-arena
-      (unsafe
-        (arena.from-raw-handle (ast-node-pool-context-base-arena pools)))
-      (compiler-arena-debug-assert-pool-install!
-        (__tl-project-field
-          (ast-expr-pool-cell-read pools.expr-pool)
-          base-arena))
-      (ast-node-pools-cells-install!
-        pools.expr-pool
-        pools.type-pool
-        pools.owner-arena)
-      (let
-        [stable : AstNodePoolContext pools]
-        [source : (Ptr i64)
-          (unsafe
-            (int->ptr (ast-place-address stable) : (Ptr i64)))]
-        [dest : (MutPtr i64)
-          (unsafe
-            (ptr-cast (ptr-addr-of ast-node-pool-active-context) : (MutPtr i64)))]
+;; Installs borrowed storage in the process-global pool. The caller must
+;; replace it before either wrapper cell or either pool's backing storage
+;; can be reset or released.
+(unsafe
+  (define (ast-node-pool-context-install! [pools : AstNodePoolContext]) : unit
+    (if ast-node-pool-compat-context-explicit?
+      unit
+      (in-arena
         (unsafe
-          (ptr-write! dest (ptr-read source))
-          (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
-          (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2)))))
-      ;; R3-P2c: remember WHICH transient generation, if any, was live when
-      ;; these cells were published. See `ast-node-pool-active-context-reseat!`.
-      (set!
-        ast-node-pool-active-context-owner
-        ast-node-pool-context-transient-witness)
-      (set! ast-node-pool-active-context-installed? true))))
+          (arena.from-raw-handle (ast-node-pool-context-base-arena pools)))
+        (compiler-arena-debug-assert-pool-install!
+          (__tl-project-field
+            (ast-expr-pool-cell-read pools.expr-pool)
+            base-arena))
+        (unsafe
+          (ast-node-pools-cells-install!
+            pools.expr-pool
+            pools.type-pool
+            pools.owner-arena))
+        (let
+          [stable : AstNodePoolContext pools]
+          [source : (Ptr i64)
+            (unsafe
+              (int->ptr (ast-place-address stable) : (Ptr i64)))]
+          [dest : (MutPtr i64)
+            (unsafe
+              (ptr-cast
+                (ptr-addr-of ast-node-pool-active-context)
+                : (MutPtr i64)))]
+          (unsafe
+            (ptr-write! dest (ptr-read source))
+            (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
+            (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2)))))
+        ;; R3-P2c: remember WHICH transient generation, if any, was live when
+        ;; these cells were published. See `ast-node-pool-active-context-reseat!`.
+        (set!
+          ast-node-pool-active-context-owner
+          ast-node-pool-context-transient-witness)
+        (set! ast-node-pool-active-context-installed? true)))))
 
 ;; Commit a completed explicit-context phase back to the compatibility context
 ;; selected for the compile. CTFE syntax and hygiene can use distinct state
@@ -5135,19 +4770,22 @@
 ;; selected context owner while making every committed node visible to legacy
 ;; global readers. Outside compatibility mode, installing the context is the
 ;; equivalent publication boundary.
-(define (ast-node-pool-context-publish-to-compat! [pools : AstNodePoolContext]) : unit
-  (if ast-node-pool-compat-context-explicit?
-    (let
-      [selected : AstNodePoolContext
-        (array-ref ast-node-pool-compat-context-cell 0)]
-      (ast-expr-pool-cell-write!
-        selected.expr-pool
-        (ast-expr-pool-cell-read pools.expr-pool))
-      (ast-type-pool-cell-write!
-        selected.type-pool
-        (ast-type-pool-cell-read pools.type-pool))
-      (ast-node-pool-compat-context-sync-installed!))
-    (ast-node-pool-context-install! pools)))
+(unsafe
+  (define (ast-node-pool-context-publish-to-compat!
+    [pools : AstNodePoolContext]) : unit
+    (if ast-node-pool-compat-context-explicit?
+      (let
+        [selected : AstNodePoolContext
+          (array-ref ast-node-pool-compat-context-cell 0)]
+        (ast-expr-pool-cell-write!
+          selected.expr-pool
+          (ast-expr-pool-cell-read pools.expr-pool))
+        (ast-type-pool-cell-write!
+          selected.type-pool
+          (ast-type-pool-cell-read pools.type-pool))
+        (ast-node-pool-compat-context-sync-installed!))
+      (unsafe
+        (ast-node-pool-context-install! pools)))))
 
 (defmacro (ast-node-pool-context-expr-len [pools : Expr]) : i64
   `(ast-expr-pool-cursor-count
@@ -5199,9 +4837,10 @@
     storage-arena))
 
 (defmacro (ast-node-pool-context-type-storage-arena [pools : Expr]) : i64
-  `(__tl-project-field
-    (ast-type-pool-cell-read (__tl-project-field-name ,pools "type-pool"))
-    storage-arena))
+  `(ast-type-pool-cursor-storage-arena
+    (__tl-project-field
+      (ast-type-pool-cell-read (__tl-project-field-name ,pools "type-pool"))
+      revision-cell)))
 
 (defmacro (ast-node-pool-context-type-exhausted? [pools : Expr]) : bool
   `(__tl-project-field
@@ -5243,7 +4882,8 @@
   [pools : (& pools AstNodePoolContext)]) : unit
   (let
     [state : AstTypeNodePoolState (ast-type-pool-cell-read pools.type-pool)]
-    (ast-type-pool-revision-cell-set! state.revision-cell 0 0)))
+    (unsafe
+      (set! (deref (ast-type-pool-cursor-ptr state.revision-cell)).revision 0))))
 
 (define (ast-node-pool-context-destroy-storage! [pools : AstNodePoolContext]) : unit
   (ast-node-pool-context-type-retire! (& pools))
@@ -5297,17 +4937,10 @@
       type-mark))
   (ast-node-pool-compat-context-sync-installed!))
 
-;; Clear the type-node dedup index on a captured pool context without
-;; truncating any live nodes. Pushes after this rebuild the index from the
-;; current node prefix, so a stale dedup entry inherited from a prior batch
-;; entry's pool snapshot can never resolve to an id whose slot now holds an
-;; unrelated node.
+;; Clear the shared index without changing any live IDs.
 (define (ast-node-pool-context-type-dedup-clear! [pools : AstNodePoolContext]) : unit
-  (ast-type-pool-cell-write!
-    pools.type-pool
-    (ast-type-node-pool-state-dedup-clear
-      (ast-type-pool-cell-read pools.type-pool)))
-  (ast-node-pool-compat-context-sync-installed!))
+  (ast-type-pool-dedup-clear!
+    (ast-type-pool-cell-read pools.type-pool).revision-cell))
 
 (define (ast-node-pool-context-expr-installed? [pools : AstNodePoolContext]) : bool
   (if (ast-node-pool-compat-context-active?)
@@ -5616,45 +5249,22 @@
 (define (ast-node-pool-context-type-push
   [pools : AstNodePoolContext]
   [node : AstType]) : i64
-  (let
-    [current : AstTypeNodePoolState (ast-type-pool-cell-read pools.type-pool)]
-    (match (ast-type-node-pool-state-push current (& node))
-      [(AstTypeNodePoolPushOk next id)
-        (ast-type-pool-cell-write! pools.type-pool next)
-        (ast-node-pool-context-type-sync-installed! pools)
-        id])))
+  (ast-type-pool-cell-push! pools.type-pool (& node)))
 
-(define (ast-node-pool-context-type-push-cells
-  [expr-cell-address : u64]
+(define (ast-type-pool-cell-push!
   [type-cell-address : u64]
   [node : (& AstType)]) : i64
-  (let
-    [expr-cell : (MutPtr AstExprNodePoolState)
-      (unsafe
-        (int->ptr expr-cell-address : (MutPtr AstExprNodePoolState)))]
-    [type-cell : (MutPtr AstTypeNodePoolState)
-      (unsafe
-        (int->ptr type-cell-address : (MutPtr AstTypeNodePoolState)))]
-    [current : AstTypeNodePoolState
-      (unsafe
-        (ptr-read type-cell))]
-    (match (ast-type-node-pool-state-push (ast-global-shared-view current) node)
-      [(AstTypeNodePoolPushOk next id)
-        (let
-          ;; Read before `next` moves into the cell.
-          [next-arena : i64 next.base-arena]
-          (unsafe
-            (ptr-write! type-cell next))
-          (if (not (= current.base-arena next-arena))
-            (unsafe
-              (ptr-write!
-                expr-cell
-                (ast-expr-node-pool-state-with-base-arena
-                  (ptr-read expr-cell)
-                  next-arena)))
-            unit)
-          (ast-node-pool-context-type-sync-installed-cells! type-cell-address)
-          id)])))
+  (unsafe
+    (let
+      [state : (MutPtr AstTypeNodePoolState)
+        (ast-type-pool-cell-ptr type-cell-address)]
+      [cell : u64 (deref state).revision-cell]
+      [id : i64 (ast-type-pool-push! cell node)]
+      [revision : i64 (ast-type-pool-cursor-live-revision cell)]
+      (when
+        (!= (deref state).revision revision)
+        (set! (deref state).revision revision))
+      id)))
 
 ;; Raw type-node read keyed by the pool's segment-bases pointer rather than a
 ;; pool value. Identical addressing to `ty-node-get`, so hot readers can hoist
@@ -5702,8 +5312,7 @@
         (& (ast-type-segment-bases-get type-segment-bases inner)))]
     [_ None]))
 
-;; Segment-bases pointer of the context's live type-pool cell. The cell is
-;; replaced on every push, so callers may only cache this across pure reads.
+;; Segment-bases pointer of the context's live type storage.
 (define (ast-node-pool-context-type-segment-bases
   [pools : (& pools AstNodePoolContext)]) : i64
   (__tl-project-field (ast-type-pool-cell-read pools.type-pool) segment-bases))
@@ -5772,9 +5381,8 @@
         (<= stamp.count current.count))]
     [(AstMaybeTypePoolStamp.No) false]))
 
-;; Cell identity, rather than a segment-bases comparison, distinguishes the
-;; live installed owner from a snapshot that shares immutable prefix segments
-;; but has an independent logical length.
+;; Identify the selected wrapper cell for compatibility dispatch. Aliases can
+;; share the backing cursor without being the selected wrapper.
 (define (ast-node-pool-context-type-installed?
   [pools : (& pools AstNodePoolContext)]) : bool
   (if (ast-node-pool-compat-context-active?)
@@ -5790,87 +5398,6 @@
         (=
           (ast-node-pool-context-type-cell-address pools)
           (ast-node-pool-context-type-cell-address (& current)))))))
-
-;; An explicit push through the cells of the ordinary installed context must
-;; publish its new count/dedup state to the transitional global pushers. This
-;; is an append, so existing ids remain valid and the pool generation must not
-;; change. This type-only publication also avoids treating every explicit
-;; compatibility append as a pool swap and needlessly invalidating id memos.
-(define (ast-node-pool-context-type-sync-installed!
-  [pools : (& pools AstNodePoolContext)]) : unit
-  (if (not (ast-node-pool-context-type-installed? pools))
-    unit
-    (let
-      [state : AstTypeNodePoolState (ast-type-pool-cell-read pools.type-pool)]
-      (set! ty-node-pool-segment-bases state.segment-bases)
-      (set! ty-node-pool-count state.count)
-      (set! ty-node-pool-storage-arena state.storage-arena)
-      (set! ty-node-pool-segment-count state.segment-count)
-      (set! ty-node-pool-revision state.revision)
-      (set! ty-node-pool-revision-cell state.revision-cell)
-      (set! ty-node-pool-exhausted state.exhausted)
-      (set!
-        ty-node-dedup-capacity
-        (ty-node-dedup-table-capacity state.dedup-slots))
-      (set! ty-node-dedup-slots state.dedup-slots)
-      (set!
-        ty-node-dedup-slots-data-address
-        (unsafe
-          (ptr->int (__tl_array-data ty-node-dedup-slots))))
-      (set! ty-node-dedup-count state.dedup-count)
-      (set! node-pool-base-arena state.base-arena)
-      (set! node-pool-owner-arena pools.owner-arena))))
-
-;; The scalar-cell constructor route has the same publication obligation as
-;; context-type-push. Only the exact installed state cell can publish; another
-;; job or a snapshot sharing its segments must remain a separate cursor.
-(define (ast-node-pool-context-type-sync-installed-cells!
-  [type-cell-address : u64]) : unit
-  (if (ast-node-pool-compat-context-active?)
-    (let
-      [current : AstNodePoolContext (ast-node-pool-compat-context-current)]
-      (when
-        (= type-cell-address (ast-pool-cell-data current.type-pool))
-        (ast-node-pool-context-type-sync-installed! (& current))))
-    (when
-      (ast-node-pool-has-active-context?)
-      (let
-        [current : AstNodePoolContext (ast-node-pool-context-active-live)]
-        (when
-          (= type-cell-address (ast-pool-cell-data current.type-pool))
-          (ast-node-pool-context-type-sync-installed! (& current)))))))
-
-;; Before a caller republishes its expression transaction, preserve type
-;; appends made by legacy operand checking through the installed view. Types
-;; are append-only within one storage revision; expression cursors can have
-;; intentional temporary rewinds and must not be merged here. A different
-;; owner, a rewind/overwrite, or an already stale active cursor grants no
-;; adoption permission.
-(define (ast-node-pool-context-type-adopt-active!
-  [pools : (& pools AstNodePoolContext)]) : unit
-  (when
-    (and
-      (not (ast-node-pool-compat-context-active?))
-      (ast-node-pool-has-active-context?)
-      (= pools.owner-arena node-pool-owner-arena))
-    (let
-      [state : AstTypeNodePoolState (ast-type-pool-cell-read pools.type-pool)]
-      (when
-        (and
-          (= state.segment-bases ty-node-pool-segment-bases)
-          (= state.revision-cell ty-node-pool-revision-cell)
-          (> state.revision 0)
-          (= state.revision ty-node-pool-revision)
-          (>= state.count 0)
-          (<= state.count ty-node-pool-count)
-          (=
-            state.revision
-            (ast-type-pool-revision-cell-get state.revision-cell 0))
-          (=
-            ty-node-pool-count
-            (ast-type-pool-revision-cell-get state.revision-cell 1)))
-        (ty-node-pool-state-capture-to-cell!
-          (ast-pool-cell-data pools.type-pool))))))
 
 (define (ast-node-pool-context-type-get
   [pools : (& pools AstNodePoolContext)]
@@ -5899,33 +5426,19 @@
         1
         (+ (* count 2) 1024)
         new-arena)]
-    (for [i (iterator.range 0 count)]
-      (match (ast-type-node-pool-state-push-raw
-        (ast-type-pool-cell-read dest.type-pool)
-        (ast-type-node-pool-state-get source-state i))
-        [(AstTypeNodePoolPushOk next _)
-          (ast-type-pool-cell-write! dest.type-pool next)
-          ;; Raw pushes append exactly once and therefore retain the
-          ;; source's insertion-ordered id.
-          unit]))
     (let
-      [dedup-copy : (__tl_dyn-array i64)
-        (ty-node-dedup-slots-copy
-          (ast-place-shared-view source-state.dedup-slots))]
       [cloned : AstTypeNodePoolState (ast-type-pool-cell-read dest.type-pool)]
-      (ast-type-pool-cell-write!
-        dest.type-pool
-        (AstTypeNodePoolState
-          cloned.segment-bases
-          cloned.count
-          cloned.base-arena
-          source-state.exhausted
-          dedup-copy
-          source-state.dedup-count
-          cloned.storage-arena
-          cloned.segment-count
-          cloned.revision
-          cloned.revision-cell)))
+      (unsafe
+        (let
+          [cursor : (MutPtr AstTypePoolCursor)
+            (ast-type-pool-cursor-ptr cloned.revision-cell)]
+          (for [i (iterator.range 0 count)]
+            (ast-type-pool-append!
+              cursor
+              (& (ast-type-node-pool-state-get source-state i))))))
+      (ast-type-pool-dedup-copy!
+        source-state.revision-cell
+        cloned.revision-cell))
     (unsafe
       (arena.tl_arena_set previous-arena))
     dest))
@@ -5962,9 +5475,7 @@
 
 (define (ast-node-pool-reader-type-push [node : (& AstType)]) : i64
   (if ast-node-pool-reader-explicit?
-    (ast-node-pool-context-type-push
-      ast-node-pool-reader-context
-      (owned_view.compiler-owned-reference-shared-view node))
+    (ast-type-pool-cell-push! ast-node-pool-reader-context.type-pool node)
     (ty-node-push node)))
 
 (define (ast-node-pool-reader-type-exhausted?) : bool
@@ -10457,13 +9968,7 @@
   (ast-node-pool-context-expr-push-cells
     expr-cell-address
     type-cell-address
-    (&
-      (MakeArray
-        (ast-node-pool-context-type-push-cells
-          expr-cell-address
-          type-cell-address
-          elem)
-        size))))
+    (& (MakeArray (ast-type-pool-cell-push! type-cell-address elem) size))))
 
 (define (ast-expr-fixed-make-array-with-cells
   [expr-cell-address : u64]
@@ -10473,13 +9978,7 @@
   (ast-node-pool-context-expr-push-cells
     expr-cell-address
     type-cell-address
-    (&
-      (FixedMakeArray
-        (ast-node-pool-context-type-push-cells
-          expr-cell-address
-          type-cell-address
-          elem)
-        size))))
+    (& (FixedMakeArray (ast-type-pool-cell-push! type-cell-address elem) size))))
 
 (define (ast-expr-type-literal-with-pools
   [pools : AstNodePoolContext]
@@ -12125,19 +11624,7 @@
 (define (ast-compaction-remap-dest-type-push
   [remap : (& remap AstProgramCompactionRemap)]
   [node : (& AstType)]) : i64
-  (let
-    [current : AstTypeNodePoolState
-      (ast-type-pool-cell-read remap.dest-pools.type-pool)]
-    (match (ast-type-node-pool-state-push (ast-global-shared-view current) node)
-      [(AstTypeNodePoolPushOk next id)
-        (ast-type-pool-cell-write!
-          remap.dest-pools.type-pool
-          (owned_view.compiler-owned-shared-view next))
-        (if (not (= current.base-arena next.base-arena))
-          (ast-compaction-remap-sync-dest-base-arena! remap next.base-arena)
-          unit)
-        (ast-node-pool-compat-context-sync-installed!)
-        id])))
+  (ast-type-pool-cell-push! remap.dest-pools.type-pool node))
 
 (define (ast-compaction-remap-dest-expr-set!
   [remap : (& remap AstProgramCompactionRemap)]
@@ -12842,11 +12329,13 @@
   [arena : i64]) : i64
   ;; Keep segment and dedup growth under their normal owners while a file's
   ;; speculative type rows and their input lists are live in scratch.
-  (let
-    [cell : u64 (ast-type-pool-cell-read pools.type-pool).revision-cell]
-    [previous : i64 (ast-type-pool-revision-cell-get cell 4)]
-    (ast-type-pool-revision-cell-set! cell 4 arena)
-    previous))
+  (unsafe
+    (let
+      [cell : u64 (ast-type-pool-cell-read pools.type-pool).revision-cell]
+      [cursor : (MutPtr AstTypePoolCursor) (ast-type-pool-cursor-ptr cell)]
+      [previous : i64 (deref cursor).parse-arena]
+      (set! (deref cursor).parse-arena arena)
+      previous)))
 
 (define (ast-persist-parsed-type-payloads!
   [pools : AstNodePoolContext]

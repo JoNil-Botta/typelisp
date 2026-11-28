@@ -1646,7 +1646,8 @@
         ;; Ensure builtin intern IDs (such as `cbi.compiler-builtin-id-fix-empty`)
         ;; match the active intern table before hydrating preludes without parsing.
         (cbi.compiler-builtin-initialize-for-parse!)
-        (ast.ast-node-pool-context-install! pools)
+        (unsafe
+          (ast.ast-node-pool-context-install! pools))
         (let
           [projected : tli_hydrate.TliProjectClosureResult
             (unsafe
@@ -1681,7 +1682,8 @@
             (!=
               (ast.ast-node-pool-context-expr-segment-bases (& prev-pools))
               (ast.ast-node-pool-context-expr-segment-bases (& pools)))
-            (ast.ast-node-pool-context-install! prev-pools))
+            (unsafe
+              (ast.ast-node-pool-context-install! prev-pools)))
           (unsafe
             (arena.tl_arena_set enclosing))
           (match projected
@@ -1724,7 +1726,8 @@
         [prev-pools : ast.AstNodePoolContext
           (ast.ast-node-pool-context-capture-active)]
         (cbi.compiler-builtin-initialize-for-parse!)
-        (ast.ast-node-pool-context-install! pools)
+        (unsafe
+          (ast.ast-node-pool-context-install! pools))
         (let
           [result : ResultCompilerLoadPackageTliHydrate
             (unsafe
@@ -1800,7 +1803,8 @@
             (!=
               (ast.ast-node-pool-context-expr-segment-bases (& prev-pools))
               (ast.ast-node-pool-context-expr-segment-bases (& pools)))
-            (ast.ast-node-pool-context-install! prev-pools))
+            (unsafe
+              (ast.ast-node-pool-context-install! prev-pools)))
           (unsafe
             (arena.tl_arena_set enclosing))
           (match result
@@ -5628,7 +5632,8 @@
         resolved
         name
         pools)]
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     result))
 
 (define (compiler-load-expand-include-with-pools
@@ -9826,7 +9831,9 @@
   ;; Direct names remain summary-driven because their ownership and policy are
   ;; part of the imported module surface.
   (let
-    [_install-pools : unit (ast.ast-node-pool-context-install! pools)]
+    [_install-pools : unit
+      (unsafe
+        (ast.ast-node-pool-context-install! pools))]
     (if candidate
       (match alias
         [(Some alias-name)
@@ -9954,7 +9961,9 @@
   [preload-demand : CompilerLoadLazyAliasDemand]
   [stdlib-roots : (& svec.Vec)]) : bool
   (let
-    [_install-pools : unit (ast.ast-node-pool-context-install! pools)]
+    [_install-pools : unit
+      (unsafe
+        (ast.ast-node-pool-context-install! pools))]
     (if (or
       (not (compiler-load-session-state-lazy-imports-enabled? load-state))
       (compiler-load-prelude-importer? importer-path))
@@ -11876,7 +11885,8 @@
         cfgs
         pools
         parse-identity)]
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     result))
 
 (define (compiler-load-source-with-paths
@@ -11952,7 +11962,8 @@
         pools)]
     ;; Serial package loading reads the compatibility pools after this boundary.
     ;; Publish the appended nodes before traversing imports.
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     result))
 
 (define (compiler-load-parse-file-diagnostic-escaping-with-pools
@@ -12993,7 +13004,8 @@
         module-id-fallback
         source-module-fallback
         pools)]
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     result))
 
 ;; A metadata-only closure can refer to stdlib modules omitted from the TLI
@@ -13059,7 +13071,8 @@
                       (string.copy module-name)
                       module-name
                       pools)]
-                  (ast.ast-node-pool-context-install! previous)
+                  (unsafe
+                    (ast.ast-node-pool-context-install! previous))
                   (match loaded
                     [(Err diag) (return (Err diag))]
                     [(Ok src-decls src-paths src-modules src-seen)

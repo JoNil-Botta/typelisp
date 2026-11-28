@@ -252,7 +252,7 @@ echo "Linting TypeLisp sources for $count file(s) in batches of $LINT_BATCH_SIZE
 # src/ boundaries as well as the size bound: compiler sources receive the union
 # of normal, deprecated-concat and redundant-begin rules in one parse/traversal,
 # while the other source units retain their existing opt-in rule scope.
-# The TLI round-trip tool needs the compiler import root used by its build.
+# Compiler importers outside src/ need the same import root as their builds.
 LINT_CHUNK_DIR="$WORKDIR/chunks"
 rm -rf "$LINT_CHUNK_DIR"
 mkdir -p "$LINT_CHUNK_DIR"
@@ -263,10 +263,10 @@ awk -v outdir="$LINT_CHUNK_DIR" -v size="$LINT_BATCH_SIZE" -v test_files="$GATE_
     }
     {
         source_rules = ($0 ~ /^src\//)
-        compiler_tool = ($0 == "tools/embedded-stdlib-tli/roundtrip.tl" || $0 == "tools/build-stdlib-sysroot/main.tl")
+        compiler_consumer = ($0 == "tools/embedded-stdlib-tli/roundtrip.tl" || $0 == "tools/build-stdlib-sysroot/main.tl" || $0 == "tests/integration/compiler_arena_debug.tl")
         test_cfg = ($0 in test_cfg_files)
         if (count == 0 || count == size || source_rules != previous_rules ||
-            compiler_tool != previous_tool || test_cfg != previous_test_cfg) {
+            compiler_consumer != previous_consumer || test_cfg != previous_test_cfg) {
             if (count != 0) close(path)
             chunk++
             count = 0
@@ -275,7 +275,7 @@ awk -v outdir="$LINT_CHUNK_DIR" -v size="$LINT_BATCH_SIZE" -v test_files="$GATE_
         print $0 >> path
         count++
         previous_rules = source_rules
-        previous_tool = compiler_tool
+        previous_consumer = compiler_consumer
         previous_test_cfg = test_cfg
     }
 ' "$FILES"
@@ -340,14 +340,14 @@ bounded_pool_run_job() {
     _chunk_status_file="$LINT_CHUNK_DIR/$_chunk_id.status"
     set --
     _src_rules=0
-    _compiler_tool=0
+    _compiler_consumer=0
     _test_cfg=0
     while IFS= read -r _lint_source; do
         [ -n "$_lint_source" ] || continue
         set -- "$@" "$_lint_source"
         case "$_lint_source" in
             src/*) _src_rules=1 ;;
-            tools/embedded-stdlib-tli/roundtrip.tl | tools/build-stdlib-sysroot/main.tl) _compiler_tool=1 ;;
+            tools/embedded-stdlib-tli/roundtrip.tl | tools/build-stdlib-sysroot/main.tl | tests/integration/compiler_arena_debug.tl) _compiler_consumer=1 ;;
         esac
         if gate_stdlib_needs_test_cfg "$_lint_source"; then
             _test_cfg=1
@@ -355,7 +355,7 @@ bounded_pool_run_job() {
     done < "$_lint_chunk"
     if [ "$_src_rules" -eq 1 ]; then
         set -- --deprecated-string-concat --redundant-begin --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" "$@"
-    elif [ "$_compiler_tool" -eq 1 ]; then
+    elif [ "$_compiler_consumer" -eq 1 ]; then
         set -- --stdlib-root "$ROOT/src" "$@"
     fi
     if [ "$NAME_CASE_CURRENT" -eq 1 ]; then

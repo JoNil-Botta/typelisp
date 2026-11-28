@@ -5192,8 +5192,8 @@
                     fanout)))]
             (and
               (!= first second)
-              (= (ast.ty-node-dedup-table-capacity final.dedup-slots) 8)
-              (= final.dedup-count 4)
+              (= (ast_tests.ast-type-node-pool-test-dedup-capacity (& final)) 8)
+              (= (ast_tests.ast-type-node-pool-test-dedup-count (& final)) 4)
               (match finite
                 [(Ok) true]
                 [(Err _) false])
@@ -5219,23 +5219,9 @@
       (ast.ast-node-pool-context-new-with-capacities 8 8)]
     [state : ast.AstTypeNodePoolState
       (ast.ast-type-pool-cell-read pools.type-pool)]
-    [small : ast.AstTypeNodePoolState
-      (ast.AstTypeNodePoolState
-        state.segment-bases
-        state.count
-        state.base-arena
-        state.exhausted
-        (in-arena
-          (unsafe
-            (arena.from-raw-handle state.base-arena))
-          (ast.ty-node-dedup-slots-new 8))
-        state.dedup-count
-        state.storage-arena
-        state.segment-count
-        state.revision
-        state.revision-cell)]
-    (ast.ast-type-pool-cell-write! pools.type-pool small)
-    (ast.ast-node-pool-context-install! pools)
+    (ast_tests.ast-type-node-pool-test-set-dedup-capacity! (& state) 8)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     (unsafe
       (ptr-write!
         (ptr-cast (ptr-addr-of ast.ty-node-dedup-max-capacity) : (MutPtr i64))
@@ -5255,7 +5241,8 @@
         (ptr-write!
           (ptr-cast (ptr-addr-of ast.ty-node-dedup-max-capacity) : (MutPtr i64))
           old-max))
-      (ast.ast-node-pool-context-install! previous)
+      (unsafe
+        (ast.ast-node-pool-context-install! previous))
       ok)))
 
 (define (compiler-typecheck-raw-append-dag-ok? [depth : i64] [applied : bool]) : bool

@@ -348,7 +348,8 @@
     [generation : i64 (intern.intern-generation)]
     [import-id : i64 builtins.compiler-builtin-id-fix-import]
     [ok : bool true]
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     (load.compiler-load-session-state-use! enclosing)
     (for [index (iterator.range 0 3)]
       (set!

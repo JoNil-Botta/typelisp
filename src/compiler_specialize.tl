@@ -3930,13 +3930,15 @@
       (ast.ast-node-pool-context-capture-active)]
     [intern-state : spec_ci.InternCompatState
       (spec_ci.intern-compat-state-capture-active)]
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     (spec_ci.intern-compat-state-install! intern-state)
     (let
       [owner : SpecOwnerContext (spec-owner-context-new pools intern-state)]
       [result : ResultGenProgram
         (gen-normalize-program-with-pools-and-intern-state program owner)]
-      (ast.ast-node-pool-context-install! previous-pools)
+      (unsafe
+        (ast.ast-node-pool-context-install! previous-pools))
       (spec_ci.intern-compat-state-install! intern-state)
       result)))
 
@@ -3944,7 +3946,8 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : ResultGenProgram (gen-normalize-program-with-pools program pools)]
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     result))
 
 (define (gen-decl-needs-normalize? [decl : (& ast.AstDecl)]) : bool
@@ -6562,7 +6565,8 @@
       (ast.ast-node-pool-context-capture-active)]
     [intern-state : spec_ci.InternCompatState
       (spec_ci.intern-compat-state-capture-active)]
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     (spec_ci.intern-compat-state-install! intern-state)
     (let
       [result : ResultSpecProgram
@@ -6570,7 +6574,8 @@
           program
           pools
           (& intern-state))]
-      (ast.ast-node-pool-context-install! previous-pools)
+      (unsafe
+        (ast.ast-node-pool-context-install! previous-pools))
       (spec_ci.intern-compat-state-install! intern-state)
       result)))
 
@@ -6584,7 +6589,8 @@
       (ast.ast-node-pool-context-capture-active)]
     [intern-state : spec_ci.InternCompatState
       (spec_ci.intern-compat-state-capture-active)]
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     (spec_ci.intern-compat-state-install! intern-state)
     (let
       [result : ResultSpecProgramWithPaths
@@ -6594,7 +6600,8 @@
           fallback-path
           pools
           (& intern-state))]
-      (ast.ast-node-pool-context-install! previous-pools)
+      (unsafe
+        (ast.ast-node-pool-context-install! previous-pools))
       (spec_ci.intern-compat-state-install! intern-state)
       result)))
 
@@ -6603,7 +6610,8 @@
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : ResultSpecProgram
       (compiler-specialize-program-with-pools program pools)]
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     result))
 
 (define (compiler-specialize-needed-with-pools

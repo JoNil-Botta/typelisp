@@ -70,6 +70,43 @@
 (define (ty-node-pool-capacity) : i64
   (ast.ty-node-pool-capacity))
 
+;; The AST smoke fixtures inspect and configure the real canonical index.
+(define (ast-type-node-pool-test-cursor
+  [pool : (& pool ast.AstTypeNodePoolState)]) : (MutPtr ast.AstTypePoolCursor)
+  (unsafe
+    (int->ptr pool.revision-cell : (MutPtr ast.AstTypePoolCursor))))
+
+(define (ast-type-node-pool-test-dedup-capacity
+  [pool : (& pool ast.AstTypeNodePoolState)]) : i64
+  (unsafe
+    (deref (ast-type-node-pool-test-cursor pool)).dedup-capacity))
+
+(define (ast-type-node-pool-test-dedup-count
+  [pool : (& pool ast.AstTypeNodePoolState)]) : i64
+  (unsafe
+    (deref (ast-type-node-pool-test-cursor pool)).dedup-count))
+
+(define (ast-type-node-pool-test-dedup-slot
+  [pool : (& pool ast.AstTypeNodePoolState)]
+  [index : i64]) : i64
+  (unsafe
+    (ptr-read
+      (ptr-offset
+        (deref (ast-type-node-pool-test-cursor pool)).dedup-slots
+        index))))
+
+(define (ast-type-node-pool-test-set-dedup-capacity!
+  [pool : (& pool ast.AstTypeNodePoolState)]
+  [capacity : i64]) : unit
+  (unsafe
+    (let
+      [cursor : (MutPtr ast.AstTypePoolCursor)
+        (ast-type-node-pool-test-cursor pool)]
+      (in-arena
+        (arena.from-raw-handle pool.base-arena)
+        (set! (deref cursor).dedup-slots (ast.ty-node-dedup-slots-new capacity)))
+      (set! (deref cursor).dedup-capacity capacity))))
+
 (define (ast-type-node-pool-state-exhausted?
   [pool : (& pool ast.AstTypeNodePoolState)]) : bool
   pool.exhausted)
@@ -112,7 +149,7 @@
       (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
       (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2))))
     ;; Overwriting an existing id can make hash entries stale. Clear the
-    ;; private table and let future pushes repopulate it from new candidates.
+    ;; shared table and let future pushes repopulate it from new candidates.
     (ast.ast-type-node-pool-state-reset-to pool count)))
 
 (define (ast-node-pool-context-expr-canonical-span

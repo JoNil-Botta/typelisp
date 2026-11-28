@@ -39,7 +39,9 @@
   (let
     [pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 8 8)]
-    [_install : unit (ast.ast-node-pool-context-install! pools)]
+    [_install : unit
+      (unsafe
+        (ast.ast-node-pool-context-install! pools))]
     [lifetime : i64 (ci.intern "r")]
     [node : i64
       (ast.ty-node-push (& (ast.ast-ty-ref lifetime (& (ast.AstType.I64)))))]
@@ -140,7 +142,8 @@
             tc.tc-variance-test-polls
             tc.tc-variance-test-allocated)))
       (tc.tc-variance-test-reset! 0)
-      (ast.ast-node-pool-context-install! installed))))
+      (unsafe
+        (ast.ast-node-pool-context-install! installed)))))
 
 (test
   variance-shared-dag-memo-worklist-oracle
@@ -148,13 +151,16 @@
     [installed : ast.AstNodePoolContext
       (ast.ast-node-pool-context-capture-active)]
     (variance-dag-self-test)
-    (ast.ast-node-pool-context-install! installed)))
+    (unsafe
+      (ast.ast-node-pool-context-install! installed))))
 
 (define (variance-source-context [source : (& str)]) : tc.TcContext
   (let
     [pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 8 8)]
-    [_install : unit (ast.ast-node-pool-context-install! pools)]
+    [_install : unit
+      (unsafe
+        (ast.ast-node-pool-context-install! pools))]
     [program : ast.AstProgram
       (match (parser.parse-ast-source-with-cfg-and-pools
         source
@@ -211,7 +217,8 @@
     [installed : ast.AstNodePoolContext
       (ast.ast-node-pool-context-capture-active)]
     (variance-four-values-self-test)
-    (ast.ast-node-pool-context-install! installed)))
+    (unsafe
+      (ast.ast-node-pool-context-install! installed))))
 
 (define (variance-layer-context [depth : i64]) : tc.TcContext
   (let
@@ -271,7 +278,8 @@
     [installed : ast.AstNodePoolContext
       (ast.ast-node-pool-context-capture-active)]
     (variance-layers-self-test)
-    (ast.ast-node-pool-context-install! installed)))
+    (unsafe
+      (ast.ast-node-pool-context-install! installed))))
 
 (cfg
   test
@@ -345,7 +353,9 @@
             0)
             [(Ok value) value]
             [(Err message) (io.panic message)])]
-        [_install : unit (ast.ast-node-pool-context-install! pools)]
+        [_install : unit
+          (unsafe
+            (ast.ast-node-pool-context-install! pools))]
         ;; Build the replacement in this pool so its child IDs have this owner.
         [parsed : ast.AstProgram
           (match (parser.parse-ast-source-with-cfg-and-pools
@@ -367,7 +377,8 @@
         (when
           (!= (variance-answer ctx "Dag" 0) 2)
           (io.panic "same-size symbol replacement reused variance")))
-      (ast.ast-node-pool-context-install! installed))))
+      (unsafe
+        (ast.ast-node-pool-context-install! installed)))))
 
 (test
   variance-completed-cache-context-and-publication
@@ -375,7 +386,8 @@
     [installed : ast.AstNodePoolContext
       (ast.ast-node-pool-context-capture-active)]
     (variance-context-self-test)
-    (ast.ast-node-pool-context-install! installed)))
+    (unsafe
+      (ast.ast-node-pool-context-install! installed))))
 
 (cfg
   test
@@ -392,7 +404,8 @@
       (when
         (!= (variance-answer left "Dag" 0) 1)
         (io.panic "pool initial answer"))
-      (ast.ast-node-pool-context-install! right-pools)
+      (unsafe
+        (ast.ast-node-pool-context-install! right-pools))
       ;; Left's field is Ref(r, 0). The same id now names a mutable referent
       ;; containing r, so this installed reader changes its full answer to Inv.
       (ast.ty-node-push (& (ast.AstType.MutRef (ci.intern "program") 1)))
@@ -401,7 +414,8 @@
       (when
         (!= (variance-answer left "Dag" 0) 3)
         (io.panic "equal type ids from another reader reused variance"))
-      (ast.ast-node-pool-context-install! left-pools)
+      (unsafe
+        (ast.ast-node-pool-context-install! left-pools))
       (when
         (!= (variance-answer left "Dag" 0) 1)
         (io.panic "interleaved reader did not restore variance"))
@@ -412,7 +426,8 @@
       (when
         (!= (variance-answer left "Dag" 0) 3)
         (io.panic "truncated/reused type ids reused variance"))
-      (ast.ast-node-pool-context-install! installed))))
+      (unsafe
+        (ast.ast-node-pool-context-install! installed)))))
 
 (test
   variance-reader-pool-identity-and-truncate-reuse
@@ -420,7 +435,8 @@
     [installed : ast.AstNodePoolContext
       (ast.ast-node-pool-context-capture-active)]
     (variance-pool-self-test)
-    (ast.ast-node-pool-context-install! installed)))
+    (unsafe
+      (ast.ast-node-pool-context-install! installed))))
 
 (cfg
   test
@@ -491,7 +507,8 @@
             (tc.tc-nominal-lifetime-variance-at ctx name 0 tc.TcNameIdList.Nil))
           1)
         (io.panic "post-segment alias variance"))
-      (ast.ast-node-pool-context-install! installed))))
+      (unsafe
+        (ast.ast-node-pool-context-install! installed)))))
 
 (test
   variance-alias-publication-changes-equation-answer

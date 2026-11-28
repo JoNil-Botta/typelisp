@@ -315,7 +315,9 @@
   [alias : i64]
   [pools : ast.AstNodePoolContext]) : CompilerLoadStructuralMemberDemand
   (let
-    [_install-pools : unit (ast.ast-node-pool-context-install! pools)]
+    [_install-pools : unit
+      (unsafe
+        (ast.ast-node-pool-context-install! pools))]
     (compiler-load-structural-member-demand-from-lazy
       (let
         [bound-5 (load.compiler-load-lazy-empty-surface-summary)]
@@ -400,7 +402,8 @@
         import-root
         cfgs
         pools)]
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     result))
 
 (define (compiler-load-package-entry-main?

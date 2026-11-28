@@ -83,7 +83,8 @@
     [source-root : ast.AstExpr (Unary (Not) source-leaf)]
     [_installed-leaf : i64
       (ast.ast-node-pool-context-expr-push installed-pools (Var other-id))]
-    (ast.ast-node-pool-context-install! installed-pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! installed-pools))
     (let
       [installed-bases : i64
         (ast.ast-node-pool-context-expr-segment-bases installed-pools)]
@@ -95,7 +96,8 @@
           Nil)]
       [installed-unchanged : bool
         (= (ast.ast-node-pool-active-expr-segment-bases) installed-bases)]
-      (ast.ast-node-pool-context-install! active-before)
+      (unsafe
+        (ast.ast-node-pool-context-install! active-before))
       (and found installed-unchanged))))
 
 (define (driver-state-smoke-type-elision-token-ok?) : bool
@@ -117,7 +119,8 @@
         (Ref nested-lifetime source-leaf-id))]
     [installed-nested-id : i64
       (ast.ast-node-pool-context-type-push installed-pools (Bool))]
-    (ast.ast-node-pool-context-install! installed-pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! installed-pools))
     (let
       [installed-bases : i64
         (ast.ast-node-pool-context-type-segment-bases installed-pools)]
@@ -139,7 +142,8 @@
         (=
           (ast.ast-node-pool-context-type-segment-bases installed-active)
           installed-bases)]
-      (ast.ast-node-pool-context-install! active-before)
+      (unsafe
+        (ast.ast-node-pool-context-install! active-before))
       (and
         (= source-leaf-id installed-leaf-id)
         (= source-nested-id installed-nested-id)
@@ -216,7 +220,8 @@
           b-structural-id
           "decoy/structural-sentinel")]
       (ci.intern-compat-state-install! state-a)
-      (ast.ast-node-pool-context-install! serial-pools)
+      (unsafe
+        (ast.ast-node-pool-context-install! serial-pools))
       (match (driver-state-specialize-parse-program incompatible?)
         [(Ok serial-program)
           (let
@@ -226,7 +231,8 @@
                 (& paths)
                 "specialize-smoke.tl"
                 serial-pools)]
-            (ast.ast-node-pool-context-install! owned-pools)
+            (unsafe
+              (ast.ast-node-pool-context-install! owned-pools))
             (match (driver-state-specialize-parse-program incompatible?)
               [(Ok owned-program)
                 (let
@@ -241,7 +247,8 @@
                   [decoy-type-id : i64
                     (ast.ast-node-pool-context-type-push decoy-pools (I64))]
                   (ci.intern-compat-state-install! state-b)
-                  (ast.ast-node-pool-context-install! decoy-pools)
+                  (unsafe
+                    (ast.ast-node-pool-context-install! decoy-pools))
                   (let
                     [before-expr-len : i64
                       (ast.ast-node-pool-context-expr-len decoy-pools)]
@@ -377,7 +384,8 @@
               [_ (set! ok false)]))]
         [(Err _) (set! ok false)]))
     ;; Restore both compatibility contexts on every normal exit.
-    (ast.ast-node-pool-context-install! home-pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! home-pools))
     (ci.intern-compat-state-install! home-intern)
     ok))
 

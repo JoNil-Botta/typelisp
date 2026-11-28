@@ -522,7 +522,8 @@
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : parser.ResultAstProgram
       (parser.parse-ast-program-with-cfg-and-pools (& toks) cfgs pools)]
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     result))
 
 (define (parse-ast-program [toks : (__tl_dyn-array token.SpannedToken)]) : parser.ResultAstProgram

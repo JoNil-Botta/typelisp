@@ -2599,7 +2599,6 @@
           (driver.compiler-driver-state-new-checked-lower-pools)]
         [_install : unit
           (unsafe
-            ;; unsafe: installs global AST pool state; replaced before this arena ends
             (ast.ast-node-pool-context-install! pools))]
         [status : i64
           (unsafe
@@ -2622,9 +2621,7 @@
           (unsafe
             ;; unsafe: installs the global load session; replaced before this arena ends
             (driver.compiler-driver-reset-file-state!))
-          (unsafe
-            ;; unsafe: installs global AST pool state; replaced before this arena ends
-            (driver.compiler-driver-state-destroy-uncommitted-pools! retired))
+          (driver.compiler-driver-state-destroy-uncommitted-pools! retired)
           (unsafe
             ;; unsafe: resets the global persistent intern arena
             (ci.intern-persistent-arena-reset!))
@@ -3604,7 +3601,8 @@
     (compiler_load.compiler-load-session-program-cache-disable!)
     (tc_core.tc-serial-job-state-set!
       (owned_view.compiler-owned-shared-view entry-job))
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     (TlTestEntry owner parent-load parent-default parent-job)))
 
 (define (tltest-entry-finish [entry : TlTestEntry] [result : i64]) : i64

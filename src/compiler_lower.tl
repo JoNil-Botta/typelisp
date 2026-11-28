@@ -1488,10 +1488,7 @@
 (define (lower-spmd-source-type-id
   [pools : ast.AstNodePoolContext]
   [ty : (& ty ast.AstType)]) : i64
-  (ast.ast-node-pool-context-type-push-cells
-    (cast (ast.ast-node-pool-context-expr-cell-address pools) : u64)
-    (cast (ast.ast-node-pool-context-type-cell-address (& pools)) : u64)
-    ty))
+  (ast.ast-type-pool-cell-push! pools.type-pool ty))
 
 (define (lower-spmd-source-key
   [ctx : tc_core.TcContext]
@@ -3067,7 +3064,8 @@
         (unsafe
           (arena.tl_arena_set source-arena))
         (set! handoff.context (Context source-pools))
-        (ast.ast-node-pool-context-install! source-pools)
+        (unsafe
+          (ast.ast-node-pool-context-install! source-pools))
         (if (= macro-frontend-arena 0)
           unit
           (unsafe
@@ -3201,7 +3199,8 @@
         (let
           [committed-pools : ast.AstNodePoolContext
             (compiler-lower-checked-pools-context handoff)]
-          (ast.ast-node-pool-context-install! committed-pools))
+          (unsafe
+            (ast.ast-node-pool-context-install! committed-pools)))
         (ast.ast-node-pool-storage-arenas-destroy!
           old-expr-storage-arena
           old-type-storage-arena
@@ -81387,7 +81386,9 @@
           (let
             [_freeze-let-facts : unit
               (tc_core.tc-checked-let-binding-facts-freeze! let-facts)]
-            [_install-pools : unit (ast.ast-node-pool-context-install! pools)]
+            [_install-pools : unit
+              (unsafe
+                (ast.ast-node-pool-context-install! pools))]
             [lower-names : LowerNameEnv
               (match (lower-global-shared-view program)
                 [(Program decls-box)
@@ -81638,7 +81639,8 @@
             (Ok program paths)))]
       ;; Explicit specialization mutates owner pool/interner cells; publish
       ;; them before matching either result or entering legacy lowering.
-      (ast.ast-node-pool-context-install! pools)
+      (unsafe
+        (ast.ast-node-pool-context-install! pools))
       (ci.intern-compat-state-install! intern-state)
       (match specialized-result
         [(Ok specialized specialized-paths)
@@ -81972,7 +81974,8 @@
             generation-owner)]
         ;; Publish explicit generation mutations before matching either result
         ;; or entering the legacy macro-expansion phase.
-        (ast.ast-node-pool-context-install! pools)
+        (unsafe
+          (ast.ast-node-pool-context-install! pools))
         (ci.intern-compat-state-install! intern-state)
         (match generated-result
           [(Ok generated generated-paths)

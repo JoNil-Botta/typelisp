@@ -283,7 +283,8 @@
     (compiler_load.compiler-load-session-state-use-with-intern-state!
       load-state
       (owned_view.compiler-owned-shared-view intern-state))
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     (ci.intern-compat-state-install! intern-state)
     (let
       [lazy-mode : bool
@@ -306,7 +307,8 @@
           ;; The stateful loader extends the explicit segmented context. Do not
           ;; overwrite it with the stale compatibility-global view on return;
           ;; publish the completed owner for the remaining legacy readers.
-          (ast.ast-node-pool-context-install! pools)
+          (unsafe
+            (ast.ast-node-pool-context-install! pools))
           (ci.intern-compat-state-capture-from-globals! (&mut intern-state)))]
       [_restore : unit
         (compiler_load.compiler-load-session-state-lazy-import-mode-set-enabled!

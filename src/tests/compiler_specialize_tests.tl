@@ -319,12 +319,14 @@
       (spec_ci.intern-compat-state-capture-active)]
     [owner : spec.SpecOwnerContext
       (spec.spec-owner-context-new pools intern-state)]
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     (spec_ci.intern-compat-state-install! intern-state)
     (let
       [result : ast.AstType
         (spec.spec-substitute-type-with-owner owner ty subs)]
-      (ast.ast-node-pool-context-install! pools)
+      (unsafe
+        (ast.ast-node-pool-context-install! pools))
       (spec_ci.intern-compat-state-install! intern-state)
       result)))
 
@@ -347,12 +349,14 @@
       (spec.SpecSubst
         (spec.spec-type-subst-new)
         (spec.spec-value-subst-shared-view subs))]
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     (spec_ci.intern-compat-state-install! intern-state)
     (let
       [result : spec.ResultSpecSubExpr
         (spec.spec-substitute-expr-with-owner owner (& expr) (& combined))]
-      (ast.ast-node-pool-context-install! pools)
+      (unsafe
+        (ast.ast-node-pool-context-install! pools))
       (spec_ci.intern-compat-state-install! intern-state)
       result)))
 
@@ -368,7 +372,8 @@
         (& paths)
         fallback-path
         pools)]
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     result))
 
 (define (compiler-specialize-needed? [program : ast.AstProgram]) : bool

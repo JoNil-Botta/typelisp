@@ -37,6 +37,52 @@
     [(Integer n) (Ok n)]
     [_ (Err (str_cat.str-cat "expected assembly integer: " (string.copy s)))]))
 
+;; COFF uses the COMDAT key in addition to the section name. Keep the
+;; selection kind in the section identity and the key as an interned ID.
+(define (coff-section!
+  [image : (&mut asm.Image)]
+  [name : (& str)]
+  [args : (& str)]
+  [i : i64]) : asm.Status
+  (let
+    [flags (unquoted (argument args (&mut i)))]
+    [selection (argument args (&mut i))]
+    [kind : i64
+      (match selection
+        ["" 0]
+        ["one_only" 1]
+        ["discard" 2]
+        ["associative" 5]
+        [_ (return (Err "unsupported COMDAT selection"))])]
+    [group : i64 -1]
+    [attributes : i64
+      (cond
+        [(string.eq (& flags) "xr") 4]
+        [(or (string.eq (& flags) "dw") (string.eq (& flags) "bw")) 1]
+        [(string.eq (& flags) "dr") 0]
+        [(string.eq (& flags) "")
+          (if (string.eq name ".rdata")
+            0
+            1)]
+        [else (return (Err "unsupported COFF section flags"))])]
+    (when
+      (> kind 0)
+      (set! group (sym.named! (&mut image.table) (& (argument args (&mut i)))))
+      (when (< group 0) (return (Err "missing COMDAT key"))))
+    (when
+      (<= i (string.string-length args))
+      (return (Err "unexpected COFF section argument")))
+    (asm.select-section!
+      image
+      name
+      (if (string.eq (& flags) "bw")
+        8
+        1)
+      attributes
+      kind
+      group
+      "")))
+
 (define (section! [image : (&mut asm.Image)] [args : (& src str)]) : asm.Status
   (let
     [i : i64 0]
@@ -44,6 +90,13 @@
     (when
       (= (string.string-length (& name)) 0)
       (return (Err "missing section name")))
+    (when
+      (and
+        image.coff
+        (or
+          (<= i (string.string-length args))
+          (< (asm.section-index image (& name)) 0)))
+      (return (coff-section! image (& name) args i)))
     (when
       (> i (string.string-length args))
       (return (asm.select-section! image (& name) 0 0 0 -1 "")))
@@ -156,19 +209,29 @@
           [size (try (number (& (argument args (&mut i)))))]
           [align
             (if (> i (string.string-length args))
-              (cast 1 : i64)
+              (if image.coff
+                (cast 0 : i64)
+                (cast 1 : i64))
               (try (number (& (argument args (&mut i))))))]
+          (when
+            image.coff
+            (unless
+              (and (>= align 0) (<= align 5) (<= size 0xffffffff))
+              (return (Err "invalid COFF common symbol extent or alignment")))
+            (set! align (shl (cast 1 : i64) align))
+            (when (< size align) (set! size align)))
           (unless
             (and (>= size 0) (> align 0) (= 0 (bit-and align (- align 1))))
             (return (Err "invalid common allocation")))
           (if (= (array-ref image.table.entries.slots id).binding 0)
             (let
+              [bss (asm.section-index image ".bss")]
               [s : (&mut img asm.Section)
-                (&mut (array-ref image.items.slots 3))]
+                (&mut (array-ref image.items.slots bss))]
               (try (asm.alignment! s align 0 0))
               (set!
                 (array-ref image.table.entries.slots id).position
-                (asm.position s 3))
+                (asm.position s bss))
               (asm.end-run! s (Fill size 0) size))
             (set! (array-ref image.table.entries.slots id).common-align align))
           (set! (array-ref image.table.entries.slots id).kind 1)
@@ -333,6 +396,10 @@
                   [".short" 2]
                   [".word" 2]
                   [".long" 4]
+                  [".rva"
+                    (if image.coff
+                      4
+                      (return (Err "unexpected .rva")))]
                   [".quad" 8]
                   [_
                     (return
@@ -343,6 +410,28 @@
               (while (<= i n)
                 (let
                   [end (op.delimiter-before args i n ',')]
-                  (try (asm.data-field! s (&mut image.table) args i end width))
+                  (let
+                    [before s.fixups.len]
+                    (try
+                      (asm.data-field! s (&mut image.table) args i end width))
+                    (when
+                      (string.eq dir ".rva")
+                      (unless
+                        (and
+                          (> s.fixups.len before)
+                          (>=
+                            (array-ref s.fixups.slots before).expression.positive
+                            0)
+                          (=
+                            (array-ref s.fixups.slots before).expression.negative
+                            -1)
+                          (string.eq
+                            (&
+                              (array-ref s.fixups.slots before).expression.modifier)
+                            ""))
+                        (return (Err "expected RVA symbol")))
+                      (set!
+                        (array-ref s.fixups.slots before).expression.modifier
+                        "IMGREL")))
                   (set! i (+ end 1))))
               (Ok unit))]))]))

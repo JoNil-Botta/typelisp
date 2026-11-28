@@ -296,22 +296,7 @@ cat > "$FALLBACK_SOURCE" <<'EOF'
 EOF
 
 echo "[windows-native-link] source unsupported semantics use assembler fallback"
-set +e
-TYPELISP_WINDOWS_DIRECT_OBJECT=1 \
-    TYPELISP_WINDOWS_CLANG=__typelisp_expected_assembler_fallback__.exe \
-    "$COMPILER" build --direct "$FALLBACK_SOURCE" --target windows-x86_64 \
-    -o "$FALLBACK_SOURCE_BIN" --stdlib-root "$ROOT/stdlib" --no-prebuilt-stdlib \
-    > "$WORKDIR/build-source-fallback-probe.stdout" \
-    2> "$WORKDIR/build-source-fallback-probe.stderr"
-fallback_source_probe_status=$?
-set -e
-if [ "$fallback_source_probe_status" -eq 0 ]; then
-    fail "unsupported Windows source semantics unexpectedly bypassed the assembler"
-fi
-assert_contains "$WORKDIR/build-source-fallback-probe.stderr" \
-    "__typelisp_expected_assembler_fallback__.exe"
-
-if ! TYPELISP_WINDOWS_DIRECT_OBJECT=1 \
+if ! TYPELISP_WINDOWS_CLANG=__typelisp_unexpected_assembler__.exe TYPELISP_WINDOWS_DIRECT_OBJECT=1 \
     "$COMPILER" build --direct "$FALLBACK_SOURCE" --target windows-x86_64 \
     -o "$FALLBACK_SOURCE_BIN" --stdlib-root "$ROOT/stdlib" --no-prebuilt-stdlib \
     > "$WORKDIR/build-source-fallback.stdout" \
@@ -414,20 +399,7 @@ cat > "$FALLBACK_PACKAGE_DIR/src/main.tl" <<'EOF'
 EOF
 
 echo "[windows-native-link] package unsupported semantics use assembler fallback"
-set +e
-TYPELISP_WINDOWS_CLANG=__typelisp_expected_package_assembler_fallback__.exe \
-    "$COMPILER" build --manifest-path "$FALLBACK_PACKAGE_DIR/typelisp.pkg" \
-    --target windows-x86_64 --stdlib-root "$ROOT/stdlib" --no-prebuilt-stdlib \
-    > "$WORKDIR/build-package-fallback-probe.stdout" \
-    2> "$WORKDIR/build-package-fallback-probe.stderr"
-fallback_probe_status=$?
-set -e
-if [ "$fallback_probe_status" -eq 0 ]; then
-    fail "unsupported package semantics unexpectedly bypassed the assembler"
-fi
-assert_contains "$WORKDIR/build-package-fallback-probe.stderr" \
-    "__typelisp_expected_package_assembler_fallback__.exe"
-if ! "$COMPILER" build --manifest-path "$FALLBACK_PACKAGE_DIR/typelisp.pkg" \
+if ! TYPELISP_WINDOWS_CLANG=__typelisp_unexpected_assembler__.exe "$COMPILER" build --manifest-path "$FALLBACK_PACKAGE_DIR/typelisp.pkg" \
     --target windows-x86_64 --stdlib-root "$ROOT/stdlib" --no-prebuilt-stdlib \
     > "$WORKDIR/build-package-fallback.stdout" \
     2> "$WORKDIR/build-package-fallback.stderr"; then
@@ -438,6 +410,11 @@ fi
 assert_empty "$WORKDIR/build-package-fallback.stderr"
 [ -x "$FALLBACK_PACKAGE_BIN" ] || \
     fail "package assembler fallback did not write $FALLBACK_PACKAGE_BIN"
+# The package keeps the final source and object. Reassembling that source
+# must reproduce the fallback object, including its symbol and unwind tables.
+FALLBACK_SIDE="$FALLBACK_PACKAGE_DIR/target/dev/windows_semantic_fallback_pkg"
+"$COMPILER" assemble "$FALLBACK_SIDE.s" -o "$WORKDIR/fallback-reassembled.obj" --target windows-x86_64
+cmp "$FALLBACK_SIDE.obj" "$WORKDIR/fallback-reassembled.obj" || fail "package fallback object differs from final assembly"
 set +e
 "$FALLBACK_PACKAGE_BIN" > "$WORKDIR/package-fallback.stdout" \
     2> "$WORKDIR/package-fallback.stderr"
@@ -473,21 +450,7 @@ cat > "$TEST_SRC" <<'EOF'
 EOF
 
 echo "[windows-native-link] test unsupported semantics use assembler fallback"
-set +e
-TYPELISP_WINDOWS_DIRECT_OBJECT=1 \
-    TYPELISP_WINDOWS_CLANG=__typelisp_unexpected_assembler_fallback__.exe \
-    "$COMPILER" test "$TEST_SRC" --target windows-x86_64 \
-    --stdlib-root "$ROOT/stdlib" --no-prebuilt-stdlib \
-    > "$WORKDIR/test-fallback-probe.stdout" 2> "$WORKDIR/test-fallback-probe.stderr"
-test_fallback_probe_status=$?
-set -e
-if [ "$test_fallback_probe_status" -eq 0 ]; then
-    fail "selfhost test unsupported semantics bypassed assembler fallback"
-fi
-assert_empty "$WORKDIR/test-fallback-probe.stdout"
-assert_contains "$WORKDIR/test-fallback-probe.stderr" "failed to run assembler"
-
-if ! TYPELISP_WINDOWS_DIRECT_OBJECT=1 \
+if ! TYPELISP_WINDOWS_CLANG=__typelisp_unexpected_assembler__.exe TYPELISP_WINDOWS_DIRECT_OBJECT=1 \
     "$COMPILER" test "$TEST_SRC" --target windows-x86_64 \
     --stdlib-root "$ROOT/stdlib" --no-prebuilt-stdlib \
     > "$WORKDIR/test-fallback.stdout" 2> "$WORKDIR/test-fallback.stderr"; then

@@ -161,6 +161,16 @@
         [else -1])]
     [else -1]))
 
+(define (coff-type [width : i64] [modifier : (& str)] [pc : bool]) : i64
+  (cond
+    [(and (not pc) (= width 4) (string.eq modifier "IMGREL")) 3]
+    [(not (string.eq modifier "")) -1]
+    [(and pc (= width 4)) 4]
+    [pc -1]
+    [(= width 4) 2]
+    [(= width 8) 1]
+    [else -1]))
+
 (define (patch!
   [out : (&mut buf.ByteBufBuilder)]
   [at : i64]
@@ -229,7 +239,7 @@
           [(and
               pc
               (= a.section id)
-              local
+              (or local image.coff)
               (string.eq modifier "")
               (= b.section absolute))
             (try
@@ -268,12 +278,14 @@
                     (Named target)]
                   [else (Named target)])]
               [ty
-                (type-code
-                  f.width
-                  modifier
-                  pc
-                  (and branch (not local) (!= a.section absolute))
-                  signed)]
+                (if image.coff
+                  (coff-type f.width modifier pc)
+                  (type-code
+                    f.width
+                    modifier
+                    pc
+                    (and branch (not local) (!= a.section absolute))
+                    signed))]
               (when
                 (< ty 0)
                 (return
@@ -281,9 +293,10 @@
                     (str_cat.str-cat
                       "unsupported relocation modifier or width: "
                       (string.copy modifier)))))
+              (when (and image.coff pc) (+= addend 4))
               (when (= ty 9) (set! ty f.got-type))
               (when
-                (>= target 0)
+                (and (not image.coff) (>= target 0))
                 (when
                   (and (>= ty 17) (<= ty 23))
                   (set! (array-ref image.table.entries.slots target).kind 6))

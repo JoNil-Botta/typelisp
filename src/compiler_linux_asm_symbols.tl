@@ -175,11 +175,12 @@
       (+= i 1))
     (buf.byte-buf-builder-finish-string (& out))))
 
-(define (parse-expression-range!
+(define (parse-group!
   [table : (&mut Table)]
   [s : (& str)]
   [start : i64]
-  [end : i64]) : ResultExpression
+  [end : i64]
+  [depth : i64]) : ResultExpression
   (let
     [i (op.skip-whitespace s start end)]
     [n (op.trim-end s i end)]
@@ -190,6 +191,57 @@
         [first (string.string-ref s i)]
         [minus (= first '-')]
         (when (or minus (= first '+')) (+= i 1))
+        (set! i (op.skip-whitespace s i n))
+        (when
+          (and (< i n) (= (string.string-ref s i) '('))
+          (when
+            (>= depth 32)
+            (return (Err "assembly expression nested too deeply")))
+          (let
+            [begin-at (+ i 1)]
+            [level : i64 1]
+            [quoted false]
+            (set! i begin-at)
+            (while (and (< i n) (> level 0))
+              (let
+                [c (string.string-ref s i)]
+                (cond
+                  [(= c '"') (set! quoted (not quoted))]
+                  [quoted unit]
+                  [(= c '(') (+= level 1)]
+                  [(= c ')') (-= level 1)]
+                  [else unit]))
+              (+= i 1))
+            (unless (= level 0) (return (Err "unclosed assembly expression")))
+            (let
+              [term (try (parse-group! table s begin-at (- i 1) (+ depth 1)))]
+              [pos
+                (if minus
+                  term.negative
+                  term.positive)]
+              [neg
+                (if minus
+                  term.positive
+                  term.negative)]
+              (when
+                (or
+                  (and (!= pos -1) (!= expr.positive -1))
+                  (and (!= neg -1) (!= expr.negative -1))
+                  (not (string.eq (& term.modifier) "")))
+                (return (Err "invalid grouped assembly expression")))
+              (when (!= pos -1) (set! expr.positive pos))
+              (when (!= neg -1) (set! expr.negative neg))
+              (if minus
+                (-= expr.constant term.constant)
+                (+= expr.constant term.constant))))
+          (set! i (op.skip-whitespace s i n))
+          (when
+            (and
+              (< i n)
+              (!= (string.string-ref s i) '+')
+              (!= (string.string-ref s i) '-'))
+            (return (Err "expected assembly expression operator")))
+          (continue))
         (let
           [start i]
           (let
@@ -251,7 +303,9 @@
                       (return (Err "invalid relocation modifier")))
                     (set! expr.modifier (modifier-name (& term) (+ at 1)))
                     (unless
-                      (string.eq (& expr.modifier) "PLT")
+                      (or
+                        (string.eq (& expr.modifier) "PLT")
+                        (string.eq (& expr.modifier) "IMGREL"))
                       (let
                         [_got (intern! table "_GLOBAL_OFFSET_TABLE_")]
                         unit)))
@@ -263,6 +317,13 @@
                       (set! expr.positive id)
                       (return (Err "multiple positive symbols")))))])))))
     (Ok expr)))
+
+(define (parse-expression-range!
+  [table : (&mut Table)]
+  [s : (& str)]
+  [start : i64]
+  [end : i64]) : ResultExpression
+  (parse-group! table s start end 0))
 
 (define (parse-expression! [table : (&mut Table)] [source : (& str)]) : ResultExpression
   (parse-expression-range! table source 0 (string.string-length source)))

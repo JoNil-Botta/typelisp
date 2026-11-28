@@ -59,6 +59,9 @@ stderr contains default dev
 stderr contains Alias for --profile release
 
 case help-details
+run assemble --help
+stderr contains --target linux-x86_64|windows-x86_64
+stderr contains relocatable ELF or COFF object
 run build -h
 stderr contains typelisp build <file.tl> [-o <exe>] [--debug|-g|--backtrace] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|s>|-Os] [--stdlib-root <dir>...]
 stderr contains --opt-level <0|1|2|s>|-Os            Optimizer level (source default 1; package release 2, dev 0)

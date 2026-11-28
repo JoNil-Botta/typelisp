@@ -1,3 +1,5 @@
+(import stdlib.iterator)
+
 ;; Each fragment is a run of fixed bytes ending at a layout decision. Labels
 ;; and fixups within the run retain a fragment index and an intra-run offset.
 (import compiler_linux_asm_symbols as sym)
@@ -397,7 +399,8 @@
   (table sym.Table)
   (items sections.Vec)
   (current i64)
-  (index section_map.Map))
+  (index section_map.Map)
+  (coff bool))
 
 (define (new-image) : Image
   (let
@@ -421,7 +424,34 @@
               (new-section name ty flags 0 -1 ""))]
           [_ unit]))
       (+= i 1))
-    (Image (sym.new-table) items 0 index)))
+    (Image (sym.new-table) items 0 index false)))
+
+(define (new-coff-image) : Image
+  (let
+    [image (Image (sym.new-table) (sections.new) 0 (section_map.new) true)]
+    (for [i (iterator.range 0 3)]
+      (let
+        [name : String
+          (match i
+            [0 ".text"]
+            [1 ".data"]
+            [_ ".bss"])]
+        [section
+          (new-section
+            (string.copy (& name))
+            (if (= i 2)
+              8
+              1)
+            (if (= i 0)
+              4
+              1)
+            0
+            -1
+            "")]
+        (set! section.alignment 4)
+        (section_map.insert-ref! (&mut image.index) name i)
+        (sections.push-ref! (&mut image.items) section)))
+    image))
 
 (define (section-spec [s : (& Section)] [id : i64]) : obj.CompilerObjectSectionSpec
   (obj.CompilerObjectSectionSpec

@@ -81,7 +81,7 @@ Usage:
     typelisp <command> --help
 
 Commands:
-    typelisp assemble       Assemble compiler output into an ELF object
+    typelisp assemble       Assemble compiler output into an ELF or COFF object
     typelisp build          Build a source file or package artifact
     typelisp check          Type check a source file or package
     typelisp clean          Remove build artifacts
@@ -353,17 +353,27 @@ Options:
 
 (define (cli-assemble-help-text) : String
   "Usage:
-    typelisp assemble <file.s> -o <file.o>
+    typelisp assemble <file.s> -o <file.o> [--target linux-x86_64|windows-x86_64]
 
 Summary:
-    Assemble final TypeLisp Linux x86-64 assembly into a relocatable ELF object.
+    Assemble final TypeLisp x86-64 assembly into a relocatable ELF or COFF object.
 ")
 
 (define (cli-assemble [count : i64]) : i64
-  (if (and (= count 5) (cli-eq? (cli-arg 3) "-o"))
+  (if (and
+    (or
+      (= count 5)
+      (and
+        (= count 7)
+        (cli-eq? (cli-arg 5) "--target")
+        (or
+          (cli-eq? (cli-arg 6) "linux-x86_64")
+          (cli-eq? (cli-arg 6) "windows-x86_64"))))
+    (cli-eq? (cli-arg 3) "-o"))
     (match (build_run_core.source-tool-assemble
-      "assembler"
-      (Linux)
+      (if (and (= count 7) (cli-eq? (cli-arg 6) "windows-x86_64"))
+        (Windows)
+        (Linux))
       (cli-arg 2)
       (cli-arg 4))
       [(Ok) 0]

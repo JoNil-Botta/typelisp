@@ -1,3 +1,6 @@
+(import stdlib.str_cat_runtime as str_cat)
+(import compiler_coff_asm_codeview as cv)
+(import compiler_coff_asm_unwind as unwind)
 (import compiler_linux_asm_debug as dbg)
 (import compiler_linux_asm_layout as asm)
 (import compiler_linux_asm_symbols as sym)
@@ -22,10 +25,19 @@
   (definitions macros.Vec)
   (stack ints.Vec)
   (debug dbg.Debug)
-  (source-offset i64))
+  (source-offset i64)
+  (unwind unwind.Unwind)
+  (codeview cv.Debug))
 
 (define (new-reader) : Reader
-  (Reader (asm.new-image) (macros.new) (ints.new) (dbg.new) 0))
+  (Reader
+    (asm.new-image)
+    (macros.new)
+    (ints.new)
+    (dbg.new)
+    0
+    (unwind.new)
+    (cv.new)))
 
 (define (next-line [source : (& str)] [cursor : (&mut i64)]) : String
   (let
@@ -272,12 +284,33 @@
                 (& (in-arena scratch (op.range (& line) at colon)))))
             (set! at (op.skip-whitespace (& line) (+ colon 1) n))
             (continue)]
+          [(and
+              reader.image.coff
+              (string.is-string-prefix-at (& word) ".cv_" 0))
+            (try
+              (cv.record!
+                (&mut reader.codeview)
+                (&mut reader.image)
+                (& word)
+                (& args)))]
+          [(and
+              reader.image.coff
+              (string.is-string-prefix-at (& word) ".seh_" 0))
+            (try
+              (unwind.record!
+                (&mut reader.unwind)
+                (&mut reader.image)
+                (& word)
+                (& args)))]
           [(or
-              (string.eq (& word) ".loc")
-              (string.eq (& word) ".file")
-              (and
-                (>= (string.string-length (& word)) 5)
-                (string.is-string-prefix-at (& word) ".cfi_" 0)))
+            (string.eq (& word) ".loc")
+            (string.eq (& word) ".file")
+            (and
+              (>= (string.string-length (& word)) 5)
+              (string.is-string-prefix-at (& word) ".cfi_" 0)))
+            (when
+              reader.image.coff
+              (return (Err "unexpected ELF debug directive in COFF assembly")))
             (try
               (dbg.record!
                 (&mut reader.debug)
@@ -373,3 +406,30 @@
         (= state.conditions 0)
         (return (Err "unclosed assembler conditional")))
       (Ok unit))))
+
+;; The caller owns the image and the scope for the resulting object.
+(define (parse-final! [parser : (&mut Reader)] [final-text : (& str)]) : asm.Status
+  (let
+    [scratch (arena.make)]
+    [parsed (read-source! parser final-text 0 scratch)]
+    (arena.destroy-safe! scratch)
+    (match parsed
+      [(Ok _) unit]
+      [(Err reason)
+        (let
+          [offset parser.source-offset]
+          [text (next-line final-text (&mut offset))]
+          (return (Err (str_cat.str-cat reason " on assembly line: " text))))])
+    (unless (= parser.stack.len 0) (return (Err "unclosed .pushsection")))
+    (when parser.unwind.active (return (Err "unclosed .seh_proc")))
+    (Ok unit)))
+
+(define (new-windows-reader) : Reader
+  (Reader
+    (asm.new-coff-image)
+    (macros.new)
+    (ints.new)
+    (dbg.new)
+    0
+    (unwind.new)
+    (cv.new)))

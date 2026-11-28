@@ -17,6 +17,7 @@
 (import compiler_lower)
 (import compiler_backend as backend)
 (import compiler_assemble_linux_x64 as linux_asm)
+(import compiler_assemble_windows_x64 as windows_asm)
 (import compiler_backend_object as be_object)
 (import compiler_ast_types as ast)
 (import compiler_ir_types as ir)
@@ -1187,23 +1188,6 @@
   [command : process.ProcessCommand]) : process.ProcessCommand
   command)
 
-(define (source-tool-windows-assembler-command
-  [asm-path : String]
-  [obj-path : String]) : process.ProcessCommand
-  (process.command
-    (source-tool-env-command-or-default
-      "TYPELISP_WINDOWS_CLANG"
-      (source-tool-resolve-command "clang"))
-    (process.args-cons
-      "--target=x86_64-pc-windows-msvc"
-      (process.args-cons
-        "-c"
-        (process.args-cons
-          asm-path
-          (process.args-cons
-            "-o"
-            (process.args-cons obj-path (process.args-empty))))))))
-
 ;; Map every entry of `items` to `prefix` + entry + `suffix`, preserving argv
 ;; order.
 (define (source-tool-decorated-args
@@ -1577,59 +1561,62 @@
   (source-tool-try-remove-dir-if-exists temp-dir)
   unit)
 
-(define (source-tool-assemble-linux-text
+(define (source-tool-assemble-text
+  [target : be_state.CompilerBackendTarget]
   [asm-path : (& asm-path str)]
   [obj-path : (& obj-path str)]
   [asm : (& asm str)]) : SourceToolCommandStatus
-  (match (linux_asm.assemble-linux-x64 asm)
-    [(Err message)
-      (Err
-        (str_cat.str-cat
-          "Error: Linux x86-64 assembler failed for "
-          (string.copy asm-path)
-          ": "
-          message))]
-    [(Ok object)
-      (source-tool-write-file
-        obj-path
-        (& object)
-        (str_cat.str-cat "Error: cannot write object " (string.copy obj-path)))]))
+  (let
+    [result : ResultSourceToolString
+      (match target
+        [(Linux)
+          (match (linux_asm.assemble-linux-x64 asm)
+            [(Ok object) (Ok object)]
+            [(Err reason) (Err reason)])]
+        [(Windows)
+          (match (windows_asm.assemble-windows-x64 asm)
+            [(Ok object) (Ok object)]
+            [(Err reason) (Err reason)])])]
+    (match result
+      [(Err message)
+        (Err
+          (str_cat.str-cat
+            "Error: "
+            (source-tool-target-name target)
+            " assembler failed for "
+            (string.copy asm-path)
+            ": "
+            message))]
+      [(Ok object)
+        (source-tool-write-file
+          obj-path
+          (& object)
+          (str_cat.str-cat "Error: cannot write object " (string.copy obj-path)))])))
 
 (define (source-tool-assemble
-  [role : String]
   [target : be_state.CompilerBackendTarget]
   [asm-path : String]
   [obj-path : String]) : SourceToolCommandStatus
-  (match target
-    [(Linux)
-      ;; Assembly input and serialized object belong to this write, including
-      ;; when a caller links many programs in one compiler process.
-      (with-scratch
-        (match (io.try-read-file (& asm-path))
-          [(ErrIoBytes error)
-            (Err
-              (str_cat.str-cat
-                "Error: cannot read assembly "
-                asm-path
-                ": "
-                (io.error-message error)))]
-          [(OkIoBytes contents)
-            (let
-              [bytes (byte_buf.as-bytes (& contents))]
-              [asm : String
-                (unsafe
-                  (string-from-bytes
-                    (byte_buf.bytes-data bytes)
-                    (byte_buf.bytes-length bytes)))]
-              (source-tool-assemble-linux-text
-                (& asm-path)
-                (& obj-path)
-                (& asm)))]))]
-    [(Windows)
-      (source-tool-run-command
-        role
-        target
-        (source-tool-windows-assembler-command asm-path obj-path))]))
+  ;; Assembly input and serialized object belong to this write, including
+  ;; when a caller links many programs in one compiler process.
+  (with-scratch
+    (match (io.try-read-file (& asm-path))
+      [(ErrIoBytes error)
+        (Err
+          (str_cat.str-cat
+            "Error: cannot read assembly "
+            asm-path
+            ": "
+            (io.error-message error)))]
+      [(OkIoBytes contents)
+        (let
+          [bytes (byte_buf.as-bytes (& contents))]
+          [asm : String
+            (unsafe
+              (string-from-bytes
+                (byte_buf.bytes-data bytes)
+                (byte_buf.bytes-length bytes)))]
+          (source-tool-assemble-text target (& asm-path) (& obj-path) (& asm)))])))
 
 (define (source-tool-link
   [target : be_state.CompilerBackendTarget]
@@ -1692,7 +1679,6 @@
     [_
       (try
         (source-tool-assemble
-          "assembler"
           target
           asm-path
           (owned_view.compiler-owned-shared-view obj-path)))]
@@ -1705,23 +1691,12 @@
   [bin-path : String]
   [asm : (& asm str)]
   [link-inputs : SourceToolLinkInputs]) : SourceToolCommandStatus
-  (match target
-    [(Linux)
-      ;; The emitter has already written the assembly artifact. Assemble its
-      ;; borrowed text without loading the file into memory again.
-      (let
-        [_
-          (try
-            (with-scratch
-              (source-tool-assemble-linux-text (& asm-path) (& obj-path) asm)))]
-        (source-tool-link target obj-path bin-path link-inputs))]
-    [(Windows)
-      (source-tool-assemble-and-link
-        target
-        asm-path
-        obj-path
-        bin-path
-        link-inputs)]))
+  (let
+    [_
+      (try
+        (with-scratch
+          (source-tool-assemble-text target (& asm-path) (& obj-path) asm)))]
+    (source-tool-link target obj-path bin-path link-inputs)))
 
 (define (source-tool-assemble-and-archive
   [target : be_state.CompilerBackendTarget]
@@ -1732,7 +1707,6 @@
     [_
       (try
         (source-tool-assemble
-          "assembler"
           target
           asm-path
           (owned_view.compiler-owned-shared-view obj-path)))]

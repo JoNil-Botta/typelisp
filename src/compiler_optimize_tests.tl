@@ -59004,6 +59004,46 @@ done:
       (irt.instr "store_ptr %9, %0 : i64")
       (irt.instr "return %7"))))
 
+(define (opt-cl-test-exit-length [exit : String]) : i64
+  (match (irt.program
+    (str_cat.str-cat
+      "function @cl_init(cond=%0:bool) -> (__tl_dyn-array i64) vars 5 {
+           entry:
+             branch %0, fresh, other
+           fresh:
+             %1 = call tl_alloc(32) : u64
+             %2 = call tl_alloc(16) : (__tl_dyn-array i64)
+             %3 = gep %2, 0 : u8
+             store_ptr %3, %1 : u64
+             %4 = gep %2, 8 : u8
+             store_ptr %4, 4 : i64
+             return %2
+           other:
+             "
+      exit
+      "\n}"))
+    [(Program _ functions _ _)
+      (let
+        [resolved (opt-le-raw-test-functions (& functions))]
+        (opt.opt-cl-init-length
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (& (array-ref resolved.slots 0))))]))
+
+(test
+  cl-init-returning-terminators
+  (test.assert-i64-eq
+    (opt-cl-test-exit-length "jump fresh")
+    4
+    "both paths return fresh")
+  (test.assert-i64-eq
+    (opt-cl-test-exit-length "tailcall other_init() : (__tl_dyn-array i64)")
+    (- 0 1)
+    "direct tail return has unknown length")
+  (test.assert-i64-eq
+    (opt-cl-test-exit-length "tailcall* fn@other_init() : (__tl_dyn-array i64)")
+    (- 0 1)
+    "indirect tail return has unknown length"))
+
 ;; The canonical constructor followed by a call that receives its fresh
 ;; descriptor. The call may write the length slot, so CL-1 must reject it even
 ;; though the local instruction stream still contains exactly two stores.

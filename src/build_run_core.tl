@@ -91,9 +91,7 @@
   (be_state.compiler-backend-target-triple target))
 
 (define (source-tool-default-target) : be_state.CompilerBackendTarget
-  (if (string.eq (env.path-separator) ";")
-    (Windows)
-    (Linux)))
+  (source-tool-backend-target (target_cfg.compiler-target-cfg-host)))
 
 (define (source-tool-backend-target [target : target_cfg.CompilerTargetCfg]) : be_state.CompilerBackendTarget
   (match target

@@ -3430,10 +3430,9 @@ EOF
     fi
     assert_contains "$_driver_stdout" "Wrote " windows-selfhost-compile-driver-linux-stdout
     assert_empty_file "$_driver_stderr" windows-selfhost-compile-driver-linux-stderr
-    if ! cmp -s "$_driver_asm" "$_driver_linux_asm"; then
-        echo "FAIL: explicit Linux target should match default selfhost compile output" >&2
-        exit 1
-    fi
+    assert_contains "$_driver_linux_asm" ".globl main" windows-selfhost-compile-driver-linux
+    assert_contains "$_driver_linux_asm" "    syscall" windows-selfhost-compile-driver-linux
+    assert_not_contains "$_driver_linux_asm" "call ExitProcess" windows-selfhost-compile-driver-linux
 
     run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" 0 compile \
         "$(cygpath -aw "$_driver_source")" --target windows-x86_64 --cfg windows -o "$(cygpath -aw "$_driver_windows_asm")"
@@ -3445,6 +3444,11 @@ EOF
     assert_empty_file "$_driver_stderr" windows-selfhost-compile-driver-windows-stderr
     assert_contains "$_driver_windows_asm" ".globl main" windows-selfhost-compile-driver-windows
     assert_not_contains "$_driver_windows_asm" ".globl _start" windows-selfhost-compile-driver-windows
+    assert_contains "$_driver_windows_asm" "call ExitProcess" windows-selfhost-compile-driver-windows
+    if ! cmp -s "$_driver_asm" "$_driver_windows_asm"; then
+        echo "FAIL: explicit Windows target should match default selfhost compile output" >&2
+        exit 1
+    fi
 
     _bad_target_asm="$_driver_dir/bad-target.s"
     rm -f "$_bad_target_asm"

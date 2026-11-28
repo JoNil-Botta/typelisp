@@ -255,7 +255,9 @@
   (tuple (pair x) (pair x)))")
     (sym_i64_env.sym-i64-empty))
     [(Ok decls _)
-      (match (parser.parse-ast-repl-source (& source))
+      (match (parser.parse-ast-repl-source
+        (& source)
+        (sym_i64_env.sym-i64-empty))
         [(Ok item)
           (match item
             [(AstReplExpr expr)

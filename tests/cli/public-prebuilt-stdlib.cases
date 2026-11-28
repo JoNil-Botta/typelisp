@@ -16,13 +16,10 @@ run inspect sysroot --no-prebuilt-stdlib
 exit nonzero
 stderr contains inspect: prebuilt stdlib disabled
 
-# `compile` defaults to --target linux-x86_64 on every host, while the
-# sysroot beside the compiler holds only the host triple, so the compile steps
-# name the host target: without it a Windows host finds no
-# lib/x86_64-unknown-linux-gnu and silently keeps the source stdlib.
+# The default target selects the host sysroot on both Linux and Windows.
 case prebuilt-stdlib-compile-and-fallback
 step prebuilt-compile
-run compile "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl" --target {{host-target}} -o "{{dir}}/prebuilt.s"
+run compile "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl" -o "{{dir}}/prebuilt.s"
 stderr empty
 in file {{dir}}/prebuilt.s
 contains .extern _tl_stdlib_io_stdlib_io_

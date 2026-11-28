@@ -1,0 +1,2 @@
+tests/spmd/stdlib_math_abs.tl
+tests/spmd/stdlib_math_sqrt.tl

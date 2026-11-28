@@ -1,0 +1,4 @@
+path	required	advisory	reason
+tests/cli/selfhost-defaults.cases	stage2-cli-build-run-and-chooser-smoke	@corpus	Cross-host CLI default settings and explicit target override transcript.
+scripts/check-deterministic-asm.sh	stage2-deterministic-assembly	@corpus	Explicit Linux target for both determinism passes on either host.
+scripts/verify-selfhost-cli-build-run.sh	stage2-cli-build-run-and-chooser-smoke	@corpus	Runs both host CLI command and configuration transcripts.

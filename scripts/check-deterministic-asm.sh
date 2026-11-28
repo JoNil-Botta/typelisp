@@ -27,12 +27,8 @@ while [ "$#" -gt 0 ]; do
     shift
 done
 
-# The check is host-agnostic in substance: it only runs `typelisp compile` (the
-# default linux-x86_64 backend emits identical `.s` text regardless of host; no
-# assembler/linker is invoked) twice and `cmp`s the outputs. Allow it on Linux
-# and on Windows hosts (Git Bash / MSYS / Cygwin) so the Windows CI job can run
-# it for parity. Other hosts stay gated until the check is exercised
-# there.
+# Compile explicitly for linux-x86_64 and compare the assembly bytes. This
+# exercises the same backend on Linux and Windows without a native linker.
 case "$(uname -s)" in
     Linux* | MINGW* | MSYS* | CYGWIN*) ;;
     *)
@@ -193,6 +189,7 @@ compile_foreign_cwd_case() {
         cd "$cwd"
         "$compiler" compile "$(compiler_input_path "$ROOT/$source")" \
             -o "$(compiler_input_path "$(absolute_path "$out")")" \
+            --target linux-x86_64 \
             --stdlib-root "$(compiler_input_path "$ROOT/stdlib")" \
             --stdlib-root "$(compiler_input_path "$ROOT/src")"
     )
@@ -240,6 +237,7 @@ compile_pass() {
         compile_source=$(compile_source_for_case "$name" "$source" "$out_dir")
         echo "[$pass_name] $compile_source -> $out"
         "$COMPILER" compile "$compile_source" -o "$out" $entry_args \
+            --target linux-x86_64 \
             --stdlib-root "$(compiler_input_path "$ROOT/stdlib")" \
             --stdlib-root "$(compiler_input_path "$ROOT/src")"
     done

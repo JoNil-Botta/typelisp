@@ -3,28 +3,12 @@ set -eu
 
 # verify-spmd-simd.sh - scalar-vs-SIMD execution-comparison harness.
 #
-# Builds each SPMD corpus program at `scalar`, `avx2`, and `avx512`, runs every
-# available variant, and asserts they produce IDENTICAL exit codes (with empty
-# stderr). Staged unsupported mode/program pairs are compiled and must fail with
-# an explicit diagnostic. `scalar` is always the reference; a SIMD mode is only
-# run natively when the host supports it, or under pinned Intel SDE for
-# AVX-512. CI requires one of those execution routes. This is the
-# comparison the SPMD acceptance criteria need: proving SIMD lowering --
-# including the masked `foreach` tail and `spmd-reduce` folds -- matches scalar
-# semantics, not merely that a mode runs on a trivial full-width program.
-#
-# The corpus deliberately includes non-power-of-two lengths (the SIMD tail),
-# foreach lanes across i64/i32/i8/u8/f64/f32, and reductions across the scalar
-# supported operator/type surface. The per-program assembly shapes and the
-# trap-path programs (bounds, shift and selector traps in every mode) are
-# tests/spmd/simd.d, run afterwards by scripts/verify-codegen-cases.sh.
-#
-# A forced-SDE duplicate run (TYPELISP_SIMD_MODE_FILTER=avx512, set by
-# scripts/ci-verify.sh) repeats only the AVX-512 route: every other mode
-# compiles and executes exactly as the ordinary gate already did. It builds and
-# runs only the selected modes, takes the scalar reference from the ordinary
-# run's workdir (TYPELISP_SPMD_SIMD_NATIVE_ROOT), and fails closed when that
-# reference is missing or the filter selects no case.
+# Batches the execution corpus at O0/O1/O2 in scalar, SSE2, AVX2 and AVX-512.
+# Every runnable row must match the O1 scalar exit status and leave stderr
+# empty. Check staged diagnostics individually since compile --batch stops
+# on the first failure. The assembly shapes and traps run in simd.d.
+# The forced-SDE gate selects AVX-512 and reuses the ordinary O1 scalar
+# receipts. O1 retains the original receipt names for cross-mode differential.
 #
 # Usage:
 #   scripts/verify-spmd-simd.sh
@@ -48,6 +32,7 @@ esac
 
 . "$ROOT/scripts/lib-gate.sh"
 gate_compiler
+gate_compiler_absolute
 gate_require_compiler
 BOUNDED_POOL_LABEL=spmd-simd
 . "$ROOT/scripts/lib-bounded-pool.sh"
@@ -61,17 +46,45 @@ case "$SPMD_SIMD_WORKERS" in
         ;;
 esac
 
-# Windows uses the host-default native toolchain (clang/lld-link); Linux uses
-# TypeLisp assembly and GNU ld.
+SPMD_STEP_SECONDS=${TYPELISP_SPMD_SIMD_STEP_SECONDS:-30}
+SPMD_BATCH_SECONDS=${TYPELISP_SPMD_SIMD_BATCH_SECONDS:-120}
+for limit in "$SPMD_STEP_SECONDS" "$SPMD_BATCH_SECONDS"; do
+    case "$limit" in
+        "" | 0* | *[!0-9]*) fail "SPMD time limits must be positive integer seconds" ;;
+    esac
+done
 if [ "$HOST_OS" = linux ]; then
-    command -v ld >/dev/null 2>&1 || {
-        echo "missing linker: ld" >&2
-        exit 1
-    }
+    command -v timeout >/dev/null 2>&1 || fail "missing coreutils timeout"
+    command -v ld >/dev/null 2>&1 || fail "missing linker: ld"
+    TRIPLE=x86_64-unknown-linux-gnu
+    BIN_EXT=
+else
+    command -v powershell.exe >/dev/null 2>&1 || fail "missing Windows PowerShell"
+    . "$ROOT/scripts/lib-native-link.sh"
+    native_link_detect_host
+    configure_toolchain
+    TRIPLE=x86_64-pc-windows-msvc
+    BIN_EXT=.exe
 fi
+TARGET="$HOST_OS-x86_64"
+
+# The CI bootstrap installs the matching sysroot beside the compiler. Use
+# the same resolved root for the interface and archive, including overrides.
+SYSROOT=${TYPELISP_SYSROOT:-}
+if [ -z "$SYSROOT" ]; then
+    SYSROOT=${COMPILER%/*}
+    [ -f "$SYSROOT/lib/$TRIPLE/stdlib.tli" ] || SYSROOT=$(dirname -- "$SYSROOT")
+fi
+[ -s "$SYSROOT/lib/$TRIPLE/stdlib.tli" ] &&
+    [ -s "$SYSROOT/lib/$TRIPLE/libstdlib.a" ] ||
+    fail "missing prebuilt stdlib for $TRIPLE in $SYSROOT"
+SYSROOT=$(CDPATH= cd -- "$SYSROOT" && pwd)
+TYPELISP_SYSROOT=$SYSROOT
+[ "$HOST_OS" != windows ] || TYPELISP_SYSROOT=$(cygpath -am "$SYSROOT")
+export TYPELISP_SYSROOT
+stdlib_archive_resolve_triple "$TRIPLE" "$COMPILER"
 
 . "$ROOT/scripts/lib-simd-execution.sh"
-simd_execution_init
 
 spmd_short_tail_shape_fail() {
     echo "[spmd-simd] spmd_short_tail benchmark shape: $*" >&2
@@ -132,140 +145,30 @@ rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 WORKDIR=$(CDPATH= cd -- "$WORKDIR" && pwd)
 
-# A filtered run selects only the modes whose route differs under the forced
-# policy, so its scalar reference is the ordinary run's native receipt.
-NATIVE_WORKDIR=${TYPELISP_SPMD_SIMD_NATIVE_ROOT:-$ROOT/target/spmd-simd-verify}
-if [ -n "${SIMD_MODE_FILTER:-}" ]; then
-    [ -d "$NATIVE_WORKDIR" ] || {
-        echo "spmd-simd: the ordinary run's workdir is missing: $NATIVE_WORKDIR" >&2
-        exit 1
-    }
-    NATIVE_WORKDIR=$(CDPATH= cd -- "$NATIVE_WORKDIR" && pwd)
-    [ "$NATIVE_WORKDIR" != "$WORKDIR" ] || {
-        echo "spmd-simd: the filtered run's workdir must differ from the ordinary run's: $WORKDIR" >&2
-        exit 1
-    }
-fi
-
-
-# SPMD corpus: each program's exit code is computed by a SIMD-lowered `foreach`
-# or `spmd-reduce`, so a wrong SIMD result (especially in the tail) changes it.
-# Each program documents its shape and result in its header comment.
-spmd_corpus() {
-    cat <<'EOF'
-tests/spmd/tail_i64_add.tl
-tests/spmd/predicated_map_tail_fault_suppression.tl
-tests/spmd/tail_i32_add.tl
-tests/spmd/foreach_bound_extremes.tl
-tests/spmd/foreach_2d_row_major.tl
-tests/spmd/foreach_2d_native.tl
-tests/spmd/uniform_zip_i64.tl
-tests/integration/spmd_uniform_index_write.tl
-tests/spmd/multi_output_i64.tl
-tests/spmd/store_alias_i64.tl
-tests/spmd/native_slice_surface_i64.tl
-tests/spmd/native_slice_multi_output_i64.tl
-tests/spmd/inline_helper_i64.tl
-tests/spmd/inline_helper_shadow_i64.tl
-tests/spmd/inline_helper_f64.tl
-tests/spmd/stdlib_math_abs.tl
-tests/spmd/stdlib_math_sqrt.tl
-tests/integration/spmd_inline_helper_composition.tl
-tests/spmd/private_helper_i64.tl
-tests/spmd/private_helper_f64.tl
-tests/spmd/private_helper_bool.tl
-tests/spmd/private_helper_mask_arg.tl
-tests/spmd/private_helper_entry_uniform_float.tl
-tests/spmd/private_uniform_call_clamp.tl
-tests/spmd/private_uniform_call_float.tl
-tests/spmd/private_uniform_call_numeric.tl
-tests/spmd/private_helper_uniform_stack.tl
-tests/spmd/private_helper_uniform_stack_f64.tl
-tests/spmd/private_helper_uniform_stack_f64_wide.tl
-tests/spmd/private_helper_masked_load.tl
-tests/spmd/private_helper_store.tl
-tests/spmd/private_helper_effects.tl
-tests/spmd/empty_private_params.tl
-tests/spmd/byte_mul_value_types.tl
-tests/spmd/full_gang_all_active_i64.tl
-tests/spmd/masked_if_i64.tl
-tests/spmd/masked_if_offset_i64.tl
-tests/spmd/masked_if_index_value_i64.tl
-tests/spmd/masked_if_index_mod_i64.tl
-tests/spmd/masked_if_value_i64.tl
-tests/spmd/masked_if_bitand_value_i64.tl
-tests/spmd/masked_if_bitwise_value_types.tl
-tests/spmd/masked_if_shift_value_types.tl
-tests/spmd/masked_if_shift_inactive.tl
-tests/spmd/map_shift_value_types.tl
-tests/spmd/byte_shift_value_types.tl
-tests/spmd/byte_shift_inactive_invalid.tl
-tests/spmd/word_shift_value_types.tl
-tests/spmd/word_shift_inactive_invalid.tl
-tests/spmd/masked_if_value_types.tl
-tests/spmd/masked_cast_i32_f32_reject.tl
-tests/spmd/masked_cast_f32_i32_reject.tl
-tests/spmd/masked_cast_u32_f32_reject.tl
-tests/spmd/masked_cast_f32_u32_reject.tl
-tests/spmd/masked_move_fault_suppression.tl
-tests/spmd/masked_load_cache_fault_suppression.tl
-tests/spmd/masked_if_nested_i64.tl
-tests/spmd/masked_if_i16_u16.tl
-tests/spmd/inline_helper_masked_if_i64.tl
-tests/spmd/masked_if_match_i64.tl
-tests/spmd/varying_while_i64.tl
-tests/spmd/varying_while_f32_i32.tl
-tests/spmd/masked_if_varying_while_i64.tl
-tests/spmd/varying_while_nested_i64.tl
-tests/spmd/varying_match_i64.tl
-tests/spmd/varying_match_enum_payload.tl
-tests/spmd/varying_match_enum_helper_reject.tl
-tests/spmd/foreach_active_simd_reject.tl
-tests/spmd/bool_lanes.tl
-tests/spmd/map_compare_surface.tl
-tests/spmd/map_fused_reduce_i64.tl
-tests/spmd/fixed_array_sources.tl
-tests/spmd/fixed_array_whole_use_keeps_array.tl
-tests/integration/spmd_foreach.tl
-tests/integration/spmd_compact_scalar.tl
-tests/integration/spmd_gather_read.tl
-tests/integration/spmd_loop_carried_copy_shape.tl
-tests/integration/spmd_reduce_scalar.tl
-tests/integration/spmd_scan_scalar.tl
-tests/integration/spmd_shuffle_simd.tl
-tests/integration/spmd_shuffle_types.tl
-tests/integration/spmd_shuffle_reduce.tl
-benchmarks/ispc/perfbench_gathers/bench.tl
-EOF
-}
-
-isa_available() {
-    simd_execution_mode "$1"
-}
-
 spmd_mode_expected_compile_diagnostic() {
     _prog=$1
     _mode=$2
-    case "$_prog:$_mode" in
-        tests/spmd/inline_helper_shadow_i64.tl:avx2 | tests/spmd/inline_helper_shadow_i64.tl:avx512)
+    case "$_prog:$_mode:$3" in
+        tests/spmd/inline_helper_shadow_i64.tl:avx2:[012] | tests/spmd/inline_helper_shadow_i64.tl:avx512:[012])
             printf '%s\n' "lower: SPMD foreach does not match a SIMD lowering pattern for this backend mode; use scalar or a contiguous map/zip body with supported array and uniform operands"
             ;;
-        tests/spmd/varying_match_enum_helper_reject.tl:avx2 | tests/spmd/varying_match_enum_helper_reject.tl:avx512)
+        tests/spmd/varying_match_enum_helper_reject.tl:avx2:[012] | tests/spmd/varying_match_enum_helper_reject.tl:avx512:[012])
             printf '%s\n' "lower: SPMD masked if does not support a SIMD varying enum match source outside a contiguous array lane"
             ;;
-        tests/spmd/private_helper_uniform_stack_f64_wide.tl:avx512)
+        tests/spmd/private_helper_uniform_stack_f64_wide.tl:avx512:[012])
             printf '%s\n' "backend: private AVX-512 SPMD call supports at most 8 varying value arguments"
             ;;
-        tests/spmd/foreach_active_simd_reject.tl:avx2)
+        # #8307 owns the transition of these AVX rejections to runtime rows.
+        tests/spmd/foreach_active_simd_reject.tl:avx2:[012])
             printf '%s\n' "lower: foreach-active is not yet lowered for AVX2"
             ;;
-        tests/spmd/foreach_active_simd_reject.tl:avx512)
+        tests/spmd/foreach_active_simd_reject.tl:avx512:[012])
             printf '%s\n' "lower: foreach-active is not yet lowered for AVX-512"
             ;;
-        tests/spmd/fixed_array_whole_use_keeps_array.tl:avx2 | tests/spmd/fixed_array_whole_use_keeps_array.tl:avx512)
+        tests/spmd/fixed_array_whole_use_keeps_array.tl:avx2:[012] | tests/spmd/fixed_array_whole_use_keeps_array.tl:avx512:[012])
             printf '%s\n' "lower: SPMD foreach does not match a SIMD lowering pattern for this backend mode; use scalar or a contiguous map/zip body with supported array and uniform operands"
             ;;
-        tests/spmd/masked_cast_*_reject.tl:avx2 | tests/spmd/masked_cast_*_reject.tl:avx512)
+        tests/spmd/masked_cast_*_reject.tl:avx2:[012] | tests/spmd/masked_cast_*_reject.tl:avx512:[012])
             # masked_cast_<source>_<destination>_reject.tl: masked conversions
             # reject at the cast until #7162 implements them (#7306).
             _row=${_prog#tests/spmd/masked_cast_}
@@ -292,298 +195,498 @@ spmd_mode_compile_only_reason() {
     esac
 }
 
-CORPUS="$WORKDIR/corpus.txt"
-FAILURES="$WORKDIR/failures.txt"
-spmd_corpus > "$CORPUS"
-: > "$FAILURES"
-
-# Build+run $1 at backend mode $2; sets `mode_code` to the exit status and
-# writes stdout/stderr to <tag>.<mode>.{out,err} under WORKDIR.
-run_spmd_mode() {
-    _prog=$1
-    _mode=$2
-    _tag=$(printf '%s' "$_prog" | sed 's#[/.]#_#g')
-    mode_out="$WORKDIR/$_tag.$_mode.out"
-    mode_err="$WORKDIR/$_tag.$_mode.err"
-    mode_exit="$WORKDIR/$_tag.$_mode.exit"
-    : > "$mode_out"
-    : > "$mode_err"
-    mode_execution="$WORKDIR/$_tag.$_mode.execution"
-    rm -f "$mode_exit" "$mode_execution"
-
-    if [ "$HOST_OS" = linux ]; then
-        _asm="$WORKDIR/$_tag.$_mode.s"
-        _obj="$WORKDIR/$_tag.$_mode.o"
-        _bin="$WORKDIR/$_tag.$_mode"
-        if ! "$COMPILER" compile "$_prog" --backend-mode "$_mode" -o "$_asm" > "$mode_out" 2> "$mode_err"; then
-            mode_code=1
-            return
-        fi
-        if ! "$COMPILER" assemble "$_asm" -o "$_obj" >> "$mode_out" 2>> "$mode_err"; then
-            mode_code=1
-            return
-        fi
-        _entry=$(linux_entry_symbol_for_asm "$_asm") || exit $?
-        _stdlib_archive=$(linux_stdlib_archive_for_asm "$_asm" "${COMPILER:-}")
-        if [ -n "$_stdlib_archive" ]; then
-            set -- -z noexecstack --gc-sections -z start-stop-gc --start-group "$_stdlib_archive" --end-group
-        else
-            set --
-        fi
-        if ! ld "$_obj" -o "$_bin" -static "$@" -e "$_entry" \
-            >> "$mode_out" 2>> "$mode_err"; then
-            mode_code=1
-            return
-        fi
-        simd_execution_record "$_prog" "$_mode"
-        printf '%s\n' "$SIMDEX_MODE" > "$mode_execution"
-        set +e
-        simd_execute "$_mode" "$_bin" >> "$mode_out" 2>> "$mode_err"
-        mode_code=$?
-        set -e
-    else
-        simd_execution_mode "$_mode" || return 1
-        _bin="$WORKDIR/$_tag.$_mode.exe"
-        if ! "$COMPILER" build "$_prog" --backend-mode "$_mode" -o "$_bin" \
-            > "$mode_out" 2> "$mode_err"; then
-            mode_code=1
-            return
-        fi
-        simd_execution_record "$_prog" "$_mode"
-        printf '%s\n' "$SIMDEX_MODE" > "$mode_execution"
-        set +e
-        simd_execute "$_mode" "$_bin" > "$mode_out" 2> "$mode_err"
-        mode_code=$?
-        set -e
-    fi
-    printf '%s\n' "$mode_code" > "$mode_exit"
-}
-
-# Print the scalar exit status the ordinary run recorded for $1. A filtered
-# run repeats only the modes whose route differs, so the reference is read
-# rather than rebuilt; a missing, malformed or failed receipt fails closed
-# instead of comparing against nothing.
-spmd_scalar_reference() {
-    _sr_tag=$(printf '%s' "$1" | sed 's#[/.]#_#g')
-    _sr_exit="$NATIVE_WORKDIR/$_sr_tag.scalar.exit"
-    _sr_err="$NATIVE_WORKDIR/$_sr_tag.scalar.err"
-    [ -f "$_sr_exit" ] && [ -f "$_sr_err" ] || {
-        echo "spmd-simd: the ordinary run recorded no scalar reference for $1 ($_sr_exit)" >&2
-        return 1
-    }
-    [ ! -s "$_sr_err" ] || {
-        echo "spmd-simd: the ordinary run's scalar reference for $1 wrote stderr: $_sr_err" >&2
-        return 1
-    }
-    _sr_code=$(tr -d '\r\n' < "$_sr_exit")
-    case "$_sr_code" in
-        '' | *[!0-9]*)
-            echo "spmd-simd: the ordinary run's scalar exit for $1 is not a status: '$_sr_code'" >&2
-            return 1
+# A program can exit with status 124 or 137 itself. Require the watchdog's
+# signal notice, and leave the captured stderr available to the row checks.
+spmd_invoke() {
+    _si_limit=$1
+    _si_stem=$2
+    shift 2
+    spmd_status=0
+    spmd_watchdog_failure=
+    LC_ALL=C timeout --verbose --kill-after=2 "$_si_limit" "$@" \
+        < /dev/null > "$_si_stem.out" 2> "$_si_stem.err" || spmd_status=$?
+    case "$spmd_status" in
+        124 | 137)
+            if grep -Fq 'timeout: sending signal ' "$_si_stem.err"; then
+                spmd_watchdog_failure="timeout after ${_si_limit}s"
+                return 1
+            fi
+            ;;
+        125 | 126 | 127)
+            if grep -q '^timeout: ' "$_si_stem.err"; then
+                cat "$_si_stem.err" >&2
+                spmd_watchdog_failure="watchdog failed (status $spmd_status)"
+                return 1
+            fi
             ;;
     esac
-    printf '%s\n' "$_sr_code"
 }
 
-# Compile $1 at backend mode $2; sets `mode_code` to the compiler exit status
-# and writes stdout/stderr to <tag>.<mode>.compile.{out,err} under WORKDIR.
-compile_spmd_mode() {
-    _prog=$1
-    _mode=$2
-    _tag=$(printf '%s' "$_prog" | sed 's#[/.]#_#g')
-    mode_out="$WORKDIR/$_tag.$_mode.compile.out"
-    mode_err="$WORKDIR/$_tag.$_mode.compile.err"
-    _asm="$WORKDIR/$_tag.$_mode.compile.s"
-    : > "$mode_out"
-    : > "$mode_err"
-
-    set +e
-    "$COMPILER" compile "$_prog" --backend-mode "$_mode" -o "$_asm" \
-        > "$mode_out" 2> "$mode_err"
-    mode_code=$?
-    set -e
-}
-
-POOL_DIR="$WORKDIR/pool"
-POOL_JOBS_DIR="$WORKDIR/pool-jobs"
-POOL_QUEUE="$WORKDIR/pool.queue"
-mkdir -p "$POOL_JOBS_DIR"
-: > "$POOL_QUEUE"
-
-corpus_idx=0
-while IFS= read -r prog; do
-    [ -n "$prog" ] || continue
-    corpus_idx=$((corpus_idx + 1))
-    job_id=$(printf 'prog-%03d' "$corpus_idx")
-    printf '%s\n' "$prog" > "$POOL_JOBS_DIR/$job_id.prog"
-    printf '%s|1\n' "$job_id" >> "$POOL_QUEUE"
-done < "$CORPUS"
-
-run_spmd_corpus_job() {
-    _job=$1
-    _prog=$(cat "$POOL_JOBS_DIR/$_job.prog")
-    _job_out="$POOL_JOBS_DIR/$_job.stdout"
-    _job_err="$POOL_JOBS_DIR/$_job.stderr"
-    _job_fail="$POOL_JOBS_DIR/$_job.failures"
-    _job_selected=0
-    SIMDEX_NATIVE=0
-    SIMDEX_EMULATED=0
-    SIMDEX_SKIPPED=0
-    : > "$_job_out"
-    : > "$_job_err"
-    : > "$_job_fail"
-
-    if [ ! -f "$_prog" ]; then
-        echo "spmd-simd: corpus program not found: $_prog" >> "$_job_err"
-        echo "$_prog (missing)" >> "$_job_fail"
-        printf '%s\n' "$_job_selected" > "$POOL_JOBS_DIR/$_job.selected"
-        printf '%s %s %s\n' "$SIMDEX_NATIVE" "$SIMDEX_EMULATED" "$SIMDEX_SKIPPED" > "$POOL_JOBS_DIR/$_job.simdex"
-        return 0
+spmd_assemble_link_linux() {
+    _asm=$1.s
+    _obj=$1.o
+    _bin=$1$BIN_EXT
+    _link_base=$1
+    if ! spmd_invoke "$SPMD_STEP_SECONDS" "$1.assemble" "$COMPILER" assemble "$_asm" -o "$_obj" ||
+        [ "$spmd_status" -ne 0 ] || [ -s "$1.assemble.err" ]; then
+        return 1
     fi
-
-    if simd_mode_selected scalar; then
-        _job_selected=$((_job_selected + 1))
-        # scalar is the always-run reference.
-        run_spmd_mode "$_prog" scalar >> "$_job_out" 2>> "$_job_err"
-        scalar_code=$mode_code
-        if [ -s "$mode_err" ]; then
-            {
-                echo "[spmd-simd] $_prog scalar build/run error:"
-                sed 's/^/    /' "$mode_err"
-            } >> "$_job_err"
-            echo "$_prog scalar" >> "$_job_fail"
-            printf '%s\n' "$_job_selected" > "$POOL_JOBS_DIR/$_job.selected"
-            printf '%s %s %s\n' "$SIMDEX_NATIVE" "$SIMDEX_EMULATED" "$SIMDEX_SKIPPED" > "$POOL_JOBS_DIR/$_job.simdex"
-            return 0
-        fi
-        echo "[spmd-simd] $_prog scalar -> $scalar_code" >> "$_job_out"
+    _entry=$(linux_entry_symbol_for_asm "$_asm") || exit $?
+    _stdlib_archive=$(linux_stdlib_archive_for_asm "$_asm" "${COMPILER:-}")
+    if [ -n "$_stdlib_archive" ]; then
+        set -- -z noexecstack --gc-sections -z start-stop-gc --start-group "$_stdlib_archive" --end-group
     else
-        if ! scalar_code=$(spmd_scalar_reference "$_prog" 2>> "$_job_err"); then
-            printf '1\n' > "$POOL_JOBS_DIR/$_job.fatal"
-            return 1
-        fi
-        echo "[spmd-simd] $_prog scalar -> $scalar_code (ordinary run reference)" >> "$_job_out"
+        set --
     fi
+    if ! spmd_invoke "$SPMD_STEP_SECONDS" "$_link_base.link" ld "$_obj" -o "$_bin" -static "$@" -e "$_entry" ||
+        [ "$spmd_status" -ne 0 ] || [ -s "$_link_base.link.err" ]; then
+        return 1
+    fi
+}
 
-    for pair in "sse2 sse2" "avx2 avx2" "avx512 avx512"; do
-        mode=${pair%% *}
-        isa=${pair##* }
-        if ! simd_mode_selected "$mode"; then
-            continue
+# Reuse the integration process runner for each Windows phase. The matrix
+# pool supplies concurrency, and the runner retains each child's deadline and
+# unsigned exit code even when the command runs through SDE.
+spmd_windows_queue_init() {
+    windows_queue="$job_dir/$1.queue"
+    windows_queue_native="$BATCH_OUTPUT_ROOT${windows_queue#"$WORKDIR"}"
+    windows_queue_count=0
+    printf 'tlwinq4\000' > "$windows_queue"
+    : > "$windows_queue.stems"
+}
+
+spmd_windows_enqueue() {
+    _swq_limit=$1
+    _swq_stem=$2
+    _swq_native="$BATCH_OUTPUT_ROOT${_swq_stem#"$WORKDIR"}"
+    _swq_exe=$3
+    shift 3
+    windows_queue_count=$((windows_queue_count + 1))
+    printf '%s\n' "$_swq_stem" >> "$windows_queue.stems"
+    printf '%s\000' "row_$windows_queue_count" "$_swq_exe" \
+        "$_swq_native.out" "$_swq_native.err" "$_swq_native.native-exit" \
+        "$_swq_limit" - '' '' - "$#" "$@" >> "$windows_queue"
+}
+
+spmd_windows_dispatch() {
+    [ "$windows_queue_count" -gt 0 ] || return 0
+    if ! MSYS2_ARG_CONV_EXCL='*' powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$WINDOWS_RUNNER" \
+        -RequestPath "$windows_queue_native" -ResultPath "$windows_queue_native.results" \
+        -AssertionPath "$windows_queue_native.assertions" -SummaryPath "$windows_queue_native.summary" \
+        < /dev/null; then
+        fail "spmd-simd: Windows runner failed for $windows_queue"
+    fi
+    _swd_index=0
+    while IFS= read -r _swd_stem; do
+        _swd_index=$((_swd_index + 1))
+        if ! IFS="$SPMD_TAB" read -r _swd_label _swd_status _swd_code _swd_error _swd_ms <&3 ||
+            [ "$_swd_label" != "row_$_swd_index" ]; then
+            fail "spmd-simd: missing or out-of-order Windows result for $_swd_stem"
         fi
-        _job_selected=$((_job_selected + 1))
-        if expected_diag=$(spmd_mode_expected_compile_diagnostic "$_prog" "$mode"); then
-            compile_spmd_mode "$_prog" "$mode"
-            if [ "$mode_code" = 0 ]; then
-                {
-                    echo "[spmd-simd]   $mode unexpectedly compiled; wanted diagnostic:"
-                    echo "    $expected_diag"
-                } >> "$_job_err"
-                echo "$_prog $mode (missing diagnostic)" >> "$_job_fail"
-            elif ! grep -F -- "$expected_diag" "$mode_err" > /dev/null; then
-                {
-                    echo "[spmd-simd]   $mode diagnostic mismatch:"
-                    sed 's/^/    /' "$mode_err"
-                } >> "$_job_err"
-                echo "$_prog $mode (wrong diagnostic)" >> "$_job_fail"
+        case "$_swd_status:$_swd_code" in
+            ok:*)
+                case "$_swd_code" in
+                    '' | *[!0-9]*) fail "spmd-simd: invalid Windows exit code for $_swd_stem" ;;
+                esac
+                printf '%s\n' "$_swd_code" > "$_swd_stem.status"
+                ;;
+            timeout:- | launch-failed:-)
+                printf '%s\n' "$_swd_status" > "$_swd_stem.status"
+                if [ "$_swd_error" != '~' ]; then
+                    printf '%s' "$_swd_error" | base64 --decode >&2
+                    printf '\n' >&2
+                fi
+                ;;
+            *) fail "spmd-simd: invalid Windows result for $_swd_stem" ;;
+        esac
+    done < "$windows_queue.stems" 3< "$windows_queue.results"
+}
+
+spmd_windows_status() {
+    spmd_status=0
+    spmd_watchdog_failure=
+    IFS= read -r _sws_status < "$2.status" || fail "spmd-simd: missing Windows status for $2"
+    case "$_sws_status" in
+        timeout) spmd_watchdog_failure="timeout after ${1}s"; return 1 ;;
+        launch-failed) spmd_watchdog_failure="launch failed"; return 1 ;;
+        *) spmd_status=$_sws_status ;;
+    esac
+}
+
+spmd_row_base() {
+    case "$3" in
+        1) base="$WORKDIR/$1.$2" ;;
+        *) base="$WORKDIR/$1.$2.O$3" ;;
+    esac
+}
+
+spmd_row_failure() {
+    echo "[spmd-simd] FAIL $prog $mode O$opt ($*)" >&2
+    printf '%s %s O%s (%s)\n' "$prog" "$mode" "$opt" "$*" >> "$job_dir/failures"
+}
+
+spmd_compile_one() {
+    compiler_invocations=$((compiler_invocations + 1))
+    set -- compile "$prog" --target "$TARGET" --sysroot "$TYPELISP_SYSROOT" \
+        --backend-mode "$mode" --opt-level "$opt"
+    if [ "$HOST_OS" = windows ]; then
+        spmd_windows_enqueue "$SPMD_STEP_SECONDS" "$base.compile" \
+            "$WINDOWS_COMPILER" "$@" -o "$BATCH_OUTPUT_ROOT${base#"$WORKDIR"}.s"
+    else
+        spmd_invoke "$SPMD_STEP_SECONDS" "$base.compile" "$COMPILER" "$@" -o "$base.s"
+    fi
+}
+
+spmd_compile_one_status() {
+    if [ "$HOST_OS" = windows ]; then
+        spmd_windows_status "$SPMD_STEP_SECONDS" "$base.compile"
+    else
+        spmd_compile_one
+    fi
+}
+
+spmd_compile_batch() {
+    if [ "$HOST_OS" = windows ]; then
+        spmd_windows_queue_init compile
+        if [ -s "$job_dir/batch.list" ]; then
+            spmd_windows_enqueue "$SPMD_BATCH_SECONDS" "$job_dir/batch" "$WINDOWS_COMPILER" \
+                compile --batch "$BATCH_OUTPUT_ROOT${job_dir#"$WORKDIR"}/batch.list" "$@"
+        fi
+        while IFS='|' read -r prog base expected_diag; do
+            [ -z "$expected_diag" ] || spmd_compile_one
+        done < "$job_dir/rows"
+        spmd_windows_dispatch
+        if [ -s "$job_dir/batch.list" ]; then
+            spmd_windows_status "$SPMD_BATCH_SECONDS" "$job_dir/batch"
+        fi
+    elif [ -s "$job_dir/batch.list" ]; then
+        spmd_invoke "$SPMD_BATCH_SECONDS" "$job_dir/batch" \
+            "$COMPILER" compile --batch "$job_dir/batch.list" "$@"
+    fi
+}
+
+spmd_record_run() {
+    if [ -s "$base.err" ]; then
+        spmd_row_failure "runtime stderr"
+        cat "$base.err" >&2
+    else
+        printf '%s\n' "$spmd_status" > "$base.exit"
+        printf '%s\n' "$SIMDEX_MODE" > "$base.execution"
+        echo "[spmd-simd] $prog $mode O$opt -> $spmd_status"
+        runs=$((runs + 1))
+    fi
+}
+
+spmd_run_row_linux() {
+    if ! spmd_assemble_link_linux "$base"; then
+        spmd_row_failure "assembly/link failed${spmd_watchdog_failure:+: $spmd_watchdog_failure}"
+        for build_stream in "$base.assemble.err" "$base.link.err"; do
+            [ ! -s "$build_stream" ] || cat "$build_stream" >&2
+        done
+        return
+    fi
+    simd_execution_record "$prog O$opt" "$mode"
+    if [ "$SIMDEX_MODE" = sde ]; then
+        set -- "$SIMDEX_SDE_BIN" -spr -- "$base$BIN_EXT"
+    else
+        set -- "$base$BIN_EXT"
+    fi
+    if ! spmd_invoke "$SPMD_STEP_SECONDS" "$base" "$@"; then
+        spmd_row_failure "run $spmd_watchdog_failure"
+    else
+        spmd_record_run
+    fi
+}
+
+spmd_windows_build_and_run() {
+    for phase in assemble link run; do
+        spmd_windows_queue_init "$phase"
+        while IFS='|' read -r prog base; do
+            native_base="$BATCH_OUTPUT_ROOT${base#"$WORKDIR"}"
+            case "$phase" in
+                assemble)
+                    spmd_windows_enqueue "$SPMD_STEP_SECONDS" "$base.assemble" "$WINDOWS_CLANG" \
+                        --target=x86_64-pc-windows-msvc -c "$native_base.s" -o "$native_base.o"
+                    ;;
+                link)
+                    windows_archive=
+                    if [ -n "$(windows_stdlib_archive_for_asm "$base.s" "$COMPILER")" ]; then
+                        windows_archive=$WINDOWS_ARCHIVE
+                    fi
+                    spmd_windows_enqueue "$SPMD_STEP_SECONDS" "$base.link" "$WINDOWS_LINK" \
+                        /NOLOGO /Brepro /OPT:REF "$native_base.o" ${windows_archive:+"$windows_archive"} \
+                        "/OUT:$native_base$BIN_EXT" /SUBSYSTEM:CONSOLE /ENTRY:_tl_start /NODEFAULTLIB \
+                        /DYNAMICBASE:NO "/STACK:$NL_WINDOWS_STACK_RESERVE" kernel32.lib ntdll.lib
+                    ;;
+                run)
+                    simd_execution_record "$prog O$opt" "$mode"
+                    if [ "$SIMDEX_MODE" = sde ]; then
+                        set -- "$WINDOWS_SDE" -spr -- "$native_base$BIN_EXT"
+                    else
+                        set -- "$native_base$BIN_EXT"
+                    fi
+                    spmd_windows_enqueue "$SPMD_STEP_SECONDS" "$base" "$@"
+                    ;;
+            esac
+        done < "$job_dir/ready"
+        spmd_windows_dispatch
+        : > "$job_dir/next"
+        while IFS='|' read -r prog base; do
+            if [ "$phase" = run ]; then
+                if spmd_windows_status "$SPMD_STEP_SECONDS" "$base"; then
+                    spmd_record_run
+                else
+                    spmd_row_failure "run $spmd_watchdog_failure"
+                fi
+            elif ! spmd_windows_status "$SPMD_STEP_SECONDS" "$base.$phase" ||
+                [ "$spmd_status" -ne 0 ] || [ -s "$base.$phase.err" ]; then
+                spmd_row_failure "$phase failed (${spmd_watchdog_failure:-status $spmd_status})"
+                [ ! -s "$base.$phase.err" ] || cat "$base.$phase.err" >&2
             else
-                echo "[spmd-simd]   $mode -> expected diagnostic OK" >> "$_job_out"
+                printf '%s|%s\n' "$prog" "$base" >> "$job_dir/next"
             fi
-            continue
-        fi
-        if compile_only_reason=$(spmd_mode_compile_only_reason "$_prog" "$mode"); then
-            compile_spmd_mode "$_prog" "$mode"
-            if [ "$mode_code" != 0 ] || [ -s "$mode_err" ]; then
-                {
-                    echo "[spmd-simd]   $mode compile error:"
-                    sed 's/^/    /' "$mode_err"
-                } >> "$_job_err"
-                echo "$_prog $mode (compile failed)" >> "$_job_fail"
-            else
-                echo "[spmd-simd]   $mode -> compiled OK ($compile_only_reason)" >> "$_job_out"
-            fi
-            continue
-        fi
-        if ! isa_available "$isa"; then
-            simd_execution_record "$_prog" "$mode" >> "$_job_out" 2>> "$_job_err"
-            echo "[spmd-simd]   skip $mode ($isa not runnable on this $HOST_OS host)" >> "$_job_out"
-            continue
-        fi
-        run_spmd_mode "$_prog" "$mode" >> "$_job_out" 2>> "$_job_err"
-        if [ -s "$mode_err" ]; then
-            {
-                echo "[spmd-simd]   $mode build/run error:"
-                sed 's/^/    /' "$mode_err"
-            } >> "$_job_err"
-            echo "$_prog $mode" >> "$_job_fail"
-        elif [ "$mode_code" != "$scalar_code" ]; then
-            echo "[spmd-simd]   $mode -> $mode_code MISMATCH (scalar=$scalar_code)" >> "$_job_err"
-            echo "$_prog $mode ($mode_code vs scalar $scalar_code)" >> "$_job_fail"
-        else
-            echo "[spmd-simd]   $mode -> $mode_code OK" >> "$_job_out"
-        fi
+        done < "$job_dir/ready"
+        mv "$job_dir/next" "$job_dir/ready"
     done
-
-    printf '%s\n' "$_job_selected" > "$POOL_JOBS_DIR/$_job.selected"
-    printf '%s %s %s\n' "$SIMDEX_NATIVE" "$SIMDEX_EMULATED" "$SIMDEX_SKIPPED" > "$POOL_JOBS_DIR/$_job.simdex"
-    return 0
 }
 
 bounded_pool_run_job() {
-    run_spmd_corpus_job "$1"
+    mode=${1%-*}
+    opt=${1##*-}
+    job_dir="$WORKDIR/jobs/$1"
+    mkdir -p "$job_dir"
+    spmd_matrix_job > "$job_dir/stdout" 2> "$job_dir/stderr"
 }
 
-echo "[spmd-simd] running $corpus_idx corpus program(s) with $SPMD_SIMD_WORKERS worker(s)"
-bounded_pool_init "$POOL_DIR" "$SPMD_SIMD_WORKERS" "$POOL_QUEUE" || exit 1
+spmd_matrix_job() {
+    : > "$job_dir/failures"
+    : > "$job_dir/batch.list"
+    : > "$job_dir/rows"
+    : > "$job_dir/ready"
+    compiler_invocations=0
+    diagnostics=0
+    compile_only=0
+    runs=0
+    SIMDEX_NATIVE=0
+    SIMDEX_EMULATED=0
+    SIMDEX_SKIPPED=0
+    while IFS='|' read -r prog tag; do
+        spmd_row_base "$tag" "$mode" "$opt"
+        if ! expected_diag=$(spmd_mode_expected_compile_diagnostic "$prog" "$mode" "$opt"); then
+            # The compiler does not receive MSYS path translation for the
+            # contents of a batch list. Use repo-relative input paths and a
+            # native output root on Windows.
+            printf '%s|%s%s.s\n' "$prog" "$BATCH_OUTPUT_ROOT" "${base#"$WORKDIR"}" >> "$job_dir/batch.list"
+        fi
+        printf '%s|%s|%s\n' "$prog" "$base" "$expected_diag" >> "$job_dir/rows"
+    done < "$CORPUS"
+
+    batch_failed=0
+    batch_interrupted=
+    if ! spmd_compile_batch --target "$TARGET" --sysroot "$TYPELISP_SYSROOT" \
+        --backend-mode "$mode" --opt-level "$opt"; then
+        batch_interrupted=$spmd_watchdog_failure
+    fi
+    if [ -s "$job_dir/batch.list" ]; then
+        compiler_invocations=$((compiler_invocations + 1))
+        if [ -n "$batch_interrupted" ] || [ "$spmd_status" -ne 0 ] || [ -s "$job_dir/batch.err" ]; then
+            batch_failed=1
+            batch_failure=${batch_interrupted:-"failed, status $spmd_status"}
+            echo "[spmd-simd] FAIL $mode O$opt batch compile ($batch_failure)" >&2
+            printf '%s O%s (batch compile %s)\n' "$mode" "$opt" "$batch_failure" >> "$job_dir/failures"
+            [ ! -s "$job_dir/batch.err" ] || cat "$job_dir/batch.err" >&2
+        fi
+    fi
+
+    if [ "$HOST_OS" = windows ] && [ -z "$batch_interrupted" ]; then
+        spmd_windows_queue_init fallback
+        while IFS='|' read -r prog base expected_diag; do
+            if [ -z "$expected_diag" ] && [ ! -s "$base.s" ]; then
+                spmd_compile_one
+            fi
+        done < "$job_dir/rows"
+        spmd_windows_dispatch
+    fi
+
+    while IFS='|' read -r prog base expected_diag; do
+        if [ -n "$expected_diag" ]; then
+            if ! spmd_compile_one_status; then
+                spmd_row_failure "diagnostic compile $spmd_watchdog_failure"
+            elif [ "$spmd_status" -ne 1 ] || ! grep -Fq -- "$expected_diag" "$base.compile.err"; then
+                spmd_row_failure "expected diagnostic with exit 1, got $spmd_status: $expected_diag"
+                cat "$base.compile.err" >&2
+            else
+                diagnostics=$((diagnostics + 1))
+                echo "[spmd-simd] $prog $mode O$opt -> expected diagnostic OK"
+            fi
+            continue
+        fi
+        if [ ! -s "$base.s" ] || { [ "$HOST_OS" = windows ] && [ -f "$base.compile.status" ]; }; then
+            if [ -n "$batch_interrupted" ]; then
+                spmd_row_failure "no assembly after batch compile $batch_interrupted"
+                continue
+            fi
+            # The batch stops at its first error. Check the remaining rows
+            # individually for coverage while retaining the batch failure.
+            if [ "$batch_failed" -eq 0 ]; then
+                spmd_row_failure "batch omitted assembly"
+            fi
+            if ! spmd_compile_one_status; then
+                spmd_row_failure "compile $spmd_watchdog_failure"
+                continue
+            fi
+            if [ "$spmd_status" -ne 0 ] || [ -s "$base.compile.err" ] || [ ! -s "$base.s" ]; then
+                spmd_row_failure "compile failed"
+                cat "$base.compile.err" >&2
+                continue
+            fi
+        fi
+        if reason=$(spmd_mode_compile_only_reason "$prog" "$mode"); then
+            compile_only=$((compile_only + 1))
+            echo "[spmd-simd] $prog $mode O$opt -> compiled only ($reason)"
+        elif ! simd_execution_mode "$mode"; then
+            simd_execution_record "$prog O$opt" "$mode"
+            compile_only=$((compile_only + 1))
+            echo "[spmd-simd] $prog $mode O$opt -> compiled only ($mode unavailable on $HOST_OS)"
+        elif [ "$HOST_OS" = windows ]; then
+            printf '%s|%s\n' "$prog" "$base" >> "$job_dir/ready"
+        else
+            spmd_run_row_linux
+        fi
+    done < "$job_dir/rows"
+    if [ "$HOST_OS" = windows ]; then
+        spmd_windows_build_and_run
+    fi
+    printf '%s %s %s\n' "$SIMDEX_NATIVE" "$SIMDEX_EMULATED" "$SIMDEX_SKIPPED" > "$job_dir/simd"
+    printf '%s %s %s %s\n' "$compiler_invocations" "$runs" "$diagnostics" "$compile_only" > "$job_dir/counts"
+}
+
+. "$ROOT/scripts/lib-manifest.sh"
+CORPUS="$WORKDIR/corpus.txt"
+manifest_concat_dir "$ROOT/tests/spmd/corpus.d" > "$WORKDIR/corpus.raw"
+# Receipt paths must be unique on case-insensitive Windows filesystems.
+LC_ALL=C awk '
+    /^[[:space:]]*(#|$)/ {next}
+    {
+        tag = $0
+        gsub(/[\/.]/, "_", tag)
+        if ($0 !~ /^[A-Za-z0-9_\/.\-]+[.]tl$/ || seen[tolower(tag)]++) {
+            print "invalid or duplicate SPMD corpus row: " $0 > "/dev/stderr"
+            bad = 1
+        }
+        print $0 "|" tag
+    }
+    END {exit bad || !length(seen)}
+' "$WORKDIR/corpus.raw" > "$CORPUS"
+while IFS='|' read -r prog tag; do
+    [ -f "$prog" ] || fail "spmd-simd: corpus program not found: $prog"
+done < "$CORPUS"
+corpus_count=$(wc -l < "$CORPUS" | tr -d ' ')
+
+simd_execution_init
+
+# Filtered cells compare against the ordinary run's O1 scalar receipts.
+NATIVE_WORKDIR=${TYPELISP_SPMD_SIMD_NATIVE_ROOT:-$ROOT/target/spmd-simd-verify}
+if [ -n "$SIMD_MODE_FILTER" ]; then
+    [ -d "$NATIVE_WORKDIR" ] ||
+        fail "spmd-simd: the ordinary run's workdir is missing: $NATIVE_WORKDIR"
+    NATIVE_WORKDIR=$(CDPATH= cd -- "$NATIVE_WORKDIR" && pwd)
+    [ "$NATIVE_WORKDIR" != "$WORKDIR" ] ||
+        fail "spmd-simd: the filtered run's workdir must differ from the ordinary run's: $WORKDIR"
+fi
+
+BATCH_OUTPUT_ROOT=$WORKDIR
+if [ "$HOST_OS" = windows ]; then
+    SPMD_TAB=$(printf '\t')
+    BATCH_OUTPUT_ROOT=$(cygpath -am "$WORKDIR")
+    WINDOWS_RUNNER=$(cygpath -aw "$ROOT/scripts/windows-integration-runner.ps1")
+    WINDOWS_COMPILER=$(cygpath -aw "$COMPILER")
+    WINDOWS_CLANG=$(cygpath -aw "$TYPELISP_WINDOWS_CLANG_POSIX")
+    WINDOWS_LINK=$(cygpath -aw "$TYPELISP_WINDOWS_LINK_POSIX")
+    WINDOWS_SDE=
+    if [ -n "$SIMDEX_SDE_BIN" ]; then
+        WINDOWS_SDE=$(cygpath -aw "$SIMDEX_SDE_BIN")
+    fi
+    WINDOWS_ARCHIVE=$(cygpath -aw "$STDLIB_ARCHIVE_PATH")
+fi
+POOL_DIR="$WORKDIR/pool"
+POOL_QUEUE="$WORKDIR/pool.queue"
+: > "$POOL_QUEUE"
+for opt in 1 0 2; do
+    for mode in scalar sse2 avx2 avx512; do
+        if simd_mode_selected "$mode"; then
+            printf '%s-%s|1\n' "$mode" "$opt" >> "$POOL_QUEUE"
+        fi
+    done
+done
+[ -s "$POOL_QUEUE" ] || fail "spmd-simd: TYPELISP_SIMD_MODE_FILTER=$SIMD_MODE_FILTER selected no corpus mode"
+
+echo "[spmd-simd] running $corpus_count corpus program(s) per matrix cell with $SPMD_SIMD_WORKERS worker(s)"
+bounded_pool_init "$POOL_DIR" "$SPMD_SIMD_WORKERS" "$POOL_QUEUE"
 bounded_pool_start "$POOL_DIR" "$SPMD_SIMD_WORKERS"
 pool_status=0
 bounded_pool_join "$POOL_DIR" || pool_status=$?
 
-SIMD_MODE_SELECTED=0
-SIMDEX_NATIVE=0
-SIMDEX_EMULATED=0
-SIMDEX_SKIPPED=0
-fatal_error=0
-replay_idx=0
-while [ "$replay_idx" -lt "$corpus_idx" ]; do
-    replay_idx=$((replay_idx + 1))
-    job_id=$(printf 'prog-%03d' "$replay_idx")
-    [ ! -s "$POOL_JOBS_DIR/$job_id.stdout" ] || cat "$POOL_JOBS_DIR/$job_id.stdout"
-    [ ! -s "$POOL_JOBS_DIR/$job_id.stderr" ] || cat "$POOL_JOBS_DIR/$job_id.stderr" >&2
-    [ ! -s "$POOL_JOBS_DIR/$job_id.failures" ] || cat "$POOL_JOBS_DIR/$job_id.failures" >> "$FAILURES"
-    [ ! -f "$POOL_JOBS_DIR/$job_id.fatal" ] || fatal_error=1
-    if [ -f "$POOL_JOBS_DIR/$job_id.selected" ]; then
-        read -r _s < "$POOL_JOBS_DIR/$job_id.selected"
-        SIMD_MODE_SELECTED=$((SIMD_MODE_SELECTED + _s))
+FAILURES="$WORKDIR/failures.txt"
+: > "$FAILURES"
+: > "$WORKDIR/counts.tsv"
+while IFS='|' read -r job unused; do
+    job_dir="$WORKDIR/jobs/$job"
+    [ ! -s "$job_dir/stdout" ] || cat "$job_dir/stdout"
+    [ ! -s "$job_dir/stderr" ] || cat "$job_dir/stderr" >&2
+    [ ! -s "$job_dir/failures" ] || cat "$job_dir/failures" >> "$FAILURES"
+    [ -s "$job_dir/counts" ] || continue
+    read -r n e k < "$job_dir/simd"
+    SIMDEX_NATIVE=$((SIMDEX_NATIVE + n))
+    SIMDEX_EMULATED=$((SIMDEX_EMULATED + e))
+    SIMDEX_SKIPPED=$((SIMDEX_SKIPPED + k))
+    read -r invocations runs diagnostics compile_only < "$job_dir/counts"
+    accounted=$((runs + diagnostics + compile_only))
+    echo "[spmd-simd] $job rows=$corpus_count ran=$runs diagnostics=$diagnostics compile-only=$compile_only failed=$((corpus_count - accounted)) compiler-invocations=$invocations"
+    printf '%s\t%s\n' "$job" "$invocations" >> "$WORKDIR/counts.tsv"
+    if [ "$accounted" -ne "$corpus_count" ]; then
+        printf '%s (accounted for %s of %s rows)\n' "$job" "$accounted" "$corpus_count" >> "$FAILURES"
     fi
-    if [ -f "$POOL_JOBS_DIR/$job_id.simdex" ]; then
-        read -r _n _e _k < "$POOL_JOBS_DIR/$job_id.simdex"
-        SIMDEX_NATIVE=$((SIMDEX_NATIVE + _n))
-        SIMDEX_EMULATED=$((SIMDEX_EMULATED + _e))
-        SIMDEX_SKIPPED=$((SIMDEX_SKIPPED + _k))
+done < "$POOL_QUEUE"
+
+# Scalar O1 is the default-level reference for every mode and level.
+if simd_mode_selected scalar; then
+    NATIVE_WORKDIR=$WORKDIR
+fi
+while IFS='|' read -r prog tag; do
+    reference="$NATIVE_WORKDIR/$tag.scalar"
+    scalar_code=
+    if [ -s "$reference.exit" ] && [ -f "$reference.err" ] && [ ! -s "$reference.err" ]; then
+        IFS= read -r scalar_code < "$reference.exit"
     fi
-done
+    case "$scalar_code" in
+        "" | *[!0-9]*)
+            printf '%s (missing or invalid O1 scalar reference)\n' "$prog" >> "$FAILURES"
+            continue
+            ;;
+    esac
+    while IFS='|' read -r job unused; do
+        mode=${job%-*}
+        opt=${job##*-}
+        spmd_row_base "$tag" "$mode" "$opt"
+        [ -f "$base.exit" ] || continue
+        IFS= read -r mode_code < "$base.exit"
+        if [ "$mode_code" != "$scalar_code" ]; then
+            printf '%s %s O%s (exit %s vs O1 scalar %s)\n' \
+                "$prog" "$mode" "$opt" "$mode_code" "$scalar_code" >> "$FAILURES"
+        fi
+    done < "$POOL_QUEUE"
+done < "$CORPUS"
 
-if [ "$fatal_error" -ne 0 ] || [ "$pool_status" -ne 0 ]; then
-    exit 1
-fi
-
-if [ -n "${SIMD_MODE_FILTER:-}" ] && [ "$SIMD_MODE_SELECTED" -eq 0 ]; then
-    echo "spmd-simd: TYPELISP_SIMD_MODE_FILTER=$SIMD_MODE_FILTER selected no corpus mode" >&2
-    exit 1
-fi
-
-# Codegen shapes and trap paths: tests/spmd/simd.d.
 if ! TYPELISP_BIN=$COMPILER CODEGEN_CASES_WORKDIR="$WORKDIR/cases" \
     sh "$ROOT/scripts/verify-codegen-cases.sh" tests/spmd/simd.d; then
     echo "tests/spmd/simd.d" >> "$FAILURES"
 fi
 
-if [ -s "$FAILURES" ]; then
+simd_execution_summary spmd-simd
+if [ "$pool_status" -ne 0 ] || [ -s "$FAILURES" ]; then
     echo "spmd-simd verification FAILED:" >&2
     sed 's/^/  /' "$FAILURES" >&2
     exit 1
 fi
-
-simd_execution_summary spmd-simd
 echo "spmd-simd verification passed (host=$HOST_OS, native-isas='$(printf '%s' "$SIMDEX_NATIVE_ISAS" | tr '\n' ' ')')"

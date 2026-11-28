@@ -1428,10 +1428,6 @@
       [lint-pool-active? : bool (ast.ast-node-pool-compat-context-active?)]
       [lint-pools : ast.AstNodePoolContext
         (ast.ast-node-pool-compat-context-current)]
-      [cfg-snapshot : cfg_core.CompilerCfgSnapshot
-        (cfg_core.compiler-cfg-snapshot-from-env cfgs)]
-      [verified-stdlib-roots : lint_svec.Vec
-        (compiler_load.compiler-load-session-stdlib-roots-snapshot)]
       [batch : (__tl_dyn-array SelfhostLintMustUseBatch)
         (__tl_make-array
           (SelfhostLintMustUseBatch
@@ -1439,23 +1435,12 @@
             (string.copy (& path))
             (lint_core.lint-findings-empty)))]
       (when lint-pool-active? (ast.ast-node-pool-compat-context-clear!))
-      ;; Phase-1 parsing and `selfhost-lint-unsafe-surface-prepare!` intern
-      ;; symbols that vary with cross-file cache hits/misses. Reset the interner
-      ;; to the session floor before typed checking so each file checks against
-      ;; a clean, order-independent intern table while keeping batch caches warm
-      ;; and preserving stdlib roots verified for this file during import resolution.
-      (compiler_check_core.compiler-check-reset-interns!)
-      (cbi.compiler-builtin-initialize-for-parse!)
-      (compiler_load.compiler-load-session-restore-stdlib-roots!
-        (& verified-stdlib-roots))
       (let
-        [typed-cfgs : sym_i64_env.SymI64Env
-          (cfg_core.compiler-cfg-snapshot-to-env (& cfg-snapshot))]
         [checked : compiler_check_core.ResultCompilerCheck
           (if track-must-use?
             (let
               [preparation : compiler_check_core.CompilerCheckPreparation
-                (if (parser.compiler-cfg-enabled? typed-cfgs (ci.intern "test"))
+                (if (parser.compiler-cfg-enabled? cfgs (ci.intern "test"))
                   (compiler_check_core.CompilerCheckPreparation.Prepare
                     tltest.tltest-prepare-check-program)
                   compiler_check_core.CompilerCheckPreparation.Unchanged)]
@@ -1477,7 +1462,7 @@
                           (compiler_load.clone-compiler-pkg-deps deps)
                           preparation)])
                     stdlib-roots
-                    typed-cfgs
+                    cfgs
                     job-state
                     (unsafe
                       (arena.from-raw-handle (arena.raw-handle owner)))
@@ -1493,7 +1478,7 @@
               (string.copy (& source))
               stdlib-roots
               context
-              typed-cfgs
+              cfgs
               job-state))]
         [must-use : lint_core.LintFindings
           (selfhost-lint-filter-derived-origins
@@ -1653,14 +1638,29 @@
         "unused-must-use-value")]
     [typed : lint_core.LintFindings
       (if (or must-use? (> unknown-count 0))
-        (selfhost-lint-typed-findings
-          path
-          source
-          stdlib-roots
-          context
-          typed-cfgs
-          (> unknown-count 0)
-          must-use?)
+        (let
+          [cfg-snapshot : cfg_core.CompilerCfgSnapshot
+            (cfg_core.compiler-cfg-snapshot-from-env typed-cfgs)]
+          [verified-stdlib-roots : lint_svec.Vec
+            (compiler_load.compiler-load-session-stdlib-roots-snapshot)]
+          ;; Phase-1 parsing and `selfhost-lint-unsafe-surface-prepare!` intern
+          ;; symbols that vary with cross-file cache hits/misses. Reset the
+          ;; interner to the session floor before typed checking so each file
+          ;; checks against a clean, order-independent intern table while
+          ;; keeping batch caches warm and preserving stdlib roots verified for
+          ;; this file during import resolution.
+          (compiler_check_core.compiler-check-reset-interns!)
+          (cbi.compiler-builtin-initialize-for-parse!)
+          (compiler_load.compiler-load-session-restore-stdlib-roots!
+            (& verified-stdlib-roots))
+          (selfhost-lint-typed-findings
+            path
+            source
+            stdlib-roots
+            context
+            (cfg_core.compiler-cfg-snapshot-to-env (& cfg-snapshot))
+            (> unknown-count 0)
+            must-use?))
         (lint_core.lint-findings-empty))]
     [base : lint_core.LintFindings
       (if (> unknown-count 0)

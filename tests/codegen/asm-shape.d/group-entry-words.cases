@@ -1,0 +1,11 @@
+# A projected String length and its trailing scalar stay in registers.
+case group-entry-words
+source tests/integration/group_entry_words.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_group_entry_words_length_score
+not-match movq [^,]+, -?[0-9]+\(%r(sp|bp)\)
+not-match movq -?[0-9]+\(%r(sp|bp)\),
+in fn _tl_group_entry_words_crowded
+contains call *
+in fn main
+contains call _tl_group_entry_words_crowded

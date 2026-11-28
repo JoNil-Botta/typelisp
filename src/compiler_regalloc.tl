@@ -1439,47 +1439,24 @@
   [instr : (& ir.CompilerIrInstr)]
   [present : (&mut present (__tl_dyn-array i64))]
   [types : (&mut types (__tl_dyn-array ast.AstType))]) : unit
-  (match (owned_view.compiler-owned-reference-shared-view instr)
-    [(or (Mov dst _ ty) (Load dst _ ty) (Cast dst _ _ ty) (Bitcast dst _ _ ty)
-         (UnOp dst _ _ ty) (VectorReduce dst _ _ _ ty) (Call dst _ _ ty)
-         (Phi dst _ ty) (Pack dst _ ty) (Word dst _ _ ty))
-      (compiler-reg-var-type-array-set! present types dst ty)]
-    [(or (AddrOf dst _ _) (Gep dst _ _ _))
-      (compiler-reg-var-type-array-set!
-        present
-        types
-        dst
-        (compiler-reg-addr-of-result-type))]
-    [(BinOp dst op _ _ ty)
-      (compiler-reg-var-type-array-set!
-        present
-        types
-        dst
-        (ir.compiler-ir-binop-result-type (& op) ty))]
-    [(MaskReduce dst _ _ _)
-      (compiler-reg-var-type-array-set! present types dst (Bool))]
-    [(SpmdCall (box (fields result)))
-      (match result
-        [(Unit) unit]
-        [(Value dst _ ty)
-          (compiler-reg-var-type-array-set! present types dst ty)])]
-    ;; SEL-1. A SCALAR select (`lanes` 0, the if-conversion result) defines a
-    ;; plain typed value like the Mov/BinOp it replaced, and it was the one
-    ;; scalar def this table did not record. Without a type the value is not
-    ;; register-eligible and cannot coalesce with the phi it feeds, so every
-    ;; if-converted loop carry -- `running = max(running, end)` spelled as
-    ;; `cmov` -- was homed on the stack: `cmovg %rsi, %r12; movq %r12, -40(%rsp)`
-    ;; and `movq -40(%rsp), %r11` on the back edge, four instructions where the
-    ;; cmov alone would do. Vector selects keep their own (vector) tables.
-    [(Select payload-box)
-      (let
-        [dst (deref payload-box).dst]
-        [lanes (deref payload-box).lanes]
-        [ty (compiler-reg-box-field-shared-view payload-box ty)]
-        (if (= lanes 0)
-          (compiler-reg-var-type-array-set! present types dst ty)
-          unit))]
-    [_ unit]))
+  (let
+    [dst : i64 (ir.compiler-ir-instr-dst instr)]
+    (when
+      (>= dst 0)
+      (match instr
+        [(or (AddrOf _ _ _) (Gep _ _ _ _))
+          (compiler-reg-var-type-array-set!
+            present
+            types
+            dst
+            (compiler-reg-addr-of-result-type))]
+        [_
+          ;; Indirect calls can define a register group even if the body never
+          ;; projects a word (for example, when forwarding the whole result).
+          (match (ir.compiler-ir-instr-dst-type
+            (owned_view.compiler-owned-reference-shared-view instr))
+            [(Some ty) (compiler-reg-var-type-array-set! present types dst ty)]
+            [(No) unit])]))))
 
 (define (compiler-reg-instr-seq-types-array!
   [instrs : (& ir.CompilerIrInstrSeq)]

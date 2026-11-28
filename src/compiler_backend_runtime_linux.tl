@@ -105,36 +105,42 @@ tl_backtrace_stack_high:
   ;; The slow paths pass the previous chunk in %rdi (zero for the null arena)
   ;; and the space needed including the header and any alignment slack in %rsi.
   ;; Return the mapping in %rax and its exact page-rounded length in %rsi.
-  ;; This internal leaf only uses registers and has no stack alignment needs.
-  ;; The 64 MiB cap applies to doubling, so larger requests still fit.
+  ;; Return SF set on failure, so the caller can branch after restoring registers.
+  ;; Linux ignores the fd for MAP_ANONYMOUS, so %r8 keeps the caller's arena.
+  ;; A successful mapping guarantees that the checked request and all header
+  ;; and cursor addresses fit inside a zero-filled userspace range.
+  ;; The implicit thread arena starts at its steady-state size. Explicit
+  ;; compact arenas double their previous mapping, up to 64 MiB.
   ;; MADV_NOHUGEPAGE is best effort on mappings large enough for a 2 MiB THP.
+  ;; The successful mmap length is below the userspace limit, so testing its
+  ;; upper bits clears SF. The madvise syscall preserves the user flags.
   ".L_tl_arena_map_chunk:
-    movl $0x40000, %eax
+    movl $0x4000000, %eax
     testq %rdi, %rdi
     jz .L_tl_arena_map_len
     movq 24(%rdi), %rcx
     subq %rdi, %rcx
-    movl $0x4000000, %eax
     cmpq $0x2000000, %rcx
     jae .L_tl_arena_map_len
     leaq (%rcx,%rcx), %rax
 .L_tl_arena_map_len:
     cmpq %rax, %rsi
     cmovbq %rax, %rsi
+    jbe .L_tl_arena_mmap
     addq $4095, %rsi
     jc .L_tl_arena_map_overflow
     andq $-4096, %rsi
+.L_tl_arena_mmap:
     xorq %rdi, %rdi
     movq $3, %rdx
     movq $0x22, %r10
-    movq $-1, %r8
     xorq %r9, %r9
     movq $9, %rax
     syscall
     testq %rax, %rax
     js .L_tl_arena_map_done
-    cmpq $0x200000, %rsi
-    jb .L_tl_arena_map_done
+    testq $-0x200000, %rsi
+    jz .L_tl_arena_map_done
     movq %rax, %rdi
     movl $15, %edx
     movl $28, %eax
@@ -143,7 +149,7 @@ tl_backtrace_stack_high:
 .L_tl_arena_map_done:
     ret
 .L_tl_arena_map_overflow:
-    movq $-1, %rax
+    orq $-1, %rax
     ret
 
 ")
@@ -154,17 +160,17 @@ tl_backtrace_stack_high:
   (let
     [fast-profile : String
       (runtime_common.compiler-backend-runtime-profile-alloc-account
-        "%rsi"
+        "%rdi"
         ".L_tl_alloc_profile_fast_done"
         profile)]
     [atomic-fast-profile : String
       (runtime_common.compiler-backend-runtime-profile-alloc-account
-        "%rsi"
+        "%rdi"
         ".L_tl_alloc_profile_atomic_fast_done"
         profile)]
     [atomic-locked-profile : String
       (runtime_common.compiler-backend-runtime-profile-alloc-account
-        "%rsi"
+        "%rdi"
         ".L_tl_alloc_profile_atomic_locked_done"
         profile)]
     [atomic-new-profile : String
@@ -186,14 +192,13 @@ tl_alloc:
     addq $7, %rdi
     jc .L_tl_alloc_abort
     andq $-8, %rdi
-    movq %rdi, %rsi
     movq %fs:tl_current_arena@tpoff, %r8
-    movq 56(%r8), %r9
     testq $1, 48(%r8)
     jnz .L_tl_alloc_atomic
+    movq 56(%r8), %r9
     movq 16(%r9), %rcx
     movq %rcx, %rax
-    addq %rsi, %rcx
+    addq %rdi, %rcx
     jc .L_tl_alloc_abort
     cmpq 24(%r9), %rcx
     ja .L_tl_alloc_new_arena
@@ -210,7 +215,7 @@ tl_alloc:
     movq 16(%r8), %rax
 .L_tl_alloc_atomic_cas:
     movq %rax, %rcx
-    addq %rsi, %rcx
+    addq %rdi, %rcx
     jc .L_tl_alloc_abort
     cmpq 24(%r8), %rcx
     ja .L_tl_alloc_atomic_new_arena
@@ -231,7 +236,7 @@ tl_alloc:
     movq 16(%r8), %rax
 .L_tl_alloc_atomic_locked_cas:
     movq %rax, %rcx
-    addq %rsi, %rcx
+    addq %rdi, %rcx
     jc .L_tl_alloc_atomic_abort_locked
     cmpq 24(%r8), %rcx
     ja .L_tl_alloc_atomic_map
@@ -245,33 +250,25 @@ tl_alloc:
     movq $1, 48(%r9)
     jmp .L_tl_alloc_abort
 .L_tl_alloc_atomic_map:
-    movq %rsi, %rcx
-    addq $64, %rcx
+    movq %rdi, %rsi
+    addq $64, %rsi
     jc .L_tl_alloc_atomic_abort_locked
     push %r9
-    push %rsi
+    push %rdi
     movq %r8, %rdi
-    movq %rcx, %rsi
     call .L_tl_arena_map_chunk
-    movq %rsi, %rdx
+    leaq (%rax,%rsi), %rcx
     pop %rsi
     pop %r9
-    testq %rax, %rax
     js .L_tl_alloc_atomic_abort_locked
-    movq %rax, %rcx
-    addq %rdx, %rcx
-    jc .L_tl_alloc_atomic_abort_locked
     movq 56(%r9), %r8
     movq %r8, 0(%rax)
-    movq $0, 32(%rax)
     movq %r9, 40(%rax)
     movq $1, 48(%rax)
-    movq $0, 56(%rax)
     leaq 64(%rax), %r8
     movq %r8, 8(%rax)
     movq %rcx, 24(%rax)
-    movq %r8, %rcx
-    addq %rsi, %rcx
+    leaq (%r8,%rsi), %rcx
     movq %rcx, 16(%rax)
     movq %rax, 56(%r9)
     movq $1, 48(%r9)
@@ -281,44 +278,34 @@ tl_alloc:
       (str_cat.str-cat
         "    ret
 .L_tl_alloc_new_arena:
-    movq %rsi, %rcx
-    addq $64, %rcx
+    movq %rdi, %rsi
+    addq $64, %rsi
     jc .L_tl_alloc_abort
-    push %rsi
-    movq %r9, %rdi
-    movq %rcx, %rsi
+    push %rdi
+    movq 56(%r8), %rdi
     call .L_tl_arena_map_chunk
-    movq %rsi, %rdx
+    leaq (%rax,%rsi), %rcx
     pop %rsi
-    testq %rax, %rax
     js .L_tl_alloc_abort
-    movq %rax, %rcx
-    addq %rdx, %rcx
-    jc .L_tl_alloc_abort
-    movq %fs:tl_current_arena@tpoff, %r9
-    testb $16, 48(%r9)
-    jnz .L_tl_alloc_root_self
-    movq 56(%r9), %r10
-    jmp .L_tl_alloc_root_ready
-.L_tl_alloc_root_self:
+    movq 56(%r8), %r10
+    testb $16, 48(%r8)
 "
-        (compiler-backend-runtime-linux-register-root-hook arena-debug)
-        "    xorq %r10, %r10
-    movq %rax, %r9
-.L_tl_alloc_root_ready:
-    movq %r10, 0(%rax)
-    movq $0, 32(%rax)
-    movq %r9, 40(%rax)
-    movq $0, 48(%rax)
-    movq %rax, 56(%r9)
-    leaq 64(%rax), %r8
-    movq %r8, 8(%rax)
+        (if arena-debug
+          (str_cat.str-cat
+            "    jz .L_tl_alloc_root_ready\n"
+            (compiler-backend-runtime-linux-register-root-hook arena-debug)
+            "    movq %rax, %r8\n.L_tl_alloc_root_ready:\n")
+          "    cmovnzq %rax, %r8\n")
+        "    movq %r10, 0(%rax)
+    movq %r8, 40(%rax)
+    movq %rax, 56(%r8)
+    leaq 64(%rax), %r9
+    movq %r9, 8(%rax)
     movq %rcx, 24(%rax)
-    movq %r8, %rcx
-    addq %rsi, %rcx
+    leaq (%r9,%rsi), %rcx
     movq %rcx, 16(%rax)
-    movq %r9, %fs:tl_current_arena@tpoff
-    movq %r8, %rax
+    movq %r8, %fs:tl_current_arena@tpoff
+    movq %r9, %rax
 ")]
     ;; `.L_tl_alloc_abort` is tl_alloc's own out-of-line stub, so the symbol
     ;; extent closes after it -- the last byte this block emits.
@@ -496,33 +483,23 @@ tl_alloc_aligned:
     movq %r8, %rdi
     movq %r10, %rsi
     call .L_tl_arena_map_chunk
-    movq %rsi, %r10
     popq %r11
     popq %rdx
     popq %r9
-    testq %rax, %rax
     js .L_tl_alloc_aligned_abort_locked
-    movq %rax, %rdi
-    addq %r10, %rdi
-    jc .L_tl_alloc_aligned_abort_locked
+    leaq (%rax,%rsi), %rdi
     movq 56(%r9), %r8
     movq %r8, 0(%rax)
-    movq $0, 32(%rax)
     movq %r9, 40(%rax)
     movq $1, 48(%rax)
-    movq $0, 56(%rax)
     leaq 64(%rax), %rcx
     movq %rcx, 8(%rax)
     movq %rdi, 24(%rax)
-    movq %rcx, %rsi
-    addq %r11, %rsi
-    jc .L_tl_alloc_aligned_abort_locked
+    leaq (%rcx,%r11), %rsi
     movq %r11, %r10
     notq %r10
     andq %r10, %rsi
-    movq %rsi, %r10
-    addq %rdx, %r10
-    jc .L_tl_alloc_aligned_abort_locked
+    leaq (%rsi,%rdx), %r10
     movq %r10, 16(%rax)
     movq %rax, 56(%r9)
     movq $1, 48(%r9)
@@ -543,23 +520,16 @@ tl_alloc_aligned:
     movq %r9, %rdi
     movq %r10, %rsi
     call .L_tl_arena_map_chunk
-    movq %rsi, %r10
     popq %r11
     popq %rdx
-    testq %rax, %rax
     js .L_tl_alloc_aligned_abort
-    movq %rax, %rdi
-    addq %r10, %rdi
-    jc .L_tl_alloc_aligned_abort
-    movq %fs:tl_current_arena@tpoff, %r8
-    testb $16, 48(%r8)
-    jnz .L_tl_alloc_aligned_root_self
+    leaq (%rax,%rsi), %rdi
     movq 56(%r8), %r9
-    jmp .L_tl_alloc_aligned_root_ready
-.L_tl_alloc_aligned_root_self:
+    testb $16, 48(%r8)
 "
           (if arena-debug
-            "    pushq %rdx
+            "    jz .L_tl_alloc_aligned_root_ready
+    pushq %rdx
     pushq %r11
     pushq %rdi
     movq %rax, %rdi
@@ -567,31 +537,23 @@ tl_alloc_aligned:
     popq %rdi
     popq %r11
     popq %rdx
-"
-            "")
-          "    xorq %r9, %r9
     movq %rax, %r8
 .L_tl_alloc_aligned_root_ready:
-    movq %r9, 0(%rax)
-    movq $0, 32(%rax)
+"
+            "    cmovnzq %rax, %r8\n")
+          "    movq %r9, 0(%rax)
     movq %r8, 40(%rax)
-    movq $0, 48(%rax)
     movq %rax, 56(%r8)
     leaq 64(%rax), %rcx
     movq %rcx, 8(%rax)
     movq %rdi, 24(%rax)
-    movq %rcx, %rsi
-    addq %r11, %rsi
-    jc .L_tl_alloc_aligned_abort
+    leaq (%rcx,%r11), %rsi
     movq %r11, %r10
     notq %r10
     andq %r10, %rsi
-    movq %rsi, %r10
-    addq %rdx, %r10
-    jc .L_tl_alloc_aligned_abort
+    leaq (%rsi,%rdx), %r10
     movq %r10, 16(%rax)
-    movq %r8, %r9
-    movq %r9, %fs:tl_current_arena@tpoff
+    movq %r8, %fs:tl_current_arena@tpoff
     subq %rcx, %r10
 "
           new-profile
@@ -619,7 +581,6 @@ tl_thread_init:
     xorq %rdi, %rdi
     movq $3, %rdx
     movq $0x22, %r10
-    movq $-1, %r8
     xorq %r9, %r9
     movq $9, %rax
     syscall
@@ -705,16 +666,12 @@ tl_arena_make_small:
     syscall
     testq %rax, %rax
     js .L_tl_arena_make_abort
-    movq $0, 0(%rax)
-    movq $0, 32(%rax)
     movq %rax, 40(%rax)
-    movq $0, 48(%rax)
     movq %rax, 56(%rax)
     leaq 64(%rax), %rcx
     movq %rcx, 8(%rax)
     movq %rcx, 16(%rax)
-    movq %rax, %rcx
-    addq %rsi, %rcx
+    leaq (%rax,%rsi), %rcx
     movq %rcx, 24(%rax)
 "
     (compiler-backend-runtime-linux-register-root-hook arena-debug)
@@ -738,16 +695,13 @@ tl_arena_make_atomic:
     syscall
     testq %rax, %rax
     js .L_tl_arena_make_atomic_abort
-    movq $0, 0(%rax)
-    movq $0, 32(%rax)
     movq %rax, 40(%rax)
     movq $1, 48(%rax)
     movq %rax, 56(%rax)
     leaq 64(%rax), %rcx
     movq %rcx, 8(%rax)
     movq %rcx, 16(%rax)
-    movq %rax, %rcx
-    addq %rsi, %rcx
+    leaq (%rax,%rsi), %rcx
     movq %rcx, 24(%rax)
 "
     (compiler-backend-runtime-linux-register-root-hook arena-debug)

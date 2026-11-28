@@ -44,8 +44,8 @@
 (define (tc-lifetime-subst-len [subst : tc_core.TcLifetimeSubst]) : i64
   (match subst
     [(Nil) 0]
-    [(One _ _) 1]
-    [(Dense _ _ len) len]))
+    [(One _ _ _) 1]
+    [(Dense _ _ len _) len]))
 
 (define (tc-lifetime-subst-wide-and-order-ok?) : bool
   (let
@@ -143,13 +143,13 @@
       (tc-lifetime-subst-lookup-eq? right 40 140)
       (tc-lifetime-subst-lookup-missing? right 30)
       (match left
-        [(Dense left-address left-tail left-len)
+        [(Dense left-address left-tail left-len _)
           (match right
-            [(Dense right-address _ _)
+            [(Dense right-address _ _ _)
               (and
                 (= left-address right-address)
                 (match duplicate
-                  [(Dense duplicate-address duplicate-tail duplicate-len)
+                  [(Dense duplicate-address duplicate-tail duplicate-len _)
                     (and
                       (= duplicate-address left-address)
                       (= duplicate-tail left-tail)
@@ -183,21 +183,27 @@
     (while (< index (array-length names))
       (let
         [name : i64 (array-ref names index)]
-        [key : i64 (tc_core.tc-lifetime-subst-variance-key name)]
         [pinned : tc_core.TcLifetimeSubst
-          (tc_core.tc-lifetime-subst-push-for-variance
+          (tc_core.tc-lifetime-subst-push-bound
             root
             name
             777
-            (tc_core.TcVariance.TcVarianceInvariant))]
+            (tc_core.tc-variance-code (tc_core.TcVariance.TcVarianceInvariant))
+            -1
+            false)]
         [sibling : tc_core.TcLifetimeSubst
           (tc-lifetime-subst-must-bind root 30 130)]
         (unless
           (and
-            (< key 0)
-            (tc-lifetime-subst-lookup-eq? pinned key 777)
-            (tc-lifetime-subst-lookup-missing? root key)
-            (tc-lifetime-subst-lookup-missing? sibling key)
+            (match (tc_core.tc-lifetime-subst-bind-for-variance
+              (tc_core.tc-empty-env)
+              pinned
+              name
+              778
+              (tc_core.TcVariance.TcVarianceInvariant))
+              [(Ok _) false]
+              [(Err _) true])
+            (tc-lifetime-subst-lookup-missing? sibling name)
             (tc-lifetime-subst-lookup-eq? pinned name 777)
             (tc-lifetime-subst-lookup-missing? root name)
             (tc-lifetime-subst-lookup-eq? pinned 10 110)
@@ -220,11 +226,13 @@
     [lower : i64 (tc_core.tc-call-temporary-lifetime-id)]
     [longer : i64 (tc_core.tc-unconstrained-lifetime-id)]
     [root : tc_core.TcLifetimeSubst
-      (tc_core.tc-lifetime-subst-push-for-variance
+      (tc_core.tc-lifetime-subst-push-bound
         Nil
         10
         lower
-        (tc_core.TcVariance.TcVarianceContravariant))]
+        (tc_core.tc-variance-code (tc_core.TcVariance.TcVarianceContravariant))
+        -1
+        false)]
     ;; An equal covariant occurrence still restricts the upper bound in this branch.
     [restricted : tc_core.TcLifetimeSubst
       (match (tc_core.tc-lifetime-subst-bind-for-variance

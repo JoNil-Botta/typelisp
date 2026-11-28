@@ -25482,7 +25482,10 @@
 (defstruct TcLifetimeSubstNode
   (from i64)
   (to i64)
-  (parent i64))
+  (parent i64)
+  (variance i64)
+  (previous-bound i64)
+  (previous-pending i64))
 
 (defstruct TcLifetimeSubstStoreData
   (nodes (__tl_dyn-array TcLifetimeSubstNode))
@@ -25496,8 +25499,8 @@
 ;; extensions append separate nodes and never rewrite their shared prefix.
 (defenum TcLifetimeSubst
   (Nil)
-  (One i64 i64)
-  (Dense i64 i64 i64))
+  (One i64 i64 i64)
+  (Dense i64 i64 i64 i64))
 
 (defenum ResultTcLifetimeSubst
   (Ok TcLifetimeSubst)
@@ -40543,14 +40546,14 @@
       (int->ptr (cast address : u64) : (MutPtr TcLifetimeSubstStoreData))
       data)))
 
-(define (tc-lifetime-subst-store-new [from : i64] [to : i64]) : i64
+(define (tc-lifetime-subst-store-new [from : i64] [to : i64] [variance : i64]) : i64
   (let
     [cell : (__tl_dyn-array TcLifetimeSubstStoreData)
       (__tl_make-array TcLifetimeSubstStoreData 1)]
     [nodes : (__tl_dyn-array TcLifetimeSubstNode)
       (__tl_make-array TcLifetimeSubstNode 4)]
     [owner : i64 (arena.tl_arena_current)]
-    (set! (array-ref nodes 0) (TcLifetimeSubstNode from to -1))
+    (set! (array-ref nodes 0) (TcLifetimeSubstNode from to -1 variance -1 -1))
     (set! (array-ref cell 0) (TcLifetimeSubstStoreData nodes 1 owner))
     (unsafe
       (cast
@@ -40581,7 +40584,13 @@
               [node : TcLifetimeSubstNode (array-ref old index)]
               (set!
                 (array-ref next index)
-                (TcLifetimeSubstNode node.from node.to node.parent))
+                (TcLifetimeSubstNode
+                  node.from
+                  node.to
+                  node.parent
+                  node.variance
+                  node.previous-bound
+                  node.previous-pending))
               (set! index (+ index 1))))
           (set! data.nodes next))))))
 
@@ -40589,58 +40598,112 @@
   [address : i64]
   [parent : i64]
   [from : i64]
-  [to : i64]) : i64
+  [to : i64]
+  [variance : i64]
+  [previous-bound : i64]
+  [pending : i64]) : i64
   (let
     [data : TcLifetimeSubstStoreData (tc-lifetime-subst-store-read address)]
     [index : i64 data.len]
     (tc-lifetime-subst-store-grow! (&mut data) (+ index 1))
-    (set! (array-ref data.nodes index) (TcLifetimeSubstNode from to parent))
+    (set!
+      (array-ref data.nodes index)
+      (TcLifetimeSubstNode from to parent variance previous-bound pending))
     (set! data.len (+ index 1))
     (tc-lifetime-subst-store-write! address data)
     index))
 
+(define (tc-lifetime-subst-find [subst : TcLifetimeSubst] [name : i64]) : i64
+  (match subst
+    [(Nil) -1]
+    [(One from _ _)
+      (if (= from name)
+        0
+        -1)]
+    [(Dense address tail _ _)
+      (let
+        [nodes : (__tl_dyn-array TcLifetimeSubstNode)
+          (tc-lifetime-subst-store-read address).nodes]
+        [index : i64 tail]
+        (while (>= index 0)
+          (when
+            (= (__tl-project-field (array-ref nodes index) from) name)
+            (return index))
+          (set! index (__tl-project-field (array-ref nodes index) parent)))
+        -1)]))
+
 (define (tc-lifetime-subst-lookup [subst : TcLifetimeSubst] [name : i64]) : TcMaybeNameId
   (match subst
     [(Nil) (No)]
-    [(One from to)
+    [(One from to _)
       (if (= from name)
         (Some to)
         (No))]
-    [(Dense address tail len)
+    [(Dense address _ _ _)
       (let
-        [data : TcLifetimeSubstStoreData (tc-lifetime-subst-store-read address)]
-        [nodes : (__tl_dyn-array TcLifetimeSubstNode) data.nodes]
-        [index : i64 tail]
-        [remaining : i64 len]
-        [found : bool false]
-        [replacement : i64 -1]
-        (while (and (not found) (> remaining 0))
-          (when
-            (= (__tl-project-field (array-ref nodes index) from) name)
-            (set! replacement (__tl-project-field (array-ref nodes index) to))
-            (set! found true))
-          (set! index (__tl-project-field (array-ref nodes index) parent))
-          (-= remaining 1))
-        (if found
-          (Some replacement)
-          (No)))]))
+        [index : i64 (tc-lifetime-subst-find subst name)]
+        (if (< index 0)
+          (No)
+          (Some
+            (__tl-project-field
+              (array-ref (tc-lifetime-subst-store-read address).nodes index)
+              to))))]))
+
+(define (tc-lifetime-subst-push-bound
+  [subst : TcLifetimeSubst]
+  [from : i64]
+  [to : i64]
+  [variance : i64]
+  [previous : i64]
+  [schedule? : bool]) : TcLifetimeSubst
+  (match subst
+    [(Nil) (One from to variance)]
+    [(One previous-from previous-to previous-variance)
+      (let
+        [address : i64
+          (tc-lifetime-subst-store-new
+            previous-from
+            previous-to
+            previous-variance)]
+        [tail : i64
+          (tc-lifetime-subst-store-push! address 0 from to variance previous -1)]
+        (Dense
+          address
+          tail
+          2
+          (if schedule?
+            tail
+            -1)))]
+    [(Dense address tail len pending)
+      (let
+        [next : i64
+          (tc-lifetime-subst-store-push!
+            address
+            tail
+            from
+            to
+            variance
+            previous
+            pending)]
+        (Dense
+          address
+          next
+          (+ len 1)
+          (if schedule?
+            next
+            pending)))]))
 
 (define (tc-lifetime-subst-push
   [subst : TcLifetimeSubst]
   [from : i64]
   [to : i64]) : TcLifetimeSubst
-  (match subst
-    [(Nil) (One from to)]
-    [(One previous-from previous-to)
-      (let
-        [address : i64 (tc-lifetime-subst-store-new previous-from previous-to)]
-        [tail : i64 (tc-lifetime-subst-store-push! address 0 from to)]
-        (Dense address tail 2))]
-    [(Dense address tail len)
-      (Dense
-        address
-        (tc-lifetime-subst-store-push! address tail from to)
-        (+ len 1))]))
+  (tc-lifetime-subst-push-bound
+    subst
+    from
+    to
+    (tc-variance-code (TcVarianceInvariant))
+    -1
+    false))
 
 (define (tc-lifetime-subst-bind
   [subst : TcLifetimeSubst]
@@ -61564,104 +61627,33 @@
       (Ok subst)
       (Err (tc-call-lifetime-subst-mismatch-message)))))
 
-;; The key for a formal's variance evidence in this substitution snapshot.
-;; Lifetime ids are nonnegative. Complementing every bit maps their full domain
-;; into negative metadata keys, disjoint from applied lifetime substitutions.
-(define (tc-lifetime-subst-variance-key [from : i64]) : i64
-  (bit-xor from -1))
-
-(define (tc-lifetime-subst-variance-fact [subst : TcLifetimeSubst] [from : i64]) : TcMaybeNameId
-  (tc-lifetime-subst-lookup subst (tc-lifetime-subst-variance-key from)))
-
-;; A nonnegative fact is an exact invariant pin. When inference starts with a
-;; lower bound, the binding tracks that bound and the fact is the complemented
-;; upper bound. Earlier upper bounds remain on the same snapshot spine.
-;; Initially the unconstrained lifetime admits every candidate.
-(define (tc-lifetime-subst-push-for-variance
-  [subst : TcLifetimeSubst]
-  [from : i64]
-  [to : i64]
-  [variance : TcVariance]) : TcLifetimeSubst
-  (let
-    [next : TcLifetimeSubst (tc-lifetime-subst-push subst from to)]
-    (match variance
-      [(TcVarianceInvariant)
-        (tc-lifetime-subst-push next (tc-lifetime-subst-variance-key from) to)]
-      [(TcVarianceContravariant)
-        (tc-lifetime-subst-push
-          next
-          (tc-lifetime-subst-variance-key from)
-          (bit-xor (tc-unconstrained-lifetime-id) -1))]
-      [_ next])))
-
-;; Two independent caller lifetimes can both outlive the same local. Check each
-;; recorded upper bound before lengthening that local, even when the bounds
-;; themselves have no ordering. Lower-first snapshots always have a metadata
-;; entry as well as the applied binding, so they use the dense representation.
-(define (tc-lifetime-subst-upper-bounds-allow?
-  [env : TcTypeEnv]
-  [subst : TcLifetimeSubst]
-  [from : i64]
-  [to : i64]) : bool
+(define (tc-lifetime-subst-bound-at [subst : TcLifetimeSubst] [index : i64]) : TcLifetimeSubstNode
   (match subst
-    [(Dense address tail _)
-      (let
-        [nodes : (__tl_dyn-array TcLifetimeSubstNode)
-          (tc-lifetime-subst-store-read address).nodes]
-        [key : i64 (tc-lifetime-subst-variance-key from)]
-        [index : i64 tail]
-        (while (>= index 0)
-          (let
-            [node : TcLifetimeSubstNode (array-ref nodes index)]
-            (when
-              (and
-                (= node.from key)
-                (not
-                  (tc-lifetime-outlives-lifetime-id?
-                    env
-                    (bit-xor node.to -1)
-                    to)))
-              (return false))
-            (set! index node.parent)))
-        true)]
-    [_ false]))
+    [(One from to variance) (TcLifetimeSubstNode from to -1 variance -1 -1)]
+    [(Dense address _ _ _)
+      (array-ref (tc-lifetime-subst-store-read address).nodes index)]
+    [(Nil) (io.panic "typecheck: missing call lifetime bound")]))
 
-;; Keep the longest lower bound as the inferred argument, including after a
-;; compatible upper bound. An invariant occurrence must fit between both.
-(define (tc-lifetime-subst-bind-lower-first
+;; The parent link identifies a substitution snapshot. The previous-bound link
+;; visits just the evidence for one formal in that snapshot, including when a
+;; structural retry appends a sibling to the same store.
+(define (tc-lifetime-bounds-allow?
   [env : TcTypeEnv]
   [subst : TcLifetimeSubst]
-  [from : i64]
-  [lower : i64]
-  [upper : i64]
-  [to : i64]
-  [variance : TcVariance]) : ResultTcLifetimeSubst
-  (match variance
-    [(TcVarianceBivariant) (Ok subst)]
-    [(TcVarianceInvariant)
-      (if (and
-        (tc-lifetime-outlives-lifetime-id? env to lower)
-        (tc-lifetime-subst-upper-bounds-allow? env subst from to))
-        (Ok (tc-lifetime-subst-push-for-variance subst from to variance))
-        (Err (tc-call-lifetime-subst-mismatch-message)))]
-    [(TcVarianceCovariant)
-      (cond
-        [(tc-lifetime-outlives-lifetime-id? env to upper) (Ok subst)]
-        [(tc-lifetime-outlives-lifetime-id? env to lower)
-          (Ok
-            (tc-lifetime-subst-push
-              subst
-              (tc-lifetime-subst-variance-key from)
-              (bit-xor to -1)))]
-        [else (Err (tc-call-lifetime-subst-mismatch-message))])]
-    [(TcVarianceContravariant)
-      (cond
-        [(tc-lifetime-outlives-lifetime-id? env lower to) (Ok subst)]
-        [(and
-            (tc-lifetime-outlives-lifetime-id? env to lower)
-            (tc-lifetime-subst-upper-bounds-allow? env subst from to))
-          (Ok (tc-lifetime-subst-push subst from to))]
-        [else (Err (tc-call-lifetime-subst-mismatch-message))])]))
+  [index : i64]
+  [candidate : i64]) : bool
+  (while (>= index 0)
+    (let
+      [bound : TcLifetimeSubstNode (tc-lifetime-subst-bound-at subst index)]
+      (unless
+        (tc-lifetime-coercible-for-variance?
+          env
+          (tc-variance-of-code bound.variance)
+          candidate
+          bound.to)
+        (return false))
+      (set! index bound.previous-bound)))
+  true)
 
 (define (tc-lifetime-subst-bind-for-variance
   [env : TcTypeEnv]
@@ -61669,49 +61661,88 @@
   [from : i64]
   [to : i64]
   [variance : TcVariance]) : ResultTcLifetimeSubst
-  (match (tc-lifetime-subst-lookup subst from)
-    [(Some existing)
-      (match (tc-lifetime-subst-variance-fact subst from)
-        [(Some fact)
-          (when
-            (< fact 0)
-            (return
-              (tc-lifetime-subst-bind-lower-first
-                env
-                subst
-                from
-                existing
-                (bit-xor fact -1)
-                to
-                variance)))
-          (match variance
-            [(TcVarianceInvariant)
-              (return
-                (if (= fact to)
-                  (Ok subst)
-                  (Err (tc-call-lifetime-subst-mismatch-message))))]
-            [_ unit])]
-        [(No) unit])
-      (match variance
-        [(TcVarianceInvariant)
-          (if (tc-lifetime-outlives-lifetime-id? env existing to)
-            (Ok (tc-lifetime-subst-push-for-variance subst from to variance))
-            (Err (tc-call-lifetime-subst-mismatch-message)))]
-        [(TcVarianceBivariant) (Ok subst)]
-        [(TcVarianceCovariant)
-          (cond
-            [(= existing to) (Ok subst)]
-            [(tc-lifetime-outlives-lifetime-id? env existing to)
-              (Ok (tc-lifetime-subst-push subst from to))]
-            [(tc-lifetime-outlives-lifetime-id? env to existing) (Ok subst)]
-            [else (Err (tc-call-lifetime-subst-mismatch-message))])]
-        [(TcVarianceContravariant)
-          (cond
-            [(tc-lifetime-outlives-lifetime-id? env existing to) (Ok subst)]
-            [(tc-lifetime-outlives-lifetime-id? env to existing)
-              (Ok (tc-lifetime-subst-push subst from to))]
-            [else (Err (tc-call-lifetime-subst-mismatch-message))])])]
-    [(No) (Ok (tc-lifetime-subst-push-for-variance subst from to variance))]))
+  (let
+    [index : i64 (tc-lifetime-subst-find subst from)]
+    [code : i64 (tc-variance-code variance)]
+    [schedule? : bool false]
+    (when
+      (>= index 0)
+      (let
+        [bound : TcLifetimeSubstNode (tc-lifetime-subst-bound-at subst index)]
+        (cond
+          [(= bound.variance (tc-variance-code (TcVarianceInvariant)))
+            (when
+              (tc-lifetime-coercible-for-variance? env variance bound.to to)
+              (return (Ok subst)))
+            ;; A comparable but incompatible bound supplies the concrete expected
+            ;; type for the final argument check, which locates the violated pin.
+            (unless
+              (tc-lifetime-coercible-for-variance? env variance to bound.to)
+              (return (Err (tc-call-lifetime-subst-mismatch-message))))]
+          [(= code (tc-variance-code (TcVarianceInvariant)))
+            (unless
+              (tc-lifetime-bounds-allow? env subst index to)
+              (return (Err (tc-call-lifetime-subst-mismatch-message))))
+            (set! index -1)]
+          [(= code (tc-variance-code (TcVarianceBivariant)))
+            (return (Ok subst))]
+          [(= bound.variance (tc-variance-code (TcVarianceBivariant)))
+            (set! index -1)]
+          [(= code bound.variance)
+            ;; Of two comparable bounds in the same direction, retain the tighter one.
+            (when
+              (tc-lifetime-coercible-for-variance? env variance bound.to to)
+              (return (Ok subst)))
+            (when
+              (tc-lifetime-coercible-for-variance? env variance to bound.to)
+              (set! index bound.previous-bound))]
+          [else unit])
+        (set! schedule? (and (>= index 0) (< bound.previous-bound 0)))))
+    (Ok (tc-lifetime-subst-push-bound subst from to code index schedule?))))
+
+;; Prefer the longest required lower bound, then the shortest admitted upper
+;; bound. Each candidate must satisfy every retained occurrence. If none fits,
+;; the ordinary substituted argument check diagnoses the incompatible argument.
+(define (tc-call-lifetime-choice
+  [env : TcTypeEnv]
+  [subst : TcLifetimeSubst]
+  [head : i64]) : TcMaybeNameId
+  (let
+    [index : i64 head]
+    [upper : TcMaybeNameId TcMaybeNameId.No]
+    (while (>= index 0)
+      (let
+        [bound : TcLifetimeSubstNode (tc-lifetime-subst-bound-at subst index)]
+        (when
+          (tc-lifetime-bounds-allow? env subst head bound.to)
+          (if (= bound.variance (tc-variance-code (TcVarianceContravariant)))
+            (return (Some bound.to))
+            (set! upper (Some bound.to))))
+        (set! index bound.previous-bound)))
+    upper))
+
+(define (tc-call-lifetime-resolve [env : TcTypeEnv] [subst : TcLifetimeSubst]) : TcLifetimeSubst
+  (match subst
+    [(Dense _ _ _ pending)
+      ;; A formal enters this worklist only on acquiring a second independent
+      ;; bound. Later occurrences, including pins, are found in this snapshot.
+      (let
+        [out : TcLifetimeSubst subst]
+        [index : i64 pending]
+        (while (>= index 0)
+          (let
+            [entry : TcLifetimeSubstNode
+              (tc-lifetime-subst-bound-at subst index)]
+            [head : i64 (tc-lifetime-subst-find subst entry.from)]
+            (when
+              (>= (tc-lifetime-subst-bound-at subst head).previous-bound 0)
+              (match (tc-call-lifetime-choice env subst head)
+                [(Some choice)
+                  (set! out (tc-lifetime-subst-push out entry.from choice))]
+                [(No) unit]))
+            (set! index entry.previous-pending)))
+        out)]
+    [_ subst]))
 
 (define (tc-infer-call-lifetime-name
   [env : TcTypeEnv]
@@ -62750,7 +62781,7 @@
   [remember? : bool]) : ResultTcLifetimeSubst
   (if (>= index args.len)
     (if (>= index (ast.ast-type-list-len params))
-      (Ok subst)
+      (Ok (tc-call-lifetime-resolve env subst))
       (Err
         (tc-call-arity-message
           (tc-context-expr-segment-bases ctx)
@@ -62878,7 +62909,9 @@
                         [canonical-got : ast.AstType
                           (tc-canonicalize-inferred-type ctx got)]
                         [required-want : ast.AstType
-                          (tc-lifetime-subst-type subst canonical-want)]
+                          (tc-lifetime-subst-type
+                            (tc-call-lifetime-resolve env subst)
+                            canonical-want)]
                         (Err
                           (tc-locate-error-at-expr
                             (tc-context-expr-bases ctx)
@@ -94076,7 +94109,12 @@
           inner-ty
           actual
           (TcVarianceCovariant))
-          [(Ok subst) (Some (tc-lifetime-subst-apply subst lifetime))]
+          [(Ok subst)
+            (let
+              [head : i64 (tc-lifetime-subst-find subst lifetime)]
+              (if (>= head 0)
+                (tc-call-lifetime-choice env subst head)
+                (Some lifetime)))]
           [(Err _) (No)]))]
     [_ (No)]))
 

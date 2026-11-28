@@ -4652,6 +4652,10 @@
             assignments
             w1
             sse1?)]
+        ;; The first scratch already excludes this home. Unless word zero
+        ;; needs the register as its destination, consume word one in place.
+        [use-src1? : bool
+          (and (not (string.eq src1-home "")) (not (string.eq src1-home dst0)))]
         ;; GAP2b: REGISTER-form dsts (a pair-homed group) must be excluded from
         ;; the scratch scavenges -- under full occupancy an EMERGENCY pick of a
         ;; dst register would wrap it in save/restore and the restore would
@@ -4665,6 +4669,35 @@
           (if (compiler-backend-pack-word-dst-register? dst1)
             (owned_view.compiler-owned-shared-view dst1)
             "")]
+        [store1 : be_state.CompilerBackendMaybeAsm
+          (if use-src1?
+            (Some
+              (compiler-backend-emit-group-word-move
+                (& src1-home)
+                (& dst1)
+                sse1?))
+            (let
+              [remat : compiler_ir_types.CompilerIrValue
+                (be_operand.compiler-backend-var-remat-value
+                  assignments
+                  w1
+                  backend-state)]
+              [dst : String (be_state.compiler-backend-global-shared-view dst1)]
+              (match (& remat)
+                [(I64 _)
+                  (compiler-backend-emit-pack-word-immediate-store
+                    type-segment-bases
+                    (& remat)
+                    dst
+                    sse1?
+                    backend-state)]
+                [_
+                  (compiler-backend-emit-pack-word-immediate-store
+                    type-segment-bases
+                    w1
+                    dst
+                    sse1?
+                    backend-state)])))]
         [scratch0-exclude : (__tl_dyn-array String)
           (be_operand.compiler-backend-three-exclude
             src1-home
@@ -4707,13 +4740,6 @@
             w0
             (be_state.compiler-backend-global-shared-view dst0)
             sse0?
-            backend-state)]
-        [store1 : be_state.CompilerBackendMaybeAsm
-          (compiler-backend-emit-pack-word-immediate-store
-            type-segment-bases
-            w1
-            (be_state.compiler-backend-global-shared-view dst1)
-            sse1?
             backend-state)]
         [a0
           (try

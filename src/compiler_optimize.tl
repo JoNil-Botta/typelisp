@@ -106374,6 +106374,13 @@
 ;; heavy-gate budget (bounded in vars to avoid disp32 frame blowup); cyclic or
 ;; deep-in-loop sole-site callees absorb when the merged caller stays within
 ;; compact block and variable bounds so the combined stack frame stays small.
+;; Charge body cost and frame growth even when the callee will disappear:
+;; moving a large frame into the caller can widen its stack displacements.
+(define (opt-inline-size-absorption-cost-ok?
+  [body-cost : i64]
+  [frame-growth : i64]) : bool
+  (<= (+ body-cost frame-growth) 96))
+
 (define (opt-inline-size-sole-call-absorb-ok?
   [absorb-class : i64]
   [staging : (& staging OptInlineArgStaging)]
@@ -106381,9 +106388,12 @@
   [caller-blocks : i64]
   [added-so-far : i64]
   [added-blocks : i64]
-  [merged-vars : i64]) : bool
+  [merged-vars : i64]
+  [frame-growth : i64]
+  [body-cost : i64]) : bool
   (and
     (= absorb-class 1)
+    (opt-inline-size-absorption-cost-ok? body-cost frame-growth)
     (not staging.all?)
     (or (not staging.values?) (opt-inline-blocks-call-free? blocks))
     (let
@@ -110569,6 +110579,7 @@
   [cargs : (& cargs ir.CompilerIrCallArgs)]
   [np : i64]
   [captures : i64]
+  [vars : i64]
   [cblocks : (& cblocks ir.CompilerIrBlockList)]
   [callee-ret : (& ast.AstType)]
   [caller-blocks : i64]
@@ -110576,14 +110587,18 @@
   (when
     census.optimize-for-size
     (return
-      (or
-        (opt-inline-census-absorbable? index census func-name callee-name)
-        (and
-          (<
-            (opt-inline-single-block-cost-instrs cblocks)
-            (opt-inline-cost-call-bonus))
-          (opt-inline-blocks-call-free? cblocks)
-          (not (opt-inline-blocks-have-bounds-check? cblocks))))))
+      (let
+        [body-cost : i64 (opt-inline-single-block-cost-instrs cblocks)]
+        (or
+          (and
+            (opt-inline-size-absorption-cost-ok?
+              (+ body-cost captures)
+              (+ (opt-inline-frame-growth vars np) captures))
+            (opt-inline-census-absorbable? index census func-name callee-name))
+          (and
+            (< body-cost (opt-inline-cost-call-bonus))
+            (opt-inline-blocks-call-free? cblocks)
+            (not (opt-inline-blocks-have-bounds-check? cblocks)))))))
   (let
     [added-blocks : i64 0]
     [body-instrs : ir.CompilerIrInstrSeq
@@ -110662,6 +110677,7 @@
                   args
                   np
                   staged-count
+                  vars
                   blocks
                   callee-ret
                   ctx.caller-blocks
@@ -111065,7 +111081,9 @@
                   site-ctx.caller-blocks
                   site-ctx.added-so-far
                   added-blocks
-                  merged-vars)
+                  merged-vars
+                  (- merged-vars site-ctx.vars)
+                  callee-instrs)
                   (return
                     (SitePlan
                       (OptInlineSitePlan

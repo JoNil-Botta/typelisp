@@ -28074,11 +28074,31 @@ tl_shared_object_init:
                   (arena.destroy peephole-arena))
                 (compiler-backend-clear-scratch-escaped-emit-state!
                   backend-state)
-                (if (be_state.compiler-backend-state-emission-target-policy
-                  backend-state).shared-object
-                  (be_data.compiler-backend-shared-object-assembly
-                    (text_buf.render final))
-                  (Ok final)))]
+                (cond
+                  [(be_state.compiler-backend-state-emission-target-policy
+                      backend-state).shared-object
+                    (be_data.compiler-backend-shared-object-assembly
+                      (text_buf.render final))]
+                  [(and
+                      emit-entry
+                      (be_state.compiler-backend-state-tail-merging-enabled?
+                        backend-state)
+                      (not
+                        (be_state.compiler-backend-state-optimize-for-size?
+                          backend-state))
+                      (not (compiler_ir_types.compiler-debug-info-enabled?))
+                      (or
+                        (be_state.compiler-backend-target-coff? target)
+                        (be_state.compiler-backend-state-closed-executable?
+                          backend-state)))
+                    (Ok
+                      (text_buf.append
+                        (text_buf.empty)
+                        (be_peephole.compiler-backend-machine-outline
+                          (text_buf.render final)
+                          (be_state.compiler-backend-target-coff? target)
+                          false)))]
+                  [else (Ok final)]))]
             [(Err message)
               (let
                 [owned-message : (Box compiler_diagnostic.CompilerDiagnostic)
@@ -28183,8 +28203,8 @@ tl_shared_object_init:
         asm))))
 
 ;; The closed program is the whole text, so only now are helper fragments
-;; known dead and every surviving return tail known. Interning runs after the
-;; prune: a shared tail must not live in a fragment the prune removes.
+;; known dead and every surviving return tail known. Size-mode epilogue
+;; interning follows pruning so every shared tail survives it.
 ;; A program linked against a prebuilt stdlib archive is not the whole text:
 ;; archive members call runtime entry points (`tl_alloc16`, `tl_array_zero`,
 ;; ...) this text never names, so every helper stays and the linker's section
@@ -28198,18 +28218,17 @@ tl_shared_object_init:
       (if (be_state.compiler-backend-state-archive-runtime? backend-state)
         asm
         (runtime_prune.prune asm))]
-    (cond
-      [(or
-          (not
-            (be_state.compiler-backend-state-optimize-for-size? backend-state))
-          (compiler_ir_types.compiler-debug-info-enabled?))
-        kept]
-      [(be_state.compiler-backend-target-coff? target)
-        (be_peephole.compiler-backend-machine-outline kept true)]
-      [else
-        (be_peephole.compiler-backend-machine-outline
+    [coff? : bool (be_state.compiler-backend-target-coff? target)]
+    [size? : bool
+      (be_state.compiler-backend-state-optimize-for-size? backend-state)]
+    (if (or (not size?) (compiler_ir_types.compiler-debug-info-enabled?))
+      kept
+      (be_peephole.compiler-backend-machine-outline
+        (if (and size? (not coff?))
           (runtime_prune.intern-epilogues kept)
-          false)])))
+          kept)
+        coff?
+        true))))
 
 (define (compiler-backend-lower-mode-for-target
   [target : be_state.CompilerBackendTarget]

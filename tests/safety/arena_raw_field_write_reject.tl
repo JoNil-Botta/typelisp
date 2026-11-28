@@ -4,5 +4,6 @@
   (let
     [owner : arena.Arena (arena.make)]
     (begin
-      (set! owner.handle 12345)
-      owner.handle)))
+      (unsafe
+        (set! owner.handle 0))
+      (arena.raw-handle owner))))

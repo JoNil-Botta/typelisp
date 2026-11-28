@@ -854,7 +854,7 @@
       [(Enabled table)
         (for [index (iterator.range 0 funcs.len)]
           (match (& (array-ref funcs.slots index))
-            [(ir.CompilerIrFunction.Function fn-name _ _ _ _ _)
+            [(ir.CompilerIrFunction.Function fn-name _ _ _ _ _ _)
               (lower_i64_i64_map.insert-ref!
                 (&mut table.function-owners)
                 (ir.compiler-ir-symbol-id fn-name)
@@ -1083,7 +1083,8 @@
                   (ast.AstType.Unit)
                   next-var
                   (ir.compiler-ir-block-builder-to-list blocks)
-                  (ir.CompilerIrFunctionAbi.Ordinary)))
+                  (ir.CompilerIrFunctionAbi.Ordinary)
+                  false))
               (lower-module-ownership-record-function-id!
                 lower-state
                 wrapper-id
@@ -23413,7 +23414,8 @@
                                     ret-ty
                                     all-params
                                     ret-ir-ty
-                                    sret-var)))
+                                    sret-var)
+                                  false))
                               (lower-state-spans final-state))))]
                       [(ResultLowerState.Err message)
                         (ResultLowerFunction.Err message)])]
@@ -23446,6 +23448,7 @@
             (lower-state-type-cache state)
             (compiler-lower-function-state-new (lower-state-owner state))
             lambda-name
+            false
             params
             ret-ty
             body
@@ -64410,7 +64413,7 @@
     [found : ir.CompilerIrFunctionAbi Ordinary]
     (while (>= index 0)
       (match (ir.compiler-ir-function-seq-ref functions index)
-        [(Function name _ _ _ _ function-abi)
+        [(Function name _ _ _ _ function-abi _)
           (if (ir.compiler-ir-symbol-eq? name helper)
             (begin
               (set! found (ir.clone-compiler-ir-function-abi (& function-abi)))
@@ -64590,7 +64593,8 @@
                 ret-ty
                 (lower-state-next-var final-state)
                 (lower-state-build-function-blocks final-state)
-                (ir.compiler-ir-function-abi-private abi)))
+                (ir.compiler-ir-function-abi-private abi)
+                false))
             (lower-state-spans final-state)))])))
 
 (define (lower-spmd-scalar-helper-function
@@ -64678,7 +64682,8 @@
           ret-ty
           (lower-state-next-var final-state)
           (lower-state-build-function-blocks final-state)
-          (ir.compiler-ir-function-abi-private abi)))
+          (ir.compiler-ir-function-abi-private abi)
+          false))
       (lower-state-spans final-state))))
 
 (define (lower-spmd-specialized-helper-function
@@ -76656,6 +76661,7 @@
   [type-cache : LowerTypeCache]
   [function-state : CompilerLowerFunctionState]
   [logical-name : i64]
+  [cold? : bool]
   [params : ast.AstParamList]
   [ret : ast.AstType]
   [body : ast.AstExpr]
@@ -76851,7 +76857,8 @@
                                   ret-ty
                                   all-params
                                   ret-ir-ty
-                                  sret-var)))
+                                  sret-var)
+                                cold?))
                             (lower-state-spans final-state))))]
                     [(ResultLowerState.Err message)
                       (ResultLowerFunction.Err message)])]
@@ -77427,6 +77434,7 @@
   [top-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
   [logical-name : i64]
+  [cold? : bool]
   [params : ast.AstParamList]
   [ret : ast.AstType]
   [body : ast.AstExpr]
@@ -77448,6 +77456,7 @@
         top-env
         type-cache
         logical-name
+        cold?
         params
         ret
         body
@@ -77461,6 +77470,7 @@
   [top-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
   [logical-name : i64]
+  [cold? : bool]
   [params : ast.AstParamList]
   [ret : ast.AstType]
   [body : ast.AstExpr]
@@ -77494,6 +77504,7 @@
         type-cache
         function-state
         logical-name
+        cold?
         params
         ret
         body
@@ -77834,6 +77845,7 @@
             top-env
             type-cache
             logical-name
+            false
             params
             (Unit)
             body
@@ -77886,7 +77898,8 @@
             false
             storage
             false
-            (ir.CompilerIrGlobalStorage.Word)))))))
+            (ir.CompilerIrGlobalStorage.Word)
+            false))))))
 
 (define (lower-struct-cleanup-decl
   [ctx : tc_core.TcContext]
@@ -78148,6 +78161,7 @@
           top-env
           type-cache
           logical-name
+          false
           (ast.ast-param-cons
             (& (ast.ast-param-id value-name-id enum-ty false))
             (& (ast.ast-param-list-new)))
@@ -79118,7 +79132,8 @@
                       physical-ret-ty
                       (+ param-count 41)
                       (ir.compiler-ir-block-builder-to-list blocks)
-                      function-abi)))
+                      function-abi
+                      false)))
                 spans))]
           [(No)
             (Err
@@ -79163,6 +79178,7 @@
               top-env
               type-cache
               internal-name
+              (ast.ast-decl-meta-cold? (& decl-meta))
               params
               ret
               body
@@ -79794,6 +79810,7 @@
                                 cur-local-top-env
                                 (lower-global-shared-view cur-type-cache)
                                 init-symbol
+                                false
                                 (ast.ast-param-list-new)
                                 (lower-global-shared-view global-ty)
                                 expr
@@ -79924,7 +79941,8 @@
                           false
                           storage
                           false
-                          cell))
+                          cell
+                          (ast.ast-decl-meta-cold? (& decl-meta))))
                       (set! cur-decls rest))))]
               [(DefFn decl-meta name params ret body-box metadata)
                 (let
@@ -79969,6 +79987,7 @@
                       cur-local-top-env
                       (lower-global-shared-view cur-type-cache)
                       function-symbol
+                      (ast.ast-decl-meta-cold? (& decl-meta))
                       (lower-global-shared-view params)
                       (lower-global-shared-view ret)
                       (lower-global-shared-view body)
@@ -80041,7 +80060,8 @@
                                         true
                                         (ir.CompilerIrReturnStorage.None)
                                         false
-                                        (ir.CompilerIrGlobalStorage.Word)))])]
+                                        (ir.CompilerIrGlobalStorage.Word)
+                                        (ast.ast-decl-meta-cold? (& decl-meta))))])]
                               (begin
                                 (cfg
                                   compile-profile

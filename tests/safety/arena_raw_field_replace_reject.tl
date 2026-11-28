@@ -3,4 +3,4 @@
 (define (main) : i64
   (let
     [owner : arena.Arena (arena.make)]
-    (replace! owner.handle 12345)))
+    (replace! owner.handle 0)))

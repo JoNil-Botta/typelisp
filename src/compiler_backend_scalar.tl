@@ -5,6 +5,7 @@
 (import compiler_backend_state as be_state)
 (import stdlib.iterator)
 (import stdlib.io)
+(import stdlib.fs)
 (import compiler_ir_types)
 (import compiler_ast_types)
 (import compiler_builtin_ids as cbi)
@@ -3010,6 +3011,19 @@
         "\n")
       "")))
 
+;; Resolve relative ELF source paths where the source was compiled. The
+;; assembly may later be assembled from an unrelated working directory.
+(define (compiler-backend-elf-debug-path [path : String] [cwd : (& str)]) : String
+  (string.replace
+    (compiler_ir_types.compiler-debug-path-remap
+      (if (or
+        (fs.path-absolute? (& path))
+        (compiler_ir_types.compiler-debug-path-remap-matches? (& path)))
+        path
+        (fs.path-join cwd (& path))))
+    "\\"
+    "/"))
+
 (define (compiler-backend-debug-file-directives
   [target : be_state.CompilerBackendTarget]
   [index : be_state.CompilerBackendSourceSpanIndex]) : String
@@ -3020,25 +3034,23 @@
       [(Files _ paths count)
         (let
           [buf : text_buf.TextBuf (text_buf.empty)]
+          [elf? (be_state.compiler-backend-target-elf? target)]
+          [cwd : String
+            (if elf?
+              (fs.current-dir)
+              "")]
           (for [path-index (iterator.range 0 count)]
             (let
               [path-id : i64 (array-ref paths path-index)]
+              [source-path
+                (ci.intern-compat-state-str
+                  (be_state.compiler-backend-state-intern index.backend-state)
+                  path-id)]
               [path : String
                 (be_facts.compiler-backend-escape-string
-                  (if (be_state.compiler-backend-target-elf? target)
-                    (string.replace
-                      (compiler_ir_types.compiler-debug-path-remap
-                        (ci.intern-compat-state-str
-                          (be_state.compiler-backend-state-intern
-                            index.backend-state)
-                          path-id))
-                      "\\"
-                      "/")
-                    (compiler_ir_types.compiler-debug-path-remap
-                      (ci.intern-compat-state-str
-                        (be_state.compiler-backend-state-intern
-                          index.backend-state)
-                        path-id))))]
+                  (if elf?
+                    (compiler-backend-elf-debug-path source-path (& cwd))
+                    (compiler_ir_types.compiler-debug-path-remap source-path)))]
               [file-number : String (string.int->string (+ path-index 1))]
               (set!
                 buf
@@ -3062,7 +3074,7 @@
   (if (>= index functions.len)
     ""
     (match (owned_view.compiler-owned-element-view functions.slots index)
-      [(Function name _ _ _ _ _)
+      [(Function name _ _ _ _ _ _)
         (match (be_operand.compiler-backend-index-function-slot
           program-index
           name)

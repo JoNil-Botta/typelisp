@@ -134,7 +134,7 @@
 (define (compiler-reg-function-ref-counts [func : ir.CompilerIrFunction]) : (__tl_dyn-array
     i64)
   (match func
-    [(Function _ _ _ vars blocks _)
+    [(Function _ _ _ vars blocks _ _)
       (let
         [counts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         (reg.compiler-reg-fill-i64-array (&mut counts) 0)
@@ -147,7 +147,7 @@
   [func : ir.CompilerIrFunction]
   [coalesce : (& coalesce reg.CompilerRegCoalesceMap)]) : (__tl_dyn-array i64)
   (match (reg.compiler-reg-global-shared-view func)
-    [(Function _ _ _ vars blocks _)
+    [(Function _ _ _ vars blocks _ _)
       (let
         [counts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         [def-status : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
@@ -176,6 +176,27 @@
 (define (compiler-reg-plan-function-avx2 [func : ir.CompilerIrFunction]) : reg.CompilerRegPlan
   (compiler-reg-plan-function-avx2-for-abi Linux func))
 
+(test
+  reg-indirect-result-group-without-projection
+  ;; Forward the whole result. No Pack or Word can seed its second frame
+  ;; slot; the type of the call instruction itself must do so.
+  (let
+    [func
+      (irt.func
+        "function @forward(p=%0:(-> String String), s=%1:String) -> String vars 3 {
+       entry:
+         %2 = call* %0(%1) : String
+         return %2
+       }")]
+    [groups
+      (reg.compiler-reg-function-group-vars
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& func)
+        (reg.compiler-reg-function-var-types (& func)))]
+    (test.assert-true
+      (live.compiler-live-set-contains? groups 2)
+      "a forwarded indirect String result has storage for both words")))
+
 (cfg
   test
   (define (compiler-reg-early-exit-general-test-function) : ir.CompilerIrFunction
@@ -201,7 +222,7 @@
   (define (compiler-reg-early-exit-general-ok?) : bool
     (match (reg.compiler-reg-early-exit-shrinkwrap-function
       (compiler-reg-early-exit-general-test-function))
-      [(Function _ params ret-ty _ blocks _)
+      [(Function _ params ret-ty _ blocks _ _)
         (let
           [seq : ir.CompilerIrBlockSeq
             (live.compiler-live-ir-block-list-to-seq (& blocks))]
@@ -271,7 +292,7 @@
   (define (compiler-reg-early-exit-float-guard-refused-ok?) : bool
     (match (reg.compiler-reg-early-exit-shrinkwrap-function
       (compiler-reg-early-exit-float-guard-test-function))
-      [(Function _ _ _ _ blocks _)
+      [(Function _ _ _ _ blocks _ _)
         (and
           (=
             (ir.compiler-ir-block-seq-count
@@ -330,7 +351,7 @@
       [temp-start : i64
         (reg.compiler-reg-cold-call-rewrite-temp-start (& rewrite))]
       (match (ir.compiler-ir-global-shared-view rewritten)
-        [(Function _ _ _ vars blocks _)
+        [(Function _ _ _ vars blocks _ _)
           (let
             [seq : ir.CompilerIrBlockSeq
               (live.compiler-live-ir-block-list-to-seq (& blocks))]
@@ -428,7 +449,7 @@
   test
   (define (compiler-reg-call-hole-weights-ok?) : bool
     (match (compiler-reg-call-hole-loop-shape-function)
-      [(Function _ _ _ _ blocks _)
+      [(Function _ _ _ _ blocks _ _)
         (let
           [weights : (__tl_dyn-array i64)
             (let
@@ -572,7 +593,7 @@
   test
   (define (compiler-reg-call-hole-cold-arm-weight-ok?) : bool
     (match (compiler-reg-call-hole-cold-arm-function)
-      [(Function self-name _ _ _ blocks _)
+      [(Function self-name _ _ _ blocks _ _)
         (let
           [arms : reg.CompilerRegCallHoleWeights
             (let
@@ -638,7 +659,7 @@
   test
   (define (compiler-reg-call-hole-bypass-loop-ok?) : bool
     (match (compiler-reg-call-hole-bypass-loop-function)
-      [(Function self-name _ _ _ blocks _)
+      [(Function self-name _ _ _ blocks _ _)
         (let
           [arms : reg.CompilerRegCallHoleWeights
             (let
@@ -699,7 +720,7 @@
   test
   (define (compiler-reg-call-hole-loop-arm-weight-ok?) : bool
     (match (compiler-reg-call-hole-loop-arm-bypass-loop-function)
-      [(Function self-name _ _ _ blocks _)
+      [(Function self-name _ _ _ blocks _ _)
         (let
           [arms : reg.CompilerRegCallHoleWeights
             (let
@@ -949,7 +970,7 @@
     [selected : (__tl_dyn-array i64)]
     [selected-count : i64]) : ir.CompilerIrBlockSeq
     (match (reg.compiler-reg-global-shared-view func)
-      [(Function _ _ _ vars blocks _)
+      [(Function _ _ _ vars blocks _ _)
         (let
           [width : i64 (+ vars selected-count)]
           [carrier : (__tl_dyn-array i64) (__tl_make-array i64 width)]
@@ -1094,7 +1115,8 @@
             (irt.instr "%4 = call h() : i64")
             (irt.instr "%5 = add %0, %0 : i64")
             (irt.instr "return %5"))))
-      Ordinary)))
+      Ordinary
+      false)))
 
 (cfg
   test
@@ -1196,7 +1218,8 @@
             (irt.instr "%2 = call g() : i64")
             (irt.instr "%3 = mul %0, %0 : i64")
             (irt.instr "return %3"))))
-      Ordinary)))
+      Ordinary
+      false)))
 
 (cfg
   test
@@ -1276,7 +1299,8 @@
             (irt.instr "%2 = call g() : i64")
             (irt.instr "%4 = add %3, %0 : i64")
             (irt.instr "return %4"))))
-      Ordinary)))
+      Ordinary
+      false)))
 
 (cfg
   test
@@ -1340,7 +1364,7 @@
   test
   (define (compiler-reg-call-hole-flow-conservative-ok?) : bool
     (match (compiler-reg-call-hole-cross-block-function)
-      [(Function _ _ _ _ blocks _)
+      [(Function _ _ _ _ blocks _ _)
         (let
           [func : ir.CompilerIrFunction
             (compiler-reg-call-hole-cross-block-function)]
@@ -1580,7 +1604,8 @@
           (ir.CompilerIrBlock.Block
             (ir.compiler-ir-label "body")
             (compiler-reg-call-hole-round-body)))
-        Ordinary))))
+        Ordinary
+        false))))
 
 (cfg
   test
@@ -1664,7 +1689,7 @@
           (& plan)
           (- 0 1))]
       (match func
-        [(Function _ _ _ vars _ _)
+        [(Function _ _ _ vars _ _ _)
           (and
             (= (reg.compiler-reg-call-hole-split-vars (& split)) vars)
             (= (reg.compiler-reg-call-hole-split-temp-start (& split)) (- 0 1)))]))))
@@ -1855,7 +1880,8 @@
       (I64)
       (+ arms 2)
       (compiler-reg-call-hole-cold-arms-chain 0 arms callee)
-      Ordinary)))
+      Ordinary
+      false)))
 
 (cfg
   test
@@ -1932,7 +1958,7 @@
   test
   (define (compiler-reg-call-hole-recursive-arm-weights [callee : i64]) : reg.CompilerRegCallHoleWeights
     (match (compiler-reg-call-hole-cold-arms-function 1 callee)
-      [(Function self-name _ _ _ blocks _)
+      [(Function self-name _ _ _ blocks _ _)
         (let
           [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
           [seq (live.compiler-live-ir-block-list-to-seq (& blocks))]
@@ -2080,7 +2106,7 @@
   test
   (define (compiler-reg-loop-park-detect-ok?) : bool
     (match (compiler-reg-loop-park-direct-function)
-      [(Function _ _ _ vars blocks _)
+      [(Function _ _ _ vars blocks _ _)
         (let
           [seq : ir.CompilerIrBlockSeq
             (live.compiler-live-ir-block-list-to-seq (& blocks))]
@@ -2224,12 +2250,12 @@
         (live.compiler-live-ir-block-list-to-seq
           (&
             (match (reg.compiler-reg-global-shared-view direct-func)
-              [(Function _ _ _ _ blocks _) blocks])))]
+              [(Function _ _ _ _ blocks _ _) blocks])))]
       [splice-seq : ir.CompilerIrBlockSeq
         (live.compiler-live-ir-block-list-to-seq
           (&
             (match (reg.compiler-reg-global-shared-view splice-func)
-              [(Function _ _ _ _ blocks _) blocks])))]
+              [(Function _ _ _ _ blocks _ _) blocks])))]
       [direct-nest : reg.CompilerRegLoopNest
         (reg.compiler-reg-loop-nest-build-seq direct-seq)]
       [splice-nest : reg.CompilerRegLoopNest
@@ -2423,7 +2449,7 @@
   test
   (define (compiler-reg-loop-park-direct-rewrite-ok?) : bool
     (match (compiler-reg-loop-park-direct-function)
-      [(Function _ _ _ vars blocks _)
+      [(Function _ _ _ vars blocks _ _)
         (let
           [seq : ir.CompilerIrBlockSeq
             (live.compiler-live-ir-block-list-to-seq (& blocks))]
@@ -2498,7 +2524,7 @@
   test
   (define (compiler-reg-loop-park-splice-rewrite-ok?) : bool
     (match (compiler-reg-loop-park-splice-function)
-      [(Function _ _ _ vars blocks _)
+      [(Function _ _ _ vars blocks _ _)
         (let
           [seq : ir.CompilerIrBlockSeq
             (live.compiler-live-ir-block-list-to-seq (& blocks))]
@@ -2681,7 +2707,7 @@
           false
           false)]
       (match func
-        [(Function _ _ _ vars _ _)
+        [(Function _ _ _ vars _ _ _)
           (and
             (= (reg.compiler-reg-call-hole-split-vars (& split)) (+ vars 1))
             (= (reg.compiler-reg-call-hole-split-temp-start (& split)) vars)
@@ -2720,7 +2746,7 @@
           false
           false)]
       (match func
-        [(Function _ _ _ vars _ _)
+        [(Function _ _ _ vars _ _ _)
           (and
             (= (reg.compiler-reg-call-hole-split-vars (& split)) vars)
             (= (reg.compiler-reg-call-hole-split-temp-start (& split)) (- 0 1)))]))))
@@ -2815,7 +2841,7 @@
       [func : ir.CompilerIrFunction (compiler-reg-loop-split-resident-function)]
       [vars : i64
         (match func
-          [(Function _ _ _ function-vars _ _) function-vars])]
+          [(Function _ _ _ function-vars _ _ _) function-vars])]
       [split : reg.CompilerRegCallHoleSplit
         (reg.compiler-reg-loop-park-rewrite-function
           (ast.ast-node-pool-reader-type-segment-bases)
@@ -2858,7 +2884,7 @@
   test
   (define (compiler-reg-loop-split-phi-refused-ok?) : bool
     (match (compiler-reg-loop-split-resident-function)
-      [(Function _ _ _ _ blocks _)
+      [(Function _ _ _ _ blocks _ _)
         (let
           [seq : ir.CompilerIrBlockSeq
             (live.compiler-live-ir-block-list-to-seq (& blocks))]
@@ -2980,7 +3006,7 @@
       [func : ir.CompilerIrFunction (compiler-reg-loop-split-nested-function)]
       [vars : i64
         (match func
-          [(Function _ _ _ function-vars _ _) function-vars])]
+          [(Function _ _ _ function-vars _ _ _) function-vars])]
       [plan : reg.CompilerRegPlan
         (Plan
           (reg.compiler-reg-assignments-prepend
@@ -3086,7 +3112,7 @@
       [func : ir.CompilerIrFunction (compiler-reg-loop-split-sibling-function)]
       [vars : i64
         (match func
-          [(Function _ _ _ function-vars _ _) function-vars])]
+          [(Function _ _ _ function-vars _ _ _) function-vars])]
       [plan : reg.CompilerRegPlan
         (Plan
           (reg.compiler-reg-assignments-prepend
@@ -3414,7 +3440,8 @@
         (I64)
         80
         (Array (ir.CompilerIrBlockSeq blocks write))
-        Ordinary))))
+        Ordinary
+        false))))
 
 ;; Two small builders for a hand-written plan, so the fixture can say exactly
 ;; which values the greedy is imagined to have homed.
@@ -3532,7 +3559,7 @@
       [split : reg.CompilerRegCallHoleSplit
         (compiler-reg-loop-park-deep-nest-split false)]
       (match (compiler-reg-loop-park-deep-nest-function)
-        [(Function _ _ _ vars _ _)
+        [(Function _ _ _ vars _ _ _)
           (and
             ;; one park per base: a parked value frees ONE register over the
             ;; loop and the loop has two operands that each need one
@@ -3574,7 +3601,7 @@
       [split : reg.CompilerRegCallHoleSplit
         (compiler-reg-loop-park-deep-nest-split true)]
       (match (compiler-reg-loop-park-deep-nest-function)
-        [(Function _ _ _ vars _ _)
+        [(Function _ _ _ vars _ _ _)
           (and
             (= (reg.compiler-reg-call-hole-split-vars (& split)) vars)
             (= (reg.compiler-reg-call-hole-split-temp-start (& split)) (- 0 1)))]))))
@@ -3861,7 +3888,8 @@
                 (irt.instrs
                   "store @low_xmm_vector_sink, %0 : f64
                    return"))))))
-      Ordinary)))
+      Ordinary
+      false)))
 
 (cfg
   test
@@ -3969,7 +3997,8 @@
           "entry:
              %1 = mov %0 : ParamAggregate
              return")
-        Ordinary))))
+        Ordinary
+        false))))
 
 (cfg
   test
@@ -4946,7 +4975,8 @@
                         (compiler-reg-test-instr-seq-prepend
                           (irt.instr "store_ptr %7, 0 : i64")
                           extra))))))))))
-      Ordinary)))
+      Ordinary
+      false)))
 
 (cfg
   test
@@ -5177,7 +5207,8 @@
             (irt.instr "%0 = mov 7 : i64")
             (AddrOf 1 0 0)
             (Return No))))
-      Ordinary)))
+      Ordinary
+      false)))
 
 (cfg
   test
@@ -5196,7 +5227,8 @@
               (irt.instr "%0 = mov @frozen : i64"))
             (irt.instr "store @sink, %0 : i64")
             (Return No))))
-      Ordinary)))
+      Ordinary
+      false)))
 
 ;; W3 step (c). The frozen-global answer is a PROGRAM fact the backend seeds, so
 ;; the gates are: unseeded (the default) refuses; seeded-and-not-a-cell-writer
@@ -5394,7 +5426,8 @@
         7
         (ir.compiler-ir-blocks
           (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs))
-        Ordinary))))
+        Ordinary
+        false))))
 
 (cfg
   test
@@ -5634,14 +5667,15 @@
             5
             fold?
             (irt.instrs "branch false, l3latch, l2latch"))))
-      Ordinary)))
+      Ordinary
+      false)))
 
 (cfg
   test
   (define (compiler-reg-foldable-rebate-array [func : ir.CompilerIrFunction]) : (__tl_dyn-array
       i64)
     (match func
-      [(Function _ _ _ vars blocks _)
+      [(Function _ _ _ vars blocks _ _)
         (compiler-reg-function-foldable-rebates
           (reg.compiler-reg-global-shared-view blocks)
           (reg.compiler-reg-function-block-weights (& blocks))
@@ -5652,7 +5686,7 @@
   (define (compiler-reg-foldable-rebate-combined [func : ir.CompilerIrFunction]) : (__tl_dyn-array
       i64)
     (match (reg.compiler-reg-global-shared-view func)
-      [(Function _ _ _ vars _ _)
+      [(Function _ _ _ vars _ _ _)
         (let
           [coalesce-map (reg.CompilerRegCoalesceMap (__tl_make-array i64 0))]
           (reg.compiler-reg-function-spill-weights-combined
@@ -6014,7 +6048,8 @@
                %1 = mov 0 : i64
                jump loop")
           (ir.CompilerIrBlock.Block (ir.compiler-ir-label "loop") loop-body))
-        Ordinary))))
+        Ordinary
+        false))))
 
 ;; Collect loop rows for var 0 (marked a full-grade candidate) and return the
 ;; bucket the collector filled.
@@ -6024,7 +6059,7 @@
     [define-in-loop? : bool]
     [call-in-loop? : bool]) : reg.CompilerRegCallRegionStatSeq
     (match (compiler-reg-loop-region-fixture define-in-loop? call-in-loop?)
-      [(Function _ _ _ vars blocks _)
+      [(Function _ _ _ vars blocks _ _)
         (let
           [cand : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
           [order : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
@@ -6380,7 +6415,8 @@
                   "%6 = add %5, %0 : i64
                      %1 = mov %6 : i64
                      branch %6, loop, exit")))))
-        Ordinary))))
+        Ordinary
+        false))))
 
 ;; r12/r13: two callee-saved homes that clear the loop-pool hazard filter.
 (cfg
@@ -6449,7 +6485,7 @@
     [out-points : (__tl_dyn-array i64)]
     [out-saves : (__tl_dyn-array i64)]) : reg.CompilerRegCallEvictPick
     (match (compiler-reg-evict-fixture victim-in-loop?)
-      [(Function _ _ _ _ blocks _)
+      [(Function _ _ _ _ blocks _ _)
         (let
           [occ-var : (__tl_dyn-array i64) (__tl_make-array i64 4)]
           [occ-reg : (__tl_dyn-array i64) (__tl_make-array i64 4)]
@@ -6811,7 +6847,7 @@
   test
   (define (compiler-reg-evict-class-mention-ok?) : bool
     (match (compiler-reg-evict-fixture false)
-      [(Function _ _ _ _ blocks _)
+      [(Function _ _ _ _ blocks _ _)
         (let
           [seq : ir.CompilerIrBlockSeq
             (live.compiler-live-ir-block-list-to-seq (& blocks))]
@@ -6867,7 +6903,7 @@
   test
   (define (compiler-reg-evict-rewrite-shape-ok?) : bool
     (match (compiler-reg-evict-fixture false)
-      [(Function _ _ _ vars blocks _)
+      [(Function _ _ _ vars blocks _ _)
         (let
           [shadow-regs : (__tl_dyn-array i64) (__tl_make-array i64 7)]
           [split : reg.CompilerRegCallSplit
@@ -8132,7 +8168,8 @@
                       4
                       (compiler-reg-i64-ty))
                     (irt.instrs "return %3"))))))))
-      Ordinary)))
+      Ordinary
+      false)))
 
 (cfg
   test
@@ -9384,7 +9421,8 @@
       "entry:
          %3 = call* %0(%1, %2) : i64
          return %3")
-    Ordinary))
+    Ordinary
+    false))
 
 (define (compiler-reg-indirect-call-args-function [count : i64]) : ir.CompilerIrFunction
   (let
@@ -9413,7 +9451,8 @@
           (compiler-reg-test-instr-seq-prepend
             (CallIndirect (+ count 1) (Var 0) (Array args) (I64))
             (ir.compiler-ir-instr-seq1 (Return (Some (Var (+ count 1))))))))
-      Ordinary)))
+      Ordinary
+      false)))
 
 (define (compiler-reg-c-abi-store-result-arg-function) : ir.CompilerIrFunction
   (Function
@@ -9433,7 +9472,8 @@
               (__tl_make-array ir.CompilerIrCAbiReturnSlot 0)
               0))
           (irt.instrs "return"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (compiler-reg-ineligible-function) : ir.CompilerIrFunction
   (Function
@@ -9464,7 +9504,8 @@
                       (compiler-reg-test-instr-seq-prepend
                         (Return (Some (Var 5)))
                         (ir.compiler-ir-instr-seq-empty)))))))))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (compiler-reg-param-livein-gap-function) : ir.CompilerIrFunction
   (irt.func
@@ -9574,7 +9615,8 @@
                           (ir.compiler-ir-label "exit")
                           (ir.compiler-ir-label "loop")))
                       (ir.compiler-ir-instr-seq-empty))))))))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (compiler-reg-self-loop-exit-live-phi-mask-shape-ok?
   [mask : (__tl_dyn-array i64)]) : bool
@@ -9751,7 +9793,8 @@
                             "%8 = add %7, %5 : i64
                              return %8")
                           (irt.instrs "return %7"))))))))))))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; Both operands loaded is the backend's PAIR fold, which needs no operand tie:
 ;;
@@ -10035,7 +10078,8 @@
                 (compiler-reg-test-instr-seq-prepend
                   (ir.ir-instr-vector-store (I64 0) (I64 8) (Var 3) 4 (I64))
                   (irt.instrs "return"))))))))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; CpuId clobbers fixed GP registers but preserves the XMM bank. A vector live
 ;; across it must therefore keep an ordinary volatile vector home on SysV.
@@ -10055,7 +10099,8 @@
             (compiler-reg-test-instr-seq-prepend
               (ir.ir-instr-vector-store (I64 0) (I64 4) (Var 0) 4 (I64))
               (irt.instrs "return"))))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (compiler-reg-vector-select-false-home-function) : ir.CompilerIrFunction
   (Function
@@ -10081,7 +10126,8 @@
                     (compiler-reg-test-instr-seq-prepend
                       (ir.ir-instr-vector-store (I64 0) (I64 8) (Var 4) 8 (I64))
                       (irt.instrs "return"))))))))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (compiler-reg-mask-home-function) : ir.CompilerIrFunction
   (irt.func
@@ -10119,7 +10165,8 @@
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
         (compiler-reg-mask-pressure-defs 0)))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (compiler-reg-reuse-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-reuse-function))
@@ -13191,7 +13238,7 @@
 
 (define (compiler-reg-empty-body-coloring [text : String] [stack-only? : bool]) : reg.CompilerRegColoring
   (match (irt.func text)
-    [(Function _ params _ vars blocks _)
+    [(Function _ params _ vars blocks _ _)
       (reg.compiler-reg-color-stack-slots-with-stack-only
         (ast.ast-node-pool-reader-type-segment-bases)
         (&
@@ -13353,7 +13400,7 @@
                 [(No) unit]
                 [_ (return false)]))
             (match func
-              [(Function _ params _ vars blocks _)
+              [(Function _ params _ vars blocks _ _)
                 (match (compiler-reg-color-stack-slots
                   (ast.ast-node-pool-reader-type-segment-bases)
                   plan
@@ -13479,7 +13526,7 @@
 
 (define (compiler-reg-color-vector-stack-slots-ok?) : bool
   (match (compiler-reg-color-vector-stack-function)
-    [(Function _ params _ vars blocks _)
+    [(Function _ params _ vars blocks _ _)
       (match (compiler-reg-color-stack-slots
         (ast.ast-node-pool-reader-type-segment-bases)
         (Plan
@@ -13561,7 +13608,8 @@
                   (compiler-reg-test-instr-seq-prepend
                     (ir.ir-instr-vector-compare 3 (Eq) (Var 0) (Var 0) 8 (I64))
                     (irt.instrs "return")))))))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (compiler-reg-simd-copy-classes-and-widths-ok?) : bool
   (let
@@ -13570,7 +13618,7 @@
       (reg.compiler-reg-function-vector-mask-defs (& func))]
     [words : (__tl_dyn-array i64) (__tl_make-array i64 6)]
     (match func
-      [(Function _ _ _ _ blocks _)
+      [(Function _ _ _ _ blocks _ _)
         (reg.compiler-reg-vector-stack-words-blocks! (& blocks) (&mut words))
         (reg.compiler-reg-vector-stack-words-fixpoint! (& blocks) (&mut words))
         (and
@@ -13597,7 +13645,7 @@
 
 (define (compiler-reg-color-storage-ranges-ok?) : bool
   (match (compiler-reg-color-storage-function)
-    [(Function _ params _ vars blocks _)
+    [(Function _ params _ vars blocks _ _)
       (match (compiler-reg-color-stack-slots
         (ast.ast-node-pool-reader-type-segment-bases)
         (Plan
@@ -13653,7 +13701,7 @@
       (set! (array-ref slots index) -1)
       (set! (array-ref remap index) -1))
     (match func
-      [(Function _ params _ vars blocks _)
+      [(Function _ params _ vars blocks _ _)
         (reg.compiler-reg-color-inline-storage
           (ast.ast-node-pool-reader-type-segment-bases)
           params
@@ -14325,7 +14373,7 @@
         (reg.compiler-reg-plan-intervals
           (reg.compiler-reg-global-shared-view plan)))]
     (match func
-      [(Function _ params _ vars blocks _)
+      [(Function _ params _ vars blocks _ _)
         (match (compiler-reg-color-stack-slots
           (ast.ast-node-pool-reader-type-segment-bases)
           plan
@@ -14360,7 +14408,7 @@
         [(Plan _ ineligible _ _ _)
           (live.compiler-live-set-contains? ineligible storage)])]
     (match func
-      [(Function _ params _ vars blocks _)
+      [(Function _ params _ vars blocks _ _)
         (match (reg.compiler-reg-color-stack-slots-with-stack-only
           (ast.ast-node-pool-reader-type-segment-bases)
           (& plan)
@@ -14445,7 +14493,7 @@
         (reg.compiler-reg-plan-intervals
           (reg.compiler-reg-global-shared-view plan)))]
     (match func
-      [(Function _ params _ vars blocks _)
+      [(Function _ params _ vars blocks _ _)
         (match (compiler-reg-color-stack-slots
           (ast.ast-node-pool-reader-type-segment-bases)
           plan
@@ -16098,8 +16146,8 @@
       ;; frame suffix. Its returned metrics must still refer to the caller.
       (compiler-reg-check-returned-plan-profile-owner
         (match (compiler-reg-liveness-handle-phi-fixture)
-          [(Function symbol params result _ blocks function-abi)
-            (Function symbol params result 262144 blocks function-abi)])))))
+          [(Function symbol params result _ blocks function-abi cold?)
+            (Function symbol params result 262144 blocks function-abi cold?)])))))
 
 (cfg
   test
@@ -16144,8 +16192,8 @@
   test
   (define (compiler-reg-analysis-owner-fixture [vars : i64]) : ir.CompilerIrFunction
     (match (compiler-reg-trace-fixture-function)
-      [(Function symbol params result _ blocks function-abi)
-        (Function symbol params result vars blocks function-abi)])))
+      [(Function symbol params result _ blocks function-abi cold?)
+        (Function symbol params result vars blocks function-abi cold?)])))
 
 (cfg
   test
@@ -16207,7 +16255,7 @@
     compiler-reg-analysis-owner-boundary-homes
     (begin
       (match (compiler-reg-trace-fixture-function)
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (test.assert-i64-eq
             (ir.compiler-ir-block-list-instruction-count (& blocks))
             12
@@ -16418,7 +16466,7 @@
   [func : ir.CompilerIrFunction]
   [strict-pairs : bool]) : reg.CompilerRegMoveSeq
   (match (reg.compiler-reg-global-shared-view func)
-    [(Function _ _ _ vars _ _)
+    [(Function _ _ _ vars _ _ _)
       (let
         [eligible : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         (reg.compiler-reg-fill-i64-array (&mut eligible) 1)
@@ -16920,7 +16968,7 @@
 
 (define (compiler-reg-direct-call-points [func : (& ir.CompilerIrFunction)]) : live.CompilerLiveI64Set
   (match func
-    [(Function _ _ _ _ blocks _)
+    [(Function _ _ _ _ blocks _ _)
       (match (compiler-reg-direct-call-points-blocks
         blocks
         0
@@ -17710,7 +17758,7 @@
     (set! (array-ref direct 6) 16)
     (set! (array-ref direct 7) 24)
     (match func
-      [(Function _ params _ vars blocks _)
+      [(Function _ params _ vars blocks _ _)
         (match (reg.compiler-reg-color-stack-slots-with-stack-only
           (ast.ast-node-pool-reader-type-segment-bases)
           (& plan)
@@ -17774,7 +17822,8 @@
             %0 = add %0, %6 : i64
             %0 = add %0, %1 : i64
             return %0")
-        ir.CompilerIrFunctionAbi.Ordinary)]
+        ir.CompilerIrFunctionAbi.Ordinary
+        false)]
     [plan : reg.CompilerRegPlan
       (reg.compiler-reg-plan-function-scalar-for-abi
         (cabi.CompilerRegTargetAbi.Linux)
@@ -17782,7 +17831,7 @@
     [direct : (__tl_dyn-array i64) (__tl_make-array i64 18)]
     (set! (array-ref direct 6) 16)
     (match func
-      [(Function _ pseq _ vars blocks _)
+      [(Function _ pseq _ vars blocks _ _)
         (match (reg.compiler-reg-color-stack-slots-with-stack-only
           (ast.ast-node-pool-reader-type-segment-bases)
           (& plan)

@@ -229,7 +229,7 @@
       (match (compiler-opt-global-array-element-shared-view
         (__tl-project-field-name ,functions "slots")
         walk-function)
-        [(ir.CompilerIrFunction.Function _ _ _ _ walk-blocks _)
+        [(ir.CompilerIrFunction.Function _ _ _ _ walk-blocks _ _)
           (opt-blocks-walk instr ,mode ,var walk-blocks ,f ,@contexts)])
       (set! walk-function (+ walk-function 1)))))
 
@@ -634,7 +634,7 @@
   [pass : String]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match (& func)
-    [(Function name _ _ _ blocks _)
+    [(Function name _ _ _ blocks _ _)
       (if (and
         compiler-opt-debug-trace-passes
         (not compiler-opt-debug-suppressed?))
@@ -1102,7 +1102,7 @@
   (define (compiler-opt-profile-function-name
     [func : (& ir.CompilerIrFunction)]) : String
     (match func
-      [(Function name _ _ _ _ _) (ir.compiler-ir-symbol-text name)])))
+      [(Function name _ _ _ _ _ _) (ir.compiler-ir-symbol-text name)])))
 
 (define (compiler-optimize-default-level) : i64
   compiler-optimize-level-default)
@@ -5476,7 +5476,7 @@
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match (compiler-opt-global-shared-view func)
-    [(Function name params ret-ty frame blocks function-abi)
+    [(Function name params ret-ty frame blocks function-abi cold?)
       (if (< frame 1)
         func
         (let
@@ -5532,7 +5532,8 @@
                         ret-ty
                         (array-ref cursor 0)
                         rewritten
-                        function-abi)))))))))]))
+                        function-abi
+                        cold?)))))))))]))
 
 ;; --- read-only AddrOf of 2-word GP RegisterGroup -> Word ---------------------
 ;;
@@ -5677,9 +5678,9 @@
   [representations : (& ir.CompilerIrRepresentationIndex)]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match func
-    [(Function name params ret-ty frame blocks function-abi)
+    [(Function name params ret-ty frame blocks function-abi cold?)
       (if (or (< frame 1) (not (opt-group-addrof-has-candidate? (& blocks))))
-        (Function name params ret-ty frame blocks function-abi)
+        (Function name params ret-ty frame blocks function-abi cold?)
         (let
           [is-group2 : (__tl_dyn-array bool) (__tl_make-array bool frame)]
           [non-group : (__tl_dyn-array bool) (__tl_make-array bool frame)]
@@ -5742,7 +5743,7 @@
                 (set! any-cand true)
                 (set! (array-ref bad-root v) true)))
             (if (not any-cand)
-              (Function name params ret-ty frame blocks function-abi)
+              (Function name params ret-ty frame blocks function-abi cold?)
               (begin
                 ;; Seed pointers from AddrOf dst src 0.
                 (match (& blocks)
@@ -5981,7 +5982,14 @@
                       (and (not (array-ref bad-root r)) (array-ref touched r))
                       (set! any-accepted true)))
                   (if (not any-accepted)
-                    (Function name params ret-ty frame blocks function-abi)
+                    (Function
+                      name
+                      params
+                      ret-ty
+                      frame
+                      blocks
+                      function-abi
+                      cold?)
                     (let
                       [rewritten : ir.CompilerIrBlockList
                         (match (& blocks)
@@ -6021,7 +6029,14 @@
                                           (ir.compiler-ir-instr-builder-to-seq
                                             builder)))])))
                               (Array (ir.CompilerIrBlockSeq out bcount)))])]
-                      (Function name params ret-ty frame rewritten function-abi)))))))))]))
+                      (Function
+                        name
+                        params
+                        ret-ty
+                        frame
+                        rewritten
+                        function-abi
+                        cold?)))))))))]))
 
 ;; --- block-local common subexpression elimination ---------------------------
 ;;
@@ -7501,9 +7516,9 @@
   [a : (& a ir.CompilerIrFunction)]
   [b : (& b ir.CompilerIrFunction)]) : bool
   (match a
-    [(Function aname aparams aret aframe ablocks aabi)
+    [(Function aname aparams aret aframe ablocks aabi _)
       (match b
-        [(Function bname bparams bret bframe bblocks babi)
+        [(Function bname bparams bret bframe bblocks babi _)
           (and
             (ir.compiler-ir-symbol-eq? aname bname)
             (= aframe bframe)
@@ -10420,7 +10435,7 @@
       (if (not changed?)
         (Unchanged)
         (match (owned_view.compiler-owned-reference-shared-view func)
-          [(Function name params ret-ty _ _ function-abi)
+          [(Function name params ret-ty _ _ function-abi cold?)
             (let
               [next : ir.CompilerIrFunction
                 (Function
@@ -10429,7 +10444,8 @@
                   ret-ty
                   frame
                   (compiler-opt-global-shared-view blocks)
-                  function-abi)]
+                  function-abi
+                  cold?)]
               [next-context : OptCfgContext
                 (opt-cfg-context-build-borrowed blocks)]
               (match (opt-verify-function-with-context next next-context)
@@ -11826,7 +11842,7 @@
   [func : (& func ir.CompilerIrFunction)]
   [context : (& context OptCfgContext)]) : ResultCompilerOptimizeVerify
   (match func
-    [(Function _ params _ vars blocks _)
+    [(Function _ params _ vars blocks _ _)
       (match (opt-var-defs-index-checked (& params) vars blocks)
         [(Duplicate) (Err "optimizer verify: duplicate var definition")]
         [(Index defs)
@@ -11861,7 +11877,7 @@
   [globals : (& globals return_storage.GlobalCells)]
   [index : OptCfgIndex]) : ResultCompilerOptimizeVerify
   (match func
-    [(Function _ _ _ _ blocks _)
+    [(Function _ _ _ _ blocks _ _)
       (let
         [doms : OptDomInfo
           (opt-cfg-dominators-with
@@ -12003,7 +12019,7 @@
   test
   (define (opt-verify-test-defined-var [func : (& func ir.CompilerIrFunction)]) : i64
     (match func
-      [(Function _ params _ vars blocks _)
+      [(Function _ params _ vars blocks _ _)
         (match (opt-var-defs-index-checked (& params) vars blocks)
           [(Index defs)
             (for [var (iterator.range 0 vars)]
@@ -12091,7 +12107,7 @@
     (when
       final?
       (match func
-        [(Function _ params _ vars blocks _)
+        [(Function _ params _ vars blocks _ _)
           (test.assert-true
             (not (opt-verify-single-defs? (& params) vars blocks))
             "final unroller boundary exercises non-SSA acceptance")]))
@@ -12172,7 +12188,7 @@
 
 (define (opt-verify-function [func : (& ir.CompilerIrFunction)]) : ResultCompilerOptimizeVerify
   (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function _ _ _ _ blocks _)
+    [(Function _ _ _ _ blocks _ _)
       (let
         [context (opt-cfg-context-build-borrowed blocks)]
         (opt-verify-function-with-context func context))]))
@@ -12186,7 +12202,7 @@
     (& (opt-cfg-context-build (opt-function-blocks func)))
     true
     (match (owned_view.compiler-owned-reference-shared-view func)
-      [(Function _ params _ vars blocks _)
+      [(Function _ params _ vars blocks _ _)
         (let
           [index : OptCfgIndex (opt-cfg-index-build (& blocks))]
           [_ (try (opt-verify-structure (& index) (& blocks)))]
@@ -12229,7 +12245,7 @@
       [func : ir.CompilerIrFunction
         (compiler-opt-global-array-element-shared-view functions.slots index)]
       (match (& func)
-        [(Function name _ _ _ _ _)
+        [(Function name _ _ _ _ _ _)
           (match (opt-verify-final-function-with-globals
             type-segment-bases
             func
@@ -12335,7 +12351,7 @@
     (unless has-runtime-or-inline? (return (Ok)))
     (for [index (iterator.range 0 functions.len)]
       (match (ir.compiler-ir-function-seq-borrow functions index)
-        [(Function name _ _ _ _ _)
+        [(Function name _ _ _ _ _ _)
           (opt_i64_i64_map.insert-ref!
             (&mut fn-map)
             (ir.compiler-ir-symbol-id name)
@@ -12360,7 +12376,7 @@
                         (ir.compiler-ir-symbol-text init)
                         " is missing"))))
                 (match (ir.compiler-ir-function-seq-borrow functions fn-idx)
-                  [(Function name _ _ _ _ abi)
+                  [(Function name _ _ _ _ abi _)
                     (unless
                       (match abi
                         [(ReturnStorage boxed)
@@ -12388,7 +12404,7 @@
             (when
               (>= fn-idx 0)
               (match (ir.compiler-ir-function-seq-borrow functions fn-idx)
-                [(Function name _ _ _ _ abi)
+                [(Function name _ _ _ _ abi _)
                   (when
                     (match abi
                       [(ReturnStorage _) true]
@@ -12404,7 +12420,7 @@
       (> (opt_i64_i64_map.len (& inline-globals)) 0)
       (for [findex (iterator.range 0 functions.len)]
         (match (ir.compiler-ir-function-seq-borrow functions findex)
-          [(Function fname _ _ _ blocks _)
+          [(Function fname _ _ _ blocks _ _)
             (match (& blocks)
               [(Array bseq)
                 (for [bindex (iterator.range 0 bseq.len)]
@@ -12503,7 +12519,7 @@
   [catalog : (& catalog ir.CompilerIrReturnStorageIndex)]
   [globals : (& globals return_storage.GlobalCells)]) : ResultCompilerOptimizeVerify
   (match (owned_view.compiler-owned-reference-shared-view func)
-    [(ir.CompilerIrFunction.Function name params result vars blocks abi)
+    [(ir.CompilerIrFunction.Function name params result vars blocks abi _)
       (let
         [hidden : i64 -1]
         [b : i64 0]
@@ -13486,7 +13502,7 @@
   [representations : (& ir.CompilerIrRepresentationIndex)]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match (compiler-opt-global-shared-view func)
-    [(Function name params ret-ty frame blocks function-abi)
+    [(Function name params ret-ty frame blocks function-abi cold?)
       (if (< frame 1)
         func
         (let
@@ -13610,7 +13626,8 @@
                     ret-ty
                     (array-ref cursor 0)
                     rewritten
-                    function-abi)))))))]))
+                    function-abi
+                    cold?)))))))]))
 
 (define (opt-group-split-filled [count : i64] [value : i64]) : (__tl_dyn-array
     i64)
@@ -15715,7 +15732,7 @@
   [entry-context : (& OptCfgContext)]
   [entry-context-valid? : bool]) : OptFunctionCtxResult
   (match (compiler-opt-global-shared-view func)
-    [(Function _ params _ frame blocks _)
+    [(Function _ params _ frame blocks _ _)
       (let
         [context : OptCfgContext
           (if entry-context-valid?
@@ -16823,7 +16840,7 @@
         (owned_view.compiler-owned-reference-shared-view context))))
     [(Ok)
       (match func
-        [(Function name params ret-ty frame blocks function-abi)
+        [(Function name params ret-ty frame blocks function-abi cold?)
           (opt-addr-taken-refresh! frame (& blocks))
           (Function
             name
@@ -16835,7 +16852,8 @@
               (owned_view.compiler-owned-reference-shared-view context)
               frame
               (& blocks))
-            function-abi)])]
+            function-abi
+            cold?)])]
     [(Err _) func]))
 
 (define (opt-cfg-foldable-branch-instr? [instr : ir.CompilerIrInstr]) : bool
@@ -18725,7 +18743,7 @@
           (compiler-opt-global-shared-view context))))
       [(Ok)
         (match (match (& func)
-          [(Function _ _ _ _ blocks _)
+          [(Function _ _ _ _ blocks _ _)
             (opt-loop-preheaders-first-plan blocks (& context))])
           ;; No preheader was synthesized: the input context still describes
           ;; the unchanged CFG, so skip the context rebuild and the post-pass
@@ -18735,7 +18753,7 @@
             (match (if owned?
               func
               (compiler-opt-global-shared-view func))
-              [(Function name params ret-ty frame blocks function-abi)
+              [(Function name params ret-ty frame blocks function-abi cold?)
                 (let
                   [remaining : i64 (ir.compiler-ir-block-list-count (& blocks))]
                   [next-blocks : ir.CompilerIrBlockList
@@ -18759,7 +18777,8 @@
                       ret-ty
                       frame
                       (compiler-opt-global-shared-view next-blocks)
-                      function-abi)]
+                      function-abi
+                      cold?)]
                   ;; Preheader synthesis may have inserted blocks, so build one
                   ;; fresh context for the rewritten CFG, reuse it for the
                   ;; post-pass verify, and hand it back for the next pass.
@@ -18791,7 +18810,7 @@
 
 (define (opt-loop-preheaders-function [func : (& ir.CompilerIrFunction)]) : ir.CompilerIrFunction
   (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function _ _ _ _ blocks _)
+    [(Function _ _ _ _ blocks _ _)
       (match (opt-loop-preheaders-run
         (opt-cfg-context-build blocks)
         false
@@ -19177,7 +19196,7 @@
   [pools : ast.AstNodePoolContext]
   [func : ir.CompilerIrFunction]) : OptBlockCtxResult
   (match func
-    [(Function _ _ _ frame blocks _)
+    [(Function _ _ _ frame blocks _ _)
       (opt-addr-taken-refresh! frame (& blocks))
       (let
         [remaining : i64 (+ 1 (ir.compiler-ir-block-list-count blocks))]
@@ -19195,7 +19214,7 @@
   [pools : ast.AstNodePoolContext]
   [func : (& ir.CompilerIrFunction)]) : OptBlockCtxResult
   (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function _ _ _ frame blocks _)
+    [(Function _ _ _ frame blocks _ _)
       (opt-addr-taken-refresh! frame (& blocks))
       ;; Preserve the scalar pipeline's pre-SSA contract. The speculative SIMD
       ;; route checks changed edges individually and verifies its final CFG.
@@ -20462,7 +20481,7 @@
   [context : (& OptCfgContext)]
   [loop : (& OptNaturalLoop)]) : OptFunctionCtxMaybe
   (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function name params ret-ty frame blocks function-abi)
+    [(Function name params ret-ty frame blocks function-abi cold?)
       (match (opt-rotate-ssa-loop (& blocks) context frame loop)
         [(No) (No)]
         [(Some next-blocks next-frame)
@@ -20480,7 +20499,8 @@
                 ret-ty
                 next-frame
                 (compiler-opt-global-shared-view kept-blocks)
-                function-abi)]
+                function-abi
+                cold?)]
             [next-context : OptCfgContext (opt-cfg-context-build kept-blocks)]
             (when homed? (opt-round-regions-resume-work! regions))
             (match (opt-verify-post
@@ -20605,7 +20625,7 @@
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
   ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
   (match (compiler-opt-global-shared-view func)
-    [(Function _ _ _ frame blocks _)
+    [(Function _ _ _ frame blocks _ _)
       (opt-addr-taken-refresh! frame (& blocks))
       (match (opt-verify-at
         "entry.rotate_ssa"
@@ -22558,7 +22578,7 @@
 (define (opt-licm-return-alias-function-index
   [func : (& ir.CompilerIrFunction)]) : i64
   (match func
-    [(Function _ params _ _ blocks _)
+    [(Function _ params _ _ blocks _ _)
       (let
         [found : i64
           (opt-licm-return-alias-blocks
@@ -22584,7 +22604,7 @@
       [func : ir.CompilerIrFunction
         (compiler-opt-global-array-element-shared-view functions.slots position)]
       (match (& func)
-        [(Function name _ _ _ _ _)
+        [(Function name _ _ _ _ _ _)
           (let
             [index : i64 (opt-licm-return-alias-function-index (& func))]
             [_record : unit
@@ -24178,14 +24198,15 @@
 
 (define (opt-store-owned-erase-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match func
-    [(Function name params ret frame blocks function-abi)
+    [(Function name params ret frame blocks function-abi cold?)
       (Function
         name
         params
         ret
         frame
         (opt-store-owned-erase-blocks (& blocks))
-        function-abi)]))
+        function-abi
+        cold?)]))
 
 (define (opt-licm-memory-safe?
   [root-summary : OptLicmStoreSummary]
@@ -29597,7 +29618,7 @@
   ;; opt-licm-global-data-slot-on).
   (set! opt-licm-global-data-slot-on late?)
   (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function name params _ frame blocks _)
+    [(Function name params _ frame blocks _ _)
       (opt-loop-function-rewrite
         "licm"
         (owned_view.compiler-owned-reference-shared-view func)
@@ -29705,7 +29726,7 @@
   [type-segment-bases : i64]
   [func : (& ir.CompilerIrFunction)]) : ir.CompilerIrFunction
   (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function _ _ _ frame blocks _)
+    [(Function _ _ _ frame blocks _ _)
       ;; Off-pipeline wrapper: install the set for the function it rewrites.
       (opt-function-addr-taken-install! frame (& blocks))
       (match (opt-licm-function-with-context-result-and-direct-call-clean
@@ -31228,7 +31249,7 @@
   [verified? : bool]
   [func : (& func ir.CompilerIrFunction)]) : OptFunctionCtxResult
   (match func
-    [(Function name params _ frame blocks _)
+    [(Function name params _ frame blocks _ _)
       (opt-loop-function-rewrite
         "licm_unswitch"
         (owned_view.compiler-owned-reference-shared-view func)
@@ -31277,7 +31298,7 @@
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (set! opt-licm-unswitch-widen-on widened?)
   (match (compiler-opt-global-shared-view func)
-    [(Function _ _ _ frame blocks _)
+    [(Function _ _ _ frame blocks _ _)
       ;; Off-pipeline entry: install the set for the function it rewrites.
       (opt-function-addr-taken-install! frame (& blocks))
       (match (opt-licm-unswitch-function-with-context-result
@@ -31288,7 +31309,14 @@
           (if (opt-function-eq type-segment-bases func next)
             func
             (match next
-              [(Function name params ret-ty frame next-blocks function-abi)
+              [(Function
+                  name
+                  params
+                  ret-ty
+                  frame
+                  next-blocks
+                  function-abi
+                  cold?)
                 (let
                   [used : (__tl_dyn-array i64)
                     (opt-collect-blocks-uses-array frame next-blocks)]
@@ -31296,7 +31324,7 @@
                     (match (opt-dce-block-list-array-pass (& used) next-blocks)
                       [(Result result _) result])]
                   [candidate : ir.CompilerIrFunction
-                    (Function name params ret-ty frame dced function-abi)]
+                    (Function name params ret-ty frame dced function-abi cold?)]
                   (match (opt-verify-post
                     "opt-licm-unswitch-final"
                     (opt-verify-function (& candidate)))
@@ -32861,7 +32889,7 @@
   ;; Induction cleanup can rewrite latch/exit edges, so a rewrite gets one
   ;; fresh context.
   (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function _ _ _ frame blocks _)
+    [(Function _ _ _ frame blocks _ _)
       (opt-loop-function-rewrite
         "induction"
         (owned_view.compiler-owned-reference-shared-view func)
@@ -33063,14 +33091,15 @@
 ;; Standalone driver for tests and ad-hoc runs.
 (define (opt-dead-phi-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match func
-    [(Function name params ret-ty frame blocks function-abi)
+    [(Function name params ret-ty frame blocks function-abi cold?)
       (Function
         name
         params
         ret-ty
         frame
         (opt-dead-phi-blocks blocks frame)
-        function-abi)]))
+        function-abi
+        cold?)]))
 
 ;; --- monotone-flag loop-exit conversion (flag_exit) ---------------------------
 ;;
@@ -37218,7 +37247,7 @@
   [verified? : bool]
   [func : (& ir.CompilerIrFunction)]) : OptFunctionCtxResult
   (match func
-    [(Function _ _ _ frame blocks _)
+    [(Function _ _ _ frame blocks _ _)
       (opt-loop-function-rewrite
         "flag_exit"
         (owned_view.compiler-owned-reference-shared-view func)
@@ -38289,7 +38318,7 @@
   ;; The rewrite only edits instructions, but the deleted phi changes the
   ;; header's phi prefix, so a rewrite gets one fresh context.
   (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function _ _ _ frame blocks _)
+    [(Function _ _ _ frame blocks _ _)
       (opt-loop-function-rewrite
         "lftr"
         (owned_view.compiler-owned-reference-shared-view func)
@@ -41149,7 +41178,7 @@
   [verified? : bool]
   [func : (& ir.CompilerIrFunction)]) : OptFunctionRewriteResult
   (match func
-    [(Function _ _ _ frame blocks _)
+    [(Function _ _ _ frame blocks _ _)
       (opt-branch-function-rewrite
         "bool_branch"
         (owned_view.compiler-owned-reference-shared-view func)
@@ -42329,7 +42358,7 @@
   [verified? : bool]
   [func : (& ir.CompilerIrFunction)]) : OptFunctionRewriteResult
   (match func
-    [(Function _ _ _ frame blocks _)
+    [(Function _ _ _ frame blocks _ _)
       (opt-branch-function-rewrite
         "phi_cmp_fold"
         (owned_view.compiler-owned-reference-shared-view func)
@@ -42491,7 +42520,7 @@
   [verified? : bool]
   [func : (& ir.CompilerIrFunction)]) : OptFunctionRewriteResult
   (match func
-    [(Function _ _ _ frame blocks _)
+    [(Function _ _ _ frame blocks _ _)
       (opt-branch-function-rewrite
         "bool_branch_chain"
         (owned_view.compiler-owned-reference-shared-view func)
@@ -44429,7 +44458,7 @@
   [verified? : bool]
   [func : (& ir.CompilerIrFunction)]) : OptFunctionRewriteResult
   (match func
-    [(Function _ _ _ frame blocks _)
+    [(Function _ _ _ frame blocks _ _)
       (opt-branch-function-rewrite
         "thread_branch"
         (owned_view.compiler-owned-reference-shared-view func)
@@ -45887,7 +45916,7 @@
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]) : OptFunctionPassResult
   (match (compiler-opt-global-shared-view func)
-    [(Function _ _ _ _ blocks _)
+    [(Function _ _ _ _ blocks _ _)
       (if (not (opt-cfg-straighten-blocks-have-candidate? blocks))
         (Result func false)
         (let
@@ -45911,7 +45940,7 @@
   [type-segment-bases : i64]
   [func : (& ir.CompilerIrFunction)]) : OptFunctionPassResult
   (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function _ _ _ frame blocks _)
+    [(Function _ _ _ frame blocks _ _)
       (match (opt-cfg-straighten-forwarding-blocks blocks frame)
         [(Result next-blocks changed)
           (match (opt-verify-at
@@ -47456,7 +47485,7 @@
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]) : OptLateRewriteResult
   (match func
-    [(Function name params ret-ty frame blocks function-abi)
+    [(Function name params ret-ty frame blocks function-abi cold?)
       (let
         [frame-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
         [_frame : unit (set! (array-ref frame-cell 0) frame)]
@@ -47495,7 +47524,8 @@
             ret-ty
             (array-ref frame-cell 0)
             next-blocks
-            function-abi)]
+            function-abi
+            cold?)]
         (Result
           (compiler-opt-debug-observe-function
             type-segment-bases
@@ -48050,7 +48080,7 @@
 
 (define (opt-switch-form-function-plan [func : (& ir.CompilerIrFunction)]) : OptBlockRewriteResult
   (match func
-    [(Function _ _ _ frame blocks _)
+    [(Function _ _ _ frame blocks _ _)
       (if (not (opt-switch-blocks-have-compare? blocks))
         (Result (opt-function-blocks func) frame false)
         (let
@@ -49740,7 +49770,7 @@
 
 (define (opt-bit-test-function-plan [func : (& ir.CompilerIrFunction)]) : OptBlockRewriteResult
   (match func
-    [(Function _ _ _ frame blocks _)
+    [(Function _ _ _ frame blocks _ _)
       (if (not (opt-bit-test-blocks-have-candidate? blocks))
         (Result (opt-function-blocks func) frame false)
         (let
@@ -57319,7 +57349,7 @@
   [context : (& OptCfgContext)]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match (compiler-opt-global-shared-view func)
-    [(Function name params ret-ty frame blocks function-abi)
+    [(Function name params ret-ty frame blocks function-abi cold?)
       (let
         [use : OptLenEqUse
           (opt-len-eq-use-build-late
@@ -57350,7 +57380,7 @@
             (& use)
             (& blocks))
             [(Result out out-frame)
-              (Function name params ret-ty out-frame out function-abi)])))]))
+              (Function name params ret-ty out-frame out function-abi cold?)])))]))
 
 ;; --- proven-safe div/rem guard elision --------------------------------------
 ;;
@@ -60211,7 +60241,7 @@
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match (compiler-opt-global-shared-view func)
-    [(Function name params ret vars blocks function-abi)
+    [(Function name params ret vars blocks function-abi cold?)
       (let
         [blocks : ir.CompilerIrBlockList
           (opt-tailrec-forward-result
@@ -60255,7 +60285,8 @@
               ret
               (+ vars n)
               (opt-ssa-explicit-entry-blocks rewritten)
-              function-abi))
+              function-abi
+              cold?))
           func))]))
 
 ;; --- canonical counted-loop unrolling (x16 straight-line / x2 diamond) -------
@@ -65660,7 +65691,7 @@
   [verified? : bool]
   [func : (& ir.CompilerIrFunction)]) : OptFunctionCtxResult
   (match func
-    [(Function _ _ _ frame blocks _)
+    [(Function _ _ _ frame blocks _ _)
       (let
         [entry-index : OptCfgIndex
           (owned_view.compiler-owned-reference-shared-view (& context.index))]
@@ -68988,7 +69019,7 @@
   [func : ir.CompilerIrFunction]
   [require-store? : bool]) : OptFunctionCtxResult
   (match (& func)
-    [(Function _ _ _ frame blocks _)
+    [(Function _ _ _ frame blocks _ _)
       (match (opt-unroll-simd-blocks-scan
         type-segment-bases
         blocks
@@ -69023,7 +69054,7 @@
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
   ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
   (match (& func)
-    [(Function _ params _ frame prescan-blocks _)
+    [(Function _ params _ frame prescan-blocks _ _)
       (if (or
         (opt-unroll-blocks-have-candidate?
           (ir.compiler-ir-block-list-view prescan-blocks))
@@ -69084,7 +69115,7 @@
   (if (<= budget 0)
     (Result func context)
     (match (& func)
-      [(Function name params _ frame blocks _)
+      [(Function name params _ frame blocks _ _)
         ;; The name the tracer's lines carry, set exactly where the versioner
         ;; sets its own (opt-bce-trace-function!).
         (opt-unroll-trace-function! name)
@@ -69160,7 +69191,8 @@
         (opt-verify-function-with-context (& func) (& context)))))
     [(Ok)
       (match (& func)
-        [(Function _ _ _ frame blocks _) (opt-loop-taint-install! frame blocks)])
+        [(Function _ _ _ frame blocks _ _)
+          (opt-loop-taint-install! frame blocks)])
       (opt-unroll-function-budget-result
         type-segment-bases
         context
@@ -69172,7 +69204,7 @@
   [type-segment-bases : i64]
   [func : (& ir.CompilerIrFunction)]) : ir.CompilerIrFunction
   (match func
-    [(Function _ _ _ frame blocks _)
+    [(Function _ _ _ frame blocks _ _)
       (let
         [_addr-taken : unit (opt-function-addr-taken-install! frame (& blocks))]
         (match (opt-unroll-function-with-context-result
@@ -84550,7 +84582,7 @@
   (if (<= budget 0)
     (Result func context)
     (match (& func)
-      [(Function _ _ _ frame blocks _)
+      [(Function _ _ _ frame blocks _ _)
         (match (let
           [natural-loops
             (opt-cfg-natural-loops-with-context
@@ -84644,7 +84676,7 @@
       [hit : OptBceScanHit
         (if single?
           (match (& func)
-            [(Function name _ _ frame blocks _)
+            [(Function name _ _ frame blocks _ _)
               (opt-bce-trace-function! name)
               (opt-bce-version-blocks-scan
                 type-segment-bases
@@ -84655,7 +84687,7 @@
                 rejected
                 frame)])
           (match (& func)
-            [(Function name params _ frame blocks _)
+            [(Function name params _ frame blocks _ _)
               (opt-bce-trace-function! name)
               (let
                 [loops : opt_natural_loop_vec.Vec
@@ -84760,7 +84792,8 @@
         (opt-verify-function-with-context (& func) (& context)))))
     [(Ok)
       (match (& func)
-        [(Function _ _ _ frame blocks _) (opt-loop-taint-install! frame blocks)])
+        [(Function _ _ _ frame blocks _ _)
+          (opt-loop-taint-install! frame blocks)])
       ;; The clone-free hoist runs LAST, over what the two versioners left: a
       ;; loop they took has a check-free clone already, and a loop they refused
       ;; on size, calls or economics is exactly the shape this reaches.
@@ -84795,7 +84828,7 @@
   (let
     [status : i64
       (match (& func)
-        [(Function name _ _ _ prescan-blocks _)
+        [(Function name _ _ _ prescan-blocks _ _)
           (cond
             [(not
                 (or
@@ -84842,7 +84875,7 @@
   (let
     [context : OptCfgContext
       (match (& func)
-        [(Function _ _ _ frame blocks _)
+        [(Function _ _ _ frame blocks _ _)
           (opt-function-addr-taken-install! frame (& blocks))
           (opt-loop-taint-install! frame (& blocks))
           (opt-cfg-context-build (opt-function-blocks (& func)))])]
@@ -84922,7 +84955,7 @@
   [type-segment-bases : i64]
   [func : (& ir.CompilerIrFunction)]) : i64
   (match func
-    [(Function _ params _ frame blocks _)
+    [(Function _ params _ frame blocks _ _)
       (let
         [_addr-taken : unit (opt-function-addr-taken-install! frame (& blocks))]
         [_taint : unit (opt-loop-taint-install! frame (& blocks))]
@@ -84976,7 +85009,7 @@
   [direct-call-clean : (& opt_i64_i64_map.Map)]
   [func : (& ir.CompilerIrFunction)]) : ir.CompilerIrFunction
   (match func
-    [(Function _ _ _ frame blocks _)
+    [(Function _ _ _ frame blocks _ _)
       (opt-function-addr-taken-install! frame (& blocks))
       (let
         [context : OptCfgContext
@@ -86997,7 +87030,7 @@
   [verified? : bool]
   [func : (& ir.CompilerIrFunction)]) : OptFunctionCtxResult
   (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function _ _ _ frame blocks _)
+    [(Function _ _ _ frame blocks _ _)
       (opt-loop-function-rewrite
         "gep_offset"
         (owned_view.compiler-owned-reference-shared-view func)
@@ -87297,7 +87330,7 @@
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match (compiler-opt-global-shared-view func)
-    [(Function name params ret-ty frame blocks function-abi)
+    [(Function name params ret-ty frame blocks function-abi cold?)
       (let
         [uses : (__tl_dyn-array i64)
           (opt-collect-blocks-uses-array frame blocks)]
@@ -87370,7 +87403,8 @@
                 ret-ty
                 (array-ref cell 0)
                 next-blocks
-                function-abi)]
+                function-abi
+                cold?)]
             (match (opt-verify-post "gep_split" (opt-verify-function (& next)))
               [(Ok) next]
               [(Err _) func]))))]))
@@ -88521,7 +88555,7 @@
   [func : (& func ir.CompilerIrFunction)]
   [copies : i64]) : ir.CompilerIrFunction
   (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function name params ret-ty frame input-blocks function-abi)
+    [(Function name params ret-ty frame input-blocks function-abi cold?)
       (if (or (<= copies 0) (not (opt-cmp-dup-blocks-want-pass? input-blocks)))
         (owned_view.compiler-owned-reference-shared-view func)
         (let
@@ -88590,7 +88624,8 @@
                   ret-ty
                   (array-ref cell 0)
                   next-blocks
-                  function-abi)]
+                  function-abi
+                  cold?)]
               (match (opt-verify-post
                 "opt-cmp-dup-function-with-budget"
                 (opt-verify-function (& next)))
@@ -95069,7 +95104,7 @@
   (let
     [next-blocks : ir.CompilerIrBlockList
       (match (& func)
-        [(Function _ _ _ frame blocks _)
+        [(Function _ _ _ frame blocks _ _)
           (let
             [plan : OptUboundRewritePlan
               (OptUboundRewritePlan
@@ -95087,7 +95122,7 @@
     [next-frame : i64
       (+
         (match (& func)
-          [(Function _ _ _ frame _ _) frame])
+          [(Function _ _ _ frame _ _ _) frame])
         (opt-ubound-plan-vars))]
     (opt-verify-at
       "ubound"
@@ -95102,7 +95137,7 @@
   (let
     [site : OptUboundMaybeSite
       (match (& func)
-        [(Function _ _ _ frame blocks _)
+        [(Function _ _ _ frame blocks _ _)
           (if (not
             (opt-ubound-blocks-have-candidate?
               (ir.compiler-ir-block-list-view (& blocks))))
@@ -95123,7 +95158,7 @@
         (let
           [phi-count : i64
             (match (& func)
-              [(Function _ _ _ _ blocks _)
+              [(Function _ _ _ _ blocks _ _)
                 (match (opt-cfg-find-block (& blocks) found.header)
                   [(Some (Block _ instrs))
                     (opt-unroll-phi-prefix-count (& instrs) 0)]
@@ -96655,7 +96690,7 @@
   [verified? : bool]
   [func : (& func ir.CompilerIrFunction)]) : OptFunctionRewriteResult
   (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function _ _ _ frame blocks _)
+    [(Function _ _ _ frame blocks _ _)
       (opt-branch-function-rewrite
         "bounds_group"
         (owned_view.compiler-owned-reference-shared-view func)
@@ -96942,7 +96977,7 @@
 (define (opt-counter-sink-function-candidates?
   [func : (& func ir.CompilerIrFunction)]) : bool
   (match func
-    [(Function _ _ _ frame blocks _)
+    [(Function _ _ _ frame blocks _ _)
       (opt-addr-taken-refresh! frame blocks)
       (match blocks
         [(Array seq) (opt-counter-sink-candidates? seq)])]))
@@ -98047,7 +98082,7 @@
                 (& summaries.representations)
                 (opt-pass-func s))]
             (match (& split)
-              [(Function _ _ _ frame _ _)
+              [(Function _ _ _ frame _ _ _)
                 (if (= frame (opt-pass-frame s))
                   s
                   (opt-pass-with-cfg-func split s))]))))]
@@ -98975,7 +99010,7 @@
         (> rounds-left 1)
         (not (opt-function-eq type-segment-bases func (& next))))
         (match (& next)
-          [(Function _ _ _ next-frame next-blocks _)
+          [(Function _ _ _ next-frame next-blocks _ _)
             (let
               [_at : unit
                 (opt-function-addr-taken-install! next-frame (& next-blocks))]
@@ -98993,7 +99028,7 @@
   [context : (& OptCfgContext)]
   [func : (& ir.CompilerIrFunction)]) : ir.CompilerIrFunction
   (match func
-    [(Function name _ _ frame blocks _)
+    [(Function name _ _ frame blocks _ _)
       (let
         ;; Off-pipeline entry: install the set for the function it rewrites.
         [_addr-taken : unit (opt-function-addr-taken-install! frame (& blocks))]
@@ -99056,7 +99091,7 @@
   (if (= (opt_i64_i64_map.len (& summaries.global-cell.arg-global)) 0)
     func
     (match (compiler-opt-global-shared-view func)
-      [(Function name params _ _ blocks _)
+      [(Function name params _ _ blocks _ _)
         (if (opt-arg-global-any-fact?
           summaries.global-cell.arg-global
           (ir.compiler-ir-symbol-id name)
@@ -99655,15 +99690,16 @@
 
 (define (opt-latch-sink-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match func
-    [(Function name params ret-ty frame blocks function-abi)
+    [(Function name params ret-ty frame blocks function-abi cold?)
       (match (opt-latch-sink-blocks (& params) frame (& blocks))
-        [(Result next _) (Function name params ret-ty frame next function-abi)])]))
+        [(Result next _)
+          (Function name params ret-ty frame next function-abi cold?)])]))
 
 (define (opt-latch-sink-final-pass
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]) : OptFunctionPassResult
   (match func
-    [(Function name params ret-ty frame blocks function-abi)
+    [(Function name params ret-ty frame blocks function-abi cold?)
       (match (opt-latch-sink-blocks (& params) frame (& blocks))
         [(Result next changed)
           (if changed
@@ -99671,9 +99707,11 @@
               (compiler-opt-debug-observe-function
                 type-segment-bases
                 "latch_sink"
-                (Function name params ret-ty frame next function-abi))
+                (Function name params ret-ty frame next function-abi cold?))
               true)
-            (Result (Function name params ret-ty frame next function-abi) false))])]))
+            (Result
+              (Function name params ret-ty frame next function-abi cold?)
+              false))])]))
 
 ;; Compare/branch fusion, run BELOW the pipeline fixpoint and below every final
 ;; CFG pass, which is the only position where "no CSE round runs after it" is
@@ -99692,7 +99730,7 @@
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]) : OptFunctionPassResult
   (match (opt-cmp-dup-function func)
-    [(Function name params ret-ty frame blocks function-abi)
+    [(Function name params ret-ty frame blocks function-abi cold?)
       ;; Nothing here reads the set: the sinking below refreshes it after the
       ;; sweep, which is the only step that can delete an `addr_of`.
       (if (<= frame (opt-function-frame func))
@@ -99711,7 +99749,8 @@
                 (opt-store-addr-sink-blocks
                   frame
                   (opt-dce-block-list-array-fixpoint frame (& blocks) 8)))
-              function-abi))
+              function-abi
+              cold?))
           true))]))
 
 ;; The same jump-threading pass the fixpoint runs early, given one last look at
@@ -99739,18 +99778,19 @@
     ;; a one-input copy the loop header then has to keep live.
     [folded : ir.CompilerIrFunction
       (match (owned_view.compiler-owned-reference-shared-view func)
-        [(Function name params ret-ty frame blocks function-abi)
+        [(Function name params ret-ty frame blocks function-abi cold?)
           (Function
             name
             (compiler-opt-global-shared-view params)
             ret-ty
             frame
             (opt-sccp-blocks type-segment-bases (& params) (& blocks))
-            function-abi)])]
+            function-abi
+            cold?)])]
     [folded-changed : bool
       (not (opt-function-eq type-segment-bases func folded))]
     (match (compiler-opt-global-shared-view folded)
-      [(Function _ _ _ _ blocks _)
+      [(Function _ _ _ _ blocks _ _)
         (match (opt-thread-const-branch-function-with-context-result
           type-segment-bases
           (&
@@ -100032,7 +100072,7 @@
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]) : OptFunctionPassResult
   (match (compiler-opt-global-shared-view func)
-    [(Function name params ret-ty frame blocks function-abi)
+    [(Function name params ret-ty frame blocks function-abi cold?)
       (let
         [no-addr-taken : (__tl_dyn-array bool) (__tl_make-array bool 0)]
         [fact-list : OptGlobalFacts
@@ -100047,7 +100087,8 @@
                 ret-ty
                 frame
                 (opt-dce-late-forward-precopies frame (& fact-list) (& blocks))
-                function-abi)]
+                function-abi
+                cold?)]
             (if (opt-function-eq type-segment-bases func forwarded)
               (Result func false)
               (match (opt-verify-post
@@ -100243,7 +100284,7 @@
   [func : ir.CompilerIrFunction]
   [changed-in? : bool]) : OptFunctionPassResult
   (match func
-    [(Function name params ret-ty frame blocks function-abi)
+    [(Function name params ret-ty frame blocks function-abi cold?)
       (let
         [fold? : bool (opt-dce-late-literal-branch? frame blocks)]
         [folded : ir.CompilerIrBlockList
@@ -100267,7 +100308,7 @@
                   (compiler-opt-debug-observe-function
                     type-segment-bases
                     "dce_late"
-                    (Function name params ret-ty frame swept function-abi))
+                    (Function name params ret-ty frame swept function-abi cold?))
                   true)])]
           [(OptZeroGepBlocks.NoChange)
             (match (opt-dce-late-sweep
@@ -100280,7 +100321,7 @@
                   (compiler-opt-debug-observe-function
                     type-segment-bases
                     "dce_late"
-                    (Function name params ret-ty frame swept function-abi))
+                    (Function name params ret-ty frame swept function-abi cold?))
                   (or changed-in? fold? swept-changed?))])]))]))
 
 ;; Shorten only multiplication that participates in a value-dependency cycle.
@@ -100370,7 +100411,7 @@
 
 (define (opt-mul-latency-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match (compiler-opt-global-shared-view func)
-    [(Function name params ret frame blocks abi)
+    [(Function name params ret frame blocks abi cold?)
       (let
         [seq : ir.CompilerIrBlockSeq
           (match blocks
@@ -100495,7 +100536,8 @@
               ret
               next
               (Array (ir.CompilerIrBlockSeq out seq.len))
-              abi))))]))
+              abi
+              cold?))))]))
 
 ;; Levels 2 and s run the full optimizer with different code growth policies.
 (define (optimize-function-with-level-and-summaries-pass
@@ -100787,7 +100829,7 @@
 ;; placement has new block storage, so it no longer matches its record.
 (define (opt-optimizer-input-identity [func : (& ir.CompilerIrFunction)]) : i64
   (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function _ _ _ _ blocks _)
+    [(Function _ _ _ _ blocks _ _)
       (match blocks
         [(Array seq)
           (let
@@ -100829,7 +100871,7 @@
             (arena.from-raw-handle (array-ref input.chunks chunk)))
           (ir.compiler-ir-clone-function pools func))]
       (match (& placed)
-        [(Function name _ _ _ _ _)
+        [(Function name _ _ _ _ _ _)
           (let
             [id : i64 (ir.compiler-ir-symbol-id name)]
             (opt_i64_i64_map.insert-ref!
@@ -100844,7 +100886,7 @@
   [input : (& input OptOptimizerInput)]
   [func : (& ir.CompilerIrFunction)]) : bool
   (match func
-    [(Function name _ _ _ _ _)
+    [(Function name _ _ _ _ _ _)
       (let
         [id : i64 (ir.compiler-ir-symbol-id name)]
         (and
@@ -100917,7 +100959,7 @@
       [(= input.arena 0) (Carried funcs)]
       [(>= unplaced 0)
         (match (ir.compiler-ir-function-seq-borrow (& funcs) unplaced)
-          [(Function name _ _ _ _ _)
+          [(Function name _ _ _ _ _ _)
             (Unplaced (ir.compiler-ir-symbol-text name))])]
       [else
         (Carried
@@ -100942,7 +100984,7 @@
                     (compiler-opt-global-array-element-shared-view out.slots i)]
                   (if (opt-optimizer-input-placed? input (& func))
                     (match (& func)
-                      [(Function name _ _ _ _ _)
+                      [(Function name _ _ _ _ _ _)
                         (set!
                           (array-ref
                             last
@@ -101088,7 +101130,7 @@
           (owned_view.compiler-owned-reference-shared-view summaries)))
         [(Result pre-dce used)
           (match pre-dce
-            [(Function name params ret-ty frame blocks function-abi)
+            [(Function name params ret-ty frame blocks function-abi cold?)
               (let
                 [escaped : ir.CompilerIrFunction
                   (compiler-opt-profile-escape-stage
@@ -101112,7 +101154,8 @@
                           escaped-blocks
                           (ir.compiler-ir-clone-function-abi
                             pools
-                            (& function-abi))))))]
+                            (& function-abi))
+                          cold?))))]
                 [_restore : unit
                   (compiler-opt-profile-escape-stage
                     "restore"
@@ -101146,7 +101189,7 @@
           (and
             has-avail?
             (match (& func)
-              [(Function fn-name _ _ _ _ _)
+              [(Function fn-name _ _ _ _ _ _)
                 (opt_i64_i64_map.contains?
                   avail-externs
                   (ir.compiler-ir-symbol-id fn-name))]))]
@@ -101409,7 +101452,7 @@
       [func : ir.CompilerIrFunction
         (compiler-opt-global-array-element-shared-view functions.slots index)]
       (match (& func)
-        [(Function name _ _ _ _ _)
+        [(Function name _ _ _ _ _ _)
           (set! (array-ref values index) func)
           (set!
             (array-ref leaf-starts index)
@@ -101538,7 +101581,7 @@
         [start : i64 (opt_dense_i64_vec.len (& targets))]
         (set! (array-ref offsets slot) start)
         (match (opt-function-index-at-slot index slot)
-          [(Function _ _ _ _ blocks _)
+          [(Function _ _ _ _ blocks _ _)
             (opt-blocks-visit
               blocks
               opt-callgraph-instr!
@@ -101932,7 +101975,7 @@
         false)]
     (for [i (iterator.range 0 functions.len)]
       (match (& (array-ref functions.slots i))
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (opt-inline-census-depths-build! blocks)
           (match blocks
             [(Array seq)
@@ -102458,7 +102501,7 @@
     (if (< synth 1)
       unit
       (match (opt-function-index-at-slot index slot)
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (opt-inline-census-depths-build! (& blocks))
           (opt-inline-synth-push-blocks!
             index
@@ -102494,7 +102537,7 @@
   [slot : i64]
   [root-weight : i64]) : i64
   (match (opt-function-index-at-slot index slot)
-    [(Function name _ _ _ _ _)
+    [(Function name _ _ _ _ _ _)
       (if (or
         (not called?)
         (string.eq (ir.compiler-ir-symbol-text name) "main")
@@ -102758,7 +102801,7 @@
 
 (define (opt-devirt-known-function-function! [func : (& ir.CompilerIrFunction)]) : unit
   (match func
-    [(Function _ _ _ frame blocks _)
+    [(Function _ _ _ frame blocks _ _)
       (if (opt-devirt-prepare-blocks! blocks)
         (let
           [states : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
@@ -103607,7 +103650,7 @@
 ;; `ReturnStorage` ABIs supported.
 (define (opt-inline-compact-ir-eligible? [func : (& ir.CompilerIrFunction)]) : bool
   (match func
-    [(Function _ params _ _ blocks abi)
+    [(Function _ params _ _ blocks abi _)
       (let
         [abi-ok? : bool
           (match abi
@@ -104178,7 +104221,7 @@
   [callee : (& ir.CompilerIrFunction)]
   [caller-name : i64]) : bool
   (match callee
-    [(Function cname cparams ret cvars cblocks _)
+    [(Function cname cparams ret cvars cblocks _ _)
       (if (ir.compiler-ir-symbol-eq? cname caller-name)
         false
         (if (or
@@ -104293,7 +104336,7 @@
   [callee : (& callee ir.CompilerIrFunction)]
   [caller-name : i64]) : bool
   (match callee
-    [(Function cname cparams cret cvars cblocks _)
+    [(Function cname cparams cret cvars cblocks _ _)
       (if (or
         (ir.compiler-ir-symbol-eq? cname caller-name)
         (opt-inline-abort-site-callee? cname))
@@ -104368,7 +104411,7 @@
     (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?)))
     unit
     (match callee
-      [(Function cname cparams _ cvars cblocks _)
+      [(Function cname cparams _ cvars cblocks _ _)
         (cond
           [(ir.compiler-ir-symbol-eq? cname caller-name) unit]
           [(or
@@ -104596,7 +104639,7 @@
   [callee : (& ir.CompilerIrFunction)]
   [census : (& census OptInlineCensus)]) : bool
   (match callee
-    [(Function callee-name cparams ret cvars cblocks _)
+    [(Function callee-name cparams ret cvars cblocks _ _)
       (let
         [np : i64 (opt-inline-param-count cparams)]
         [block-count : i64 (ir.compiler-ir-block-list-count cblocks)]
@@ -108870,7 +108913,7 @@
   [type-segment-bases : i64]
   [callee : (& callee ir.CompilerIrFunction)]) : OptMaybeFunction
   (match (owned_view.compiler-owned-reference-shared-view callee)
-    [(Function name params ret vars blocks function-abi)
+    [(Function name params ret vars blocks function-abi cold?)
       (let
         [prefix : ir.CompilerIrInstrSeq
           (opt-inline-checked-literal-movs
@@ -108886,7 +108929,8 @@
               ret
               vars
               (opt-blocks-build blocks opt-inline-checked-prefix-entry! prefix)
-              function-abi))))]))
+              function-abi
+              cold?))))]))
 
 (define (opt-inline-checked-spec-gain
   [pools : ast.AstNodePoolContext]
@@ -110057,7 +110101,7 @@
   [func : (& func ir.CompilerIrFunction)]
   [offset : i64]) : i64
   (match func
-    [(Function _ _ _ _ blocks _)
+    [(Function _ _ _ _ blocks _ _)
       (opt-inline-census-depths-build! (& blocks))
       (match blocks
         [(Array seq)
@@ -110107,7 +110151,7 @@
     [plan : reg.CompilerRegPlan (reg.compiler-reg-plan-function-scalar func)]
     [cost : i64
       (match func
-        [(Function _ params _ vars blocks _)
+        [(Function _ params _ vars blocks _ _)
           (match blocks
             [(Array seq)
               (let
@@ -110326,7 +110370,7 @@
 (define (opt-inline-checked-sret-bytes
   [callee : (& callee ir.CompilerIrFunction)]) : i64
   (match callee
-    [(Function _ params _ _ blocks _)
+    [(Function _ params _ _ blocks _ _)
       (let
         [sret : i64 (opt-inline-checked-sret-var (& params))]
         (if (< sret 0)
@@ -110478,7 +110522,7 @@
     ;; read as a ceiling instead of a floor.
     [one-block? : bool
       (match callee
-        [(Function _ _ _ _ cblocks _)
+        [(Function _ _ _ _ cblocks _ _)
           (<= (ir.compiler-ir-block-list-count cblocks) 1)])]
     [one-block-ok? : bool (or (not one-block?) small-body?)]
     ;; INL-18: past the base ceiling the caller is large and the plan's growth
@@ -110685,7 +110729,7 @@
     [(None) false]
     [(Some slot)
       (match (& (array-ref index.values slot))
-        [(Function callee-name params callee-ret vars blocks _)
+        [(Function callee-name params callee-ret vars blocks _ _)
           (let
             [np : i64 (opt-inline-param-count params)]
             (unless (opt-inline-arity-ok? args np) (return false))
@@ -111058,7 +111102,7 @@
   [census : (& census OptInlineCensus)]
   [index : (& index OptFunctionIndex)]) : OptInlineMaybeSitePlan
   (match callee
-    [(Function callee-name cparams _ cvars cblocks _)
+    [(Function callee-name cparams _ cvars cblocks _ _)
       (let
         [np : i64 (opt-inline-param-count cparams)]
         (if (opt-inline-arity-ok? cargs np)
@@ -111602,7 +111646,7 @@
         [(Forward) true]
         [_ false])]
     (match callee
-      [(Function callee-name cparams _ cvars cblocks _)
+      [(Function callee-name cparams _ cvars cblocks _ _)
         (match (opt-inline-multiblock-site-plan
           callee
           cargs
@@ -112227,7 +112271,7 @@
   [source-spans : (& ir.CompilerSourceSpans)]
   [out-spans : ir.CompilerSourceSpans]) : OptInlineSpanProgram
   (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function name params ret vars blocks function-abi)
+    [(Function name params ret vars blocks function-abi cold?)
       (let
         [caller-blocks : i64 (ir.compiler-ir-block-list-count blocks)]
         [phi-predecessors : OptLabelSet
@@ -112273,7 +112317,8 @@
                     ret
                     new-vars
                     repaired-blocks
-                    function-abi)]
+                    function-abi
+                    cold?)]
                 (if structure-ok?
                   (Program
                     (ir.compiler-ir-function-seq-prepend
@@ -112646,7 +112691,7 @@
 
 (define (opt-inline-tiny-leaf-callee-ok? [callee : (& ir.CompilerIrFunction)]) : bool
   (match callee
-    [(Function _ cparams _ cvars cblocks _)
+    [(Function _ cparams _ cvars cblocks _ _)
       (let
         [np : i64 (opt-inline-param-count cparams)]
         (and
@@ -112696,7 +112741,7 @@
       (match (opt-inline-tiny-leaf-lookup index flags cname)
         [(Some slot)
           (match (& (array-ref index.values slot))
-            [(Function _ cparams _ _ _ _)
+            [(Function _ cparams _ _ _ _ _)
               (opt-inline-arity-ok? cargs (opt-inline-param-count cparams))])]
         [(None) false])]
     [_ false]))
@@ -112732,7 +112777,7 @@
       (match (opt-inline-tiny-leaf-lookup index flags cname)
         [(Some slot)
           (match (& (array-ref index.values slot))
-            [(Function _ cparams _ cvars cblocks _)
+            [(Function _ cparams _ cvars cblocks _ _)
               (let
                 [np : i64 (opt-inline-param-count cparams)]
                 (when
@@ -112871,7 +112916,7 @@
   [source-spans : (& source-spans ir.CompilerSourceSpans)]
   [out-spans : ir.CompilerSourceSpans]) : OptInlineSpanProgram
   (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function name params ret vars blocks function-abi)
+    [(Function name params ret vars blocks function-abi cold?)
       (if (not (opt-inline-tiny-leaf-blocks-have-site? blocks index flags))
         (Program
           (ir.compiler-ir-function-seq-prepend
@@ -112905,7 +112950,8 @@
                           ret
                           new-vars
                           new-blocks
-                          function-abi))
+                          function-abi
+                          cold?))
                       (& (ir.compiler-ir-function-seq-empty)))
                     next-spans)
                   (Program
@@ -113025,7 +113071,7 @@
   (if (opt-function-seq-defines? functions "main")
     (for [i (iterator.range 0 (ir.compiler-ir-extern-seq-count externs))]
       (match (ir.compiler-ir-extern-seq-borrow externs i)
-        [(Extern name-id _ _ _ _ _ _ provided _ _ _)
+        [(Extern name-id _ _ _ _ _ _ provided _ _ _ _)
           (when
             provided
             (match (opt-function-index-slot-id index name-id)
@@ -113127,7 +113173,7 @@
   [name : String]) : bool
   (for [index (iterator.range 0 functions.len)]
     (match (compiler-opt-global-array-element-shared-view functions.slots index)
-      [(Function func-name _ _ _ _ _)
+      [(Function func-name _ _ _ _ _ _)
         (when
           (string.eq (ir.compiler-ir-symbol-text func-name) name)
           (return true))]))
@@ -113146,7 +113192,7 @@
       [func : ir.CompilerIrFunction
         (compiler-opt-global-array-element-shared-view functions.slots index)]
       (match (& func)
-        [(Function func-name _ _ _ _ _)
+        [(Function func-name _ _ _ _ _ _)
           (when
             (string.eq (ir.compiler-ir-symbol-text func-name) name)
             (return (Some func)))])))
@@ -113216,7 +113262,7 @@
   (if (>= slot count)
     state
     (match (compiler-opt-global-array-element-shared-view index.values slot)
-      [(Function name _ _ _ _ _)
+      [(Function name _ _ _ _ _ _)
         (opt-reach-add-function-leaf-from
           index
           (if (opt-symbol-leaf-matches-from?
@@ -113349,7 +113395,7 @@
   [state : (& OptReachState)]
   [func : (& ir.CompilerIrFunction)]) : OptReachState
   (match func
-    [(Function _ _ _ _ blocks _)
+    [(Function _ _ _ _ blocks _ _)
       (opt-blocks-fold
         blocks
         (owned_view.compiler-owned-reference-shared-view state)
@@ -113441,7 +113487,7 @@
             functions.slots
             position)]
         (match (& func)
-          [(Function name _ _ _ _ _)
+          [(Function name _ _ _ _ _ _)
             (when
               (opt-reach-slot-set-contains-name? index reachable name)
               (ir.compiler-ir-function-builder-push! (&mut builder) func))])))
@@ -113510,7 +113556,7 @@
   (if (>= seq-index (ir.compiler-ir-extern-seq-count externs))
     state
     (match (ir.compiler-ir-extern-seq-borrow externs seq-index)
-      [(Extern name-id _ _ _ _ _ _ provided _ _ _)
+      [(Extern name-id _ _ _ _ _ _ provided _ _ _ _)
         (opt-reach-add-provided-extern-seq
           index
           externs
@@ -113764,7 +113810,7 @@
       (opt_i64_i64_map.with-capacity (ir.compiler-ir-extern-seq-count externs))]
     (for [at (iterator.range 0 (ir.compiler-ir-extern-seq-count externs))]
       (match (ir.compiler-ir-extern-seq-borrow externs at)
-        [(Extern name _ _ _ _ link _ provided _ body-available _)
+        [(Extern name _ _ _ _ link _ provided _ body-available _ _)
           (unless
             (or provided body-available)
             (opt_i64_i64_map.insert-ref!
@@ -113943,7 +113989,7 @@
         ;; Mirror entries under extern `name-id` when it differs from `link-id`.
         (for [ei (iterator.range 0 externs.len)]
           (match (ir.compiler-ir-extern-seq-borrow externs ei)
-            [(Extern name-id _ _ _ _ link-id _ provided _ _ _)
+            [(Extern name-id _ _ _ _ link-id _ provided _ _ _ _)
               (when
                 (and (not provided) (!= name-id link-id))
                 (let
@@ -114149,7 +114195,7 @@
   [index : (& index OptProgramIndex)]
   [slot : i64]) : i64
   (match (opt-function-index-at-slot index.functions slot)
-    [(Function name _ _ _ _ _) (ir.compiler-ir-symbol-id name)]))
+    [(Function name _ _ _ _ _ _) (ir.compiler-ir-symbol-id name)]))
 
 ;; Close per-function rows over the direct call graph: every slot's row becomes
 ;; the union of its own and those of every function it can reach. That is the
@@ -114919,7 +114965,7 @@
   [summaries : (& summaries opt_i64_i64_map.Map)]
   [func : (& ir.CompilerIrFunction)]) : i64
   (match func
-    [(Function _ params _ _ blocks _)
+    [(Function _ params _ _ blocks _ _)
       (if (not (opt-call-memory-blocks-need-roots? summaries blocks))
         (opt-call-memory-candidate-blocks
           type-segment-bases
@@ -115294,7 +115340,7 @@
     [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
     (for [index (iterator.range 0 functions.len)]
       (match (ir.compiler-ir-function-seq-borrow functions index)
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (match blocks
             [(Array seq)
               (for [block (iterator.range 0 seq.len)]
@@ -115523,6 +115569,9 @@
                     (set! (array-ref state 8) 1))]
                 [_ (set! (array-ref state 8) 1)])]
             [(No) (set! (array-ref state 8) 1)])]
+        ;; A tail call returns its callee's result, even without descriptor operands.
+        [(or (TailCall _ _ _) (TailCallIndirect _ _ _))
+          (set! (array-ref state 8) 1)]
         [(Call dst name args ty)
           (if (and
             (ir.compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
@@ -115744,7 +115793,7 @@
   [type-segment-bases : i64]
   [func : (& ir.CompilerIrFunction)]) : i64
   (match func
-    [(Function _ _ _ _ blocks _)
+    [(Function _ _ _ _ blocks _ _)
       (let
         [state : (__tl_dyn-array i64) (__tl_make-array i64 12)]
         (set! (array-ref state 0) (- 0 1))
@@ -115809,7 +115858,7 @@
       [func : ir.CompilerIrFunction
         (ir.compiler-ir-function-seq-ref functions index)]
       (match (& func)
-        [(Function name _ _ _ _ _)
+        [(Function name _ _ _ _ _ _)
           (when (= (ir.compiler-ir-symbol-id name) id) (return (Some func)))])))
   (No))
 
@@ -115828,7 +115877,7 @@
     [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
     (for [index (iterator.range 0 functions.len)]
       (match (ir.compiler-ir-function-seq-borrow functions index)
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (let
             [gep-vars : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 8)]
             (opt-blocks-visit
@@ -116571,7 +116620,7 @@
     [out : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
     (for [index (iterator.range 0 functions.len)]
       (match (ir.compiler-ir-function-seq-borrow functions index)
-        [(Function name _ _ _ _ _)
+        [(Function name _ _ _ _ _ _)
           (let
             [name-id : i64 (ir.compiler-ir-symbol-id name)]
             [bits : i64
@@ -116734,7 +116783,7 @@
     [out : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
     (for [index (iterator.range 0 (ir.compiler-ir-extern-seq-count externs))]
       (match (ir.compiler-ir-extern-seq-borrow externs index)
-        [(Extern name-id _ _ _ _ _ _ _ _ _ _)
+        [(Extern name-id _ _ _ _ _ _ _ _ _ _ _)
           (opt_i64_i64_map.insert-ref! (&mut out) name-id 1)]))
     out))
 
@@ -117078,15 +117127,15 @@
   (if (= (opt_i64_i64_map.len constants) 0)
     func
     (match func
-      [(Function name params ret-ty frame blocks function-abi)
+      [(Function name params ret-ty frame blocks function-abi cold?)
         (unless
           (opt-blocks-any? blocks opt-const-global-mul-shift-candidate-op?)
-          (return (Function name params ret-ty frame blocks function-abi)))
+          (return (Function name params ret-ty frame blocks function-abi cold?)))
         ;; The taint gate installs the set for the function, which the copy
         ;; walk below reads.
         (when
           (opt-value-function-branches-tainted? frame (& blocks))
-          (return (Function name params ret-ty frame blocks function-abi)))
+          (return (Function name params ret-ty frame blocks function-abi cold?)))
         (let
           [copies : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 8)]
           [counts : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 64)]
@@ -117110,7 +117159,8 @@
               copies
               counts
               (& blocks))
-            function-abi))])))
+            function-abi
+            cold?))])))
 
 ;; The early rewrite substitutes every scalar operand position whose literal
 ;; the round-1 local fold and the loop passes can both consume: BinOp operands
@@ -117509,7 +117559,7 @@
     [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
     (for [index (iterator.range 0 functions.len)]
       (match (& (array-ref functions.slots index))
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (opt-global-cell-scan-blocks! (&mut out) (&mut uses) false blocks)]))
     out))
 
@@ -117826,7 +117876,7 @@
     [rows : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     (for [slot (iterator.range 0 count)]
       (match (opt-function-index-at-slot program.functions slot)
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (set!
             (array-ref rows slot)
             (opt-blocks-fold
@@ -118666,7 +118716,7 @@
   [capacity : i64]) : unit
   (for [position (iterator.range 0 functions.len)]
     (match (ir.compiler-ir-function-seq-borrow functions position)
-      [(Function name params _ _ blocks _)
+      [(Function name params _ _ blocks _ _)
         (let
           [owners : OptGlobalObjOwners
             (let
@@ -118709,7 +118759,7 @@
     [rows : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     (for [slot (iterator.range 0 count)]
       (match (opt-function-index-at-slot program.functions slot)
-        [(Function name params _ _ blocks _)
+        [(Function name params _ _ blocks _ _)
           (let
             [owners : OptGlobalObjOwners
               (opt-global-obj-owners-for-function
@@ -119678,7 +119728,7 @@
   [type-segment-bases : i64]
   [func : (& func ir.CompilerIrFunction)]) : i64
   (match func
-    [(Function _ params _ frame blocks _)
+    [(Function _ params _ frame blocks _ _)
       (if (not (= (opt-len-eq-return-count blocks 0) 1))
         0
         (let
@@ -119878,7 +119928,7 @@
     [refused : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     (for [slot (iterator.range 0 count)]
       (match (opt-function-index-at-slot program.functions slot)
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (unless
             (opt-len-eq-blocks-clean? set reads? (& known) (& known) (& blocks))
             (set! (array-ref refused slot) 1))]))
@@ -120316,7 +120366,7 @@
   [bad : (&mut bad opt_i64_i64_map.Map)]
   [func : (& func ir.CompilerIrFunction)]) : unit
   (match func
-    [(Function _ _ _ frame blocks _)
+    [(Function _ _ _ frame blocks _ _)
       (let
         [taint : OptLenEqTaint (opt-len-eq-taint-new frame)]
         [tables : OptLenEqDefs
@@ -120418,7 +120468,7 @@
   [owner : i64]
   [func : (& func ir.CompilerIrFunction)]) : unit
   (match func
-    [(Function _ params _ frame blocks _)
+    [(Function _ params _ frame blocks _ _)
       (let
         [returns : i64 (opt-len-eq-return-count blocks 0)]
         [tails : i64 (opt-len-eq-tail-call-count blocks 0)]
@@ -120478,7 +120528,7 @@
     (let
       [func (& (array-ref functions.slots index))]
       (match func
-        [(Function name _ _ _ _ _)
+        [(Function name _ _ _ _ _ _)
           (match (opt_i64_i64_map.get inits (ir.compiler-ir-symbol-id name))
             [(LookupFound encoded)
               (opt-len-eq-init-scan! ctx bad (- encoded 1) func)]
@@ -120501,7 +120551,7 @@
       (let
         [func (& (array-ref functions.slots index))]
         (match func
-          [(Function name _ _ _ _ _)
+          [(Function name _ _ _ _ _ _)
             (let
               [summary : i64 (opt-len-eq-ctor-summary type-segment-bases func)]
               (when
@@ -120810,7 +120860,7 @@
   [functions : (& ir.CompilerIrFunctionSeq)]) : unit
   (for [index (iterator.range 0 functions.len)]
     (match (ir.compiler-ir-function-seq-borrow functions index)
-      [(Function name params _ _ _ _)
+      [(Function name params _ _ _ _ _)
         (let
           [id : i64 (ir.compiler-ir-symbol-id name)]
           (when
@@ -120824,7 +120874,7 @@
             (opt_i64_i64_map.insert-ref! (&mut scan.arity) id (+ params.len 1))))]))
   (for [index (iterator.range 0 externs.len)]
     (match (ir.compiler-ir-extern-seq-borrow externs index)
-      [(Extern name _ _ _ _ _ _ provided _ _ _)
+      [(Extern name _ _ _ _ _ _ provided _ _ _ _)
         (when
           provided
           (opt_i64_i64_map.insert-ref!
@@ -120863,7 +120913,7 @@
   [out : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
   (for [index (iterator.range 0 functions.len)]
     (match (ir.compiler-ir-function-seq-borrow functions index)
-      [(Function name params _ _ _ _)
+      [(Function name params _ _ _ _ _)
         (let
           [id : i64 (ir.compiler-ir-symbol-id name)]
           (unless
@@ -120905,7 +120955,7 @@
     (opt-arg-global-seed! (&mut scan) globals externs functions)
     (for [index (iterator.range 0 functions.len)]
       (match (ir.compiler-ir-function-seq-borrow functions index)
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (opt-blocks-visit
             blocks
             opt-arg-global-scan-instr!
@@ -121413,7 +121463,7 @@
   [func : (& ir.CompilerIrFunction)]
   [plan : (&mut OptLgaPlan)]) : unit
   (match func
-    [(Function name params _ frame blocks function-abi)
+    [(Function name params _ frame blocks function-abi _)
       (let
         [id : i64 (ir.compiler-ir-symbol-id name)]
         [np : i64 params.len]
@@ -121628,7 +121678,7 @@
   [plan : (& plan OptLgaPlan)]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match func
-    [(Function name params ret-ty frame blocks function-abi)
+    [(Function name params ret-ty frame blocks function-abi cold?)
       (let
         [id : i64 (ir.compiler-ir-symbol-id name)]
         [own? : bool (opt_i64_i64_map.contains? (& plan.specialized) id)]
@@ -121639,7 +121689,7 @@
               blocks
               opt-lga-instr-calls-specialized?
               plan.specialized)))
-          (Function name params ret-ty frame blocks function-abi)
+          (Function name params ret-ty frame blocks function-abi cold?)
           (let
             [removed : (__tl_dyn-array i64)
               (if own?
@@ -121658,7 +121708,8 @@
                 (&mut rw)
                 (& removed)
                 plan)
-              function-abi))))]))
+              function-abi
+              cold?))))]))
 
 (define (opt-lga-rewrite-functions
   [plan : (& plan OptLgaPlan)]
@@ -122068,7 +122119,7 @@
       [func : (& functions ir.CompilerIrFunction)
         (ir.compiler-ir-function-seq-borrow functions index)]
       (match func
-        [(Function _ params _ frame blocks _)
+        [(Function _ params _ frame blocks _ _)
           (let
             [defs : (__tl_dyn-array OptBoolBranchDef)
               (__tl_make-array OptBoolBranchDef frame)]
@@ -123253,7 +123304,7 @@
   [policy : OptGlobalSnapshotPolicy]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match func
-    [(Function name params ret-ty frame blocks function-abi)
+    [(Function name params ret-ty frame blocks function-abi cold?)
       (let
         [marks : (__tl_dyn-array bool)
           (opt-addr-taken-marks-blocks frame (& blocks))]
@@ -123290,7 +123341,8 @@
             opt-global-snapshot-prune-seq
             (& summaries.global-cell)
             (& (opt-collect-blocks-uses-array frame (& normalized))))
-          function-abi))]))
+          function-abi
+          cold?))]))
 
 ;; Load each hoistable global's cell once at entry and rewrite its uses. The
 ;; pass is a no-op (returning the function by reference) when the program has
@@ -123315,12 +123367,12 @@
           (OptGlobalSnapshotPolicy false true)
           input))]
     (match func
-      [(Function name params ret-ty frame blocks function-abi)
+      [(Function name params ret-ty frame blocks function-abi cold?)
         (let
           [cell : OptGlobalCellSummary
             (__tl-project-field summaries global-cell)]
           (if (= cell.word-cell 0)
-            (Function name params ret-ty frame blocks function-abi)
+            (Function name params ret-ty frame blocks function-abi cold?)
             (let
               [scan : OptGlobalCellScan
                 (opt-global-cell-scan-blocks
@@ -123331,7 +123383,7 @@
                 [(match scan.ref-list
                     [(Nil) true]
                     [(Dense _ _) false])
-                  (Function name params ret-ty frame blocks function-abi)]
+                  (Function name params ret-ty frame blocks function-abi cold?)]
                 [else
                   (let
                     [call-writes : i64
@@ -123340,7 +123392,14 @@
                     (if (or
                       (opt-global-mod-ref-any? call-writes)
                       (and calls? (not (opt-global-cell-entry-fits? blocks))))
-                      (Function name params ret-ty frame blocks function-abi)
+                      (Function
+                        name
+                        params
+                        ret-ty
+                        frame
+                        blocks
+                        function-abi
+                        cold?)
                       (let
                         [next-frame : i64 frame]
                         [planned : OptGlobalCellPlan
@@ -123369,7 +123428,8 @@
                             ret-ty
                             frame
                             blocks
-                            function-abi)
+                            function-abi
+                            cold?)
                           (let
                             [hoists : (__tl_dyn-array ir.CompilerIrInstr)
                               (__tl_make-array ir.CompilerIrInstr planned.count)]
@@ -123389,7 +123449,8 @@
                                 (& hoists)
                                 planned.count
                                 (& blocks))
-                              function-abi))))))]))))])))
+                              function-abi
+                              cold?))))))]))))])))
 
 (define (opt-remap-spans-prepend-entry
   [spans : ir.CompilerSourceSpans]
@@ -123510,7 +123571,7 @@
   [out : ir.CompilerSourceSpans]
   [func : (& ir.CompilerIrFunction)]) : ir.CompilerSourceSpans
   (match func
-    [(Function name _ _ _ blocks _)
+    [(Function name _ _ _ blocks _ _)
       (opt-remap-spans-blocks
         instr-entries
         out
@@ -123559,7 +123620,7 @@
     [out : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
     (for [i (iterator.range 0 externs.len)]
       (match (ir.compiler-ir-extern-seq-borrow externs i)
-        [(Extern name-id _ _ _ _ _ _ _ _ body-available _)
+        [(Extern name-id _ _ _ _ _ _ _ _ body-available _ _)
           (when
             body-available
             (opt_i64_i64_map.insert-ref!
@@ -123611,7 +123672,7 @@
         (let
           [keep? : bool
             (match (ir.compiler-ir-function-seq-borrow (& functions) i)
-              [(Function fname _ _ _ _ _)
+              [(Function fname _ _ _ _ _ _)
                 (not
                   (opt_i64_i64_map.contains?
                     avail
@@ -123638,7 +123699,8 @@
               provided
               storage
               _
-              cell)
+              cell
+              cold?)
             (ir.compiler-ir-extern-builder-push!
               (&mut e-builder)
               (ir.CompilerIrExtern.Extern
@@ -123652,7 +123714,8 @@
                 provided
                 storage
                 false
-                cell))]))
+                cell
+                cold?))]))
       (OptStrippedProgram
         (ir.compiler-ir-global-builder-snapshot-seq (& g-builder))
         (ir.compiler-ir-function-builder-to-seq f-builder)
@@ -124045,7 +124108,7 @@
       [names : (__tl_dyn-array i64) (__tl_make-array i64 functions.len)]
       (for [i (iterator.range 0 functions.len)]
         (match (& (array-ref functions.slots i))
-          [(Function name _ _ _ _ _) (set! (array-ref names i) name)]))
+          [(Function name _ _ _ _ _ _) (set! (array-ref names i) name)]))
       names)))
 
 ;: Validate the armed bounds against the stage's actual input and, when they
@@ -124076,7 +124139,7 @@
       valid
       (for [slot (iterator.range 0 count)]
         (match (& (array-ref index.values slot))
-          [(Function name _ _ _ _ _)
+          [(Function name _ _ _ _ _ _)
             (unless (= name (array-ref names slot)) (set! valid false))])))
     (when
       valid
@@ -124213,20 +124276,20 @@
 
 (define (opt-function-blocks [func : (& func ir.CompilerIrFunction)]) : ir.CompilerIrBlockList
   (match func
-    [(Function _ _ _ _ blocks _)
+    [(Function _ _ _ _ blocks _ _)
       (owned_view.compiler-owned-reference-shared-view blocks)]))
 
 (define (opt-function-frame [func : (& func ir.CompilerIrFunction)]) : i64
   (match func
-    [(Function _ _ _ frame _ _) frame]))
+    [(Function _ _ _ frame _ _ _) frame]))
 
 (define (opt-function-name [func : (& func ir.CompilerIrFunction)]) : i64
   (match func
-    [(Function name _ _ _ _ _) name]))
+    [(Function name _ _ _ _ _ _) name]))
 
 (define (opt-function-params [func : (& func ir.CompilerIrFunction)]) : ir.CompilerIrParamSeq
   (match func
-    [(Function _ params _ _ _ _)
+    [(Function _ params _ _ _ _ _)
       (owned_view.compiler-owned-reference-shared-view params)]))
 
 (define (opt-function-with-frame-blocks
@@ -124234,8 +124297,8 @@
   [frame : i64]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrFunction
   (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function name params ret-ty _ _ function-abi)
-      (Function name params ret-ty frame blocks function-abi)]))
+    [(Function name params ret-ty _ _ function-abi cold?)
+      (Function name params ret-ty frame blocks function-abi cold?)]))
 
 ;; --- noalias / alias fact model ---------------------------------------------
 ;;
@@ -125558,7 +125621,7 @@
   [verified? : bool]
   [func : (& ir.CompilerIrFunction)]) : OptFunctionCtxResult
   (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function _ _ _ frame blocks _)
+    [(Function _ _ _ frame blocks _ _)
       (opt-loop-function-rewrite
         "scratch_reset"
         (owned_view.compiler-owned-reference-shared-view func)
@@ -125582,7 +125645,7 @@
   [type-segment-bases : i64]
   [func : (& func ir.CompilerIrFunction)]) : OptLateRewriteResult
   (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function name params ret-ty frame blocks function-abi)
+    [(Function name params ret-ty frame blocks function-abi cold?)
       (let
         [context : OptCfgContext
           (opt-cfg-context-build (compiler-opt-global-shared-view blocks))]
@@ -125606,7 +125669,8 @@
                   ret-ty
                   next-frame
                   next-blocks
-                  function-abi)
+                  function-abi
+                  cold?)
                 true)
               (Result
                 (owned_view.compiler-owned-reference-shared-view func)
@@ -125660,7 +125724,7 @@
     [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
     (for [at (iterator.range 0 functions.len)]
       (match (ir.compiler-ir-function-seq-borrow functions at)
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (match blocks
             [(Array seq)
               (for [b (iterator.range 0 seq.len)]
@@ -125682,7 +125746,7 @@
         [_ unit]))
     (for [at (iterator.range 0 externs.len)]
       (match (ir.compiler-ir-extern-seq-borrow externs at)
-        [(Extern name-id _ _ _ _ symbol-id _ _ _ _ _)
+        [(Extern name-id _ _ _ _ symbol-id _ _ _ _ _ _)
           (opt-merge-note-symbol! (&mut observed) name-id)
           (opt-merge-note-symbol! (&mut observed) symbol-id)]))
     observed))
@@ -125694,7 +125758,7 @@
   [observed : (& observed opt_i64_i64_map.Map)]
   [func : (& func ir.CompilerIrFunction)]) : bool
   (match func
-    [(Function name _ _ _ blocks abi)
+    [(Function name _ _ _ blocks abi _)
       (and
         (match abi
           [(Ordinary) true]
@@ -125725,10 +125789,11 @@
   [a : (& a ir.CompilerIrFunction)]
   [b : (& b ir.CompilerIrFunction)]) : bool
   (match (owned_view.compiler-owned-reference-shared-view a)
-    [(Function _ aparams aret aframe ablocks aabi)
+    [(Function _ aparams aret aframe ablocks aabi a-cold?)
       (match (owned_view.compiler-owned-reference-shared-view b)
-        [(Function _ bparams bret bframe bblocks babi)
+        [(Function _ bparams bret bframe bblocks babi b-cold?)
           (and
+            (= a-cold? b-cold?)
             (= aframe bframe)
             (= aparams.len bparams.len)
             (return_storage.function-abi-equal? type-segment-bases aabi babi)
@@ -125742,7 +125807,7 @@
 ;; Bucket key: equal bodies have equal shapes.
 (define (opt-merge-shape [func : (& func ir.CompilerIrFunction)]) : i64
   (match func
-    [(Function _ params _ frame blocks _)
+    [(Function _ params _ frame blocks _ _)
       (let
         [no-instrs : i64 0]
         [instrs : i64
@@ -125858,7 +125923,7 @@
         (when
           (array-ref keep at)
           (match (ir.compiler-ir-function-seq-ref functions at)
-            [(Function name params ret frame blocks abi)
+            [(Function name params ret frame blocks abi cold?)
               (set!
                 (array-ref out next)
                 (Function
@@ -125867,7 +125932,8 @@
                   ret
                   frame
                   (opt-blocks-map-seq blocks opt-merge-rename-instrs renames)
-                  abi))
+                  abi
+                  cold?))
               (set! next (+ next 1))]))
         (set! at (+ at 1)))
       (ir.CompilerIrFunctionSeq out kept))))
@@ -129807,7 +129873,7 @@
   [summaries : (& summaries OptProgramSummaries)]
   [func : (& func ir.CompilerIrFunction)]) : bool
   (match func
-    [(Function _ _ _ _ blocks _)
+    [(Function _ _ _ _ blocks _ _)
       (opt-blocks-any?
         blocks
         opt-global-snapshot-candidate?
@@ -130737,7 +130803,7 @@
   [exit : i64]
   [plan : OptLoopCallSum]) : ir.CompilerIrFunction
   (match func
-    [(Function name params ret frame _ abi)
+    [(Function name params ret frame _ abi cold?)
       (let
         [out : ir.CompilerIrBlockBuilder
           (ir.compiler-ir-block-builder-with-capacity
@@ -130821,7 +130887,8 @@
           ret
           (+ frame 2)
           (ir.compiler-ir-block-builder-to-list out)
-          abi))]))
+          abi
+          cold?))]))
 
 (define (opt-loop-call-guarded-build
   [func : ir.CompilerIrFunction]
@@ -130832,7 +130899,7 @@
   [exit : i64]
   [replay? : bool]) : ir.CompilerIrFunction
   (match func
-    [(Function name params ret frame blocks abi)
+    [(Function name params ret frame blocks abi cold?)
       (match header
         [(Block head guard)
           (let
@@ -130942,7 +131009,8 @@
               ret
               frame
               (ir.compiler-ir-block-builder-to-list out)
-              abi))])]))
+              abi
+              cold?))])]))
 
 (defenum OptLoopCallGuardPlan
   (No)
@@ -131042,9 +131110,9 @@
   [site : i64]
   [at : i64]) : ir.CompilerIrFunction
   (match func
-    [(Function name params ret frame blocks abi)
+    [(Function name params ret frame blocks abi cold?)
       (match (opt-cfg-index-find-block cfg-index site)
-        [(No) (Function name params ret frame blocks abi)]
+        [(No) (Function name params ret frame blocks abi cold?)]
         [(Some (Block _ site-instrs))
           (match (ir.compiler-ir-instr-seq-borrow site-instrs at)
             [(Call dst _ _ ty)
@@ -131168,16 +131236,17 @@
                     (& (ir.compiler-ir-block-builder-to-list out))
                     site
                     resume)
-                  abi))]
-            [_ (Function name params ret frame blocks abi)])]
-        [_ (Function name params ret frame blocks abi)])]))
+                  abi
+                  cold?))]
+            [_ (Function name params ret frame blocks abi cold?)])]
+        [_ (Function name params ret frame blocks abi cold?)])]))
 
 (define (opt-loop-call-cache-function
   [functions : (& functions OptFunctionIndex)]
   [memory : (& memory opt_i64_i64_map.Map)]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match (compiler-opt-global-shared-view func)
-    [(Function _ params _ frame blocks _)
+    [(Function _ params _ frame blocks _ _)
       (if (or
         (< (ir.compiler-ir-block-list-count blocks) 2)
         (> (ir.compiler-ir-block-list-count blocks) 64)
@@ -131275,7 +131344,7 @@
   [sites : (& OptPureCallTable)]
   [func : (& ir.CompilerIrFunction)]) : OptMaybeBlockList
   (match func
-    [(Function name params _ frame blocks _)
+    [(Function name params _ frame blocks _ _)
       (if (<
         (+
           (opt-pure-call-count-blocks call-memory blocks 0)
@@ -131354,8 +131423,8 @@
       [(No) func]
       [(Some blocks)
         (match func
-          [(Function name params ret-ty frame _ abi)
-            (Function name params ret-ty frame blocks abi)])])))
+          [(Function name params ret-ty frame _ abi cold?)
+            (Function name params ret-ty frame blocks abi cold?)])])))
 
 ;; --- cross-block redundant-load GVN -----------------------------------------
 (defenum OptMaybeLoadCseState
@@ -135806,7 +135875,7 @@
   [summaries : (& summaries OptProgramSummaries)]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match (compiler-opt-global-shared-view func)
-    [(Function name params ret-ty frame blocks function-abi)
+    [(Function name params ret-ty frame blocks function-abi cold?)
       (if (< frame 1)
         func
         (let
@@ -136031,7 +136100,8 @@
                       (& dropvar)
                       (& fold)
                       (& final-blocks))
-                    function-abi)))))))]))
+                    function-abi
+                    cold?)))))))]))
 
 ;; Bucket chain over the branch-condition shape hash, over BLOCK ids.
 (define (opt-guard-dedup-branch-chain-build

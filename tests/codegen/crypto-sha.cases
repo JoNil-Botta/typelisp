@@ -62,7 +62,7 @@ file sha256.tl
             (begin
               (crypto_sha256.wipe-state! (&mut state))
               (crypto_sha256.wipe-digest! (&mut digest))
-              (if (and state.finalized
+              (if (and (crypto_sha256.state-finalized? (& state))
                        (= (cast
                             (crypto_sha256.digest-byte (& digest) 0)
                             : i64)

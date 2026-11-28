@@ -1140,7 +1140,7 @@
             (& storage))]))
     (for [index (iterator.range 0 externs.len)]
       (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs index)
-        [(Extern name _ _ _ _ _ _ _ _ _ storage)
+        [(Extern name _ _ _ _ _ _ _ _ _ storage _)
           (compiler-backend-publish-global-storage-entry!
             (&mut table)
             name
@@ -1620,7 +1620,7 @@
       0
       (compiler_ir_types.compiler-ir-function-seq-count functions))]
     (match (owned_view.compiler-owned-element-view functions.slots index)
-      [(Function name _ _ _ _ _)
+      [(Function name _ _ _ _ _ _)
         (when
           (compiler-backend-runtime-prelude-helper-function?
             (be_state.compiler-backend-symbol-text-state backend-state name)
@@ -1773,7 +1773,7 @@
     (compiler_ir_types.compiler-ir-function-seq-count functions))
     index
     (match (owned_view.compiler-owned-element-view functions.slots seq-index)
-      [(Function name _ _ _ blocks _)
+      [(Function name _ _ _ blocks _ _)
         (compiler-backend-runtime-index-function-seq
           (compiler-backend-runtime-index-blocks
             (compiler-backend-runtime-index-add-define index name)
@@ -1795,7 +1795,7 @@
   (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     index
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs seq-index)
-      [(Extern name-id source-name-id _ _ _ link-symbol _ provided _ _ _)
+      [(Extern name-id source-name-id _ _ _ link-symbol _ provided _ _ _ _)
         (let
           [with-startup-role : be_state.CompilerBackendRuntimeIndex
             (compiler-backend-runtime-index-with-startup-profile-role
@@ -1831,7 +1831,7 @@
   (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     index
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs seq-index)
-      [(Extern name-id source-name-id _ _ _ link-symbol _ _ _ _ _)
+      [(Extern name-id source-name-id _ _ _ link-symbol _ _ _ _ _ _)
         (compiler-backend-runtime-index-arena-debug-call-link-seq
           (if (and
             (or
@@ -2207,7 +2207,7 @@
   (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     buf
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs seq-index)
-      [(Extern name-id source-name-id _ _ abi link-symbol-id _ provided _ _ _)
+      [(Extern name-id source-name-id _ _ abi link-symbol-id _ provided _ _ _ _)
         (compiler-backend-emit-extern-seq-into
           backend-state
           externs
@@ -2316,7 +2316,7 @@
         0
         (compiler_ir_types.compiler-ir-extern-seq-count externs))]
       (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs i)
-        [(Extern name source _ _ _ link _ _ _ _ _)
+        [(Extern name source _ _ _ link _ _ _ _ _ _)
           (let
             [bit : i64 (compiler-backend-runtime-leaf-bit backend-state link)]
             (when

@@ -56,7 +56,8 @@
                   (compiler-bounds-check-smoke-instr-seq-prepend
                     (Return (Some (I64 42)))
                     (ir.compiler-ir-instr-seq-empty))))))
-          Ordinary))
+          Ordinary
+          false))
       (& (ir.compiler-ir-function-seq-empty)))
     (ir.compiler-ir-extern-seq-empty)
     (ir.CompilerIrReturnStorageAuthority.None)))

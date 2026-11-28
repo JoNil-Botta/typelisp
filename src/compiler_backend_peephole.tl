@@ -18773,7 +18773,7 @@
           (match (compiler_ir_types.compiler-ir-function-seq-borrow
             functions
             slot)
-            [(Function name _ _ _ _ _)
+            [(Function name _ _ _ _ _ _)
               (backend_string_i64_map.insert!
                 symbols
                 (be_operand.compiler-backend-function-symbol-index index name)

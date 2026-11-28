@@ -1,3 +1,5 @@
+(import package_profile_core as pkg_profile)
+
 ;; compiler_dependency_tlci.tl - Package TLCI discovery and admission.
 ;;
 ;; This module sits above compiler_load and package_source_core so the loader
@@ -345,6 +347,7 @@
   (let
     [artifact-path : String
       (load.compiler-load-package-tlci-path
+        (load.compiler-load-session-package-profile (& state))
         (owned_view.compiler-owned-shared-view source-set.manifest-dir)
         (owned_view.compiler-owned-shared-view source-set.manifest.name))]
     (match (package_source.package-source-set-digest
@@ -370,6 +373,7 @@
             (let
               [tli-path : String
                 (load.compiler-load-package-tli-path
+                  (load.compiler-load-session-package-profile (& state))
                   (owned_view.compiler-owned-shared-view
                     source-set.manifest-dir)
                   (owned_view.compiler-owned-shared-view
@@ -463,6 +467,8 @@
           (compiler-dependency-tlci-prepare-source-set! state source-set))]
       [(Err message)
         (let
+          [profile : pkg_profile.PackageProfile
+            (load.compiler-load-session-package-profile (& state))]
           [owner : i64
             (load.compiler-load-dependency-catalog-owner-arena-ensure!
               (owned_view.compiler-owned-shared-view state))]
@@ -476,7 +482,11 @@
                 (owned_view.compiler-owned-shared-view dep.alias)
                 ""
                 (load.compiler-load-canonical-path
-                  (& (load.compiler-load-package-tlci-path root dep.alias)))
+                  (&
+                    (load.compiler-load-package-tlci-path
+                      profile
+                      root
+                      dep.alias)))
                 -1
                 -1
                 -1
@@ -575,7 +585,7 @@
       (compiler-dependency-tlci-test-mkdir
         (compiler-dependency-tlci-test-path "target"))
       (compiler-dependency-tlci-test-mkdir
-        (compiler-dependency-tlci-test-path "target/release"))
+        (compiler-dependency-tlci-test-path "target/dev"))
       (compiler-dependency-tlci-test-write-text
         (compiler-dependency-tlci-test-path "typelisp.pkg")
         "(package\n  (name \"metadata_dep\")\n  (version \"1.0.0\")\n  (kind \"staticlib\")\n  (entry \"src/lib.tl\"))\n")
@@ -683,6 +693,7 @@
             (+ digest 1))]
         [artifact : String
           (load.compiler-load-package-tlci-path
+            (pkg_profile.package-default-profile)
             (owned_view.compiler-owned-shared-view source-set.manifest-dir)
             (owned_view.compiler-owned-shared-view source-set.manifest.name))]
         [good-image : tlci.TlciImage

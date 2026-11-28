@@ -7819,7 +7819,7 @@
       [(LookupFound slot)
         (if (and (>= slot 0) (< slot functions.len))
           (match (& (array-ref functions.slots slot))
-            [(Function _ params _ _ _ _)
+            [(Function _ params _ _ _ _ _)
               (let
                 [int-idx : i64 0]
                 [float-idx : i64 0]

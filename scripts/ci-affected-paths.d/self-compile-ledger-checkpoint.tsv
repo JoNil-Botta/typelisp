@@ -1,0 +1,2 @@
+path	required	advisory	reason
+perf/self-compile-ledger-checkpoint.tsv	self-compile-gate-self-tests	-	Reviewed self-compile ledger checkpoint consumed by scripts/self-compile.sh ledger.

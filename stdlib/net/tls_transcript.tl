@@ -157,9 +157,9 @@
         [(or
             (not (limits-valid? (& state.limits)))
             (> state.input-length state.limits.max-input)
-            (< state.input-length state.hash.byte-length))
+            (< state.input-length (sha.state-byte-length (& state.hash))))
           (TlsTranscriptErr (TlsTranscriptInvalidState))]
-        [state.hash.finalized
+        [(sha.state-finalized? (& state.hash))
           (TlsTranscriptErr (TlsTranscriptShaError 0 (sha.Sha256Finalized)))]
         [(not (sha.state-valid? (& state.hash)))
           (TlsTranscriptErr (TlsTranscriptShaError 0 (sha.Sha256InvalidState)))]
@@ -258,7 +258,11 @@
     (when
       (or (= kind wire.handshake-message-hash) (retry-frame? frame))
       (return (TlsTranscriptErr (TlsTranscriptFrameKind offset kind))))
-    (match (check-length state state.hash.byte-length count offset)
+    (match (check-length
+      state
+      (sha.state-byte-length (& state.hash))
+      count
+      offset)
       [(TlsTranscriptErr error) (return (TlsTranscriptErr error))]
       [(TlsTranscriptOk) unit])
     (match (sha.update! (&mut state.hash) frame)
@@ -285,18 +289,10 @@
   (match (check-state state)
     [(TlsTranscriptErr error) (TlsTranscriptDigestErr error)]
     [(TlsTranscriptOk)
-      (let
-        [copy : sha.Sha256State
-          (sha.Sha256State
-            state.hash.words
-            state.hash.block
-            state.hash.block-length
-            state.hash.byte-length
-            state.hash.finalized)]
-        (match (sha.finalize! (&mut copy))
-          [(Sha256FinalizeOk digest) (TlsTranscriptDigestOk digest)]
-          [(Sha256FinalizeErr error)
-            (TlsTranscriptDigestErr (TlsTranscriptShaError 0 error))]))]))
+      (match (sha.snapshot (& state.hash))
+        [(Sha256FinalizeOk digest) (TlsTranscriptDigestOk digest)]
+        [(Sha256FinalizeErr error)
+          (TlsTranscriptDigestErr (TlsTranscriptShaError 0 error))])]))
 
 ;: Replace the sole ClientHello1 and absorb the held exact HRR atomically.
 ;: Scratch state is published only after all checks and SHA operations pass.

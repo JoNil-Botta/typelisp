@@ -306,7 +306,7 @@
         [found : bool false]
         (while (and (< f functions.len) (not found))
           (match (& (array-ref functions.slots f))
-            [(Function _ _ _ _ blocks function-abi)
+            [(Function _ _ _ _ blocks function-abi _)
               (when
                 (compiler-backend-function-uses-simd? function-abi blocks)
                 (set! found true))])
@@ -783,7 +783,7 @@
       (> (array-length counts) 0)
       (for [i (iterator.range 0 functions.len)]
         (match (& (array-ref functions.slots i))
-          [(Function _ _ _ _ blocks _)
+          [(Function _ _ _ _ blocks _ _)
             (let
               [view (compiler_ir_types.compiler-ir-block-list-view blocks)]
               (when
@@ -23739,7 +23739,7 @@
   [swb-label : i64]
   [swb-bare : (__tl_dyn-array i64)]) : be_state.ResultCompilerBackend
   (match (be_state.compiler-backend-global-shared-view func)
-    [(Function name params ret-ty vars raw-blocks function-abi)
+    [(Function name params ret-ty vars raw-blocks function-abi cold?)
       ;; The provenance fallback diagnostic for this function: backend
       ;; errors raised while emitting its body stamp this function's source span
       ;; (or `1:1` when none was recorded) rather than always `1:1`.
@@ -23833,7 +23833,8 @@
                 (be_state.compiler-backend-global-shared-view ret-ty)
                 factored-vars
                 factored-blocks
-                (be_state.compiler-backend-global-shared-view function-abi))]
+                (be_state.compiler-backend-global-shared-view function-abi)
+                cold?)]
             (if (and
               shrinkwrap-enabled
               scalar-pipeline?
@@ -23860,10 +23861,10 @@
             (be_state.compiler-backend-global-shared-view cold-call-rewrite))]
         [blocks : compiler_ir_types.CompilerIrBlockList
           (match (be_state.compiler-backend-global-shared-view cold-call-func)
-            [(Function _ _ _ _ out-blocks _) out-blocks])]
+            [(Function _ _ _ _ out-blocks _ _) out-blocks])]
         [walk-vars : i64
           (match cold-call-func
-            [(Function _ _ _ out-vars _ _) out-vars])]
+            [(Function _ _ _ out-vars _ _ _) out-vars])]
         [cold-call-temp-start : i64
           (compiler_regalloc.compiler-reg-cold-call-rewrite-temp-start
             (& cold-call-rewrite))]
@@ -23874,7 +23875,8 @@
             (be_state.compiler-backend-global-shared-view ret-ty)
             walk-vars
             blocks
-            (be_state.compiler-backend-global-shared-view function-abi))]
+            (be_state.compiler-backend-global-shared-view function-abi)
+            cold?)]
         [func-diag : compiler_diagnostic.CompilerDiagnostic
           (be_state.compiler-backend-function-diagnostic-index
             span-index
@@ -24132,7 +24134,8 @@
                 (be_state.compiler-backend-global-shared-view ret-ty)
                 scratch-vars
                 (be_state.compiler-backend-global-shared-view rewritten-blocks)
-                (be_state.compiler-backend-global-shared-view function-abi)))
+                (be_state.compiler-backend-global-shared-view function-abi)
+                cold?))
             plan-types)]
         ;; Address temps the gep fusion peepholes fold into their consumer.
         ;; Computed on the exact blocks and assignments the coloring pass reads,
@@ -24435,7 +24438,8 @@
                     emit-vars
                     (be_state.compiler-backend-global-shared-view
                       emit-blocks-list)
-                    function-abi)]
+                    function-abi
+                    cold?)]
                 (unsafe
                   ;; unsafe: grows the global liveness id buffer here; reset before this arena ends
                   (compiler_regalloc.compiler-reg-live-interval-selection-with-live-in
@@ -25927,7 +25931,7 @@
 (define (compiler-backend-emit-function-direct?
   [func : compiler_ir_types.CompilerIrFunction]) : bool
   (match func
-    [(Function _ _ _ _ blocks _)
+    [(Function _ _ _ _ blocks _ _)
       (<=
         (compiler_ir_types.compiler-ir-block-list-instruction-count (& blocks))
         (compiler-backend-direct-emit-instr-limit))]))
@@ -26023,7 +26027,7 @@
       (and
         (be_state.compiler-backend-state-closed-executable? backend-state)
         (match (& func)
-          [(Function name _ _ _ _ _)
+          [(Function name _ _ _ _ _ _)
             (be_scalar.compiler-backend-optional-runtime-function?
               backend-state
               name)]))]
@@ -28810,7 +28814,8 @@ tl_shared_object_init:
                         (I64 0))))
                   (I64))
                 (Return (Some (I64 42))))))
-          Ordinary))
+          Ordinary
+          false))
       (& (compiler_ir_types.compiler-ir-function-seq-empty)))
     (compiler_ir_types.compiler-ir-extern-seq4
       (compiler_ir_types.compiler-ir-extern-default-id

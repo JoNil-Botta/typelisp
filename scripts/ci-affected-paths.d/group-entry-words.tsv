@@ -1,0 +1,2 @@
+path	required	advisory	reason
+tests/integration/group_entry_words.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	The group-entry-words assembly cases check register-passed pair projections on both targets.

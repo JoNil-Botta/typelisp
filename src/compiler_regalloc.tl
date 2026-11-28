@@ -5727,6 +5727,141 @@
                   div-points
                   shift-points))]))])))
 
+(define (compiler-reg-entry-projection? [instr : (& ir.CompilerIrInstr)]) : bool
+  (match instr
+    [(Word _ (Var _) index ty)
+      (and
+        (or (= index 0) (= index 1))
+        (match ty
+          [(or (U64) (I64) (Ptr _) (MutPtr _)) true]
+          [_ false]))]
+    [_ false]))
+
+(define (compiler-reg-entry-projection-count
+  [seq : (& seq ir.CompilerIrBlockSeq)]) : i64
+  (when
+    (> seq.len 0)
+    (match (& (array-ref seq.slots 0))
+      [(Block _ instrs)
+        (for [i (iterator.range 0 instrs.len)]
+          (unless
+            (compiler-reg-entry-projection?
+              (ir.compiler-ir-instr-seq-borrow instrs i))
+            (return i)))
+        (return instrs.len)]))
+  0)
+
+;; Count the IR uses and definitions, including AddrOf's storage use. Subtract
+;; just the reads performed by the entry prefix. A candidate whose count falls
+;; to zero has neither an observable group home nor a later word use.
+(define (compiler-reg-entry-word-uses!
+  [seq : (& seq ir.CompilerIrBlockSeq)]
+  [prefix : i64]
+  [words : (&mut words (__tl_dyn-array i64))]) : unit
+  (let
+    [refs : (__tl_dyn-array i64) (__tl_make-array i64 (array-length words))]
+    (for [b (iterator.range 0 seq.len)]
+      (match (& (array-ref seq.slots b))
+        [(Block _ instrs)
+          (compiler-reg-ref-counts-seq-weighted! (&mut refs) instrs 1)]))
+    (match (& (array-ref seq.slots 0))
+      [(Block _ instrs)
+        (for [i (iterator.range 0 prefix)]
+          (match (ir.compiler-ir-instr-seq-borrow instrs i)
+            [(Word _ (Var src) _ _)
+              (-= (array-ref refs src) 1)
+              (when
+                (and (= (array-ref refs src) 0) (= (array-ref words src) 1))
+                (set! (array-ref words src) 2))]
+            [_ unit]))])))
+
+(define (compiler-reg-entry-word-block
+  [words : (& (__tl_dyn-array i64))]
+  [prefix : i64]
+  [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
+  (match block
+    [(Block label instrs)
+      (let
+        [out : ir.CompilerIrInstrBuilder
+          (ir.compiler-ir-instr-builder-with-capacity instrs.len)]
+        (for [i (iterator.range 0 prefix)]
+          (let
+            [instr (ir.compiler-ir-instr-seq-ref (& instrs) i)]
+            (ir.compiler-ir-instr-builder-push!
+              (&mut out)
+              (match (& instr)
+                [(Word dst (Var src) index ty)
+                  (if (> (array-ref words src) 0)
+                    (Mov
+                      dst
+                      (Var
+                        (if (= index 0)
+                          src
+                          (array-ref words src)))
+                      (ast.clone-ast-type ty))
+                    instr)]
+                [_ instr]))))
+        (ir.compiler-ir-instr-builder-append-seq-range!
+          (&mut out)
+          (& instrs)
+          prefix
+          instrs.len)
+        (Block label (ir.compiler-ir-instr-builder-to-seq out)))]))
+
+(define (compiler-reg-project-entry-words
+  [func : ir.CompilerIrFunction]
+  [prefix : i64]
+  [words : (__tl_dyn-array i64)]) : ir.CompilerIrFunction
+  (match (& func)
+    [(Function _ params _ vars (Array seq) _ _)
+      (compiler-reg-entry-word-uses! seq prefix (&mut words))
+      (let
+        [next-var : i64 vars]
+        [new-params : ir.CompilerIrParamBuilder
+          (ir.compiler-ir-param-builder-with-capacity params.len)]
+        (for [i (iterator.range 0 params.len)]
+          (match (ir.compiler-ir-param-seq-ref params i)
+            [(Param name ty var)
+              (if (= (array-ref words var) 2)
+                (begin
+                  (ir.compiler-ir-param-builder-push!
+                    (&mut new-params)
+                    (Param name (U64) var))
+                  (ir.compiler-ir-param-builder-push!
+                    (&mut new-params)
+                    (Param "$word1" (U64) next-var))
+                  (set! (array-ref words var) next-var)
+                  (+= next-var 1))
+                (begin
+                  (set! (array-ref words var) 0)
+                  (ir.compiler-ir-param-builder-push!
+                    (&mut new-params)
+                    (Param name ty var))))]))
+        (when (= next-var vars) (return func))
+        (let
+          [out : ir.CompilerIrBlockBuilder
+            (ir.compiler-ir-block-builder-with-capacity seq.len)]
+          (for [b (iterator.range 0 seq.len)]
+            (ir.compiler-ir-block-builder-push!
+              (&mut out)
+              (if (= b 0)
+                (compiler-reg-entry-word-block
+                  (& words)
+                  prefix
+                  (ir.compiler-ir-block-seq-ref seq b))
+                (ir.compiler-ir-block-seq-ref seq b))))
+          (match func
+            [(Function name _ ret _ _ abi cold?)
+              (Function
+                name
+                (ir.compiler-ir-param-builder-to-seq new-params)
+                ret
+                next-var
+                (ir.compiler-ir-block-builder-to-list out)
+                abi
+                cold?)])))]
+    [_ func]))
+
 (define (compiler-reg-param-assign-plan
   [type-segment-bases : i64]
   [representations : (& ir.CompilerIrRepresentationIndex)]
@@ -29388,6 +29523,8 @@
 ;; Identity-pin scalar parameter variables: the prologue's param spill writes
 ;; each parameter to its remapped formula slot. Ordinary parameters keep
 ;; private ids during coloring, then can move with the frame permutation.
+;; When the prologue consumes expanded or caller-frame parameters, its remap
+;; reserves dense private slots; a fresh word id need not extend the frame.
 ;; Wide private SPMD parameters need a complete YMM/ZMM range from the
 ;; private-range pass, and direct-home incoming stack parameters stay in the
 ;; caller's stack frame and consume no local formula slot.
@@ -29397,10 +29534,9 @@
   [remap : (&mut remap (__tl_dyn-array i64))]
   [slot-ends : (&mut slot-ends (__tl_dyn-array i64))]
   [ref-counts : (&mut ref-counts (__tl_dyn-array i64))]
-  [highest : i64]) : i64
+  [compact? : bool]) : i64
   (let
-    [compact? : bool (> (array-length direct-stack-params) 0)]
-    [out : i64 highest]
+    [out : i64 0]
     (for [position (iterator.range 0 params.len)]
       (match (ir.compiler-ir-param-seq-borrow params position)
         [(Param name _ var-id)
@@ -30816,6 +30952,7 @@
   [slot-candidate-vars : i64]
   [identity-pinned : (& live.CompilerLiveI64Set)]
   [direct-stack-params : (& (__tl_dyn-array i64))]
+  [expanded-params? : bool]
   [stack-only? : bool]) : CompilerRegColoring
   (compiler-reg-with-analysis-scratch
     vars
@@ -30832,6 +30969,7 @@
         slot-candidate-vars
         identity-pinned
         direct-stack-params
+        expanded-params?
         stack-only?))))
 
 ;; Only the result-owning wrapper above calls this analysis implementation.
@@ -30845,6 +30983,7 @@
   [slot-candidate-vars : i64]
   [identity-pinned : (& live.CompilerLiveI64Set)]
   [direct-stack-params : (& (__tl_dyn-array i64))]
+  [expanded-params? : bool]
   [stack-only? : bool]) : CompilerRegColoring
   (let
     [intervals : CompilerRegIntervalSeq
@@ -30968,7 +31107,7 @@
             (&mut remap)
             (&mut slot-ends)
             (&mut ref-counts)
-            0)]
+            (or expanded-params? (> (array-length direct-stack-params) 0)))]
         ;; The scalar walk's per-variable admission test, decided once here --
         ;; after the parameter pins are in `remap`, which is the last write
         ;; before the walk itself starts filling it -- and read by the web

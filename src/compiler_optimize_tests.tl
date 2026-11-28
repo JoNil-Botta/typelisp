@@ -81873,6 +81873,52 @@ done:
         [(Result f _) f])]
     (opt.opt-function-blocks func)))
 
+(test
+  guard-sink-keeps-global-read-before-destination-write
+  (let
+    [cells : opt.OptGlobalCellSummary
+      (opt-guard-sink-test-summary
+        (opt-test-symbol "gs_g")
+        (opt-test-symbol "gs_writer")
+        1)]
+    [name : String "guard_sink_destination_write"]
+    [optimized : ir.CompilerIrBlockList
+      (opt-guard-sink-run
+        (string.copy (& name))
+        (& cells)
+        (irt.blocks
+          "entry:
+             %2 = mov @gs_g : i64
+             %3 = ge %1, 0 : i64
+             branch %3, use, done
+           use:
+             %8 = call gs_writer() : i64
+             %4 = add %2, 1 : i64
+             return %4
+           done:
+             return 0"))]
+    [actual (opt-guard-sink-test-function (string.copy (& name)) optimized)]
+    [expected
+      (opt-guard-sink-test-function
+        name
+        (irt.blocks
+          "entry:
+             %3 = ge %1, 0 : i64
+             branch %3, use, done
+           use:
+             %2 = mov @gs_g : i64
+             %8 = call gs_writer() : i64
+             %4 = add %2, 1 : i64
+             return %4
+           done:
+             return 0"))]
+    (test.assert-true
+      (opt.opt-function-eq
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& actual)
+        (& expected))
+      "sink into the guarded arm without crossing its call that writes the cell")))
+
 ;; A global-rooted `gep; load` chain derived in the entry block and read only
 ;; inside the loop. The rotated loop's landing block `pre` is the deepest
 ;; dominator of the read whose loop depth is still the entry block's, so the

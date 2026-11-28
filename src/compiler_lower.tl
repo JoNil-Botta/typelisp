@@ -6431,6 +6431,10 @@
   (cbi.compiler-builtin-refresh!)
   cbi.compiler-builtin-id-tl-array-zero)
 
+(define (lower-tl-mem-fill8-symbol) : i64
+  (cbi.compiler-builtin-refresh!)
+  cbi.compiler-builtin-id-tl-mem-fill8)
+
 (define (lower-tl-arena-make-symbol) : i64
   (cbi.compiler-builtin-refresh!)
   cbi.compiler-builtin-id-tl-arena-make)
@@ -28282,11 +28286,10 @@
                         (U64))))
                   filled)]
               [else
-                (cbi.compiler-builtin-refresh!)
                 (match (try
                   (lower-runtime-call-values
                     reserved
-                    cbi.compiler-builtin-id-tl-mem-fill8
+                    (lower-tl-mem-fill8-symbol)
                     (ir.compiler-ir-value-seq3
                       (ir.compiler-ir-clone-value (& base))
                       (I64 slots)

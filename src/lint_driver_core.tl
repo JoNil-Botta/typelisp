@@ -20,6 +20,8 @@
 (import compiler_check_core)
 (import compiler_semantic_lint_facts as semantic)
 (import compiler_ast_types as ast)
+(import compiler_builtin_ids as cbi)
+(import compiler_cfg_core as cfg_core)
 (import compiler_target_cfg_core as target_cfg)
 (import compiler_load)
 (import compiler_diagnostic as cdiag)
@@ -1636,14 +1638,29 @@
         "unused-must-use-value")]
     [typed : lint_core.LintFindings
       (if (or must-use? (> unknown-count 0))
-        (selfhost-lint-typed-findings
-          path
-          source
-          stdlib-roots
-          context
-          typed-cfgs
-          (> unknown-count 0)
-          must-use?)
+        (let
+          [cfg-snapshot : cfg_core.CompilerCfgSnapshot
+            (cfg_core.compiler-cfg-snapshot-from-env typed-cfgs)]
+          [verified-stdlib-roots : lint_svec.Vec
+            (compiler_load.compiler-load-session-stdlib-roots-snapshot)]
+          ;; Phase-1 parsing and `selfhost-lint-unsafe-surface-prepare!` intern
+          ;; symbols that vary with cross-file cache hits/misses. Reset the
+          ;; interner to the session floor before typed checking so each file
+          ;; checks against a clean, order-independent intern table while
+          ;; keeping batch caches warm and preserving stdlib roots verified for
+          ;; this file during import resolution.
+          (compiler_check_core.compiler-check-reset-interns!)
+          (cbi.compiler-builtin-initialize-for-parse!)
+          (compiler_load.compiler-load-session-restore-stdlib-roots!
+            (& verified-stdlib-roots))
+          (selfhost-lint-typed-findings
+            path
+            source
+            stdlib-roots
+            context
+            (cfg_core.compiler-cfg-snapshot-to-env (& cfg-snapshot))
+            (> unknown-count 0)
+            must-use?))
         (lint_core.lint-findings-empty))]
     [base : lint_core.LintFindings
       (if (> unknown-count 0)

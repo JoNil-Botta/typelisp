@@ -2582,6 +2582,63 @@
       typed?
       "the CTFE type-literal predicate reads the node from its owning pool, not the installed decoy")))
 
+(test
+  tuple-ref-visitors-follow-only-the-receiver
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [first : i64
+      (ast.ast-node-pool-context-expr-push pools (Literal (Int 7 "7")))]
+    [decoy : i64 (ast.ast-node-pool-context-expr-push pools (TypeLiteral 0))]
+    [second : i64
+      (ast.ast-node-pool-context-expr-push pools (Literal (Int 42 "42")))]
+    [items : ast.AstExprList (ast.ast-expr-list-new)]
+    [_ (ast.ast-expr-list-push (&mut items) first)]
+    [_ (ast.ast-expr-list-push (&mut items) second)]
+    [receiver : i64 (ast.ast-node-pool-context-expr-push pools (Tuple items))]
+    [bases : i64 (ast.ast-node-pool-context-expr-segment-bases (& pools))]
+    [macro-state : tc_core.TcMacroState
+      (tc_core.tc-job-state-macro-state (tc_core.tc-job-state-new))]
+    (test.assert-i64-eq
+      decoy
+      1
+      "the field index coincides with an occupied node slot")
+    (test.assert-true
+      (not
+        (tc_core.ctfe-expr-has-type-literal?
+          bases
+          macro-state
+          (TupleRef receiver 1)))
+      "CTFE skips the unrelated type literal at node 1")
+    (ast.ast-node-pool-context-expr-set! pools second (& (TypeLiteral 0)))
+    (test.assert-true
+      (tc_core.ctfe-expr-has-type-literal?
+        bases
+        macro-state
+        (TupleRef receiver 1))
+      "CTFE visits the tuple receiver")
+    (ast.ast-node-pool-context-expr-set!
+      pools
+      second
+      (& (Literal (Int 42 "42"))))
+    (ast.ast-node-pool-context-expr-set! pools decoy (& (SpmdProgramIndex)))
+    (test.assert-true
+      (match (tc_core.tc-spmd-scan-body-no-nested-spmd
+        bases
+        (TupleRef receiver 1))
+        [(Ok) true]
+        [(Err _) false])
+      "the SPMD scan skips the unrelated program-index at node 1")
+    (ast.ast-node-pool-context-expr-set! pools decoy (& (Literal (Int 0 "0"))))
+    (ast.ast-node-pool-context-expr-set! pools second (& (SpmdProgramIndex)))
+    (test.assert-true
+      (match (tc_core.tc-spmd-scan-body-no-nested-spmd
+        bases
+        (TupleRef receiver 1))
+        [(Ok) false]
+        [(Err _) true])
+      "the SPMD scan visits the tuple receiver")))
+
 ;; --- #7918: expression forms in Decls/Module macro output -------------------
 ;;
 ;; A Decls or Module macro's output reaches the declaration parser through
@@ -18730,3 +18787,113 @@
                   "undeclared arena owner call must stay unrepresented")])]
           [(tc_core.TcSelectedResult.Err message _)
             (test.assert-true false message)])))))
+
+(cfg
+  test
+  (test
+    tc-arena-store-type-hash-intern-order-invariant
+    (let
+      [pools-a : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-new-with-capacities 16 16)]
+      [_use-a : unit (ast.ast-node-pool-compat-context-use! pools-a)]
+      (ci.intern-reset!)
+      (cbi.compiler-builtin-initialize-for-parse!)
+      (let
+        [mod-a : i64 (ci.intern "hash_mod")]
+        [key-a : i64 (ci.intern "HashKey")]
+        [qual-a : i64 (ci.intern "hash_mod/HashKey")]
+        [pair-a : i64 (ci.intern-composite-pair-id mod-a key-a)]
+        [bool-ty-a : ast.AstType ast.AstType.Bool]
+        [empty-types-a : ast.AstTypeList (ast.ast-type-list-new)]
+        [i64-id-a : i64
+          (ast.ast-node-pool-context-type-push pools-a ast.AstType.I64)]
+        [fn-sig-a : i64
+          (ast.ast-node-pool-context-type-push
+            pools-a
+            (ast.ast-ty-func-with-pools
+              pools-a
+              (ast.ast-type-list-cons-id i64-id-a (& empty-types-a))
+              (& bool-ty-a)))]
+        [h-struct-a : i64
+          (tc_core.tc-arena-store-type-hash (ast.AstType.Struct key-a))]
+        [h-enum-a : i64
+          (tc_core.tc-arena-store-type-hash (ast.AstType.Enum qual-a))]
+        [h-pair-a : i64
+          (tc_core.tc-arena-store-type-hash (ast.AstType.Enum pair-a))]
+        [h-cfunc-a : i64
+          (tc_core.tc-arena-store-type-hash
+            (ast.AstType.CFunc fn-sig-a ast.AstCFunctionMode.NonNull))]
+        (ast.ast-node-pool-compat-context-clear!)
+        (ast.ast-node-pool-context-destroy-storage! pools-a)
+        (test.assert-true
+          (>= h-struct-a 0)
+          "struct arena-store hash is non-negative")
+        (test.assert-i64-eq
+          h-enum-a
+          h-pair-a
+          "qualified string and composite pair nominal keys share arena-store hash")
+        (let
+          [pools-b : ast.AstNodePoolContext
+            (ast.ast-node-pool-context-new-with-capacities 16 16)]
+          [_use-b : unit (ast.ast-node-pool-compat-context-use! pools-b)]
+          [i : i64 0]
+          (ci.intern-reset!)
+          (cbi.compiler-builtin-initialize-for-parse!)
+          (while (< i 37)
+            (let
+              [_shift : i64
+                (ci.intern
+                  (str_cat.str-cat "arena_hash_shift_" (string.int->string i)))]
+              (+= i 1)))
+          ;; Also shift type-node IDs before pushing `CFunc`'s signature.
+          (let
+            [_pad-ty : i64
+              (ast.ast-node-pool-context-type-push pools-b ast.AstType.F32)]
+            [mod-b : i64 (ci.intern "hash_mod")]
+            [key-b : i64 (ci.intern "HashKey")]
+            [qual-b : i64 (ci.intern "hash_mod/HashKey")]
+            [pair-b : i64 (ci.intern-composite-pair-id mod-b key-b)]
+            [bool-ty-b : ast.AstType ast.AstType.Bool]
+            [empty-types-b : ast.AstTypeList (ast.ast-type-list-new)]
+            [i64-id-b : i64
+              (ast.ast-node-pool-context-type-push pools-b ast.AstType.I64)]
+            [fn-sig-b : i64
+              (ast.ast-node-pool-context-type-push
+                pools-b
+                (ast.ast-ty-func-with-pools
+                  pools-b
+                  (ast.ast-type-list-cons-id i64-id-b (& empty-types-b))
+                  (& bool-ty-b)))]
+            [h-struct-b : i64
+              (tc_core.tc-arena-store-type-hash (ast.AstType.Struct key-b))]
+            [h-enum-b : i64
+              (tc_core.tc-arena-store-type-hash (ast.AstType.Enum qual-b))]
+            [h-pair-b : i64
+              (tc_core.tc-arena-store-type-hash (ast.AstType.Enum pair-b))]
+            [h-cfunc-b : i64
+              (tc_core.tc-arena-store-type-hash
+                (ast.AstType.CFunc fn-sig-b ast.AstCFunctionMode.NonNull))]
+            (ast.ast-node-pool-compat-context-clear!)
+            (ast.ast-node-pool-context-destroy-storage! pools-b)
+            (test.assert-true
+              (!= key-a key-b)
+              "shift actually moved sequential intern IDs")
+            (test.assert-true
+              (!= fn-sig-a fn-sig-b)
+              "shift actually moved sequential type-node IDs")
+            (test.assert-i64-eq
+              h-struct-a
+              h-struct-b
+              "unqualified struct arena-store hash is invariant to intern order")
+            (test.assert-i64-eq
+              h-enum-a
+              h-enum-b
+              "qualified enum arena-store hash is invariant to intern order")
+            (test.assert-i64-eq
+              h-pair-a
+              h-pair-b
+              "composite-pair arena-store hash is invariant to intern order")
+            (test.assert-i64-eq
+              h-cfunc-a
+              h-cfunc-b
+              "CFunc arena-store hash is invariant to type-node IDs")))))))

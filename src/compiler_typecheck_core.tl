@@ -73887,23 +73887,10 @@
               (ast.ast-expr-list-get exprs index 0))))]
       (tc-spmd-scan-body-no-nested-list-at expr-bases exprs (+ index 1)))))
 
-(define (tc-spmd-scan-body-no-nested-pair
-  [expr-bases : i64]
-  [left : ast.AstExpr]
-  [right : ast.AstExpr]) : ResultTcUnit
-  (let
-    [_ (try (tc-spmd-scan-body-no-nested-spmd expr-bases left))]
-    (tc-spmd-scan-body-no-nested-spmd expr-bases right)))
-
 (define (tc-spmd-scan-body-no-nested-spmd
   [expr-bases : i64]
   [expr : ast.AstExpr]) : ResultTcUnit
   (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
-    [(TupleRef tuple-box index-box)
-      (tc-spmd-scan-body-no-nested-pair
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases tuple-box)
-        (ast.ast-expr-segment-bases-get expr-bases index-box))]
     [(Foreach _)
       (Err
         (tc-kind-message
@@ -95675,6 +95662,38 @@
         (deref state).arena-nodes)]
     (+ 1 (arena_store_nodes.len (& nodes)))))
 
+(define (tc-arena-store-name-part-hash [id : i64]) : i64
+  (if (ci.intern-renderable-id? id)
+    (hash.string-key (& (ci.intern-str id)))
+    (hash.i64 id)))
+
+;; Content hash of a canonical nominal type key (`ast.ast-nominal-name-id-key`),
+;; independent of parse-order intern IDs and with zero heap allocation.
+(define (tc-arena-store-nominal-hash [name : i64]) : i64
+  (let
+    [key : i64 (csym.compiler-symbol-name-id-key name)]
+    (cond
+      [(ci.intern-composite-pair-id? key)
+        (hash.combine-normalized
+          (hash.combine-normalized
+            17
+            (tc-arena-store-name-part-hash
+              (ci.intern-composite-left-id-unchecked key)))
+          (tc-arena-store-name-part-hash
+            (ci.intern-composite-right-id-unchecked key)))]
+      [(ci.intern-composite-triple-id? key)
+        (hash.combine-normalized
+          (hash.combine-normalized
+            (hash.combine-normalized
+              19
+              (tc-arena-store-name-part-hash
+                (ci.intern-composite-left-id-unchecked key)))
+            (tc-arena-store-name-part-hash
+              (ci.intern-composite-middle-id-unchecked key)))
+          (tc-arena-store-name-part-hash
+            (ci.intern-composite-right-id-unchecked key)))]
+      [else (tc-arena-store-name-part-hash key)])))
+
 ;; A structural hash of a resolved type that ignores regions and lifetimes,
 ;; or -1 when the type is not known well enough to place.
 (define (tc-arena-store-type-hash [ty : ast.AstType]) : i64
@@ -95690,12 +95709,20 @@
     [(MutPtr inner) (tc-arena-store-wrapped-hash 47 inner)]
     [(Array inner _) (tc-arena-store-wrapped-hash 48 inner)]
     [(or (Struct name) (Enum name) (StructArgs name _) (EnumArgs name _))
-      (hash.combine 7 (csym.compiler-symbol-name-id-key name))]
+      (hash.combine-normalized 7 (tc-arena-store-nominal-hash name))]
     [(Tuple elems)
       (tc-arena-store-types-hash
         (& (ast.ast-type-list-box-shared-view elems))
         11)]
     [(Func args _) (hash.combine 13 (ast.ast-type-list-len (& (deref args))))]
+    [(CFunc signature mode)
+      (let
+        [sig : i64 (tc-arena-store-type-hash (ast.ty-node-get signature))]
+        (if (< sig 0)
+          -1
+          (hash.combine
+            (hash.combine-normalized 49 sig)
+            (ast.ast-c-function-mode-key mode))))]
     [(or (Var _) (VarArgs _ _)) -1]
     [_ (ast.ty-node-hash-value (& ty))]))
 
@@ -127494,11 +127521,11 @@
     [(or (PtrAddrOf place) (Spanned place _) (MacroExpansion place _ _)
          (Unary _ place) (FixedMakeArray _ place) (MakeArray _ place)
          (Set _ place) (Ann place _) (Cast place _) (Borrow _ _ place)
-         (StructGet place _) (Box place) (BoxGet place) (BoxTake place)
-         (Comptime place) (Quote place) (Quasiquote place) (Unquote place)
-         (UnquoteSplicing place) (Try place) (Return place) (PtrNullCheck place)
-         (PtrRead place) (PtrCast place _) (PtrToInt place) (IntToPtr place _)
-         (StringData place) (ArrayData place) (Xgetbv place)
+         (StructGet place _) (TupleRef place _) (Box place) (BoxGet place)
+         (BoxTake place) (Comptime place) (Quote place) (Quasiquote place)
+         (Unquote place) (UnquoteSplicing place) (Try place) (Return place)
+         (PtrNullCheck place) (PtrRead place) (PtrCast place _) (PtrToInt place)
+         (IntToPtr place _) (StringData place) (ArrayData place) (Xgetbv place)
          (ForeachActive _ place) (LaneValue place))
       (ctfe-node-has-type-literal? expr-bases state place)]
     [(Call func-box args)
@@ -127514,10 +127541,10 @@
          (Begin items) (Unsafe items) (WithRegion _ items) (WithScratch items)
          (Syscall items))
       (ctfe-exprs-have-type-literal? expr-bases state items)]
-    [(or (Binary _ l r) (TupleRef l r) (ArrayRef l r) (Replace l r)
-         (ArrayPush l r) (StringRef l r) (StructSet l _ r) (BoxSet l r)
-         (PtrWrite l r) (PtrOffset l r) (StringFromBytes l r) (CpuIdEax l r)
-         (CpuIdEbx l r) (CpuIdEcx l r) (CpuIdEdx l r))
+    [(or (Binary _ l r) (ArrayRef l r) (Replace l r) (ArrayPush l r)
+         (StringRef l r) (StructSet l _ r) (BoxSet l r) (PtrWrite l r)
+         (PtrOffset l r) (StringFromBytes l r) (CpuIdEax l r) (CpuIdEbx l r)
+         (CpuIdEcx l r) (CpuIdEdx l r))
       (ctfe-reflection-prescan-or
         (ctfe-node-has-type-literal? expr-bases state l)
         (ctfe-node-has-type-literal? expr-bases state r))]

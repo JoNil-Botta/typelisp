@@ -1,0 +1,306 @@
+# The unused profile contains an invalid interface. Successful commands must
+# both produce and consume artifacts in the profile they selected.
+do none
+target -
+opt -
+
+file profiles/typelisp.pkg
+(package
+  (name "profile_app")
+  (version "0.1.0")
+  (kind "bin")
+  (dependencies (dep "vendor/dep")))
+end-file
+file -x profiles/src/main.tl
+;# ```typelisp
+;# (import dep.src.lib as dep)
+;# (cfg target-{{host}} (define (doctest-answer) : i64 (dep.from-profile (dep.answer))))
+;# (define (doctest-result) : i64 (doctest-answer))
+;# ```
+;#
+;# ```typelisp
+;# (import stdlib.vector)
+;# (import (vector.vector i64) as ints)
+;# (define (main) : i64 0)
+;# ```
+;#
+;# ```typelisp
+;# (import stdlib.vector)
+;# (import (vector.vector i64) as ints)
+;# (define (main) : i64
+;#   (let [xs : ints.Vec (ints.with-capacity 1)]
+;#     (begin
+;#       (ints.push! xs 42)
+;#       (ints.get (& xs) 0 0))))
+;# ```
+(import dep.src.lib as dep)
+(cfg test (import stdlib.test))
+
+(define (main) : i64
+  (let [answer : i64 (unsafe (dep.answer))]
+    (dep.from-profile (- answer 42))))
+
+(test answer
+  (test.assert-i64-eq (dep.answer) 42 "selected dependency"))
+end-file
+file profiles/vendor/dep/typelisp.pkg
+(package
+  (name "profile_dep")
+  (version "0.1.0")
+  (kind "lib"))
+end-file
+file profiles/vendor/dep/src/lib.tl
+(defmacro (from-profile [expr : Expr]) : Expr expr)
+(define (answer) : i64 42)
+end-file
+
+case package-profile-command
+each build run check test lint
+sh cp -R "{{work}}/profiles/." "{{dir}}/"
+cwd .
+step {{each}}-dev-default
+sh mkdir -p "{{dir}}/vendor/dep/target/release"
+sh printf 'CORRUPT' > "{{dir}}/vendor/dep/target/release/profile_dep.tli"
+run {{each}}
+stderr not-contains error
+test -s "{{dir}}/vendor/dep/target/dev/profile_dep.tli"
+test -s "{{dir}}/vendor/dep/target/dev/profile_dep.tlci"
+test "$(cat "{{dir}}/vendor/dep/target/release/profile_dep.tli")" = CORRUPT
+step {{each}}-release-shorthand
+sh rm -rf "{{dir}}/vendor/dep/target/release"
+sh printf 'CORRUPT' > "{{dir}}/vendor/dep/target/dev/profile_dep.tli"
+run {{each}} --release
+stderr not-contains error
+test -s "{{dir}}/vendor/dep/target/release/profile_dep.tli"
+test -s "{{dir}}/vendor/dep/target/release/profile_dep.tlci"
+test "$(cat "{{dir}}/vendor/dep/target/dev/profile_dep.tli")" = CORRUPT
+step {{each}}-release-name
+sh cp "{{dir}}/vendor/dep/target/release/profile_dep.tli" "{{dir}}/shorthand.tli"
+sh rm -rf "{{dir}}/target/release" "{{dir}}/vendor/dep/target/release"
+run {{each}} --profile release
+stderr not-contains error
+sh cmp "{{dir}}/shorthand.tli" "{{dir}}/vendor/dep/target/release/profile_dep.tli"
+step {{each}}-unknown-profile
+run {{each}} --profile fast
+exit nonzero
+stdout empty
+stderr match ^unknown profile 'fast'; expected dev or release$
+step {{each}}-duplicate-profile
+run {{each}} --release --profile release
+exit nonzero
+stdout empty
+stderr match ^profile was provided more than once$
+
+case package-profile-lint-must-use
+sh cp -R "{{work}}/profiles/." "{{dir}}/"
+cwd .
+file src/main.tl
+(import dep.src.lib as dep)
+
+(define (discard-marked) : unit
+  (unsafe (dep.from-profile (dep.make)) unit))
+
+(define (main) : i64
+  (discard-marked)
+  0)
+
+(test selected-profile
+  (unsafe (dep.from-profile unit))
+  (dep.make)
+  unit)
+end-file
+file vendor/dep/src/lib.tl
+(defstruct Marked (:must-use) (value i64))
+(defmacro (from-profile [expr : Expr]) : Expr expr)
+(define (make) : Marked (Marked 42))
+end-file
+step lint-must-use-dev
+sh mkdir -p "{{dir}}/vendor/dep/target/release"
+sh printf 'CORRUPT' > "{{dir}}/vendor/dep/target/release/profile_dep.tli"
+run lint --format flat
+exit 0
+stderr empty
+stdout contains main.tl:4:29: unused must-use value of type profile_dep.src.lib/Marked
+stdout contains main.tl:4:3: unused unsafe block
+stdout contains main.tl:12:3: unused must-use value of type profile_dep.src.lib/Marked
+stdout contains lint: 3 finding(s)
+test -s "{{dir}}/vendor/dep/target/dev/profile_dep.tli"
+test -s "{{dir}}/vendor/dep/target/dev/profile_dep.tlci"
+test "$(cat "{{dir}}/vendor/dep/target/release/profile_dep.tli")" = CORRUPT
+step lint-must-use-release
+sh rm -rf "{{dir}}/vendor/dep/target/release"
+sh printf 'CORRUPT' > "{{dir}}/vendor/dep/target/dev/profile_dep.tli"
+run lint --profile release --format flat
+exit 0
+stderr empty
+stdout contains main.tl:4:29: unused must-use value of type profile_dep.src.lib/Marked
+stdout contains main.tl:4:3: unused unsafe block
+stdout contains main.tl:12:3: unused must-use value of type profile_dep.src.lib/Marked
+stdout contains lint: 3 finding(s)
+test -s "{{dir}}/vendor/dep/target/release/profile_dep.tli"
+test -s "{{dir}}/vendor/dep/target/release/profile_dep.tlci"
+test "$(cat "{{dir}}/vendor/dep/target/dev/profile_dep.tli")" = CORRUPT
+
+case package-profile-doctest
+sh cp -R "{{work}}/profiles/." "{{dir}}/"
+cwd .
+step doc-dev-default
+sh mkdir -p "{{dir}}/vendor/dep/target/release"
+sh printf 'CORRUPT' > "{{dir}}/vendor/dep/target/release/profile_dep.tli"
+run doc --test
+stderr empty
+stdout contains Doc tests passed: 3 example(s)
+test -s "{{dir}}/vendor/dep/target/dev/profile_dep.tli"
+test -s "{{dir}}/vendor/dep/target/dev/profile_dep.tlci"
+test "$(cat "{{dir}}/vendor/dep/target/release/profile_dep.tli")" = CORRUPT
+step doc-release-shorthand
+sh rm -rf "{{dir}}/vendor/dep/target/release"
+sh printf 'CORRUPT' > "{{dir}}/vendor/dep/target/dev/profile_dep.tli"
+run doc --test --release
+stderr empty
+stdout contains Doc tests passed: 3 example(s)
+test -s "{{dir}}/vendor/dep/target/release/profile_dep.tli"
+test -s "{{dir}}/vendor/dep/target/release/profile_dep.tlci"
+test "$(cat "{{dir}}/vendor/dep/target/dev/profile_dep.tli")" = CORRUPT
+step doc-release-name
+sh cp "{{dir}}/vendor/dep/target/release/profile_dep.tli" "{{dir}}/shorthand.tli"
+sh rm -rf "{{dir}}/vendor/dep/target/release"
+run doc --test --profile release
+stderr empty
+stdout contains Doc tests passed: 3 example(s)
+sh cmp "{{dir}}/shorthand.tli" "{{dir}}/vendor/dep/target/release/profile_dep.tli"
+step doc-unknown-profile
+run doc --test --profile fast
+exit nonzero
+stdout empty
+stderr match ^unknown profile 'fast'; expected dev or release$
+step doc-site-release
+run doc --profile release
+stderr empty
+stdout contains Wrote
+test -s "{{dir}}/target/doc/index.html"
+step doc-site-unknown-profile
+run doc --profile fast
+exit nonzero
+stdout empty
+stderr match ^unknown profile 'fast'; expected dev or release$
+
+case package-profile-clean
+sh cp -R "{{work}}/profiles/." "{{dir}}/"
+cwd .
+run build
+stderr empty
+run build --release
+stderr empty
+run clean --dry-run
+stderr empty
+stdout contains target/dev/profile_app.s
+stdout contains target/release/profile_app.s
+test -s "{{dir}}/target/dev/profile_app{{exe}}"
+test -s "{{dir}}/target/release/profile_app{{exe}}"
+run clean
+stderr empty
+test ! -e "{{dir}}/target/dev"
+test ! -e "{{dir}}/target/release"
+run clean
+stdout empty
+stderr empty
+
+case standalone-profile-command
+each check lint test
+file standalone.tl
+(cfg test (import stdlib.test))
+(define (main) : i64 0)
+(test standalone (test.assert-i64-eq 42 42 "standalone"))
+end-file
+run {{each}} "{{dir}}/standalone.tl"
+stderr not-contains error
+run {{each}} "{{dir}}/standalone.tl" --release
+exit nonzero
+stdout empty
+stderr match ^--profile and --release are only valid in package mode$
+run {{each}} --profile dev "{{dir}}/standalone.tl"
+exit nonzero
+stdout empty
+stderr match ^--profile and --release are only valid in package mode$
+
+case batch-profile-command
+each check test
+cwd .
+file standalone.tl
+(cfg test (import stdlib.test))
+(define (main) : i64 0)
+(test standalone (test.assert-i64-eq 42 42 "standalone"))
+end-file
+file inputs.txt
+standalone.tl
+end-file
+run {{each}} --batch "{{dir}}/inputs.txt"
+stderr not-contains error
+run {{each}} --batch "{{dir}}/inputs.txt" --release
+exit nonzero
+stdout empty
+stderr match ^--profile and --release are only valid in package mode$
+run {{each}} --profile dev --batch "{{dir}}/inputs.txt"
+exit nonzero
+stdout empty
+stderr match ^--profile and --release are only valid in package mode$
+
+case standalone-and-batch-doctest-profile
+cwd .
+file standalone.tl
+;# ```tl
+;# (define (main) : i64 0)
+;# ```
+(define (main) : i64 0)
+end-file
+file inputs.txt
+standalone.tl
+end-file
+run doc --test "{{dir}}/standalone.tl"
+stderr empty
+stdout contains Doc tests passed: 1 example(s)
+run doc --test --batch "{{dir}}/inputs.txt"
+stderr empty
+stdout contains Doc tests passed: 1 example(s)
+run doc --test "{{dir}}/standalone.tl" --release
+exit nonzero
+stdout empty
+stderr match ^--profile and --release are only valid in package mode$
+run doc --test --profile dev "{{dir}}/standalone.tl"
+exit nonzero
+stdout empty
+stderr match ^--profile and --release are only valid in package mode$
+run doc --test --batch "{{dir}}/inputs.txt" --release
+exit nonzero
+stdout empty
+stderr match ^--profile and --release are only valid in package mode$
+run doc --test --profile dev --batch "{{dir}}/inputs.txt"
+exit nonzero
+stdout empty
+stderr match ^--profile and --release are only valid in package mode$
+
+case missing-package-profile
+each build run check lint test doc
+run {{each}} --profile
+exit nonzero
+stdout empty
+stderr match ^--profile requires a value$
+stderr count = 1 .
+run {{each}} --profile --release
+exit nonzero
+stdout empty
+stderr match ^--profile requires a value$
+stderr count = 1 .
+
+case missing-doctest-profile
+run doc --test --profile
+exit nonzero
+stdout empty
+stderr match ^--profile requires a value$
+stderr count = 1 .
+run doc --test --profile --release
+exit nonzero
+stdout empty
+stderr match ^--profile requires a value$
+stderr count = 1 .

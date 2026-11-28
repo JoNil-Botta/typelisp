@@ -1,0 +1,2 @@
+path	required	advisory	reason
+tests/integration/c60_cold_attr.tl	stage2-public-tool-affected-map,stage2-public-tool-cli-transcripts-1,stage2-public-tool-cli-transcripts-2,stage2-public-tool-cli-transcripts-3,stage2-public-tool-corpora	@corpus	Primary source for the public IR check of cold function metadata through macro expansion and specialization.

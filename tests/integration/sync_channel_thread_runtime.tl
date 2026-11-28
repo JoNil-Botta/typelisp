@@ -1,3 +1,4 @@
+(import stdlib.iterator)
 (import stdlib.sync)
 (import (sync.channel i64) as channel_i64)
 (import stdlib.thread)
@@ -162,7 +163,22 @@
           [(ThreadSpawnErr _) 7]
           [(ThreadSpawnOk b) (sync-integration-finish channel a b)])])))
 
+(define (sync-integration-empty-raw-zero?) : bool
+  (let
+    [sentinel : sync.SyncI64Channel (channel_i64.empty-raw)]
+    [count : i64 (channel_i64.raw-field-count)]
+    [raw : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    (for [i (iterator.range 0 count)]
+      (set! (array-ref raw i) -1))
+    (unsafe
+      (sync.i64-channel-store-raw! sentinel (&mut raw) 0))
+    (for [i (iterator.range 0 count)]
+      (when (not (= (array-ref raw i) 0)) (return false)))
+    true))
+
 (define (main) : i64
-  (match (channel_i64.create 8)
-    [(CreateErr _) 1]
-    [(CreateOk channel) (sync-integration-run channel)]))
+  (if (sync-integration-empty-raw-zero?)
+    (match (channel_i64.create 8)
+      [(CreateErr _) 1]
+      [(CreateOk channel) (sync-integration-run channel)])
+    8))

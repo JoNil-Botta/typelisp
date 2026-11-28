@@ -106,7 +106,7 @@ stderr empty
 step build-and-run-package-defaults
 run build --manifest-path "{{dir}}/pkg/typelisp.pkg"
 stderr empty
-exec "{{dir}}/pkg/target/release/host_defaults{{exe}}"
+exec "{{dir}}/pkg/target/dev/host_defaults{{exe}}"
 exit 42
 run run --manifest-path "{{dir}}/pkg/typelisp.pkg"
 exit 42
@@ -151,14 +151,17 @@ stderr contains TypeLisp tests: 1 passed; 0 failed
 stdout empty
 
 step doc-defaults
-file -x documented.tl
+file -x pkg/src/documented.tl
 ;: ```typelisp
-;: (cfg {{host}} (define (host-value) : i64 42))
+;: (cfg {{platform}} (define (host-value) : i64 42))
 ;: (define (use) : i64 (host-value))
 ;: ```
-(define (main) : i64 42)
+(define (documented-value) : i64 42)
 end-file
-run doc --test "{{dir}}/documented.tl"
+run doc --test "{{dir}}/pkg/src/documented.tl"
+stderr empty
+stdout contains Doc tests passed: 1
+run doc --test --manifest-path "{{dir}}/pkg/typelisp.pkg"
 stderr empty
 stdout contains Doc tests passed: 1
 

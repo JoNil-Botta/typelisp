@@ -42,6 +42,12 @@
 (defenum CompilerSemanticCheckInput
   (Source String String)
   (PreparedSource String String CompilerCheckPreparation)
+  (PreparedPackageSource
+    String
+    String
+    String
+    compiler_load.CompilerPkgDeps
+    CompilerCheckPreparation)
   (File String)
   (PackageEntry String String compiler_load.CompilerPkgDeps bool))
 
@@ -393,11 +399,14 @@
   [path : String]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheck
-  (compiler-check-source-with-roots-and-cfg
-    (owned_view.compiler-owned-shared-view path)
-    (compiler_load.compiler-load-session-read-source-text path)
-    stdlib-roots
-    cfgs))
+  (match (compiler_load.compiler-load-try-read-file-text (& path))
+    [(OkIoString source)
+      (compiler-check-source-with-roots-and-cfg path source stdlib-roots cfgs)]
+    [(ErrIoString _)
+      (Err
+        (cdiag.compiler-diagnostic-list-box-single
+          (compiler_load.compiler-load-source-read-diagnostic (& path)))
+        (cdiag.compiler-advisory-list-empty))]))
 
 (define (compiler-check-package-source-with-prelude-recovery
   [path : String]
@@ -408,7 +417,9 @@
   [stdlib-roots : svec.Vec]
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheck
+  [cfgs : sym_i64_env.SymI64Env]
+  [job-state : tc.TcJobState]
+  [preparation : CompilerCheckPreparation]) : ResultCompilerCheck
   (match (parser.parse-ast-source-recovery-diagnostic-with-cfg
     (owned_view.compiler-owned-shared-view path)
     (& source)
@@ -416,7 +427,7 @@
     [(Fatal diagnostics)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
-        (Err diagnostics (compiler-check-serial-advisories)))]
+        (Err diagnostics (compiler-check-advisories-for-job job-state)))]
     [(Parsed program diagnostics)
       (let
         [parse-identity : compiler_load.CompilerLoadParseIdentity
@@ -448,8 +459,8 @@
               "typecheck-prefix-check"
               stdlib-roots
               cfgs)
-            (tc.tc-serial-job-state)
-            CompilerCheckPreparation.Unchanged)))]))
+            job-state
+            preparation)))]))
 
 (define (compiler-check-target-from-cfgs [cfgs : sym_i64_env.SymI64Env]) : target_cfg.CompilerTargetCfg
   (if (cfg_core.compiler-cfg-enabled? cfgs (ci.intern "windows"))
@@ -486,11 +497,17 @@
       [(Err tli-msg) (Err tli-msg)]
       [(Ok)
         (if overlay-active
-          (begin
+          (let
+            [profile
+              (compiler_load.compiler-load-session-package-profile
+                (& load-state))]
             (compiler_load.compiler-load-session-state-set-dependency-tlci-force-source!
               load-state
               true)
-            (tli_cli.tli-check-overlay-package-dep-tlci! manifest-dir deps))
+            (tli_cli.tli-check-overlay-package-dep-tlci!
+              profile
+              manifest-dir
+              deps))
           (if (compiler_dependency_tlci.compiler-dependency-tlci-force-source?)
             (tli_cli.ResultTliCatalogOpen.Ok)
             (tli_cli.tli-open-transitive-package-deps-for-session!
@@ -525,16 +542,18 @@
       [(Ok) unit]
       [(Err _) unit])))
 
-(define (compiler-check-package-source-with-roots-and-cfg
+(define (compiler-check-package-source-prepared
   [path : String]
   [source : String]
   [stdlib-roots : svec.Vec]
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheck
+  [cfgs : sym_i64_env.SymI64Env]
+  [job-state : tc.TcJobState]
+  [preparation : CompilerCheckPreparation]) : ResultCompilerCheck
   (begin
     (compiler-check-reset-pools!)
-    (tc.tc-job-state-reset-advisories! (tc.tc-serial-job-state))
+    (tc.tc-job-state-reset-advisories! job-state)
     (cfg compile-profile (compiler-check-profile-start))
     (match (compiler-check-package-open-tli-and-deps!
       (& path)
@@ -548,7 +567,7 @@
         (Err
           (cdiag.compiler-diagnostic-list-box-single
             (box (cdiag.compiler-diagnostic-at-start path tli-msg)))
-          (compiler-check-serial-advisories))]
+          (compiler-check-advisories-for-job job-state))]
       [(Ok)
         (let
           [result : ResultCompilerCheck
@@ -570,15 +589,34 @@
                   stdlib-roots
                   manifest-dir
                   deps
-                  cfgs)]
+                  cfgs
+                  job-state
+                  preparation)]
               [(Err diag)
                 (begin
                   (cfg compile-profile (compiler-check-profile-finish "load"))
                   (Err
                     (cdiag.compiler-diagnostic-list-box-single diag)
-                    (compiler-check-serial-advisories)))])]
+                    (compiler-check-advisories-for-job job-state)))])]
           (compiler-check-package-finish-tli-and-deps!)
           result)])))
+
+(define (compiler-check-package-source-with-roots-and-cfg
+  [path : String]
+  [source : String]
+  [stdlib-roots : svec.Vec]
+  [manifest-dir : String]
+  [deps : compiler_load.CompilerPkgDeps]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheck
+  (compiler-check-package-source-prepared
+    path
+    source
+    stdlib-roots
+    manifest-dir
+    deps
+    cfgs
+    (tc.tc-serial-job-state)
+    CompilerCheckPreparation.Unchanged))
 
 (define (compiler-check-package-begin! [job-state : tc.TcJobState]) : unit
   (begin
@@ -679,6 +717,16 @@
             path
             source
             request.stdlib-roots
+            parse-cfgs
+            job
+            prepare)]
+        [(PreparedPackageSource path source manifest-dir deps prepare)
+          (compiler-check-package-source-prepared
+            path
+            source
+            request.stdlib-roots
+            manifest-dir
+            deps
             parse-cfgs
             job
             prepare)]

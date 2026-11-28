@@ -25757,23 +25757,23 @@
       (unsafe
         (arena.from-raw-handle (tc-job-state-field job-state owner-arena i64)))]
     [cell : (__tl_dyn-array TcAggLayoutCacheStateData)
-      (in-arena owner (__tl_make-array TcAggLayoutCacheStateData 1))]
+      (in-arena
+        owner
+        (__tl_make-array
+          (TcAggLayoutCacheStateData
+            (arena.raw-handle owner)
+            (unsafe
+              (arena.from-raw-handle 0))
+            (__tl_make-array TcAggLayoutCacheSlot 0)
+            (__tl_make-array i64 0)
+            -1
+            -1)))]
     [address : i64
       (cast
         (unsafe
           (ptr->int
             (ptr-cast (__tl_array-data cell) : (Ptr TcAggLayoutCacheStateData))))
         : i64)]
-    (set!
-      (array-ref cell 0)
-      (TcAggLayoutCacheStateData
-        (arena.raw-handle owner)
-        (unsafe
-          (arena.from-raw-handle 0))
-        (__tl_make-array TcAggLayoutCacheSlot 0)
-        (__tl_make-array i64 0)
-        -1
-        -1))
     (tc-job-state-set-agg-layout-cache-address! job-state address)
     (TcAggLayoutCacheState address)))
 
@@ -33433,52 +33433,6 @@
     import-unqualified
     name-id)
   (tc-bind-unsafe-id env (tc-module-name-id-by-id alias-id name-id) ty))
-
-;; Raw arena authority is a constructor effect of the canonical declaration,
-;; not a property inferred from the spelling of a call. All environment routes
-;; preserve the ordinary unsafe-callable marker, including import aliases and
-;; hygienic definition-site lookup. Inert integer reads remain ordinary values.
-(define (tc-struct-constructor-unsafe? [nominal-id : i64]) : bool
-  (tc-arena-nominal-name-id? nominal-id))
-
-(define (tc-bind-struct-constructor-id
-  [env : TcTypeEnv]
-  [binding-id : i64]
-  [nominal-id : i64]
-  [ty : ast.AstType]) : TcTypeEnv
-  (if (tc-struct-constructor-unsafe? nominal-id)
-    (tc-bind-unsafe-id env binding-id ty)
-    (tc-bind-id env binding-id ty)))
-
-(define (tc-bind-import-alias-struct-id
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [alias-id : i64]
-  [importer-module-id : i64]
-  [source-module-id : i64]
-  [import-unqualified : bool]
-  [name-id : i64]
-  [ty : ast.AstType]) : TcTypeEnv
-  (if (tc-struct-constructor-unsafe?
-    (tc-module-name-id-by-id source-module-id name-id))
-    (tc-bind-import-alias-value-unsafe-id
-      ctx
-      env
-      alias-id
-      importer-module-id
-      source-module-id
-      import-unqualified
-      name-id
-      ty)
-    (tc-bind-import-alias-value-id
-      ctx
-      env
-      alias-id
-      importer-module-id
-      source-module-id
-      import-unqualified
-      name-id
-      ty)))
 
 (define (tc-struct-cleanup-function-type [struct-ty : ast.AstType]) : ast.AstType
   (tc-fn1 struct-ty (Unit)))
@@ -55777,9 +55731,8 @@
           (& constructor-ty))
         (Ok
           (tc-bind-struct-cleanup-module-id
-            (tc-bind-struct-constructor-id
+            (tc-bind-id
               env
-              (tc-module-name-id-by-id module-id name)
               (tc-module-name-id-by-id module-id name)
               constructor-ty)
             module-id
@@ -55804,9 +55757,8 @@
           (& constructor-ty))
         (Ok
           (tc-bind-struct-cleanup-module-id
-            (tc-bind-struct-constructor-id
+            (tc-bind-id
               env
-              (tc-module-name-id-by-id module-id name)
               (tc-module-name-id-by-id module-id name)
               constructor-ty)
             module-id
@@ -56132,7 +56084,7 @@
         (Ok
           (tc-bind-struct-cleanup-import-alias
             ctx
-            (tc-bind-import-alias-struct-id
+            (tc-bind-import-alias-value-id
               ctx
               env
               alias
@@ -56158,7 +56110,7 @@
         (Ok
           (tc-bind-struct-cleanup-import-alias
             ctx
-            (tc-bind-import-alias-struct-id
+            (tc-bind-import-alias-value-id
               ctx
               env
               alias
@@ -56976,11 +56928,7 @@
                   (tc-module-view-note-type!
                     ctx
                     (tc-global-shared-view constructor-ty))]
-                (tc-bind-struct-constructor-id
-                  env
-                  name
-                  (tc-module-name-id-by-id (tc-context-module-id ctx) name)
-                  constructor-ty))
+                (tc-bind-id env name constructor-ty))
               env)
             seen
             cleanup
@@ -57002,11 +56950,7 @@
                   (tc-module-view-note-type!
                     ctx
                     (tc-global-shared-view constructor-ty))]
-                (tc-bind-struct-constructor-id
-                  env
-                  name
-                  (tc-module-name-id-by-id (tc-context-module-id ctx) name)
-                  constructor-ty))
+                (tc-bind-id env name constructor-ty))
               env)
             seen
             cleanup
@@ -90040,10 +89984,8 @@
           "typecheck: set! tuple element requires mutable tuple access"))]
     [_ (Err "typecheck: set! tuple element requires tuple")]))
 
-;; Writing raw representation or exposing an exclusive projection can create
-;; authority just as construction can: an Arena handle, or a sealed handle type
-;; outside its module family (#9783). Check the resolved receiver at the
-;; ordinary typed-place boundary; reads of the fields remain safe.
+;; Mutation or an exclusive projection of a cleanup-owning sealed handle
+;; outside its module family requires unsafe authority (#9783).
 (define (tc-struct-field-mutation-admission
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -90051,19 +89993,16 @@
   [field-id : i64]) : ResultTcUnit
   (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
     [(or (ast.AstType.Struct name) (ast.AstType.StructArgs name _))
-      (cond
-        [(tc-arena-nominal-name-id? name)
-          (tc-require-unsafe ctx env "mutation of Arena.handle")]
-        [(tc-sealed-handle-foreign? ctx env name)
-          (let
-            [_
-              (when
-                (tc-job-state-opaque-fields? (tc-context-job-state ctx))
-                (let
-                  [_ (try (tc-struct-field-type-id ctx name field-id))]
-                  unit))]
-            (tc-sealed-handle-require-unsafe ctx env name "field mutation"))]
-        [else ResultTcUnit.Ok])]
+      (if (tc-sealed-handle-foreign? ctx env name)
+        (let
+          [_
+            (when
+              (tc-job-state-opaque-fields? (tc-context-job-state ctx))
+              (let
+                [_ (try (tc-struct-field-type-id ctx name field-id))]
+                unit))]
+          (tc-sealed-handle-require-unsafe ctx env name "field mutation"))
+        ResultTcUnit.Ok)]
     [(ast.AstType.Ref _ referent)
       (tc-struct-field-mutation-admission
         ctx
@@ -103236,6 +103175,11 @@
   ;; (macro-decl-list-events). A zero-copy suffix slice shares its parent's
   ;; array: the slots are the same, and positions outside the slice are ignored.
   (events (__tl_dyn-array i64))
+  ;; All rows of one splice have the same expansion depth, including rows
+  ;; after a module marker. The suspended suffix keeps its own depth.
+  (expansion-depth i64)
+  (expansion-generation i64)
+  (parent-expansion i64)
   (next i64))
 
 (defstruct MacroSegmentedProgramViewData
@@ -103318,13 +103262,23 @@
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
   [events : (__tl_dyn-array i64)]
+  [expansion-depth : i64]
+  [expansion-generation : i64]
+  [parent-expansion : i64]
   [next : i64]) : i64
   (let
     [cell : (__tl_dyn-array MacroProgramSegmentNodeData)
       (__tl_make-array MacroProgramSegmentNodeData 1)]
     (set!
       (array-ref cell 0)
-      (MacroProgramSegmentNodeData decls paths events next))
+      (MacroProgramSegmentNodeData
+        decls
+        paths
+        events
+        expansion-depth
+        expansion-generation
+        parent-expansion
+        next))
     (cast
       (unsafe
         (ptr->int
@@ -103345,6 +103299,9 @@
           (tc-global-shared-view decls)
           paths
           (macro-decl-list-events (& decls))
+          0
+          0
+          0
           0))]
     [cell : (__tl_dyn-array MacroSegmentedProgramViewData)
       (__tl_make-array MacroSegmentedProgramViewData 1)]
@@ -103452,6 +103409,39 @@
     [node : MacroProgramSegmentNodeData
       (macro-program-segment-node-data data.head)]
     (ast.ast-decl-list-ref node.decls data.cursor)))
+
+(define (macro-segmented-program-current-expansion-depth [state : TcJobState]) : i64
+  (if (macro-segmented-program-active? state)
+    (let
+      [data : MacroSegmentedProgramViewData
+        (macro-segmented-program-normalize-head! state)]
+      (macro-program-segment-node-data data.head).expansion-depth)
+    0))
+
+(define (macro-segmented-program-next-generation [state : TcJobState]) : i64
+  (let
+    [address : i64 (tc-job-state-macro-program-view-address state)]
+    (if (> address 0)
+      (+ (macro-segmented-program-view-data address).generation 1)
+      0)))
+
+;; The generation names the original producer of a memo entry. `next`
+;; tracks queued siblings, so follow the expansion parents to find ancestors.
+(define (macro-segmented-program-expansion-active?
+  [state : TcJobState]
+  [generation : i64]) : bool
+  (let
+    [address : i64 (tc-job-state-macro-program-view-address state)]
+    (when (or (<= generation 0) (<= address 0)) (return false))
+    (let
+      [cursor : i64 (macro-segmented-program-view-data address).head]
+      (while (> cursor 0)
+        (let
+          [node : MacroProgramSegmentNodeData
+            (macro-program-segment-node-data cursor)]
+          (when (= node.expansion-generation generation) (return true))
+          (set! cursor node.parent-expansion)))
+      false)))
 
 (define (macro-segmented-program-prepend-current
   [state : TcJobState]
@@ -103585,7 +103575,8 @@
 (define (macro-segmented-program-splice-current-in-scratch!
   [state : TcJobState]
   [middle : ast.AstDeclList]
-  [middle-paths : ast.AstDeclPathList]) : unit
+  [middle-paths : ast.AstDeclPathList]
+  [macro-expansion? : bool]) : unit
   (let
     [address : i64 (tc-job-state-macro-program-view-address state)]
     [data : MacroSegmentedProgramViewData
@@ -103607,6 +103598,9 @@
             false)
           (macro-segmented-path-drop node-paths next-index)
           node.events
+          node.expansion-depth
+          node.expansion-generation
+          node.parent-expansion
           node.next)
         node.next)]
     [middle-count : i64 (ast.ast-decl-list-len (& middle))]
@@ -103621,6 +103615,13 @@
           stable-middle
           stable-paths
           middle-events
+          (if macro-expansion?
+            (+ node.expansion-depth 1)
+            0)
+          (+ data.generation 1)
+          (if macro-expansion?
+            data.head
+            0)
           suffix-head)
         suffix-head)]
     (begin
@@ -103656,7 +103657,8 @@
 (define (macro-segmented-program-splice-current!
   [state : TcJobState]
   [middle : ast.AstDeclList]
-  [middle-paths : ast.AstDeclPathList]) : unit
+  [middle-paths : ast.AstDeclPathList]
+  [macro-expansion? : bool]) : unit
   (let
     [macro-state : TcMacroState (tc-job-state-macro-state state)]
     [storage : i64 (macro-expand-scratch-arena-get macro-state)]
@@ -103666,7 +103668,8 @@
       (macro-segmented-program-splice-current-in-scratch!
         state
         middle
-        middle-paths))))
+        middle-paths
+        macro-expansion?))))
 
 (define (macro-segmented-program-decl-count [state : TcJobState]) : i64
   (let
@@ -104807,6 +104810,11 @@
         [_ false])]
     [_ false]))
 
+(define (macro-decl-decls-placeholder? [decl : (& ast.AstDecl)]) : bool
+  (match decl
+    [(Import _ (Spec (MacroDecls _ _) _ _ _ _)) true]
+    [_ false]))
+
 (define (macro-expansion-wrap-expr-id
   [expr-id : i64]
   [path-id : i64]
@@ -105500,7 +105508,7 @@
 
 (defenum MacroMaybeSpliceDecls
   (No)
-  (Some ast.AstDeclList))
+  (Some ast.AstDeclList i64))
 
 ;; Decls-macro splice memo. A Decls-position macro call splices its generated
 ;; declarations inline, and the demand-driven walk rebuilds the whole-program
@@ -105509,8 +105517,9 @@
 ;; symbols builder before gen-normalize's registry dedup ever runs (the retired
 ;; fixed-point loop normalized between passes, so its symbols never saw the
 ;; transient duplicate). Memoize the first expansion per identity: a repeat
-;; splice with a structurally identical payload contributes nothing (and skips
-;; the context rebuild entirely); an incompatible payload errors exactly like
+;; splice with a structurally identical payload deduplicates materialized
+;; rows. Pending calls are retained if the producer is still an ancestor.
+;; An incompatible payload errors exactly like
 ;; gen-register-generated-decl. Same lifecycle as the module memo: reset per
 ;; program, self-clears on intern-generation change. Admission is scoped by
 ;; the owning module and output segment as well as the expansion identity.
@@ -105518,6 +105527,7 @@
   (capacity i64)
   (keys (__tl_dyn-array i64))
   (decls (__tl_dyn-array ast.AstDeclList))
+  (producer-generations (__tl_dyn-array i64))
   (count i64)
   (owner-table-id i64)
   (owner-reset-generation i64)
@@ -105528,6 +105538,7 @@
     1024
     (__tl_make-array i64 0)
     (__tl_make-array ast.AstDeclList 0)
+    (__tl_make-array i64 0)
     0
     -1
     -1
@@ -105594,7 +105605,10 @@
                     (__tl_make-array i64 (deref memo).capacity))
                   (set!
                     (deref memo).decls
-                    (__tl_make-array ast.AstDeclList (deref memo).capacity)))]
+                    (__tl_make-array ast.AstDeclList (deref memo).capacity))
+                  (set!
+                    (deref memo).producer-generations
+                    (__tl_make-array i64 (deref memo).capacity)))]
               [i : i64 0]
               ;; Re-arming clears only the keys. Every read of `decls` needs a
               ;; matching key and `put!` replaces the element, so a previous
@@ -105676,7 +105690,8 @@
                   (Some
                     (tc-global-array-element-shared-view
                       (deref memo).decls
-                      cursor)))
+                      cursor)
+                    (array-ref (deref memo).producer-generations cursor)))
                 (set! done true))
               (begin
                 (set! cursor (bit-and (+ cursor 1) (- (deref memo).capacity 1)))
@@ -105687,7 +105702,8 @@
   [state : TcMacroState]
   [scope : i64]
   [identity : (& str)]
-  [decls : ast.AstDeclList]) : unit
+  [decls : ast.AstDeclList]
+  [producer-generation : i64]) : unit
   (let
     [identity-id : i64 (macro-generated-decls-identity-id state scope identity)]
     ;; R3-P2b: see macro-generated-module-memo-put!.
@@ -105715,6 +105731,9 @@
                   (set!
                     (array-ref (deref memo).decls cursor)
                     (tc-global-shared-view decls))
+                  (set!
+                    (array-ref (deref memo).producer-generations cursor)
+                    producer-generation)
                   (set! (deref memo).count (+ (deref memo).count 1))
                   (set! done true))
                 (if (= slot key)
@@ -105722,6 +105741,9 @@
                     (set!
                       (array-ref (deref memo).decls cursor)
                       (tc-global-shared-view decls))
+                    (set!
+                      (array-ref (deref memo).producer-generations cursor)
+                      producer-generation)
                     (set! done true))
                   (begin
                     (set!
@@ -105972,15 +105994,17 @@
         [(None) ""])]))
 
 ;; Resolve a Decls-macro splice against the memo: first expansion is recorded
-;; and spliced; a structurally identical repeat contributes an empty splice; an
-;; incompatible repeat errors with the same diagnostic gen-normalize's registry
-;; would produce.
+;; and spliced; an incompatible repeat errors with the same diagnostic
+;; gen-normalize's registry would produce. Identical payloads deduplicate, but
+;; pending Decls calls still need to expand when an ancestor owns the memo.
+;; Once that ancestor finishes, independent repeats deduplicate as before.
 (defenum MacroDeclsSpliceAdmission
-  (SpliceAdmission bool)
+  (SpliceAdmission bool bool)
   (SpliceAdmissionError (Box cdiag.CompilerDiagnostic)))
 
 (define (macro-decls-splice-admit
   [expr-bases : i64]
+  [job : TcJobState]
   [state : TcMacroState]
   [scope : i64]
   [identity : (& str)]
@@ -105992,13 +106016,16 @@
         state
         scope
         identity
-        (owned_view.compiler-owned-reference-shared-view wrapped))
-      (SpliceAdmission true)]
-    [(Some existing)
+        (owned_view.compiler-owned-reference-shared-view wrapped)
+        (macro-segmented-program-next-generation job))
+      (SpliceAdmission true false)]
+    [(Some existing generation)
       (if (macro-generated-decls-splice-equal?
         existing
         (owned_view.compiler-owned-reference-shared-view wrapped))
-        (SpliceAdmission false)
+        (SpliceAdmission
+          false
+          (macro-segmented-program-expansion-active? job generation))
         (SpliceAdmissionError
           (let
             [diag : cdiag.CompilerDiagnostic
@@ -106019,7 +106046,8 @@
   (owner i64)
   (segment i64)
   (decls ast.AstDeclList)
-  (emit bool))
+  (emit bool)
+  (replay-pending bool))
 
 ;; Flattened output may switch to an explicit module and later return to a
 ;; previous one. Admit each nonempty segment between markers in its own scope,
@@ -106029,13 +106057,14 @@
 ;; declarations following the splice.
 (define (macro-decls-splice-scoped-modules
   [expr-bases : i64]
-  [state : TcMacroState]
+  [job : TcJobState]
   [module-id : i64]
   [identity : String]
   [wrapped : ast.AstDeclList]
   [decl-path : String]
   [call-expr : ast.AstExpr]) : ResultMacroDeclExpansion
   (let
+    [state : TcMacroState (tc-job-state-macro-state job)]
     [count : i64 (ast.ast-decl-list-len (& wrapped))]
     [groups : (__tl_dyn-array MacroDeclsSpliceGroup)
       (__tl_make-array MacroDeclsSpliceGroup count)]
@@ -106060,6 +106089,7 @@
                   current
                   segment
                   (ast.ast-decl-list-new)
+                  false
                   false))
               (+= group-count 1))
             (ast.ast-decl-list-push-from
@@ -106071,13 +106101,16 @@
         [group (& (array-ref groups i))]
         (match (macro-decls-splice-admit
           expr-bases
+          job
           state
           (macro-decls-segment-scope state group.owner group.segment)
           (& identity)
           (& group.decls)
           (& call-expr))
           [(SpliceAdmissionError diag) (return (Err diag))]
-          [(SpliceAdmission admitted) (set! (array-ref groups i).emit admitted)])))
+          [(SpliceAdmission admitted replay-pending)
+            (set! (array-ref groups i).emit admitted)
+            (set! (array-ref groups i).replay-pending replay-pending)])))
     (let
       [out : ast.AstDeclList (ast.ast-decl-list-with-capacity count)]
       [index : i64 -1]
@@ -106095,7 +106128,12 @@
               (or (< index 0) (!= (array-ref groups index).segment segment))
               (+= index 1))
             (when
-              (array-ref groups index).emit
+              (or
+                (array-ref groups index).emit
+                (and
+                  (array-ref groups index).replay-pending
+                  (macro-decl-decls-placeholder?
+                    (ast.ast-decl-list-ref-borrowed (& wrapped) i))))
               (ast.ast-decl-list-push-from
                 (&mut out)
                 (& wrapped.slots)
@@ -106107,7 +106145,7 @@
 
 (define (macro-decls-splice-with-memo
   [expr-bases : i64]
-  [state : TcMacroState]
+  [job : TcJobState]
   [module-id : i64]
   [identity : String]
   [wrapped : ast.AstDeclList]
@@ -106119,7 +106157,7 @@
       (return
         (macro-decls-splice-scoped-modules
           expr-bases
-          state
+          job
           module-id
           identity
           wrapped
@@ -106127,19 +106165,38 @@
           call-expr))))
   (match (macro-decls-splice-admit
     expr-bases
-    state
-    (macro-decls-segment-scope state module-id 0)
+    job
+    (tc-job-state-macro-state job)
+    (macro-decls-segment-scope (tc-job-state-macro-state job) module-id 0)
     (& identity)
     (& wrapped)
     (& call-expr))
     [(SpliceAdmissionError diag) (Err diag)]
-    [(SpliceAdmission admitted)
-      (if admitted
-        (let
-          [paths : ast.AstDeclPathList
-            (macro-paths-for-decls state (& wrapped) decl-path)]
-          (Ok wrapped paths))
-        (Ok (ast.ast-decl-list-new) (ast.ast-decl-path-list-new)))]))
+    [(SpliceAdmission admitted replay-pending)
+      (unless
+        (or admitted replay-pending)
+        (return (Ok (ast.ast-decl-list-new) (ast.ast-decl-path-list-new))))
+      (let
+        [out : ast.AstDeclList
+          (if admitted
+            wrapped
+            (let
+              [pending : ast.AstDeclList (ast.ast-decl-list-new)]
+              (for [i (iterator.range 0 (ast.ast-decl-list-len (& wrapped)))]
+                (when
+                  (macro-decl-decls-placeholder?
+                    (ast.ast-decl-list-ref-borrowed (& wrapped) i))
+                  (ast.ast-decl-list-push-from
+                    (&mut pending)
+                    (& wrapped.slots)
+                    (+ wrapped.offset i))))
+              pending))]
+        [paths : ast.AstDeclPathList
+          (macro-paths-for-decls
+            (tc-job-state-macro-state job)
+            (& out)
+            decl-path)]
+        (Ok out paths))]))
 
 (define (macro-decl-generated? [decl : (& ast.AstDecl)]) : bool
   (match (ast.ast-decl-generated-meta decl)
@@ -124422,7 +124479,13 @@
               scratch-mark)]
           [nbody : i64 (try nbody-result)]
           (Ok
-            (ast.ast-decl-def-fn-metadata-id name params ret nbody (& metadata))))]
+            (ast.ast-decl-def-fn-metadata-id
+              decl-meta
+              name
+              params
+              ret
+              nbody
+              (& metadata))))]
       [(DefMacro decl-meta name params ret body-id)
         (let
           [expanded : i64
@@ -125682,7 +125745,7 @@
                                                 span)]
                                             (macro-decls-splice-with-memo
                                               (tc-context-expr-bases call-ctx)
-                                              (tc-context-macro-state call-ctx)
+                                              (tc-context-job-state call-ctx)
                                               module-id
                                               identity
                                               wrapped
@@ -125732,6 +125795,19 @@
   [span : ast.AstSourceSpan]
   [cfgs : sym_i64_env.SymI64Env]
   [decl-path : String]) : ResultMacroDeclExpansion
+  (when
+    (<
+      (macro-expand-depth-limit)
+      (macro-segmented-program-current-expansion-depth
+        (tc-context-job-state ctx)))
+    (let
+      [diag : cdiag.CompilerDiagnostic
+        (ctfe_support.ctfe-diagnostic-at-expr
+          (MacroDepth)
+          (& (ast.AstExpr.Spanned call-id span))
+          "macro expansion exceeded depth limit")]
+      (return
+        (Err (box (cdiag.compiler-diagnostic-with-path (& diag) (& decl-path)))))))
   (let
     [site : (Tuple i64 i64)
       (match (tc-context-expr-get ctx call-id)
@@ -128296,10 +128372,9 @@
                           cfgs
                           decl-path)
                           [(Ok expanded expanded-paths)
-                            ;; A deduplicated splice (see
-                            ;; macro-decls-splice-with-memo) expands to nothing:
-                            ;; drop the placeholder and keep walking -- there is
-                            ;; no new name, so no context rebuild is needed.
+                            ;; An empty or fully deduplicated splice needs no
+                            ;; context rebuild. Drop the placeholder and keep
+                            ;; walking.
                             (match (ast.ast-decl-list-step expanded)
                               [(Nil)
                                 (macro-segmented-program-advance! walk-state)]
@@ -128321,7 +128396,8 @@
                                       (macro-segmented-program-splice-current!
                                         walk-state
                                         (tc-global-shared-view expanded)
-                                        (tc-global-shared-view expanded-paths))]
+                                        (tc-global-shared-view expanded-paths)
+                                        true)]
                                     [_commit-marker-prefix : unit
                                       (let
                                         [remaining : i64
@@ -128428,7 +128504,8 @@
                                       (macro-segmented-program-splice-current!
                                         walk-state
                                         (tc-global-shared-view expanded)
-                                        (tc-global-shared-view expanded-paths))]
+                                        (tc-global-shared-view expanded-paths)
+                                        true)]
                                     [generated-ext : MacroMaybeGeneratedModuleExtension
                                       (macro-generated-module-extension
                                         macro-state
@@ -128658,7 +128735,8 @@
                                   (macro-segmented-program-splice-current!
                                     walk-state
                                     (tc-global-shared-view materialized-decls)
-                                    (tc-global-shared-view materialized-paths))]
+                                    (tc-global-shared-view materialized-paths)
+                                    false)]
                                 ;; An import of an already-loaded module loads
                                 ;; nothing: it materializes only its alias
                                 ;; markers, which take the same incremental

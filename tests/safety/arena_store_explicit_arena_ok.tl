@@ -15,7 +15,7 @@
         (arena.tl_arena_make_small))]
     (in-arena
       (unsafe
-        (arena.Arena facts))
+        (arena.from-raw-handle facts))
       (svec.push-ref! (&mut names) (string.int->string n)))))
 
 (define (main) : i64

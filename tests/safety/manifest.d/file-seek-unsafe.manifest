@@ -1,0 +1,2 @@
+# An existing FileHandle still requires unsafe at the seek boundary.
+file_seek_safe_reject|check-fail|tests/safety/file_seek_safe_reject.tl|-|io/file-seek requires unsafe context

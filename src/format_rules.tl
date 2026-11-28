@@ -16,9 +16,9 @@
   (Ok String)
   (Err tokens.FormatSourceError))
 
-(define (format-rules-node-colon? [node : cst.FormatCst]) : bool
+(define (format-rules-node-colon? [node : (& cst.FormatCst)]) : bool
   (match node
-    [(Atom tok) (= (tokens.format-token-tag tok) (tokens.fmt-tag-colon))]
+    [(Atom (Colon)) true]
     [_ false]))
 
 (define (format-rules-node-symbol-name [node : cst.FormatCst]) : String
@@ -34,7 +34,7 @@
     [(Comment _) true]
     [_ false]))
 
-(define (format-rules-node-colon-list? [node : cst.FormatCst]) : bool
+(define (format-rules-node-colon-list? [node : (& cst.FormatCst)]) : bool
   (match node
     [(List items)
       (match (cst.fmt-cst-list-step (deref items))
@@ -42,7 +42,7 @@
         [_ false])]
     [_ false]))
 
-(define (format-rules-node-spmd-callable? [node : cst.FormatCst]) : bool
+(define (format-rules-node-spmd-callable? [node : (& cst.FormatCst)]) : bool
   (match node
     [(List items)
       (match (cst.fmt-cst-list-step (deref items))
@@ -419,7 +419,7 @@
       buf)))
 
 (define (format-rules-layout-metadata-return-type-tail
-  [metadata : cst.FormatCst]
+  [spmd-callable? : bool]
   [colon : cst.FormatCst]
   [typ : cst.FormatCst]
   [emit : bool]
@@ -429,7 +429,7 @@
   [flat : bool]
   [limit : i64]
   [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
-  (if (format-rules-node-spmd-callable? metadata)
+  (if spmd-callable?
     (format-rules-layout-colon-pair
       colon
       typ
@@ -524,8 +524,7 @@
           (owned_view.compiler-owned-array-element-shared-view slots index)]
         [after-line : i64
           (format-rules-layout-hard-line emit width indent out flat limit buf)]
-        (if (if (format-rules-node-colon?
-          (owned_view.compiler-owned-shared-view node))
+        (if (if (format-rules-node-colon? (& node))
           (< (+ index 1) end)
           false)
           (let
@@ -860,8 +859,7 @@
             flat
             limit
             buf)]
-        (if (if (format-rules-node-colon?
-          (owned_view.compiler-owned-shared-view node))
+        (if (if (format-rules-node-colon? (& node))
           (< (+ index 1) end)
           false)
           (let
@@ -1509,8 +1507,7 @@
               (match (cst.fmt-cst-list-step after-typ)
                 [(Item init after-init)
                   (if (cst.fmt-cst-list-empty? after-init)
-                    (if (format-rules-node-colon?
-                      (owned_view.compiler-owned-shared-view second))
+                    (if (format-rules-node-colon? (& second))
                       (format-rules-layout-let-binding-annotated
                         name
                         second
@@ -1763,12 +1760,90 @@
     limit
     buf))
 
-(define (format-rules-layout-define-metadata-annotated
+(define (format-rules-layout-define-metadata-tail
+  [metadata : cst.FormatCst]
+  [rest : cst.FormatCstList]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  (let
+    [spmd-callable? : bool (format-rules-node-spmd-callable? (& metadata))]
+    [next-col : i64
+      (format-rules-layout-cst
+        metadata
+        emit
+        width
+        indent
+        (format-rules-layout-hard-line emit width indent col flat limit buf)
+        flat
+        limit
+        buf)]
+    (match (cst.fmt-cst-list-step rest)
+      [(Item next tail)
+        (cond
+          [(format-rules-node-colon-list? (& next))
+            (format-rules-layout-define-metadata-tail
+              next
+              tail
+              emit
+              width
+              indent
+              next-col
+              flat
+              limit
+              buf)]
+          [(format-rules-node-colon? (& next))
+            (match (cst.fmt-cst-list-step tail)
+              [(Item typ body)
+                (format-rules-layout-hard-tail
+                  body
+                  emit
+                  width
+                  indent
+                  (format-rules-layout-metadata-return-type-tail
+                    spmd-callable?
+                    next
+                    typ
+                    emit
+                    width
+                    indent
+                    next-col
+                    flat
+                    limit
+                    buf)
+                  flat
+                  limit
+                  buf)]
+              [_
+                (format-rules-layout-hard-tail
+                  rest
+                  emit
+                  width
+                  indent
+                  next-col
+                  flat
+                  limit
+                  buf)])]
+          [else
+            (format-rules-layout-hard-tail
+              rest
+              emit
+              width
+              indent
+              next-col
+              flat
+              limit
+              buf)])]
+      [_ next-col])))
+
+(define (format-rules-layout-define-metadata
   [target : cst.FormatCst]
   [metadata : cst.FormatCst]
-  [colon : cst.FormatCst]
-  [typ : cst.FormatCst]
-  [body-items : cst.FormatCstList]
+  [rest : cst.FormatCstList]
   [emit : bool]
   [width : i64]
   [indent : i64]
@@ -1781,55 +1856,23 @@
     emit
     width
     indent
-    (format-rules-layout-hard-tail
-      body-items
+    (format-rules-layout-define-metadata-tail
+      metadata
+      rest
       emit
       width
       (+ indent 2)
-      (format-rules-layout-metadata-return-type-tail
-        (owned_view.compiler-owned-shared-view metadata)
-        colon
-        typ
+      (format-rules-layout-space-cst
+        target
         emit
         width
-        (+ indent 2)
-        (format-rules-layout-cst
-          metadata
+        indent
+        (format-rules-layout-text
+          "define"
           emit
           width
-          (+ indent 2)
-          (format-rules-layout-hard-line
-            emit
-            width
-            (+ indent 2)
-            (format-rules-layout-space-cst
-              target
-              emit
-              width
-              indent
-              (format-rules-layout-text
-                "define"
-                emit
-                width
-                indent
-                (format-rules-layout-text
-                  "("
-                  emit
-                  width
-                  indent
-                  col
-                  flat
-                  limit
-                  buf)
-                flat
-                limit
-                buf)
-              flat
-              limit
-              buf)
-            flat
-            limit
-            buf)
+          indent
+          (format-rules-layout-text "(" emit width indent col flat limit buf)
           flat
           limit
           buf)
@@ -1900,8 +1943,7 @@
     [(Item target after-target)
       (match (cst.fmt-cst-list-step after-target)
         [(Item second after-second)
-          (if (format-rules-node-colon?
-            (owned_view.compiler-owned-shared-view second))
+          (if (format-rules-node-colon? (& second))
             (match (cst.fmt-cst-list-step after-second)
               [(Item typ body)
                 (if (cst.fmt-cst-list-empty? body)
@@ -1939,70 +1981,18 @@
                   flat
                   limit
                   buf)])
-            (if (format-rules-node-colon-list?
-              (owned_view.compiler-owned-shared-view second))
-              (match (cst.fmt-cst-list-step after-second)
-                [(Item colon after-colon)
-                  (if (format-rules-node-colon?
-                    (owned_view.compiler-owned-shared-view colon))
-                    (match (cst.fmt-cst-list-step after-colon)
-                      [(Item typ body)
-                        (if (cst.fmt-cst-list-empty? body)
-                          (format-rules-layout-first-or-line-form
-                            "define"
-                            rest
-                            emit
-                            width
-                            indent
-                            col
-                            flat
-                            limit
-                            buf)
-                          (format-rules-layout-define-metadata-annotated
-                            target
-                            second
-                            colon
-                            typ
-                            body
-                            emit
-                            width
-                            indent
-                            col
-                            flat
-                            limit
-                            buf))]
-                      [_
-                        (format-rules-layout-first-or-line-form
-                          "define"
-                          rest
-                          emit
-                          width
-                          indent
-                          col
-                          flat
-                          limit
-                          buf)])
-                    (format-rules-layout-first-or-line-form
-                      "define"
-                      rest
-                      emit
-                      width
-                      indent
-                      col
-                      flat
-                      limit
-                      buf))]
-                [_
-                  (format-rules-layout-first-or-line-form
-                    "define"
-                    rest
-                    emit
-                    width
-                    indent
-                    col
-                    flat
-                    limit
-                    buf)])
+            (if (format-rules-node-colon-list? (& second))
+              (format-rules-layout-define-metadata
+                target
+                second
+                after-second
+                emit
+                width
+                indent
+                col
+                flat
+                limit
+                buf)
               (format-rules-layout-define-body
                 target
                 after-target
@@ -2049,8 +2039,7 @@
     [(Item target after-target)
       (match (cst.fmt-cst-list-step after-target)
         [(Item colon after-colon)
-          (if (format-rules-node-colon?
-            (owned_view.compiler-owned-shared-view colon))
+          (if (format-rules-node-colon? (& colon))
             (match (cst.fmt-cst-list-step after-colon)
               [(Item typ body)
                 (if (cst.fmt-cst-list-empty? body)
@@ -2134,8 +2123,7 @@
     [(Item target after-target)
       (match (cst.fmt-cst-list-step after-target)
         [(Item colon after-colon)
-          (if (format-rules-node-colon?
-            (owned_view.compiler-owned-shared-view colon))
+          (if (format-rules-node-colon? (& colon))
             (match (cst.fmt-cst-list-step after-colon)
               [(Item typ body)
                 (if (cst.fmt-cst-list-empty? body)
@@ -2789,8 +2777,7 @@
         limit
         buf)]
     [(Item head rest)
-      (if (format-rules-node-colon?
-        (owned_view.compiler-owned-shared-view head))
+      (if (format-rules-node-colon? (& head))
         (format-rules-layout-colon-list
           rest
           items

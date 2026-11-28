@@ -1,0 +1,4 @@
+decls_expansion_depth_direct|check-fail|tests/safety/decls_expansion_depth_direct_reject.tl|tests/safety/decls_expansion_depth_direct_reject.tl:4:1|error[E0504]:
+decls_expansion_depth_mutual|check-fail|tests/safety/decls_expansion_depth_mutual_reject.tl|tests/safety/decls_expansion_depth_mutual_reject.tl:7:1|error[E0504]:
+decls_expansion_depth_module|check-fail|tests/safety/decls_expansion_depth_module_reject.tl|tests/safety/decls_expansion_depth_module_reject.tl:4:1|error[E0504]:
+decls_expansion_depth_ok|check-ok|tests/safety/decls_expansion_depth_ok.tl|-|-

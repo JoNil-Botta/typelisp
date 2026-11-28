@@ -328,7 +328,7 @@ exit nonzero
 stdout empty
 stderr contains cannot combine input path with --manifest-path
 step build-package
-run build --manifest-path "{{dir}}/pkg/typelisp.pkg" --opt-level 0
+run build --release --manifest-path "{{dir}}/pkg/typelisp.pkg" --opt-level 0
 test -x "{{dir}}/pkg/target/release/stage1_pkg"
 test -f "{{dir}}/pkg/target/release/stage1_pkg.s"
 test -s "{{dir}}/pkg/vendor/math/target/release/libstage1_math.a"
@@ -366,7 +366,7 @@ stdout empty
 stderr empty
 step build-package-repeat
 sh cp "{{dir}}/pkg/vendor/math/target/release/stage1_math.tlci" "{{dir}}/stage1_math.first.tlci"
-run build --manifest-path "{{dir}}/pkg/typelisp.pkg" --opt-level 0
+run build --release --manifest-path "{{dir}}/pkg/typelisp.pkg" --opt-level 0
 same "{{dir}}/stage1_math.first.tlci" "{{dir}}/pkg/vendor/math/target/release/stage1_math.tlci"
 stdout contains Fresh {{dir}}/pkg/target/release/stage1_pkg
 stdout contains Fresh {{dir}}/pkg/vendor/math/target/release/stage1_math.tlci
@@ -402,9 +402,9 @@ sh rm -rf "{{dir}}/pkg/target"
 cwd {{dir}}/pkg/src/nested/deeper
 run build
 cwd -
-test -x "{{dir}}/pkg/target/release/stage1_pkg"
-test -f "{{dir}}/pkg/target/release/stage1_pkg.s"
-stdout contains Built ../../../target/release/stage1_pkg
+test -x "{{dir}}/pkg/target/dev/stage1_pkg"
+test -f "{{dir}}/pkg/target/dev/stage1_pkg.s"
+stdout contains Built ../../../target/dev/stage1_pkg
 
 case package-lib
 file libpkg/typelisp.pkg
@@ -418,11 +418,11 @@ file libpkg/src/lib.tl
 (define (add-two [x : i64]) : i64 (+ x 2))
 end-file
 run build --manifest-path "{{dir}}/libpkg/typelisp.pkg"
-test -s "{{dir}}/libpkg/target/release/libstage1_lib.a"
+test -s "{{dir}}/libpkg/target/dev/libstage1_lib.a"
 # A library without macros publishes its interface as .tli and has no .tlci.
-test -s "{{dir}}/libpkg/target/release/stage1_lib.tli"
-test ! -e "{{dir}}/libpkg/target/release/stage1_lib.tlci"
-stdout contains Built {{dir}}/libpkg/target/release/libstage1_lib.a
+test -s "{{dir}}/libpkg/target/dev/stage1_lib.tli"
+test ! -e "{{dir}}/libpkg/target/dev/stage1_lib.tlci"
+stdout contains Built {{dir}}/libpkg/target/dev/libstage1_lib.a
 stdout not-contains stage1_lib.tlci
 
 case package-missing
@@ -904,7 +904,7 @@ case lint
 run lint --help
 stdout empty
 stderr contains Usage:
-stderr contains typelisp lint [<file.tl>...] [--check] [--format <rich|flat>] [--deprecated-string-concat] [--redundant-function-name] [--redundant-begin] [--prefer-dotted-field] [--name-case] [--manifest-path <typelisp.pkg>] [--target <target>] [--cfg <name>...] [--stdlib-root <dir>...]
+stderr contains typelisp lint [<file.tl>...] [--check] [--format <rich|flat>] [--deprecated-string-concat] [--redundant-function-name] [--redundant-begin] [--prefer-dotted-field] [--name-case] [--manifest-path <typelisp.pkg>] [--profile dev|release] [--release] [--target <target>] [--cfg <name>...] [--stdlib-root <dir>...]
 stderr contains Summary:
 step lint-missing
 sh CCV_nopkg=$(mktemp -d "${TMPDIR:-/tmp}/typelisp-lint-nopkg.XXXXXX")

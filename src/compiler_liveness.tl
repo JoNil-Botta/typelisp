@@ -1736,7 +1736,7 @@
 
 (define (compiler-live-analyze-function [func : (& ir.CompilerIrFunction)]) : CompilerFunctionLiveness
   (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function _ _ _ vars blocks _)
+    [(Function _ _ _ vars blocks _ _)
       (let
         [seq : ir.CompilerIrBlockSeq
           (compiler-live-ir-block-list-to-seq (& blocks))]
@@ -1981,7 +1981,7 @@
 (define (compiler-live-analyze-function-edge-precise
   [func : (& ir.CompilerIrFunction)]) : CompilerFunctionLiveness
   (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function _ _ _ vars blocks _)
+    [(Function _ _ _ vars blocks _ _)
       (compiler-live-analyze-blocks-edge-precise (& blocks) vars)]))
 
 (define (compiler-live-function-block-index

@@ -3,4 +3,4 @@
 (define (main) : i64
   (let
     [construct arena.Arena]
-    (construct 12345).handle))
+    (arena.raw-handle (construct 0))))

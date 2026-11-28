@@ -161,13 +161,14 @@ fi
 stdlib_build_fixture() {
     _src=$1
     _stem=$2
+    shift 2
     build_status=0
     : > "$_stem.build.err"
     stdlib_configure_native_link
     set +e
     "$COMPILER" compile "$_src" --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) \
-        --stdlib-root "$ROOT/stdlib" -o "$_stem.s" \
+        --stdlib-root "$ROOT/stdlib" -o "$_stem.s" "$@" \
         > "$_stem.build.out" 2> "$_stem.build.err"
     build_status=$?
     if [ "$build_status" -eq 0 ]; then
@@ -185,7 +186,8 @@ stdlib_build_run() {
     _src=$1
     _stem=$2
     _stdin=$3
-    stdlib_build_fixture "$_src" "$_stem"
+    shift 3
+    stdlib_build_fixture "$_src" "$_stem" "$@"
     if [ "$build_status" -eq 0 ]; then
         set +e
         stdlib_run_fixture_binary "$_stem$NL_BIN_EXT" "$_stdin" "$_stem.stdout" "$_stem.stderr"
@@ -890,7 +892,16 @@ printf 'pipe-001|1\n' >> "$POOL_QUEUE"
 
 check_count=0
 CHECK_ROWS="$WORKDIR/check-rows.psv"
+CHECK_PROVIDER_PATHS="$WORKDIR/check-provider-paths.psv"
 : > "$CHECK_ROWS"
+: > "$CHECK_PROVIDER_PATHS"
+
+# White-box family fixtures need the stdlib provider (#8733). The other
+# fixtures run from copies to check the ordinary external consumer route.
+stdlib_fixture_needs_source_provider() {
+    grep -q '^(module stdlib\.' "$1"
+}
+
 while IFS='|' read -r fixture want stderr_snippet extra; do
     case "$fixture" in
         '' | \#*) continue ;;
@@ -937,6 +948,9 @@ while IFS='|' read -r fixture want stderr_snippet extra; do
     fi
 
     check_count=$((check_count + 1))
+    if stdlib_fixture_needs_source_provider "$fixture"; then
+        printf '%s|%s\n' "$fixture" "$(stdlib_host_path "$ROOT/$fixture")" >> "$CHECK_PROVIDER_PATHS"
+    fi
     printf '%s|%s|%s\n' "$fixture" "$want" "$stderr_snippet" >> "$CHECK_ROWS"
 done < "$CHECK_MANIFEST"
 
@@ -951,7 +965,12 @@ if [ "$check_count" -gt 0 ]; then
         -v chunk_size="$STDLIB_CHECK_CHUNK_SIZE" \
         -v jobs_dir="$POOL_JOBS_DIR" \
         -v queue_file="$POOL_QUEUE" \
-        -v copies_host="$CHECK_COPIES_HOST" '
+        -v copies_host="$CHECK_COPIES_HOST" \
+        -v provider_paths="$CHECK_PROVIDER_PATHS" '
+        BEGIN {
+            while ((getline < provider_paths) > 0) source_paths[$1] = $2
+            close(provider_paths)
+        }
         {
             if (in_chunk == 0 || in_chunk >= chunk_size) {
                 if (cur_rows != "") {
@@ -966,7 +985,7 @@ if [ "$check_count" -gt 0 ]; then
                 in_chunk = 0
             }
             print $0 > cur_rows
-            print copies_host "/" $1 > cur_list
+            print ($1 in source_paths ? source_paths[$1] : copies_host "/" $1) > cur_list
             in_chunk++
         }
         END {
@@ -989,10 +1008,7 @@ run_stdlib_runnable_job() {
 
     case_id=$(printf '%s' "$fixture" | sed 's#/#_#g;s#\.tl$##')
     _job_dir="$RUN_ROOT/$_job"
-    if grep -q '^(module stdlib\.' "$fixture"; then
-        # White-box stdlib-family tests live under $ROOT/stdlib and need the
-        # stdlib provider (#8733), so compile them in place under --stdlib-root
-        # instead of copying them outside it.
+    if stdlib_fixture_needs_source_provider "$fixture"; then
         source_path="$ROOT/$fixture"
         mkdir -p "$_job_dir"
     else
@@ -1009,8 +1025,12 @@ run_stdlib_runnable_job() {
         return 1
     fi
 
-    echo "[stdlib] building+running $fixture (--stdlib-root)" >> "$_job_out"
-    stdlib_build_run "$source_path" "$stem" "$stdin" >> "$_job_out" 2>> "$_job_err"
+    set --
+    if gate_stdlib_needs_test_cfg "$fixture"; then
+        set -- --no-prebuilt-stdlib --cfg test
+    fi
+    echo "[stdlib] building+running $fixture (--stdlib-root${*:+ $*})" >> "$_job_out"
+    stdlib_build_run "$source_path" "$stem" "$stdin" "$@" >> "$_job_out" 2>> "$_job_err"
 
     if [ "$build_status" -ne 0 ]; then
         {

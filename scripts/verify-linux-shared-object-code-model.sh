@@ -54,7 +54,7 @@ case "$SHARED_OBJECT_COMPILE_WORKERS" in
         ;;
 esac
 
-for tool in as cc ld readelf; do
+for tool in cc ld readelf; do
     if ! command -v "$tool" > /dev/null 2>&1; then
         echo "shared-object code model gate needs $tool" >&2
         exit 1
@@ -204,8 +204,8 @@ bounded_pool_run_job() {
     while IFS= read -r name; do
         [ -n "$name" ] || continue
         dir="$WORKDIR/cases/$name"
-        if ! as "$dir/$name.s" -o "$dir/$name.o" 2> "$dir/as.stderr"; then
-            chunk_fail "$_chunk_failures" "$name" "assembly failed: $(head -1 "$dir/as.stderr")"
+        if ! "$COMPILER" assemble "$dir/$name.s" -o "$dir/$name.o" 2> "$dir/assemble.stderr"; then
+            chunk_fail "$_chunk_failures" "$name" "assembly failed: $(head -1 "$dir/assemble.stderr")"
             continue
         fi
         if readelf -rW "$dir/$name.o" | grep -q 'R_X86_64_TPOFF32'; then
@@ -365,7 +365,7 @@ int main(int argc, char **argv) {
     return 0;
 }
 DRIVER_C
-as "$DL/worker.s" -o "$DL/worker.o"
+"$COMPILER" assemble "$DL/worker.s" -o "$DL/worker.o"
 cc -fPIC -c "$DL/shim.c" -o "$DL/shim.o"
 cc -shared -o "$DL/libworker.so" "$DL/worker.o" "$DL/shim.o" -lpthread
 cc "$DL/driver.c" -o "$DL/driver" -ldl -lpthread
@@ -397,7 +397,7 @@ if ! grep -q '^\.section "\.rodata\.' "$LIB/library.s"; then
     echo "shared-object library object has no sectioned literal" >&2
     exit 1
 fi
-as "$LIB/library.s" -o "$LIB/library.o"
+"$COMPILER" assemble "$LIB/library.s" -o "$LIB/library.o"
 ld -shared -o "$LIB/library.so" "$LIB/library.o"
 case "$(readelf -d "$LIB/library.so")" in
     *TEXTREL*)

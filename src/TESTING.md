@@ -2526,7 +2526,8 @@ stale or clobber a local tag.
 
 The checkout root also has a `typelisp.pkg` whose binary entry is
 `src/main.tl`, so `typelisp build` from the repository root builds the
-selfhost CLI package into `target/release/`. That package build refreshes the
+selfhost CLI package into `target/dev/`. Use `typelisp build --release` to
+build into `target/release/`. The package build refreshes the
 compiler identity from the checkout's exact Git HEAD before compiling. The CLI
 smoke in `tests/cli/selfhost-build-run.cases` poisons the old identity stamp,
 checks that the root-built compiler reports the refreshed identity, and uses it

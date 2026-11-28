@@ -1,0 +1,2 @@
+# Function metadata across parsing, expansion, specialization, and lowering.
+c60_cold_attr|all|0,2|tests/integration/c60_cold_attr.tl|42|-|-|-|-

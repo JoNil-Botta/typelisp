@@ -325,10 +325,10 @@ gate_bootstrap_compiler() {
     # probe is a CI failure, never a reason to omit gates.
     if [ "$HOST_OS" = linux ]; then
         if ! stage2_safety_corpus_supported "$STAGE2_BIN"; then
-            required_gate_unavailable "Linux stage2 compile->as->ld->run probe" \
+            required_gate_unavailable "Linux stage2 compile->assemble->ld->run probe" \
                 "safety, integration, examples, SPMD, and stdlib run-assert tiers depend on this probe"
         fi
-        echo "[ci-verify] stage2 compile->as->ld->run capability confirmed"
+        echo "[ci-verify] stage2 compile->assemble->ld->run capability confirmed"
     else
         if ! stage2_can_compile_native_windows "$STAGE2_BIN"; then
             required_gate_unavailable "Windows stage2 compile->clang->lld-link->run probe" \
@@ -383,7 +383,7 @@ stage2_safety_corpus_supported() {
         sed 's/^/  /' "$probe_dir/compile.stderr" >&2 || true
         return 1
     fi
-    if ! as "$asm" -o "$obj" > "$probe_dir/assemble.stdout" 2> "$probe_dir/assemble.stderr"; then
+    if ! "$compiler" assemble "$asm" -o "$obj" > "$probe_dir/assemble.stdout" 2> "$probe_dir/assemble.stderr"; then
         echo "[ci-verify] stage2 safety probe assemble failed"
         sed 's/^/  /' "$probe_dir/assemble.stdout" >&2 || true
         sed 's/^/  /' "$probe_dir/assemble.stderr" >&2 || true

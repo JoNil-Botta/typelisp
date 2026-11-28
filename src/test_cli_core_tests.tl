@@ -1170,7 +1170,7 @@
     [found : bool false]
     (while (and (< index funcs.len) (not found))
       (match (owned_view.compiler-owned-element-view funcs.slots index)
-        [(Function name _ _ _ _ _)
+        [(Function name _ _ _ _ _ _)
           (let
             [name-text : String (ir.compiler-ir-symbol-text name)]
             (if (string.contains (& name-text) (& base))

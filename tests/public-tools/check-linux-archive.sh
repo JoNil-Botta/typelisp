@@ -4,7 +4,7 @@ set -eu
 compiler=$1
 case_dir=$(CDPATH= cd -- "$2" && pwd)
 manifest="$case_dir/pkg with spaces/typelisp.pkg"
-output_dir="$case_dir/pkg with spaces/target/release"
+output_dir="$case_dir/pkg with spaces/target/dev"
 archive="$output_dir/libarchive_probe.a"
 stamp="$archive.runtime-inputs"
 original_path=$PATH

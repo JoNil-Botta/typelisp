@@ -3627,12 +3627,16 @@ Example:
 (define flag : bool true)
 ```
 
-### 4.2 `(define (name [param : type] ...) [: ret_type] body...)` — function
+### 4.2 `(define (name [param : type] ...) [metadata ...] [: ret_type] body...)` — function
 
 Defines a named function.
 
 - Parameters must be explicitly typed.
 - Return type defaults to `unit` when omitted.
+- `(:cold)` marks a function as rarely executed. Write it after the parameter
+  list, alongside any other function metadata and before the optional return
+  type. It takes no arguments and may appear only once. The compiler records
+  the hint in IR and package interfaces without changing execution semantics.
 - The body is one or more expressions. Multiple body expressions are evaluated
   as an implicit `begin`; the last expression provides the function result.
 - The entry point is a function named `main` with return type `i64` or `unit`.
@@ -4521,10 +4525,16 @@ Example:
   bodies, macro-import calls, and generated-declaration metadata as roots;
   top-level declarations unreachable from those roots are lint findings unless
   suppressed with `;; lint-allow: dead-code`.
-- Package builds accept `--profile dev|release` and `--release`. The default
-  profile is `release`; `--release` is an alias for `--profile release`.
-  `--opt-level 0|1|2|s` overrides the profile's optimizer level. Without an
-  explicit level, `release` uses level 2 and `dev` uses level 0.
+- Package `build`, `run`, `test`, `check`, `lint`, and `doc` accept
+  `--profile dev|release`. `--release` is an alias for `--profile release`.
+  Profile selection applies through the dependency graph.
+
+  | Profile | Default optimization | Default debug | Package and dependency artifacts |
+  | --- | --- | --- | --- |
+  | `dev` (default) | 0 | Off | `target/dev/` |
+  | `release` | 2 | Off | `target/release/` |
+
+  Where supported, `--opt-level 0|1|2|s` overrides the profile's optimizer level.
 - Package builds accept `--locked` and `--update-lock` as described above.
   These flags are rejected for source-file builds and non-package commands.
 - Build outputs are written under `target/<profile>/` in the package root.
@@ -9946,16 +9956,15 @@ arena helper signatures, and an `arena.Arena` cannot be passed where an
 values do not switch the active arena, free arena chains, rewind allocation,
 or invalidate live safe handles.
 
-Constructing the canonical `arena.Arena` from an integer requires `unsafe`,
-including through import aliases and generated expressions. Its constructor
-has the ordinary unsafe-callable effect and cannot be erased into a plain
-function value. The caller must establish that the raw handle identifies a
-live arena for every use of the resulting wrapper. Zero identifies the
-runtime's default arena, so an `unsafe` construction from `0` names it.
-Reading `.handle` produces an inert integer and is safe. Writing that field,
-replacing it, or exposing an exclusive reference to it requires `unsafe` and
-the same live-handle obligation. The rule belongs to the canonical arena
-declaration, not an unrelated user type with the same short name.
+The representation fields of `arena.Arena` and `arena.ArenaMark` are opaque
+outside the arena module family (§3.5.4). For low-level interop,
+`arena.raw-handle` and `arena.mark-raw-handle` return raw integer identities.
+`arena.from-raw-handle` takes an integer and requires `unsafe`. Its caller
+must establish that the integer identifies a live arena for every use.
+Zero identifies the runtime's default arena. `arena.mark-from-raw-handle`
+also requires `unsafe`. Before rewinding to the resulting mark, the caller
+must restore the live arena that issued it and ensure the mark is still
+valid there.
 
 An `in-arena` target may also be a shared or exclusive reference to a branded
 `(arena.Arena storage)`. Allocation provenance is `storage`, independent of the
@@ -10629,8 +10638,9 @@ supplied. A dash means that the command does not apply that setting.
 | `compile` (assembly or IR, including batch) | Host | 1 | SSE2 | Off | Target aliases |
 | `compile --emit-tli` | Host | — | — | — | Target aliases |
 | `build`, `run` (source file) | Host | 1 | SSE2 | Off | Target aliases |
-| `build`, `run` (package) | Host | Release 2, dev 0 | SSE2 | Off | Target aliases |
-| `test` (source file, package or batch) | Host | 1 | SSE2 | Off | Target aliases and `test` while checking or compiling tests |
+| `build`, `run` (package) | Host | 0 (dev profile) | SSE2 | Off | Target aliases |
+| `test` (source file or batch) | Host | 1 | SSE2 | Off | Target aliases and `test` while checking or compiling tests |
+| `test` (package) | Host | 0 (dev profile) | SSE2 | Off | Target aliases and `test` while checking or compiling tests |
 | `check` (source file, package or batch) | Host | — | — | — | Target aliases |
 | `lint` (source files or package) | Host | — | — | — | Target aliases |
 | `expand` | Host | — | — | — | Target aliases |
@@ -10644,9 +10654,12 @@ supplied. A dash means that the command does not apply that setting.
 
 There are no user-supplied cfg names by default. The `compiler-backtrace`
 predicate is enabled by debug selection in commands that emit debug info.
-Package builds and runs select release by default. An explicit optimization
-level overrides the profile's level. Selecting size optimization (`-Os` or
-`--opt-level s`) selects scalar emission unless a backend mode is explicit.
+Package commands that select a profile default to dev. The release profile
+selects optimization level 2 for package builds, runs, and tests. Package
+`check`, `lint`, and `doc --test` use the selected profile for dependency
+artifacts. An explicit optimization level overrides the profile's level where
+supported. Selecting size optimization (`-Os` or `--opt-level s`) selects
+scalar emission unless a backend mode is explicit.
 
 Where supported, `--target` overrides the host and selects the corresponding
 target aliases. For example, `typelisp compile main.tl --target linux-x86_64`
@@ -10754,7 +10767,7 @@ surface has been republished. This bounds reset residency to one entry rather
 than retaining every manifest entry in the process arena.
 
 `build --profile dev|release` selects the package build profile (default
-`release`), `--release` aliases `--profile release`, and
+`dev`), `--release` aliases `--profile release`, and
 `--manifest-path <file>` uses an explicit package manifest (default: the
 nearest `typelisp.pkg` upward). `--locked` requires a matching
 `typelisp.lock` and does not rewrite it; `--update-lock` refreshes remote

@@ -88,7 +88,8 @@
           (Store pc (Var 2) (I64))
           (Store pd (Var 3) (I64))
           (Return No))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (win-param-preassign-program) : ir.CompilerIrProgram
   (let
@@ -122,7 +123,8 @@
         (ir.compiler-ir-instr-seq2
           (BinOp 2 SafeDiv (I64 8) (I64 2) (I64))
           (Return (Some (Var 1))))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (win-param-preassign-safe-div-regalloc-ok?) : bool
   ;; The incoming Win64 home of param b (var 1) is %rdx (arg1), which the safe

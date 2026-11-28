@@ -47,14 +47,13 @@
   (Sha256LengthOk u64)
   (Sha256LengthErr Sha256Error))
 
-;: Incremental SHA-256 state. Construct with `new`; a directly constructed
-;: aggregate is not necessarily a valid state.
+;: Incremental SHA-256 state. Construct with `new`.
 (defstruct Sha256State
-  (words (Array u32 8))
-  (block (Array u8 64))
-  (block-length i64)
-  (byte-length u64)
-  (finalized bool))
+  (words (Array u32 8) (:opaque))
+  (block (Array u8 64) (:opaque))
+  (block-length i64 (:opaque))
+  (byte-length u64 (:opaque))
+  (finalized bool (:opaque)))
 
 ;: Exact public SHA-256 digest bytes in network order.
 (defstruct Sha256Digest
@@ -520,7 +519,15 @@
     (unsafe
       (wipe-schedule-pointer! (ptr-cast (ptr-addr-of schedule) : (MutPtr u32))))))
 
-;: True when public bookkeeping fields describe a live streaming state.
+;: Number of input bytes accepted by the state.
+(define (state-byte-length [state : (& state Sha256State)]) : u64
+  state.byte-length)
+
+;: True after the state has been finalized or wiped.
+(define (state-finalized? [state : (& state Sha256State)]) : bool
+  state.finalized)
+
+;: True when the bookkeeping fields describe a valid streaming state.
 (define (state-valid? [state : (& state Sha256State)]) : bool
   (and
     (>= state.block-length 0)
@@ -704,6 +711,74 @@
       (finalize-into-pointer! state output))
       [(Sha256FinalizeIntoOk) (Sha256FinalizeOk (Sha256Digest octets))]
       [(Sha256FinalizeIntoErr error) (Sha256FinalizeErr error)])))
+
+;: Finalize an independent copy, leaving the source available for more updates.
+(define (snapshot [state : (& state Sha256State)]) : Sha256FinalizeResult
+  (let
+    [copy : Sha256State
+      (Sha256State
+        state.words
+        state.block
+        state.block-length
+        state.byte-length
+        state.finalized)]
+    (finalize! (&mut copy))))
+
+;; Synthetic states keep the HMAC/TLS byte-limit and rejection fixtures small.
+(cfg
+  test
+  (unsafe
+    (define (test-near-length-limit-state [state : Sha256State]) : Sha256State
+      (Sha256State
+        state.words
+        state.block
+        62
+        (- (max-byte-length) (cast 1 : u64))
+        state.finalized))))
+
+(cfg
+  test
+  (unsafe
+    (define (test-invalid-block-cursor-state [state : Sha256State]) : Sha256State
+      (Sha256State state.words state.block 64 state.byte-length state.finalized))))
+
+(cfg
+  test
+  (unsafe
+    (define (test-finalized-state [state : Sha256State]) : Sha256State
+      (Sha256State
+        state.words
+        state.block
+        state.block-length
+        state.byte-length
+        true))))
+
+(cfg
+  test
+  (define (test-state-eq?
+    [left : (& left Sha256State)]
+    [right : (& right Sha256State)]) : bool
+    (unless
+      (and
+        (= left.byte-length right.byte-length)
+        (= left.block-length right.block-length)
+        (= left.finalized right.finalized))
+      (return false))
+    (let
+      [index : i64 0]
+      (while (< index 8)
+        (unless
+          (= (array-ref left.words index) (array-ref right.words index))
+          (return false))
+        (set! index (+ index 1))))
+    (let
+      [index : i64 0]
+      (while (< index 64)
+        (unless
+          (= (array-ref left.block index) (array-ref right.block index))
+          (return false))
+        (set! index (+ index 1))))
+    true))
 
 ;: Compute a one-shot SHA-256 digest over exact borrowed bytes.
 (define (digest [input : (& input bytes)]) : Sha256FinalizeResult

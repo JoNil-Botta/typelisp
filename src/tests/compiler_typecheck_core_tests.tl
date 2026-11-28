@@ -7883,7 +7883,7 @@
   (test
     tc-lifetime-substitution-rewrites-region-wrapper
     (match (tc_core.tc-lifetime-subst-type
-      (One 101 202)
+      (tc_core.tc-lifetime-subst-push tc_core.TcLifetimeSubst.Nil 101 202)
       (ast.ast-ty-region 101 (& (String))))
       [(Region region inner)
         (if (and

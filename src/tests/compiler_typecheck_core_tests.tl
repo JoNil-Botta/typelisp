@@ -146,7 +146,9 @@
         [mode : (& cases str) (& (array-ref cases case-index))]
         [pools : ast.AstNodePoolContext
           (ast.ast-node-pool-context-new-with-capacities 8 8)]
-        [_install : unit (ast.ast-node-pool-context-install! pools)]
+        [_install : unit
+          (unsafe
+            (ast.ast-node-pool-context-install! pools))]
         [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
         [module-id : i64 (ci.intern "carry-owner")]
         [ctx : tc_core.TcContext
@@ -448,7 +450,8 @@
                           top.head)
                         (string.copy (& (array-ref boundary-cases boundary)))))))))))
         (tc_core.tc-job-state-retire-owned-storage! job)
-        (ast.ast-node-pool-context-install! installed)
+        (unsafe
+          (ast.ast-node-pool-context-install! installed))
         (ast.ast-node-pool-context-destroy-storage! pools)))))
 
 (define (tc-hygiene-span-line?
@@ -488,7 +491,8 @@
     [captured-view : i64 -1]
     [name : i64 -1]
     [renamed : i64 -1]
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     (unless
       alternate?
       (for [index (iterator.range 0 prefix)]
@@ -589,7 +593,8 @@
           (set!
             (deref (tc_core.tc-macro-hygiene-produced-state-ptr state)).floor
             (+ (ast.ast-node-pool-context-expr-len pools) 1))))
-      (ast.ast-node-pool-context-publish-to-compat! pools)
+      (unsafe
+        (ast.ast-node-pool-context-publish-to-compat! pools))
       (let
         [before : i64 (ast.ast-node-pool-context-expr-len pools)]
         [respans : i64 (ast.ast-node-pool-context-expr-respan-count pools)]
@@ -713,7 +718,8 @@
             (tc-hygiene-span-line? pools out-view false 2)
             (ast.ast-node-pool-context-expr-span-oracle-ok? pools)))
         (tc_core.tc-job-state-retire-owned-storage! job)
-        (ast.ast-node-pool-context-install! previous)
+        (unsafe
+          (ast.ast-node-pool-context-install! previous))
         (ast.ast-node-pool-context-destroy-storage! pools)
         (unsafe
           (arena.set! home))
@@ -773,7 +779,8 @@
         pools
         literal
         (ast.ast-source-span 42 1 42 2))]
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     (let
       [other-ok? : bool
         (and
@@ -794,7 +801,8 @@
           (tc-hygiene-span-line? pools view false 42)
           (ast.ast-node-pool-context-expr-span-oracle-ok? pools))
         "hygiene on another pool must preserve the installed owner"))
-    (ast.ast-node-pool-context-install! previous)
+    (unsafe
+      (ast.ast-node-pool-context-install! previous))
     (ast.ast-node-pool-context-destroy-storage! pools)))
 
 ;; Copies of core's walk-state field macros: a type named in a macro template
@@ -1848,14 +1856,18 @@
     [_older-root : i64 (ast.ast-node-pool-context-expr-push older (Var 1))]
     [_owned-root : i64 (ast.ast-node-pool-context-expr-push owned (Var 2))]
     [_owned-next : i64 (ast.ast-node-pool-context-expr-push owned (Var 3))]
-    [_install-older : unit (ast.ast-node-pool-context-install! older)]
+    [_install-older : unit
+      (unsafe
+        (ast.ast-node-pool-context-install! older))]
     [_prepare-longer : unit (tc_core.macro-prepare-transformer-pools! ctx)]
     [longer-installed? : bool (ast.ast-node-pool-context-expr-installed? owned)]
     [_older-grows : i64
       (begin
         (ast.ast-node-pool-context-expr-push older (Var 4))
         (ast.ast-node-pool-context-expr-push older (Var 5)))]
-    [_reinstall-older : unit (ast.ast-node-pool-context-install! older)]
+    [_reinstall-older : unit
+      (unsafe
+        (ast.ast-node-pool-context-install! older))]
     [_prepare-shorter : unit (tc_core.macro-prepare-transformer-pools! ctx)]
     [shorter-captured? : bool
       (and
@@ -1869,21 +1881,27 @@
     [type-ctx : tc_core.TcContext (macro-prepare-test-ctx type-owned)]
     [_type-owned-node : i64
       (ast.ast-node-pool-context-type-push type-owned (Array 0 7937))]
-    [_install-type-older : unit (ast.ast-node-pool-context-install! type-older)]
+    [_install-type-older : unit
+      (unsafe
+        (ast.ast-node-pool-context-install! type-older))]
     [_prepare-type : unit (tc_core.macro-prepare-transformer-pools! type-ctx)]
     [type-longer-installed? : bool
       (ast.ast-node-pool-context-expr-installed? type-owned)]
-    [_install-compat-older : unit (ast.ast-node-pool-context-install! older)]
+    [_install-compat-older : unit
+      (unsafe
+        (ast.ast-node-pool-context-install! older))]
     [compat-unchanged? : bool
       (begin
-        (ast.ast-node-pool-compat-context-use! type-older)
+        (unsafe
+          (ast.ast-node-pool-compat-context-use! type-older))
         (tc_core.macro-prepare-transformer-pools! type-ctx)
         (let
           [unchanged? : bool
             (not (ast.ast-node-pool-context-expr-installed? type-owned))]
           (ast.ast-node-pool-compat-context-clear!)
           unchanged?))]
-    (ast.ast-node-pool-context-install! installed)
+    (unsafe
+      (ast.ast-node-pool-context-install! installed))
     (if (and
       longer-installed?
       shorter-captured?
@@ -1938,7 +1956,8 @@
         [_ false])]
     [compat-ok? : bool
       (begin
-        (ast.ast-node-pool-compat-context-use! pools-a)
+        (unsafe
+          (ast.ast-node-pool-compat-context-use! pools-a))
         (let
           [ok?
             : bool
@@ -1965,13 +1984,15 @@
         [saved : ast.AstNodePoolContext
           (ast.ast-node-pool-context-capture-active)]
         ;; Neither does an ordinary install of another pool.
-        (ast.ast-node-pool-context-install! pools-b)
+        (unsafe
+          (ast.ast-node-pool-context-install! pools-b))
         (let
           [ok? : bool
             (match (tc_core.tc-context-expr-get ctx-a root-b)
               [(Var name) (= name 101)]
               [_ false])]
-          (ast.ast-node-pool-context-install! saved)
+          (unsafe
+            (ast.ast-node-pool-context-install! saved))
           ok?))]
     (if (and
       (= root-a root-b)
@@ -2377,7 +2398,9 @@
     [bases-a : i64 (ast.ast-node-pool-context-expr-segment-bases (& pools-a))]
     [bases-b : i64 (ast.ast-node-pool-context-expr-segment-bases (& pools-b))]
     [root-expr : ast.AstExpr (ast.ast-expr-segment-bases-get bases-a root-a)]
-    [_install-owner : unit (ast.ast-node-pool-context-install! pools-a)]
+    [_install-owner : unit
+      (unsafe
+        (ast.ast-node-pool-context-install! pools-a))]
     [serial : String
       (tc-diagnostic-span-isolation-transcript
         (ast.ast-node-pool-active-expr-segment-bases)
@@ -2387,7 +2410,9 @@
       (tc-diagnostic-span-isolation-expect-message
         ctx-a
         (tc_core.tc-global-shared-view root-expr))]
-    [_install-decoy : unit (ast.ast-node-pool-context-install! pools-b)]
+    [_install-decoy : unit
+      (unsafe
+        (ast.ast-node-pool-context-install! pools-b))]
     [isolated : String
       (tc-diagnostic-span-isolation-transcript bases-a session root-a)]
     [isolated-expect : String
@@ -2416,7 +2441,8 @@
         decoy-still-installed?
         (= (ast.ast-node-pool-context-expr-len pools-a) 3)
         (= (ast.ast-node-pool-context-expr-len pools-b) 3))]
-    (ast.ast-node-pool-context-install! installed)
+    (unsafe
+      (ast.ast-node-pool-context-install! installed))
     (if ok?
       unit
       (io.panic "typecheck: diagnostic span pool isolation failed"))))
@@ -2489,12 +2515,16 @@
       (ast.ast-expr-segment-bases-get bases-a (- call-a 3))]
     ;; Parsing an output form installs the parser's pools, so the decoy is
     ;; reinstalled before each read under test.
-    [_decoy-for-name : unit (ast.ast-node-pool-context-install! pools-b)]
+    [_decoy-for-name : unit
+      (unsafe
+        (ast.ast-node-pool-context-install! pools-b))]
     [callee-name : String
       (match (tc_core.macro-call-callee-name bases-a session spanned-expr)
         [(Some name) name]
         [(No) ""])]
-    [_decoy-for-sexpr : unit (ast.ast-node-pool-context-install! pools-b)]
+    [_decoy-for-sexpr : unit
+      (unsafe
+        (ast.ast-node-pool-context-install! pools-b))]
     [sexpr-name : i64
       (match (tc_core.macro-expr-to-spanned-sexpr
         (& owner)
@@ -2508,7 +2538,9 @@
                 [_ -1])]
             [_ -1])]
         [(Err _) -1])]
-    [_decoy-for-parse : unit (ast.ast-node-pool-context-install! pools-b)]
+    [_decoy-for-parse : unit
+      (unsafe
+        (ast.ast-node-pool-context-install! pools-b))]
     [parsed-name : i64
       (macro-read-pool-parsed-name
         (tc_core.macro-parse-decls-from-expr
@@ -2526,7 +2558,8 @@
         (string.eq
           (tc_core.tc-env-key-display session parsed-name)
           "macro-read-isolation/alpha"))]
-    (ast.ast-node-pool-context-install! installed)
+    (unsafe
+      (ast.ast-node-pool-context-install! installed))
     (if ok?
       unit
       (io.panic "typecheck: macro expression read pool isolation failed"))))
@@ -2567,11 +2600,14 @@
     [bases-a : i64 (ast.ast-node-pool-context-expr-segment-bases (& pools-a))]
     [macro-state : tc_core.TcMacroState
       (tc_core.tc-job-state-macro-state (tc_core.tc-job-state-new))]
-    [_decoy : unit (ast.ast-node-pool-context-install! pools-b)]
+    [_decoy : unit
+      (unsafe
+        (ast.ast-node-pool-context-install! pools-b))]
     [call? : bool (tc_core.tc-call-expr? bases-a (Spanned call-a span))]
     [typed? : bool
       (tc_core.ctfe-node-has-type-literal? bases-a macro-state type-a)]
-    (ast.ast-node-pool-context-install! installed)
+    (unsafe
+      (ast.ast-node-pool-context-install! installed))
     (test.assert-true
       (and (= call-a call-b) (= type-a type-b))
       "the two pools give the probed nodes the same ids")
@@ -2878,7 +2914,8 @@
     [move-aware-rejected? : bool
       (macro-output-move-aware-rejected?
         (tc_core.tc-context-structural-session ctx))]
-    (ast.ast-node-pool-context-install! installed)
+    (unsafe
+      (ast.ast-node-pool-context-install! installed))
     (test.assert-string-eq
       failed
       ""
@@ -7204,7 +7241,8 @@
     [integer-ok? : bool false]
     ;; All roots have identical integer ids. The installed integer pool must
     ;; not turn the other owners' float syntax into an integer literal.
-    (ast.ast-node-pool-context-install! pools-a)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools-a))
     (set!
       owned-ok?
       (and
@@ -7252,7 +7290,8 @@
               (= (ast.ast-source-span-start-col span) 5))]
           [_ false])
         (ast.ast-node-pool-context-expr-span-oracle-ok? pools-c)))
-    (ast.ast-node-pool-context-install! pools-b)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools-b))
     (set!
       integer-ok?
       (and
@@ -7273,7 +7312,8 @@
         (not (tc_core.tc-float-literal-expr? ctx-a (Literal (Bool true))))))
     ;; A compatibility pool context does not redirect typechecker reads: the
     ;; owner-A context still reads its integer literal at the shared id.
-    (ast.ast-node-pool-compat-context-use! pools-b)
+    (unsafe
+      (ast.ast-node-pool-compat-context-use! pools-b))
     (set!
       compat-ok?
       (and
@@ -7291,7 +7331,8 @@
           [(Ok ty) (tc_core.tc-type-eq ty (I64))]
           [_ false])))
     (ast.ast-node-pool-compat-context-clear!)
-    (ast.ast-node-pool-context-install! saved)
+    (unsafe
+      (ast.ast-node-pool-context-install! saved))
     (unless
       (and owned-ok? integer-ok? compat-ok?)
       (io.panic
@@ -8023,7 +8064,8 @@
     [restart-ok? : bool false]
     ;; Every argument below is a copied owner-A expression. The unrelated
     ;; installed pool holds other valid views at the same ids.
-    (ast.ast-node-pool-context-install! pools-b)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools-b))
     (set!
       keys-ok?
       (and
@@ -8047,7 +8089,8 @@
         (= (tc_core.tc-call-arg-fact-key ctx-b (& (MacroExpansion 6 0 0))) 0)))
     ;; A compatibility pool context does not redirect typechecker reads: the
     ;; owner-A context keeps its own keys for the same ids.
-    (ast.ast-node-pool-compat-context-use! pools-b)
+    (unsafe
+      (ast.ast-node-pool-compat-context-use! pools-b))
     (set!
       compat-ok?
       (and
@@ -8071,9 +8114,11 @@
     (tc_core.tc-body-type-facts-start-consuming! state)
     ;; Installing the owner, then the decoy again, must not move the facts an
     ;; unchanged context and argument select.
-    (ast.ast-node-pool-context-install! pools-a)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools-a))
     (set! consuming-ok? (tc-call-arg-fact-test-owning-facts? ctx-a env))
-    (ast.ast-node-pool-context-install! pools-b)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools-b))
     (set!
       consuming-ok?
       (and consuming-ok? (tc-call-arg-fact-test-owning-facts? ctx-a env)))
@@ -8101,7 +8146,8 @@
           [(Hit ty) (tc_core.tc-type-eq ty (I32))]
           [(Miss) false])))
     (tc_core.tc-body-type-fact-storage-release! state)
-    (ast.ast-node-pool-context-install! saved)
+    (unsafe
+      (ast.ast-node-pool-context-install! saved))
     (unless
       keys-ok?
       (io.panic
@@ -8810,7 +8856,9 @@
         (String))]
     [owners : tc_core.TcStringList
       (tc_core.tc-string-list-add Nil (ci.intern-str owner-id))]
-    [_install-decoy : unit (ast.ast-node-pool-context-install! pools-b)]
+    [_install-decoy : unit
+      (unsafe
+        (ast.ast-node-pool-context-install! pools-b))]
     [owner-found? : bool
       (tc_core.tc-expr-result-uses-active-cleanup-owner?
         ctx-a
@@ -8833,7 +8881,8 @@
         decoy-still-installed?
         (= (ast.ast-node-pool-context-expr-len pools-a) 1)
         (= (ast.ast-node-pool-context-expr-len pools-b) 1))]
-    (ast.ast-node-pool-context-install! installed)
+    (unsafe
+      (ast.ast-node-pool-context-install! installed))
     (if ok?
       unit
       (io.panic "typecheck: cleanup-owner result walk pool isolation failed"))))
@@ -9157,7 +9206,9 @@
         (ci.intern-source-name-session-capture-active-handle)
         job-state)]
     [env : tc_core.TcTypeEnv (tc_core.tc-empty-env-with-job-state job-state)]
-    [_install-decoy : unit (ast.ast-node-pool-context-install! pools-b)]
+    [_install-decoy : unit
+      (unsafe
+        (ast.ast-node-pool-context-install! pools-b))]
     [result : tc_core.ResultTcUnit
       (tc_core.tc-quasiquote-template-ok ctx env (Begin template-items))]
     [decoy-still-installed? : bool
@@ -9181,7 +9232,8 @@
         decoy-still-installed?
         (= (ast.ast-node-pool-context-expr-len pools-a) 5)
         (= (ast.ast-node-pool-context-expr-len pools-b) 5))]
-    (ast.ast-node-pool-context-install! prev)
+    (unsafe
+      (ast.ast-node-pool-context-install! prev))
     (if ok?
       unit
       (io.panic "typecheck: quasiquote template pool isolation failed"))))
@@ -11343,7 +11395,9 @@
         (tc_core.tc-job-state-type-resolution-cache job)]
       [child : i64 (ast.ast-node-pool-context-type-push pools (I64))]
       [alias : ast.AstNodePoolContext (ast.ast-node-pool-context-clone pools)]
-      [_install : unit (ast.ast-node-pool-context-install! pools)]
+      [_install : unit
+        (unsafe
+          (ast.ast-node-pool-context-install! pools))]
       [_bind-alias : unit
         (tc_core.tc-type-resolution-cache-bind-pools-for-job! job alias)]
       [before? : bool
@@ -11367,7 +11421,8 @@
         (tc_core.tc-type-resolution-cache-bind-active-for-state! cache)]
       [rebound-epoch : i64
         (tc_core.tc-type-resolution-cache-state-data cache).epoch]
-      (ast.ast-node-pool-context-install! saved)
+      (unsafe
+        (ast.ast-node-pool-context-install! saved))
       (test.assert-i64-eq child reissued "truncation reissues the same type ID")
       (test.assert-i64-eq
         installed-epoch
@@ -11392,7 +11447,9 @@
           (ast.ast-node-pool-context-capture-active))]
       [pools : ast.AstNodePoolContext
         (ast.ast-node-pool-context-new-with-capacities 4 16)]
-      [_install : unit (ast.ast-node-pool-context-install! pools)]
+      [_install : unit
+        (unsafe
+          (ast.ast-node-pool-context-install! pools))]
       [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
       [ctx : tc_core.TcContext
         (tc_core.tc-context-new-with-source-names-and-job-state
@@ -11484,7 +11541,8 @@
               (test.assert-true
                 (ast.ast-type-eq? actual expected)
                 "function arguments and nested tuples use the same resolution")))))
-      (ast.ast-node-pool-context-install! installed))))
+      (unsafe
+        (ast.ast-node-pool-context-install! installed)))))
 
 (cfg
   test
@@ -11522,7 +11580,8 @@
           (ci.intern-source-name-session-capture-active-handle)
           job-state)]
       [_install-concrete : unit
-        (ast.ast-node-pool-context-install! concrete-pools)]
+        (unsafe
+          (ast.ast-node-pool-context-install! concrete-pools))]
       [concrete-len-before : i64
         (ast.ast-node-pool-context-type-len concrete-pools)]
       [resolved-primitive : ast.AstType (tc_core.tc-resolve-type ctx (I64))]
@@ -11545,7 +11604,8 @@
             (ast.ast-node-pool-context-type-len concrete-pools)
             concrete-len-before))]
       [_install-compatibility : unit
-        (ast.ast-node-pool-context-install! compatibility-pools)]
+        (unsafe
+          (ast.ast-node-pool-context-install! compatibility-pools))]
       [compatibility-len-before : i64
         (ast.ast-node-pool-context-type-len compatibility-pools)]
       [resolved-unresolved : ast.AstType
@@ -11579,7 +11639,8 @@
           (+ compatibility-len-before 1))]
       [compatibility-still-installed? : bool
         (ast.ast-node-pool-context-type-installed? (& compatibility-pools))]
-      (ast.ast-node-pool-context-install! installed)
+      (unsafe
+        (ast.ast-node-pool-context-install! installed))
       (cond
         [(not concrete-unchanged?)
           (io.panic
@@ -12522,7 +12583,8 @@
         [(Ok ty) (tc_core.tc-type-eq ty (Bool))]
         [(Err _) false])]
     [after-success : i64 (tc_core.tc-unbound-suggestion-suppress-depth env)]
-    (ast.ast-node-pool-context-install! saved)
+    (unsafe
+      (ast.ast-node-pool-context-install! saved))
     (unless
       (and failed? succeeded? (= after-error 0) (= after-success 0))
       (io.panic
@@ -12597,7 +12659,9 @@
         ""
         cbi.compiler-builtin-id-fix-empty
         pools-a)]
-    [_install-decoy : unit (ast.ast-node-pool-context-install! pools-b)]
+    [_install-decoy : unit
+      (unsafe
+        (ast.ast-node-pool-context-install! pools-b))]
     [expr-bases-a : i64 (tc_core.tc-context-expr-bases ctx-a)]
     [expr-bases-b : i64
       (ast.ast-node-pool-context-expr-segment-bases (& pools-b))]
@@ -12654,7 +12718,8 @@
       (tc_core.macro-node-uses-macro? ctx-a expr-bases-b decls macro-b)]
     [decoy-still-installed? : bool
       (ast.ast-node-pool-context-expr-installed? pools-b)]
-    (ast.ast-node-pool-context-install! installed)
+    (unsafe
+      (ast.ast-node-pool-context-install! installed))
     (if (and
       (= literal-a literal-b)
       (= macro-a macro-b)
@@ -14572,7 +14637,9 @@
       (and
         (= past-end (+ value 1))
         (= (ast.ast-node-pool-context-expr-len expanded) past-end))]
-    [_install : unit (ast.ast-node-pool-compat-context-use! expanded)]
+    [_install : unit
+      (unsafe
+        (ast.ast-node-pool-compat-context-use! expanded))]
     [query : bool
       (match (tc_core.tc-expr-with-expected-or-actual
         ctx
@@ -14636,7 +14703,9 @@
             message
             (tc_core.tc-selected-error typed.TypedError.Unknown))]
         [_ false])]
-    [_live : unit (ast.ast-node-pool-context-install! expanded)]
+    [_live : unit
+      (unsafe
+        (ast.ast-node-pool-context-install! expanded))]
     [mirrored-query : bool
       (match (tc_core.tc-expr-with-expected-or-actual
         ctx
@@ -14687,7 +14756,9 @@
     [_restore-intern : unit (ci.intern-compat-state-install! (& intern-state))]
     [unchanged-cursor : bool
       (= (ast.ast-node-pool-context-expr-len pools) past-end)]
-    [_restore-pools : unit (ast.ast-node-pool-context-install! pools)]
+    [_restore-pools : unit
+      (unsafe
+        (ast.ast-node-pool-context-install! pools))]
     [unpublished : bool
       (and (= store.occurrence-count 0) (= store.type-count 0))]
     (typed.typed-store-retire! (&mut store))
@@ -16364,7 +16435,9 @@
       (ast.ast-node-pool-context-new-with-capacities 32 32)]
     ;; The canonical resolver and its type-list adapters use the current
     ;; reader. Pin it to the same owner as the authored composite type.
-    [_installed : unit (ast.ast-node-pool-context-install! pools)]
+    [_installed : unit
+      (unsafe
+        (ast.ast-node-pool-context-install! pools))]
     [_reader : unit (ast.ast-node-pool-reader-use! pools)]
     [ctx : tc_core.TcContext (tc-selected-test-context pools)]
     [name : i64 (ci.intern "selected-tuple-parameter")]
@@ -16504,7 +16577,8 @@
           (= store.binder-count 1)))]
     (tc_core.tc-type-env-scoped-runtime-restore! save)
     (typed.typed-store-retire! (&mut store))
-    (ast.ast-node-pool-context-install! installed)
+    (unsafe
+      (ast.ast-node-pool-context-install! installed))
     (if reader-explicit
       (ast.ast-node-pool-reader-use! reader)
       (ast.ast-node-pool-reader-clear!))
@@ -16652,7 +16726,9 @@
     [reader : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
     [pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 32 32)]
-    [_install : unit (ast.ast-node-pool-context-install! pools)]
+    [_install : unit
+      (unsafe
+        (ast.ast-node-pool-context-install! pools))]
     [_reader : unit (ast.ast-node-pool-reader-use! pools)]
     [ctx : tc_core.TcContext (tc-selected-test-context pools)]
     [name : i64 (ci.intern "selected-array-parameter")]
@@ -16819,7 +16895,8 @@
           (= store.binder-count 1)))]
     (tc_core.tc-type-env-scoped-runtime-restore! save)
     (typed.typed-store-retire! (&mut store))
-    (ast.ast-node-pool-context-install! installed)
+    (unsafe
+      (ast.ast-node-pool-context-install! installed))
     (if reader-explicit
       (ast.ast-node-pool-reader-use! reader)
       (ast.ast-node-pool-reader-clear!))
@@ -17053,7 +17130,9 @@
   (let
     [_init : unit (cbi.compiler-builtin-initialize-for-parse!)]
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
-    [_installed : unit (ast.ast-node-pool-context-install! pools)]
+    [_installed : unit
+      (unsafe
+        (ast.ast-node-pool-context-install! pools))]
     [_reader : unit (ast.ast-node-pool-reader-use! pools)]
     [ctx : tc_core.TcContext (tc-selected-test-context pools)]
     [brand : i64 (ci.intern "selected-signature-brand")]
@@ -17439,7 +17518,8 @@
     [env : tc_core.TcTypeEnv
       (tc_core.tc-bind-id (tc_core.tc-empty-env) name (String))]
     [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     (let
       [rows : i64 (ast.ast-node-pool-context-expr-len pools)]
       [operand : i64
@@ -17455,7 +17535,8 @@
               operand)]
           [_ -1])]
       [rows-after : i64 (ast.ast-node-pool-context-expr-len pools)]
-      (ast.ast-node-pool-context-install! saved)
+      (unsafe
+        (ast.ast-node-pool-context-install! saved))
       (test.assert-i64-eq
         operand
         arg
@@ -17550,7 +17631,8 @@
         span)]
     [ctx : tc_core.TcContext (tc-literal-pool-test-context pools)]
     [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     ;; Unobserved: the compact marker takes the operand's Spanned place.
     (test.assert-i64-eq
       (tc-caller-marker-test-wrapped
@@ -17649,7 +17731,8 @@
       (tc_core.tc-job-state-set-semantic-observer!
         (tc_core.tc-context-job-state ctx)
         (tc_core.TcSemanticObserver 0))
-      (ast.ast-node-pool-context-install! saved)
+      (unsafe
+        (ast.ast-node-pool-context-install! saved))
       (test.assert-i64-eq
         observed
         var-arg
@@ -18124,7 +18207,9 @@
           (ast.ast-node-pool-context-capture-active)]
         [pools : ast.AstNodePoolContext
           (ast.ast-node-pool-context-new-with-capacities 64 32)]
-        [_install : unit (ast.ast-node-pool-context-install! pools)]
+        [_install : unit
+          (unsafe
+            (ast.ast-node-pool-context-install! pools))]
         [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
         [ctx : tc_core.TcContext
           (tc_core.tc-context-new-with-source-names-and-job-state
@@ -18227,7 +18312,8 @@
                 1
                 "reachable lambda is observed"))))
         (tc_core.compiler-typecheck-reset-file-state-for-job! job)
-        (ast.ast-node-pool-context-install! caller-pools)
+        (unsafe
+          (ast.ast-node-pool-context-install! caller-pools))
         (ast.ast-node-pool-context-destroy-storage! pools)))))
 
 (cfg
@@ -18574,7 +18660,9 @@
           (ast.ast-node-pool-reader-context-current)]
         [pools : ast.AstNodePoolContext
           (ast.ast-node-pool-context-new-with-capacities 64 64)]
-        [_install : unit (ast.ast-node-pool-context-install! pools)]
+        [_install : unit
+          (unsafe
+            (ast.ast-node-pool-context-install! pools))]
         [_reader : unit (ast.ast-node-pool-reader-use! pools)]
         [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
         [i64-ty : ast.AstType ast.AstType.I64]
@@ -18666,7 +18754,8 @@
                   ""
                   message))]
             [_ "UNEXPECTED_OK"])]
-        (ast.ast-node-pool-context-install! previous)
+        (unsafe
+          (ast.ast-node-pool-context-install! previous))
         (if reader-explicit
           (ast.ast-node-pool-reader-use! reader)
           (ast.ast-node-pool-reader-clear!))

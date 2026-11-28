@@ -1518,7 +1518,8 @@
         (tc.tc-job-state-retire-owned-storage! job-state)
         (when
           lint-pool-active?
-          (ast.ast-node-pool-compat-context-use! lint-pools))
+          (unsafe
+            (ast.ast-node-pool-compat-context-use! lint-pools)))
         findings))))
 
 (define (selfhost-lint-source-unused-unsafe-findings
@@ -2567,7 +2568,9 @@
         selfhost-lint-expr-pool-initial-capacity
         selfhost-lint-type-pool-initial-capacity
         pool-arena)]
-    [_install-pools : unit (ast.ast-node-pool-compat-context-use! pools)]
+    [_install-pools : unit
+      (unsafe
+        (ast.ast-node-pool-compat-context-use! pools))]
     [source-scan : SelfhostLintDeadScan
       (with-scratch
         (let
@@ -3301,7 +3304,9 @@
         selfhost-lint-expr-pool-initial-capacity
         selfhost-lint-type-pool-initial-capacity
         pool-arena)]
-    [_install-pools : unit (ast.ast-node-pool-compat-context-use! pools)]
+    [_install-pools : unit
+      (unsafe
+        (ast.ast-node-pool-compat-context-use! pools))]
     [result : ResultSelfhostLintDeadImportList
       (with-scratch
         (let
@@ -3656,7 +3661,9 @@
         selfhost-lint-expr-pool-initial-capacity
         selfhost-lint-type-pool-initial-capacity
         pool-arena)]
-    [_install-pools : unit (ast.ast-node-pool-compat-context-use! pools)]
+    [_install-pools : unit
+      (unsafe
+        (ast.ast-node-pool-compat-context-use! pools))]
     [status : i64
       (with-scratch
         (let
@@ -3717,7 +3724,9 @@
         selfhost-lint-expr-pool-initial-capacity
         selfhost-lint-type-pool-initial-capacity
         pool-arena)]
-    [_install-pools : unit (ast.ast-node-pool-compat-context-use! pools)]
+    [_install-pools : unit
+      (unsafe
+        (ast.ast-node-pool-compat-context-use! pools))]
     [status : i64
       (with-scratch
         (let

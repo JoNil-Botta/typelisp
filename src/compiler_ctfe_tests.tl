@@ -1850,7 +1850,9 @@
     (let
       [installed : ast.AstNodePoolContext
         (ast.ast-node-pool-context-new-with-capacities 4 8)]
-      [_install : unit (ast.ast-node-pool-compat-context-use! installed)]
+      [_install : unit
+        (unsafe
+          (ast.ast-node-pool-compat-context-use! installed))]
       [snapshot : ast.AstNodePoolContext
         (ast.ast-node-pool-context-capture-active)]
       [installed-cursor : i64 (ast.ast-node-pool-context-type-len installed)]
@@ -4374,7 +4376,10 @@
         (if (ast.ast-node-pool-has-active-context?)
           (Some (ast.ast-node-pool-context-active-live))
           (None))]
-      (when (= source 2) (ast.ast-node-pool-context-install! caller-pools))
+      (when
+        (= source 2)
+        (unsafe
+          (ast.ast-node-pool-context-install! caller-pools)))
       (let
         [cons-ok? : bool
           (match (ctfe.compiler-ctfe-eval
@@ -4417,7 +4422,9 @@
         (when
           (= source 2)
           (match previous
-            [(Some pools) (ast.ast-node-pool-context-install! pools)]
+            [(Some pools)
+              (unsafe
+                (ast.ast-node-pool-context-install! pools))]
             [(None) (ast.ast-node-pool-active-context-clear!)]))
         (and cons-ok? call-ok? (> next (+ sentinel 1)))))))
 

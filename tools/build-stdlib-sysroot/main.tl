@@ -211,7 +211,8 @@
               (lower.compiler-lower-state-enable-module-ownership!
                 lower-state
                 true)
-              (ast.ast-node-pool-context-install! pools)
+              (unsafe
+                (ast.ast-node-pool-context-install! pools))
               (let
                 [lower-names : lower.LowerNameEnv
                   (match (& checked-program)

@@ -9716,7 +9716,8 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : ResultAstExpr (parse-ast-expr-with-pools dispatch pools s)]
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     (match result
       [(Ok expr) (Ok expr)]
       [(Err message) (Err (cdiag.compiler-diagnostic-untagged-message message))])))
@@ -12290,7 +12291,8 @@
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : ResultAstMaybeDecl
       (parse-ast-decl-maybe-with-pools dispatch pools s)]
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     (match result
       [(NoDecl) NoDecl]
       [(SomeDecl decl) (SomeDecl decl)]
@@ -12716,7 +12718,8 @@
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : ResultAstProgram
       (parse-ast-source-with-cfg-and-pools src cfgs pools)]
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     result))
 
 (define (parse-ast-repl-module-macro-call-decl? [decl : (& ast.AstDecl)]) : bool
@@ -12815,7 +12818,8 @@
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : ResultAstReplItem
       (parse-ast-repl-source-with-pools src cfgs pools)]
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     result))
 
 ;; Every parse error becomes a diagnostic through here. A tagged message or a
@@ -13097,7 +13101,8 @@
         src
         cfgs
         pools)]
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     result))
 
 (define (parse-ast-program-forms-diagnostic-into-vec
@@ -13351,7 +13356,8 @@
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : ResultAstProgramDiagnostic
       (parse-ast-source-diagnostic-with-cfg-and-pools path src cfgs pools)]
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     result))
 
 (define (ast-decl-list-count [decls : (& ast.AstDeclList)]) : i64

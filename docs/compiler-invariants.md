@@ -2502,9 +2502,14 @@ canonical index. Installed and explicit writers over that storage share the
 cursor, even when their context cells differ. At half occupancy the index
 rehashes the immutable prefix in the pool's base arena. Every writer sees the
 replacement, and the pending push can still return an existing ID. Growth
-preserves IDs and revisions. Truncation clears the shared index and starts a
-new revision. An independently allocated pool has its own cursor and index.
+preserves IDs and revisions. Truncation clears the shared index, starts a
+new revision and refreshes installed wrappers that share the truncated
+cursor. Retirement is terminal, including for a reset to an empty pool.
+An independently allocated pool has its own cursor and index.
 At the maximum index capacity, pushes retain the raw-append fallback.
+
+Unscoped pool installation requires an unsafe call. The installing caller
+keeps the wrapper cells and backing arenas live until it replaces the pool.
 
 
 Expression node IDs belong to an AST pool. Literal analysis in

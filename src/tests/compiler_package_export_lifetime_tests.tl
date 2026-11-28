@@ -73,7 +73,9 @@
         [interns : ci.InternCompatState (ci.intern-compat-state-new)]
         [_install : unit
           (begin
-            (ast.ast-node-pool-context-install! pools)
+            (unsafe
+              ;; Restore home-pools before releasing this scratch arena.
+              (ast.ast-node-pool-context-install! pools))
             (unsafe
               ;; unsafe: installs global intern state; replaced before this arena ends
               (ci.intern-compat-state-install! interns))
@@ -129,7 +131,8 @@
           (unsafe
             ;; unsafe: installs global intern state; replaced before this arena ends
             (ci.intern-compat-state-install! home-interns))
-          (ast.ast-node-pool-context-install! home-pools)
+          (unsafe
+            (ast.ast-node-pool-context-install! home-pools))
           (tc.compiler-typecheck-reset-intern-owned-state!)
           (unsafe
             ;; unsafe: resets global analysis state; it holds no allocation of this arena

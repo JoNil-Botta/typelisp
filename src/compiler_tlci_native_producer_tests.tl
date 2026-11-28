@@ -323,7 +323,9 @@
       (parser.compiler-parse-state-new-with-intern-state
         (ci.intern-compat-state-capture-active))]
     [source : String (producer-owner-input callee wrapper)]
-    [_install : unit (ast.ast-node-pool-context-install! pools)]
+    [_install : unit
+      (unsafe
+        (ast.ast-node-pool-context-install! pools))]
     (match (parser.parse-ast-source-with-cfg-and-pools
       (& source)
       (parser.compiler-parse-state-cfgs
@@ -545,7 +547,8 @@
       "the decoy's own source remains intact")
     (producer.embedded-native-full-blocker-report-set! home-full-report)
     (ci.intern-compat-state-install! home-interns)
-    (ast.ast-node-pool-context-install! home-pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! home-pools))
     (cbi.state-install! (& home-builtins))))
 
 (test native-source-explicit-owner-isolation (producer-owner-isolation!))

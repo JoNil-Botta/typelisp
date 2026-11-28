@@ -47,6 +47,14 @@
             (ast.ast-node-pool-context-type-retire! (& pools))
             (ast.ast-node-pool-context-type-push pools (ast.AstType.I64))
             0)]
+        [(string.eq operation "retired-reset")
+          (let
+            [pools : ast.AstNodePoolContext
+              (ast.ast-node-pool-context-new-with-capacities 1 1)]
+            ;; The cursor and the backing storage are still allocated.
+            (ast.ast-node-pool-context-type-retire! (& pools))
+            (ast.ast-node-pool-context-reset-to! pools 0 0)
+            0)]
         [(string.eq operation "valid")
           (let
             [env : opt.OptSsaRenameEnv

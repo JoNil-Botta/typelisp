@@ -1297,7 +1297,8 @@
             (compiler_load.compiler-load-session-state-use-with-intern-state!
               load-state
               (owned_view.compiler-owned-shared-view intern-state))
-            (ast.ast-node-pool-context-install! pools)
+            (unsafe
+              (ast.ast-node-pool-context-install! pools))
             (ci.intern-compat-state-install! intern-state)
             (let
               [loaded : compiler_load.ResultCompilerLoadWithPaths
@@ -1312,7 +1313,8 @@
                   pools)]
               ;; Preserve segments appended through the explicit loader and
               ;; publish that completed owner for legacy expansion readers.
-              (ast.ast-node-pool-context-install! pools)
+              (unsafe
+                (ast.ast-node-pool-context-install! pools))
               (ci.intern-compat-state-capture-from-globals! (&mut intern-state))
               (match loaded
                 [(Ok decls paths _ _)

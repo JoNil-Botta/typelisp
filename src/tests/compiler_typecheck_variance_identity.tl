@@ -123,7 +123,8 @@
         "IDENTITY owner={} forward=1/2/2 reverse=2/1/2 wrapper=3 modes=0,1,2\n"
         ci.intern-active-structural-owner)
       (tc.tc-variance-test-reset! 0)
-      (ast.ast-node-pool-context-install! installed))))
+      (unsafe
+        (ast.ast-node-pool-context-install! installed)))))
 
 (cfg
   test

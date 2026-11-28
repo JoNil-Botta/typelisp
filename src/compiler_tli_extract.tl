@@ -2952,7 +2952,8 @@
                   (& paths)
                   ""
                   owner-context)]
-              (ast.ast-node-pool-context-install! pools)
+              (unsafe
+                (ast.ast-node-pool-context-install! pools))
               (intern.intern-compat-state-capture-from-globals!
                 (&mut intern-state))
               (intern.intern-compat-state-install! (& intern-state))
@@ -3134,7 +3135,8 @@
       (str_map.with-capacity (+ (* module-count 2) 4))]
     [expected-inits : (__tl_dyn-array bool) (__tl_make-array bool module-count)]
     (intern.intern-compat-state-install! (& interns))
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     (for [i (iterator.range 0 module-count)]
       (set!
         (array-ref sorted-names i)

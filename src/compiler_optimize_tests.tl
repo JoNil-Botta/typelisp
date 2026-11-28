@@ -3525,8 +3525,9 @@
     [ambient : ast.AstNodePoolContext
       (ast.ast-node-pool-reader-context-current)]
     [_install-empty : unit
-      (ast.ast-node-pool-context-install!
-        (ast.ast-node-pool-context-new-with-capacities 4 16))]
+      (unsafe
+        (ast.ast-node-pool-context-install!
+          (ast.ast-node-pool-context-new-with-capacities 4 16)))]
     [inlined : opt.OptInlineSpanProgram
       (opt-test-inline-program-with-spans
         job
@@ -3534,7 +3535,9 @@
         functions
         2
         (ir.compiler-source-spans-empty))]
-    [_restore : unit (ast.ast-node-pool-context-install! ambient)]
+    [_restore : unit
+      (unsafe
+        (ast.ast-node-pool-context-install! ambient))]
     [control : ir.CompilerIrFunction
       (opt-inline-job-pool-caller "job_pool_c" (Ref 1 array-id))]
     (and
@@ -4511,7 +4514,8 @@
           (= collision 1)
           (for [i (iterator.range 0 1200)]
             (ast.ast-node-pool-context-type-push ambient (Array 0 (+ i 1)))))
-        (ast.ast-node-pool-context-install! ambient)
+        (unsafe
+          (ast.ast-node-pool-context-install! ambient))
         (opt-test-input-retirement
           job
           (ir.compiler-ir-function-seq-prepend
@@ -4519,7 +4523,8 @@
             (& (ir.compiler-ir-function-seq-empty)))
           2
           true)))
-    (ast.ast-node-pool-context-install! saved)))
+    (unsafe
+      (ast.ast-node-pool-context-install! saved))))
 
 (test
   optimizer-input-retirement-explicit-pool-nested-types
@@ -27622,8 +27627,9 @@
   (let
     [saved : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
     (for [colliding? (array false true)]
-      (ast.ast-node-pool-context-install!
-        (ast.ast-node-pool-context-new-with-capacities 4 16))
+      (unsafe
+        (ast.ast-node-pool-context-install!
+          (ast.ast-node-pool-context-new-with-capacities 4 16)))
       (let
         [raw : ir.CompilerIrProgram (opt-tailrec-array-owner-program)]
         [owner : ast.AstNodePoolContext
@@ -27647,7 +27653,9 @@
                   (ast.ast-node-pool-context-type-push
                     decoy
                     (Array filler (+ i 1)))))))]
-        [_install : unit (ast.ast-node-pool-context-install! decoy)]
+        [_install : unit
+          (unsafe
+            (ast.ast-node-pool-context-install! decoy))]
         [before : ast.AstNodePoolContext
           (ast.ast-node-pool-reader-context-current)]
         [optimized : opt.CompilerOptimizedProgram
@@ -27666,7 +27674,8 @@
           (ir.compiler-ir-type-pool-count before)
           (ir.compiler-ir-type-pool-count after)
           "optimization does not add types to the peer")
-        (ast.ast-node-pool-context-install! owner)
+        (unsafe
+          (ast.ast-node-pool-context-install! owner))
         (match optimized
           [(Program result _)
             (match (opt.opt-verify-program (& result))
@@ -27713,7 +27722,8 @@
                     (test.assert-true
                       false
                       "the recursive array function remains")])])])))
-    (ast.ast-node-pool-context-install! saved)))
+    (unsafe
+      (ast.ast-node-pool-context-install! saved))))
 
 (define (compiler-optimize-tailrec-self-test) : i64
   (let

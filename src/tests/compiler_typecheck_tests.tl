@@ -5220,7 +5220,8 @@
     [state : ast.AstTypeNodePoolState
       (ast.ast-type-pool-cell-read pools.type-pool)]
     (ast_tests.ast-type-node-pool-test-set-dedup-capacity! (& state) 8)
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     (unsafe
       (ptr-write!
         (ptr-cast (ptr-addr-of ast.ty-node-dedup-max-capacity) : (MutPtr i64))
@@ -5240,7 +5241,8 @@
         (ptr-write!
           (ptr-cast (ptr-addr-of ast.ty-node-dedup-max-capacity) : (MutPtr i64))
           old-max))
-      (ast.ast-node-pool-context-install! previous)
+      (unsafe
+        (ast.ast-node-pool-context-install! previous))
       ok)))
 
 (define (compiler-typecheck-raw-append-dag-ok? [depth : i64] [applied : bool]) : bool

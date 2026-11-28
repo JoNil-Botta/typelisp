@@ -2382,8 +2382,9 @@
       (ast.ast-node-pool-context-expr-push
         (ast.ast-node-pool-context-shared-view (& installed-pools))
         (Literal (Bool false)))]
-    (ast.ast-node-pool-context-install!
-      (ast.ast-node-pool-context-shared-view (& installed-pools)))
+    (unsafe
+      (ast.ast-node-pool-context-install!
+        (ast.ast-node-pool-context-shared-view (& installed-pools))))
     (let
       [result-id : i64
         (tc_core.macro-generated-type-param-expr
@@ -2439,7 +2440,8 @@
           (=
             (ast.ast-node-pool-context-type-segment-bases (& active-after))
             installed-type-bases))]
-      (ast.ast-node-pool-context-install! active-before)
+      (unsafe
+        (ast.ast-node-pool-context-install! active-before))
       ok)))
 
 (define (compiler-typecheck-smoke-type-resolution-pool-isolation-ok?) : bool
@@ -2483,8 +2485,9 @@
         ""
         cbi.compiler-builtin-id-fix-empty
         (ast.ast-node-pool-context-shared-view (& installed-pools)))]
-    (ast.ast-node-pool-context-install!
-      (ast.ast-node-pool-context-shared-view (& installed-pools)))
+    (unsafe
+      (ast.ast-node-pool-context-install!
+        (ast.ast-node-pool-context-shared-view (& installed-pools))))
     ;; The same numeric parent id deliberately means "already concrete" in
     ;; the installed pool and "contains Var" in the context-owned pool.
     (let
@@ -2568,7 +2571,8 @@
           (=
             (ast.ast-node-pool-context-type-segment-bases installed-active)
             installed-bases))]
-      (ast.ast-node-pool-context-install! active-before)
+      (unsafe
+        (ast.ast-node-pool-context-install! active-before))
       ok)))
 
 (define (compiler-typecheck-smoke-generated-import-decl

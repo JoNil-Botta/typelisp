@@ -2597,7 +2597,9 @@
       (let
         [pools : ast.AstNodePoolContext
           (driver.compiler-driver-state-new-checked-lower-pools)]
-        [_install : unit (ast.ast-node-pool-context-install! pools)]
+        [_install : unit
+          (unsafe
+            (ast.ast-node-pool-context-install! pools))]
         [status : i64
           (unsafe
             ;; unsafe: interned names live in the persistent intern arena, not this one
@@ -3599,7 +3601,8 @@
     (compiler_load.compiler-load-session-program-cache-disable!)
     (tc_core.tc-serial-job-state-set!
       (owned_view.compiler-owned-shared-view entry-job))
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     (TlTestEntry owner parent-load parent-default parent-job)))
 
 (define (tltest-entry-finish [entry : TlTestEntry] [result : i64]) : i64

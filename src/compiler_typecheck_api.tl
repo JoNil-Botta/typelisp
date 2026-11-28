@@ -123,7 +123,8 @@
           (& paths)
           ""
           owner-context)]
-      (ast.ast-node-pool-context-install! pools)
+      (unsafe
+        (ast.ast-node-pool-context-install! pools))
       (ci.intern-compat-state-install! intern-state)
       (match generated-result
         [(Ok generated generated-paths)
@@ -200,7 +201,8 @@
                     (& paths)
                     ""
                     owner-context)]
-                (ast.ast-node-pool-context-install! pools)
+                (unsafe
+                  (ast.ast-node-pool-context-install! pools))
                 ;; Publish generated IDs before legacy macro/symbol consumers run.
                 (ci.intern-compat-state-install! intern-state)
                 (match generated-result
@@ -238,7 +240,8 @@
                                   owner-context)]
                               ;; Publish explicit normalization mutations before
                               ;; matching either result or entering legacy phases.
-                              (ast.ast-node-pool-context-install! pools)
+                              (unsafe
+                                (ast.ast-node-pool-context-install! pools))
                               (ci.intern-compat-state-install! intern-state)
                               (match normalized-result
                                 [(Ok normalized normalized-paths)
@@ -267,8 +270,9 @@
                                                   "")
                                                 pools
                                                 (& intern-state))]
-                                            (ast.ast-node-pool-context-install!
-                                              pools)
+                                            (unsafe
+                                              (ast.ast-node-pool-context-install!
+                                                pools))
                                             (ci.intern-compat-state-install!
                                               intern-state)
                                             (match specialized-result

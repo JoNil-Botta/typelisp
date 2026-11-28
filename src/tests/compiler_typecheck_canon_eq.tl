@@ -36,8 +36,9 @@
     (ast.ty-node-push (& (ast.ast-ty-tuple children)))))
 
 (define (canon-eq-fresh-pool) : unit
-  (ast.ast-node-pool-context-install!
-    (ast.ast-node-pool-context-new-with-capacities 8 8)))
+  (unsafe
+    (ast.ast-node-pool-context-install!
+      (ast.ast-node-pool-context-new-with-capacities 8 8))))
 
 ;; Raw-appended (dedup-bypassing) equal DAGs: distinct IDs at every level,
 ;; equal by canonical ID, so depth 40 stays linear.
@@ -390,7 +391,8 @@
       (canon-eq-jobs-test job)
       (canon-eq-same-job-nesting-test)
       (canon-eq-release-test job)
-      (ast.ast-node-pool-context-install! installed)
+      (unsafe
+        (ast.ast-node-pool-context-install! installed))
       (canon-eq-failing-check-test job)
       (canon-eq-expansion-binding-test job)
       (canon-eq-temporary-job-test)
@@ -404,7 +406,8 @@
         true
         (canon-eq-raw-dag 6 ast.AstType.I64)
         (canon-eq-raw-dag 6 ast.AstType.I64))
-      (ast.ast-node-pool-context-install! installed))))
+      (unsafe
+        (ast.ast-node-pool-context-install! installed)))))
 
 (test canonical-type-id-equality-controls (canon-eq-self-test))
 

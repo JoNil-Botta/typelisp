@@ -482,8 +482,9 @@
   (if (=
     (compiler_ast_types.ast-node-pool-owner-arena-handle)
     (compiler_ast_types.ast-node-pool-context-owner-arena pools))
-    (compiler_ast_types.ast-node-pool-context-install!
-      (array-ref compiler-driver-detached-compat-pools 0))
+    (unsafe
+      (compiler_ast_types.ast-node-pool-context-install!
+        (array-ref compiler-driver-detached-compat-pools 0)))
     unit))
 
 (define (compiler-driver-state-new-for-compile-with-load-session
@@ -623,8 +624,9 @@
   (set!
     (array-ref compiler-driver-active-state-surface-arena 0)
     (compiler-driver-state-surface-arena state))
-  (compiler_ast_types.ast-node-pool-context-install!
-    (compiler-driver-state-pool-context state)))
+  (unsafe
+    (compiler_ast_types.ast-node-pool-context-install!
+      (compiler-driver-state-pool-context state))))
 
 ;; The most recently installed driver state's own pool arena, or 0 when no
 ;; state is installed. The allocation snapshot reports this as `state-pool-arena`
@@ -5539,7 +5541,8 @@
     (unsafe
       ;; unsafe: installs global intern state; replaced before this arena ends
       (ci.intern-compat-state-install! interns))
-    (compiler_ast_types.ast-node-pool-context-install! pools)
+    (unsafe
+      (compiler_ast_types.ast-node-pool-context-install! pools))
     (if (array-ref parent.intern-state-ready 0)
       (unsafe
         ;; unsafe: installs the global load session; replaced before this arena ends
@@ -5923,7 +5926,8 @@
           (compiler_load.compiler-load-session-state-new-for-package-child
             (& parent))]
         [_install-pools : unit
-          (compiler_ast_types.ast-node-pool-context-install! pools)]
+          (unsafe
+            (compiler_ast_types.ast-node-pool-context-install! pools))]
         [_install-interns : unit
           (unsafe
             ;; unsafe: installs global intern state; replaced before this arena ends

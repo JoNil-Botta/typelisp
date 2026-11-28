@@ -275,7 +275,8 @@
       (tc_core.tc-type-env-store-read parent.store)]
     [chain : i64 (tc_core.tc-chain-state-address parent.store)]
     [counts : (Array i64 4) (array 0 3 80 1)]
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     (for [case-index (iterator.range 0 (array-length counts))]
       (let
         [count : i64 (array-ref counts case-index)]
@@ -362,7 +363,8 @@
       "an error also leaves the persistent parent untouched")
     (lower.compiler-lower-arena-state-release!
       (lower.compiler-lower-state-arenas owner))
-    (ast.ast-node-pool-context-install! saved)))
+    (unsafe
+      (ast.ast-node-pool-context-install! saved))))
 
 (test
   compiler-lower-let-source-fact-fallback
@@ -394,7 +396,8 @@
       (tc_core.tc-job-state-checked-let-binding-facts job)]
     [transition : tc_core.TcCheckedLetBindingTransition
       (tc_core.TcCheckedLetBindingTransition 0 -1)]
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     (test.assert-true
       (match (lower.lower-let-binding-source-type ctx env 11 0 name (No) init)
         [(Ok (Region region nested)) (and (= region 77) (= nested inner))]
@@ -450,7 +453,8 @@
         [_ false])
       "an exact checked proof retains its semantic type")
     (tc_core.tc-checked-let-binding-facts-finish! facts)
-    (ast.ast-node-pool-context-install! saved)))
+    (unsafe
+      (ast.ast-node-pool-context-install! saved))))
 
 ;; The functions of a successful lowering. Checks match on it and fail on No.
 (defenum LowerTestFunctions
@@ -1928,7 +1932,8 @@
     [plain-body : ast.AstExprList
       (ast.ast-expr-cons plain (& (ast.ast-expr-list-new)))]
     [loops : (__tl_dyn-array ast.AstExpr) (__tl_make-array ast.AstExpr 0)]
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     (__tl_array-push! loops (While plain (ast.clone-ast-expr-list (& body))))
     (__tl_array-push!
       loops
@@ -2066,7 +2071,8 @@
     (test.assert-true
       (lower-test-precheck-cached? ctx (PtrAddrOf variable) false)
       "an acyclic address is not a loop-exposure summary")
-    (ast.ast-node-pool-context-install! active)))
+    (unsafe
+      (ast.ast-node-pool-context-install! active))))
 
 (test
   compiler-lower-body-proofs-loop-rhs-and-mention-only
@@ -2109,7 +2115,8 @@
     [owner : lower.CompilerLowerState (lower.compiler-lower-state-new)]
     [state : lower.CompilerLowerFunctionState
       (lower.compiler-lower-function-state-new owner)]
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     (let
       [inner-body : ast.AstExprList
         (ast.ast-expr-cons quote-id (& (ast.ast-expr-list-new)))]
@@ -2156,7 +2163,8 @@
           (lower.compiler-lower-function-state-name-written? state read-only))
         (lower.compiler-lower-function-state-raw-address-free? state))
       "unknown forms count mentions and immediate reads through offsets preserve the raw proof")
-    (ast.ast-node-pool-context-install! active)))
+    (unsafe
+      (ast.ast-node-pool-context-install! active))))
 
 (test
   compiler-lower-fused-precheck-helper-invalidation
@@ -2205,7 +2213,8 @@
     [owner : lower.CompilerLowerState (lower.compiler-lower-state-new)]
     [state : lower.CompilerLowerFunctionState
       (lower.compiler-lower-function-state-new owner)]
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     (for [_index (iterator.range 0 21)]
       (set!
         tree
@@ -2245,7 +2254,8 @@
           (lower.compiler-lower-function-state-set-in-loop? state tree)
           (not (lower.compiler-lower-function-state-raw-address-free? state)))
         "exhausted write, loop and raw-address proofs all fail closed"))
-    (ast.ast-node-pool-context-install! active)))
+    (unsafe
+      (ast.ast-node-pool-context-install! active))))
 
 ;; Call and operator operands, and indirect callees in ordinary and tail
 ;; calls, copy storage only when later evaluation can write it. Unrelated
@@ -11583,7 +11593,8 @@
     [decoy-exprs-before : i64 (ast.ast-node-pool-context-expr-len pools-b)]
     [ok : bool false]
     (ci.intern-compat-state-install! intern-decoy)
-    (ast.ast-node-pool-context-install! pools-b)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools-b))
     (let
       [stripped-a : i64
         (lower.lower-imported-spmd-ir-symbol (&mut intern-a) item-a)]
@@ -11638,7 +11649,8 @@
             decoy-generated-before)
           (= (ast.ast-node-pool-context-expr-len pools-b) decoy-exprs-before))))
     (ci.intern-compat-state-install! active-intern-before)
-    (ast.ast-node-pool-context-install! active-pools-before)
+    (unsafe
+      (ast.ast-node-pool-context-install! active-pools-before))
     (ast.ast-node-pool-context-destroy-storage! pools-a)
     (ast.ast-node-pool-context-destroy-storage! pools-b)
     (unsafe
@@ -14840,7 +14852,8 @@
       [expr-b-before : i64 (ast.ast-node-pool-context-expr-len pools-b)]
       [ok : bool false]
       (ci.intern-compat-state-install! intern-b)
-      (ast.ast-node-pool-context-install! pools-b)
+      (unsafe
+        (ast.ast-node-pool-context-install! pools-b))
       (let
         [_active-generated-b : i64
           (ci.intern-compat-state-generated-name
@@ -14898,7 +14911,8 @@
             (= (ast.ast-node-pool-context-expr-len pools-a) 7)
             (= (ast.ast-node-pool-context-expr-len pools-b) expr-b-before))))
       (ci.intern-compat-state-install! active-intern-before)
-      (ast.ast-node-pool-context-install! active-pools-before)
+      (unsafe
+        (ast.ast-node-pool-context-install! active-pools-before))
       (ast.ast-node-pool-context-destroy-storage! pools-a)
       (ast.ast-node-pool-context-destroy-storage! pools-b)
       (unsafe
@@ -15659,7 +15673,8 @@
         pools)]
     [layouts : ctfe.CtfeLayoutInfoList (ctfe.ctfe-layout-info-list-empty)]
     [ok : bool false]
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     (set!
       ok
       (and
@@ -15723,7 +15738,8 @@
               (= (tc_core.tc-layout-info-size info) 16)
               (= (tc_core.tc-layout-info-align info) 8))]
           [(Err _) false])))
-    (ast.ast-node-pool-context-install! active-before)
+    (unsafe
+      (ast.ast-node-pool-context-install! active-before))
     ok))
 
 ;; A BoundsCheck lowers to one unsigned `cmpq length, index`, so an operand that
@@ -15864,7 +15880,8 @@
     [array-u8 : ast.AstType (Array u8-id 3)]
     [array-nested : ast.AstType (Array nested-id 2)]
     [ok : bool false]
-    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ast.ast-node-pool-context-install! pools))
     (set!
       ok
       (and
@@ -16017,7 +16034,8 @@
           array-u8)
           [(No) true]
           [_ false])))
-    (ast.ast-node-pool-context-install! active-before)
+    (unsafe
+      (ast.ast-node-pool-context-install! active-before))
     ok))
 
 (test
@@ -16986,7 +17004,8 @@
     (unless
       (compiler-lower-checked-pools-state-inert? retained-state)
       (set! ok false))
-    (ast.ast-node-pool-context-install! active-pools-before)
+    (unsafe
+      (ast.ast-node-pool-context-install! active-pools-before))
     (compiler-lower-checked-pools-test-context-destroy!
       retained-source
       return-arena)
@@ -18217,8 +18236,9 @@
     [saved-pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-capture-active)]
     [_fresh : unit
-      (ast.ast-node-pool-context-install!
-        (ast.ast-node-pool-context-new-with-capacities 64 16))]
+      (unsafe
+        (ast.ast-node-pool-context-install!
+          (ast.ast-node-pool-context-new-with-capacities 64 16)))]
     [owner : lower.CompilerLowerState (lower.compiler-lower-state-new)]
     [ordinary : String "(define (f) : i64 42)"]
     [empty : ir.CompilerSpmdDecisions
@@ -18230,8 +18250,9 @@
     (test.assert-true
       (not (lower.compiler-lower-state-spmd-source-present owner))
       "prepared ordinary pool skips provenance enumeration")
-    (ast.ast-node-pool-context-install!
-      (ast.ast-node-pool-context-new-with-capacities 64 16))
+    (unsafe
+      (ast.ast-node-pool-context-install!
+        (ast.ast-node-pool-context-new-with-capacities 64 16)))
     (let
       [generated : ir.CompilerSpmdDecisions
         (compiler-lower-spmd-source-facts
@@ -18245,8 +18266,9 @@
       (test.assert-true
         (lower.compiler-lower-state-spmd-source-present owner)
         "new prepared pool invalidates a negative result"))
-    (ast.ast-node-pool-context-install!
-      (ast.ast-node-pool-context-new-with-capacities 64 16))
+    (unsafe
+      (ast.ast-node-pool-context-install!
+        (ast.ast-node-pool-context-new-with-capacities 64 16)))
     (let
       [again : ir.CompilerSpmdDecisions
         (compiler-lower-spmd-source-facts
@@ -18260,7 +18282,8 @@
       (test.assert-true
         (not (lower.compiler-lower-state-spmd-source-present owner))
         "presence belongs to the current prepared job"))
-    (ast.ast-node-pool-context-install! saved-pools)))
+    (unsafe
+      (ast.ast-node-pool-context-install! saved-pools))))
 
 (test
   compiler-lower-spmd-decisions-function-identity

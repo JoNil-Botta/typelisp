@@ -435,7 +435,7 @@
               (i64_map.insert-ref! (&mut st.ref-exs-seen) eidx 1)
               (i64_vec.push-ref! (&mut st.ref-exs) eidx))
             (match (ir.compiler-ir-extern-seq-borrow whole-externs eidx)
-              [(ir.CompilerIrExtern.Extern _ _ _ _ abi link-id _ _ _ _ _)
+              [(ir.CompilerIrExtern.Extern _ _ _ _ abi link-id _ _ _ _ _ _)
                 (match abi
                   [(ast.AstExternAbi.CVarargsTyped _) (set! st.ok? false)]
                   [_ unit])
@@ -487,7 +487,7 @@
                   (i64_map.insert-ref! (&mut st.ref-exs-seen) eidx 1)
                   (i64_vec.push-ref! (&mut st.ref-exs) eidx))
                 (match (ir.compiler-ir-extern-seq-borrow whole-externs eidx)
-                  [(ir.CompilerIrExtern.Extern _ _ _ _ abi link-id _ _ _ _ _)
+                  [(ir.CompilerIrExtern.Extern _ _ _ _ abi link-id _ _ _ _ _ _)
                     (if (ast.ast-extern-abi-c? abi)
                       (ir.compiler-ir-symbol-text sym-id)
                       (string.copy
@@ -508,7 +508,7 @@
         (match (i64_map.get (& tables.ex-id-to-idx) sid)
           [(LookupFound eidx)
             (match (ir.compiler-ir-extern-seq-borrow whole-externs eidx)
-              [(ir.CompilerIrExtern.Extern _ _ _ _ _ _ _ _ _ _ storage)
+              [(ir.CompilerIrExtern.Extern _ _ _ _ _ _ _ _ _ _ storage _)
                 (> (ir.compiler-ir-global-storage-inline-size (& storage)) 0)])]
           [(LookupMissing) false])])))
 
@@ -893,7 +893,7 @@
       (ir.compiler-ir-function-seq-borrow whole-functions fn-idx)))
     (No)
     (match (ir.compiler-ir-function-seq-borrow whole-functions fn-idx)
-      [(ir.CompilerIrFunction.Function _ params ret-ty next-var blocks abi)
+      [(ir.CompilerIrFunction.Function _ params ret-ty next-var blocks abi _)
         (match blocks
           [(ir.CompilerIrBlockList.Array bseq)
             (let
@@ -980,7 +980,8 @@
                             cret
                             _
                             _
-                            cabi)
+                            cabi
+                            cold?)
                           (let
                             [lsym : String
                               (string.copy
@@ -1004,7 +1005,8 @@
                                   interns
                                   cparams
                                   cret)
-                                crs)))])))
+                                crs
+                                cold?)))])))
                   (for [ri (iterator.range 0 (i64_vec.len (& st.ref-gls)))]
                     (let
                       [gidx : i64 (i64_vec.get (& st.ref-gls) ri 0)]
@@ -1023,7 +1025,8 @@
                                 0
                                 lsym
                                 (tli-compact-type-from-ast pools interns gty)
-                                (tli.TliCompactReturnStorage.None))))])))
+                                (tli.TliCompactReturnStorage.None)
+                                false)))])))
                   (for [ri (iterator.range 0 (i64_vec.len (& st.ref-exs)))]
                     (let
                       [eidx : i64 (i64_vec.get (& st.ref-exs) ri 0)]
@@ -1041,7 +1044,8 @@
                             _
                             estorage
                             _
-                            _)
+                            _
+                            cold?)
                           (let
                             [abi-tag : i64
                               (match eabi
@@ -1066,7 +1070,8 @@
                                 (tli-compact-return-storage-from-ir
                                   pools
                                   interns
-                                  estorage))))])))
+                                  estorage)
+                                cold?)))])))
                   (let
                     [rcount : i64 (ext_ref_vec.len (& refs))]
                     [out-refs : (__tl_dyn-array tli.TliCompactExternRef)
@@ -1133,7 +1138,7 @@
         (array-ref fn-links-copy i)
         (string.copy (& (array-ref (deref fn-link-syms) i))))
       (match (ir.compiler-ir-function-seq-borrow whole-functions i)
-        [(ir.CompilerIrFunction.Function fn-name _ _ _ _ _)
+        [(ir.CompilerIrFunction.Function fn-name _ _ _ _ _ _)
           (i64_map.insert-ref!
             (&mut fn-id-to-idx)
             (ir.compiler-ir-symbol-id fn-name)
@@ -1150,7 +1155,7 @@
               i))]))
     (for [i (iterator.range 0 ex-count)]
       (match (ir.compiler-ir-extern-seq-borrow whole-externs i)
-        [(ir.CompilerIrExtern.Extern ename _ _ _ _ _ _ provided _ _ _)
+        [(ir.CompilerIrExtern.Extern ename _ _ _ _ _ _ provided _ _ _ _)
           (unless
             provided
             (i64_map.insert-ref!
@@ -1249,7 +1254,7 @@
       (for [i (iterator.range 0 fn-count)]
         (set! (array-ref fn-needs-init i) false)
         (match (ir.compiler-ir-function-seq-borrow whole-functions i)
-          [(ir.CompilerIrFunction.Function fn-name _ _ _ blocks _)
+          [(ir.CompilerIrFunction.Function fn-name _ _ _ blocks _ _)
             (set! (array-ref fn-sym-ids i) (ir.compiler-ir-symbol-id fn-name))
             (set! (array-ref edge-starts i) (i64_vec.len (& edge-targets)))
             (let
@@ -1418,7 +1423,7 @@
                         (match (ir.compiler-ir-function-seq-borrow
                           whole-functions
                           fidx)
-                          [(ir.CompilerIrFunction.Function fn-name _ _ _ _ _)
+                          [(ir.CompilerIrFunction.Function fn-name _ _ _ _ _ _)
                             (ir.compiler-ir-symbol-id fn-name)])]
                       [cm : i64
                         (i64_map.get-value-or
@@ -1877,7 +1882,8 @@
     r.abi
     (string.copy (& r.link-symbol))
     (tli-clone-type (& r.ty))
-    (tli-clone-compact-return-storage (& r.return-storage))))
+    (tli-clone-compact-return-storage (& r.return-storage))
+    r.cold?))
 
 (define (tli-clone-compact-ir-body [b : (& tli.TliCompactIrBody)]) : tli.TliCompactIrBody
   (let
@@ -1919,7 +1925,8 @@
           (string.copy (& (array-ref b.extern-refs i).link-symbol))
           (tli-clone-type (& (array-ref b.extern-refs i).ty))
           (tli-clone-compact-return-storage
-            (& (array-ref b.extern-refs i).return-storage)))))
+            (& (array-ref b.extern-refs i).return-storage))
+          (array-ref b.extern-refs i).cold?)))
     (tli.TliCompactIrBody
       b.ir-flags
       b.instr-count
@@ -2325,6 +2332,7 @@
 (define (tli-compact-ir-body-to-function
   [pools : ast.AstNodePoolContext]
   [target-name-id : i64]
+  [cold? : bool]
   [body : (& tli.TliCompactIrBody)]) : ir.CompilerIrFunction
   (let
     [pn : i64 (array-length body.params)]
@@ -2369,7 +2377,8 @@
         (tli-compact-type-to-ast pools (& body.ret-type))
         body.next-var
         (ir.CompilerIrBlockList.Array (ir.CompilerIrBlockSeq bslots bn))
-        abi))))
+        abi
+        cold?))))
 
 (define (tli-compact-extern-ref-to-ir
   [pools : ast.AstNodePoolContext]
@@ -2396,7 +2405,8 @@
       false
       (tli-compact-return-storage-to-ir pools (& ref.return-storage))
       false
-      (ir.CompilerIrGlobalStorage.Word))))
+      (ir.CompilerIrGlobalStorage.Word)
+      ref.cold?)))
 
 (define (tli-compact-global-to-ir
   [pools : ast.AstNodePoolContext]
@@ -2615,7 +2625,7 @@
     [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
     (for [fi (iterator.range 0 functions.len)]
       (match (ir.compiler-ir-function-seq-borrow functions fi)
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
+        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _ _)
           (match blocks
             [(ir.CompilerIrBlockList.Array bseq)
               (for [bi (iterator.range 0 (ir.compiler-ir-block-seq-count bseq))]
@@ -2801,7 +2811,7 @@
         ;; body-available, since un-inlined bodies revert to externs).
         (for [ei (iterator.range 0 externs.len)]
           (match (ir.compiler-ir-extern-seq-borrow externs ei)
-            [(ir.CompilerIrExtern.Extern ename _ _ _ _ elink _ prov _ _ _)
+            [(ir.CompilerIrExtern.Extern ename _ _ _ _ elink _ prov _ _ _ _)
               (unless
                 prov
                 (let
@@ -3147,6 +3157,7 @@
                       provided
                       _
                       _
+                      _
                       _)
                     (unless
                       provided
@@ -3188,7 +3199,7 @@
               [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
               (for [i (iterator.range 0 functions.len)]
                 (match (ir.compiler-ir-function-seq-borrow (& functions) i)
-                  [(ir.CompilerIrFunction.Function fname _ _ _ blocks _)
+                  [(ir.CompilerIrFunction.Function fname _ _ _ blocks _ _)
                     (i64_map.insert-ref!
                       (&mut defined-fns)
                       (ir.compiler-ir-symbol-id fname)
@@ -3234,6 +3245,7 @@
                       elink
                       _
                       provided
+                      _
                       _
                       _
                       _)
@@ -3341,6 +3353,7 @@
                                   (tli-compact-ir-body-to-function
                                     pools
                                     target-name
+                                    (!= (bit-and eflags tli.tli-fn-cold) 0)
                                     (& body.ir-body)))
                                 (+= added-fns 1)
                                 (i64_map.insert-ref!
@@ -3509,7 +3522,8 @@
                           prov
                           storage
                           ba
-                          cell)
+                          cell
+                          cold?)
                         (let
                           [avail? : bool
                             (or
@@ -3532,7 +3546,8 @@
                               prov
                               storage
                               avail?
-                              cell)))]))
+                              cell
+                              cold?)))]))
                   (for [i (iterator.range 0 added-ex-seq.len)]
                     (match (ir.compiler-ir-extern-seq-ref (& added-ex-seq) i)
                       [(ir.CompilerIrExtern.Extern
@@ -3546,7 +3561,8 @@
                           prov
                           storage
                           _
-                          cell)
+                          cell
+                          cold?)
                         (let
                           [avail? : bool
                             (i64_map.contains?
@@ -3565,7 +3581,8 @@
                               prov
                               storage
                               avail?
-                              cell)))]))
+                              cell
+                              cold?)))]))
                   (let
                     [final-globals : ir.CompilerIrGlobalSeq
                       (ir.compiler-ir-global-builder-snapshot-seq
@@ -3626,6 +3643,7 @@
                                   elink
                                   _
                                   prov
+                                  _
                                   _
                                   _
                                   _)

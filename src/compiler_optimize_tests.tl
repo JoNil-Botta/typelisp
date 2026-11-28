@@ -194,7 +194,8 @@
             (ast.AstType.I64)
             14
             (opt-ctor-adopt-loop-test-blocks mode false)
-            (ir.CompilerIrFunctionAbi.Ordinary))]
+            (ir.CompilerIrFunctionAbi.Ordinary)
+            false)]
         [out : ir.CompilerIrBlockList
           (opt.opt-ctor-adopt-function-blocks
             (ast.ast-node-pool-reader-type-segment-bases)
@@ -246,7 +247,8 @@
                 (ast.AstType.I64)
                 13
                 (opt-ctor-adopt-test-blocks mode false)
-                (ir.CompilerIrFunctionAbi.Ordinary))]
+                (ir.CompilerIrFunctionAbi.Ordinary)
+                false)]
             (unless
               (opt.opt-verify-ok? (& (opt.opt-verify-function fixture)))
               (return (+ mode 201)))))
@@ -342,7 +344,8 @@
     (ast.AstType.U64)
     23
     blocks
-    (ir.CompilerIrFunctionAbi.Ordinary)))
+    (ir.CompilerIrFunctionAbi.Ordinary)
+    false))
 
 ;; Modes 0, 8, 9, 11 and 13 forward (a plain site, a call that cannot reach
 ;; the slot, a store that cannot reach it, a destination computed before the
@@ -1048,7 +1051,7 @@
   [fallback : (& fallback ir.CompilerIrFunction)]
   [next : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match (ir.compiler-ir-global-shared-view next)
-    [(Function _ _ _ _ blocks _)
+    [(Function _ _ _ _ blocks _ _)
       (if (opt.opt-inline-structure-ok? (& blocks))
         next
         (owned_view.compiler-owned-reference-shared-view fallback))]))
@@ -1401,7 +1404,7 @@
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match (opt.compiler-opt-global-shared-view func)
-    [(Function _ _ _ _ blocks _)
+    [(Function _ _ _ _ blocks _ _)
       (match (opt.opt-scratch-reset-function-with-context-result
         type-segment-bases
         (& (opt.opt-cfg-context-build blocks))
@@ -1414,13 +1417,13 @@
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]) : opt.OptFunctionCtxResult
   (match func
-    [(Function name params ret-ty frame blocks function-abi)
+    [(Function name params ret-ty frame blocks function-abi cold?)
       (let
         [context : opt.OptCfgContext
           (opt.opt-cfg-context-build
             (ir.compiler-ir-clone-block-list pools (& blocks)))]
         [input : ir.CompilerIrFunction
-          (Function name params ret-ty frame blocks function-abi)]
+          (Function name params ret-ty frame blocks function-abi cold?)]
         [preheaders-result : opt.OptFunctionCtxResult
           (opt.opt-loop-preheaders-function-with-context-result
             context
@@ -2536,7 +2539,7 @@
     [count : i64 0]
     (for [index (iterator.range 0 functions.len)]
       (match (ir.compiler-ir-function-seq-borrow functions index)
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (+=
             count
             (opt-count-exact-instr-blocks
@@ -2968,7 +2971,8 @@
     frame
     (ir.compiler-ir-blocks
       (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-spans-function [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrFunction
   (opt-spans-function-with-frame instrs 4))
@@ -3148,7 +3152,8 @@
         (opt-test-instrs
           (opt-inline-span-callee-call symbols)
           (irt.instr "return %1"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-span-caller-call [symbols : OptInlineSpanTestSymbols]) : ir.CompilerIrInstr
   (Call 0 symbols.inline-span (One (I64 7)) (I64)))
@@ -3165,7 +3170,8 @@
         (opt-test-instrs
           (opt-inline-span-caller-call symbols)
           (irt.instr "return %0"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-span-program [symbols : OptInlineSpanTestSymbols]) : ir.CompilerIrProgram
   (Program
@@ -3427,7 +3433,8 @@
     2
     (ir.compiler-ir-blocks
       (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-job-pool-caller [name : String] [param-type : ast.AstType]) : ir.CompilerIrFunction
   (opt-inline-job-pool-function
@@ -3443,7 +3450,7 @@
 
 (define (opt-inline-job-pool-leaf-calls [func : (& func ir.CompilerIrFunction)]) : i64
   (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function _ _ _ _ blocks _)
+    [(Function _ _ _ _ blocks _ _)
       (opt-count-direct-call-name-blocks
         (ir.compiler-ir-block-list-view blocks)
         "job_pool_leaf")]))
@@ -3454,7 +3461,7 @@
   [bases : i64]
   [func : (& func ir.CompilerIrFunction)]) : bool
   (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function _ params _ _ blocks _)
+    [(Function _ params _ _ blocks _ _)
       (and
         (=
           (opt-count-direct-call-name-blocks
@@ -4337,7 +4344,7 @@
         opt-test-release-input-chunk!)]
     (for [i (iterator.range 0 functions.len)]
       (match (& (array-ref functions.slots i))
-        [(Function name _ _ _ _ _) (set! (array-ref names i) name)]))
+        [(Function name _ _ _ _ _ _) (set! (array-ref names i) name)]))
     (opt.opt-inline-input-chunks-arm!
       (opt.OptInputRetirement.Retain)
       (__tl_make-array 0 2 4))
@@ -4423,7 +4430,7 @@
       (ir.compiler-ir-clone-function pools (& (array-ref functions.slots 2)))]
     (for [i (iterator.range 0 functions.len)]
       (match (& (array-ref functions.slots i))
-        [(Function name _ _ _ _ _) (set! (array-ref names i) name)]))
+        [(Function name _ _ _ _ _ _) (set! (array-ref names i) name)]))
     (opt.opt-inline-callee-cost-reset!)
     (opt.opt-inline-callee-cost-record! (& (array-ref input.slots 2)) 0 37)
     (test.assert-i64-eq
@@ -4690,7 +4697,8 @@
                        return %0
                      else:
                        return 0")
-                Ordinary))
+                Ordinary
+                false))
             (&
               (ir.compiler-ir-function-seq-prepend
                 (&
@@ -4709,7 +4717,8 @@
                             (Two (Var 0) (Var 1))
                             (I64))
                           (irt.instr "return %2"))))
-                    Ordinary))
+                    Ordinary
+                    false))
                 (& functions)))))))
     (let
       [input-rows : i64 (ir.compiler-source-spans-instr-count (& spans))]
@@ -5159,7 +5168,7 @@
   [kind : i64]
   [arg : i64]) : i64
   (match func
-    [(Function _ _ _ _ blocks _)
+    [(Function _ _ _ _ blocks _ _)
       (opt-agsplit-count-blocks
         (ir.compiler-ir-block-list-view blocks)
         kind
@@ -5172,7 +5181,8 @@
     (I64)
     frame
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-agsplit-split [blocks : ir.CompilerIrBlockList] [frame : i64]) : ir.CompilerIrFunction
   (opt.opt-aggregate-split-function
@@ -6179,7 +6189,7 @@
         call)]
     [context : opt.OptCfgContext
       (match before
-        [(Function _ _ _ _ blocks _) (opt.opt-cfg-context-build blocks)])]
+        [(Function _ _ _ _ blocks _ _) (opt.opt-cfg-context-build blocks)])]
     (test.assert-true
       (not
         (opt.opt-verify-ok?
@@ -7466,7 +7476,8 @@
     ty
     10
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-bitlen-counter-first-ok?
   [ty : (& ty ast.AstType)]
@@ -8251,7 +8262,8 @@
             (I64)
             16
             (opt.compiler-opt-global-shared-view blocks)
-            Ordinary))
+            Ordinary
+            false))
         (& (ir.compiler-ir-function-seq-empty)))]
     [table : opt_i64_i64_map.Map (opt-test-const-divisors globals functions)]
     [rewritten : ir.CompilerIrBlockList
@@ -8987,13 +8999,14 @@
         (I64)
         16
         (opt-dce-pack-blocks)
-        Ordinary)]
+        Ordinary
+        false)]
     (opt.optimize-function-once-with-summaries
       pools
       type-segment-bases
       func
       (opt.opt-program-summaries-empty)))
-    [(Function _ _ _ _ optimized-blocks _)
+    [(Function _ _ _ _ optimized-blocks _ _)
       (unless
         (=
           (opt-count-words-blocks
@@ -9600,7 +9613,8 @@
     (I64)
     16
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-cmp-dup-test-compare [lhs : ir.CompilerIrValue]) : ir.CompilerIrInstr
   (BinOp 5 (Lt) lhs (Var 1) (I64)))
@@ -10040,7 +10054,8 @@
     (I64)
     16
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-dce-late-run [name : String] [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrFunction
   (match (opt.opt-dce-late-final-pass
@@ -10417,7 +10432,8 @@
     (I64)
     16
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 ;; Both producers start in `entry`. Backward planning first moves the Pack whose
 ;; Word use is in `use`, then recognizes that the Load's only remaining use is
@@ -12081,7 +12097,8 @@
           (ir.CompilerIrBlock.Block
             (ir.compiler-ir-label "entry")
             (opt-nonneg-test-instrs symbols)))
-        Ordinary))
+        Ordinary
+        false))
     (& (ir.compiler-ir-function-seq-empty))))
 
 (define (compiler-optimize-nonneg-globals-self-test) : i64
@@ -12381,7 +12398,8 @@
             (I64)
             20
             blocks
-            Ordinary))))))
+            Ordinary
+            false))))))
 
 (define (opt-bounds-run-length-chain-ok? [links : i64] [descending : bool]) : bool
   (let
@@ -13558,7 +13576,8 @@
     5
     (ir.compiler-ir-blocks
       (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-test-function-named
   [name : String]
@@ -13581,7 +13600,7 @@
 ;; instruction-count assertions; not used by production passes.
 (define (opt-function-first-instrs [func : (& func ir.CompilerIrFunction)]) : ir.CompilerIrInstrSeq
   (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function _ _ _ _ blocks _)
+    [(Function _ _ _ _ blocks _ _)
       (match (ir.compiler-ir-block-list-view blocks)
         [(slice block & _)
           (match (owned_view.compiler-owned-reference-shared-view block)
@@ -13695,6 +13714,7 @@
                       aprovided
                       astorage
                       _
+                      _
                       _)
                     (match (ir.compiler-ir-extern-seq-borrow bexterns index)
                       [(Extern
@@ -13707,6 +13727,7 @@
                           blinks
                           bprovided
                           bstorage
+                          _
                           _
                           _)
                         (set!
@@ -13883,7 +13904,8 @@
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
         (opt-global-dce-large-return-step 0 value)))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-global-dce-globals [symbols : OptGlobalDceTestSymbols]) : ir.CompilerIrGlobalSeq
   (let
@@ -14551,7 +14573,8 @@
     (irt.blocks "entry:
          %2 = add %0, %1 : i64
          return %2")
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-frame-caller [symbols : OptInlineFrameTestSymbols]) : ir.CompilerIrFunction
   (Function
@@ -14571,7 +14594,8 @@
             (Two (Var 0) (Var 1))
             (I64))
           (irt.instr "return %2"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-frame-functions [symbols : OptInlineFrameTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
@@ -14599,7 +14623,8 @@
             (Two (Var 0) (Var 1))
             (I64))
           (irt.instr "return %2"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-known-indirect-functions
   [symbols : OptInlineFrameTestSymbols]) : ir.CompilerIrFunctionSeq
@@ -14621,7 +14646,8 @@
          %2 = pack [%0, %1] : i64
          %3 = word %2, 1 : i64
          return %3")
-    Ordinary))
+    Ordinary
+    false))
 
 ;; The caller passes its args from vars 1/2 (NOT the callee's param ids 0/1)
 ;; and uses a spacer var 0, so a missing remap of the inlined Pack/Word
@@ -14647,7 +14673,8 @@
             (Two (Var 1) (Var 2))
             (I64))
           (irt.instr "return %3"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-pack-word-functions [symbols : OptInlineFrameTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
@@ -14710,7 +14737,8 @@
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
         (opt-inline-large-callee-instrs 0)))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-bounds-callee [symbols : OptInlineBoundsTestSymbols]) : ir.CompilerIrFunction
   (Function
@@ -14722,7 +14750,8 @@
       "entry:
          bounds_check %0, %1 message \"bounds_inline.ok\"
          return %0")
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-call-one [dst : i64] [callee : i64]) : ir.CompilerIrInstrSeq
   (opt-test-instrs
@@ -14739,7 +14768,8 @@
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
         (opt-inline-call-one 0 symbols.too-large)))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-call-bounds [symbols : OptInlineBoundsTestSymbols]) : ir.CompilerIrFunction
   (Function
@@ -14757,7 +14787,8 @@
             (Two (I64 0) (I64 4))
             (I64))
           (irt.instr "return %2"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-call-bounds-twice [symbols : OptInlineBoundsTestSymbols]) : ir.CompilerIrFunction
   (Function
@@ -14780,7 +14811,8 @@
             (Two (I64 1) (I64 4))
             (I64))
           (irt.instr "return %3"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-duplicate-bounds-label-function
   [symbols : OptInlineBoundsTestSymbols]) : ir.CompilerIrFunction
@@ -14794,7 +14826,8 @@
          bounds_check 0, 4 message \"dup.ok\"
          bounds_check 1, 4 message \"dup.ok\"
          return 0")
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-large-functions [symbols : OptInlineBoundsTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
@@ -14842,7 +14875,8 @@
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
         (opt-inline-bounds-leaf-instrs 0 body)))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-call-bounds-leaf [symbols : OptInlineBoundsTestSymbols]) : ir.CompilerIrFunction
   (Function
@@ -14862,7 +14896,8 @@
             (Two (Var 0) (Var 1))
             (Unit))
           (irt.instr "return 42"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-bounds-leaf-functions
   [symbols : OptInlineBoundsTestSymbols]
@@ -14901,7 +14936,8 @@
             (Two (Var 1) (Var 0))
             (Unit))
           (irt.instr "return 42"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-bounds-leaf-twice-functions
   [symbols : OptInlineBoundsTestSymbols]
@@ -14939,7 +14975,8 @@
          %2 = call bounds_leaf_call_inline(%0, %1) : unit
          %3 = call bounds_leaf_call_inline(%1, %0) : unit
          return 42")
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-bounds-leaf-call-functions
   [symbols : OptInlineBoundsTestSymbols]) : ir.CompilerIrFunctionSeq
@@ -14976,7 +15013,8 @@
           (irt.instr "bounds_check %0, %1 message \"bounds_leaf_typed.ok\"")
           (ir.CompilerIrInstr.Mov 2 value ret)
           (irt.instr "return %2"))))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; Two ordinary call sites with variable arguments: two references make the
 ;; callee non-absorbable and no argument is constant, so the generic has-bounds
@@ -15003,7 +15041,8 @@
             (ast.ast-global-shared-view ret))
           (ir.CompilerIrInstr.Call 3 callee (Two (Var 1) (Var 0)) ret)
           (irt.instr "return 42"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-bounds-leaf-char-functions
   [symbols : OptInlineBoundsTestSymbols]) : ir.CompilerIrFunctionSeq
@@ -15101,7 +15140,8 @@
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
         (opt-inline-band-instrs 0 body)))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-band-args [const-args? : bool] [first : i64] [second : i64]) : ir.CompilerIrCallArgs
   (if const-args?
@@ -15136,7 +15176,8 @@
             (opt-inline-band-args const-args? 1 0)
             (I64))
           (irt.instr "return %3"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-band-functions [body : i64] [const-args? : bool]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
@@ -15169,7 +15210,8 @@
             (Two (Var 1) (Var 2))
             (I64))
           (irt.instr "return %3"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-multi-call-functions [symbols : OptInlineFrameTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
@@ -15195,7 +15237,8 @@
             (Two (Var 0) (Var 1))
             (I64))
           (irt.instr "return %2"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-cascade-main [symbols : OptInlineFrameTestSymbols]) : ir.CompilerIrFunction
   (Function
@@ -15215,7 +15258,8 @@
             (Two (Var 0) (Var 1))
             (I64))
           (irt.instr "return %2"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-cascade-functions [symbols : OptInlineFrameTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
@@ -15283,7 +15327,8 @@
           (opt-test-instrs-with-tail
             entry-tail
             (irt.instr "%0 = mov fn@local_alias_target : i64"))))
-      Ordinary)))
+      Ordinary
+      false)))
 
 (define (opt-devirt-reach-target) : ir.CompilerIrFunction
   (irt.func
@@ -15510,7 +15555,8 @@
            %4 = add %1, %3 : i64
            tailcall conv_leaf(%3, %4) : i64
            return %4")
-      Ordinary)))
+      Ordinary
+      false)))
 
 ;; `conv_walk(i, acc)`: while i < 8, acc = conv_leaf(i, acc); i = i + 1.
 (define (opt-inline-conv-walk) : ir.CompilerIrFunction
@@ -15532,7 +15578,8 @@
            return %3
          exit:
            return %1")
-      Ordinary)))
+      Ordinary
+      false)))
 
 ;; A second, straight-line reference to the leaf.
 (define (opt-inline-conv-other) : ir.CompilerIrFunction
@@ -15545,7 +15592,8 @@
       "entry:
          %2 = call conv_leaf(%1, %0) : i64
          return %2")
-    Ordinary))
+    Ordinary
+    false))
 
 ;; `loop_walk(i, acc)`: the same loop as `conv_walk`, spelled as a CFG loop
 ;; rather than a self tail call, so the caller is not a converted function.
@@ -15569,7 +15617,8 @@
          jump header
        exit:
          return %3")
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-convwalk-functions) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
@@ -15688,7 +15737,8 @@
         (ir.CompilerIrInstr.Mov 1 (I64 value) (I64))
         (irt.instr "return %1"))
       value)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-mb2-big-instrs [idx : i64] [limit : i64]) : ir.CompilerIrInstrSeq
   (if (> idx limit)
@@ -15718,7 +15768,8 @@
     (opt-inline-mb2-branch-blocks
       (opt-inline-mb2-big-instrs 0 (opt-inline-mb2-big-limit))
       5)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-mb2-caller [name : i64] [first : i64] [second : i64]) : ir.CompilerIrFunction
   (Function
@@ -15734,7 +15785,8 @@
           (ir.CompilerIrInstr.Call 1 second (One (Bool false)) (I64))
           (irt.instr "%2 = add %0, %1 : i64")
           (irt.instr "return %2"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-mb2-program
   [caller : ir.CompilerIrFunction]
@@ -15765,7 +15817,8 @@
         (opt-test-instrs
           (ir.CompilerIrInstr.Call 0 callee (One (Bool true)) (I64))
           (irt.instr "return %0"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-mb2-shared-program
   [caller : ir.CompilerIrFunction]
@@ -16318,7 +16371,8 @@
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "then")
         (opt-test-instrs (opt-inline-branch-callee-mov) (irt.instr "return %1"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-branch-caller-call [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrInstr
   (Call 0 symbols.inline-branch (One (Bool true)) (I64)))
@@ -16335,7 +16389,8 @@
         (opt-test-instrs
           (opt-inline-branch-caller-call symbols)
           (irt.instr "return %0"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-branch-functions [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
@@ -16360,7 +16415,8 @@
          return true
        no:
          return false")
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-repeated-predicate-caller
   [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunction
@@ -16390,7 +16446,8 @@
             (One (I64 12))
             (Bool))
           (irt.instr "return %1"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-repeated-predicate-functions
   [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
@@ -16483,7 +16540,8 @@
          branch true, loop, exit
        exit:
          return 1")
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-loop-caller [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunction
   (Function
@@ -16497,7 +16555,8 @@
         (opt-test-instrs
           (ir.CompilerIrInstr.Call 0 symbols.inline-loop Nil (I64))
           (irt.instr "return %0"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-loop-functions [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
@@ -16548,7 +16607,8 @@
          return %0
        else:
          return 0")
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-mb-bounds-caller [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunction
   (Function
@@ -16566,7 +16626,8 @@
             (Two (Var 0) (Var 1))
             (I64))
           (irt.instr "return %2"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (compiler-optimize-inline-multiblock-bounds-ok?) : bool
   (let
@@ -16629,7 +16690,8 @@
         (opt-test-instrs
           (opt-inline-switch-loop-phi-instr)
           (irt.instr "return %3"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-switch-callee [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunction
   (opt-inline-switch-callee-named symbols.inline-switch))
@@ -16655,7 +16717,8 @@
        join:
          %3 = phi [10, zero], [20, one], [30, other] : i64
          return %3")
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-switch-caller-call-named [callee-name : i64]) : ir.CompilerIrInstr
   (let
@@ -16682,7 +16745,8 @@
         (opt-test-instrs
           (opt-inline-switch-caller-call-named callee-name)
           (irt.instr "return %3"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-switch-caller [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunction
   (opt-inline-switch-caller-named symbols symbols.inline-switch))
@@ -16971,7 +17035,8 @@
     (I64)
     6
     (opt-inline-loop-site-caller-blocks callee-name entry-instrs)
-    Ordinary))
+    Ordinary
+    false))
 
 ;; `main` calls the leaf from inside a loop: the boundary is repaid per
 ;; iteration, so the gate admits it.
@@ -17136,7 +17201,8 @@
         (opt-test-instrs
           (opt-inline-switch-loop-phi-instr)
           (irt.instr "return %3"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-dup-leaf-jump-zero-instrs) : ir.CompilerIrInstrSeq
   (opt-test-instrs (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "join"))))
@@ -17324,7 +17390,8 @@
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "loop")
         (opt-inline-checked-depth-loop-instrs loop-instrs)))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-checked-depth-loop-instrs [remaining : i64]) : ir.CompilerIrInstrSeq
   (if (<= remaining 1)
@@ -17499,7 +17566,8 @@
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
         (opt-test-instr-seq-append body (irt.instrs "return"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (compiler-optimize-inline-checked-sret-copy-ok?) : bool
   (and
@@ -17780,7 +17848,8 @@
     (I64)
     7
     (opt-inline-nested-loop-site-blocks callee-name)
-    Ordinary))
+    Ordinary
+    false))
 
 ;; Two nested-loop callers of the same call-carrying leaf. Two references keep
 ;; every band away -- the duplicating, hot-loop-leaf and shared-accessor bands
@@ -17893,7 +17962,8 @@
           (ir.compiler-ir-label "zero")
           (opt-test-instrs
             (ir.CompilerIrInstr.TailCall helper-name (Array args) (I64)))))
-      Ordinary)))
+      Ordinary
+      false)))
 
 ;; The nearest refused neighbour, and the reason it is written with a LOAD: an
 ;; indirect tail call whose target is a spelled function is rewritten into a
@@ -17914,7 +17984,8 @@
         (opt-test-instrs
           (ir.CompilerIrInstr.Load 0 (Global symbols.inline-nonleaf) (I64))
           (irt.instr "tailcall* %0() : i64"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-multiblock-tail-site-indirect-functions
   [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
@@ -18007,7 +18078,8 @@
     (I64)
     6
     (opt-inline-tail-site-loop-blocks callee-name)
-    Ordinary))
+    Ordinary
+    false))
 
 ;; The encoding is `spent`, then the two callers' surviving references to the
 ;; leaf -- counted as tail calls AND as calls, so a site "taken" by converting
@@ -18138,7 +18210,8 @@
     (I64)
     6
     (opt-inline-tail-post-site-blocks callee-name)
-    Ordinary))
+    Ordinary
+    false))
 
 ;; The encoding is `spent` -- both budgets, since the admitted site is a
 ;; relaxed candidate and spends the relaxations' reserve -- then the two
@@ -18358,7 +18431,8 @@
           (ir.compiler-ir-label "arm_b")
           (opt-test-instrs
             (ir.CompilerIrInstr.TailCall helper-name (Array args-b) (I64)))))
-      Ordinary)))
+      Ordinary
+      false)))
 
 (define (opt-inline-tail-only-site-call
   [callee-name : i64]
@@ -18408,7 +18482,8 @@
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "body")
         (opt-inline-tail-only-site-body callee-name literal?)))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; The encoding is `spent` then the calls to the forwarder left in `main`. With
 ;; the literal the site reaches a verdict; without it the tail-only clause
@@ -18609,7 +18684,8 @@
           (opt-inline-rescan-chain-cold-call symbols.inline-nonleaf 4)
           (opt-inline-rescan-chain-cold-call symbols.inline-switch 5)
           (irt.instr "return %5"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-rescan-chain-functions
   [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
@@ -18818,7 +18894,8 @@
             (Array args)
             (I64))
           (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "join"))))
-      Ordinary)))
+      Ordinary
+      false)))
 
 (define (opt-inline-absorb-rescan-cold-caller
   [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunction
@@ -18834,7 +18911,8 @@
           (opt-inline-rescan-chain-cold-call symbols.inline-nonleaf 4)
           (opt-inline-rescan-chain-cold-call symbols.inline-switch 5)
           (irt.instr "return %5"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-absorb-rescan-functions
   [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
@@ -19697,7 +19775,8 @@
     (I64)
     8
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-pos-install! [blocks : ir.CompilerIrBlockList]) : unit
   (let
@@ -20031,7 +20110,8 @@
             (opt-inline-checked-builder-pad)
             (+ arity 1)
             (irt.instrs "jump header"))))
-      Ordinary)))
+      Ordinary
+      false)))
 
 (define (opt-inline-checked-builder-args!
   [args : (&mut args (__tl_dyn-array ir.CompilerIrValue))]
@@ -20101,7 +20181,8 @@
             (opt-test-instrs
               (ir.CompilerIrInstr.Return
                 (Some (Var (opt-inline-inl9-leaf-acc))))))))
-      Ordinary)))
+      Ordinary
+      false)))
 
 ;; ...and the same chain with a loop around it. Same arity, same instructions,
 ;; same call-freedom: the ONE difference is the back edge, which is the clause.
@@ -20132,7 +20213,8 @@
             (opt-inline-inl9-leaf-pad)
             (+ arity 1)
             (irt.instrs "jump header"))))
-      Ordinary)))
+      Ordinary
+      false)))
 
 ;; The dispatch: `entry` and `d_spine` compare and branch and do nothing else,
 ;; and the three arms below them each call the leaf once. Only `d_arm1` is a
@@ -20163,7 +20245,8 @@
         (opt-test-instrs
           (opt-inline-checked-builder-call leaf-name 5)
           (irt.instr "return %5"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-inl9-leaf-name) : i64
   (opt-test-symbol "inl9_leaf"))
@@ -20277,7 +20360,8 @@
           (if loop?
             (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "i8_loop"))
             (irt.instr "return %5")))))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; 1000 * verdicts spent + 10 * calls left in the holder + calls left in the
 ;; wrapper, so a change in any of the three reads straight off the number.
@@ -20562,7 +20646,8 @@
     (I64)
     (+ (opt-inline-checked-depth0-latch-var) 1)
     (opt-inline-checked-depth0-caller-blocks callee-name shape)
-    Ordinary))
+    Ordinary
+    false))
 
 ;; One straight-line block calling the holder and the leaf once each. It is what
 ;; keeps both of them at two references, so no single-reference band can take
@@ -20583,7 +20668,8 @@
           (opt-inline-loop-site-call holder-name 3)
           (opt-inline-checked-builder-call leaf-name 4)
           (irt.instr "return %4"))))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; The same driver reaching the holder from inside a loop, which is the only
 ;; thing that differs between the two programs below: it multiplies the holder's
@@ -20611,7 +20697,8 @@
         (opt-test-instrs
           (opt-inline-loop-site-call holder-name 3)
           (irt.instr "return %3"))))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; Modes 0 and 1 put the call in the entry block (cold driver, then hot); mode 2
 ;; threads it one jump on; mode 3 puts it below a returning guard.
@@ -20946,7 +21033,8 @@
     3
     (irt.blocks "entry:
          return %0")
-    Ordinary))
+    Ordinary
+    false))
 
 ;; entry -> loop -> wrapper -> wrapper -> leaf. The loop holder calls `mid` from
 ;; its loop body (depth 1, one census weight); `mid` and `wrap` are
@@ -21225,7 +21313,8 @@
          %3 = add %0, %1 : i64
          %4 = bit_xor %3, %2 : i64
          return %4")
-    Ordinary))
+    Ordinary
+    false))
 
 ;; The hot caller: the builder at its ENTRY block, which every band refuses --
 ;; the loop bands want the site inside the caller's loop, the sole-call band
@@ -21265,7 +21354,8 @@
           (irt.instr "%8 = add %6, %7 : i64")
           (irt.instr "%9 = add %8, %5 : i64")
           (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch")))))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; The cold caller: the leaf's other two sites, plus the second reference to the
 ;; builder and to the hot caller, so no single-reference band can claim either
@@ -21292,7 +21382,8 @@
           (irt.instr "%8 = add %3, %6 : i64")
           (irt.instr "%9 = add %7, %8 : i64")
           (irt.instr "return %9"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-checked-cheap-program [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
   (let
@@ -21331,7 +21422,7 @@
     [count : i64 0]
     (for [index (iterator.range 0 functions.len)]
       (match (ir.compiler-ir-function-seq-borrow functions index)
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (+=
             count
             (opt-count-direct-call-name-blocks
@@ -21496,7 +21587,8 @@
     (I64)
     (+ (opt-inline-wide-phi-var params) 1)
     (opt-inline-wide-callee-blocks params (ir.compiler-ir-instr-seq-empty))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-wide-callee [callee-name : i64]) : ir.CompilerIrFunction
   (opt-inline-wide-callee-arity callee-name (opt-inline-wide-param-count)))
@@ -21542,7 +21634,8 @@
             helper-name
             params
             (+ (opt-inline-wide-phi-var params) 1))))
-      Ordinary)))
+      Ordinary
+      false)))
 
 ;; A straight-line caller: the site is in no natural loop, which is what this
 ;; band requires and what the loop tier forbids.
@@ -21561,7 +21654,8 @@
         (opt-test-instrs
           (opt-inline-wide-call callee-name params 3)
           (irt.instr "return %3"))))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; The same straight-line caller with the callee's address taken first. Nothing
 ;; else differs from the headline fixture.
@@ -21580,7 +21674,8 @@
           (ir.CompilerIrInstr.Mov 4 (Function callee-name) (I64))
           (opt-inline-wide-call callee-name (opt-inline-wide-param-count) 3)
           (irt.instr "return %3"))))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; The same caller with the wide call inside a natural loop. entry -> header ->
 ;; {body -> latch -> header, exit}, with the call in `body`; the back edge
@@ -21612,7 +21707,8 @@
     (I64)
     6
     (opt-inline-wide-loop-caller-blocks callee-name)
-    Ordinary))
+    Ordinary
+    false))
 
 ;; The middle link of the cascade: wide, single-site, straight-line, multiblock,
 ;; and itself calling the wide leaf. It carries a bounds check of its own so
@@ -21636,7 +21732,8 @@
             (irt.instr "bounds_check %1, %2 message \"mid_bounds_ok\"")
             (opt-inline-wide-call leaf-name params params)
             (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "exit")))))
-      Ordinary)))
+      Ordinary
+      false)))
 
 (define (opt-inline-wide-optimized [functions : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
   (opt-test-inline-program-functions
@@ -21774,7 +21871,8 @@
       (- blocks 1)
       (opt-inline-chain-exit-label)
       (opt-inline-chain-exit-block))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; The same straight-line caller as opt-inline-wide-cold-caller with `pad`
 ;; jump-only blocks in front of the call block, so the fixture can name the
@@ -21800,7 +21898,8 @@
           (opt-test-instrs
             (opt-inline-wide-call callee-name params 3)
             (irt.instr "return %3")))))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; Below the arity floor there is no argument marshalling for the absorption to
 ;; retire and the narrow class stays with the site-conditioned tiers: the
@@ -21910,7 +22009,8 @@
           (opt-test-instr-seq-prepend
             (opt-inline-loop-site-call callee-name 5)
             (irt.instrs "jump header")))))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; `count` extra Movs ahead of the `zero` case's jump. The leaf keeps its five
 ;; blocks, its three parameters, its bounds check and its loop, and only its
@@ -22032,7 +22132,8 @@
     (irt.blocks "entry:
          %1 = add %0, 1 : i64
          return %1")
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-fuel-tiny-call [callee-name : i64] [dst : i64]) : ir.CompilerIrInstr
   (Call dst callee-name (One (Var 0)) (I64)))
@@ -22064,7 +22165,8 @@
           (opt-inline-fuel-tiny-call tiny-name 5)
           (opt-inline-fuel-tiny-call tiny-name 6)
           (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "exit")))))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; The band MOVES a body; it does not copy one, so the blocks it lands do not
 ;; spend the shared growth budget the cost model draws on. The 34-block
@@ -22364,7 +22466,8 @@
           (irt.block
             "chain_latch:
                branch %0, chain_0, chain_exit")))
-      Ordinary)))
+      Ordinary
+      false)))
 
 ;; The same acyclic chain leaf with a call to itself in its first block. The
 ;; census counts that self-reference, so the callee carries two references and
@@ -22390,7 +22493,8 @@
           (opt-test-instrs
             (opt-inline-wide-call callee-name params params)
             (ir.CompilerIrInstr.Jump (opt-inline-chain-block-label 0)))))
-      Ordinary)))
+      Ordinary
+      false)))
 
 ;; A straight-line caller at the tier's arity, one block, one call.
 ;; The same acyclic chain leaf with an `__sret` first parameter, which is what
@@ -22409,7 +22513,8 @@
       (- (opt-inline-sole-call-blocks) 1)
       (opt-inline-chain-exit-label)
       (opt-inline-chain-exit-block))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-sole-call-caller [func-name : i64] [callee-name : i64]) : ir.CompilerIrFunction
   (opt-inline-wide-cold-caller
@@ -22434,7 +22539,8 @@
           (ir.CompilerIrInstr.Mov 4 (Function callee-name) (I64))
           (opt-inline-wide-call callee-name (opt-inline-sole-call-params) 3)
           (irt.instr "return %3"))))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; The same caller with the call inside a natural loop: entry -> header ->
 ;; {body -> latch -> header, exit}, the call in `body`.
@@ -22462,7 +22568,8 @@
         (opt-test-instrs
           (opt-inline-wide-call callee-name (opt-inline-sole-call-params) 5)
           (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch")))))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; The same loop with the call TWO deciding branches below the header: header
 ;; -> {guard_a, exit}, guard_a -> {guard_b, exit}, guard_b -> {body, exit}, the
@@ -22501,7 +22608,8 @@
         (opt-test-instrs
           (opt-inline-wide-call callee-name (opt-inline-sole-call-params) 5)
           (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch")))))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; The headline case: three parameters, forty blocks, one straight-line site.
 ;; The arity floor refuses it, the cost model's block fuel refuses it, and the
@@ -22681,7 +22789,8 @@
           (opt-test-instrs
             (opt-inline-wide-call leaf-name params params)
             (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "exit")))))
-      Ordinary)))
+      Ordinary
+      false)))
 
 ;; Two-level absorption: `main` calls the middle function, which calls the leaf.
 ;; SCC order rewrites the leaf's caller before the caller's caller, so the leaf
@@ -22764,7 +22873,8 @@
            bounds_check %1, %2 message \"switch_bounds_ok\"
            switch %0 base 0 [0:zero, 1:one] default other")
       (ir.CompilerIrBlock.Block (ir.compiler-ir-label "zero") zero-instrs))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-shared-accessor-leaf [callee-name : i64]) : ir.CompilerIrFunction
   (opt-inline-shared-accessor-leaf-named
@@ -22806,7 +22916,8 @@
         (opt-test-instrs
           (opt-inline-switch-loop-phi-instr)
           (irt.instr "return %3"))))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; Straight-line callers, for the site clause.
 (define (opt-inline-shared-flat-caller-chain
@@ -22837,7 +22948,8 @@
                 (opt-test-instrs
                   (opt-inline-switch-caller-call-named callee-name)
                   (irt.instr "return %3"))))
-            Ordinary))
+            Ordinary
+            false))
         (&
           (opt-inline-shared-flat-caller-chain-from
             names
@@ -23176,7 +23288,8 @@
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "zero")
         (opt-inline-depth-leaf-zero-instrs)))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-depth-leaf-switch-instrs) : ir.CompilerIrInstrSeq
   (irt.instrs "switch %0 base 0 [0:zero, 1:one] default other"))
@@ -23245,7 +23358,8 @@
     (I64)
     6
     (opt-inline-depth-nested-caller-blocks callee-name)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-depth-caller-chain
   [names : (__tl_dyn-array i64)]
@@ -23489,7 +23603,8 @@
                 (opt-inline-chain-phi-inputs (- arms 1) arms)
                 (I64))
               (irt.instr "return %3"))))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-chain-remaining-calls
   [functions : ir.CompilerIrFunctionSeq]) : i64
@@ -23755,7 +23870,8 @@
       (irt.block "entry:
            %3 = mov 0 : i64
            jump pad0"))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-hot-loop-big-caller-chain
   [names : (__tl_dyn-array i64)]
@@ -23886,7 +24002,8 @@
     (I64)
     4
     (opt-inline-recursive-caller-blocks func-name callee-name)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-recursive-caller-chain
   [names : (__tl_dyn-array i64)]
@@ -24024,7 +24141,8 @@
         (opt-test-instrs
           (opt-inline-loop-site-call callee-name 6)
           (irt.instr "return %6"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-hot-loop-cold-site-chain
   [names : (__tl_dyn-array i64)]
@@ -24147,7 +24265,8 @@
                 callee-name
                 0
                 6)
-              Ordinary))
+              Ordinary
+              false))
           (&
             (ir.compiler-ir-function-seq-prepend
               (& (opt-inline-dup-leaf-plain callee-name))
@@ -24391,7 +24510,8 @@
        join:
          %1 = phi [10, zero], [20, one], [30, other] : i64
          return %1")
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-costly-switch-caller [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunction
   (Function
@@ -24415,7 +24535,8 @@
             (I64))
           (irt.instr "%2 = add %0, %1 : i64")
           (irt.instr "return %2"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (compiler-optimize-inline-multiblock-switch-cost-refusal-ok?) : bool
   (let
@@ -24460,7 +24581,8 @@
          branch false, loop, exit
        exit:
          return %0")
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-mut-param-caller [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunction
   (Function
@@ -24478,7 +24600,8 @@
             (One (I64 4))
             (I64))
           (irt.instr "return %0"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-mut-param-functions [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
@@ -24531,7 +24654,8 @@
         (opt-test-instrs
           (ir.CompilerIrInstr.Call 0 symbols.inline-loop Nil (I64))
           (irt.instr "branch true, left, right"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-caller-phi-loop-functions
   [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
@@ -24583,7 +24707,8 @@
         (opt-test-instrs
           (ir.CompilerIrInstr.Call 0 helper-name Nil (I64))
           (irt.instr "return %0"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-nonleaf-callee [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunction
   (opt-inline-nonleaf-callee-named symbols symbols.external-helper))
@@ -24600,7 +24725,8 @@
         (opt-test-instrs
           (ir.CompilerIrInstr.Call 0 symbols.inline-nonleaf Nil (I64))
           (irt.instr "return %0"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-nonleaf-functions [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
@@ -24792,7 +24918,8 @@
         (opt-test-instrs
           (ir.CompilerIrInstr.Call 0 symbols.inline-nonleaf Nil (I64))
           (irt.instr "return %0"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-chain-main [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunction
   (Function
@@ -24806,7 +24933,8 @@
         (opt-test-instrs
           (ir.CompilerIrInstr.Call 0 symbols.inline-loop Nil (I64))
           (irt.instr "return %0"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (compiler-optimize-inline-chain-second-import-call-ok?) : bool
   (let
@@ -24895,7 +25023,8 @@
         (ir.compiler-ir-label "call")
         (opt-test-instrs
           (ir.CompilerIrInstr.TailCall symbols.external-helper Nil (I64)))))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; The nearest refused neighbour: identical body, except the tail call goes
 ;; through a computed callee. The admission stops at the direct form, so this
@@ -24926,7 +25055,8 @@
         (opt-test-instrs
           (ir.CompilerIrInstr.Load 0 (Global symbols.external-helper) (I64))
           (irt.instr "tailcall* %0() : i64"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-tail-call-functions [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
@@ -25075,7 +25205,8 @@
             symbols.external-helper
             (One (Var 0))
             (I64)))))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; The nearest refused neighbour, on the same terms as the multiblock pair
 ;; above: the target is LOADED, so devirtualization cannot spell it and the
@@ -25093,7 +25224,8 @@
         (opt-test-instrs
           (ir.CompilerIrInstr.Load 0 (Global symbols.external-helper) (I64))
           (irt.instr "tailcall* %0() : i64"))))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; A one-block body whose tail call names the callee itself: the self-recursion
 ;; the tail-recursion-to-loop pass owns. INL-11 runs that pass over every
@@ -25113,7 +25245,8 @@
         (ir.compiler-ir-label "entry")
         (opt-test-instrs
           (ir.CompilerIrInstr.TailCall symbols.inline-nonleaf Nil (I64)))))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; Mutual recursion through the tail call: the callee's one block tail-calls
 ;; the CALLER. Inlining it would put a self-call inside `main` and would make
@@ -25130,7 +25263,8 @@
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
         (opt-test-instrs (ir.CompilerIrInstr.TailCall symbols.main Nil (I64)))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-single-block-tail-call-functions
   [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
@@ -25349,7 +25483,8 @@
         (ir.compiler-ir-label "entry")
         (opt-test-instrs
           (ir.CompilerIrInstr.TailCall symbols.inline-nonleaf Nil (I64)))))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; The indirect twin of the site: the target is LOADED, so nothing names a
 ;; callee and the census cannot price it. It must survive the pass untouched.
@@ -25366,7 +25501,8 @@
         (opt-test-instrs
           (ir.CompilerIrInstr.Load 0 (Global symbols.inline-nonleaf) (I64))
           (irt.instr "tailcall* %0() : i64"))))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; The ordinary `Return`-exit callee, seen from a tail site.
 (define (opt-inline-tail-site-return-callee
@@ -25379,7 +25515,8 @@
     (irt.blocks "entry:
          %0 = mov 7 : i64
          return %0")
-    Ordinary))
+    Ordinary
+    false))
 
 ;; A self-tail-recursive callee: one block, one `Mov`, and a tail call to
 ;; ITSELF. Its own tail call is now a site the walk visits, and it is the site
@@ -25400,7 +25537,8 @@
         (opt-test-instrs
           (irt.instr "%0 = mov 7 : i64")
           (ir.CompilerIrInstr.TailCall symbols.inline-nonleaf Nil (I64)))))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; The mutual-recursion pair's other half: it tail-calls the CALLER back. The
 ;; two functions share an SCC, so neither site may be taken -- taking either one
@@ -25418,7 +25556,8 @@
         (opt-test-instrs
           (irt.instr "%0 = mov 7 : i64")
           (ir.CompilerIrInstr.TailCall symbols.main Nil (I64)))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-tail-site-return-functions
   [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
@@ -25717,7 +25856,8 @@
         (opt-test-instrs
           (ir.CompilerIrInstr.Call 1 symbols.external-predicate Nil (Bool))
           (irt.instr "return %1"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-repeated-nonleaf-predicate-caller
   [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunction
@@ -25747,7 +25887,8 @@
             Nil
             (Bool))
           (irt.instr "return %1"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-repeated-nonleaf-predicate-functions
   [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
@@ -26001,7 +26142,8 @@
     (U64)
     2
     (opt-inline-private-memory-test-body)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-private-memory-test-caller
   [caller-name : i64]
@@ -26018,7 +26160,8 @@
         (opt-test-instrs
           (ir.CompilerIrInstr.Call 2 callee-name (Two (Var 0) (Var 1)) (U64))
           (ir.CompilerIrInstr.Return (No)))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-private-memory-test-functions
   [caller-name : i64]
@@ -26480,7 +26623,8 @@
     (U64)
     9
     (opt-inline-alloc-sret-body 5 2)
-    Ordinary))
+    Ordinary
+    false))
 
 ;; The site is inside a loop, and it is spliced ONCE: the clone's storage run
 ;; is created at the site, not per iteration, so the merged caller holds the
@@ -26522,7 +26666,8 @@
             (Two (Bool true) (Var 4))
             (U64))
           (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch")))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-alloc-sret-functions
   [caller-name : i64]
@@ -27174,7 +27319,8 @@
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
           (ir.compiler-ir-instr-builder-to-seq builder)))
-      Ordinary)))
+      Ordinary
+      false)))
 
 (define (opt-tailrec-expected-instrs) : ir.CompilerIrInstrSeq
   (let
@@ -27206,7 +27352,7 @@
 
 (define (opt-tailrec-entry-collision-function) : ir.CompilerIrFunction
   (match (opt-tailrec-test-function)
-    [(Function name params ret frame blocks function-abi)
+    [(Function name params ret frame blocks function-abi cold?)
       (Function
         name
         params
@@ -27216,7 +27362,8 @@
           (& blocks)
           (& (irt.blocks "entry__ssa_entry:
                return 0")))
-        function-abi)]))
+        function-abi
+        cold?)]))
 
 (define (opt-tailrec-frame-test-function [mode : i64]) : ir.CompilerIrFunction
   (let
@@ -27254,7 +27401,8 @@
           (&mut cons-builder)
           (ir.compiler-ir-block-list-empty))
         (ir.compiler-ir-block-builder-to-list cons-builder))
-      ir.CompilerIrFunctionAbi.Ordinary)))
+      ir.CompilerIrFunctionAbi.Ordinary
+      false)))
 
 ;; Test the optimizer consumer directly: source lowering can already refuse a
 ;; frame-retaining tail call, which would hide an unsound tailrec rewrite.
@@ -27554,7 +27702,8 @@
                             _
                             _
                             _
-                            (ir.CompilerIrFunctionAbi.ReturnStorage _))
+                            (ir.CompilerIrFunctionAbi.ReturnStorage _)
+                            _)
                           unit]
                         [_
                           (test.assert-true
@@ -27976,7 +28125,8 @@
     (I64)
     16
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-sccp-cond-params) : ir.CompilerIrParamSeq
   (irt.params "cond=%0:bool"))
@@ -28007,7 +28157,7 @@
   [params : ir.CompilerIrParamSeq]
   [ret-ty : ast.AstType]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrFunction
-  (Function (opt-test-symbol name) params ret-ty 16 blocks Ordinary))
+  (Function (opt-test-symbol name) params ret-ty 16 blocks Ordinary false))
 
 (define (opt-gvn-dominated-diamond-blocks) : ir.CompilerIrBlockList
   (irt.blocks
@@ -28890,7 +29040,8 @@
         (opt-test-instrs
           (ir.CompilerIrInstr.Store symbols.cell (I64 3) (I64))
           (irt.instr "return 0"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-gsf-read-twice-tail [symbols : OptGsfSymbols]) : ir.CompilerIrInstrSeq
   (opt-test-instrs
@@ -28922,7 +29073,8 @@
     (I64)
     16
     (opt-gsf-blocks symbols call?)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-gsf-run [call? : bool]) : ir.CompilerIrBlockList
   (let
@@ -29048,7 +29200,8 @@
     (I64)
     20
     (opt-gdp-blocks symbols)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-gdp-run [header? : bool]) : ir.CompilerIrBlockList
   (let
@@ -31013,7 +31166,8 @@
     (I64)
     16
     (opt-uniform-phi-chain-blocks)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-uniform-phi-folded-instr-seq?
   [instrs : ir.CompilerIrInstrSeq]
@@ -31103,7 +31257,8 @@
     (I64)
     16
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-bool-branch-two-cond-params) : ir.CompilerIrParamSeq
   (irt.params "left=%0:bool, right=%1:bool"))
@@ -31237,7 +31392,8 @@
       (I64)
       16
       blocks
-      Ordinary)))
+      Ordinary
+      false)))
 
 ;; The chain shape of `opt-bool-branch-merge-chain-blocks 0` reached through a
 ;; block whose branch sccp folds. `entry` tests a var sccp proves `true`, so the
@@ -31345,7 +31501,8 @@
     (I64)
     16
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-bool-branch-chain-test-run [mode : i64]) : opt.OptFunctionPassResult
   (let
@@ -31464,7 +31621,8 @@
     (I64)
     16
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-thread-optimized [name : String] [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrFunction
   (opt-test-optimize-function
@@ -31648,7 +31806,8 @@
     (I64)
     16
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-thread-cmp-verified? [blocks : ir.CompilerIrBlockList]) : bool
   (opt.opt-verify-ok?
@@ -32010,7 +32169,8 @@
     (I64)
     16
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-cfg-straighten-run [blocks : ir.CompilerIrBlockList]) : opt.OptFunctionPassResult
   (opt.opt-cfg-straighten-final-pass
@@ -32032,7 +32192,8 @@
         (I64)
         16
         blocks
-        Ordinary))))
+        Ordinary
+        false))))
 
 (define (opt-cfg-switch-blocks) : ir.CompilerIrBlockList
   (irt.blocks
@@ -32309,7 +32470,8 @@
     (I64)
     16
     (opt-ssa-diamond-blocks)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-ssa-loop-blocks) : ir.CompilerIrBlockList
   (irt.blocks
@@ -32331,7 +32493,8 @@
     (I64)
     16
     (opt-ssa-loop-blocks)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-ssa-construct-diamond-blocks) : ir.CompilerIrBlockList
   (irt.blocks
@@ -32353,7 +32516,8 @@
     (I64)
     2
     (opt-ssa-construct-diamond-blocks)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-ssa-construct-loop-params) : ir.CompilerIrParamSeq
   (irt.params "cond=%4:bool"))
@@ -32378,7 +32542,8 @@
     (I64)
     5
     (opt-ssa-construct-loop-blocks)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-ssa-construct-mutated-param-params) : ir.CompilerIrParamSeq
   (irt.params "value=%0:i64, cond=%1:bool"))
@@ -32402,7 +32567,8 @@
     (I64)
     2
     (opt-ssa-construct-mutated-param-blocks)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-ssa-construct-address-taken-blocks) : ir.CompilerIrBlockList
   (irt.blocks
@@ -32419,7 +32585,8 @@
     (I64)
     3
     (opt-ssa-construct-address-taken-blocks)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-ssa-fixed-handle-params [ty : ast.AstType]) : ir.CompilerIrParamSeq
   (ir.compiler-ir-param-seq-prepend
@@ -32456,7 +32623,8 @@
       (ast.ast-global-shared-view ty)
       4
       (opt-ssa-fixed-handle-diamond-blocks ty)
-      Ordinary)))
+      Ordinary
+      false)))
 
 (define (opt-ssa-fixed-handle-diamond-ok? [ty : ast.AstType]) : bool
   (let
@@ -32505,7 +32673,8 @@
     (ast.ast-global-shared-view ty)
     4
     (opt-ssa-fixed-handle-loop-blocks ty)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-ssa-fixed-handle-loop-ok? [ty : ast.AstType]) : bool
   (let
@@ -32539,7 +32708,8 @@
           (ir.CompilerIrInstr.AddrOf 2 1 0)
           (ir.CompilerIrInstr.Mov 1 (Var 0) ty)
           (irt.instr "return %1"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-ssa-fixed-handle-unsupported-dst-function [ty : ast.AstType]) : ir.CompilerIrFunction
   (Function
@@ -32556,7 +32726,8 @@
           (ir.CompilerIrInstr.Alloc 1 (ast.ast-global-shared-view ty))
           (ir.CompilerIrInstr.Mov 1 (Var 0) ty)
           (irt.instr "return %1"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-ssa-fixed-handle-boundary-ok?) : bool
   (and
@@ -32689,7 +32860,8 @@
                   (& (ir.compiler-ir-value-seq-empty)))))
             ty)
           (ir.CompilerIrInstr.Return (No)))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-ssa-representation-aware-diamond-ok?
   [ty : ast.AstType]
@@ -33109,7 +33281,8 @@
       (I64)
       1
       (Array (ir.CompilerIrBlockSeq slots count))
-      Ordinary)))
+      Ordinary
+      false)))
 
 (define (compiler-optimize-ssa-fixed-handle-self-test) : i64
   (let
@@ -33277,7 +33450,8 @@
     (I64)
     4
     (opt-ssa-entry-backedge-blocks)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-ssa-entry-backedge-preheader-function) : ir.CompilerIrFunction
   (Function
@@ -33286,7 +33460,8 @@
     (I64)
     4
     (opt.opt-ssa-explicit-entry-blocks (opt-ssa-entry-backedge-blocks))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-natural-loop-nested-blocks) : ir.CompilerIrBlockList
   (irt.blocks
@@ -33504,7 +33679,8 @@
       (I64)
       16
       blocks
-      Ordinary)))
+      Ordinary
+      false)))
 
 (define (opt-licm-optimized-function [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrFunction
   (opt.opt-licm-function
@@ -33535,7 +33711,8 @@
     (I64)
     16
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-licm-array-optimized-function [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrFunction
   (opt.opt-licm-function
@@ -34499,7 +34676,8 @@
       (I64)
       32
       blocks
-      Ordinary)))
+      Ordinary
+      false)))
 
 (cfg
   test
@@ -35374,7 +35552,8 @@
             (I64)
             9
             (opt-licm-word-blocks)
-            Ordinary)))]
+            Ordinary
+            false)))]
     [blocks : ir.CompilerIrBlockList (opt.opt-function-blocks result)]
     (cond
       [(not (opt.opt-verify-ok? (& (opt.opt-verify-function (& result))))) 1]
@@ -36385,7 +36564,8 @@
         (I64)
         32
         (ir.compiler-ir-global-shared-view blocks)
-        Ordinary)]
+        Ordinary
+        false)]
     (match (opt.opt-licm-function-with-context-result-and-direct-call-clean
       (ast.ast-node-pool-reader-type-segment-bases)
       (& (opt.opt-cfg-context-build blocks))
@@ -36429,7 +36609,8 @@
     (U64)
     8
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-licm-ls-alias-single-block [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrBlockList
   (ir.compiler-ir-blocks
@@ -36533,7 +36714,8 @@
         (irt.blocks "entry:
           %0 = mov %1 : u64
           return %0")
-        Ordinary)]
+        Ordinary
+        false)]
     [functions
       (ir.compiler-ir-function-seq-prepend
         (& callee)
@@ -36891,7 +37073,8 @@
     (I64)
     2
     (opt-licm-unswitch-test-blocks rotated?)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-licm-unswitch-test-run [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (opt.opt-licm-unswitch-final
@@ -37047,7 +37230,8 @@
     (I64)
     2
     (opt-lu1-test-blocks twice?)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (compiler-optimize-licm-unswitch-general-self-test) : i64
   (let
@@ -37186,7 +37370,8 @@
     (I64)
     5
     (opt-ph1-test-blocks stubs)
-    Ordinary))
+    Ordinary
+    false))
 
 ;; The var the block's last instruction branches on, or -1.
 (define (opt-ph1-branch-cond-var
@@ -37308,7 +37493,8 @@
     (I64)
     4
     (opt-licm-unswitch-chain-test-blocks invariant-a?)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-licm-unswitch-successor-count
   [blocks : (& blocks ir.CompilerIrBlockList)]
@@ -37420,7 +37606,8 @@
     (I64)
     32
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-induction-optimized-function [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrFunction
   (let
@@ -38959,7 +39146,8 @@
     (I64)
     9
     (opt-unroll-cascade-test-blocks)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-unroll-vector-test-params) : ir.CompilerIrParamSeq
   (irt.params "n=%0:i64, base=%1:i64"))
@@ -39033,7 +39221,8 @@
     (I64)
     7
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-unroll-vector-test-function) : ir.CompilerIrFunction
   (Function
@@ -39042,7 +39231,8 @@
     (I64)
     15
     (opt-unroll-vector-test-blocks)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-unroll-mutable-vector-test-function [loop-local-base? : bool]) : ir.CompilerIrFunction
   (Function
@@ -39051,7 +39241,8 @@
     (I64)
     10
     (opt-unroll-mutable-vector-test-blocks loop-local-base?)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-unroll-mutable-map-test-params) : ir.CompilerIrParamSeq
   (irt.params "n=%0:i64, left=%1:i64, right=%2:i64, out=%3:i64"))
@@ -39104,7 +39295,8 @@
     (I64)
     11
     (opt-unroll-mutable-map-test-blocks mode)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-test-simd-unroll-keeps-blocks? [func : ir.CompilerIrFunction]) : bool
   (let
@@ -39440,7 +39632,8 @@ exit:
     (I64)
     11
     (opt-unroll-load-store-test-blocks mode)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-unroll-test-count-store-ptr-instr-seq
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
@@ -39660,7 +39853,8 @@ exit:
     (I64)
     11
     (opt-unroll-descending-test-blocks mode)
-    Ordinary))
+    Ordinary
+    false))
 
 ;; The block's memory operations as one number, most significant first: a Load
 ;; shifts in a 1 and a StorePtr a 0, everything else is skipped. Two copies of
@@ -40353,7 +40547,8 @@ exit:
     (I64)
     17
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 ;; Replace the ordinary exit Phi with the reduction shape produced by scalar
 ;; SPMD lowering: the loop's accumulator is consumed directly in its sole exit
@@ -40633,7 +40828,8 @@ exit:
     (if (<= variant 1)
       (opt-bce-mask-single-blocks variant)
       (opt-bce-mask-probe-blocks variant))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-bce-mask-rewrite [variant : i64]) : ir.CompilerIrBlockList
   (let
@@ -41116,7 +41312,8 @@ exit:
           (I64)
           11
           (opt-bce-version-while-blocks false)
-          Ordinary))]
+          Ordinary
+          false))]
     [blocks : ir.CompilerIrBlockList (opt.opt-function-blocks optimized)]
     [scaled : ir.CompilerIrFunction
       (opt-test-optimize-function
@@ -41128,7 +41325,8 @@ exit:
           (I64)
           11
           (opt-bce-version-while-blocks true)
-          Ordinary))]
+          Ordinary
+          false))]
     [scaled-blocks : ir.CompilerIrBlockList (opt.opt-function-blocks scaled)]
     (cond
       [(not (opt.opt-verify-ok? (& (opt.opt-verify-function (& optimized))))) 1]
@@ -42232,7 +42430,8 @@ exit:
     (I64)
     opt-bce-mb-test-frame
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-bce-mb-test-jump-block [label : i64] [target : i64]) : ir.CompilerIrBlock
   (Block label (opt-test-instrs (ir.CompilerIrInstr.Jump target))))
@@ -42329,7 +42528,8 @@ exit:
     (I64)
     (+ 10 (* 7 pad))
     (opt-bce-mb-test-chain-blocks pad)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (compiler-optimize-bce-version-mb-self-test) : i64
   (let
@@ -42874,7 +43074,8 @@ exit:
     (I64)
     opt-bce-mb2-test-frame
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-bce-mb2-test-versioned-fn [variant : i64]) : ir.CompilerIrFunction
   (opt.opt-bce-version-function
@@ -43246,7 +43447,8 @@ exit:
     (I64)
     opt-pcd-test-frame
     (opt-pcd-test-blocks)
-    Ordinary))
+    Ordinary
+    false))
 
 ;; The call-memory rows: `pure` and `unitpure` write nothing; `impure` stores a
 ;; global. With `pure-writes?` the pure callee is given a global store too.
@@ -43321,7 +43523,8 @@ exit:
             (I64)
             opt-pcd-test-frame
             (opt-pcd-test-redef-blocks)
-            Ordinary)))]
+            Ordinary
+            false)))]
     (opt.opt-function-blocks func)))
 
 ;; Is instruction `index` of block `label` `Mov dst, %src`?
@@ -43542,7 +43745,8 @@ exit:
                 (I64)
                 opt-pcd-test-frame
                 (ir.compiler-ir-block-builder-to-list builder)
-                Ordinary))))]
+                Ordinary
+                false))))]
       (opt.opt-function-blocks func))))
 
 (cfg
@@ -43760,7 +43964,8 @@ exit:
     (I64)
     opt-bce-mb3-test-frame
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-bce-mb3-test-versioned-fn [variant : i64]) : ir.CompilerIrFunction
   (opt.opt-bce-version-function
@@ -43989,7 +44194,8 @@ exit:
     (I64)
     opt-bce-fuse-test-frame
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-bce-fuse-test-versioned [variant : i64]) : ir.CompilerIrFunction
   (opt.opt-bce-version-function
@@ -44299,7 +44505,8 @@ exit:
         (I64)
         opt-bce-fold-test-frame
         (opt-bce-fold-test-blocks variant)
-        Ordinary))))
+        Ordinary
+        false))))
 
 (define (opt-bce-fold-test-versioned [variant : i64]) : ir.CompilerIrBlockList
   (let
@@ -44549,7 +44756,8 @@ exit:
     (I64)
     (+ 15 pad)
     (opt-bce-mb-test-nest-blocks mode pad)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-bce-mb-test-nest-versioned [mode : i64] [pad : i64]) : ir.CompilerIrFunction
   (opt.opt-bce-version-function (& (opt-bce-mb-test-nest-function mode pad))))
@@ -44718,7 +44926,8 @@ exit:
     (I64)
     15
     (opt-bce-version-reject-test-blocks)
-    Ordinary))
+    Ordinary
+    false))
 
 ;; A verifier rejection retires ONE loop, not the function.
 ;;
@@ -45071,7 +45280,8 @@ exit:
     (I64)
     opt-bce-p5a-test-frame
     (opt-bce-p5a-test-blocks variant)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-bce-p5a-test-versioned [variant : i64]) : ir.CompilerIrFunction
   (opt.opt-bce-version-function (& (opt-bce-p5a-test-function variant))))
@@ -45277,7 +45487,8 @@ exit:
     (I64)
     16
     (opt-unroll-p5a-remainder-blocks bounded?)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (compiler-optimize-unroll-p5a-remainder-self-test) : i64
   (let
@@ -45441,7 +45652,8 @@ exit:
     (I64)
     24
     (opt-gep-offset-test-blocks variant)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-gep-offset-test-run [variant : i64]) : ir.CompilerIrFunction
   (opt-gep-offset-function
@@ -45756,7 +45968,8 @@ exit:
     (I64)
     48
     (opt-gep-nested-test-blocks variant)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-gep-nested-test-run [variant : i64]) : ir.CompilerIrFunction
   (opt-gep-offset-function
@@ -45944,7 +46157,8 @@ exit:
       (I64)
       32
       (opt-gep-starved-test-blocks)
-      Ordinary)))
+      Ordinary
+      false)))
 
 (define (compiler-optimize-gep-offset-starved-self-test) : i64
   (let
@@ -46271,7 +46485,8 @@ exit:
     (Bool)
     23
     (opt-flag-exit-test-blocks variant)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-flag-exit-test-run [variant : i64]) : ir.CompilerIrFunction
   (opt.opt-flag-exit-function (& (opt-flag-exit-test-function variant))))
@@ -46799,7 +47014,8 @@ exit:
         (I64)
         2
         (ir.compiler-ir-global-shared-view blocks)
-        (Ordinary))]
+        (Ordinary)
+        false)]
     [valid : bool (opt.opt-verify-ok? (& (opt.opt-verify-function (& func))))]
     [context : opt.OptCfgContext
       (opt.opt-cfg-context-build (ir.compiler-ir-global-shared-view blocks))]
@@ -47048,7 +47264,8 @@ exit:
     (Bool)
     (opt-flag-exit-gen-frame variant)
     (opt-flag-exit-gen-blocks variant)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-flag-exit-gen-run [variant : i64]) : ir.CompilerIrFunction
   (opt.opt-flag-exit-function (& (opt-flag-exit-gen-function variant))))
@@ -47331,7 +47548,8 @@ exit:
     (I64)
     23
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-dead-phi-test-function [variant : i64]) : ir.CompilerIrFunction
   (opt-dead-phi-test-wrap (opt-dead-phi-test-blocks variant)))
@@ -47525,7 +47743,8 @@ exit:
         (I64)
         6
         (opt-gep-split-test-chain-blocks offset elem-ty other-use)
-        Ordinary))))
+        Ordinary
+        false))))
 
 (define (opt-gep-split-test-chain-shape?
   [func : (& func ir.CompilerIrFunction)]
@@ -47579,7 +47798,8 @@ exit:
         (I64)
         5
         (ir.clone-compiler-ir-block-list (& blocks))
-        Ordinary)]
+        Ordinary
+        false)]
     [rewritten : ir.CompilerIrFunction
       (opt.opt-gep-split-function
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -47653,7 +47873,8 @@ exit:
           (I64)
           7
           (ir.clone-compiler-ir-block-list (& blocks))
-          Ordinary)]
+          Ordinary
+          false)]
       [_addr-taken : unit
         (opt.opt-function-addr-taken-install!
           (opt.opt-function-frame function)
@@ -47692,7 +47913,8 @@ exit:
             (I64)
             8
             (opt-gep-split-test-shared-blocks false)
-            Ordinary)))]
+            Ordinary
+            false)))]
     [split-blocks : ir.CompilerIrBlockList (opt.opt-function-blocks split)]
     [untouched : ir.CompilerIrFunction
       (opt.opt-gep-split-function
@@ -47704,7 +47926,8 @@ exit:
             (I64)
             8
             (opt-gep-split-test-shared-blocks true)
-            Ordinary)))]
+            Ordinary
+            false)))]
     [chain-zero : ir.CompilerIrFunction
       (opt-gep-split-test-chain-function (I64 0) (U8) false)]
     [chain-disp : ir.CompilerIrFunction
@@ -47872,7 +48095,8 @@ exit:
           (I64)
           9
           (opt-bce-mb-pipeline-blocks)
-          Ordinary))]
+          Ordinary
+          false))]
     [blocks : ir.CompilerIrBlockList (opt.opt-function-blocks optimized)]
     (cond
       [(not (opt.opt-verify-ok? (& (opt.opt-verify-function (& optimized))))) 1]
@@ -48010,7 +48234,8 @@ exit:
     (Bool)
     31
     (opt-bce-mb-eq-test-blocks variant)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-bce-mb-eq-test-no-fast?
   [blocks : (& blocks ir.CompilerIrBlockList)]) : bool
@@ -48371,7 +48596,8 @@ exit:
     (I64)
     40
     (opt-bce-mbcall-test-blocks variant)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-bce-mbcall-test-run [variant : i64]) : ir.CompilerIrFunction
   (opt.opt-bce-version-function-with-types-and-calls
@@ -48894,7 +49120,8 @@ exit:
             (I64)
             9
             (opt-bce-mb-pipeline-blocks)
-            Ordinary)))]
+            Ordinary
+            false)))]
     (opt.opt-function-blocks func)))
 
 (define (opt-merged-loop-test-function) : ir.CompilerIrFunction
@@ -48957,7 +49184,8 @@ exit:
             (opt.opt-blocks-append
               (& entry-blocks)
               (& (opt.opt-blocks-append (& cloned) (& tail-blocks))))
-            Ordinary))])))
+            Ordinary
+            false))])))
 
 ;; The unroller's multi-block companion must pick up the check-free versioned
 ;; diamond on a later optimizer iteration (after its dedicated preheader has
@@ -48974,7 +49202,8 @@ exit:
           (I64)
           9
           (opt-bce-mb-pipeline-blocks)
-          Ordinary))]
+          Ordinary
+          false))]
     [blocks : ir.CompilerIrBlockList (opt.opt-function-blocks optimized)]
     ;; The caller's self tail call is rewritten into its loop before the
     ;; pipeline, as the program-wide tailrec stage does ahead of the inliner.
@@ -49139,7 +49368,8 @@ exit:
     (I64)
     7
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-ssa-preexisting-test-first-phi-inputs
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
@@ -49308,7 +49538,8 @@ exit:
     (I64)
     17
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-licm-multi-exit-count-loads-seq
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
@@ -49653,7 +49884,8 @@ exit:
     (I64)
     32
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 ;; The loads left in `pre` (the preheader) and in `arm` after one LICM run,
 ;; packed as `pre * 10 + arm`: 10 is a hoisted read, 1 one that stayed.
@@ -49947,7 +50179,14 @@ exit:
   [visits : i64]) : i64
   (let
     [func : ir.CompilerIrFunction
-      (Function (opt-test-symbol "licm_deref") params (I64) 32 blocks Ordinary)]
+      (Function
+        (opt-test-symbol "licm_deref")
+        params
+        (I64)
+        32
+        blocks
+        Ordinary
+        false)]
     (for [visit (iterator.range 0 visits)]
       (let
         [context : opt.OptCfgContext
@@ -50503,7 +50742,8 @@ exit:
     (I64)
     17
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-licm-dh-late-optimized-function [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrFunction
   (let
@@ -50878,7 +51118,8 @@ exit:
     (I64)
     64
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 ;; The PRE-BCE run, with no global table and no clean-callee map: the plain
 ;; memory gate, so the only thing that can move the candidate is the clause
@@ -51304,7 +51545,8 @@ exit:
             (I64)
             9
             (opt-affine-lcg-loop-blocks)
-            Ordinary))
+            Ordinary
+            false))
         1
         2
         3)]
@@ -51319,7 +51561,8 @@ exit:
             (I64)
             8
             (opt-affine-lcg-while-blocks)
-            Ordinary))
+            Ordinary
+            false))
         4
         5
         6)]
@@ -51661,7 +51904,8 @@ exit:
     (I64)
     0
     (opt-ssa-unreachable-blocks)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-ssa-bad-phi-function) : ir.CompilerIrFunction
   (Function
@@ -51681,7 +51925,8 @@ exit:
        join:
          %3 = phi [%1, then], [%2, ghost] : i64
          return %3")
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-ssa-duplicate-label-function) : ir.CompilerIrFunction
   (irt.func
@@ -51720,7 +51965,8 @@ exit:
         (opt-test-instrs
           (ir.CompilerIrInstr.Mov var (I64 1) (I64))
           (irt.instr "return 1"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-ssa-use-before-def-function) : ir.CompilerIrFunction
   (irt.func
@@ -51739,7 +51985,8 @@ exit:
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
         (opt-test-instrs (ir.CompilerIrInstr.Return (Some (RuntimeGlobal 2))))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-ssa-dominance-fail-function) : ir.CompilerIrFunction
   (Function
@@ -51757,7 +52004,8 @@ exit:
          jump join
        join:
          return %1")
-    Ordinary))
+    Ordinary
+    false))
 
 ;; --- BCE-3: preheader synthesis verdicts -------------------------------------
 ;;
@@ -53053,7 +53301,8 @@ done:
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "inner_body")
         (opt-ssa-nested-loop-inner-body)))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; Fixture for the post-SSA rotation pass: `entry` is the single-successor
 ;; preheader, `header` carries one loop phi plus a pure guard and the loop
@@ -53089,7 +53338,8 @@ done:
     (I64)
     4
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-rotate-ssa-test-run [side-exit : bool]) : ir.CompilerIrFunction
   (let
@@ -53213,7 +53463,8 @@ done:
         (I64)
         7
         blocks
-        Ordinary))
+        Ordinary
+        false))
       [(Result next _) next])))
 
 ;; The `it-slice-eq?` class, in the shape `flag_exit` leaves behind: a
@@ -53262,7 +53513,8 @@ done:
     (I64)
     6
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-rotate-ssa-test-second-exit-run [live-out : bool]) : ir.CompilerIrFunction
   (let
@@ -53351,7 +53603,8 @@ done:
     (Bool)
     10
     (opt-rotate-ssa-test-flag-loop-blocks)
-    Ordinary))
+    Ordinary
+    false))
 
 ;; One rotation pass over the flag loop, with nothing below it in the pipeline.
 ;; This has to leave the loop ALONE: the flag is flag_exit's monotone seed with
@@ -53525,7 +53778,8 @@ done:
         (I64)
         11
         blocks
-        Ordinary))
+        Ordinary
+        false))
       [(Result next _) next])))
 
 ;; Scan discipline: a REFUSED loop must not retire the rounds. The leading loop
@@ -53590,7 +53844,8 @@ done:
         (I64)
         9
         blocks
-        Ordinary))
+        Ordinary
+        false))
       [(Result next _) next])))
 
 ;; Fixpoint discipline: the rotated latch ends in the cloned guard branch, not a
@@ -53680,7 +53935,8 @@ done:
     (I64)
     (+ 1 (* 3 loops))
     (opt-rotate-ssa-many-siblings-blocks loops)
-    Ordinary))
+    Ordinary
+    false))
 
 ;; The rounds over LOOPS siblings with FUEL rounds.
 (define (opt-rotate-ssa-many-siblings-run [loops : i64] [fuel : i64]) : ir.CompilerIrFunction
@@ -53778,7 +54034,8 @@ done:
       (I64)
       26
       (irt.blocks text)
-      Ordinary)))
+      Ordinary
+      false)))
 
 (define (opt-rotate-ssa-compound-types-ok?
   [blocks : (& blocks ir.CompilerIrBlockList)]
@@ -54057,7 +54314,8 @@ done:
           (I64)
           12
           blocks
-          Ordinary))
+          Ordinary
+          false))
         [(Result next _) next])]
     (opt-round-regions-test-clobber!)
     (let
@@ -54107,7 +54365,8 @@ done:
         (I64)
         frame
         blocks
-        Ordinary)]
+        Ordinary
+        false)]
     [context : opt.OptCfgContext
       (opt.opt-cfg-context-build (opt.opt-function-blocks func))]
     [loops
@@ -56517,7 +56776,8 @@ done:
     (I64)
     10
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-scratch-reset-header-instrs) : ir.CompilerIrInstrSeq
   (irt.instrs "branch true, body, exit"))
@@ -56563,7 +56823,8 @@ done:
     (I64)
     10
     (opt-scratch-reset-level-blocks)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-scratch-reset-level-program) : ir.CompilerIrProgram
   (Program
@@ -56942,7 +57203,7 @@ done:
           (match (opt.compiler-opt-global-array-element-shared-view
             functions.slots
             i)
-            [(Function name _ _ _ blocks _)
+            [(Function name _ _ _ blocks _ _)
               (set!
                 out
                 (str_cat.str-cat out (ir.compiler-ir-symbol-text name) " "))
@@ -58341,7 +58602,8 @@ done:
     16
     (ir.compiler-ir-blocks
       (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; Linked traversal is the independent oracle until #5729 retires that storage.
 ;; The reversed first dependency needs the existing second root pass; the rest
@@ -59925,7 +60187,8 @@ done:
     (I64)
     40
     (opt-lc-word-test-blocks seed bound)
-    Ordinary))
+    Ordinary
+    false))
 
 ;; Ascending accumulator loop: i/acc phis, acc += i, i += 1, i < bound (the
 ;; compare reads the phi, not the post-step value). bound 4 => 5 trips; the
@@ -59956,7 +60219,8 @@ done:
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "lc_body")
         (opt-lc-asc-test-body bound)))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; Store-bearing descending counted loop: the const-trip arm shares the x16
 ;; arm's whitelist, which excludes StorePtr, so this loop must stay rolled.
@@ -59984,7 +60248,8 @@ done:
          branch %39, lc_body, lc_exit
        lc_exit:
          return %36")
-    Ordinary))
+    Ordinary
+    false))
 
 ;; Straight-line byte-compose fixtures for load_combine. Eight steps compose
 ;; zero-extended byte loads off base %0 at (%1 + literal) offsets; step j uses
@@ -60792,7 +61057,8 @@ done:
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "lc_body")
         (opt-uce-dual-test-body mode)))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; (b) Two derivable groups consolidate into one guard with two conditions
 ;; per group; a phi-indexed check is underivable and stays in the fast
@@ -61350,7 +61616,8 @@ done:
             (I64)
             17
             (opt.compiler-opt-global-shared-view blocks)
-            Ordinary))
+            Ordinary
+            false))
         (& (ir.compiler-ir-function-seq-empty)))]
     [table : opt_i64_i64_map.Map (opt-test-const-divisors globals functions)]
     [rewritten : ir.CompilerIrBlockList
@@ -61526,7 +61793,8 @@ done:
       10
       7)
     (opt-gc-test-reader-blocks symbols store-k? call-mode)
-    Ordinary))
+    Ordinary
+    false))
 
 ;; takes the address of gc_arr (disqualifies it program-wide, mechanism (b))
 (define (opt-gc-test-other-function [symbols : OptGcTestSymbols]) : ir.CompilerIrFunction
@@ -61541,7 +61809,8 @@ done:
         (opt-test-instrs
           (ir.CompilerIrInstr.Mov 0 (GlobalAddr symbols.arr) (U64))
           (irt.instr "return %0"))))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; stores gc_k in ANOTHER function (the loader pattern: must NOT disqualify
 ;; the reader's hoist of gc_k -- the store cannot interleave with a call-free
@@ -61558,7 +61827,8 @@ done:
         (opt-test-instrs
           (ir.CompilerIrInstr.Store symbols.k (I64 1) (I64))
           (irt.instr "return 0"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-gc-test-functions1 [f : (& f ir.CompilerIrFunction)]) : ir.CompilerIrFunctionSeq
   (let
@@ -61855,7 +62125,8 @@ done:
         (opt-test-instr-seq-prepend
           (Store target (I64 1) (I64))
           (irt.instrs "return 0"))))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; `gc_callee` again, storing nothing itself and CALLING `gc_writer` (which
 ;; stores gc_k). Its row is the TRANSITIVE one the mod-ref fixpoint computes,
@@ -61872,7 +62143,8 @@ done:
         (opt-test-instr-seq-prepend
           (Call 0 symbols.writer (Nil) (I64))
           (irt.instrs "return 0"))))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; Fixture H: @gc_k is read EXACTLY ONCE, in a non-entry block. The hoist
 ;; would replace that one conditional load with one unconditional entry load
@@ -61895,7 +62167,8 @@ done:
         (opt-test-instrs
           (ir.CompilerIrInstr.Mov 0 (Global symbols.k) (I64))
           (irt.instr "return %0"))))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; PRESSURE fixture for opt-global-cell-entry-fits?. Same admitted shape as P2
 ;; -- a returning callee that writes some other cell, two `@gc_arr` reads in a
@@ -61958,7 +62231,8 @@ done:
           (opt-test-instr-seq-prepend
             (Return (Some (Var acc)))
             (ir.compiler-ir-instr-seq-empty))))
-      Ordinary)))
+      Ordinary
+      false)))
 
 (define (opt-gc-test-pressure-run [symbols : OptGcTestSymbols] [live-ins : i64]) : ir.CompilerIrFunction
   (let
@@ -62440,7 +62714,8 @@ done:
           step
           bound
           local-bound?))
-      Ordinary)))
+      Ordinary
+      false)))
 
 ;; The real post-`bce_version` clone body, instruction for instruction:
 ;;
@@ -62530,7 +62805,8 @@ done:
         (opt-fc-test-pred-block pred loop exit)
         (opt-fc-test-real-loop-block loop pred exit)
         (opt-fc-test-exit-block exit))
-      Ordinary)))
+      Ordinary
+      false)))
 
 (define (opt-fc-test-loop-instr-count [out : (& out ir.CompilerIrFunction)]) : i64
   (let
@@ -62996,7 +63272,8 @@ done:
           invariant-index?
           second-store?)
         (opt-cc-test-exit-block exit pred loop escape?))
-      Ordinary)))
+      Ordinary
+      false)))
 
 (define (opt-cc-test-loop-instr-count [out : (& out ir.CompilerIrFunction)]) : i64
   (let
@@ -63248,7 +63525,8 @@ done:
                   ""
                   step)
                 (str_cat.str-cat extra suffix))))))
-      ir.CompilerIrFunctionAbi.Ordinary)))
+      ir.CompilerIrFunctionAbi.Ordinary
+      false)))
 
 (define (compiler-optimize-loop-call-suffix-self-test) : i64
   (let
@@ -63398,7 +63676,8 @@ done:
                     (str_cat.str-cat
                       latch-type
                       "\nbranch %9, loop__bce_fast, exit\nexit:\nreturn 0"))))))))
-      ir.CompilerIrFunctionAbi.Ordinary)))
+      ir.CompilerIrFunctionAbi.Ordinary
+      false)))
 
 (define (compiler-optimize-loop-call-entry-proof-self-test) : i64
   (let
@@ -64599,11 +64878,13 @@ done:
 
 (define (opt-cs-test-apply [func : ir.CompilerIrFunction]) : OptCsTestResult
   (match func
-    [(Function name params ret-ty frame blocks function-abi)
+    [(Function name params ret-ty frame blocks function-abi cold?)
       (opt.opt-function-addr-taken-install! frame (& blocks))
       (match (opt.opt-counter-sink-blocks (& params) frame (& blocks))
         [(Result next changed)
-          (Result (Function name params ret-ty frame next function-abi) changed)])]))
+          (Result
+            (Function name params ret-ty frame next function-abi cold?)
+            changed)])]))
 
 (define (opt-cs-test-run [text : String]) : ir.CompilerIrFunction
   (match (opt-cs-test-apply (irt.func text))
@@ -65221,7 +65502,8 @@ done:
     (I64)
     4
     (opt-gc-obs-blocks symbols mode)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-gc-obs-run [symbols : OptGcTestSymbols] [mode : i64]) : ir.CompilerIrFunction
   (let
@@ -65348,7 +65630,8 @@ done:
     (I64)
     20
     (opt-gc-test-while-blocks symbols)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-test-closed-world-main) : ir.CompilerIrFunction
   (Function
@@ -65360,7 +65643,8 @@ done:
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
         (opt-test-instrs (irt.instr "return 0"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (compiler-optimize-global-cell-pipeline-self-test) : i64
   (let
@@ -65497,7 +65781,8 @@ done:
     (irt.blocks "entry:
          %30 = call* %1() : i64
          return 0")
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-lp-test-program-functions [symbols : OptLpTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
@@ -65528,7 +65813,8 @@ done:
           (ir.CompilerIrInstr.Store symbols.g1 (I64 3) (I64))
           (ir.CompilerIrInstr.Store symbols.g2 (I64 4) (I64))
           (irt.instr "return 0"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-lp-value-global? [v : ir.CompilerIrValue]) : bool
   (match v
@@ -65686,7 +65972,8 @@ done:
     (I64)
     16
     (opt-lp-test-call-blocks symbols)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-lp-version-params) : ir.CompilerIrParamSeq
   (irt.params "arr=%0:(__tl_dyn-array i64)"))
@@ -65733,7 +66020,8 @@ done:
     (I64)
     20
     (opt-lp-test-version-blocks symbols)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-lp-promoted-blocks
   [symbols : OptLpTestSymbols]
@@ -65851,7 +66139,8 @@ done:
         (I64)
         64
         (ir.compiler-ir-global-shared-view blocks)
-        Ordinary)]
+        Ordinary
+        false)]
     (match (opt.opt-licm-function-with-context-result-and-direct-call-clean
       (ast.ast-node-pool-reader-type-segment-bases)
       (& (opt.opt-cfg-context-build blocks))
@@ -66152,7 +66441,8 @@ done:
     8
     (ir.compiler-ir-blocks
       (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-mr-return-zero) : ir.CompilerIrInstrSeq
   (irt.instrs "return 0"))
@@ -66674,7 +66964,8 @@ done:
     64
     (ir.compiler-ir-blocks
       (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-le-params [count : i64]) : ir.CompilerIrParamSeq
   (if (<= count 0)
@@ -67063,7 +67354,7 @@ done:
 
 ;; The LATE slot: the same blocks, swept after bce_version would have had them.
 (define (opt-le-blocks-function [name : i64] [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrFunction
-  (Function name (opt-le-params 1) (I64) 64 blocks Ordinary))
+  (Function name (opt-le-params 1) (I64) 64 blocks Ordinary false))
 
 (define (opt-le-late-sweep
   [cells : opt.OptGlobalCellSummary]
@@ -67572,7 +67863,8 @@ done:
         (opt-test-instr-seq-prepend
           (irt.instr "store_ptr %0, 1 : i64")
           (opt-mr-return-zero))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-og-one-arg-call
   [dst : i64]
@@ -67736,7 +68028,8 @@ done:
     (I64)
     32
     (irt.blocks text)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-snapshot-test-ok?
   [before : String]
@@ -67928,7 +68221,8 @@ done:
         0
         (irt.blocks "entry:
   return 0")
-        Ordinary)]
+        Ordinary
+        false)]
     [functions
       (ir.compiler-ir-function-seq-prepend
         (& fixture)
@@ -67969,7 +68263,8 @@ done:
         0
         (irt.blocks "entry:
   return 0")
-        Ordinary)]
+        Ordinary
+        false)]
     [functions
       (ir.compiler-ir-function-seq-prepend
         (& fixture)
@@ -68601,7 +68896,8 @@ return 0" true)
     provided
     (ir.CompilerIrReturnStorage.None)
     false
-    (ir.CompilerIrGlobalStorage.Word)))
+    (ir.CompilerIrGlobalStorage.Word)
+    false))
 
 (test
   global-mod-ref-extern-link-identity
@@ -70196,7 +70492,8 @@ return 0" true)
     64
     (ir.compiler-ir-blocks
       (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; Two `bounds_check`es of ONE index against the array lengths reached through
 ;; the two reference PARAMETERS: the cfg/dominator helper shape, with no global
@@ -70420,7 +70717,8 @@ return 0" true)
         (I64)
         64
         (opt.compiler-opt-global-shared-view blocks)
-        Ordinary)]
+        Ordinary
+        false)]
     [walked-blocks : ir.CompilerIrBlockList
       (let
         [func-2
@@ -70637,7 +70935,8 @@ return 0" true)
         (opt-test-instr-seq-prepend
           (irt.instr "%1 = load %0 : i64")
           (opt-mr-return-zero))))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; The same dereference, behind a direct call to a function that rebinds a cell.
 (define (opt-lga-rebind-function [name : i64] [callee : i64]) : ir.CompilerIrFunction
@@ -70654,7 +70953,8 @@ return 0" true)
           (opt-test-instr-seq-prepend
             (irt.instr "%1 = load %0 : i64")
             (opt-mr-return-zero)))))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; `store_ptr %5, %0` -- the parameter itself is the value STORED, which is the
 ;; one position IAG-2's escape check does not license.
@@ -70670,7 +70970,8 @@ return 0" true)
         (opt-test-instr-seq-prepend
           (irt.instr "store_ptr %5, %0 : u64")
           (opt-mr-return-zero))))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; Two sites in one caller, the second passing a local.
 (define (opt-lga-mixed-caller-function [symbols : OptLgaTestSymbols]) : ir.CompilerIrFunction
@@ -70781,7 +71082,7 @@ return 0" true)
       (match (opt.compiler-opt-global-array-element-shared-view
         functions.slots
         index)
-        [(Function found _ _ _ _ _) (= (ir.compiler-ir-symbol-id found) name)])
+        [(Function found _ _ _ _ _ _) (= (ir.compiler-ir-symbol-id found) name)])
       (return index)))
   (- 0 1))
 
@@ -70796,7 +71097,7 @@ return 0" true)
       (match (opt.compiler-opt-global-array-element-shared-view
         functions.slots
         index)
-        [(Function _ params _ _ _ _) params.len]))))
+        [(Function _ params _ _ _ _ _) params.len]))))
 
 ;; The first instruction of a function's entry block, or a `Jump` sentinel no
 ;; fixture builds.
@@ -70810,7 +71111,7 @@ return 0" true)
       (match (opt.compiler-opt-global-array-element-shared-view
         functions.slots
         index)
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (match (ir.compiler-ir-block-list-view blocks)
             [(slice block & _)
               (match (owned_view.compiler-owned-reference-shared-view block)
@@ -71782,7 +72083,8 @@ return 0" true)
         (I64)
         64
         (ir.clone-compiler-ir-block-list (& blocks))
-        Ordinary)]
+        Ordinary
+        false)]
     (match (opt.opt-licm-function-with-context-result-and-direct-call-clean
       (ast.ast-node-pool-reader-type-segment-bases)
       (& (opt.opt-cfg-context-build blocks))
@@ -71946,7 +72248,8 @@ return 0" true)
         (I64)
         64
         (ir.compiler-ir-global-shared-view blocks)
-        Ordinary)]
+        Ordinary
+        false)]
     (match (opt.opt-licm-function-with-context-result-and-direct-call-clean
       (ast.ast-node-pool-reader-type-segment-bases)
       (& (opt.opt-cfg-context-build blocks))
@@ -72069,7 +72372,8 @@ return 0" true)
         (I64)
         64
         (ir.clone-compiler-ir-block-list (& blocks))
-        Ordinary)]
+        Ordinary
+        false)]
     [after : ir.CompilerIrBlockList
       (match (opt.opt-licm-function-with-context-result-and-direct-call-clean
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -73922,7 +74226,8 @@ done:
         malformed?)
       (irt.block "entry:
            jump loop0"))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; loop_k of the single-block bce fixture: i/acc phis, acc += i, one derivable
 ;; counter BoundsCheck, i += 1, i' < n -- the shape the pass versions
@@ -74028,7 +74333,8 @@ done:
       (opt.opt-blocks-collect opt-loop-budget-bce-tail-blocks! 0 n)
       (irt.block "entry:
            jump loop0"))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; Two chained multi-block counted loops: a header carrying the counter phi
 ;; and one derivable check, one body jump block, and a latch with the step and
@@ -74095,7 +74401,8 @@ done:
       (irt.block "blk1:
                        jump latch1")
       (opt-loop-budget-mb-latch-block 1 (ir.compiler-ir-label "done")))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (compiler-optimize-loop-budget-unroll-self-test) : i64
   (let
@@ -74648,7 +74955,8 @@ done:
     (I64)
     16
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-bit-test-link-block
   [label : i64]
@@ -74847,7 +75155,7 @@ done:
   (match (opt-bit-test-run blocks)
     [(Result next _)
       (match next
-        [(Function _ _ _ _ out _) out])]))
+        [(Function _ _ _ _ out _ _) out])]))
 
 (define (opt-bit-test-result-verified? [blocks : ir.CompilerIrBlockList]) : bool
   (match (opt-bit-test-run blocks)
@@ -75252,7 +75560,7 @@ done:
           (opt.opt-verify-ok? (& (opt.opt-verify-function (& next))))]
         [out : ir.CompilerIrBlockList
           (match next
-            [(Function _ _ _ _ out _) out])]
+            [(Function _ _ _ _ out _ _) out])]
         (and
           changed
           verified
@@ -75268,7 +75576,7 @@ done:
           (opt.opt-verify-ok? (& (opt.opt-verify-function (& next))))]
         [out : ir.CompilerIrBlockList
           (match next
-            [(Function _ _ _ _ out _) out])]
+            [(Function _ _ _ _ out _ _) out])]
         [head : ir.CompilerIrBlock
           (opt-bit-test-block-at (& out) (ir.compiler-ir-label "entry"))]
         (and
@@ -75482,7 +75790,8 @@ done:
     (I64)
     13
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-ubound-run [name : String] [blocks : ir.CompilerIrBlockList]) : opt.OptFunctionPassResult
   (opt.opt-ubound-function-pass 0 (opt-ubound-function name blocks)))
@@ -76000,7 +76309,8 @@ done:
     (I64)
     11
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-bg-run [name : String] [blocks : ir.CompilerIrBlockList]) : opt.OptFunctionPassResult
   (opt.opt-bg-function-pass (& (opt-bg-function name blocks))))
@@ -76221,7 +76531,8 @@ done:
     (I64)
     24
     (irt.blocks text)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-bg-text-result [name : String] [text : String]) : ir.CompilerIrFunction
   (match (opt.opt-bg-function-pass (& (opt-bg-text-function name text)))
@@ -76975,7 +77286,8 @@ done:
         (Bool)
         16
         blocks
-        Ordinary)))
+        Ordinary
+        false)))
     [(Result next _ changed?) (Result next changed?)]))
 
 (define (opt-pcf-changed? [name : String] [blocks : ir.CompilerIrBlockList]) : bool
@@ -78599,7 +78911,8 @@ done:
              return %3")
       (opt-nn-block "entry" (opt-unr-loop-entry))
       (opt-nn-block "body" (opt-unr-loop-body mode)))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-unr-loop-run [mode : i64]) : ir.CompilerIrBlockList
   (let
@@ -78900,7 +79213,8 @@ done:
     (I64)
     22
     (opt-flag-exit-sent-blocks variant)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-flag-exit-sent-run [variant : i64]) : ir.CompilerIrFunction
   (opt.opt-flag-exit-function (& (opt-flag-exit-sent-function variant))))
@@ -79496,8 +79810,9 @@ done:
       (I64)
       32
       blocks
-      Ordinary))
-    [(Function _ _ _ _ out _) out]))
+      Ordinary
+      false))
+    [(Function _ _ _ _ out _ _) out]))
 
 ;; `%dst = <op> %x, %y : i64`
 (define (opt-ifc-binop [dst : i64] [op : ir.CompilerIrBinOp]) : ir.CompilerIrInstr
@@ -80604,7 +80919,8 @@ done:
     (I64)
     frame
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-t25-thread-result [blocks : ir.CompilerIrBlockList] [frame : i64]) : opt.OptBlockListPassResult
   (opt.opt-thread-const-branch-blocks
@@ -80947,7 +81263,8 @@ done:
     (I64)
     11
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-bce-mb-index-form-rewrite [variant : i64]) : ir.CompilerIrBlockList
   (let
@@ -81506,7 +81823,8 @@ done:
     (I64)
     32
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 ;; A summary whose two per-global tables are BUILT, so `Cell`/`Storage` reads are
 ;; answered by name instead of by the absent-table fallback. `callee` is given the
@@ -82034,7 +82352,8 @@ done:
     (I64)
     32
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 ;; Summaries carrying one call-memory row, so the region test can be shown
 ;; admitting a callee proven to write nothing and refusing one that writes.
@@ -82067,7 +82386,7 @@ done:
     (ast.ast-node-pool-reader-type-segment-bases)
     summaries
     (opt-guard-dedup-fn blocks))
-    [(Function _ _ _ _ out _) out]))
+    [(Function _ _ _ _ out _ _) out]))
 
 ;; Branches whose condition is already a literal: what retirement leaves for
 ;; `opt-cfg-fold-branch` below to turn into a jump.
@@ -82876,7 +83195,8 @@ done:
     (I64)
     64
     (opt-bce-hoist-test-blocks variant)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-bce-hoist-rewrite [variant : i64]) : ir.CompilerIrBlockList
   (let
@@ -83250,7 +83570,8 @@ done:
     (I64)
     2
     (opt-inline-store-callee-body symbols)
-    Ordinary))
+    Ordinary
+    false))
 
 ;; Var 0 is a spacer the site never passes and var 1 is the argument, so the
 ;; callee's own ids (param 0, local 1) both name caller vars holding OTHER
@@ -83270,7 +83591,8 @@ done:
           (irt.instr "%1 = mov 41 : i64")
           (ir.CompilerIrInstr.Call 2 symbols.bump (One (Var 1)) (I64))
           (irt.instr "return %2"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-inline-store-functions [symbols : OptInlineStoreTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
@@ -83517,7 +83839,8 @@ done:
       (I64)
       0
       blocks
-      Ordinary)))
+      Ordinary
+      false)))
 
 (define (opt-loop-call-test-transaction) : unit
   (let
@@ -83645,14 +83968,15 @@ done:
         unit)]
     [snapshot : ir.CompilerIrFunction
       (match (owned_view.compiler-owned-shared-view func)
-        [(Function name params ty frame blocks function-abi)
+        [(Function name params ty frame blocks function-abi cold?)
           (Function
             name
             params
             ty
             frame
             (opt.opt-bool-branch-clone-blocks blocks)
-            function-abi)])]
+            function-abi
+            cold?)])]
     [context : opt.OptCfgContext
       (opt.opt-cfg-context-build (opt.opt-function-blocks func))]
     [labels : u64
@@ -83886,7 +84210,8 @@ done:
     (I64)
     1
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-preheaders-ice-broken) : ir.CompilerIrFunction
   (opt-preheaders-ice-function
@@ -84683,7 +85008,8 @@ done:
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
           (ir.compiler-ir-instr-builder-to-seq b)))
-      (Ordinary))))
+      (Ordinary)
+      false)))
 
 (define (opt-lcc-test-function [mode : i64]) : ir.CompilerIrFunction
   (let
@@ -84833,7 +85159,8 @@ done:
       (I64)
       8
       (ir.compiler-ir-block-builder-to-list out)
-      (Ordinary))))
+      (Ordinary)
+      false)))
 
 ;; Pin the lazy cache's branch direction and state, in addition to SSA shape.
 (define (opt-lcc-test-control? [blocks : (& blocks ir.CompilerIrBlockList)]) : bool
@@ -85123,7 +85450,8 @@ done:
       ty
       12
       (ir.compiler-ir-block-builder-to-list blocks)
-      (Ordinary))))
+      (Ordinary)
+      false)))
 
 (define (opt-lcs-test-no-backedge? [func : (& func ir.CompilerIrFunction)]) : bool
   (match (let
@@ -85213,7 +85541,7 @@ done:
 ;; Prefix arithmetic updates a loop-carried value before the invariant call.
 (define (opt-lcp-test-input [mode : i64]) : ir.CompilerIrFunction
   (match (opt-lcc-test-function 0)
-    [(Function name params ret frame blocks abi)
+    [(Function name params ret frame blocks abi cold?)
       (let
         [seq (ir.compiler-ir-block-list-seq blocks)]
         [out (ir.compiler-ir-block-builder-with-capacity 4)]
@@ -85273,7 +85601,8 @@ done:
           ret
           frame
           (ir.compiler-ir-block-builder-to-list out)
-          abi))]))
+          abi
+          cold?))]))
 
 (define (opt-lcp-test-control? [blocks : (& blocks ir.CompilerIrBlockList)]) : bool
   (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label "body"))
@@ -85706,7 +86035,7 @@ done:
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match (opt.compiler-opt-global-shared-view func)
-    [(Function _ _ _ frame blocks _)
+    [(Function _ _ _ frame blocks _ _)
       ;; A raw pass fixture is off-pipeline: it installs the set for the body it
       ;; hands the pass.
       (opt.opt-function-addr-taken-install! frame (& blocks))
@@ -85732,7 +86061,7 @@ done:
 
 (define (opt-switch-form-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match (opt.compiler-opt-global-shared-view func)
-    [(Function _ _ _ frame blocks _)
+    [(Function _ _ _ frame blocks _ _)
       ;; A raw pass fixture is off-pipeline: it installs the set for the body it
       ;; hands the pass.
       (opt.opt-function-addr-taken-install! frame (& blocks))
@@ -86674,7 +87003,8 @@ done:
           (I64)
           13
           (opt-interval-test-blocks variant)
-          Ordinary)]
+          Ordinary
+          false)]
       [optimized : ir.CompilerIrFunction
         (opt.opt-bce-version-function (& original))]
       [blocks (opt.opt-function-blocks optimized)]
@@ -87766,7 +88096,7 @@ e:
 return 4
 }")]
     (match (opt.compiler-opt-global-shared-view func)
-      [(Function _ _ _ frame blocks _)
+      [(Function _ _ _ frame blocks _ _)
         ;; A raw pass fixture is off-pipeline: it installs the set for the body
         ;; it hands the pass.
         (opt.opt-function-addr-taken-install! frame (& blocks))])
@@ -87822,7 +88152,8 @@ return
             (ir.CompilerIrBlock.Block
               (ir.compiler-ir-label "body")
               (ir.compiler-ir-instr-builder-to-seq builder)))
-          Ordinary)]
+          Ordinary
+          false)]
       [state
         (opt.opt-verify-at
           "rotation"
@@ -88165,7 +88496,8 @@ return
               (ast.AstType.Unit)
               2
               (ir.compiler-ir-block-builder-to-list blocks)
-              (ir.CompilerIrFunctionAbi.Ordinary)))
+              (ir.CompilerIrFunctionAbi.Ordinary)
+              false))
           (opt-tailrec-array-authorize
             pools
             (ir.CompilerIrProgram.Program
@@ -88495,7 +88827,8 @@ return
           (ir.CompilerIrInstr.Store symbols.pointer (I64 7) (I64))
           (ir.CompilerIrInstr.Store symbols.initializer-addr (I64 7) (I64))
           (ir.CompilerIrInstr.Return (Some (I64 0))))))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; One reader per refused fact: a `Global` read, a read that only a `Load`
 ;; performs, `(& g)` (an escape, also what a pointer write goes through), and a
@@ -88520,7 +88853,8 @@ return
           (ir.CompilerIrInstr.Mov 4 (GlobalAddr symbols.pointer) (U64))
           (ir.CompilerIrInstr.StorePtr (Var 4) (I64 9) (I64))
           (ir.CompilerIrInstr.Return (Some (Var 1))))))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; The prune walks only what "main" reaches, so the fixture needs one that calls
 ;; both bodies.
@@ -88537,7 +88871,8 @@ return
           (irt.instr "%1 = call ds_writer() : i64")
           (irt.instr "%2 = call ds_reader() : i64")
           (ir.CompilerIrInstr.Return (Some (Var 2))))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-ds-test-count-store-instr
   [name : i64]
@@ -88608,7 +88943,7 @@ return
       [func : ir.CompilerIrFunction
         (ir.compiler-ir-function-seq-ref functions index)]
       (match (& func)
-        [(Function name _ _ _ _ _)
+        [(Function name _ _ _ _ _ _)
           (if (= (ir.compiler-ir-symbol-id name) function-name)
             (let
               [blocks : ir.CompilerIrBlockList
@@ -88715,7 +89050,8 @@ return
             (opt-test-instrs
               (ir.CompilerIrInstr.Mov 1 (Global symbols.read) (I64))
               (ir.CompilerIrInstr.Return (Some (Var 1))))))
-        Ordinary)]
+        Ordinary
+        false)]
     [inline-main : ir.CompilerIrFunction
       (Function
         symbols.main
@@ -88729,7 +89065,8 @@ return
               (ir.CompilerIrInstr.Store symbols.read (I64 2) (I64))
               (irt.instr "%2 = call ds_probe() : i64")
               (ir.CompilerIrInstr.Return (Some (Var 2))))))
-        Ordinary)]
+        Ordinary
+        false)]
     [inline-module : ir.CompilerIrFunctionSeq
       (ir.compiler-ir-function-seq-prepend
         (& inline-main)
@@ -90252,7 +90589,8 @@ inl.entry.0.cont:
         (U32)
         frame
         cleaned
-        Ordinary)]
+        Ordinary
+        false)]
     (ir.compiler-ir-function-render
       (cis.InternStructuralSessionHandle 0)
       (ast.ast-node-pool-reader-type-segment-bases)
@@ -91046,7 +91384,8 @@ inl.entry.0.cont:
     ret-ty
     frame
     (irt.blocks blocks-text)
-    Ordinary))
+    Ordinary
+    false))
 
 (test
   optimizer-flag-exit-rotated-bool-latch-with-not-and-dead-mov
@@ -91405,7 +91744,7 @@ inl.entry.0.cont:
         (let
           [out : ir.CompilerIrBlockList
             (match next
-              [(Function _ _ _ _ out _) out])]
+              [(Function _ _ _ _ out _ _) out])]
           [head : ir.CompilerIrBlock
             (opt-bit-test-block-at (& out) (ir.compiler-ir-label "entry"))]
           [head-count : i64 (opt-block-instr-count head)]

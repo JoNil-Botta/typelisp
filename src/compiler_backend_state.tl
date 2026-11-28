@@ -215,7 +215,7 @@
     [backend-state : CompilerBackendState]
     [func : compiler_ir_types.CompilerIrFunction]) : String
     (match func
-      [(Function name _ _ _ _ _)
+      [(Function name _ _ _ _ _ _)
         (compiler-backend-symbol-text-state backend-state name)])))
 
 (defenum ResultBackendReg

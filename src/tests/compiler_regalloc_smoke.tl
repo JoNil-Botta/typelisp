@@ -55,14 +55,15 @@
                   (irt.instrs
                     "%4 = mov %3 : i64
                      return %4")))))))
-      Ordinary)))
+      Ordinary
+      false)))
 
 (define (compiler-reg-smoke-spmd-call-shape-ok?) : bool
   (let
     [func : ir.CompilerIrFunction (compiler-reg-smoke-spmd-call-function)]
     [call-args : live.CompilerLiveI64Set
       (match (& func)
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (reg.compiler-reg-call-arg-vars-blocks
             blocks
             (live.compiler-live-set-empty))])]
@@ -70,7 +71,7 @@
       (live.compiler-live-analyze-function (& func))]
     [call-live : live.CompilerLiveI64Set
       (match (& func)
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (reg_tests.compiler-reg-call-live-blocks
             blocks
             liveness
@@ -115,7 +116,8 @@
                     (compiler-regalloc-smoke-instr-seq-prepend
                       (ir.ir-instr-descriptor-pair-length 7 (Var 5))
                       (irt.instrs "return %7"))))))))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (compiler-reg-smoke-descriptor-pair-group-ok?) : bool
   (let

@@ -882,12 +882,17 @@
   [ctx : DocExpandContext]
   [name : i64]
   [params : ast.AstParamList]
-  [ret : ast.AstType]) : String
-  (doc-cat6
+  [ret : ast.AstType]
+  [cold? : bool]) : String
+  (str_cat.str-cat
     "(define ("
     (doc-expand-source-name ctx name)
     (doc-ast-param-list-source ctx params)
-    ") : "
+    ")"
+    (if cold?
+      " (:cold)"
+      "")
+    " : "
     (doc-ast-type-source ctx ret)
     " ...)"))
 
@@ -961,7 +966,12 @@
             (Function)
             (doc-expand-source-name ctx name)
             ""
-            (doc-ast-function-signature ctx name params ret)
+            (doc-ast-function-signature
+              ctx
+              name
+              params
+              ret
+              (ast.ast-decl-meta-cold? (& decl-meta)))
             0))]
       [(DefMacro decl-meta name params ret _)
         (Some

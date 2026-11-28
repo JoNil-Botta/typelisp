@@ -1,6 +1,8 @@
 (import compiler_tli_extract as extract)
 (import compiler_tli_codec as codec)
 (import compiler_tli_types as tli)
+(import compiler_tli_hydrate as hydrate)
+(import tlci_core as tlci)
 (import compiler_typecheck_api as api)
 (import compiler_ast_types as ast)
 (import compiler_diagnostic as diag)
@@ -404,3 +406,65 @@
               "slash-alias struct field cleanup")]
           [_ (io.panic "expected slash-alias struct field cleanup")])]
       [_ (io.panic "expected a struct body")])))
+
+(test
+  tli-cold-attribute-round-trip
+  (let
+    [row : tli.TliModuleRecord
+      (extract-fixture-module
+        "(module fixture)
+(define (cold-unit) (:cold) unit)
+(define (cold-result) (:export-symbol \"cold_result\") (:cold) : i64 42)
+(define (warm-result) : i64 42)
+")]
+    [facts : hydrate.TliHydratedFacts (hydrate.tli-hydrated-facts-new 1)]
+    [decls : ast.AstDeclList (ast.ast-decl-list-new)]
+    [paths : ast.AstDeclPathList (ast.ast-decl-path-list-new)]
+    [modules : ast.AstDeclModuleList (ast.ast-decl-module-list-new)]
+    (test.assert-i64-eq
+      (bit-and
+        (extract-fixture-fn (& row) "cold-unit").summary.effect-flags
+        tli.tli-fn-cold)
+      tli.tli-fn-cold
+      "a default-unit function retains its marker")
+    (test.assert-i64-eq
+      (bit-and
+        (extract-fixture-fn (& row) "cold-result").summary.effect-flags
+        tli.tli-fn-cold)
+      tli.tli-fn-cold
+      "the marker composes with an export symbol")
+    (test.assert-i64-eq
+      (bit-and
+        (extract-fixture-fn (& row) "warm-result").summary.effect-flags
+        tli.tli-fn-cold)
+      0
+      "an unmarked function stays warm")
+    (for [i (iterator.range 0 (array-length row.functions))]
+      (let
+        [fn (& (array-ref row.functions i))]
+        (hydrate.tli-hydrate-project-fn-with-context!
+          (&mut facts)
+          (&mut decls)
+          (&mut paths)
+          (&mut modules)
+          fn
+          false
+          "provider"
+          "0.1.0"
+          (& (tlci.tlci-spmd-callables-empty))
+          "provider.tl"
+          0
+          0
+          0
+          i)
+        (let
+          [decl : ast.AstDecl
+            (ast.ast-decl-list-get (& decls) i (ast.ast-decl-fallback))]
+          (test.assert-true
+            (match (& decl)
+              [(Extern meta _ (Function) _ _)
+                (=
+                  (ast.ast-decl-meta-cold? meta)
+                  (not (string.eq (& fn.name) "warm-result")))]
+              [_ false])
+            "an imported extern retains the function's marker"))))))

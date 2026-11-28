@@ -4115,3 +4115,34 @@ step c-extern-ok
 run check "{{root}}/tests/safety/global_call_c_extern_ok.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
 stdout contains Type checking passed!
 stderr empty
+
+case cold-attribute-syntax
+file cold_duplicate.tl
+(define (report) (:cold) (:export-symbol "c60_report") (:cold) unit)
+end-file
+file cold_arguments.tl
+(define (report) (:cold 1) : i64 42)
+end-file
+step cold-duplicate
+run check "{{dir}}/cold_duplicate.tl"
+exit 1
+stderr contains parse: duplicate define :cold metadata
+step cold-arguments
+run check "{{dir}}/cold_arguments.tl"
+exit 1
+stderr contains parse: define :cold expects no arguments
+file cold_spmd.tl
+(define (report [x : i64])
+  (:spmd-callable (specialization (lanes 8) (args uniform) (result uniform) (index-param none)))
+  (:cold) : i64
+  x)
+end-file
+step cold-composes-with-callable-metadata
+run check "{{dir}}/cold_spmd.tl"
+stderr empty
+step cold-survives-expansion-and-specialization
+run compile "{{root}}/tests/integration/c60_cold_attr.tl" --dump-ir --target {{host-target}} --opt-level 0 -o "{{dir}}/cold.ir"
+stderr empty
+sh grep -Eq '^function @.*report-message\(.* cold \{' "{{dir}}/cold.ir"
+sh grep -Eq '^function @.*generated-code\(.* cold \{' "{{dir}}/cold.ir"
+sh grep -Eq '^function @.*specialized_add-offset.* cold \{' "{{dir}}/cold.ir"

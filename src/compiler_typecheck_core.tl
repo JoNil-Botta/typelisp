@@ -124479,7 +124479,13 @@
               scratch-mark)]
           [nbody : i64 (try nbody-result)]
           (Ok
-            (ast.ast-decl-def-fn-metadata-id name params ret nbody (& metadata))))]
+            (ast.ast-decl-def-fn-metadata-id
+              decl-meta
+              name
+              params
+              ret
+              nbody
+              (& metadata))))]
       [(DefMacro decl-meta name params ret body-id)
         (let
           [expanded : i64

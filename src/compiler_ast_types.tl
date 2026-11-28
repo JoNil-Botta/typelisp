@@ -11181,18 +11181,13 @@
     (ast-fn-metadata No)))
 
 (define (ast-decl-def-fn-metadata-id
+  [decl-meta : AstDeclMeta]
   [name : i64]
   [params : AstParamList]
   [ret : AstType]
   [body : i64]
   [metadata : (& AstFnMetadata)]) : AstDecl
-  (DefFn
-    (ast-global-shared-view ast-decl-meta-runtime)
-    name
-    params
-    ret
-    body
-    (ast-fn-metadata-clone metadata)))
+  (DefFn decl-meta name params ret body (ast-fn-metadata-clone metadata)))
 
 (define (ast-decl-def-macro-id
   [name : i64]
@@ -11302,6 +11297,12 @@
 
 ;; Only :must-use and :opaque are whole-aggregate markers on the public surface.
 ;; The parser also records qualified type literals on macros and opaque fields on structs.
+(define ast-decl-cold-bit : i64
+  16)
+
+(define (ast-decl-meta-cold? [meta : (& AstDeclMeta)]) : bool
+  (!= (bit-and (ast-decl-meta-markers meta) ast-decl-cold-bit) 0))
+
 (define (ast-decl-meta-aggregate-markers [meta : (& AstDeclMeta)]) : i64
   (bit-and (ast-decl-meta-markers meta) 3))
 

@@ -10193,8 +10193,10 @@
         (owned_view.compiler-owned-shared-view text))]
     ;; 0 is an ordinary datum, 1 is a parenthesized form head, and 2 is the
     ;; first datum in a bracket arm. Brackets also introduce parameters and let
-    ;; bindings, so only `else` is a keyword in their head position.
+    ;; bindings, so only `else` is a keyword in their head position. A
+    ;; colon in a parenthesized head starts a metadata keyword.
     [head-position : i64 0]
+    [metadata-colon : i64 -1]
     (for [index (iterator.range 0 (format_tokens.format-token-count stream))]
       (let
         [start : i64 (format_tokens.format-token-start stream index)]
@@ -10203,6 +10205,12 @@
         (match tok
           [(LParen) (set! head-position 1)]
           [(LBracket) (set! head-position 2)]
+          [(Colon)
+            (if (= head-position 1)
+              (begin
+                (set! metadata-colon start)
+                (set! head-position 3))
+              (set! head-position 0))]
           [(Comment spelling)
             (lsp-semantic-token-add-split-span!
               tokens
@@ -10264,6 +10272,19 @@
                   0
                   0)
                 unit))
+            (when
+              (and
+                (= head-position 3)
+                (= start (+ metadata-colon 1))
+                (string.eq spelling "cold"))
+              (lsp-semantic-token-add-split-span!
+                tokens
+                text
+                metadata-colon
+                (+ start (string.string-length spelling))
+                lsp-semantic-token-type-keyword
+                0
+                0))
             (set! head-position 0)]
           [(End) unit]
           [_ (set! head-position 0)])))

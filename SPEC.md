@@ -3627,12 +3627,16 @@ Example:
 (define flag : bool true)
 ```
 
-### 4.2 `(define (name [param : type] ...) [: ret_type] body...)` — function
+### 4.2 `(define (name [param : type] ...) [metadata ...] [: ret_type] body...)` — function
 
 Defines a named function.
 
 - Parameters must be explicitly typed.
 - Return type defaults to `unit` when omitted.
+- `(:cold)` marks a function as rarely executed. Write it after the parameter
+  list, alongside any other function metadata and before the optional return
+  type. It takes no arguments and may appear only once. The compiler records
+  the hint in IR and package interfaces without changing execution semantics.
 - The body is one or more expressions. Multiple body expressions are evaluated
   as an implicit `begin`; the last expression provides the function result.
 - The entry point is a function named `main` with return type `i64` or `unit`.

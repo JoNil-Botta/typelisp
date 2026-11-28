@@ -157,7 +157,8 @@
     (I64)
     16
     blocks
-    Ordinary))
+    Ordinary
+    false))
 
 (define (opt-switch-test-compare-block
   [label : i64]
@@ -1953,7 +1954,8 @@
     (I64)
     5
     (smoke-heavy-pass-large-blocks)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (smoke-heavy-pass-large-gvn-self-test) : i64
   (let
@@ -1970,7 +1972,7 @@
           (opt.opt-program-summaries-empty)))]
     (unless (> (ir.compiler-ir-block-list-count blocks) 4096) (return 1))
     (match optimized
-      [(Function _ _ _ _ optimized-blocks _)
+      [(Function _ _ _ _ optimized-blocks _ _)
         (if (=
           (ot.opt-gvn-count-binops-blocks
             (ir.compiler-ir-block-list-view optimized-blocks))
@@ -2072,7 +2074,8 @@
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "latch")
         (ot.opt-test-instrs call (irt.instr "branch true, header, exit"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (smoke-inline-phi-params) : ir.CompilerIrParamSeq
   (irt.params "a=%0:i64, b=%1:i64, c=%2:i64, d=%3:i64"))
@@ -2094,7 +2097,8 @@
         (ot.opt-test-instrs
           (smoke-inline-phi-callee-mov)
           (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "exit")))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (smoke-inline-phi-call [symbols : ot.OptInlineMultiTestSymbols]) : ir.CompilerIrInstr
   (let
@@ -2376,7 +2380,8 @@
           (irt.instr "%6 = add %2, 1 : i64")
           (irt.instr "%7 = lt %6, 2 : i64")
           (irt.instr "branch %7, header, exit"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (smoke-c27-count-scalar-selects-instrs
   [instrs : ir.CompilerIrInstrSeq]
@@ -2448,7 +2453,8 @@
             (irt.instrs "return %2"))
           (irt.instr "%1 = bit_and %0, 1 : i64")
           (irt.instr "%2 = gt %1, 0 : i64"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (smoke-c27-if-convert-compare-self-test) : i64
   (let
@@ -2462,7 +2468,7 @@
         (smoke-c27-if-convert-function true))]
     [single-use : ir.CompilerIrFunction
       (match (smoke-c27-compare-function false)
-        [(Function name params ret frame blocks function-abi)
+        [(Function name params ret frame blocks function-abi cold?)
           (Function
             name
             params
@@ -2471,10 +2477,11 @@
             (opt.opt-dce-block-list-array
               (& (opt.opt-collect-blocks-uses-array frame blocks))
               (& blocks))
-            function-abi)])]
+            function-abi
+            cold?)])]
     [multi-use : ir.CompilerIrFunction
       (match (smoke-c27-compare-function true)
-        [(Function name params ret frame blocks function-abi)
+        [(Function name params ret frame blocks function-abi cold?)
           (Function
             name
             params
@@ -2483,7 +2490,8 @@
             (opt.opt-dce-block-list-array
               (& (opt.opt-collect-blocks-uses-array frame blocks))
               (& blocks))
-            function-abi)])]
+            function-abi
+            cold?)])]
     [converted-blocks : ir.CompilerIrBlockList
       (opt.opt-function-blocks converted)]
     [conditional-blocks : ir.CompilerIrBlockList
@@ -2553,13 +2561,14 @@
           (ir.CompilerIrInstr.BinOp 2 BitAnd (Var 0) and-mask (I64))
           (ir.CompilerIrInstr.BinOp 3 cmp-op (Var 2) (I64 cmp-const) (I64))
           (irt.instr "return %3"))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (smoke-c27-mask-dce-blocks [fn : ir.CompilerIrFunction]) : ir.CompilerIrBlockList
   (let
     [func
       (match fn
-        [(Function name params ret frame blocks function-abi)
+        [(Function name params ret frame blocks function-abi cold?)
           (ir.CompilerIrFunction.Function
             name
             params
@@ -2568,7 +2577,8 @@
             (opt.opt-dce-block-list-array
               (& (opt.opt-collect-blocks-uses-array frame blocks))
               (& blocks))
-            function-abi)])]
+            function-abi
+            cold?)])]
     (opt.opt-function-blocks func)))
 
 ;; 1 when the pair collapsed to BitTestNe, 2 when it collapsed to BitTestEq,

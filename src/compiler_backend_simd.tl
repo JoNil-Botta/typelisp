@@ -43,7 +43,7 @@
   [backend-state : be_state.CompilerBackendState]
   [func : compiler_ir_types.CompilerIrFunction]) : be_state.CompilerBackendMode
   (match func
-    [(Function name _ _ _ _ _)
+    [(Function name _ _ _ _ _ _)
       (compiler-backend-effective-mode-for-function-name
         mode
         (be_state.compiler-backend-symbol-text-state backend-state name))]))

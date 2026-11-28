@@ -373,7 +373,7 @@
         (for [index (iterator.range 0 functions.len)]
           (match (unsafe
             (ptr-read (ptr-offset (__tl_array-data functions.slots) index)))
-            [(Function symbol _ _ _ _ _)
+            [(Function symbol _ _ _ _ _ _)
               (when
                 (<
                   (symbol_map.get-value-or

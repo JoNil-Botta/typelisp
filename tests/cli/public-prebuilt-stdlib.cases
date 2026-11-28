@@ -392,3 +392,30 @@ run compile --batch "{{dir}}/batch.txt" --emit-tli --target {{host-target}}
 exit nonzero
 stderr contains --emit-tli
 cwd -
+
+case cold-attribute-extra-tli
+file provider/c60_provider.tl
+(define (report) (:cold) : i64 42)
+(define (warm) : i64 0)
+end-file
+file provider/root.tl
+(import c60_provider)
+
+(define (main) : i64
+  (+ (c60_provider.report) (c60_provider.warm)))
+end-file
+file consumer/main.tl
+(import c60_provider)
+
+(define (main) : i64
+  (+ (c60_provider.report) (c60_provider.warm)))
+end-file
+step emit-cold-tli
+run compile "{{dir}}/provider/root.tl" --emit-tli --target {{host-target}} -o "{{dir}}/cold.tli"
+stderr empty
+step import-cold-tli
+run compile "{{dir}}/consumer/main.tl" --extra-tli "{{dir}}/cold.tli" --target {{host-target}} --opt-level 0 -o "{{dir}}/consumer.s"
+stderr empty
+in file {{dir}}/consumer.s
+contains c60_provider_report
+contains c60_provider_warm

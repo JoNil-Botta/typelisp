@@ -31,7 +31,7 @@
      dead:
        jump dead
      }")
-    [(Function name _ _ vars blocks _)
+    [(Function name _ _ vars blocks _ _)
       (let
         [builder : ir.CompilerIrBlockBuilder
           (ir.compiler-ir-block-builder-with-capacity
@@ -473,7 +473,7 @@
          jump entry
        }")]
     (match func
-      [(Function _ _ _ vars blocks _)
+      [(Function _ _ _ vars blocks _ _)
         (let
           [seq : ir.CompilerIrBlockSeq (ir.compiler-ir-block-list-seq blocks)]
           (set!
@@ -736,7 +736,7 @@
             (and (array-ref paths block) (array-ref paths (* block 3)))
             (set! expected (+ expected 1)))))
       (match (irt.func (text_buf.render text))
-        [(Function name _ _ vars blocks _)
+        [(Function name _ _ vars blocks _ _)
           (let
             [function : ir.CompilerIrSymbolId
               (ir.compiler-ir-symbol-typed-id name)]

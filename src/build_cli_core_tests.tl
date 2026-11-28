@@ -261,6 +261,7 @@
           cbi.compiler-builtin-id-fix-empty)]
       [spmd-decl : ast.AstDecl
         (ast.ast-decl-def-fn-metadata-id
+          (ast.ast-decl-meta-runtime-with-aggregate-markers 0)
           (ci.intern "direct-object-spmd")
           (ast.ast-param-list-new)
           (I64)
@@ -327,6 +328,7 @@
           (ast.ast-decl-path-list-new))]
       [spmd-decl : ast.AstDecl
         (ast.ast-decl-def-fn-metadata-id
+          (ast.ast-decl-meta-runtime-with-aggregate-markers 0)
           (ci.intern "typed-route-spmd")
           (ast.ast-param-list-new)
           (I64)
@@ -450,6 +452,7 @@
             (ast.ast-decl-cons
               (&
                 (ast.ast-decl-def-fn-metadata-id
+                  (ast.ast-decl-meta-runtime-with-aggregate-markers 0)
                   (ci.intern "typed-route-table-spmd")
                   (ast.ast-param-list-new)
                   (I64)

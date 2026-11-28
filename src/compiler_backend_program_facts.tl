@@ -173,7 +173,7 @@
         0
         (compiler_ir_types.compiler-ir-function-seq-count functions))]
       (match (compiler_ir_types.compiler-ir-function-seq-borrow functions slot)
-        [(Function name params _ _ _ _)
+        [(Function name params _ _ _ _ _)
           (when
             (be_operand.compiler-backend-index-c-export? index name)
             (let
@@ -619,7 +619,7 @@
     (compiler_ir_types.compiler-ir-function-seq-count functions))
     ids
     (match (owned_view.compiler-owned-element-view functions.slots seq-index)
-      [(Function name params ret-ty _ _ _)
+      [(Function name params ret-ty _ _ _ _)
         (set!
           (array-ref names out-index)
           (be_state.compiler-backend-symbol-text-state backend-state name))
@@ -734,6 +734,7 @@
           _
           _
           _
+          _
           _)
         (let
           [call-info : i64
@@ -815,7 +816,7 @@
   (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     link-references
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs seq-index)
-      [(Extern _ _ _ _ _ link-symbol _ provided _ _ _)
+      [(Extern _ _ _ _ _ link-symbol _ provided _ _ _ _)
         (let
           [next-link-references : backend_i64_i64_map.Map link-references]
           (set! (array-ref link-symbols out-index) link-symbol)
@@ -851,7 +852,7 @@
   (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     reference-ids
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs seq-index)
-      [(Extern extern-name-id source-name-id _ _ _ _ _ _ _ _ _)
+      [(Extern extern-name-id source-name-id _ _ _ _ _ _ _ _ _ _)
         (compiler-backend-program-index-extern-reference-name-seq-into
           externs
           (compiler-backend-program-index-bind-extern-ids
@@ -1008,7 +1009,7 @@
   [state : be_state.CompilerBackendCollectState]
   [func : compiler_ir_types.CompilerIrFunction]) : be_state.CompilerBackendCollectState
   (match func
-    [(Function _ _ _ _ blocks _)
+    [(Function _ _ _ _ blocks _ _)
       (compiler-backend-collect-blocks-shared state blocks)]))
 
 (define (compiler-backend-collect-function-seq-shared
@@ -1065,7 +1066,7 @@
   (unless
     (>= index (compiler_ir_types.compiler-ir-function-seq-count functions))
     (match (owned_view.compiler-owned-element-view functions.slots index)
-      [(Function name params _ _ _ _)
+      [(Function name params _ _ _ _ _)
         (if (compiler-backend-param-seq-has-private-memory?
           type-segment-bases
           params)
@@ -1114,7 +1115,7 @@
       (set!
         (array-ref out k)
         (match (owned_view.compiler-owned-element-view functions.slots k)
-          [(Function _ _ _ _ _ (ReturnStorage storage))
+          [(Function _ _ _ _ _ (ReturnStorage storage) _)
             (compiler-backend-leading-sret-index (& (deref storage)))]
           [_ -1])))
     out))
@@ -1889,7 +1890,7 @@
     (compiler_ir_types.compiler-ir-function-seq-count functions))
     (Ok seen)
     (match (owned_view.compiler-owned-element-view functions.slots seq-index)
-      [(Function name _ _ _ _ _)
+      [(Function name _ _ _ _ _ _)
         (let
           [provided? : bool
             (be_operand.compiler-backend-index-extern-provided? index name)]
@@ -1992,7 +1993,7 @@
   (for [seq-index
     (iterator.range 0 (compiler_ir_types.compiler-ir-extern-seq-count externs))]
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs seq-index)
-      [(Extern name-id _ _ ty abi link-symbol-id _ provided _ _ _)
+      [(Extern name-id _ _ ty abi link-symbol-id _ provided _ _ _ _)
         (if (compiler-backend-emits-extern-symbol?
           backend-state
           name-id
@@ -2167,7 +2168,7 @@
   [emit-entry : bool]) : be_state.ResultCompilerBackendSymbolValidation
   (for [position (iterator.range 0 externs.len)]
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs position)
-      [(Extern id source name ty abi link _ _ _ _ _)
+      [(Extern id source name ty abi link _ _ _ _ _ _)
         (match abi
           [(TypeLisp)
             (when
@@ -2837,7 +2838,7 @@
   (if (>= index (compiler_ir_types.compiler-ir-function-seq-count functions))
     buf
     (match (owned_view.compiler-owned-element-view functions.slots index)
-      [(Function name _ _ _ blocks _)
+      [(Function name _ _ _ blocks _ _)
         (let
           [_phi-targets : unit
             (compiler-backend-function-state-install-phi-targets!
@@ -3003,7 +3004,7 @@
       0
       (compiler_ir_types.compiler-ir-function-seq-count functions))]
     (match (owned_view.compiler-owned-element-view functions.slots index)
-      [(Function _ _ _ _ blocks _)
+      [(Function _ _ _ _ blocks _ _)
         (let
           [targets : be_state.BackendSymbolSeq
             (compiler-backend-phi-target-labels-for-blocks
@@ -3476,7 +3477,7 @@
       0
       (compiler_ir_types.compiler-ir-function-seq-count functions))]
     (match (owned_view.compiler-owned-element-view functions.slots index)
-      [(Function func-name _ _ _ _ _)
+      [(Function func-name _ _ _ _ _ _)
         (when
           (compiler_ir_types.compiler-ir-symbol-eq? func-name name)
           (return true))]))

@@ -4054,7 +4054,7 @@
     [index : i64 0]
     (while (and (not found) (< index functions.len))
       (match (compiler-ir-array-shared-view functions.slots index)
-        [(Function function-name _ _ _ _ _)
+        [(Function function-name _ _ _ _ _ _)
           (set! found (compiler-ir-symbol-eq? function-name name))])
       (+= index 1))
     found))
@@ -4094,7 +4094,7 @@
                     ": no same-program private helper has that name"))]
               [else
                 (match (compiler-ir-array-shared-view functions.slots slot)
-                  [(Function _ _ _ _ _ function-abi)
+                  [(Function _ _ _ _ _ function-abi _)
                     (match function-abi
                       [(SpmdPrivate helper-box)
                         (if (compiler-ir-spmd-private-abi-eq?
@@ -4173,7 +4173,7 @@
     [index : i64 0]
     (while (and (= (string.string-length problem) 0) (< index functions.len))
       (match (compiler-ir-array-shared-view functions.slots index)
-        [(Function name params ret _ _ function-abi)
+        [(Function name params ret _ _ function-abi _)
           (match function-abi
             [(Ordinary) unit]
             [(ReturnStorage _) unit]
@@ -4193,7 +4193,7 @@
     (set! index 0)
     (while (and (= (string.string-length problem) 0) (< index functions.len))
       (match (compiler-ir-array-shared-view functions.slots index)
-        [(Function name _ _ _ blocks _)
+        [(Function name _ _ _ blocks _ _)
           (set!
             problem
             (compiler-ir-spmd-private-block-list-error
@@ -4426,7 +4426,8 @@
     ast.AstType
     i64
     CompilerIrBlockList
-    CompilerIrFunctionAbi))
+    CompilerIrFunctionAbi
+    bool))
 
 (defstruct CompilerIrFunctionSeq
   (slots (__tl_dyn-array CompilerIrFunction))
@@ -4467,7 +4468,8 @@
     bool
     CompilerIrReturnStorage
     bool
-    CompilerIrGlobalStorage))
+    CompilerIrGlobalStorage
+    bool))
 
 (defstruct CompilerIrExternSeq
   (slots (__tl_dyn-array CompilerIrExtern))
@@ -5046,7 +5048,7 @@
     (while (< i functions.len)
       (begin
         (match (compiler-ir-function-seq-ref functions i)
-          [(CompilerIrFunction.Function name params result _ _ abi)
+          [(CompilerIrFunction.Function name params result _ _ abi _)
             (match abi
               [(CompilerIrFunctionAbi.ReturnStorage storage)
                 (let
@@ -5095,6 +5097,7 @@
               provided
               storage
               body-available
+              _
               _)
             ;; A provided export or available-externally body also has a
             ;; definition with this identity; the definition is authoritative
@@ -6853,7 +6856,8 @@
     false
     (CompilerIrReturnStorage.None)
     false
-    (CompilerIrGlobalStorage.Word)))
+    (CompilerIrGlobalStorage.Word)
+    false))
 
 (define (compiler-ir-clone-value [value : (& CompilerIrValue)]) : CompilerIrValue
   (match value
@@ -7194,14 +7198,15 @@
   [pools : ast.AstNodePoolContext]
   [func : (& CompilerIrFunction)]) : CompilerIrFunction
   (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function name params ret vars blocks function-abi)
+    [(Function name params ret vars blocks function-abi cold?)
       (Function
         (compiler-ir-symbol-clone name)
         (compiler-ir-clone-param-seq pools (& params))
         (compiler-ir-clone-type pools ret)
         vars
         (compiler-ir-clone-block-list pools (& blocks))
-        (compiler-ir-clone-function-abi pools (& function-abi)))]))
+        (compiler-ir-clone-function-abi pools (& function-abi))
+        cold?)]))
 
 (define (compiler-ir-clone-function-seq
   [pools : ast.AstNodePoolContext]
@@ -7255,7 +7260,8 @@
         provided
         storage
         body-available
-        cell)
+        cell
+        cold?)
       (Extern
         name-id
         source-name-id
@@ -7267,7 +7273,8 @@
         provided
         (compiler-ir-clone-return-storage pools storage)
         body-available
-        (compiler-ir-global-storage-clone (& cell)))]))
+        (compiler-ir-global-storage-clone (& cell))
+        cold?)]))
 
 (define (compiler-ir-clone-extern-seq
   [pools : ast.AstNodePoolContext]
@@ -7845,14 +7852,15 @@
 
 (define (clone-compiler-ir-function [func : (& CompilerIrFunction)]) : CompilerIrFunction
   (match func
-    [(Function name params ret vars blocks function-abi)
+    [(Function name params ret vars blocks function-abi cold?)
       (Function
         name
         (clone-compiler-ir-param-seq params)
         (ast.clone-ast-type ret)
         vars
         (clone-compiler-ir-block-list blocks)
-        (clone-compiler-ir-function-abi function-abi))]))
+        (clone-compiler-ir-function-abi function-abi)
+        cold?)]))
 
 (define (clone-compiler-ir-function-seq [seq : (& CompilerIrFunctionSeq)]) : CompilerIrFunctionSeq
   (let
@@ -7896,7 +7904,8 @@
         provided
         storage
         body-available
-        cell)
+        cell
+        cold?)
       (Extern
         name-id
         source-name-id
@@ -7908,7 +7917,8 @@
         provided
         (clone-compiler-ir-return-storage storage)
         body-available
-        (compiler-ir-global-storage-clone cell))]))
+        (compiler-ir-global-storage-clone cell)
+        cold?)]))
 
 (define (clone-compiler-ir-extern-seq [seq : (& CompilerIrExternSeq)]) : CompilerIrExternSeq
   (let
@@ -9302,7 +9312,7 @@
   [type-segment-bases : i64]
   [func : (& CompilerIrFunction)]) : String
   (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function name params ret vars blocks function-abi)
+    [(Function name params ret vars blocks function-abi cold?)
       (str_cat.str-cat
         "function @"
         (compiler-ir-symbol-text name)
@@ -9331,6 +9341,9 @@
                 structural-session
                 type-segment-bases
                 (deref private-box)))])
+        (if cold?
+          " cold"
+          "")
         " {\n"
         (compiler-ir-block-list-render
           structural-session
@@ -9480,7 +9493,7 @@
   [type-segment-bases : i64]
   [extern : (& CompilerIrExtern)]) : String
   (match (owned_view.compiler-owned-reference-shared-view extern)
-    [(Extern name _ symbol ty abi _ _ weak storage _ _)
+    [(Extern name _ symbol ty abi _ _ weak storage _ _ cold?)
       (str_cat.str-cat
         "extern @"
         (compiler-ir-symbol-text name)
@@ -9505,6 +9518,9 @@
                 structural-session
                 type-segment-bases
                 (compiler-ir-box-shared-view boxed)))])
+        (if cold?
+          " cold"
+          "")
         "\n")]))
 
 (define (compiler-ir-extern-seq-render-into
@@ -11075,46 +11091,46 @@
 
 (define (compiler-ir-function-block-count [func : (& CompilerIrFunction)]) : i64
   (match func
-    [(Function _ _ _ _ blocks _) (compiler-ir-block-list-count blocks)]))
+    [(Function _ _ _ _ blocks _ _) (compiler-ir-block-list-count blocks)]))
 
 (define (compiler-ir-function-instruction-count [func : (& CompilerIrFunction)]) : i64
   (match func
-    [(Function _ _ _ _ blocks _)
+    [(Function _ _ _ _ blocks _ _)
       (compiler-ir-block-list-instruction-count (& blocks))]))
 
 (define (compiler-ir-function-empty-block-count [func : (& CompilerIrFunction)]) : i64
   (match func
-    [(Function _ _ _ _ blocks _)
+    [(Function _ _ _ _ blocks _ _)
       (compiler-ir-block-list-empty-count (compiler-ir-block-list-view blocks))]))
 
 (define (compiler-ir-function-max-instruction-count
   [func : (& CompilerIrFunction)]) : i64
   (match func
-    [(Function _ _ _ _ blocks _)
+    [(Function _ _ _ _ blocks _ _)
       (compiler-ir-block-list-instruction-count (& blocks))]))
 
 (define (compiler-ir-function-max-block-instruction-count
   [func : (& CompilerIrFunction)]) : i64
   (match func
-    [(Function _ _ _ _ blocks _)
+    [(Function _ _ _ _ blocks _ _)
       (compiler-ir-block-list-max-instruction-count
         (compiler-ir-block-list-view blocks))]))
 
 (define (compiler-ir-function-call-arg-count [func : (& CompilerIrFunction)]) : i64
   (match func
-    [(Function _ _ _ _ blocks _)
+    [(Function _ _ _ _ blocks _ _)
       (compiler-ir-block-list-call-arg-count
         (compiler-ir-block-list-view blocks))]))
 
 (define (compiler-ir-function-phi-input-count [func : (& CompilerIrFunction)]) : i64
   (match func
-    [(Function _ _ _ _ blocks _)
+    [(Function _ _ _ _ blocks _ _)
       (compiler-ir-block-list-phi-input-count
         (compiler-ir-block-list-view blocks))]))
 
 (define (compiler-ir-function-var-count [func : (& CompilerIrFunction)]) : i64
   (match func
-    [(Function _ _ _ vars _ _) vars]))
+    [(Function _ _ _ vars _ _ _) vars]))
 
 (define (compiler-ir-function-seq-block-count
   [functions : (& CompilerIrFunctionSeq)]) : i64
@@ -11636,7 +11652,7 @@
 (define (compiler-ir-representation-function-var-types
   [func : (& CompilerIrFunction)]) : CompilerIrRepresentationVarTypes
   (match func
-    [(Function _ params _ vars blocks _)
+    [(Function _ params _ vars blocks _ _)
       (let
         [types : CompilerIrRepresentationVarTypes
           (CompilerIrRepresentationVarTypes
@@ -11825,7 +11841,7 @@
   [index : (& CompilerIrRepresentationIndex)]
   [func : (& CompilerIrFunction)]) : CompilerIrRepresentationIndex
   (match func
-    [(Function _ params ret-ty _ blocks _)
+    [(Function _ params ret-ty _ blocks _ _)
       (let
         [types : CompilerIrRepresentationVarTypes
           (compiler-ir-representation-function-var-types func)]
@@ -12082,7 +12098,7 @@
   [index : (& CompilerIrRepresentationIndex)]
   [func : (& CompilerIrFunction)]) : CompilerIrRepresentationIndex
   (match func
-    [(Function _ params ret-ty _ blocks _)
+    [(Function _ params ret-ty _ blocks _ _)
       (compiler-ir-representation-collect-one-blocks
         type-segment-bases
         (&
@@ -12161,7 +12177,7 @@
   (if (>= position externs.len)
     index
     (match (compiler-ir-extern-seq-borrow externs position)
-      [(Extern _ _ _ ty abi _ _ _ _ _ _)
+      [(Extern _ _ _ ty abi _ _ _ _ _ _ _)
         (compiler-ir-representation-collect-one-externs-from
           type-segment-bases
           require-layout
@@ -12305,7 +12321,7 @@
     [out : String ""]
     (for [index (iterator.range 0 functions.len)]
       (match (compiler-ir-function-seq-borrow functions index)
-        [(Function _ _ _ _ _ function-abi)
+        [(Function _ _ _ _ _ function-abi _)
           (match function-abi
             [(Ordinary) unit]
             [(ReturnStorage _) unit]

@@ -210,7 +210,8 @@ ret
 .cv_func_id 0
 .cv_func_id 1
 .text
-f:
+nop
+.Lline_start:
 .cv_loc 0 1 100 2
 jmp 1f
 .space 128
@@ -222,7 +223,7 @@ g: ret
 h:
 .section .debug$S,\"dr\"
 .cv_filechecksums
-.cv_linetable 0, f, e
+.cv_linetable 0, .Lline_start, e
 .cv_linetable 1, g, h
 ")]
     [section (header (& obj) ".debug$S" false)]
@@ -241,6 +242,14 @@ h:
       (layout.compiler-object-layout-u32-at (& obj) lines)
       0xf2
       "lines")
+    (test.assert-i64-eq
+      (layout.compiler-object-layout-u32-at (& obj) (+ lines 8))
+      1
+      "SECREL addend for temporary label")
+    (test.assert-i64-eq
+      (layout.compiler-object-layout-u16-at (& obj) (+ lines 12))
+      0
+      "SECTION addend for temporary label")
     (test.assert-i64-eq
       (layout.compiler-object-layout-u32-at (& obj) (+ lines 16))
       134

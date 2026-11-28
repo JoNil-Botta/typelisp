@@ -149,7 +149,8 @@
                   (when
                     (< v.section 0)
                     (return (Err "undefined local COFF relocation target")))
-                  (+= addend v.offset)
+                  ;; IMAGE_REL_AMD64_SECTION names the containing section.
+                  (unless (= r.ty 10) (+= addend v.offset))
                   (array-ref index.sections v.section))))]
           [(SectionAddress id) (array-ref index.sections id)]
           [(AbsoluteZero) (return (Err "COFF relocation needs a symbol"))])]

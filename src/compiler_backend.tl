@@ -25949,6 +25949,11 @@
                                     symbol)
                                   c-entry
                                   "\n"
+                                  (be_scalar.compiler-backend-debug-cv-line-table
+                                    target
+                                    program-index
+                                    name
+                                    (& symbol))
                                   (be_scalar.compiler-backend-backtrace-function-entry
                                     target
                                     program-index
@@ -27074,7 +27079,11 @@ tl_shared_object_init:
                 program-index
                 (be_state.compiler-backend-global-shared-view span-index)))
             (str_cat.str-cat
-              (be_scalar.compiler-backend-backtrace-map-prefix target)
+              (be_scalar.compiler-backend-backtrace-map-prefix
+                target
+                (be_state.compiler-backend-state-library-object?
+                  program-index.backend-state)
+                target-policy.shared-object)
               (be_scalar.compiler-backend-abort-table-prefix
                 target
                 (be_state.compiler-backend-state-library-object?
@@ -27170,11 +27179,12 @@ tl_shared_object_init:
                         target-policy.shared-object
                         (be_state.compiler-backend-state-abort-site-counter
                           program-index.backend-state))
-                      (be_scalar.compiler-backend-backtrace-map-trailer target)
-                      (be_scalar.compiler-backend-debug-trailer
+                      (be_scalar.compiler-backend-backtrace-map-trailer
                         target
-                        functions
-                        program-index))))
+                        (be_state.compiler-backend-state-library-object?
+                          program-index.backend-state)
+                        target-policy.shared-object)
+                      (be_scalar.compiler-backend-debug-trailer target))))
                   [(Ok with-adapters)
                     (begin
                       (cfg

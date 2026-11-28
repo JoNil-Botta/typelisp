@@ -502,9 +502,7 @@
   [dry-run : bool]) : i64
   (let
     [resolved-manifest : load.CompilerLoadMaybePath
-      (if has-manifest
-        (CompilerLoadSomePath manifest-path)
-        (build_cli_core.build-discover-manifest-up "" 256))]
+      (load.compiler-load-select-manifest-path manifest-path has-manifest)]
     (match resolved-manifest
       [(CompilerLoadNoPath)
         (io.print-error
@@ -558,9 +556,7 @@
   [dry-run : bool]) : i64
   (let
     [resolved-manifest : load.CompilerLoadMaybePath
-      (if has-manifest
-        (CompilerLoadSomePath manifest-path)
-        (build_cli_core.build-discover-manifest-up "" 256))]
+      (load.compiler-load-select-manifest-path manifest-path has-manifest)]
     (match resolved-manifest
       [(CompilerLoadNoPath)
         (io.print-error

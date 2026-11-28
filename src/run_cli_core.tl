@@ -74,33 +74,7 @@
       [(Err message) (Err (run-cli-rewrite-build-error message))]
       [(Ok config)
         (match config
-          [(Package
-              manifest-path
-              has-manifest
-              target-text
-              has-target
-              mode
-              profile
-              release
-              opt-level
-              lock-policy
-              stdlib-roots
-              cfg-names)
-            (Ok
-              (Package
-                (build_cli_core.BuildConfig.Package
-                  manifest-path
-                  has-manifest
-                  target-text
-                  has-target
-                  mode
-                  profile
-                  release
-                  opt-level
-                  lock-policy
-                  stdlib-roots
-                  cfg-names)
-                runtime-args))]
+          [(Package _ _ _ _) (Ok (Package config runtime-args))]
           [(Source)
             (Err
               "run: source file arguments must appear before run options; use -- before package runtime args")])])))
@@ -246,7 +220,7 @@
 
 (define (run-cli-package-artifact-path
   [manifest-path : String]
-  [manifest : load.CompilerPkgManifest]
+  [manifest : (& load.CompilerPkgManifest)]
   [profile : pkg_profile.PackageProfile]
   [target : be_state.CompilerBackendTarget]) : String
   (let
@@ -256,105 +230,70 @@
     [artifacts : build_cli_core.BuildPackageArtifactPaths
       (build_cli_core.build-package-artifact-paths
         manifest-dir
-        manifest.name
-        manifest.kind
+        (string.copy (& manifest.name))
+        (load.clone-compiler-pkg-kind (& manifest.kind))
         profile
         target)]
     (build_cli_core.build-package-runtime-artifact-path artifacts)))
 
 (define (run-cli-run-package-from-path
   [manifest-path : String]
-  [target-text : String]
-  [has-target : bool]
-  [mode : String]
-  [profile : pkg_profile.PackageProfile]
-  [opt-level : i64]
+  [options : cli_option.CliCompileOptions]
   [lock-policy : build_cli_core.BuildPackageLockPolicy]
-  [stdlib-roots : cli_svec.Vec]
-  [cfg-names : (& cfg-names cli_svec.Vec)]
   [producer-identity : String]
   [runtime-args : process.ProcessStringList]) : i64
-  (match (build_run_core.source-tool-parse-target (string.copy (& target-text)))
+  (match (build_cli_core.build-load-manifest (string.copy (& manifest-path)))
     [(Err message)
-      (io.print-error (run-cli-rewrite-build-error message))
+      (io.print-error (str_cat.str-cat "Error: " message))
       1]
-    [(Ok target)
-      (match (build_cli_core.build-load-manifest
-        (string.copy (& manifest-path)))
-        [(Err message)
-          (io.print-error (str_cat.str-cat "Error: " message))
-          1]
-        [(Ok manifest)
-          (if (not (build_cli_core.build-package-kind-entry? manifest.kind))
-            (begin
-              (io.print-error
-                "run: package manifest kind must be bin to execute")
-              1)
-            (let
-              [build-status : i64
-                (build_cli_core.build-package-from-path-announce
-                  (string.copy (& manifest-path))
-                  (string.copy (& target-text))
-                  has-target
-                  mode
-                  opt-level
-                  profile
-                  lock-policy
-                  stdlib-roots
-                  (& cfg-names)
-                  (string.copy (& producer-identity))
-                  false)]
-              (if (= build-status 0)
-                (run-cli-run-package-artifact
-                  (run-cli-package-artifact-path
-                    manifest-path
-                    manifest
-                    profile
-                    target)
-                  target
-                  runtime-args)
-                build-status)))])]))
+    [(Ok manifest)
+      (unless
+        (build_cli_core.build-package-kind-entry? manifest.kind)
+        (io.print-error "run: package manifest kind must be bin to execute")
+        (return 1))
+      (let
+        [graph-options : cli_option.CliCompileOptions
+          (build_cli_core.build-package-graph-options (& manifest) options)]
+        [target : be_state.CompilerBackendTarget
+          (build_run_core.source-tool-backend-target graph-options.target)]
+        [artifact-path : String
+          (run-cli-package-artifact-path
+            (string.copy (& manifest-path))
+            (& manifest)
+            graph-options.profile
+            target)]
+        [build-status : i64
+          (build_cli_core.build-package-emit
+            (string.copy (& manifest-path))
+            manifest
+            (& graph-options)
+            lock-policy
+            producer-identity
+            false)]
+        (if (= build-status 0)
+          (run-cli-run-package-artifact artifact-path target runtime-args)
+          build-status))]))
 
 (define (run-cli-run-package
   [config : build_cli_core.BuildConfig]
   [producer-identity : String]
   [runtime-args : process.ProcessStringList]) : i64
   (match config
-    [(Package
+    [(Package manifest-path has-manifest options lock-policy)
+      (match (load.compiler-load-select-manifest-path
         manifest-path
-        has-manifest
-        target-text
-        has-target
-        mode
-        profile
-        _
-        opt-level
-        lock-policy
-        stdlib-roots
-        cfg-names)
-      (let
-        [resolved-manifest : load.CompilerLoadMaybePath
-          (if has-manifest
-            (CompilerLoadSomePath manifest-path)
-            (build_cli_core.build-discover-manifest-up "" 256))]
-        (match resolved-manifest
-          [(CompilerLoadNoPath)
-            (io.print-error
-              "could not find typelisp.pkg from '.' or any parent directory")
-            1]
-          [(CompilerLoadSomePath path)
-            (run-cli-run-package-from-path
-              path
-              target-text
-              has-target
-              mode
-              profile
-              opt-level
-              lock-policy
-              stdlib-roots
-              (& cfg-names)
-              producer-identity
-              runtime-args)]))]
+        has-manifest)
+        [(CompilerLoadNoPath)
+          (io.print-error
+            "could not find typelisp.pkg from '.' or any parent directory")
+          1]
+        [(CompilerLoadSomePath path)
+          (run-cli-run-package-from-path
+            path
+            options
+            lock-policy
+            producer-identity
+            runtime-args)])]
     [_ 1]))
 
 (define (run-direct-from [idx : i64] [count : i64] [producer-identity : String]) : i64

@@ -1286,7 +1286,10 @@
 
 (defenum SelfhostLintCheckContext
   (FileContext)
-  (PackageContext String compiler_load.CompilerPkgDeps))
+  (PackageContext
+    String
+    compiler_load.CompilerPkgDeps
+    cli_option.CliCompileOptions))
 
 (defstruct SelfhostLintMustUseFinding
   (rule-id String)
@@ -1382,6 +1385,16 @@
     (unsafe
       (set! (deref batch).findings findings))))
 
+(define (selfhost-lint-package-check-graph
+  [cfgs : sym_i64_env.SymI64Env]
+  [options : (& cli_option.CliCompileOptions)]) : compiler_check_core.CompilerCheckPackageGraph
+  (compiler_check_core.compiler-check-package-graph
+    (compiler_load.compiler-pkg-graph-cfgs
+      (compiler_check_core.compiler-check-target-from-cfgs cfgs)
+      (& options.cfgs)
+      options.debug)
+    (lint_svec.clone-vec (& options.stdlib-roots))))
+
 (define (selfhost-lint-check-source
   [path : String]
   [source : String]
@@ -1397,7 +1410,7 @@
         stdlib-roots
         cfgs
         job-state)]
-    [(PackageContext manifest-dir deps)
+    [(PackageContext manifest-dir deps graph-options)
       (compiler_check_core.compiler-check-package-source-prepared
         path
         source
@@ -1405,6 +1418,7 @@
         (string.copy manifest-dir)
         (compiler_load.clone-compiler-pkg-deps deps)
         cfgs
+        (& (selfhost-lint-package-check-graph cfgs graph-options))
         job-state
         compiler_check_core.CompilerCheckPreparation.Unchanged)]))
 
@@ -1454,12 +1468,13 @@
                           (string.copy (& path))
                           (string.copy (& source))
                           preparation)]
-                      [(PackageContext manifest-dir deps)
+                      [(PackageContext manifest-dir deps graph-options)
                         (compiler_check_core.CompilerSemanticCheckInput.PreparedPackageSource
                           (string.copy (& path))
                           (string.copy (& source))
                           (string.copy manifest-dir)
                           (compiler_load.clone-compiler-pkg-deps deps)
+                          (selfhost-lint-package-check-graph cfgs graph-options)
                           preparation)])
                     stdlib-roots
                     cfgs
@@ -4062,7 +4077,7 @@
 (define (selfhost-lint-package
   [manifest-path : String]
   [has-manifest : bool]
-  [options : cli_option.CliCompileOptions]
+  [cli-options : cli_option.CliCompileOptions]
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
@@ -4077,66 +4092,82 @@
       (io.print-error (str_cat.str-cat message "\n"))
       1]
     [(Ok source-set)
-      (match (build_run_core.source-tool-build-package-deps-only!
-        (& source-set.manifest-path)
-        options.profile
-        (build_run_core.source-tool-backend-target options.target)
-        (& options.stdlib-roots)
-        (& options.cfgs)
-        (& source-set.manifest.deps))
-        [(Ok) unit]
-        [(Err message)
-          (io.print-error message)
-          (return 1)])
-      (compiler_load.compiler-load-session-set-package-profile!
-        (compiler_load.compiler-load-serial-test-session-state)
-        options.profile)
       (let
-        [stdlib-roots : lint_svec.Vec options.stdlib-roots]
-        [context : SelfhostLintCheckContext
-          (if (>
-            (compiler_load.compiler-pkg-dep-list-count
-              (& source-set.manifest.deps.ordered))
-            0)
-            (PackageContext
-              (string.copy (& source-set.manifest-dir))
-              (compiler_load.clone-compiler-pkg-deps
-                (& source-set.manifest.deps)))
-            (FileContext))]
-        [sources : lint_svec.Vec
-          (owned_view.compiler-owned-shared-view source-set.sources)]
-        [manifest : compiler_load.CompilerPkgManifest
-          (owned_view.compiler-owned-shared-view source-set.manifest)]
-        [dead-sources-result : ResultSelfhostLintDeadSources
-          (selfhost-lint-package-dead-sources
-            (owned_view.compiler-owned-shared-view source-set)
-            (owned_view.compiler-owned-shared-view stdlib-roots))]
-        [package-roots : lint_svec.Vec
-          (selfhost-lint-package-import-roots source-set stdlib-roots)]
-        (match dead-sources-result
-          [(Ok dead-sources)
-            (let
-              [dead-decls : SelfhostLintDeadDecls
-                (selfhost-lint-package-dead-code
-                  dead-sources
-                  (owned_view.compiler-owned-shared-view package-roots)
-                  manifest.kind)]
-              (selfhost-lint-package-files
-                sources
-                package-roots
-                (& context)
-                enforcing
-                deprecated-string-concat
-                redundant-function-name
-                redundant-begin
-                prefer-dotted-field
-                name-case
-                dead-decls
-                (> (lint_svec.len (& sources)) 1)
-                0))]
-          [(Err diag)
-            (io.print-error (cdiag.compiler-diagnostic-render (deref diag)))
-            1]))]))
+        [target : target_cfg.CompilerTargetCfg
+          (compiler_load.compiler-pkg-graph-target
+            (& source-set.manifest.settings)
+            (& cli-options))]
+        [options : cli_option.CliCompileOptions
+          (compiler_load.compiler-pkg-resolve-compile-options
+            (& source-set.manifest.settings)
+            (& source-set.manifest-dir)
+            target
+            (& cli-options))]
+        (match (build_run_core.source-tool-build-package-deps-only!
+          (& source-set.manifest-path)
+          (target_cfg.clone-compiler-target-cfg (& options.target))
+          (& cli-options)
+          (& source-set.manifest.deps))
+          [(Ok) unit]
+          [(Err message)
+            (io.print-error message)
+            (return 1)])
+        (set!
+          selfhost-lint-language-target
+          (target_cfg.clone-compiler-target-cfg (& options.target)))
+        (set!
+          selfhost-lint-language-cfg-names
+          (lint_svec.clone-vec (& options.cfgs)))
+        (compiler_load.compiler-load-session-set-package-profile!
+          (compiler_load.compiler-load-serial-test-session-state)
+          options.profile)
+        (let
+          [stdlib-roots : lint_svec.Vec options.stdlib-roots]
+          [context : SelfhostLintCheckContext
+            (if (>
+              (compiler_load.compiler-pkg-dep-list-count
+                (& source-set.manifest.deps.ordered))
+              0)
+              (PackageContext
+                (string.copy (& source-set.manifest-dir))
+                (compiler_load.clone-compiler-pkg-deps
+                  (& source-set.manifest.deps))
+                cli-options)
+              (FileContext))]
+          [sources : lint_svec.Vec
+            (owned_view.compiler-owned-shared-view source-set.sources)]
+          [manifest : compiler_load.CompilerPkgManifest
+            (owned_view.compiler-owned-shared-view source-set.manifest)]
+          [dead-sources-result : ResultSelfhostLintDeadSources
+            (selfhost-lint-package-dead-sources
+              (owned_view.compiler-owned-shared-view source-set)
+              (owned_view.compiler-owned-shared-view stdlib-roots))]
+          [package-roots : lint_svec.Vec
+            (selfhost-lint-package-import-roots source-set stdlib-roots)]
+          (match dead-sources-result
+            [(Ok dead-sources)
+              (let
+                [dead-decls : SelfhostLintDeadDecls
+                  (selfhost-lint-package-dead-code
+                    dead-sources
+                    (owned_view.compiler-owned-shared-view package-roots)
+                    manifest.kind)]
+                (selfhost-lint-package-files
+                  sources
+                  package-roots
+                  (& context)
+                  enforcing
+                  deprecated-string-concat
+                  redundant-function-name
+                  redundant-begin
+                  prefer-dotted-field
+                  name-case
+                  dead-decls
+                  (> (lint_svec.len (& sources)) 1)
+                  0))]
+            [(Err diag)
+              (io.print-error (cdiag.compiler-diagnostic-render (deref diag)))
+              1])))]))
 
 ;; Run the `lint` command over arguments starting at `start`.
 (define (selfhost-lint-run-from [start : i64] [count : i64]) : i64

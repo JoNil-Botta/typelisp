@@ -1438,6 +1438,8 @@
   [target : target_cfg.CompilerTargetCfg]
   [stdlib-roots : (& svec.Vec)]
   [cfgs : sym_i64_env.SymI64Env]
+  [graph-cfgs : sym_i64_env.SymI64Env]
+  [graph-roots : (& svec.Vec)]
   [opt-level : i64]
   [require-archive : bool]) : tli_cli.ResultTliCatalogOpen
   (match (compiler-driver-open-tli-catalog-for-session!
@@ -1455,7 +1457,8 @@
         manifest-dir
         deps
         target
-        cfgs
+        graph-cfgs
+        graph-roots
         require-archive)]))
 
 (define (compiler-driver-copy-string-array [src : (& (__tl_dyn-array String))]) : (__tl_dyn-array
@@ -5683,6 +5686,8 @@
   [target : be_state.CompilerBackendTarget]
   [stdlib-roots : (& svec.Vec)]
   [cfgs : sym_i64_env.SymI64Env]
+  [graph-cfgs : sym_i64_env.SymI64Env]
+  [graph-roots : (& svec.Vec)]
   [opt-level : i64]
   [require-archive : bool]) : tli_cli.ResultTliCatalogOpen
   (compiler-driver-open-package-tli-catalogs-for-session!
@@ -5693,6 +5698,8 @@
     (compiler-driver-target-cfg-from-backend target)
     stdlib-roots
     cfgs
+    graph-cfgs
+    graph-roots
     opt-level
     require-archive))
 
@@ -5899,6 +5906,8 @@
   [input-path : String]
   [target : be_state.CompilerBackendTarget]
   [cfg-names : (& cfg-names svec.Vec)]
+  [graph-cfgs : (& cfg_core.CompilerCfgSnapshot)]
+  [graph-roots : (& svec.Vec)]
   [stdlib-roots : svec.Vec]
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
@@ -5960,7 +5969,8 @@
               (& manifest-dir)
               (& deps)
               (compiler-driver-target-cfg-from-backend target)
-              discovery-cfgs
+              (cfg_core.compiler-cfg-snapshot-to-env graph-cfgs)
+              graph-roots
               false)
               [(Ok) unit]
               [(Err _)
@@ -6037,7 +6047,13 @@
     input-path
     target
     cfg-names
-    stdlib-roots
+    (&
+      (cfg_core.compiler-cfg-snapshot-from-env
+        (compiler-driver-target-cfgs
+          target
+          (target_cfg.compiler-target-user-cfgs cfg-names))))
+    (& stdlib-roots)
+    (svec.clone-vec (& stdlib-roots))
     manifest-dir
     deps
     emit-entry
@@ -6047,6 +6063,8 @@
   [input-path : String]
   [target : be_state.CompilerBackendTarget]
   [cfg-names : (& cfg-names svec.Vec)]
+  [graph-cfgs : (& cfg_core.CompilerCfgSnapshot)]
+  [graph-roots : (& svec.Vec)]
   [stdlib-roots : svec.Vec]
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
@@ -6055,6 +6073,8 @@
     input-path
     target
     cfg-names
+    graph-cfgs
+    graph-roots
     stdlib-roots
     manifest-dir
     deps

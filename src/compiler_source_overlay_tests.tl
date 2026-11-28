@@ -755,10 +755,10 @@
           (overlay-test-names-1 (string.copy (& other))))
           [(Ok second-overlay)
             (compiler_load.compiler-load-session-state-source-provider-install!
-              (owned_view.compiler-owned-shared-view first)
+              (&mut first)
               first-overlay)
             (compiler_load.compiler-load-session-state-source-provider-install!
-              (owned_view.compiler-owned-shared-view second)
+              (&mut second)
               second-overlay)
             (let
               [first-read : String
@@ -777,10 +777,10 @@
                   (& b))]
               [first-ledger : source_overlay.CompilerSourceLedger
                 (compiler_load.compiler-load-session-state-source-provider-finish!
-                  (owned_view.compiler-owned-shared-view first))]
+                  (&mut first))]
               [second-ledger : source_overlay.CompilerSourceLedger
                 (compiler_load.compiler-load-session-state-source-provider-finish!
-                  (owned_view.compiler-owned-shared-view second))]
+                  (&mut second))]
               [first-content : source_overlay.CompilerSourceContent
                 (overlay-test-ledger-content (& first-ledger) 0)]
               [second-content : source_overlay.CompilerSourceContent

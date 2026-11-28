@@ -823,7 +823,11 @@
           (svec.new)
           "."
           (compiler_load.compiler-pkg-deps-empty)
-          (compiler_check_core.compiler-check-language-cfgs))))))
+          (&
+            (compiler_check_core.compiler-check-package-config
+              (compiler_check_core.compiler-check-language-cfgs)
+              (compiler_check_core.compiler-check-language-cfgs)
+              (svec.new))))))))
 
 (define (compiler-check-poison-suppresses-derived-diagnostics-ok?) : bool
   (match (check_core.compiler-check-source

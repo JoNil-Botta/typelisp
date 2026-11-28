@@ -1,3 +1,5 @@
+(import cli_option_core as cli_option)
+(import compiler_target_cfg_core as target_cfg)
 (import package_profile_core as pkg_profile)
 
 ;; build_cli_core_tests.tl - White-box tests for package builds: paths and
@@ -534,7 +536,8 @@
     (CompilerPkgKindLib)
     "src/lib.tl"
     (load.compiler-pkg-deps-empty)
-    (load.compiler-pkg-link-empty)))
+    (load.compiler-pkg-link-empty)
+    (load.compiler-pkg-settings-empty)))
 
 (define (build-package-graph-test-manifest-with-deps
   [name : String]
@@ -545,7 +548,8 @@
     (CompilerPkgKindLib)
     "src/lib.tl"
     (load.compiler-pkg-deps-from-list deps)
-    (load.compiler-pkg-link-empty)))
+    (load.compiler-pkg-link-empty)
+    (load.compiler-pkg-settings-empty)))
 
 (define (build-package-graph-test-node [manifest-path : String] [name : String]) : build.BuildPackageGraphNode
   (build.BuildPackageGraphNode
@@ -592,7 +596,8 @@
           (CompilerPkgKindBin)
           "src/main.tl"
           (load.compiler-pkg-deps-empty)
-          (load.compiler-pkg-link-empty))]
+          (load.compiler-pkg-link-empty)
+          (load.compiler-pkg-settings-empty))]
       [bin-node : build.BuildPackageGraphNode
         (build.BuildPackageGraphNode
           "root/app/typelisp.pkg"
@@ -732,17 +737,16 @@
           (build.build-package-graph-node-vec-push
             (build.build-package-graph-node-vec-new)
             node)]
+        [options : cli_option.CliCompileOptions
+          (cli_option.cli-compile-options)]
+        (set! options.target (target_cfg.CompilerTargetCfg.Linux))
+        (set! options.opt-level 0)
         (match (build.build-package-schedule-pass
           nodes
           (build_string_i64_map.with-capacity 4)
           (build_string_i64_map.with-capacity 4)
-          (Linux)
-          0
-          (Release)
-          (Scalar)
-          (Default)
-          (cli_svec.new)
-          (& (cli_svec.new)))
+          (& options)
+          (Default))
           [(Err _) false]
           [(Ok pass)
             (and
@@ -943,15 +947,14 @@
               (let
                 [decls : ast.AstDeclList (deref decls-box)]
                 [paths : ast.AstDeclPathList (ast.ast-decl-path-list-new)]
+                [sources : cli_svec.Vec (cli_svec.new)]
+                [_add-source : unit
+                  (cli_svec.push-ref! (&mut sources) "pkg/src/macros.tl")]
                 [owned-sources : build_string_i64_map.Map
-                  (build_string_i64_map.with-capacity 4)]
+                  (build.build-package-tlci-source-map (& sources))]
                 [names : cli_svec.Vec (cli_svec.new)]
                 [captures : compiler_tlci_native_producer.TlciNativeMacroCaptures
                   (compiler_tlci_native_producer.tlci-native-macro-captures-new)]
-                (build_string_i64_map.insert-ref!
-                  (&mut owned-sources)
-                  (load.compiler-load-normalize-path "pkg/src/macros.tl")
-                  1)
                 (ast.ast-decl-path-list-push-with-owner-id
                   (&mut paths)
                   "pkg/src/macros.tl"
@@ -1518,7 +1521,8 @@
         (CompilerPkgKindLib)
         "src/lib.tl"
         (load.compiler-pkg-deps-empty)
-        link)
+        link
+        (load.compiler-pkg-settings-empty))
       provenance)))
 
 ;; wa and wb each export `m` for every target, their own vendored library and

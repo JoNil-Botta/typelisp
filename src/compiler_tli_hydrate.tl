@@ -3338,8 +3338,10 @@
               (if (< dep-gid 0)
                 (if (and
                   (not src-is-stdlib)
-                  (not multi.has-stdlib-bundle)
-                  (tli-hydrate-string-starts-with? (& imp-name) "stdlib."))
+                  (tli-hydrate-string-starts-with? (& imp-name) "stdlib.")
+                  (or
+                    (not multi.has-stdlib-bundle)
+                    (tli-hydrate-digest-zero? (& imp-sha))))
                   (begin
                     (tli-multi-push-pending-source-stdlib! multi (& imp-name))
                     (+= (array-ref next-edge.slots top) 1))

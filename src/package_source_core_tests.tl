@@ -190,7 +190,8 @@
       CompilerPkgKindBin
       "a.tl"
       (compiler_load.compiler-pkg-deps-empty)
-      (compiler_load.compiler-pkg-link-empty))))
+      (compiler_load.compiler-pkg-link-empty)
+      (compiler_load.compiler-pkg-settings-empty))))
 
 (cfg
   test

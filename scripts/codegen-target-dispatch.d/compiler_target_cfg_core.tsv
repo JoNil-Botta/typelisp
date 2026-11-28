@@ -1,6 +1,10 @@
 # Codegen target-dispatch boundary inventory (#5347); see scripts/check-codegen-target-dispatch.sh.
 # file	scope	boundary	category	token-regex	count	rationale
-src/compiler_target_cfg_core.tl	compiler-target-enable-linux-cfgs	policy	target-cfg	target-linux	1	Shared target cfg preset used by CLI and backend source requests.
-src/compiler_target_cfg_core.tl	compiler-target-enable-windows-cfgs	policy	target-cfg	target-windows	1	Shared target cfg preset used by CLI and backend source requests.
-src/compiler_target_cfg_core.tl	compiler-target-enable-linux-cfgs-with-intern-state	policy	target-cfg	target-linux	1	Shared target cfg preset used by CLI and backend source requests.
-src/compiler_target_cfg_core.tl	compiler-target-enable-windows-cfgs-with-intern-state	policy	target-cfg	target-windows	1	Shared target cfg preset used by CLI and backend source requests.
+src/compiler_target_cfg_core.tl	compiler-target-enable-linux-cfgs	policy	target-cfg	target-linux	1	Enables the target preset through its shared cfg names.
+src/compiler_target_cfg_core.tl	compiler-target-enable-windows-cfgs	policy	target-cfg	target-windows	1	Enables the target preset through its shared cfg names.
+src/compiler_target_cfg_core.tl	compiler-target-enable-linux-cfgs-with-intern-state	policy	target-cfg	target-linux	1	Enables the target preset through its shared cfg names.
+src/compiler_target_cfg_core.tl	compiler-target-enable-windows-cfgs-with-intern-state	policy	target-cfg	target-windows	1	Enables the target preset through its shared cfg names.
+src/compiler_target_cfg_core.tl	compiler-target-linux-cfg-names	policy	target-cfg	target-linux	2	Defines the Linux cfg names used by activation and manifest validation.
+src/compiler_target_cfg_core.tl	compiler-target-windows-cfg-names	policy	target-cfg	target-windows	2	Defines the Windows cfg names used by activation and manifest validation.
+src/compiler_target_cfg_core.tl	compiler-target-derived-cfg?	policy	target-cfg	target-linux	1	Checks manifest values against the Linux cfg names.
+src/compiler_target_cfg_core.tl	compiler-target-derived-cfg?	policy	target-cfg	target-windows	1	Checks manifest values against the Windows cfg names.

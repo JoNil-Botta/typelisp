@@ -47,6 +47,7 @@
     String
     String
     compiler_load.CompilerPkgDeps
+    CompilerCheckPackageGraph
     CompilerCheckPreparation)
   (File String)
   (PackageEntry String String compiler_load.CompilerPkgDeps bool))
@@ -473,7 +474,9 @@
   [stdlib-roots : (& svec.Vec)]
   [manifest-dir : (& str)]
   [deps : (& compiler_load.CompilerPkgDeps)]
-  [cfgs : sym_i64_env.SymI64Env]) : tli_cli.ResultTliCatalogOpen
+  [cfgs : sym_i64_env.SymI64Env]
+  [graph-cfgs : sym_i64_env.SymI64Env]
+  [graph-roots : (& svec.Vec)]) : tli_cli.ResultTliCatalogOpen
   (let
     [load-state : compiler_load.CompilerLoadSessionState
       (compiler_load.compiler-load-serial-test-session-state)]
@@ -508,15 +511,14 @@
               profile
               manifest-dir
               deps))
-          (if (compiler_dependency_tlci.compiler-dependency-tlci-force-source?)
-            (tli_cli.ResultTliCatalogOpen.Ok)
-            (tli_cli.tli-open-transitive-package-deps-for-session!
-              (& load-state)
-              manifest-dir
-              deps
-              target
-              cfgs
-              false)))])))
+          (tli_cli.tli-open-transitive-package-deps-for-session!
+            (& load-state)
+            manifest-dir
+            deps
+            target
+            graph-cfgs
+            graph-roots
+            false))])))
 
 (define (compiler-check-package-finish-tli-and-deps!) : unit
   (let
@@ -542,6 +544,29 @@
       [(Ok) unit]
       [(Err _) unit])))
 
+(defstruct CompilerCheckPackageGraph
+  (cfgs cfg_core.CompilerCfgSnapshot)
+  (roots svec.Vec))
+
+(define (compiler-check-package-graph
+  [cfgs : sym_i64_env.SymI64Env]
+  [roots : svec.Vec]) : CompilerCheckPackageGraph
+  (CompilerCheckPackageGraph
+    (cfg_core.compiler-cfg-snapshot-from-env cfgs)
+    roots))
+
+(defstruct CompilerCheckPackageConfig
+  (cfgs cfg_core.CompilerCfgSnapshot)
+  (graph CompilerCheckPackageGraph))
+
+(define (compiler-check-package-config
+  [cfgs : sym_i64_env.SymI64Env]
+  [graph-cfgs : sym_i64_env.SymI64Env]
+  [graph-roots : svec.Vec]) : CompilerCheckPackageConfig
+  (CompilerCheckPackageConfig
+    (cfg_core.compiler-cfg-snapshot-from-env cfgs)
+    (compiler-check-package-graph graph-cfgs graph-roots)))
+
 (define (compiler-check-package-source-prepared
   [path : String]
   [source : String]
@@ -549,6 +574,7 @@
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]
+  [graph : (& CompilerCheckPackageGraph)]
   [job-state : tc.TcJobState]
   [preparation : CompilerCheckPreparation]) : ResultCompilerCheck
   (begin
@@ -561,7 +587,9 @@
       (& stdlib-roots)
       (& manifest-dir)
       (& deps)
-      cfgs)
+      cfgs
+      (cfg_core.compiler-cfg-snapshot-to-env (& graph.cfgs))
+      (& graph.roots))
       [(Err tli-msg)
         (compiler-check-package-finish-tli-and-deps!)
         (Err
@@ -607,14 +635,15 @@
   [stdlib-roots : svec.Vec]
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheck
+  [config : (& CompilerCheckPackageConfig)]) : ResultCompilerCheck
   (compiler-check-package-source-prepared
     path
     source
     stdlib-roots
     manifest-dir
     deps
-    cfgs
+    (cfg_core.compiler-cfg-snapshot-to-env (& config.cfgs))
+    (& config.graph)
     (tc.tc-serial-job-state)
     CompilerCheckPreparation.Unchanged))
 
@@ -648,6 +677,8 @@
   [deps : compiler_load.CompilerPkgDeps]
   [emit-entry : bool]
   [cfgs : sym_i64_env.SymI64Env]
+  [graph-cfgs : sym_i64_env.SymI64Env]
+  [graph-roots : (& svec.Vec)]
   [job-state : tc.TcJobState]) : ResultCompilerCheckWithPaths
   (compiler-check-package-begin! job-state)
   (match (compiler-check-package-open-tli-and-deps!
@@ -656,7 +687,9 @@
     (& stdlib-roots)
     (& manifest-dir)
     (& deps)
-    cfgs)
+    cfgs
+    graph-cfgs
+    graph-roots)
     [(Err tli-msg)
       (compiler-check-package-finish-tli-and-deps!)
       (Err
@@ -720,7 +753,7 @@
             parse-cfgs
             job
             prepare)]
-        [(PreparedPackageSource path source manifest-dir deps prepare)
+        [(PreparedPackageSource path source manifest-dir deps graph prepare)
           (compiler-check-package-source-prepared
             path
             source
@@ -728,6 +761,7 @@
             manifest-dir
             deps
             parse-cfgs
+            (& graph)
             job
             prepare)]
         [(File path)
@@ -740,11 +774,13 @@
         [(PackageEntry path manifest-dir deps emit-entry)
           (match (compiler-check-package-entry-file-with-roots-and-cfg
             path
-            request.stdlib-roots
+            (svec.clone-vec (& request.stdlib-roots))
             manifest-dir
             deps
             emit-entry
             parse-cfgs
+            parse-cfgs
+            (& request.stdlib-roots)
             job)
             [(Ok summary _ advisories) (Ok summary advisories)]
             [(Err diagnostics advisories) (Err diagnostics advisories)])])]
@@ -899,7 +935,7 @@
           (compiler_load.compiler-load-serial-test-session-state)]
         [_install : unit
           (compiler_load.compiler-load-session-state-source-provider-install!
-            (owned_view.compiler-owned-shared-view state)
+            (&mut state)
             (owned_view.compiler-owned-shared-view overlay))]
         [source : String
           (compiler_load.compiler-load-session-read-source-text (& path))]
@@ -911,7 +947,7 @@
             cfgs)]
         [ledger : source_overlay.CompilerSourceLedger
           (compiler_load.compiler-load-session-state-source-provider-finish!
-            state)]
+            (&mut state))]
         (match (compiler-check-overlay-ledger-status
           (& overlay)
           (& ledger)
@@ -938,20 +974,22 @@
           (compiler_load.compiler-load-serial-test-session-state)]
         [_install : unit
           (compiler_load.compiler-load-session-state-source-provider-install!
-            (owned_view.compiler-owned-shared-view state)
+            (&mut state)
             (owned_view.compiler-owned-shared-view overlay))]
         [check : ResultCompilerCheckWithPaths
           (compiler-check-package-entry-file-with-roots-and-cfg
             path
-            stdlib-roots
+            (svec.clone-vec (& stdlib-roots))
             manifest-dir
             deps
             emit-entry
             cfgs
+            cfgs
+            (& stdlib-roots)
             (tc.tc-serial-job-state))]
         [ledger : source_overlay.CompilerSourceLedger
           (compiler_load.compiler-load-session-state-source-provider-finish!
-            state)]
+            (&mut state))]
         (match (compiler-check-overlay-ledger-status
           (& overlay)
           (& ledger)

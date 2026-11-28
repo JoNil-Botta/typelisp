@@ -1868,11 +1868,43 @@
               [Empty unit])
             unit)))]))
 
+;: Return the end of the server/share anchor, or zero for a non-UNC path.
+(define (path-unc-anchor-end [path : (& path str)]) : i64
+  (let
+    [n : i64 (string-length path)]
+    [i : i64 2]
+    [part : i64 0]
+    (unless
+      (and
+        (> n 4)
+        (stdlib.fs.path-separator? (string-ref path 0))
+        (stdlib.fs.path-separator? (string-ref path 1)))
+      (return 0))
+    (while (< part 2)
+      (let
+        [start : i64 i]
+        (while (and
+          (< i n)
+          (not (stdlib.fs.path-separator? (string-ref path i))))
+          (+= i 1))
+        (let
+          [segment : String (string.substring path start (- i start))]
+          (when
+            (or
+              (string.eq segment "")
+              (string.eq segment ".")
+              (string.eq segment ".."))
+            (return 0)))
+        (when (= part 0) (+= i 1)))
+      (+= part 1))
+    i))
+
 ;: Lexically normalize `path` without resolving symlinks or touching the host FS.
 ;:
 ;: Both `/` and `\` are accepted as separators. Repeated separators and `.`
 ;: segments are removed, `..` pops a normal segment, rooted paths stay rooted,
-;: and leading `..` segments are preserved for relative paths. Normalized output
+;: and leading `..` segments are preserved for relative paths. UNC paths keep
+;: their `//server/share` anchor. Normalized output
 ;: uses `/` as its stable separator on every host; empty relative paths normalize
 ;: to `"."`.
 (define (path-normalize [path : (& path str)]) : String
@@ -1884,18 +1916,14 @@
           (stdlib.fs.path-separator? (string-ref path 2))
           false)
         false)]
+    [unc-end : i64 (stdlib.fs.path-unc-anchor-end path)]
     [rooted : bool
       (if drive-root
         true
         (if (> n 0)
           (stdlib.fs.path-separator? (string-ref path 0))
           false))]
-    [i : i64
-      (if drive-root
-        3
-        (if rooted
-          1
-          0))]
+    [i : i64 (cond [(> unc-end 0) unc-end] [drive-root 3] [rooted 1] [else 0])]
     [segment-start : i64 i]
     [segments : svec.Vec (svec.new)]
     (while (< i n)
@@ -1915,6 +1943,21 @@
     (let
       [body : String (stdlib.fs.path-segment-vec-render segments)]
       (cond
+        [(> unc-end 0)
+          (let
+            [split : i64 2]
+            (while (not (stdlib.fs.path-separator? (string-ref path split)))
+              (+= split 1))
+            (let
+              [anchor : String
+                (str_cat.str-cat
+                  "//"
+                  (string.substring path 2 (- split 2))
+                  "/"
+                  (string.substring path (+ split 1) (- unc-end (+ split 1))))]
+              (if (string.eq body "")
+                anchor
+                (str_cat.str-cat anchor "/" body))))]
         [(if drive-root
             (= (string-length body) 0)
             false)

@@ -63,15 +63,7 @@
     cli_svec.Vec
     i64
     TestMode)
-  (Package
-    String
-    bool
-    String
-    be_state.CompilerBackendMode
-    cli_svec.Vec
-    i64
-    pkg_profile.PackageProfile
-    TestMode))
+  (Package String bool cli_option.CliCompileOptions TestMode))
 
 (defenum ResultTestConfig
   (Ok TestConfig)
@@ -149,8 +141,20 @@
 (define tltest-user-cfg-slots : cli_svec.Vec
   (cli_svec.new))
 
+;; Package harnesses enable the root's local cfgs. Their library catalogs
+;; start from the original CLI cfgs and add each library's own settings.
+(define tltest-graph-cfg-slots : cli_svec.Vec
+  (cli_svec.new))
+(define tltest-graph-root-slots : cli_svec.Vec
+  (cli_svec.new))
+(define tltest-graph-debug : bool
+  false)
+
 (define (tltest-user-cfg-reset!) : unit
-  (set! tltest-user-cfg-slots (cli_svec.new)))
+  (set! tltest-user-cfg-slots (cli_svec.new))
+  (set! tltest-graph-cfg-slots (cli_svec.new))
+  (set! tltest-graph-root-slots (cli_svec.new))
+  (set! tltest-graph-debug false))
 
 (define (tltest-selection-set?) : bool
   (or tltest-name-filter-set tltest-name-exact-set))
@@ -392,9 +396,8 @@
   [has-manifest : bool]
   [target : String]
   [mode : be_state.CompilerBackendMode]
-  [roots : cli_svec.Vec]
   [opt-level : i64]
-  [profile : pkg_profile.PackageProfile]
+  [options : cli_option.CliCompileOptions]
   [test-mode : TestMode]
   [batch-list : TestMaybeString]) : ResultTestConfig
   (if (and tltest-seed-set (not tltest-shuffle))
@@ -420,7 +423,14 @@
                   [paths (try (tltest-batch-paths list-path))]
                   (if (cli_svec.is-empty? (& paths))
                     (Err "test: --batch list is empty")
-                    (Ok (Batch paths target mode roots opt-level test-mode))))])])]
+                    (Ok
+                      (Batch
+                        paths
+                        target
+                        mode
+                        options.stdlib-roots
+                        opt-level
+                        test-mode))))])])]
       [(No)
         (if tltest-prefix-cache-stats
           (Err "test: --prefix-cache-stats requires --batch")
@@ -436,19 +446,10 @@
                   (Err "test: cannot combine source path with --manifest-path")
                   (let
                     [source-roots : cli_svec.Vec
-                      (tltest-source-roots (& source) roots)]
+                      (tltest-source-roots (& source) options.stdlib-roots)]
                     (Ok
                       (File source target mode source-roots opt-level test-mode))))
-                (Ok
-                  (Package
-                    manifest-path
-                    has-manifest
-                    target
-                    mode
-                    roots
-                    opt-level
-                    profile
-                    test-mode)))]))])))
+                (Ok (Package manifest-path has-manifest options test-mode)))]))])))
 
 ;; Testing a module of the implicit prelude reads the prelude from that file
 ;; rather than the test-blanked embedded copy (#8813).
@@ -627,9 +628,8 @@
                   options.backend-mode
                   options.has-backend-mode
                   opt-level))
-              options.stdlib-roots
               opt-level
-              options.profile
+              options
               test-mode
               batch-list))]))))
 
@@ -2473,6 +2473,8 @@
   [manifest-dir : (& str)]
   [deps : (& compiler_load.CompilerPkgDeps)]
   [cfgs : sym_i64_env.SymI64Env]
+  [graph-cfgs : sym_i64_env.SymI64Env]
+  [graph-roots : (& cli_svec.Vec)]
   [opt-level : i64]
   [require-archive : bool]) : tli_cli.ResultTliCatalogOpen
   (let
@@ -2492,15 +2494,14 @@
       require-archive)
       [(Err tli-msg) (Err tli-msg)]
       [(Ok)
-        (if (compiler_dependency_tlci.compiler-dependency-tlci-force-source?)
-          (tli_cli.ResultTliCatalogOpen.Ok)
-          (tli_cli.tli-open-transitive-package-deps-for-session!
-            (& load-state)
-            manifest-dir
-            deps
-            target
-            cfgs
-            require-archive))])))
+        (tli_cli.tli-open-transitive-package-deps-for-session!
+          (& load-state)
+          manifest-dir
+          deps
+          target
+          graph-cfgs
+          graph-roots
+          require-archive)])))
 
 (define (tltest-package-release-tli-and-deps!) : unit
   (let
@@ -2519,6 +2520,8 @@
   [package-owner : String]
   [deps : compiler_load.CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]
+  [graph-cfgs : sym_i64_env.SymI64Env]
+  [graph-roots : (& cli_svec.Vec)]
   [cache-scope-prefix : String]) : i64
   (if (tltest-source-has-inline-tests?
     (owned_view.compiler-owned-shared-view source))
@@ -2532,6 +2535,8 @@
         (& manifest-dir)
         (& deps)
         test-cfgs
+        graph-cfgs
+        graph-roots
         1
         false)
         [(Err tli-msg)
@@ -2580,6 +2585,8 @@
   [package-owner : String]
   [deps : compiler_load.CompilerPkgDeps]
   [cfg-names : cfg_core.CompilerCfgSnapshot]
+  [graph-cfg-names : (& cfg_core.CompilerCfgSnapshot)]
+  [graph-roots : (& cli_svec.Vec)]
   [cache-scope-prefix : String]) : i64
   (let
     [home : arena.Arena (arena.current)]
@@ -2611,6 +2618,8 @@
               package-owner
               deps
               (cfg_core.compiler-cfg-snapshot-to-env (& cfg-names))
+              (cfg_core.compiler-cfg-snapshot-to-env graph-cfg-names)
+              graph-roots
               cache-scope-prefix))]
         [retired : ast.AstNodePoolContext
           (ast.ast-node-pool-context-capture-active)]
@@ -2641,6 +2650,8 @@
   [package-owner : String]
   [deps : compiler_load.CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]
+  [graph-cfgs : sym_i64_env.SymI64Env]
+  [graph-roots : (& cli_svec.Vec)]
   [cache-scope-prefix : String]) : i64
   (let
     [count : i64 (cli_svec.len (& sources))]
@@ -2648,6 +2659,8 @@
     [status : i64 0]
     [cfg-names : cfg_core.CompilerCfgSnapshot
       (cfg_core.compiler-cfg-snapshot-from-env cfgs)]
+    [graph-cfg-names : cfg_core.CompilerCfgSnapshot
+      (cfg_core.compiler-cfg-snapshot-from-env graph-cfgs)]
     (while (and (= status 0) (< cursor count))
       (let
         [source : String (cli_svec.get (& sources) cursor "")]
@@ -2664,6 +2677,8 @@
               (owned_view.compiler-owned-shared-view package-owner)
               (owned_view.compiler-owned-shared-view deps)
               (owned_view.compiler-owned-shared-view cfg-names)
+              (& graph-cfg-names)
+              graph-roots
               (owned_view.compiler-owned-shared-view cache-scope-prefix)))
           (set! status 0))
         (if (= status 0)
@@ -2685,6 +2700,8 @@
   [package-owner : String]
   [deps : compiler_load.CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]
+  [graph-cfgs : sym_i64_env.SymI64Env]
+  [graph-roots : (& cli_svec.Vec)]
   [cache-scope-prefix : String]) : i64
   (tltest-inline-typecheck-package-sources-from
     sources
@@ -2694,7 +2711,15 @@
     package-owner
     deps
     cfgs
+    graph-cfgs
+    graph-roots
     cache-scope-prefix))
+
+(define (tltest-graph-cfgs [target : target_cfg.CompilerTargetCfg]) : sym_i64_env.SymI64Env
+  (compiler_load.compiler-pkg-graph-cfgs
+    target
+    (& tltest-graph-cfg-slots)
+    tltest-graph-debug))
 
 (define (tltest-cfgs [backend-target : be_state.CompilerBackendTarget]) : sym_i64_env.SymI64Env
   (cfg_core.compiler-cfg-enable
@@ -3518,6 +3543,8 @@
           (& manifest-dir)
           (& deps)
           cfgs
+          (tltest-graph-cfgs target-cfg)
+          (& tltest-graph-root-slots)
           opt-level
           (not (tltest-check-mode? test-mode)))
           [(Err tli-msg)
@@ -3697,6 +3724,8 @@
         (& manifest-dir)
         (& deps)
         cfgs
+        (tltest-graph-cfgs target-cfg)
+        (& tltest-graph-root-slots)
         opt-level
         (not (tltest-check-mode? test-mode)))
         [(Err tli-msg)
@@ -4055,6 +4084,10 @@
           (driver.compiler-driver-target-cfgs
             backend-target
             (target_cfg.compiler-target-user-cfgs (& tltest-user-cfg-slots)))
+          (tltest-graph-cfgs
+            (compiler_check_core.compiler-check-target-from-cfgs
+              (tltest-cfgs backend-target)))
+          (& tltest-graph-root-slots)
           (tc_core.tc-serial-job-state))
           [(Ok _ _ advisories)
             (driver.compiler-driver-print-advisories (& advisories))
@@ -4080,118 +4113,139 @@
 (define (tltest-run-package
   [manifest-path : String]
   [has-manifest : bool]
-  [target : String]
-  [roots : cli_svec.Vec]
-  [opt-level : i64]
-  [profile : pkg_profile.PackageProfile]
-  [backend-mode : be_state.CompilerBackendMode]
+  [cli-options : cli_option.CliCompileOptions]
   [test-mode : TestMode]) : i64
-  (match (build_run_core.source-tool-parse-target
-    (owned_view.compiler-owned-shared-view target))
+  (match (package_source_core.package-source-discover-for
+    "test"
+    manifest-path
+    has-manifest)
     [(Err message)
       (io.print-error message)
       1]
-    [(Ok backend-target)
-      (match (package_source_core.package-source-discover-for
-        "test"
-        manifest-path
-        has-manifest)
-        [(Err message)
-          (io.print-error message)
-          1]
-        [(Ok source-set)
-          (let
-            [manifest : compiler_load.CompilerPkgManifest
-              (owned_view.compiler-owned-shared-view source-set.manifest)]
-            [manifest-dir : String
-              (owned_view.compiler-owned-shared-view source-set.manifest-dir)]
-            [package-owner : String manifest.name]
-            [tests-prefix : String
-              (tltest-package-tests-prefix
-                (owned_view.compiler-owned-shared-view manifest-dir))]
-            (compiler_load.compiler-load-session-set-package-profile!
-              (compiler_load.compiler-load-serial-test-session-state)
-              profile)
-            (unless
-              tltest-list-only
-              (match (build_run_core.source-tool-build-package-deps-only!
-                (& source-set.manifest-path)
-                profile
-                backend-target
+    [(Ok source-set)
+      (let
+        [manifest : compiler_load.CompilerPkgManifest
+          (owned_view.compiler-owned-shared-view source-set.manifest)]
+        [manifest-dir : String
+          (owned_view.compiler-owned-shared-view source-set.manifest-dir)]
+        [graph-target : target_cfg.CompilerTargetCfg
+          (compiler_load.compiler-pkg-graph-target
+            (& manifest.settings)
+            (& cli-options))]
+        [effective : cli_option.CliCompileOptions
+          (compiler_load.compiler-pkg-resolve-compile-options
+            (& manifest.settings)
+            (& manifest-dir)
+            graph-target
+            (& cli-options))]
+        [target : String
+          (cli_option.cli-option-target-name
+            (target_cfg.clone-compiler-target-cfg (& effective.target)))]
+        [backend-target : be_state.CompilerBackendTarget
+          (build_run_core.source-tool-backend-target
+            (target_cfg.clone-compiler-target-cfg (& effective.target)))]
+        [roots : cli_svec.Vec effective.stdlib-roots]
+        [opt-level : i64 effective.opt-level]
+        [profile : pkg_profile.PackageProfile effective.profile]
+        [backend-mode : be_state.CompilerBackendMode
+          (build_run_core.source-tool-backend-mode effective.backend-mode)]
+        [package-owner : String manifest.name]
+        [tests-prefix : String
+          (tltest-package-tests-prefix
+            (owned_view.compiler-owned-shared-view manifest-dir))]
+        (unless
+          (tltest-host-isa-permits?
+            (be_state.clone-compiler-backend-mode (& backend-mode))
+            test-mode)
+          (return 1))
+        (ir.compiler-debug-info-set-enabled! effective.debug)
+        (set! tltest-user-cfg-slots effective.cfgs)
+        (set! tltest-graph-cfg-slots (cli_svec.clone-vec (& cli-options.cfgs)))
+        (set!
+          tltest-graph-root-slots
+          (cli_svec.clone-vec (& cli-options.stdlib-roots)))
+        (set! tltest-graph-debug cli-options.debug)
+        (compiler_load.compiler-load-session-set-package-profile!
+          (compiler_load.compiler-load-serial-test-session-state)
+          profile)
+        (unless
+          tltest-list-only
+          (match (build_run_core.source-tool-build-package-deps-only!
+            (& source-set.manifest-path)
+            (target_cfg.clone-compiler-target-cfg (& effective.target))
+            (& cli-options)
+            (& manifest.deps))
+            [(Ok) unit]
+            [(Err message)
+              (io.print-error message)
+              (return 1)]))
+        (let
+          [production-status : i64
+            (if tltest-list-only
+              0
+              (tltest-package-check-entry
+                (& source-set)
                 (& roots)
-                (& tltest-user-cfg-slots)
-                (& manifest.deps))
-                [(Ok) unit]
-                [(Err message)
-                  (io.print-error message)
-                  (return 1)]))
-            (let
-              [production-status : i64
-                (if tltest-list-only
+                backend-target))]
+          (if (not (= production-status 0))
+            production-status
+            (match (package_source_core.package-source-discover-tests-for
+              "test"
+              (owned_view.compiler-owned-shared-view source-set))
+              [(Err message)
+                (io.print-error message)
+                1]
+              [(Ok integration-sources)
+                (match (tltest-package-run-sources
+                  source-set.sources
+                  tests-prefix
+                  (owned_view.compiler-owned-shared-view target)
+                  (owned_view.compiler-owned-shared-view roots)
+                  opt-level
+                  backend-mode
+                  test-mode
+                  backend-target
+                  (owned_view.compiler-owned-shared-view manifest-dir)
+                  (owned_view.compiler-owned-shared-view package-owner)
+                  (owned_view.compiler-owned-shared-view manifest.deps)
                   0
-                  (tltest-package-check-entry
-                    (& source-set)
-                    (& roots)
-                    backend-target))]
-              (if (not (= production-status 0))
-                production-status
-                (match (package_source_core.package-source-discover-tests-for
-                  "test"
-                  (owned_view.compiler-owned-shared-view source-set))
-                  [(Err message)
-                    (io.print-error message)
-                    1]
-                  [(Ok integration-sources)
-                    (match (tltest-package-run-sources
-                      source-set.sources
+                  0)
+                  [(Err status) status]
+                  [(Failed
+                      inline-file-count
+                      inline-test-count
+                      inline-failed-file-count)
+                    (tltest-run-package-integrations
+                      integration-sources
                       tests-prefix
-                      (owned_view.compiler-owned-shared-view target)
-                      (owned_view.compiler-owned-shared-view roots)
+                      target
+                      roots
                       opt-level
                       backend-mode
                       test-mode
                       backend-target
-                      (owned_view.compiler-owned-shared-view manifest-dir)
-                      (owned_view.compiler-owned-shared-view package-owner)
-                      (owned_view.compiler-owned-shared-view manifest.deps)
-                      0
-                      0)
-                      [(Err status) status]
-                      [(Failed
-                          inline-file-count
-                          inline-test-count
-                          inline-failed-file-count)
-                        (tltest-run-package-integrations
-                          integration-sources
-                          tests-prefix
-                          target
-                          roots
-                          opt-level
-                          backend-mode
-                          test-mode
-                          backend-target
-                          manifest-dir
-                          package-owner
-                          manifest.deps
-                          inline-file-count
-                          inline-test-count
-                          inline-failed-file-count)]
-                      [(Ok inline-file-count inline-test-count)
-                        (tltest-run-package-integrations
-                          integration-sources
-                          tests-prefix
-                          target
-                          roots
-                          opt-level
-                          backend-mode
-                          test-mode
-                          backend-target
-                          manifest-dir
-                          package-owner
-                          manifest.deps
-                          inline-file-count
-                          inline-test-count
-                          0)])]))))])]))
+                      manifest-dir
+                      package-owner
+                      manifest.deps
+                      inline-file-count
+                      inline-test-count
+                      inline-failed-file-count)]
+                  [(Ok inline-file-count inline-test-count)
+                    (tltest-run-package-integrations
+                      integration-sources
+                      tests-prefix
+                      target
+                      roots
+                      opt-level
+                      backend-mode
+                      test-mode
+                      backend-target
+                      manifest-dir
+                      package-owner
+                      manifest.deps
+                      inline-file-count
+                      inline-test-count
+                      0)])]))))]))
 
 (define (tltest-check-file-loaded
   [source : String]
@@ -6093,24 +6147,8 @@
           [(Check) (tltest-run-batch-check paths target roots)]
           [(Run)
             (tltest-run-batch-run paths target roots opt-level backend-mode)]))]
-    [(Package
-        manifest-path
-        has-manifest
-        target
-        backend-mode
-        roots
-        opt-level
-        profile
-        test-mode)
-      (tltest-run-package
-        manifest-path
-        has-manifest
-        target
-        roots
-        opt-level
-        profile
-        backend-mode
-        test-mode)]))
+    [(Package manifest-path has-manifest options test-mode)
+      (tltest-run-package manifest-path has-manifest options test-mode)]))
 
 ;; Host-ISA policy for executing SIMD harnesses: the same CPUID-plus-OS-state
 ;; contract the SPMD gates use (`stdlib.cpu`; AVX-512 means F+BW+DQ). The
@@ -6163,9 +6201,9 @@
 (define (tltest-config-host-isa-permits? [config : TestConfig]) : bool
   (match config
     [(or (File _ _ backend-mode _ _ test-mode)
-         (Batch _ _ backend-mode _ _ test-mode)
-         (Package _ _ _ backend-mode _ _ _ test-mode))
-      (tltest-host-isa-permits? backend-mode test-mode)]))
+         (Batch _ _ backend-mode _ _ test-mode))
+      (tltest-host-isa-permits? backend-mode test-mode)]
+    [(Package _ _ _ _) true]))
 
 (define (tltest-run-config [config : TestConfig]) : i64
   (if (tltest-config-host-isa-permits?

@@ -2744,12 +2744,7 @@
       [(>= name-start 0)
         (let
           [read-only : bool
-            (or
-              (string.is-string-prefix-at text ".rodata" name-start)
-              (string.is-string-prefix-at
-                text
-                ".typelisp_backtrace,"
-                name-start))]
+            (string.is-string-prefix-at text ".rodata" name-start)]
           (cond [(and push read-only) 5] [push 3] [read-only 2] [else 1]))]
       [(string.is-string-prefix-at text ".popsection" start) 4]
       [(or
@@ -2776,18 +2771,9 @@
 (define (compiler-backend-shared-object-moved-section
   [text : (& text str)]
   [start : i64]) : String
-  (let
-    [push : bool (string.is-string-prefix-at text ".pushsection " start)]
-    [name-start : i64
-      (compiler-backend-shared-object-section-name-start text start)]
-    (str_cat.str-cat
-      (if push
-        "    .pushsection "
-        "    .section ")
-      (if (string.is-string-prefix-at text ".typelisp_backtrace" name-start)
-        ".typelisp_backtrace"
-        ".data.rel.ro")
-      ",\"aw\",@progbits")))
+  (if (string.is-string-prefix-at text ".pushsection " start)
+    "    .pushsection .data.rel.ro,\"aw\",@progbits"
+    "    .section .data.rel.ro,\"aw\",@progbits"))
 
 ;; Whether the line [START, END) of TEXT mentions a local-exec TLS offset.
 (define (compiler-backend-shared-object-tls-line?

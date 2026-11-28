@@ -92,7 +92,7 @@ contains tl_backtrace_stack_low:
 case fatal-backtrace-debug
 run compile tests/integration/fatal_backtrace.tl --backtrace --stdlib-root "{{root}}/src" --opt-level 0 -o "{{dir}}/bt.s"
 in file {{dir}}/bt.s
-contains .section .typelisp_backtrace,"a",@progbits
+contains .section tl_backtrace_map_data,"ao",@progbits,.text
 contains tl_backtrace_string_data_begin:
 contains fatal_backtrace.tl::backtrace-leaf
 contains tl_backtrace_frame_pointer:
@@ -156,6 +156,10 @@ exec env TYPELISP_BACKTRACE=full "{{dir}}/corrupt"
 exit 134
 stderr match   0: <unknown> \(0x[1-9a-f][0-9a-f]*\)
 stderr contains fatal_backtrace.tl::backtrace-recurse
+step shared-object-bounds
+exec env TYPELISP_BACKEND_CODE_MODEL=shared-object "{{compiler}}" compile "{{root}}/tests/integration/fatal_backtrace.tl" --backtrace --stdlib-root "{{root}}/src" --opt-level 0 -o "{{dir}}/dso.s"
+sh as "{{dir}}/dso.s" -o "{{dir}}/dso.o" && ld -shared -z text "{{dir}}/dso.o" -o "{{dir}}/bt.so"
+sh nm -P "{{dir}}/bt.so" | awk '$1 == "__start_tl_backtrace_map_data" { begin = "x" $3 } $1 == "__stop_tl_backtrace_map_data" { end = "x" $3 } END { exit !(begin != "" && end != "" && begin < end) }'
 step worker
 run compile tests/integration/fatal_backtrace_thread.tl --backtrace --stdlib-root "{{root}}/src" --opt-level 0 -o "{{dir}}/thread.s"
 sh as "{{dir}}/thread.s" -o "{{dir}}/thread.o" && { CCV_entry=$(linux_entry_symbol_for_asm "{{dir}}/thread.s") || exit $?; ld -static -e "$CCV_entry" "{{dir}}/thread.o" -o "{{dir}}/thread"; }

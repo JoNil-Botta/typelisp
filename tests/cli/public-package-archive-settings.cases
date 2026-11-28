@@ -1,0 +1,179 @@
+do none
+target -
+opt -
+
+case archive-settings-external-inputs
+file dep/typelisp.pkg
+(package
+  (name "dep")
+  (version "1")
+  (stdlib-root "../override" "../roots"))
+end-file
+file dep/src/lib.tl
+(import stdlib.replay_value as external)
+(define (answer) : i64 external.value)
+end-file
+file roots/replay_value.tl
+(define value : i64 1)
+end-file
+file override/unused.tl
+(define unused : i64 0)
+end-file
+cwd dep
+step initial
+run build --target {{host-target}}
+stdout contains Built
+in file {{dir}}/dep/target/dev/{{lib-prefix}}dep{{lib-suffix}}.runtime-inputs
+contains resolved-source-sha256:
+contains /roots/replay_value.tl
+not-contains /override/unused.tl
+step unchanged-import
+sh printf '(define unused : i64 2)\n' > "{{dir}}/override/unused.tl"
+run build --target {{host-target}}
+stdout contains Fresh
+step edited-import
+sh printf '(define value : i64 2)\n' > "{{dir}}/roots/replay_value.tl"
+run build --target {{host-target}}
+stdout contains Built
+step shadowed-import
+sh cp "{{dir}}/roots/replay_value.tl" "{{dir}}/override/replay_value.tl"
+run build --target {{host-target}}
+stdout contains Built
+in file {{dir}}/dep/target/dev/{{lib-prefix}}dep{{lib-suffix}}.runtime-inputs
+contains /override/replay_value.tl
+not-contains /roots/replay_value.tl
+step removed-shadow
+sh rm "{{dir}}/override/replay_value.tl"
+run build --target {{host-target}}
+stdout contains Built
+step removed-definition
+sh printf '(define other : i64 2)\n' > "{{dir}}/roots/replay_value.tl"
+run build --target {{host-target}}
+exit nonzero
+stderr contains unbound name external.value
+step removed-import
+sh rm "{{dir}}/roots/replay_value.tl"
+run build --target {{host-target}}
+exit nonzero
+stderr contains replay_value
+
+case archive-settings-backtrace
+file typelisp.pkg
+(package
+  (name "archive_app")
+  (version "1")
+  (dependencies (dep "dep"))
+  (profile dev (opt-level 0) (debug true)))
+end-file
+file src/main.tl
+(import dep.src.lib as dep)
+(define (main) : i64 (+ 1 (unsafe (dep.crash 1))))
+end-file
+file dep/typelisp.pkg
+(package
+  (name "dep")
+  (version "1")
+  (profile dev (opt-level 0) (debug true))
+  (profile release (debug true)))
+end-file
+file dep/src/lib.tl
+(import stdlib.io)
+(define (lib-leaf [x : i64]) : i64 (if (= x 1) (io.panic "archive probe") x))
+(define (crash [x : i64]) : i64 (+ 1 (lib-leaf x)))
+end-file
+cwd .
+step root
+run run --target {{host-target}}
+exit 134
+stderr contains panic: archive probe
+stderr contains stack backtrace:
+stderr contains ::lib-leaf at
+stderr contains ::crash at
+stderr contains dep/src/lib.tl:
+stderr contains main at
+step release
+run run --target {{host-target}} --release
+exit 134
+stderr contains panic: archive probe
+stderr not-contains stack backtrace:
+in file {{dir}}/target/release/archive_app.s
+not-contains tl_backtrace_map_begin:
+
+case archive-settings-unc-root
+hosts linux
+file typelisp.pkg
+(package
+  (name "unc_app")
+  (version "1")
+  (stdlib-root "//server/share/stdlib"))
+end-file
+file src/main.tl
+(define (main) : i64 0)
+end-file
+cwd .
+step root
+run build
+in file {{dir}}/target/dev/unc_app.runtime-inputs
+contains stdlib-root 21://server/share/stdlib
+step subdirectory
+cwd src
+run build
+in file {{dir}}/target/dev/unc_app.runtime-inputs
+contains stdlib-root 21://server/share/stdlib
+
+case archive-settings-paths
+file probe.tl
+(import stdlib.fs)
+(import stdlib.string)
+(define (main) : i64
+  (if (and
+        (string.eq (fs.path-normalize "//server/share/../stdlib") "//server/share/stdlib")
+        (string.eq (fs.path-normalize "\\\\server\\share\\src\\..\\stdlib") "//server/share/stdlib")
+        (string.eq (fs.path-normalize "C:\\src\\..\\stdlib") "C:/stdlib")
+        (string.eq (fs.path-normalize "///usr//local") "/usr/local"))
+    0
+    1))
+end-file
+step windows-paths
+run run "{{dir}}/probe.tl" --target {{host-target}}
+
+
+case archive-settings-derived-aliases
+each linux unix target-linux os-linux windows target-windows os-windows compiler-backtrace
+file main.tl
+(define (main) : i64 0)
+end-file
+file -x typelisp.pkg
+(package
+  (name "aliases")
+  (version "1")
+  (entry "main.tl")
+  (target-settings windows-x86_64 (cfg "{{each}}")))
+end-file
+cwd .
+step conflicting-alias
+run check --target windows-x86_64
+exit nonzero
+stderr contains typelisp.pkg:5:40
+stderr contains manifest cfg `{{each}}` conflicts with target selection
+
+case archive-settings-target-aliases
+each linux windows
+file typelisp.pkg
+(package
+  (name "alias_app")
+  (version "1")
+  (target-settings linux-x86_64 (cfg "manifest-linux"))
+  (target-settings windows-x86_64 (cfg "manifest-windows")))
+end-file
+file src/main.tl
+(cfg (all manifest-linux linux unix target-linux os-linux
+          (not (any manifest-windows windows target-windows os-windows)))
+  (define value : i64 0))
+(cfg (all manifest-windows windows target-windows os-windows
+          (not (any manifest-linux linux unix target-linux os-linux)))
+  (define value : i64 0))
+(define (main) : i64 value)
+end-file
+cwd .
+run check --target {{each}}-x86_64

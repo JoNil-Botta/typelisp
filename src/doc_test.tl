@@ -133,7 +133,10 @@
   (manifest-dir String)
   (deps compiler_load.CompilerPkgDeps)
   (profile pkg_profile.PackageProfile)
-  (cfgs cfg_core.CompilerCfgSnapshot)
+  (target be_state.CompilerBackendTarget)
+  (opt-level i64)
+  (mode be_state.CompilerBackendMode)
+  (check-config compiler_check_core.CompilerCheckPackageConfig)
   (link-inputs build_run_core.SourceToolLinkInputs))
 
 (defenum DocTestExecution
@@ -1122,8 +1125,12 @@
 ;; runnable doctests can hide target-specific compiler/runtime bugs.
 (define (doc-test-runnable-target-supported?
   [target : be_state.CompilerBackendTarget]) : bool
-  (match target
-    [(or (Linux) (Windows)) true]))
+  (let
+    [selected : String (build_run_core.source-tool-target-name target)]
+    [host : String
+      (build_run_core.source-tool-target-name
+        (build_run_core.source-tool-default-target))]
+    (string.eq (& selected) (& host))))
 
 (define (doc-test-runnable-unsupported-message
   [index : i64]
@@ -1333,9 +1340,8 @@
   [advisories-out : (&mut advisories-out doc_svec.Vec)]) : build_run_core.ResultSourceToolString
   (let
     [cfgs : sym_i64_env.SymI64Env
-      (cfg_core.compiler-cfg-snapshot-to-env (& package-run.cfgs))]
-    [opt-level : i64
-      (pkg_profile.package-profile-opt-level (& package-run.profile))]
+      (cfg_core.compiler-cfg-snapshot-to-env (& package-run.check-config.cfgs))]
+    [opt-level : i64 package-run.opt-level]
     (compiler_load.compiler-load-session-set-package-profile!
       (compiler_load.compiler-load-serial-test-session-state)
       (pkg_profile.clone-package-profile (& package-run.profile)))
@@ -1351,6 +1357,9 @@
       target
       (& roots)
       cfgs
+      (cfg_core.compiler-cfg-snapshot-to-env
+        (& package-run.check-config.graph.cfgs))
+      (& package-run.check-config.graph.roots)
       opt-level
       true)
       [(Err message) (return (Err message))]
@@ -1381,14 +1390,14 @@
               scope
               (string.copy (& package-run.name))
               target
-              (Scalar)
+              (be_state.clone-compiler-backend-mode (& package-run.mode))
               decls
               owned-paths
               cfgs
               opt-level)
             target
             true
-            (Scalar)
+            (be_state.clone-compiler-backend-mode (& package-run.mode))
             opt-level
             true
             (build_run_core.source-tool-linux-crt-entry?
@@ -1544,7 +1553,10 @@
       (doc-test-example-source-line
         (owned_view.compiler-owned-shared-view example))]
     [target : be_state.CompilerBackendTarget
-      (build_run_core.source-tool-default-target)]
+      (match execution
+        [(Standalone) (build_run_core.source-tool-default-target)]
+        [(Package package-run)
+          (be_state.clone-compiler-backend-target (& package-run.target))])]
     (if (doc-test-runnable-target-supported? target)
       (match (build_run_core.source-tool-create-temp-dir "typelisp-doctest")
         [(Ok temp-dir)
@@ -1673,12 +1685,10 @@
   [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
-  [cfg-snapshot : (& cfg_core.CompilerCfgSnapshot)]
+  [config : (& compiler_check_core.CompilerCheckPackageConfig)]
   [advisories-out : (&mut advisories-out doc_svec.Vec)]) : DocTestMaybeFailure
   (compiler_check_core.compiler-check-reset-interns!)
   (let
-    [cfgs : sym_i64_env.SymI64Env
-      (cfg_core.compiler-cfg-snapshot-to-env cfg-snapshot)]
     [index : i64
       (doc-test-example-index (owned_view.compiler-owned-shared-view example))]
     [source-line : i64
@@ -1702,7 +1712,7 @@
         stdlib-roots
         manifest-dir
         deps
-        cfgs)
+        config)
       advisories-out)))
 
 (define (doc-test-check-example-with-roots
@@ -1782,7 +1792,7 @@
   [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
-  [cfg-snapshot : (& cfg_core.CompilerCfgSnapshot)]
+  [config : (& compiler_check_core.CompilerCheckPackageConfig)]
   [execution : (& DocTestExecution)]
   [advisories-out : (&mut advisories-out doc_svec.Vec)]) : doc_run_failure_vec.Vec
   (let
@@ -1811,7 +1821,7 @@
             (owned_view.compiler-owned-shared-view stdlib-roots)
             (owned_view.compiler-owned-shared-view manifest-dir)
             (owned_view.compiler-owned-shared-view deps)
-            cfg-snapshot
+            config
             advisories-out))
           [(No) unit]
           [(Some failure) (doc_run_failure_vec.push-ref! (&mut out) failure)])))
@@ -1914,7 +1924,7 @@
   [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
-  [cfg-snapshot : (& cfg_core.CompilerCfgSnapshot)]
+  [config : (& compiler_check_core.CompilerCheckPackageConfig)]
   [execution : (& DocTestExecution)]
   [advisories-out : (&mut advisories-out doc_svec.Vec)]) : DocTestRunReport
   (match extraction
@@ -1933,7 +1943,7 @@
             stdlib-roots
             manifest-dir
             deps
-            cfg-snapshot
+            config
             execution
             advisories-out)
           ""))]))
@@ -1994,7 +2004,7 @@
   [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
-  [cfg-snapshot : (& cfg_core.CompilerCfgSnapshot)]
+  [config : (& compiler_check_core.CompilerCheckPackageConfig)]
   [last-path : String]
   [count : i64]
   [advisories-out : (&mut advisories-out doc_svec.Vec)]) : DocTestRunReport
@@ -2052,7 +2062,7 @@
                 (owned_view.compiler-owned-shared-view stdlib-roots)
                 (owned_view.compiler-owned-shared-view manifest-dir)
                 (owned_view.compiler-owned-shared-view deps)
-                cfg-snapshot
+                config
                 advisories-out)]
             (if (doc-test-run-report-ok?
               (owned_view.compiler-owned-shared-view report))
@@ -2061,7 +2071,7 @@
                 stdlib-roots
                 manifest-dir
                 deps
-                cfg-snapshot
+                config
                 rooted
                 (+ count (doc-test-run-report-count report))
                 advisories-out)
@@ -2071,7 +2081,7 @@
             stdlib-roots
             manifest-dir
             deps
-            cfg-snapshot
+            config
             last-path
             count
             advisories-out)))]))
@@ -2081,7 +2091,7 @@
   [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
-  [cfg-snapshot : (& cfg_core.CompilerCfgSnapshot)]
+  [config : (& compiler_check_core.CompilerCheckPackageConfig)]
   [advisories-out : (&mut advisories-out doc_svec.Vec)]) : DocTestRunReport
   (doc-test-typecheck-package-extraction-with-roots-and-cfg
     (owned_view.compiler-owned-shared-view path)
@@ -2089,7 +2099,7 @@
     stdlib-roots
     manifest-dir
     deps
-    cfg-snapshot
+    config
     (& (DocTestExecution.Standalone))
     advisories-out))
 
@@ -2108,7 +2118,7 @@
             stdlib-roots
             (string.copy (& config.manifest-dir))
             (compiler_load.clone-compiler-pkg-deps (& config.deps))
-            (& config.cfgs)
+            (& config.check-config)
             execution
             (&mut advisories))]
         [(Standalone) (io.panic "doctest: expected package execution")])]
@@ -2126,17 +2136,19 @@
     stdlib-roots
     manifest-dir
     deps
-    (compiler_check_core.compiler-check-language-cfgs)))
+    (&
+      (compiler_check_core.compiler-check-package-config
+        (compiler_check_core.compiler-check-language-cfgs)
+        (compiler_check_core.compiler-check-language-cfgs)
+        (doc_svec.new)))))
 
 (define (doc-test-typecheck-package-paths-with-roots-and-cfg
   [paths : ast.AstDeclPathList]
   [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
-  [cfgs : sym_i64_env.SymI64Env]) : DocTestRunReport
+  [config : (& compiler_check_core.CompilerCheckPackageConfig)]) : DocTestRunReport
   (let
-    [cfg-snapshot : cfg_core.CompilerCfgSnapshot
-      (cfg_core.compiler-cfg-snapshot-from-env cfgs)]
     [home : arena.Arena (arena.current)]
     (with-scratch
       (let
@@ -2157,7 +2169,7 @@
                     stdlib-roots
                     manifest-dir
                     deps
-                    (& cfg-snapshot)
+                    config
                     ""
                     0
                     (&mut advisories))]

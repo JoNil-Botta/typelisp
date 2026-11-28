@@ -47,12 +47,59 @@ Package `build`, `run`, `check`, `test`, `lint`, and `doc` accept
 | `dev` (default) | `0` | Off | `target/dev/` |
 | `release` | `2` | Off | `target/release/` |
 
-Use `--opt-level` to override optimization where the command emits code and
-`--debug` to request debug info. Profile selection leaves the target, backend
-mode, and cfg defaults alone. The selected profile follows the package graph
-into dependency builds and artifact lookup, including package doctest
-typechecking. Local HTML documentation goes into `target/doc/`. Package
-`clean` removes the package artifacts for both profiles.
+The package graph uses one target and one profile. The target defaults to the
+host. Without a backend override, the compiler uses `sse2` or `scalar` for
+size optimization. User cfgs and configured stdlib roots default to empty lists.
+The selected profile controls the artifact directory for every dependency.
+Local HTML documentation goes into `target/doc/`. Package `clean` removes
+artifacts for both profiles.
+
+### Build settings
+
+```lisp
+(package
+  (name "my-app")
+  (version "0.1.0")
+  (target linux-x86_64)
+  (cfg "logging")
+  (stdlib-root "vendor/stdlib")
+  (profile dev (opt-level 1) (debug true))
+  (profile release (opt-level s) (backend-mode scalar))
+  (target-settings windows-x86_64
+    (cfg "win-console")
+    (stdlib-root "vendor/windows-stdlib")))
+```
+
+| Field | Scope | Values |
+| --- | --- | --- |
+| `target` | Package | The symbol `linux-x86_64` or `windows-x86_64` |
+| `opt-level` | `profile dev` or `profile release` | The integer `0`, `1`, or `2`, or the symbol `s` |
+| `debug` | Profile | The symbol `true` or `false` |
+| `backend-mode` | Profile | The symbol `scalar`, `sse2`, `avx2`, or `avx512` |
+| `cfg` | Package or `target-settings <target>` | One or more non-empty cfg name strings |
+| `stdlib-root` | Package or target settings | One or more non-empty directory strings |
+
+A manifest can declare each field once per scope, each named profile once,
+and each target settings section once. The compiler derives the platform cfgs
+and `compiler-backtrace` from target and debug settings. These cfg names are
+reserved in manifests.
+
+`--target` takes precedence over the root package's `target`. A dependency's
+`target` is its default when built as a root. Each node in the graph applies
+its own settings for the selected target and profile. An explicit `--opt-level`
+(or `-Os`), `--backend-mode`, or `--debug` overrides the corresponding profile
+setting on each node. `--debug` enables debug info.
+
+Cfgs and stdlib roots are additive. The compiler keeps the first occurrence
+in CLI, target-specific, then package-wide order. Relative manifest paths
+resolve from the declaring manifest directory. Relative CLI paths resolve from
+the invocation directory. For stdlib lookup, local files precede configured
+roots, then the existing `TYPELISP_STDLIB_ROOT` and embedded fallbacks apply.
+A static library archives code from its package source set. When one of its
+runtime references uses a custom module outside that source set, the consuming
+executable needs a linked definition for the referenced symbol. The `link`
+section merges its common and platform-specific inputs in the native-link
+order described below.
 
 GitHub `rev` pins must be full lowercase hexadecimal object IDs (40 digits for
 SHA-1, or 64 for SHA-256). Use `tag` or `branch` for a named ref. Lock commits

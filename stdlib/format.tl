@@ -1871,40 +1871,74 @@
                 (string.eq element-kind "mut-ref"))
               false)
             false)]
-        (if nested-debug-reference?
-          `(stdlib.format.format-classified-call
-            ,terminal
-            ,prefix
-            ,(comptime.type-expr element-type)
-            (deref ,value-runtime)
-            ,(comptime.type-expr width-source)
-            ,width-runtime
-            ,(comptime.type-expr precision-source)
-            ,precision-runtime
-            ,fill-expr
-            ,alignment-expr
-            ,sign-expr
-            ,alternate-expr
-            ,zero-expr
-            ,width-kind-expr
-            ,precision-kind-expr
-            ,selector-expr)
-          `(,terminal
-            ,(comptime.type-expr value-source)
-            ,@prefix-items
-            ,value-runtime
-            ,fill-expr
-            ,alignment-expr
-            ,sign-expr
-            ,alternate-expr
-            ,zero-expr
-            ,width-kind-expr
-            ,(comptime.type-expr width-source)
-            ,width-runtime
-            ,precision-kind-expr
-            ,(comptime.type-expr precision-source)
-            ,precision-runtime
-            ,selector-expr)))]
+        ;; Borrowing a tagged value gives the formatter the referent's
+        ;; shape. The borrow keeps its owner live through the formatting call.
+        (if (string.eq element-kind "region")
+          (let
+            [name : String
+              (comptime.syntax-name-fresh "__tl_format_tagged_value")]
+            [borrowed : comptime.Expr (comptime.expr-var name)]
+            [place : comptime.Expr
+              (if source-reference?
+                `(deref ,value-runtime)
+                value-runtime)]
+            (comptime.expr-shared-let-scope
+              name
+              place
+              `(stdlib.format.format-classify-value
+                ,terminal
+                ,prefix
+                ,borrowed
+                ,fill-expr
+                ,alignment-expr
+                ,sign-expr
+                ,alternate-expr
+                ,zero-expr
+                ,width-kind-expr
+                (__tl_format_typed_argument
+                  ,(comptime.type-expr width-source)
+                  0
+                  ,width-runtime)
+                ,precision-kind-expr
+                (__tl_format_typed_argument
+                  ,(comptime.type-expr precision-source)
+                  0
+                  ,precision-runtime)
+                ,selector-expr)))
+          (if nested-debug-reference?
+            `(stdlib.format.format-classified-call
+              ,terminal
+              ,prefix
+              ,(comptime.type-expr element-type)
+              (deref ,value-runtime)
+              ,(comptime.type-expr width-source)
+              ,width-runtime
+              ,(comptime.type-expr precision-source)
+              ,precision-runtime
+              ,fill-expr
+              ,alignment-expr
+              ,sign-expr
+              ,alternate-expr
+              ,zero-expr
+              ,width-kind-expr
+              ,precision-kind-expr
+              ,selector-expr)
+            `(,terminal
+              ,(comptime.type-expr value-source)
+              ,@prefix-items
+              ,value-runtime
+              ,fill-expr
+              ,alignment-expr
+              ,sign-expr
+              ,alternate-expr
+              ,zero-expr
+              ,width-kind-expr
+              ,(comptime.type-expr width-source)
+              ,width-runtime
+              ,precision-kind-expr
+              ,(comptime.type-expr precision-source)
+              ,precision-runtime
+              ,selector-expr))))]
     [_
       (comptime.comptime-error "format: internal terminal prefix is malformed")]))
 

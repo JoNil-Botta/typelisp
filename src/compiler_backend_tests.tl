@@ -50777,8 +50777,6 @@ user_fn:
     [state-o1 : be_state.CompilerBackendState
       (be_state.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    [pools : ast.AstNodePoolContext
-      (ast.ast-node-pool-context-new-with-capacities 4 16)]
     [switch-blocks : ir.CompilerIrBlockList
       (irt.blocks
         "entry:
@@ -50823,7 +50821,7 @@ user_fn:
     (test.assert-true
       (match (backend.compiler-backend-object-program-eligibility-with-pools-and-profile-state
         state-o2
-        pools
+        (ast.ast-node-pool-context-capture-active)
         (ir.clone-compiler-ir-program (& cold-prog))
         (be_state.CompilerBackendTarget.Linux)
         (profile_state.compiler-profile-state-new))
@@ -50833,13 +50831,15 @@ user_fn:
     (test.assert-true
       (match (backend.compiler-backend-object-program-eligibility-with-pools-and-profile-state
         state-o1
-        pools
+        (ast.ast-node-pool-context-capture-active)
         cold-prog
         (be_state.CompilerBackendTarget.Linux)
         (profile_state.compiler-profile-state-new))
         [(Eligible) true]
         [_ false])
-      "cold function at -O1 keeps direct-object route")))
+      "cold function at -O1 keeps direct-object route")
+    (backend.compiler-backend-state-release-final-arenas! state-o2)
+    (backend.compiler-backend-state-release-final-arenas! state-o1)))
 
 (test
   c60-cold-filtered-machine-outline-ranges

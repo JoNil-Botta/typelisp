@@ -2056,7 +2056,9 @@
     (let
       [cold-pools : ast.AstNodePoolContext
         (ast.ast-node-pool-context-new-with-capacities 64 64)]
-      [_use-cold : unit (ast.ast-node-pool-compat-context-use! cold-pools)]
+      [_use-cold : unit
+        (unsafe
+          (ast.ast-node-pool-compat-context-use! cold-pools))]
       [cold-len : i64
         (match (parse_core.parse-ast-source-diagnostic-with-cfg-and-pools
           (string.copy (& second-path))
@@ -2095,7 +2097,9 @@
   (shared_dep.dep-ok))"]
         [first-pools : ast.AstNodePoolContext
           (ast.ast-node-pool-context-new-with-capacities 64 64)]
-        [_use-first : unit (ast.ast-node-pool-compat-context-use! first-pools)]
+        [_use-first : unit
+          (unsafe
+            (ast.ast-node-pool-compat-context-use! first-pools))]
         [first-count : i64
           (match (parse_core.parse-ast-source-diagnostic-with-cfg-and-pools
             (string.copy (& first-path))
@@ -2127,7 +2131,9 @@
           (driver_tests.selfhost-lint-unsafe-surface-cache-hit-count)]
         [warm-pools : ast.AstNodePoolContext
           (ast.ast-node-pool-context-new-with-capacities 64 64)]
-        [_use-warm : unit (ast.ast-node-pool-compat-context-use! warm-pools)]
+        [_use-warm : unit
+          (unsafe
+            (ast.ast-node-pool-compat-context-use! warm-pools))]
         [warm-len : i64
           (match (parse_core.parse-ast-source-diagnostic-with-cfg-and-pools
             (string.copy (& second-path))

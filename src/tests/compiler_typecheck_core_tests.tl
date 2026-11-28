@@ -18884,7 +18884,9 @@
     (let
       [pools-a : ast.AstNodePoolContext
         (ast.ast-node-pool-context-new-with-capacities 16 16)]
-      [_use-a : unit (ast.ast-node-pool-compat-context-use! pools-a)]
+      [_use-a : unit
+        (unsafe
+          (ast.ast-node-pool-compat-context-use! pools-a))]
       (ci.intern-reset!)
       (cbi.compiler-builtin-initialize-for-parse!)
       (let
@@ -18924,7 +18926,9 @@
         (let
           [pools-b : ast.AstNodePoolContext
             (ast.ast-node-pool-context-new-with-capacities 16 16)]
-          [_use-b : unit (ast.ast-node-pool-compat-context-use! pools-b)]
+          [_use-b : unit
+            (unsafe
+              (ast.ast-node-pool-compat-context-use! pools-b))]
           [i : i64 0]
           (ci.intern-reset!)
           (cbi.compiler-builtin-initialize-for-parse!)

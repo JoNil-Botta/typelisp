@@ -2964,7 +2964,7 @@
 (define (main) : i64
   (let
     [tuples : (Array (Tuple i64 String) 2) (make-array (Tuple i64 String) 2)]
-    [maybes : (Array Maybe 3) (make-array Maybe 3)]
+    [maybes : (Array Maybe 5) (make-array Maybe 5)]
     (+ (tuple-ref (array-ref tuples 0) 0)
        (match (array-ref maybes 0) [(Some v) v] [(None) 1]))))")
 
@@ -8428,7 +8428,8 @@
         (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
         (= (lower-test-count functions "main" (CopyBytes)) 0)
         (= (lower-test-function-call-count functions "main" "tl_array_zero") 0)
-        (= (lower-test-function-call-count functions "main" "tl_mem_fill8") 2))]
+        (>= (lower-test-count functions "main" (StorePtr)) 6)
+        (= (lower-test-function-call-count functions "main" "tl_mem_fill8") 1))]
     [_ false]))
 
 (define (compiler-lower-dyn-array-literal-shape-ok?) : bool

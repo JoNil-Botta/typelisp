@@ -28267,7 +28267,8 @@
           [zeroed : LowerState
             (cond
               [(= size 0) reserved]
-              [(<= slots 4)
+              ;; A cache line or less fits in a short run of direct stores.
+              [(<= slots 8)
                 (let
                   [filled : LowerState reserved]
                   (for [slot (iterator.range 0 slots)]

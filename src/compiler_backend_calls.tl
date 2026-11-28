@@ -9374,6 +9374,38 @@
       [(Err message)
         (be_state.compiler-backend-instr-error-from instr-diag message)])))
 
+;; A positive compile-time count needs no runtime guard. Keep the platform
+;; call's argument setup and clobber budget, including preserving Win64 RDI.
+(define (compiler-backend-fixed-zero-fill-asm
+  [windows? : bool]
+  [convention : compiler_abi.CompilerCallConvention]
+  [name : i64]
+  [args : (& args compiler_ir_types.CompilerIrCallArgs)]
+  [call-symbol : (& call-symbol str)]) : String
+  (if (and
+    (cbi.compiler-builtin-backend-tl-mem-fill8-id? name)
+    (string.eq call-symbol "tl_mem_fill8")
+    (match convention
+      [(Platform) true]
+      [_ false])
+    (= (compiler_ir_types.compiler-ir-call-args-count args) 3))
+    (match args
+      [(Array values)
+        (match (& (array-ref values 1))
+          [(I64 count)
+            (if (and
+              (> count 0)
+              (match (& (array-ref values 2))
+                [(I64 0) true]
+                [_ false]))
+              (if windows?
+                "    movq %rdi, %r11\n    movq %rcx, %rdi\n    movq %rdx, %rcx\n    xorl %eax, %eax\n    rep stosq\n    movq %r11, %rdi\n"
+                "    movq %rsi, %rcx\n    xorl %eax, %eax\n    rep stosq\n")
+              "")]
+          [_ ""])]
+      [_ ""])
+    ""))
+
 (define (compiler-backend-emit-direct-call-with-arg-assignments
   [type-segment-bases : i64]
   [target : be_state.CompilerBackendTarget]
@@ -9561,6 +9593,14 @@
               param-types
               c-abi?
               program-index)]
+          [zero-fill : String
+            (compiler-backend-fixed-zero-fill-asm
+              (be_state.compiler-backend-state-emission-target-policy
+                backend-state).windows
+              convention
+              name
+              (& args)
+              (& call-symbol))]
           ;; Route the non-tail direct call through the parallel-move wrapper (not
           ;; the raw naive emitter): a register-homed arg's source register can be
           ;; another arg's destination arg register (e.g. once mixed scalar+handle
@@ -9612,12 +9652,17 @@
                   target
                   extern-call-info
                   param-types))
-              (be_state.compiler-backend-asm-append4
-                (&mut seq)
-                "    call "
-                call-symbol
-                "\n"
-                (be_operand.compiler-backend-emit-call-space-add call-space))
+              (if (= (string.string-length (& zero-fill)) 0)
+                (be_state.compiler-backend-asm-append4
+                  (&mut seq)
+                  "    call "
+                  call-symbol
+                  "\n"
+                  (be_operand.compiler-backend-emit-call-space-add call-space))
+                (be_state.compiler-backend-asm-append2
+                  (&mut seq)
+                  zero-fill
+                  (be_operand.compiler-backend-emit-call-space-add call-space)))
               (match (compiler-backend-emit-call-result-store-normalize-into
                 (&mut seq)
                 type-segment-bases

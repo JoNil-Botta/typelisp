@@ -5863,16 +5863,18 @@
               (& source-set.sources))
               [(Ok text) text]
               [(Err _) ""])])]
+      (match (& prepared)
+        [(Err _) unit]
+        [_
+          (let
+            [error : String
+              (build-package-check-archive-symbols package-archives)]
+            (when
+              (> (string.string-length (& error)) 0)
+              (io.print-error error)
+              (return 1)))])
       (build-package-finish-prepared-runtime
-        (match (& prepared)
-          [(Err _) prepared]
-          [_
-            (let
-              [error : String
-                (build-package-check-archive-symbols package-archives)]
-              (if (> (string.string-length (& error)) 0)
-                (Err error)
-                prepared))])
+        prepared
         name
         kind
         target

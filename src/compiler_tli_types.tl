@@ -6,7 +6,7 @@
 (define tli-magic : i64
   0x00494c54)
 (define tli-schema-version : i64
-  5)
+  6)
 (define tli-header-size : i64
   144)
 
@@ -113,6 +113,9 @@
   (Struct (__tl_dyn-array TliField))
   (Enum (__tl_dyn-array TliVariant)))
 
+(define tli-type-has-cleanup : i64
+  16)
+
 (defstruct TliTypeDecl
   (name String)
   (module-name String)
@@ -122,6 +125,7 @@
   (repr-kind i64)
   (repr-align i64)
   (cleanup TliCleanup)
+  (cleanup-link-symbol String)
   (lifetimes (__tl_dyn-array String))
   (body TliTypeBody))
 

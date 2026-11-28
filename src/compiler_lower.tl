@@ -77820,9 +77820,8 @@
             mode))]
       [(Err message) (Err (box (lower-diagnostic message)))])))
 
-;; A hydrated stdlib struct or enum already has its synthesized cleanup wrapper
-;; compiled in `libstdlib.a`; declare it as a TypeLisp extern instead of
-;; emitting a duplicate definition in the caller's object file.
+;; A hydrated cleanup body lives in its defining archive. Package interfaces
+;; carry the producer symbol because the consumer sees a relocated source path.
 (define (lower-hydrated-cleanup-extern!
   [decl-ctx : tc_core.TcContext]
   [mode : CompilerLowerMode]
@@ -77846,9 +77845,13 @@
               (ast.clone-ast-type (& resolved-ty)))
             (ast.AstExternAbi.TypeLisp))]
         [logical-text : String (ir.compiler-ir-symbol-text logical-name)]
-        [archive-sym : String
-          (tli_hydrate.tli-hydrate-archive-user-symbol (& logical-text))]
-        [archive-sym-id : i64 (ci.intern archive-sym)]
+        [package-symbol : i64
+          (tc_core.tc-tli-cleanup-link-symbol decl-ctx (& arg-ty))]
+        [archive-sym-id : i64
+          (if (>= package-symbol 0)
+            package-symbol
+            (ci.intern
+              (tli_hydrate.tli-hydrate-archive-user-symbol (& logical-text))))]
         (ir.compiler-ir-extern-builder-push!
           cur-externs
           (ir.CompilerIrExtern.Extern

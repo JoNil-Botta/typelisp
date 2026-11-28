@@ -1171,6 +1171,7 @@
   (spmd-inline-entries spmd_inline_vec.Vec)
   (macro-slots tli_i64_map.Map)
   (macros macro_vec.Vec)
+  (cleanup-link-symbols tli_i64_map.Map)
   (type-layout-slots tli_i64_map.Map)
   (type-layouts layout_vec.Vec))
 
@@ -1190,6 +1191,7 @@
     (spmd_inline_vec.new)
     (tli_i64_map.with-capacity 64)
     (macro_vec.new)
+    (tli_i64_map.with-capacity 4)
     (tli_i64_map.with-capacity 128)
     (layout_vec.new)))
 
@@ -1200,6 +1202,11 @@
     (& facts.fn-summary-by-link-slots)
     link-symbol-id
     -1))
+
+(define (tli-hydrated-cleanup-link-symbol
+  [facts : (& TliHydratedFacts)]
+  [nominal-id : i64]) : i64
+  (tli_i64_map.get-value-or (& facts.cleanup-link-symbols) nominal-id -1))
 
 (define (tli-hydrated-facts-module-hydrated?
   [facts : (& TliHydratedFacts)]
@@ -1502,6 +1509,15 @@
         (not (string.eq (& row.module-name) "stdlib.comptime")))]
     [unsafe-decl : bool (!= (bit-and row.flags 8) 0)]
     [lifetimes : ast.AstLifetimeList (tli-hydrate-lifetimes (& row.lifetimes))]
+    (when
+      (> (string.string-length (& row.cleanup-link-symbol)) 0)
+      (in-arena
+        (unsafe
+          (arena.from-raw-handle facts.owner-arena))
+        (tli_i64_map.insert-ref!
+          (&mut facts.cleanup-link-symbols)
+          nominal-id
+          (tli-hydrate-name (& row.cleanup-link-symbol)))))
     (match (& row.body)
       [(Struct fields)
         (let

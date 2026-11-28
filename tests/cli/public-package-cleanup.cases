@@ -1,0 +1,60 @@
+# A dependency's generated cleanup has one archive definition. The sum makes
+# both skipping the nested hook and calling it twice observable.
+do none
+target -
+opt 0 1 2
+
+case package-generated-cleanup
+file producer/typelisp.pkg
+(package (name "resources") (version "0.1.0") (kind "lib"))
+end-file
+file producer/src/lib.tl
+(define total : i64 0)
+(define (close-value [value : i64]) : unit (set! total (+ total value)))
+(defstruct Word (:cleanup drop-word) (x i64 (:cleanup close-value)))
+(defstruct Holder (:cleanup drop-holder) (word Word (:owned)))
+(define (make [x : i64]) : Word (Word x))
+(define (make-holder [x : i64]) : Holder (Holder (Word x)))
+(define (count) : i64 total)
+end-file
+file typelisp.pkg
+(package (name "app") (version "0.1.0") (kind "bin")
+  (dependencies (resources "producer")))
+end-file
+file src/main.tl
+(import resources.src.lib as e)
+(define (main) : i64
+  (let [word : e.Word (e.make 19)] [holder : e.Holder (e.make-holder 23)]
+    (e.drop-word word)
+    (e.drop-holder holder)
+    (e.count)))
+end-file
+file missing/typelisp.pkg
+(package (name "missing") (version "0.1.0") (kind "bin")
+  (dependencies (resources "../producer")))
+end-file
+file missing/src/main.tl
+(import resources.src.lib as e)
+(define (main) : i64 (let [word : e.Word (e.make 42)] 42))
+end-file
+file twice/typelisp.pkg
+(package (name "twice") (version "0.1.0") (kind "bin")
+  (dependencies (resources "../producer")))
+end-file
+file twice/src/main.tl
+(import resources.src.lib as e)
+(define (main) : i64
+  (let [word : e.Word (e.make 42)] (e.drop-word word) (e.drop-word word) 42))
+end-file
+step build
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+exec "{{dir}}/target/release/app{{exe}}"
+exit 42
+step missing-discharge
+run build --manifest-path "{{dir}}/missing/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+exit 1
+stderr contains error[E0211]
+step duplicate-discharge
+run build --manifest-path "{{dir}}/twice/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+exit 1
+stderr contains moved

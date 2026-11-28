@@ -563,12 +563,13 @@
       flags
       (match (& cleanup)
         [(No) 0]
-        [_ 16]))
+        [_ tli.tli-type-has-cleanup]))
     size
     align
     repr-kind
     repr-align
     cleanup
+    ""
     (tli-extract-lifetimes lifetimes)
     body))
 
@@ -1874,6 +1875,7 @@
   [lower-state : lower.CompilerLowerState]
   [facts : (& facts TliExtractEffects)]) : unit
   (let
+    [first-type : i64 out.types.len]
     [comptime-only : bool (tli-extract-comptime? ctx decl)]
     [type-flags : i64
       (+
@@ -2043,7 +2045,20 @@
               (tli-extract-flag unsafe-decl 1)
               sig-tli
               summary)))]
-      [_ unit])))
+      [_ unit])
+    ;; Only the producer knows the path and raw module used for its archive.
+    ;; A moduleless declaration still has a qualified public interface name.
+    (when
+      (and (not is-stdlib) (> out.types.len first-type))
+      (match (& (array-ref out.types.slots first-type).cleanup)
+        [(Fn name)
+          (set!
+            (array-ref out.types.slots first-type).cleanup-link-symbol
+            (tli-extract-package-link-symbol
+              decl-path
+              raw-module-name
+              (& (hydrate.tli-hydrate-symbol-leaf name))))]
+        [_ unit]))))
 
 (define (tli-extract-find-module
   [sources : (& sources (__tl_dyn-array TliSource))]

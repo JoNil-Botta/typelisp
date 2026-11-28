@@ -72,6 +72,7 @@ cli_transcripts_files() {
         2)
             printf '%s\n' \
                 tests/cli/public-package.cases \
+                tests/cli/public-package-cleanup.cases \
                 tests/cli/public-package-profiles.cases \
                 tests/cli/public-package-tli.cases \
                 tests/cli/public-package-opaque-provider.cases \

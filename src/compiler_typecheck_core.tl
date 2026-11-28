@@ -97408,6 +97408,23 @@
                 : (Ptr tli_hydrate.TliHydratedFacts)))]
           (tli_hydrate.tli-hydrated-facts-module-hydrated? (& facts) module-id))))))
 
+(define (tc-tli-cleanup-link-symbol [ctx : TcContext] [ty : (& ast.AstType)]) : i64
+  (match (ast.ast-aggregate-type-key (tc-context-type-bases ctx) ty)
+    [(Some key)
+      (let
+        [facts-ptr : i64
+          (tc-job-state-tli-facts-ptr (tc-context-job-state ctx))]
+        (when (= facts-ptr 0) (return -1))
+        (unsafe
+          (let
+            [facts : tli_hydrate.TliHydratedFacts
+              (ptr-read
+                (int->ptr
+                  (cast facts-ptr : u64)
+                  : (Ptr tli_hydrate.TliHydratedFacts)))]
+            (tli_hydrate.tli-hydrated-cleanup-link-symbol (& facts) key))))]
+    [(None) -1]))
+
 (define (tc-tli-hydrated-fn-summary-flags [ctx : TcContext] [symbol-id : i64]) : i64
   (let
     [facts-ptr : i64 (tc-job-state-tli-facts-ptr (tc-context-job-state ctx))]

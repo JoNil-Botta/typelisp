@@ -111,6 +111,7 @@
         1
         16
         (tli.TliCleanup.Fn "cleanup.type")
+        "_tl_fixture_cleanup"
         (tli-test-lifetimes)
         (tli.TliTypeBody.Struct fields)))
     (set!
@@ -124,6 +125,7 @@
         0
         0
         (tli.TliCleanup.No)
+        ""
         (__tl_make-array String 0)
         (tli.TliTypeBody.Enum variants)))
     decls))
@@ -483,6 +485,10 @@
         (& dispatch.link-symbol)
         "dispatch.a"
         "dispatch tie-break")
+      (test.assert-string-eq
+        (& (array-ref module.types 1).cleanup-link-symbol)
+        "_tl_fixture_cleanup"
+        "producer cleanup archive symbol")
       (match (& (array-ref module.types 1).body)
         [(tli.TliTypeBody.Struct fields)
           (test.assert-true (array-ref fields 0).opaque? "opaque field")
@@ -774,7 +780,7 @@
     (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.UnknownTag))))
 
 (test
-  tli-v5-wire-tags-and-digests
+  tli-v6-wire-tags-and-digests
   (let
     [wire : (__tl_dyn-array u8) (tli-test-encode-plain (tli.TliType.I64))]
     [bundle : tli.TliBundle (tli-test-bundle false)]
@@ -783,11 +789,11 @@
       (codec.tli-write-context-new
         (codec.tli-collect-pool (& bundle))
         (__tl_make-array codec.TliCompactBodyMeta 0))]
-    (test.assert-i64-eq (array-length wire) 411 "v5 exemplar length")
+    (test.assert-i64-eq (array-length wire) 411 "v6 exemplar length")
     (test.assert-i64-eq
       (tli-test-record (& wire))
       284
-      "v5 exemplar record offset")
+      "v6 exemplar record offset")
     (match (codec.tli-decode-directory (& wire))
       [(codec.TliDirectoryResult.Err error)
         (test.assert-true false error.message)]
@@ -796,7 +802,7 @@
           [entry (& (array-ref directory.entries 0))]
           (test.assert-owned-string-eq
             (sha256.to-hex (& (sha256.Sha256Digest directory.content-sha256)))
-            "eab219c4934b239a82e13aea7d1661fe3fc33d13017a73115b6f3c34ecb04ed2"
+            "4e47a7ceb51c5ec389b2da5b6736ae449c4443d9f160d31a52ed4b3fd9a7b0f4"
             "independently computed content digest")
           (let
             [index : (Array u8 32) (make-array u8 32)]
@@ -806,7 +812,7 @@
                 (array-ref wire (+ tli.tli-index-digest-offset byte))))
             (test.assert-owned-string-eq
               (sha256.to-hex (& (sha256.Sha256Digest index)))
-              "ca5b9490efe4e6e6ad1335af50903a080d8f30d3195acb9a5c45ad4dfce44183"
+              "df9c3bef824b97cba9cef8a5c1fdb55a63ae4e3af114a811b160db30a12e3bc7"
               "independently computed index digest"))
           (test.assert-owned-string-eq
             (sha256.to-hex (& (sha256.Sha256Digest entry.module-sha256)))
@@ -833,12 +839,12 @@
     [first-type : i64 (+ first-import (* 6 45) 12 4)]
     [repr : i64 (+ first-type 29)]
     [cleanup : i64 (+ first-type 38)]
-    ;; Enum (63 bytes), struct (114 bytes), then the function count.
+    ;; Enum (63 bytes), struct (118 bytes), then the function count.
     [first-struct : i64 (+ first-type 63)]
-    [first-fn : i64 (+ first-struct 114 4)]
-    ;; Struct metadata and field count (59 bytes), then the first field's
+    [first-fn : i64 (+ first-struct 118 4)]
+    ;; Struct metadata and field count (63 bytes), then the first field's
     ;; 22 bytes before its boolean opacity tag.
-    [field-opacity : i64 (+ first-struct 59 22)]
+    [field-opacity : i64 (+ first-struct 63 22)]
     [first-name : i64 (le.read-u32 (& bytes) dir)]
     [second-name : i64 (le.read-u32 (& bytes) (+ dir 56))]
     (le.set-u32! (&mut bytes) dir second-name)

@@ -71,7 +71,7 @@ rows and the 15,000,000-byte limit from
   `Utf8`, `Limit`, `StringIdOutOfRange`, `UnknownTag`, `DigestMismatch`,
   `CfgFingerprintMismatch`, `CompilerBuildMismatch`, `TargetMismatch`,
   `TrailingBytes`). Nothing is left partially decoded into a useable state.
-  `schema_version` is `5` and there is no compatibility reader, so a newer
+  `schema_version` is `6` and there is no compatibility reader, so a newer
   reader rejects an older version instead of guessing.
 - **Lazy, job-scoped decoding.** The Module Directory alone answers
   `inspect`-style summaries. A record decodes on first use into the current
@@ -81,7 +81,7 @@ rows and the 15,000,000-byte limit from
   `scripts/verify-compile-profile.sh` keeps its `<= 1 MiB` post-emission pool
   release and `<= 4 MiB` batch-live drift bounds.
 
-## `.tli` v5 wire format
+## `.tli` v6 wire format
 
 Bytes are packed in this order with no padding and no gaps: header, string
 pool, module directory, module records, compact IR. Offsets and lengths are
@@ -92,7 +92,7 @@ absolute from byte `0`.
 | Bytes | Field | Meaning |
 | --- | --- | --- |
 | `[0..4]` | `magic` | `"TLI\0"` (`0x00494C54`, little-endian) |
-| `[4..8]` | `schema_version: u32` | `5` |
+| `[4..8]` | `schema_version: u32` | `6` |
 | `[8..12]` | `flags: u32` | bit0 `IS_STDLIB_BUNDLE`, bit1 `HAS_COMPACT_IR`, bit2 `HAS_TLCI_COMPANION`; other bits `0` |
 | `[12..16]` | `module_count: u32` | directory entries |
 | `[16..24]` | `total_byte_len: u64` | must equal the file length |
@@ -173,14 +173,16 @@ c) `types` (`TliTypeDecl`): `u8 kind` (0 `Struct`, 1 `Enum`), `s:name`,
    `s:module`, `u32 flags` (bit0 `MUST_USE`, bit1 `OPAQUE`, bit2 `COMPTIME_ONLY`,
    bit3 `IS_UNSAFE`, bit4 `HAS_CLEANUP`), `u64 layout_size`, `u64 layout_align`
    (the checked `TcLayoutInfo`), `u8 repr_kind` (0 `Default`, 1 `C`),
-   `u64 repr_align`, `cleanup_tag cleanup`, `list<s:lifetime>`, then Struct
+   `u64 repr_align`, `cleanup_tag cleanup`, optional `s:cleanup_link_symbol` when bit4 is set,
+   `list<s:lifetime>`, then Struct
    `list<field>` or Enum `list<variant>`, where
    `field = s:name t:type cleanup_tag cleanup u64 byte_offset u64 explicit_align u8 opaque`
    and `variant = s:name list<payload>` with
    `payload = t:type cleanup_tag cleanup`. `cleanup_tag` is `AstFieldCleanup`
    verbatim: 0 `No`, 1 `Fn` + `s:cleanup_fn`, 2 `Owned` (tag 2 is valid only on
    struct fields and enum payloads; type-level `AstStructCleanup` /
-   `AstEnumCleanup` allow only 0 and 1). `explicit_align` is `0` for a field that declares
+   `AstEnumCleanup` allow only 0 and 1). Package interfaces retain the physical archive symbol for
+   a generated cleanup alongside its semantic name. `explicit_align` is `0` for a field that declares
    none, matching `AstFieldAligns`. The field's `opaque` tag is 0 for a public field
    or 1 for a field declared `(:opaque)`. The interface retains the full representation
    for ABI and family access, while callers obey the opaque construction

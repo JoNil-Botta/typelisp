@@ -775,7 +775,7 @@
               [_ false]))]
         [_capture : unit
           (driver.compiler-driver-package-runtime-capture-frontend!
-            (owned_view.compiler-owned-shared-view scope))]
+            (&mut scope))]
         (arena.destroy-safe! owner)
         (unsafe
           ;; unsafe: installs global intern state; replaced before this arena ends

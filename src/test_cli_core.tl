@@ -599,33 +599,39 @@
       args.failed
       (ir.compiler-debug-info-set-enabled! options.debug)
       (tli_cli.tli-set-active-sysroot-options! (& sysroot)))
-    (if args.failed
-      (Err args.error)
-      (let
-        [opt-level : i64
-          (if (or
-            has-source
-            (match batch-list
-              [(Some _) true]
-              [_ false]))
-            options.opt-level
-            (cli_option.cli-package-opt-level (& options)))]
-        (tltest-config-finish
-          source
+    (let
+      [source-mode : bool
+        (or
           has-source
-          manifest-path
-          has-manifest
-          (cli_option.cli-option-target-name options.target)
-          (build_run_core.source-tool-backend-mode
-            (cli_option.cli-compile-options-backend-mode
-              options.backend-mode
-              options.has-backend-mode
-              opt-level))
-          options.stdlib-roots
-          opt-level
-          options.profile
-          test-mode
-          batch-list)))))
+          (match (& batch-list)
+            [(Some _) true]
+            [_ false]))]
+      (cond
+        [args.failed (Err args.error)]
+        [(and options.has-profile source-mode)
+          (Err (string.copy (& cli_option.cli-package-profile-mode-error)))]
+        [else
+          (let
+            [opt-level : i64
+              (if source-mode
+                options.opt-level
+                (cli_option.cli-package-opt-level (& options)))]
+            (tltest-config-finish
+              source
+              has-source
+              manifest-path
+              has-manifest
+              (cli_option.cli-option-target-name options.target)
+              (build_run_core.source-tool-backend-mode
+                (cli_option.cli-compile-options-backend-mode
+                  options.backend-mode
+                  options.has-backend-mode
+                  opt-level))
+              options.stdlib-roots
+              opt-level
+              options.profile
+              test-mode
+              batch-list))]))))
 
 (define (tltest-main-decl? [decl : (& ast.AstDecl)]) : bool
   (match decl

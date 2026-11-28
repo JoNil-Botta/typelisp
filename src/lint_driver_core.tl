@@ -180,6 +180,8 @@
             redundant-begin
             prefer-dotted-field
             name-case))]
+      [options.has-profile
+        (Err (string.copy (& cli_option.cli-package-profile-mode-error)))]
       [has-manifest
         (Err "selfhost-lint: cannot combine input paths with --manifest-path")]
       [else

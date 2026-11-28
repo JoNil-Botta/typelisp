@@ -569,6 +569,11 @@ file app/typelisp.pkg
     (wrap "../wrap")))
 end-file
 file app/src/main.tl
+;# ```tl run
+;# ;; doctest-exit: 42
+;# (import wrap.src.lib as w)
+;# (define (main) : i64 (w.wrap-add 35))
+;# ```
 (import wrap.src.lib as w)
 (define (main) : i64 (w.wrap-add 35))
 end-file
@@ -619,6 +624,22 @@ step active-archive-run
 exec "{{dir}}/app/target/dev/wrap_app"
 exit 43
 sh rm "{{dir}}/wrap/vendor/libffi_add7.a" && ar rcs "{{dir}}/wrap/vendor/libffi_add7.a" "{{dir}}/ffi_add7.o"
+step propagated-release-run
+run run --manifest-path "{{dir}}/app/typelisp.pkg" --release
+exit 42
+stderr empty
+step propagated-release-doctest
+sh mv "{{dir}}/wrap/target/dev/libwrap.a" "{{dir}}/wrap/target/dev/libwrap.saved"
+sh printf 'CORRUPT' > "{{dir}}/wrap/target/dev/libwrap.a"
+run doc --test --manifest-path "{{dir}}/app/typelisp.pkg" --release
+stderr empty
+stdout contains Doc tests passed: 1 example(s)
+test "$(cat "{{dir}}/wrap/target/dev/libwrap.a")" = CORRUPT
+sh mv -f "{{dir}}/wrap/target/dev/libwrap.saved" "{{dir}}/wrap/target/dev/libwrap.a"
+step propagated-dev-doctest
+run doc --test --manifest-path "{{dir}}/app/typelisp.pkg"
+stderr empty
+stdout contains Doc tests passed: 1 example(s)
 # A library the linker cannot find names the manifest field that asked for it.
 step missing-library
 sh sed -i 's/(linux-libraries "ffi_add7")/(linux-libraries "ffi_add7" "wrap_no_such_native_lib")/' "{{dir}}/wrap/typelisp.pkg"

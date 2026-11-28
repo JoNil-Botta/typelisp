@@ -16,6 +16,7 @@
 (import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.byte_buf)
+(import stdlib.arena)
 (import stdlib.io)
 (import stdlib.process)
 (import stdlib.vector)
@@ -29,7 +30,9 @@
 (import compiler_optimize as opt)
 (import compiler_typecheck_core as tc)
 (import compiler_load)
+(import compiler_dependency_tlci)
 (import build_run_core)
+(import package_profile_core as pkg_profile)
 (import stdlib.string)
 (import stdlib.text_buf)
 (import source_text_core as source_text)
@@ -124,6 +127,18 @@
 (defenum DocTestMaybeString
   (No)
   (Some String))
+
+(defstruct DocTestPackageRun
+  (name String)
+  (manifest-dir String)
+  (deps compiler_load.CompilerPkgDeps)
+  (profile pkg_profile.PackageProfile)
+  (cfgs cfg_core.CompilerCfgSnapshot)
+  (link-inputs build_run_core.SourceToolLinkInputs))
+
+(defenum DocTestExecution
+  (Standalone)
+  (Package DocTestPackageRun))
 
 (defenum DocTestFenceInfo
   (Ignore)
@@ -970,6 +985,18 @@
 (defenum DocTestRunReport
   (Report i64 doc_run_failure_vec.Vec String))
 
+(define (clone-doc-test-run-report [report : (& DocTestRunReport)]) : DocTestRunReport
+  (match report
+    [(Report count failures advisories)
+      (let
+        [copied : doc_run_failure_vec.Vec
+          (doc_run_failure_vec.with-capacity (doc_run_failure_vec.len failures))]
+        (for [index (iterator.range 0 (doc_run_failure_vec.len failures))]
+          (doc_run_failure_vec.push-ref!
+            (&mut copied)
+            (doc-test-run-failure-list-ref failures index)))
+        (Report count copied (string.copy advisories)))]))
+
 (defenum DocTestMaybeFailure
   (No)
   (Some DocTestRunFailure))
@@ -1296,6 +1323,121 @@
     (driver.compiler-driver-reset-file-state!)
     result))
 
+(define (doc-test-emit-package-runnable-in-scope
+  [scope : (&mut driver.CompilerDriverPackageRuntimeScope)]
+  [path : String]
+  [code : String]
+  [roots : doc_svec.Vec]
+  [target : be_state.CompilerBackendTarget]
+  [package-run : (& DocTestPackageRun)]
+  [advisories-out : (&mut advisories-out doc_svec.Vec)]) : build_run_core.ResultSourceToolString
+  (let
+    [cfgs : sym_i64_env.SymI64Env
+      (cfg_core.compiler-cfg-snapshot-to-env (& package-run.cfgs))]
+    [opt-level : i64
+      (pkg_profile.package-profile-opt-level (& package-run.profile))]
+    (compiler_load.compiler-load-session-set-package-profile!
+      (compiler_load.compiler-load-serial-test-session-state)
+      (pkg_profile.clone-package-profile (& package-run.profile)))
+    (compiler_dependency_tlci.compiler-dependency-tlci-prepare-deps!
+      (compiler_load.compiler-load-serial-test-session-state)
+      (string.copy (& package-run.manifest-dir))
+      (compiler_load.clone-compiler-pkg-deps (& package-run.deps)))
+    (match (driver.compiler-driver-package-runtime-open-tli!
+      scope
+      (& path)
+      (& package-run.manifest-dir)
+      (& package-run.deps)
+      target
+      (& roots)
+      cfgs
+      opt-level
+      true)
+      [(Err message) (return (Err message))]
+      [(Ok) unit])
+    (match (driver.compiler-driver-package-runtime-load-entry
+      scope
+      (& path)
+      (compiler_load.CompilerLoadMaybeString.CompilerLoadSomeString code)
+      (& roots)
+      (& package-run.manifest-dir)
+      (& package-run.deps)
+      true
+      cfgs)
+      [(Err diag) (Err (cdiag.compiler-diagnostic-render (deref diag)))]
+      [(Ok decls paths _ _)
+        (let
+          [owned-paths : ast.AstDeclPathList
+            (compiler_load.compiler-load-package-owned-paths-for-decls
+              (& package-run.name)
+              (& package-run.manifest-dir)
+              (& roots)
+              (& path)
+              (& decls)
+              (& paths))]
+          (match (driver.compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
+            path
+            (driver.compiler-driver-package-runtime-lower
+              scope
+              (string.copy (& package-run.name))
+              target
+              (Scalar)
+              decls
+              owned-paths
+              cfgs
+              opt-level)
+            target
+            true
+            (Scalar)
+            opt-level
+            true
+            (build_run_core.source-tool-linux-crt-entry?
+              target
+              (& package-run.link-inputs))
+            false)
+            [(Ok asm advisories)
+              (doc-test-append-advisories! advisories-out (& advisories))
+              (Ok
+                (build_run_core.source-tool-augment-assembly-for-target
+                  asm
+                  target))]
+            [(Err diag advisories)
+              (doc-test-append-advisories! advisories-out (& advisories))
+              (Err (cdiag.compiler-diagnostic-render (deref diag)))]))])))
+
+(define (doc-test-emit-package-runnable-assembly
+  [path : String]
+  [code : String]
+  [roots : doc_svec.Vec]
+  [target : be_state.CompilerBackendTarget]
+  [package-run : (& DocTestPackageRun)]
+  [advisories-out : (&mut advisories-out doc_svec.Vec)]) : build_run_core.ResultSourceToolString
+  (let
+    [home : arena.Arena (arena.current)]
+    (with-scratch
+      (let
+        [scope : driver.CompilerDriverPackageRuntimeScope
+          (unsafe
+            ;; unsafe: the runtime scope installs a load session until release
+            (driver.compiler-driver-package-runtime-scope-new home))]
+        [result : build_run_core.ResultSourceToolString
+          (in-arena
+            home
+            (unsafe
+              ;; unsafe: the scope owns frontend state and is released below
+              (doc-test-emit-package-runnable-in-scope
+                (&mut scope)
+                path
+                code
+                roots
+                target
+                package-run
+                advisories-out)))]
+        (unsafe
+          ;; unsafe: restore the enclosing load session before scratch ends
+          (driver.compiler-driver-package-runtime-scope-release! scope))
+        result))))
+
 (define (doc-test-runnable-failure
   [path : String]
   [source-line : i64]
@@ -1309,6 +1451,7 @@
   [stdlib-roots : doc_svec.Vec]
   [target : be_state.CompilerBackendTarget]
   [temp-dir : String]
+  [execution : (& DocTestExecution)]
   [advisories-out : (&mut advisories-out doc_svec.Vec)]) : DocTestMaybeFailure
   (let
     [index : i64
@@ -1324,14 +1467,27 @@
         (owned_view.compiler-owned-shared-view path)
         index)]
     [files : build_run_core.SourceToolTempFiles
-      (build_run_core.source-tool-temp-files temp-dir virtual-path target)]
+      (build_run_core.source-tool-temp-files
+        temp-dir
+        (string.copy (& virtual-path))
+        target)]
     [message : DocTestMaybeString
-      (match (doc-test-emit-runnable-assembly
-        (owned_view.compiler-owned-shared-view path)
-        example
-        stdlib-roots
-        target
-        advisories-out)
+      (match (match execution
+        [(Standalone)
+          (doc-test-emit-runnable-assembly
+            (string.copy (& path))
+            example
+            stdlib-roots
+            target
+            advisories-out)]
+        [(Package package-run)
+          (doc-test-emit-package-runnable-assembly
+            virtual-path
+            (doc-test-example-code example)
+            stdlib-roots
+            target
+            package-run
+            advisories-out)])
         [(Err message) (Some (doc-test-runnable-compile-message index message))]
         [(Ok asm)
           (match (build_run_core.source-tool-link-and-run
@@ -1341,7 +1497,11 @@
               target
               (opt.compiler-optimize-default-level)
               (Scalar)
-              (build_run_core.source-tool-link-inputs-empty)
+              (match execution
+                [(Standalone) (build_run_core.source-tool-link-inputs-empty)]
+                [(Package package-run)
+                  (build_run_core.clone-source-tool-link-inputs
+                    (& package-run.link-inputs))])
               (owned_view.compiler-owned-shared-view files)
               "doctest: failed to write assembly artifact")
             (process.args-empty)
@@ -1375,6 +1535,7 @@
   [path : String]
   [example : DocTestExample]
   [stdlib-roots : doc_svec.Vec]
+  [execution : (& DocTestExecution)]
   [advisories-out : (&mut advisories-out doc_svec.Vec)]) : DocTestMaybeFailure
   (let
     [index : i64
@@ -1393,6 +1554,7 @@
             stdlib-roots
             target
             temp-dir
+            execution
             advisories-out)]
         [(Err message)
           (Some
@@ -1511,9 +1673,12 @@
   [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
-  [cfgs : sym_i64_env.SymI64Env]
+  [cfg-snapshot : (& cfg_core.CompilerCfgSnapshot)]
   [advisories-out : (&mut advisories-out doc_svec.Vec)]) : DocTestMaybeFailure
+  (compiler_check_core.compiler-check-reset-interns!)
   (let
+    [cfgs : sym_i64_env.SymI64Env
+      (cfg_core.compiler-cfg-snapshot-to-env cfg-snapshot)]
     [index : i64
       (doc-test-example-index (owned_view.compiler-owned-shared-view example))]
     [source-line : i64
@@ -1552,6 +1717,7 @@
       path
       example
       stdlib-roots
+      (& (DocTestExecution.Standalone))
       advisories-out)
     (doc-test-typecheck-example-with-roots
       path
@@ -1616,8 +1782,8 @@
   [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
-  [cfgs : sym_i64_env.SymI64Env]
-  [execute? : bool]
+  [cfg-snapshot : (& cfg_core.CompilerCfgSnapshot)]
+  [execution : (& DocTestExecution)]
   [advisories-out : (&mut advisories-out doc_svec.Vec)]) : doc_run_failure_vec.Vec
   (let
     [count : i64 (doc-test-example-list-count (& examples))]
@@ -1627,7 +1793,9 @@
         [example : DocTestExample
           (doc-test-example-list-ref (& examples) index)]
         (match (if (and
-          execute?
+          (match execution
+            [(Package _) true]
+            [(Standalone) false])
           (match (& example)
             [(Example _ _ (Run _ _ _) _) true]
             [_ false]))
@@ -1635,6 +1803,7 @@
             (string.copy (& path))
             example
             (doc_svec.clone-vec (& stdlib-roots))
+            execution
             advisories-out)
           (doc-test-typecheck-package-example-with-roots-and-cfg
             (owned_view.compiler-owned-shared-view path)
@@ -1642,7 +1811,7 @@
             (owned_view.compiler-owned-shared-view stdlib-roots)
             (owned_view.compiler-owned-shared-view manifest-dir)
             (owned_view.compiler-owned-shared-view deps)
-            cfgs
+            cfg-snapshot
             advisories-out))
           [(No) unit]
           [(Some failure) (doc_run_failure_vec.push-ref! (&mut out) failure)])))
@@ -1745,8 +1914,8 @@
   [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
-  [cfgs : sym_i64_env.SymI64Env]
-  [execute? : bool]
+  [cfg-snapshot : (& cfg_core.CompilerCfgSnapshot)]
+  [execution : (& DocTestExecution)]
   [advisories-out : (&mut advisories-out doc_svec.Vec)]) : DocTestRunReport
   (match extraction
     [(Extraction examples errors)
@@ -1764,8 +1933,8 @@
             stdlib-roots
             manifest-dir
             deps
-            cfgs
-            execute?
+            cfg-snapshot
+            execution
             advisories-out)
           ""))]))
 
@@ -1825,7 +1994,7 @@
   [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
-  [cfgs : sym_i64_env.SymI64Env]
+  [cfg-snapshot : (& cfg_core.CompilerCfgSnapshot)]
   [last-path : String]
   [count : i64]
   [advisories-out : (&mut advisories-out doc_svec.Vec)]) : DocTestRunReport
@@ -1883,7 +2052,7 @@
                 (owned_view.compiler-owned-shared-view stdlib-roots)
                 (owned_view.compiler-owned-shared-view manifest-dir)
                 (owned_view.compiler-owned-shared-view deps)
-                cfgs
+                cfg-snapshot
                 advisories-out)]
             (if (doc-test-run-report-ok?
               (owned_view.compiler-owned-shared-view report))
@@ -1892,7 +2061,7 @@
                 stdlib-roots
                 manifest-dir
                 deps
-                cfgs
+                cfg-snapshot
                 rooted
                 (+ count (doc-test-run-report-count report))
                 advisories-out)
@@ -1902,7 +2071,7 @@
             stdlib-roots
             manifest-dir
             deps
-            cfgs
+            cfg-snapshot
             last-path
             count
             advisories-out)))]))
@@ -1912,7 +2081,7 @@
   [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
-  [cfgs : sym_i64_env.SymI64Env]
+  [cfg-snapshot : (& cfg_core.CompilerCfgSnapshot)]
   [advisories-out : (&mut advisories-out doc_svec.Vec)]) : DocTestRunReport
   (doc-test-typecheck-package-extraction-with-roots-and-cfg
     (owned_view.compiler-owned-shared-view path)
@@ -1920,28 +2089,29 @@
     stdlib-roots
     manifest-dir
     deps
-    cfgs
-    false
+    cfg-snapshot
+    (& (DocTestExecution.Standalone))
     advisories-out))
 
 (define (doc-test-run-package-file-with-roots
   [path : String]
   [stdlib-roots : doc_svec.Vec]
-  [manifest-dir : String]
-  [deps : compiler_load.CompilerPkgDeps]
-  [cfgs : sym_i64_env.SymI64Env]) : DocTestRunReport
+  [execution : (& DocTestExecution)]) : DocTestRunReport
   (let
     [advisories : doc_svec.Vec (doc_svec.new)]
     [report : DocTestRunReport
-      (doc-test-typecheck-package-extraction-with-roots-and-cfg
-        (string.copy (& path))
-        (doc-test-extract-package-file-text path)
-        stdlib-roots
-        manifest-dir
-        deps
-        cfgs
-        true
-        (&mut advisories))]
+      (match execution
+        [(Package config)
+          (doc-test-typecheck-package-extraction-with-roots-and-cfg
+            (string.copy (& path))
+            (doc-test-extract-package-file-text path)
+            stdlib-roots
+            (string.copy (& config.manifest-dir))
+            (compiler_load.clone-compiler-pkg-deps (& config.deps))
+            (& config.cfgs)
+            execution
+            (&mut advisories))]
+        [(Standalone) (io.panic "doctest: expected package execution")])]
     (doc-test-run-report-with-advisories
       report
       (doc-test-join-advisories (& advisories)))))
@@ -1965,20 +2135,41 @@
   [deps : compiler_load.CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]) : DocTestRunReport
   (let
-    [advisories-out : doc_svec.Vec (doc_svec.new)]
-    [report : DocTestRunReport
-      (doc-test-typecheck-package-path-list-with-roots-from
-        paths
-        stdlib-roots
-        manifest-dir
-        deps
-        cfgs
-        ""
-        0
-        (&mut advisories-out))]
-    (doc-test-run-report-with-advisories
-      report
-      (doc-test-join-advisories (& advisories-out)))))
+    [cfg-snapshot : cfg_core.CompilerCfgSnapshot
+      (cfg_core.compiler-cfg-snapshot-from-env cfgs)]
+    [home : arena.Arena (arena.current)]
+    (with-scratch
+      (let
+        [scope : driver.CompilerDriverPackageRuntimeScope
+          (unsafe
+            ;; unsafe: keep example resets in a child session until release
+            (driver.compiler-driver-package-runtime-scope-new home))]
+        [report : DocTestRunReport
+          (in-arena
+            home
+            (unsafe
+              ;; unsafe: loader state stays in the child scope until release
+              (let
+                [advisories : doc_svec.Vec (doc_svec.new)]
+                [checked : DocTestRunReport
+                  (doc-test-typecheck-package-path-list-with-roots-from
+                    paths
+                    stdlib-roots
+                    manifest-dir
+                    deps
+                    (& cfg-snapshot)
+                    ""
+                    0
+                    (&mut advisories))]
+                (driver.compiler-driver-package-runtime-capture-frontend!
+                  (&mut scope))
+                (doc-test-run-report-with-advisories
+                  checked
+                  (doc-test-join-advisories (& advisories))))))]
+        (unsafe
+          ;; unsafe: restore the enclosing load session before scratch ends
+          (driver.compiler-driver-package-runtime-scope-release! scope))
+        report))))
 
 ;; Exit status for a report: 0 when every example passed (or there were none),
 ;; 1 otherwise. Callers turn this directly into a process exit code.

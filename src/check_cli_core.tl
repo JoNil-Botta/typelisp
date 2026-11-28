@@ -100,6 +100,8 @@
     (unless args.failed (tli_cli.tli-set-active-sysroot-options! (& sysroot)))
     (cond
       [args.failed (Err args.error)]
+      [(and options.has-profile (or has-input has-batch))
+        (Err (string.copy (& cli_option.cli-package-profile-mode-error)))]
       [(and has-batch has-input)
         (Err "selfhost-check: cannot combine input path with --batch")]
       [(and has-batch has-manifest)

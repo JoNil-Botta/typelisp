@@ -42,7 +42,7 @@
               (parser.parse-ast-source (& source))))]
         [_capture : unit
           (driver.compiler-driver-package-runtime-capture-frontend!
-            (owned_view.compiler-owned-shared-view scope))]
+            (&mut scope))]
         [result : String
           (in-arena
             home
@@ -56,7 +56,7 @@
                         (unsafe
                           ;; unsafe: installs global intern state; replaced before this arena ends
                           (driver.compiler-driver-package-runtime-lower
-                            (owned_view.compiler-owned-shared-view scope)
+                            (&mut scope)
                             "owner_smoke"
                             target
                             (Scalar)

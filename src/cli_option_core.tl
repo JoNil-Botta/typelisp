@@ -135,7 +135,7 @@
 (define (cli-option-missing-value-message
   [command : (& command str)]
   [option : (& option str)]) : String
-  (if (cli-compile-option? option)
+  (if (or (cli-compile-option? option) (string.eq option "--profile"))
     (string.concat3-borrowed "" option " requires a value")
     (string.concat4-borrowed command ": " option " requires a value")))
 
@@ -173,7 +173,11 @@
           (set! args.name name)
           (set! args.next (+ index (+ arity 1)))
           (when
-            (> args.next args.count)
+            (or
+              (> args.next args.count)
+              (and
+                (string.eq args.name "--profile")
+                (cli-flag? (& (io.arg (+ index 1))))))
             (cli-args-fail!
               args
               (cli-option-missing-value-message (& args.command) (& arg))))])
@@ -309,6 +313,9 @@
 
 (define (cli-package-profile-options) : String
   " --profile <dev|release> --release ")
+
+(define cli-package-profile-mode-error : String
+  "--profile and --release are only valid in package mode")
 
 (define (cli-package-profile-option!
   [options : (&mut options CliCompileOptions)]

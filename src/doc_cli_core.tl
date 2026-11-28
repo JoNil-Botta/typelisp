@@ -1,4 +1,8 @@
 (import build_run_core)
+(import build_cli_core)
+(import compiler_cfg_core as cfg_core)
+(import compiler_backend_state as be_state)
+(import package_profile_core as pkg_profile)
 
 ;; doc_cli_core.tl - Selfhost doc command logic.
 ;;
@@ -635,6 +639,15 @@
   [has-manifest : bool]
   [options : cli_option.CliCompileOptions]
   [batch-list : DocMaybeString]) : ResultDocTestCliConfig
+  (when
+    (and
+      options.has-profile
+      (or
+        (not (doc_svec.is-empty? (& input-paths)))
+        (match (& batch-list)
+          [(Some _) true]
+          [_ false])))
+    (return (Err (string.copy (& cli_option.cli-package-profile-mode-error)))))
   (match batch-list
     [(Some list-path)
       (if has-manifest
@@ -743,8 +756,7 @@
 (define (doc-test-package-files-from
   [input-paths : doc_svec.Vec]
   [stdlib-roots : doc_svec.Vec]
-  [manifest-dir : (& str)]
-  [deps : (& compiler_load.CompilerPkgDeps)]
+  [execution : (& doc_test.DocTestExecution)]
   [status : i64]) : i64
   (for [index (iterator.range 0 (doc_svec.len (& input-paths)))]
     (let
@@ -754,21 +766,60 @@
           (io.print-format
             "{}"
             (str_cat.str-cat "--- " (string.copy (& input-path)) "\n"))
-          (if (= (compiler_load.compiler-pkg-dep-list-count (& deps.ordered)) 0)
-            (doc-test-file input-path (doc_svec.clone-vec (& stdlib-roots)))
-            (doc-test-print-file-report
-              (doc_test.doc-test-run-package-file-with-roots
-                input-path
-                (doc_svec.clone-vec (& stdlib-roots))
-                (string.copy manifest-dir)
-                (compiler_load.clone-compiler-pkg-deps deps)
-                (compiler_check_core.compiler-check-language-cfgs)))))]
+          (doc-test-print-file-report
+            (doc_test.doc-test-run-package-file-with-roots
+              input-path
+              (doc_svec.clone-vec (& stdlib-roots))
+              execution)))]
       (set!
         status
         (if (= status 0)
           file-status
           status))))
   status)
+
+(define (doc-test-package-link-inputs
+  [manifest-path : (& str)]
+  [manifest : compiler_load.CompilerPkgManifest]
+  [profile : pkg_profile.PackageProfile]
+  [target : be_state.CompilerBackendTarget]) : build_run_core.ResultSourceToolLinkInputs
+  (let
+    [path : String
+      (build_cli_core.build-package-normalize-manifest-path
+        (string.copy manifest-path))]
+    [manifest-inputs : build_run_core.SourceToolLinkInputs
+      (build_cli_core.build-package-manifest-link-inputs
+        (& manifest.link)
+        (compiler_load.compiler-load-dirname (string.copy (& path)))
+        (build_cli_core.build-package-link-owner
+          (string.copy (& manifest.name))
+          (string.copy (& path)))
+        target)]
+    [declared-deps : compiler_load.CompilerPkgDeps
+      (compiler_load.clone-compiler-pkg-deps (& manifest.deps))]
+    [resolved
+      (try
+        (build_cli_core.build-package-resolve-manifest-deps
+          (string.copy (& path))
+          manifest
+          (build_cli_core.BuildPackageLockPolicy.Default)))]
+    [graph
+      (try
+        (build_cli_core.build-package-dependency-graph
+          path
+          (& declared-deps)
+          (& resolved.deps)))]
+    [dep-inputs
+      (try
+        (build_cli_core.build-package-graph-link-inputs
+          graph.order
+          profile
+          target))]
+    (Ok
+      (build_run_core.source-tool-link-inputs-merge-with
+        manifest-inputs
+        dep-inputs
+        false))))
 
 (define (doc-test-package
   [manifest-path : String]
@@ -796,12 +847,34 @@
           (compiler_load.compiler-load-session-set-package-profile!
             (compiler_load.compiler-load-serial-test-session-state)
             options.profile)
-          (doc-test-package-files-from
-            source-set.sources
-            options.stdlib-roots
-            (& source-set.manifest-dir)
-            (& source-set.manifest.deps)
-            0)])]))
+          (let
+            [name : String (string.copy (& source-set.manifest.name))]
+            [deps : compiler_load.CompilerPkgDeps
+              (compiler_load.clone-compiler-pkg-deps
+                (& source-set.manifest.deps))]
+            (match (doc-test-package-link-inputs
+              (& source-set.manifest-path)
+              source-set.manifest
+              options.profile
+              (build_run_core.source-tool-backend-target options.target))
+              [(Err message)
+                (io.print-error message)
+                1]
+              [(Ok link-inputs)
+                (doc-test-package-files-from
+                  source-set.sources
+                  options.stdlib-roots
+                  (&
+                    (doc_test.DocTestExecution.Package
+                      (doc_test.DocTestPackageRun
+                        name
+                        source-set.manifest-dir
+                        deps
+                        options.profile
+                        (cfg_core.compiler-cfg-snapshot-from-env
+                          (compiler_check_core.compiler-check-language-cfgs))
+                        link-inputs)))
+                  0)]))])]))
 
 (define (doc-default-config-finish
   [input-paths : doc_svec.Vec]

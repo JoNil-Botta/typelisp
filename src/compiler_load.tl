@@ -14934,8 +14934,9 @@
       deps
       cfgs)))
 
-(define (compiler-load-package-file-with-runtime-cfg-inner
+(define (compiler-load-package-entry-with-runtime-cfg
   [input-path : (& str)]
+  [source : CompilerLoadMaybeString]
   [stdlib-roots : (& svec.Vec)]
   [manifest-dir : (& str)]
   [deps : (& CompilerPkgDeps)]
@@ -14957,13 +14958,24 @@
           deps
           cfgs)
           [(Ok macro-decls macro-paths macro-modules prelude-seen)
-            (match (compiler-load-package-entry-file-with-paths-and-roots-cfg
-              (& (string.copy input-path))
-              prelude-seen
-              stdlib-roots
-              (& (string.copy manifest-dir))
-              deps
-              cfgs)
+            (match (match source
+              [(CompilerLoadNoString)
+                (compiler-load-package-entry-file-with-paths-and-roots-cfg
+                  input-path
+                  prelude-seen
+                  stdlib-roots
+                  manifest-dir
+                  deps
+                  cfgs)]
+              [(CompilerLoadSomeString text)
+                (compiler-load-package-stdlib-prelude-source-with-roots-cfg
+                  input-path
+                  (& text)
+                  prelude-seen
+                  stdlib-roots
+                  manifest-dir
+                  deps
+                  cfgs)])
               [(Ok entry-decls entry-paths entry-modules seen)
                 (Ok
                   (compiler-load-decl-list-append
@@ -15022,8 +15034,9 @@
   [deps : (& CompilerPkgDeps)]
   [emit-entry : bool]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
-  (compiler-load-package-file-with-runtime-cfg-inner
+  (compiler-load-package-entry-with-runtime-cfg
     input-path
+    CompilerLoadNoString
     stdlib-roots
     manifest-dir
     deps

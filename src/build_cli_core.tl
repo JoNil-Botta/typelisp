@@ -2041,8 +2041,8 @@
 
 (define (build-package-graph-add-deps
   [manifest-dir : String]
-  [declared-deps : load.CompilerPkgDepList]
-  [resolved-deps : load.CompilerPkgDepList]
+  [declared-deps : (& load.CompilerPkgDepList)]
+  [resolved-deps : (& load.CompilerPkgDepList)]
   [index : i64]
   [state : BuildPackageGraphState]) : ResultBuildPackageGraphState
   (if (>= index (load.compiler-pkg-dep-list-count resolved-deps))
@@ -2052,8 +2052,8 @@
         (try
           (build-package-load-dep-node
             (owned_view.compiler-owned-shared-view manifest-dir)
-            (load.compiler-pkg-dep-list-at (& declared-deps) index)
-            (load.compiler-pkg-dep-list-at (& resolved-deps) index)))]
+            (load.compiler-pkg-dep-list-at declared-deps index)
+            (load.compiler-pkg-dep-list-at resolved-deps index)))]
       [next-state (try (build-package-graph-add-node node state))]
       (build-package-graph-add-deps
         manifest-dir
@@ -2064,8 +2064,8 @@
 
 (define (build-package-dependency-graph
   [manifest-path : String]
-  [declared-manifest : load.CompilerPkgManifest]
-  [resolved-manifest : load.CompilerPkgManifest]) : ResultBuildPackageGraph
+  [declared-deps : (& load.CompilerPkgDeps)]
+  [resolved-deps : (& load.CompilerPkgDeps)]) : ResultBuildPackageGraph
   (let
     [root-path : String (build-package-normalize-manifest-path manifest-path)]
     [root-dir : String (load.compiler-load-dirname root-path)]
@@ -2080,8 +2080,8 @@
       (try
         (build-package-graph-add-deps
           root-dir
-          (load.compiler-pkg-deps-list declared-manifest.deps)
-          (load.compiler-pkg-deps-list resolved-manifest.deps)
+          (& declared-deps.ordered)
+          (& resolved-deps.ordered)
           0
           initial))]
     (Ok (BuildPackageGraph state.order))))
@@ -2271,7 +2271,7 @@
   [manifest-dir : String]
   [owner : String]
   [prefix : String]
-  [set : load.CompilerPkgLinkSet]) : build_run_core.SourceToolLinkInputs
+  [set : (& load.CompilerPkgLinkSet)]) : build_run_core.SourceToolLinkInputs
   (build-package-link-add-field-origins
     (build-package-link-add-field-origins
       (build-package-link-add-field-origins
@@ -2346,7 +2346,7 @@
 (define (build-package-link-add-set
   [inputs : build_run_core.SourceToolLinkInputs]
   [manifest-dir : String]
-  [set : load.CompilerPkgLinkSet]) : build_run_core.SourceToolLinkInputs
+  [set : (& load.CompilerPkgLinkSet)]) : build_run_core.SourceToolLinkInputs
   (build-package-link-add-args
     (build-package-link-add-search-paths
       (build-package-link-add-libs inputs (& set.libraries) 0)
@@ -2356,41 +2356,51 @@
     (& set.args)
     0))
 
+(define (build-package-link-add-scope
+  [inputs : build_run_core.SourceToolLinkInputs]
+  [manifest-dir : (& str)]
+  [owner : (& str)]
+  [prefix : String]
+  [set : (& load.CompilerPkgLinkSet)]) : build_run_core.SourceToolLinkInputs
+  (build-package-link-add-set-origins
+    (build-package-link-add-set inputs (string.copy manifest-dir) set)
+    (string.copy manifest-dir)
+    (string.copy owner)
+    prefix
+    set))
+
 ;: Convert a manifest `(link ...)` section into link inputs for `target`:
 ;: all-target inputs first, then the per-target (linux / windows) inputs,
 ;: preserving first-seen order and dropping exact duplicates within each class.
 ;: `owner` names the declaring package in every input's origin record.
 (define (build-package-manifest-link-inputs
-  [link : load.CompilerPkgLink]
+  [link : (& load.CompilerPkgLink)]
   [manifest-dir : String]
   [owner : String]
   [target : be_state.CompilerBackendTarget]) : build_run_core.SourceToolLinkInputs
   (let
-    [selected : load.CompilerPkgLinkSet
-      (match target
-        [(Linux) link.linux]
-        [(Windows) link.windows])]
-    [prefix : String
-      (match target
-        [(Linux) "linux-"]
-        [(Windows) "windows-"])]
-    (build-package-link-add-set-origins
-      (build-package-link-add-set-origins
-        (build-package-link-add-set
-          (build-package-link-add-set
-            (build_run_core.source-tool-link-inputs-empty)
-            (owned_view.compiler-owned-shared-view manifest-dir)
-            (owned_view.compiler-owned-shared-view link.all))
-          (owned_view.compiler-owned-shared-view manifest-dir)
-          (owned_view.compiler-owned-shared-view selected))
-        (owned_view.compiler-owned-shared-view manifest-dir)
-        (owned_view.compiler-owned-shared-view owner)
+    [inputs : build_run_core.SourceToolLinkInputs
+      (build-package-link-add-scope
+        (build_run_core.source-tool-link-inputs-empty)
+        (& manifest-dir)
+        (& owner)
         ""
-        link.all)
-      manifest-dir
-      owner
-      prefix
-      selected)))
+        (& link.all))]
+    (match target
+      [(Linux)
+        (build-package-link-add-scope
+          inputs
+          (& manifest-dir)
+          (& owner)
+          "linux-"
+          (& link.linux))]
+      [(Windows)
+        (build-package-link-add-scope
+          inputs
+          (& manifest-dir)
+          (& owner)
+          "windows-"
+          (& link.windows))])))
 
 (define (build-package-artifact-status
   [kind : load.CompilerPkgKind]
@@ -2795,7 +2805,7 @@
                 false)]
             [manifest-inputs : build_run_core.SourceToolLinkInputs
               (build-package-manifest-link-inputs
-                link
+                (& link)
                 (load.compiler-load-dirname
                   (owned_view.compiler-owned-shared-view node.manifest-path))
                 owner
@@ -5652,7 +5662,7 @@
           (& request.paths))]
       [lowered : compiler_driver_core.ResultCompilerDriverLowered
         (compiler_driver_core.compiler-driver-package-runtime-lower
-          scope
+          (&mut scope)
           request.name
           request.target
           request.mode
@@ -6550,7 +6560,7 @@
             [_ false])]
         [_capture-fe : unit
           (compiler_driver_core.compiler-driver-package-runtime-capture-frontend!
-            (owned_view.compiler-owned-shared-view scope))]
+            (&mut scope))]
         [tc-req : tc_api.TypecheckRequest
           (tc_api.TypecheckRequest
             (owned_view.compiler-owned-shared-view scope.state.load-session)
@@ -7020,7 +7030,7 @@
       [req-target : be_state.CompilerBackendTarget
         (be_state.clone-compiler-backend-target (& request.target))]
       (match (compiler_driver_core.compiler-driver-package-runtime-open-tli!
-        (owned_view.compiler-owned-shared-view scope)
+        (& scope)
         (& request.entry-path)
         (& request.manifest-dir)
         (& request.manifest.deps)
@@ -7319,7 +7329,7 @@
           (let
             [manifest-link-inputs : build_run_core.SourceToolLinkInputs
               (build-package-manifest-link-inputs
-                (owned_view.compiler-owned-shared-view manifest.link)
+                (& manifest.link)
                 (owned_view.compiler-owned-shared-view manifest-dir)
                 (build-package-link-owner
                   (owned_view.compiler-owned-shared-view manifest.name)
@@ -8406,8 +8416,8 @@
           [(Ok resolved-manifest)
             (match (build-package-dependency-graph
               (owned_view.compiler-owned-shared-view normalized-path)
-              manifest
-              (owned_view.compiler-owned-shared-view resolved-manifest))
+              (& manifest.deps)
+              (& resolved-manifest.deps))
               [(Err message)
                 (io.print-error message)
                 1]
@@ -8819,8 +8829,8 @@
                   [(Ok resolved-manifest)
                     (match (build-package-dependency-graph
                       (string.copy (& normalized-path))
-                      manifest
-                      (owned_view.compiler-owned-shared-view resolved-manifest))
+                      (& manifest.deps)
+                      (& resolved-manifest.deps))
                       [(Err message)
                         (io.print-error message)
                         1]

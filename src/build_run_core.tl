@@ -46,6 +46,8 @@
   (Ok String)
   (Err String))
 
+(clone_gen.gen-clone ResultSourceToolString)
+
 (defenum SourceToolDirectObjectStatus
   (Ok)
   (Unavailable String)

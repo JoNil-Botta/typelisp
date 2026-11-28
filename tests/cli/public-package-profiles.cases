@@ -17,6 +17,22 @@ file -x profiles/src/main.tl
 ;# (cfg target-{{host}} (define (doctest-answer) : i64 (dep.from-profile (dep.answer))))
 ;# (define (doctest-result) : i64 (doctest-answer))
 ;# ```
+;#
+;# ```typelisp
+;# (import stdlib.vector)
+;# (import (vector.vector i64) as ints)
+;# (define (main) : i64 0)
+;# ```
+;#
+;# ```typelisp
+;# (import stdlib.vector)
+;# (import (vector.vector i64) as ints)
+;# (define (main) : i64
+;#   (let [xs : ints.Vec (ints.with-capacity 1)]
+;#     (begin
+;#       (ints.push! xs 42)
+;#       (ints.get (& xs) 0 0))))
+;# ```
 (import dep.src.lib as dep)
 (cfg test (import stdlib.test))
 
@@ -133,7 +149,7 @@ sh mkdir -p "{{dir}}/vendor/dep/target/release"
 sh printf 'CORRUPT' > "{{dir}}/vendor/dep/target/release/profile_dep.tli"
 run doc --test
 stderr empty
-stdout contains Doc tests passed: 1 example(s)
+stdout contains Doc tests passed: 3 example(s)
 test -s "{{dir}}/vendor/dep/target/dev/profile_dep.tli"
 test -s "{{dir}}/vendor/dep/target/dev/profile_dep.tlci"
 test "$(cat "{{dir}}/vendor/dep/target/release/profile_dep.tli")" = CORRUPT
@@ -142,7 +158,7 @@ sh rm -rf "{{dir}}/vendor/dep/target/release"
 sh printf 'CORRUPT' > "{{dir}}/vendor/dep/target/dev/profile_dep.tli"
 run doc --test --release
 stderr empty
-stdout contains Doc tests passed: 1 example(s)
+stdout contains Doc tests passed: 3 example(s)
 test -s "{{dir}}/vendor/dep/target/release/profile_dep.tli"
 test -s "{{dir}}/vendor/dep/target/release/profile_dep.tlci"
 test "$(cat "{{dir}}/vendor/dep/target/dev/profile_dep.tli")" = CORRUPT
@@ -151,7 +167,7 @@ sh cp "{{dir}}/vendor/dep/target/release/profile_dep.tli" "{{dir}}/shorthand.tli
 sh rm -rf "{{dir}}/vendor/dep/target/release"
 run doc --test --profile release
 stderr empty
-stdout contains Doc tests passed: 1 example(s)
+stdout contains Doc tests passed: 3 example(s)
 sh cmp "{{dir}}/shorthand.tli" "{{dir}}/vendor/dep/target/release/profile_dep.tli"
 step doc-unknown-profile
 run doc --test --profile fast
@@ -189,3 +205,102 @@ test ! -e "{{dir}}/target/release"
 run clean
 stdout empty
 stderr empty
+
+case standalone-profile-command
+each check lint test
+file standalone.tl
+(cfg test (import stdlib.test))
+(define (main) : i64 0)
+(test standalone (test.assert-i64-eq 42 42 "standalone"))
+end-file
+run {{each}} "{{dir}}/standalone.tl"
+stderr not-contains error
+run {{each}} "{{dir}}/standalone.tl" --release
+exit nonzero
+stdout empty
+stderr match ^--profile and --release are only valid in package mode$
+run {{each}} --profile dev "{{dir}}/standalone.tl"
+exit nonzero
+stdout empty
+stderr match ^--profile and --release are only valid in package mode$
+
+case batch-profile-command
+each check test
+cwd .
+file standalone.tl
+(cfg test (import stdlib.test))
+(define (main) : i64 0)
+(test standalone (test.assert-i64-eq 42 42 "standalone"))
+end-file
+file inputs.txt
+standalone.tl
+end-file
+run {{each}} --batch "{{dir}}/inputs.txt"
+stderr not-contains error
+run {{each}} --batch "{{dir}}/inputs.txt" --release
+exit nonzero
+stdout empty
+stderr match ^--profile and --release are only valid in package mode$
+run {{each}} --profile dev --batch "{{dir}}/inputs.txt"
+exit nonzero
+stdout empty
+stderr match ^--profile and --release are only valid in package mode$
+
+case standalone-and-batch-doctest-profile
+cwd .
+file standalone.tl
+;# ```tl
+;# (define (main) : i64 0)
+;# ```
+(define (main) : i64 0)
+end-file
+file inputs.txt
+standalone.tl
+end-file
+run doc --test "{{dir}}/standalone.tl"
+stderr empty
+stdout contains Doc tests passed: 1 example(s)
+run doc --test --batch "{{dir}}/inputs.txt"
+stderr empty
+stdout contains Doc tests passed: 1 example(s)
+run doc --test "{{dir}}/standalone.tl" --release
+exit nonzero
+stdout empty
+stderr match ^--profile and --release are only valid in package mode$
+run doc --test --profile dev "{{dir}}/standalone.tl"
+exit nonzero
+stdout empty
+stderr match ^--profile and --release are only valid in package mode$
+run doc --test --batch "{{dir}}/inputs.txt" --release
+exit nonzero
+stdout empty
+stderr match ^--profile and --release are only valid in package mode$
+run doc --test --profile dev --batch "{{dir}}/inputs.txt"
+exit nonzero
+stdout empty
+stderr match ^--profile and --release are only valid in package mode$
+
+case missing-package-profile
+each build run check lint test doc
+run {{each}} --profile
+exit nonzero
+stdout empty
+stderr match ^--profile requires a value$
+stderr count = 1 .
+run {{each}} --profile --release
+exit nonzero
+stdout empty
+stderr match ^--profile requires a value$
+stderr count = 1 .
+
+case missing-doctest-profile
+run doc --test --profile
+exit nonzero
+stdout empty
+stderr match ^--profile requires a value$
+stderr count = 1 .
+run doc --test --profile --release
+exit nonzero
+stdout empty
+stderr match ^--profile requires a value$
+stderr count = 1 .

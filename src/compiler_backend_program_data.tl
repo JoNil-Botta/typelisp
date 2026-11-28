@@ -2662,23 +2662,6 @@
                 offset-symbol
                 "@gottpoff(%rip), "
                 dest))]
-          ;; `@gottpoff` takes only mov and add, so a subtracted offset is added
-          ;; to the negated register. The value matches; the flags do not, and
-          ;; the one such site, in tl_thread_init, never reads them.
-          [(and
-              (string.eq mnemonic "subq")
-              (> (string.string-length (& offset-symbol)) 0)
-              (string.is-string-prefix-at dest "%" 0))
-            (Ok
-              (str_cat.str-cat
-                "    negq "
-                dest
-                "\n    addq "
-                offset-symbol
-                "@gottpoff(%rip), "
-                dest
-                "\n    negq "
-                dest))]
           [else (Err unsupported)])))))
 
 ;; The first offset in [START, END) of TEXT that is not a space or tab.

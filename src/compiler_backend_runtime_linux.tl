@@ -580,8 +580,8 @@ tl_alloc_aligned:
   [profile : bool]
   [arena-debug : bool]) : String
   ;; The native entry and each clone worker install a fresh zeroed TLS mapping.
-  ;; Its negative TPOFF words and FS:0 self pointer fit in the 4096-byte mapping;
-  ;; the storage word is independent of arena switching and reclamation.
+  ;; Place the thread pointer at the last 16-byte boundary inside the 4096-byte
+  ;; mapping. Negative TPOFF words precede it, and FS:0 holds the self pointer.
   (str_cat.str-cat
     "    .globl tl_thread_init
     .type tl_thread_init,@function
@@ -596,8 +596,7 @@ tl_thread_init:
     syscall
     testq %rax, %rax
     js .L_tl_thread_init_abort
-    movq %rax, %rsi
-    subq $tl_current_arena@tpoff, %rsi
+    leaq 4080(%rax), %rsi
     movq %rsi, 0(%rsi)
     movq $0x1002, %rdi
     movq $158, %rax

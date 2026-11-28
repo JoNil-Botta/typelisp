@@ -46805,7 +46805,8 @@ tl_region_reset:
     xorq %rbx, %rbx
     ret
 tl_thread_init:
-    subq $tl_current_arena@tpoff, %rsi
+    leaq 4080(%rax), %rsi
+    movq %rsi, %fs:tl_current_arena@tpoff
     ret
 tl_thread_local_word_addr:
     movq %fs:0, %rax
@@ -46848,7 +46849,7 @@ user_fn:
         "tl_arena_set:\n    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %rdi, %fs:(%rax)\n"
         "    movq tl_current_arena@gottpoff(%rip), %r8\n    movq %fs:(%r8), %r8\n"
         "    movq tl_current_arena@gottpoff(%rip), %rbx\n    movq $0, %fs:(%rbx)\n    xorq %rbx, %rbx\n"
-        "    negq %rsi\n    addq tl_current_arena@gottpoff(%rip), %rsi\n    negq %rsi\n"
+        "tl_thread_init:\n    leaq 4080(%rax), %rsi\n    movq tl_current_arena@gottpoff(%rip), %rdi\n    movq %rsi, %fs:(%rdi)\n"
         "    addq tl_thread_local_word@gottpoff(%rip), %rax\n"
         ;; Generated code stores TLS only at a call site, where %rax is free.
         "user_fn:\n    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %rdi, %fs:(%rax)\n"

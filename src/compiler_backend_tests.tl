@@ -25591,7 +25591,7 @@ entry:
           (backend.compiler-backend-string-count
             asm
             "%fs:tl_current_arena@tpoff")
-          20)
+          22)
         (= (backend.compiler-backend-string-count asm "%gs:0x28") 0)))))
 
 (define (compiler-backend-test-runtime-functions-for-target
@@ -40655,11 +40655,12 @@ entry:
     [_set-home : unit
       (unsafe
         (arena.set! home))]
-    ;; Leave eight bytes in the Linux root segment. The first retained chunk
+    ;; Leave eight bytes in the root segment. The first retained chunk
     ;; stays Inline; appending the second chunk forces dense-store materialization
-    ;; and grows the home chain without touching 64 MiB of pages. The public
-    ;; handle must remain the stable owner root throughout.
-    [_fill-home : i64 (compiler-backend-test-runtime-alloc 67108792)]
+    ;; and grows the home chain without touching the rest of the segment.
+    ;; The public handle must remain the stable owner root throughout.
+    [root-size : i64 (cfg linux 262144 67108864)]
+    [_fill-home : i64 (compiler-backend-test-runtime-alloc (- root-size 72))]
     [home-before-copy : arena.Arena (arena.current)]
     [_set-scratch : unit
       (unsafe
@@ -44799,8 +44800,9 @@ b_keep:
       "tl_arena_make_atomic:\n"
       "    movq %fs:tl_current_arena@tpoff, %r8\n"
       ".L_tl_alloc_new_arena:\n"
-      "    movl $0x4000000, %eax\n    testq %rdi, %rdi\n    jz .L_tl_arena_map_len\n    movq 24(%rdi), %rcx\n    subq %rdi, %rcx\n    cmpq $0x2000000, %rcx\n    jae .L_tl_arena_map_len\n    leaq (%rcx,%rcx), %rax\n"
-      "    cmpq %rax, %rsi\n    cmovbq %rax, %rsi\n    jbe .L_tl_arena_mmap\n    addq $4095, %rsi\n    jc .L_tl_arena_map_overflow\n    andq $-4096, %rsi\n"
+      ".L_tl_arena_map_chunk:\n    testq %rdi, %rdi\n    jnz .L_tl_arena_map_grow\n    cmpq $0x4000000, %rsi\n    ja .L_tl_arena_map_round\n    movl $0x4000000, %esi\n"
+      ".L_tl_arena_map_grow:\n    movl $0x4000000, %eax\n    movq 24(%rdi), %rcx\n    subq %rdi, %rcx\n    xorq %rdi, %rdi\n    cmpq $0x2000000, %rcx\n    jae .L_tl_arena_map_len\n    leaq (%rcx,%rcx), %rax\n"
+      ".L_tl_arena_map_len:\n    cmpq %rax, %rsi\n    cmovbq %rax, %rsi\n    jbe .L_tl_arena_mmap\n.L_tl_arena_map_round:\n    addq $4095, %rsi\n    jc .L_tl_arena_map_overflow\n    andq $-4096, %rsi\n    jmp .L_tl_arena_mmap\n"
       "    addq $64, %rsi\n"
       "    leaq (%rax,%rsi), %rcx\n    pop %rsi\n    js .L_tl_alloc_abort\n"
       "    movq %r10, 0(%rax)\n"

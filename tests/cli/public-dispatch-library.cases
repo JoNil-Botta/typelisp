@@ -39,21 +39,22 @@ stderr empty
 
 case dispatch-library-scalar-only-no-entry
 file lib.tl
-(define (odd-scalar [n : i64]) : i64
-  (let
-    [odd : i64 0]
-    (foreach
-      ([i : i64 0 n])
-      (if (= (% i 2) 1)
-        (foreach-active [lane : i64] (set! odd (+ odd 1)))
+(define (positive-scalar [x : i32]) : i64
+  (let [src : (__tl_dyn-array i32) (__tl_make-array i32 1)]
+    [out : (__tl_dyn-array f32) (__tl_make-array f32 1)]
+    (set! (array-ref src 0) x)
+    (foreach ([i : i64 0 1])
+      (if (> (array-ref src i) (cast 0 : i32))
+        (set! (array-ref out i) (cast (array-ref src i) : f32))
         unit))
-    odd))
+    (cast (array-ref out 0) : i64)))
 
-(define (odd-simd [n : i64]) : i64 (/ n 2))
+(define (positive-simd [x : i32]) : i64
+  (if (> x (cast 0 : i32)) (cast (cast x : f32) : i64) 0))
 
-(defdispatch odd-count (scalar odd-scalar) (avx2 odd-simd) (avx512 odd-simd))
+(defdispatch positive (scalar positive-scalar) (avx2 positive-simd) (avx512 positive-simd))
 
-(define (use-odd [n : i64]) : i64 (odd-count n))
+(define (use-positive [x : i32]) : i64 (positive x))
 end-file
 run compile "{{dir}}/lib.tl" --no-entry --opt-level {{opt}} --backend-mode {{mode}} -o "{{dir}}/lib.s"
 exit scalar=0 avx2=1 avx512=1
@@ -61,10 +62,10 @@ if-mode scalar
 stderr empty
 end-if
 if-mode avx2
-stderr contains foreach-active is not yet lowered for AVX2
+stderr contains SPMD numeric conversion from i32 to f32 is unsupported in masked control context for AVX2
 end-if
 if-mode avx512
-stderr contains foreach-active is not yet lowered for AVX-512
+stderr contains SPMD numeric conversion from i32 to f32 is unsupported in masked control context for AVX-512
 end-if
 
 case dispatch-library-scalar-only-staticlib
@@ -75,21 +76,22 @@ file typelisp.pkg
   (kind "staticlib"))
 end-file
 file src/lib.tl
-(define (odd-scalar [n : i64]) : i64
-  (let
-    [odd : i64 0]
-    (foreach
-      ([i : i64 0 n])
-      (if (= (% i 2) 1)
-        (foreach-active [lane : i64] (set! odd (+ odd 1)))
+(define (positive-scalar [x : i32]) : i64
+  (let [src : (__tl_dyn-array i32) (__tl_make-array i32 1)]
+    [out : (__tl_dyn-array f32) (__tl_make-array f32 1)]
+    (set! (array-ref src 0) x)
+    (foreach ([i : i64 0 1])
+      (if (> (array-ref src i) (cast 0 : i32))
+        (set! (array-ref out i) (cast (array-ref src i) : f32))
         unit))
-    odd))
+    (cast (array-ref out 0) : i64)))
 
-(define (odd-simd [n : i64]) : i64 (/ n 2))
+(define (positive-simd [x : i32]) : i64
+  (if (> x (cast 0 : i32)) (cast (cast x : f32) : i64) 0))
 
-(defdispatch odd-count (scalar odd-scalar) (avx2 odd-simd) (avx512 odd-simd))
+(defdispatch positive (scalar positive-scalar) (avx2 positive-simd) (avx512 positive-simd))
 
-(define (use-odd [n : i64]) : i64 (odd-count n))
+(define (use-positive [x : i32]) : i64 (positive x))
 end-file
 run build --manifest-path "{{dir}}/typelisp.pkg" --opt-level {{opt}} --backend-mode {{mode}}
 exit scalar=0 avx2=1 avx512=1
@@ -97,30 +99,31 @@ if-mode scalar
 stderr empty
 end-if
 if-mode avx2
-stderr contains foreach-active is not yet lowered for AVX2
+stderr contains SPMD numeric conversion from i32 to f32 is unsupported in masked control context for AVX2
 end-if
 if-mode avx512
-stderr contains foreach-active is not yet lowered for AVX-512
+stderr contains SPMD numeric conversion from i32 to f32 is unsupported in masked control context for AVX-512
 end-if
 
 case dispatch-library-scalar-only-with-main
 file prog.tl
-(define (odd-scalar [n : i64]) : i64
-  (let
-    [odd : i64 0]
-    (foreach
-      ([i : i64 0 n])
-      (if (= (% i 2) 1)
-        (foreach-active [lane : i64] (set! odd (+ odd 1)))
+(define (positive-scalar [x : i32]) : i64
+  (let [src : (__tl_dyn-array i32) (__tl_make-array i32 1)]
+    [out : (__tl_dyn-array f32) (__tl_make-array f32 1)]
+    (set! (array-ref src 0) x)
+    (foreach ([i : i64 0 1])
+      (if (> (array-ref src i) (cast 0 : i32))
+        (set! (array-ref out i) (cast (array-ref src i) : f32))
         unit))
-    odd))
+    (cast (array-ref out 0) : i64)))
 
-(define (odd-simd [n : i64]) : i64 (/ n 2))
+(define (positive-simd [x : i32]) : i64
+  (if (> x (cast 0 : i32)) (cast (cast x : f32) : i64) 0))
 
-(defdispatch odd-count (scalar odd-scalar) (avx2 odd-simd) (avx512 odd-simd))
+(defdispatch positive (scalar positive-scalar) (avx2 positive-simd) (avx512 positive-simd))
 
-(define (use-odd [n : i64]) : i64 (odd-count n))
-(define (main) : i64 (use-odd 8))
+(define (use-positive [x : i32]) : i64 (positive x))
+(define (main) : i64 (use-positive (cast 4 : i32)))
 end-file
 run run "{{dir}}/prog.tl" --opt-level {{opt}} --backend-mode {{mode}}
 exit 4

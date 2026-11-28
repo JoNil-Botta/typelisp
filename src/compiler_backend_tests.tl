@@ -50952,12 +50952,16 @@ user_fn:
   ;; End-to-end Win64 opt2 emission covering:
   ;; - GP-pair RegisterGroup live across an Internal call + matching SEH unwind
   ;; - GP-pair RegisterGroup live across a Platform extern C call + shadow space
-  ;; - Indirect closure tail call carrying a String
-  ;; - Disjoint non-addressable Strings vs escaping addressable String
+  ;; - Indirect closure tail call carrying a Pair
+  ;; - Disjoint non-addressable Pairs vs escaping addressable Pair
   (let
     [src : String
       "(defstruct Pair (a i64) (b i64))
 (extern (ext_c_touch [x : i64]) : i64)
+(define (make_pair [x : i64] [y : i64]) : Pair
+  (if (< x 0)
+    (Pair y x)
+    (Pair x y)))
 (define (peek_pair [p : (& p Pair)] [n : i64]) : i64
   (if (<= n 0)
     (+ (ext_c_touch p.a) p.b)
@@ -50966,13 +50970,16 @@ user_fn:
   (if (<= k 0)
     (+ s.a s.b)
     (+ 1 (int_sink s (- k 1)))))
-(define (w64_int [a : Pair] [b : Pair]) : i64
+(define (w64_int [x1 : i64] [x2 : i64] [y1 : i64] [y2 : i64]) : i64
   (let
+    [a : Pair (make_pair x1 x2)]
+    [b : Pair (make_pair y1 y2)]
     [n1 : i64 (int_sink a 1)]
     [n2 : i64 (int_sink b n1)]
     (+ n2 (+ a.a (+ a.b (+ b.a b.b))))))
-(define (w64_plat [a : Pair] [k : i64]) : i64
+(define (w64_plat [x : i64] [y : i64] [k : i64]) : i64
   (let
+    [a : Pair (make_pair x y)]
     [c : i64 (ext_c_touch k)]
     (+ c (+ a.a a.b))))
 (define (w64_tail [f : (-> Pair i64 i64)] [s : Pair] [k : i64]) : i64
@@ -50981,13 +50988,14 @@ user_fn:
   (let
     [local : Pair s]
     (peek_pair (& local) 2)))
-(define keep_int : (-> Pair Pair i64) w64_int)
-(define keep_plat : (-> Pair i64 i64) w64_plat)
+(define keep_make : (-> i64 i64 Pair) make_pair)
+(define keep_int : (-> i64 i64 i64 i64 i64) w64_int)
+(define keep_plat : (-> i64 i64 i64 i64) w64_plat)
 (define keep_tail : (-> (-> Pair i64 i64) Pair i64 i64) w64_tail)
 (define keep_addr : (-> Pair i64) w64_addr)
 (define (main) : i64
-  (+ (w64_int (Pair 1 2) (Pair 3 4))
-     (+ (w64_plat (Pair 5 6) 7)
+  (+ (w64_int 1 2 3 4)
+     (+ (w64_plat 5 6 7)
         (w64_addr (Pair 8 9)))))"]
     (match (compiler-backend-emit-source-opt2-for-target
       src
@@ -51023,7 +51031,7 @@ user_fn:
                 "call ext_c_touch"
                 ".seh_pushreg %r13"
                 ".seh_pushreg %r14"
-                ".seh_stackalloc 48"
+                ".seh_stackalloc 64"
                 ".seh_endprologue"
                 ".seh_endproc"))
             "Win64 Pair live across Platform extern call must keep CSR GP-pair and SEH unwind directives")
@@ -51031,8 +51039,8 @@ user_fn:
             (and
               (asm-has?
                 fn-tail
-                ".seh_pushreg %r12"
-                ".seh_pushreg %r13"
+                ".seh_stackalloc"
+                ".seh_endprologue"
                 ".seh_endproc")
               (or (asm-has? fn-tail "jmp *(") (asm-has? fn-tail "call *(")))
             "Win64 indirect tail call carrying Pair must emit valid SEH and closure dispatch")

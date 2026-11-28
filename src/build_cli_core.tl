@@ -4360,7 +4360,7 @@
   [mode : be_state.CompilerBackendMode]
   [opt-level : i64]
   [producer-identity : String]
-  [asm-path : String]
+  [_asm-path : String]
   [obj-path : String]
   [artifact-path : String]
   [link-inputs : build_run_core.SourceToolLinkInputs]
@@ -4400,17 +4400,13 @@
             "false"))
         extra-v3)]
     [assembler-text : String
-      (cond
-        [direct-object ""]
-        [(be_facts.compiler-backend-target-linux? target)
-          (build-package-transcript-field "assembler" "typelisp-linux-x86_64")]
-        [else
-          (try
-            (build-package-command-transcript
-              "assembler"
-              (build_run_core.source-tool-windows-assembler-command
-                asm-path
-                (string.copy (& obj-path)))))])]
+      (if direct-object
+        ""
+        (build-package-transcript-field
+          "assembler"
+          (str_cat.str-cat
+            "typelisp-"
+            (build_run_core.source-tool-target-name target))))]
     (build-package-runtime-input-transcript-after-assembler
       (str_cat.str-cat base assembler-text)
       kind
@@ -6057,7 +6053,6 @@
               "build: failed to write empty library stub assembly"))
           (try
             (build_run_core.source-tool-assemble
-              "build: assembler failed"
               target
               stub-asm
               (string.copy (& stub-obj))))
@@ -6076,7 +6071,6 @@
               (array-ref (deref direct-objects) i)
               (try
                 (build_run_core.source-tool-assemble
-                  "build: assembler failed"
                   target
                   asm-p
                   (string.copy (& obj-p)))))

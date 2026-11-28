@@ -6,7 +6,6 @@
 (import compiler_linux_asm_resolve as resolve)
 (import compiler_object_elf as elf)
 (import compiler_object_layout as layout)
-(import stdlib.arena)
 (import stdlib.byte_buf_core as buf)
 (import stdlib.byte_le)
 (import stdlib.string)
@@ -344,17 +343,7 @@
 (define (assemble-linux-x64 [final-text : (& str)]) : elf.ResultCompilerObjectElf
   (let
     [parser (reader.new-reader)]
-    [scratch (arena.make)]
-    [parsed (reader.read-source! (&mut parser) final-text 0 scratch)]
-    (arena.destroy-safe! scratch)
-    (match parsed
-      [(Ok _) unit]
-      [(Err reason)
-        (let
-          [offset parser.source-offset]
-          [text (string.copy (reader.next-line final-text (&mut offset)))]
-          (return (Err (str_cat.str-cat reason " on assembly line: " text))))])
-    (unless (= parser.stack.len 0) (return (Err "unclosed .pushsection")))
+    (try (reader.parse-final! (&mut parser) final-text))
     (try
       (asm.select-section! (&mut parser.image) ".note.GNU-stack" 0 0 0 -1 ""))
     (assemble-image (&mut parser.image) (& parser.debug))))

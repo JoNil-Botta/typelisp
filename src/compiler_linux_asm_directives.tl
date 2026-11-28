@@ -1,3 +1,4 @@
+(import stdlib.arena)
 (import compiler_linux_asm_layout as asm)
 (import compiler_linux_asm_symbols as sym)
 (import compiler_x64_encode_operands as op)
@@ -37,18 +38,80 @@
     [(Integer n) (Ok n)]
     [_ (Err (str_cat.str-cat "expected assembly integer: " (string.copy s)))]))
 
-(define (section! [image : (&mut asm.Image)] [args : (& src str)]) : asm.Status
+;; COFF uses the COMDAT key in addition to the section name. Keep the
+;; selection kind in the section identity and the key as an interned ID.
+(define (coff-section!
+  [image : (&mut asm.Image)]
+  [name : (& str)]
+  [args : (& str)]
+  [i : i64]
+  [scratch : arena.Arena]) : asm.Status
+  (let
+    [flags (in-arena scratch (unquoted (argument args (&mut i))))]
+    [selection (in-arena scratch (argument args (&mut i)))]
+    [kind : i64
+      (match selection
+        ["" 0]
+        ["one_only" 1]
+        ["discard" 2]
+        ["associative" 5]
+        [_ (return (Err "unsupported COMDAT selection"))])]
+    [group : i64 -1]
+    [attributes : i64
+      (cond
+        [(string.eq (& flags) "xr") 4]
+        [(or (string.eq (& flags) "dw") (string.eq (& flags) "bw")) 1]
+        [(string.eq (& flags) "dr") 0]
+        [(string.eq (& flags) "")
+          (if (string.eq name ".rdata")
+            0
+            1)]
+        [else (return (Err "unsupported COFF section flags"))])]
+    (when
+      (> kind 0)
+      (set!
+        group
+        (sym.named!
+          (&mut image.table)
+          (& (in-arena scratch (argument args (&mut i))))))
+      (when (< group 0) (return (Err "missing COMDAT key"))))
+    (when
+      (<= i (string.string-length args))
+      (return (Err "unexpected COFF section argument")))
+    (asm.select-section!
+      image
+      name
+      (if (string.eq (& flags) "bw")
+        8
+        1)
+      attributes
+      kind
+      group
+      "")))
+
+(define (section!
+  [image : (&mut asm.Image)]
+  [args : (& src str)]
+  [scratch : arena.Arena]) : asm.Status
   (let
     [i : i64 0]
-    [name : String (unquoted (argument args (&mut i)))]
+    [name : String (in-arena scratch (unquoted (argument args (&mut i))))]
     (when
       (= (string.string-length (& name)) 0)
       (return (Err "missing section name")))
     (when
+      (and
+        image.coff
+        (or
+          (<= i (string.string-length args))
+          (< (asm.section-index image (& name)) 0)))
+      (return (coff-section! image (& name) args i scratch)))
+    (when
       (> i (string.string-length args))
       (return (asm.select-section! image (& name) 0 0 0 -1 "")))
     (let
-      [flags-text : String (unquoted (argument args (&mut i)))]
+      [flags-text : String
+        (in-arena scratch (unquoted (argument args (&mut i))))]
       [type-text : String (argument args (&mut i))]
       [ty : i64
         (cond
@@ -79,7 +142,9 @@
         (+= j 1))
       (when
         (!= 0 (bit-and flags 16))
-        (set! ent (try (number (& (argument args (&mut i)))))))
+        (set!
+          ent
+          (try (number (& (in-arena scratch (argument args (&mut i))))))))
       (let
         [link : String
           (if (!= 0 (bit-and flags 128))
@@ -89,7 +154,9 @@
           (!= 0 (bit-and flags 512))
           (set!
             group
-            (sym.intern! (&mut image.table) (& (argument args (&mut i)))))
+            (sym.intern!
+              (&mut image.table)
+              (& (in-arena scratch (argument args (&mut i))))))
           (let
             [group-kind (argument args (&mut i))]
             (unless
@@ -156,19 +223,29 @@
           [size (try (number (& (argument args (&mut i)))))]
           [align
             (if (> i (string.string-length args))
-              (cast 1 : i64)
+              (if image.coff
+                (cast 0 : i64)
+                (cast 1 : i64))
               (try (number (& (argument args (&mut i))))))]
+          (when
+            image.coff
+            (unless
+              (and (>= align 0) (<= align 5) (<= size 0xffffffff))
+              (return (Err "invalid COFF common symbol extent or alignment")))
+            (set! align (shl (cast 1 : i64) align))
+            (when (< size align) (set! size align)))
           (unless
             (and (>= size 0) (> align 0) (= 0 (bit-and align (- align 1))))
             (return (Err "invalid common allocation")))
           (if (= (array-ref image.table.entries.slots id).binding 0)
             (let
+              [bss (asm.section-index image ".bss")]
               [s : (&mut img asm.Section)
-                (&mut (array-ref image.items.slots 3))]
+                (&mut (array-ref image.items.slots bss))]
               (try (asm.alignment! s align 0 0))
               (set!
                 (array-ref image.table.entries.slots id).position
-                (asm.position s 3))
+                (asm.position s bss))
               (asm.end-run! s (Fill size 0) size))
             (set! (array-ref image.table.entries.slots id).common-align align))
           (set! (array-ref image.table.entries.slots id).kind 1)
@@ -248,15 +325,16 @@
 (define (directive!
   [image : (&mut img asm.Image)]
   [dir : (& str)]
-  [args : (& src str)]) : asm.Status
+  [args : (& src str)]
+  [scratch : arena.Arena]) : asm.Status
   (cond
-    [(string.eq dir ".section") (section! image args)]
+    [(string.eq dir ".section") (section! image args scratch)]
     [(or
         (string.eq dir ".text")
         (string.eq dir ".data")
         (string.eq dir ".bss")
         (string.eq dir ".rodata"))
-      (section! image dir)]
+      (section! image dir scratch)]
     ;; GNU as ignores .extern; a reference to an undefined name creates the
     ;; corresponding external symbol.
     [(string.eq dir ".extern") (Ok unit)]
@@ -283,8 +361,9 @@
               (string.eq dir ".balign")
               (string.eq dir ".p2align"))
             (let
-              [align (try (number (& (argument args (&mut i)))))]
-              [fill-text : String (argument args (&mut i))]
+              [align
+                (try (number (& (in-arena scratch (argument args (&mut i))))))]
+              [fill-text : String (in-arena scratch (argument args (&mut i)))]
               [fill : i64
                 (if (= 0 (string.string-length (& fill-text)))
                   (if (!= 0 (bit-and s.flags 4))
@@ -293,7 +372,7 @@
                   (bit-and 255 (try (number (& fill-text)))))]
               [maximum : i64
                 (if (<= i n)
-                  (try (number (& (argument args (&mut i)))))
+                  (try (number (& (in-arena scratch (argument args (&mut i))))))
                   0)]
               (when
                 (string.eq dir ".p2align")
@@ -304,10 +383,11 @@
               (asm.alignment! s align fill maximum))]
           [(or (string.eq dir ".zero") (string.eq dir ".space"))
             (let
-              [size (try (number (& (argument args (&mut i)))))]
+              [size
+                (try (number (& (in-arena scratch (argument args (&mut i))))))]
               [fill : i64
                 (if (<= i n)
-                  (try (number (& (argument args (&mut i)))))
+                  (try (number (& (in-arena scratch (argument args (&mut i))))))
                   0)]
               (when
                 (or (< size 0) (and (= s.ty 8) (!= fill 0)))
@@ -320,7 +400,10 @@
             (string.eq dir ".string"))
             (when (= s.ty 8) (return (Err "string in NOBITS section")))
             (while (<= i n)
-              (try (literal! (&mut s.raw) (& (argument args (&mut i)))))
+              (try
+                (literal!
+                  (&mut s.raw)
+                  (& (in-arena scratch (argument args (&mut i))))))
               (unless
                 (string.eq dir ".ascii")
                 (buf.byte-buf-builder-push (&mut s.raw) (cast 0 : u8))))
@@ -328,11 +411,15 @@
           [else
             (let
               [width : i64
-                (match (string.copy dir)
+                (match (in-arena scratch (string.copy dir))
                   [".byte" 1]
                   [".short" 2]
                   [".word" 2]
                   [".long" 4]
+                  [".rva"
+                    (if image.coff
+                      4
+                      (return (Err "unexpected .rva")))]
                   [".quad" 8]
                   [_
                     (return
@@ -343,6 +430,14 @@
               (while (<= i n)
                 (let
                   [end (op.delimiter-before args i n ',')]
-                  (try (asm.data-field! s (&mut image.table) args i end width))
+                  (try
+                    (asm.data-field!
+                      s
+                      (&mut image.table)
+                      args
+                      i
+                      end
+                      width
+                      (string.eq dir ".rva")))
                   (set! i (+ end 1))))
               (Ok unit))]))]))

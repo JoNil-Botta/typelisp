@@ -191,17 +191,16 @@
 
 (define (compiler-object-coff-push-file-header!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [image : (& image cobj.CompilerObjectImage)]
-  [plan : (& CoffProjection)]) : unit
+  [section-count : i64]
+  [symbol-offset : i64]
+  [symbol-count : i64]) : unit
   (layout.compiler-object-layout-push-u16!
     out
     compiler-object-coff-machine-amd64)
-  (layout.compiler-object-layout-push-u16! out image.sections.len)
+  (layout.compiler-object-layout-push-u16! out section-count)
   (layout.compiler-object-layout-push-u32! out 0)
-  (layout.compiler-object-layout-push-u32! out plan.symbols)
-  (layout.compiler-object-layout-push-u32!
-    out
-    (cobj.compiler-object-symbol-list-count image.symbols))
+  (layout.compiler-object-layout-push-u32! out symbol-offset)
+  (layout.compiler-object-layout-push-u32! out symbol-count)
   (layout.compiler-object-layout-push-u16! out 0)
   (layout.compiler-object-layout-push-u16! out 0))
 
@@ -227,18 +226,6 @@
       row.count))
   (layout.compiler-object-layout-push-u16! out 0)
   (layout.compiler-object-layout-push-u32! out row.flags))
-
-(define (compiler-object-coff-push-section-headers!
-  [out : (&mut byte_buf_core.ByteBufBuilder)]
-  [image : (& cobj.CompilerObjectImage)]
-  [plan : (& CoffProjection)]) : unit
-  (for [i (iterator.range 0 image.sections.len)]
-    (match (& (array-ref image.sections.slots i))
-      [(Section spec _ _)
-        (compiler-object-coff-push-section-header!
-          out
-          spec.name
-          (& (array-ref plan.rows i)))])))
 
 (define (compiler-object-coff-render-sections!
   [out : (&mut byte_buf_core.ByteBufBuilder)]
@@ -768,6 +755,68 @@
           (layout.compiler-object-layout-push-string-bytes! out spec.name)
           (layout.compiler-object-layout-push-u8! out 0))])))
 
+(defstruct CoffAssembly
+  (names (__tl_dyn-array String))
+  (contents (__tl_dyn-array byte_buf_core.ByteBufBuilder))
+  (relocs byte_buf_core.ByteBufBuilder)
+  (symbols byte_buf_core.ByteBufBuilder)
+  (strings byte_buf_core.ByteBufBuilder))
+
+(defenum CoffPayloads
+  (:lifetimes source plan)
+  (ObjectImage (& source cobj.CompilerObjectImage) (& plan CoffProjection))
+  (Assembled (& source CoffAssembly)))
+
+(define (append-buffer!
+  [out : (&mut byte_buf_core.ByteBufBuilder)]
+  [b : (& byte_buf_core.ByteBufBuilder)]) : unit
+  (byte_buf_core.byte-buf-builder-append-array-range out (& b.slots) 0 b.len))
+
+(define (serialize
+  [rows : (& (__tl_dyn-array CoffSectionHeader))]
+  [size : i64]
+  [symbol-offset : i64]
+  [symbol-count : i64]
+  [payloads : (CoffPayloads source plan)]) : ResultCompilerObjectCoff
+  (let
+    [n (array-length rows)]
+    [out (byte_buf_core.byte-buf-builder-with-capacity size)]
+    (compiler-object-coff-push-file-header!
+      (&mut out)
+      n
+      symbol-offset
+      symbol-count)
+    (for [i (iterator.range 0 n)]
+      (match payloads
+        [(ObjectImage image _)
+          (match (& (array-ref image.sections.slots i))
+            [(Section spec _ _)
+              (compiler-object-coff-push-section-header!
+                (&mut out)
+                spec.name
+                (& (array-ref rows i)))])]
+        [(Assembled assembled)
+          (compiler-object-coff-push-section-header!
+            (&mut out)
+            (& (array-ref assembled.names i))
+            (& (array-ref rows i)))]))
+    (match payloads
+      [(ObjectImage image plan)
+        (compiler-object-coff-render-sections! (&mut out) image plan)
+        (compiler-object-coff-render-relocations! (&mut out) image plan)
+        (compiler-object-coff-render-symbols! (&mut out) image image.symbols)
+        (compiler-object-coff-render-string-table! (&mut out) image plan)]
+      [(Assembled assembled)
+        (for [i (iterator.range 0 n)]
+          (append-buffer! (&mut out) (& (array-ref assembled.contents i))))
+        (append-buffer! (&mut out) (& assembled.relocs))
+        (append-buffer! (&mut out) (& assembled.symbols))
+        (append-buffer! (&mut out) (& assembled.strings))])
+    (unless
+      (= size out.len)
+      (return (Err "COFF serialized size differs from projection")))
+    (Ok (layout.compiler-object-layout-bytes-string (& out)))))
+
 (define (compiler-object-coff-render
   [image : (& image cobj.CompilerObjectImage)]) : ResultCompilerObjectCoff
   (let
@@ -776,15 +825,12 @@
         (compiler-object-coff-project
           image
           compiler-object-coff-max-output-size))]
-    [out : byte_buf_core.ByteBufBuilder
-      (byte_buf_core.byte-buf-builder-with-capacity plan.size)]
-    (compiler-object-coff-push-file-header! (&mut out) image (& plan))
-    (compiler-object-coff-push-section-headers! (&mut out) image (& plan))
-    (compiler-object-coff-render-sections! (&mut out) image (& plan))
-    (compiler-object-coff-render-relocations! (&mut out) image (& plan))
-    (compiler-object-coff-render-symbols! (&mut out) image image.symbols)
-    (compiler-object-coff-render-string-table! (&mut out) image (& plan))
-    (Ok (layout.compiler-object-layout-bytes-string (& out)))))
+    (serialize
+      (& plan.rows)
+      plan.size
+      plan.symbols
+      (cobj.compiler-object-symbol-list-count image.symbols)
+      (ObjectImage image (& plan)))))
 
 (define (compiler-object-coff-section-header-offset
   [image : (& cobj.CompilerObjectImage)]

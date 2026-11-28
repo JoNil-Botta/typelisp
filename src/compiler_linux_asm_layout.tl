@@ -1,3 +1,5 @@
+(import stdlib.iterator)
+
 ;; Each fragment is a run of fixed bytes ending at a layout decision. Labels
 ;; and fixups within the run retain a fragment index and an intra-run offset.
 (import compiler_linux_asm_symbols as sym)
@@ -397,7 +399,8 @@
   (table sym.Table)
   (items sections.Vec)
   (current i64)
-  (index section_map.Map))
+  (index section_map.Map)
+  (coff bool))
 
 (define (new-image) : Image
   (let
@@ -421,7 +424,34 @@
               (new-section name ty flags 0 -1 ""))]
           [_ unit]))
       (+= i 1))
-    (Image (sym.new-table) items 0 index)))
+    (Image (sym.new-table) items 0 index false)))
+
+(define (new-coff-image) : Image
+  (let
+    [image (Image (sym.new-table) (sections.new) 0 (section_map.new) true)]
+    (for [i (iterator.range 0 3)]
+      (let
+        [name : String
+          (match i
+            [0 ".text"]
+            [1 ".data"]
+            [_ ".bss"])]
+        [section
+          (new-section
+            (string.copy (& name))
+            (if (= i 2)
+              8
+              1)
+            (if (= i 0)
+              4
+              1)
+            0
+            -1
+            "")]
+        (set! section.alignment 4)
+        (section_map.insert-ref! (&mut image.index) name i)
+        (sections.push-ref! (&mut image.items) section)))
+    image))
 
 (define (section-spec [s : (& Section)] [id : i64]) : obj.CompilerObjectSectionSpec
   (obj.CompilerObjectSectionSpec
@@ -449,18 +479,22 @@
   [link-name : (& str)]) : Status
   (unless
     (object_layout.compiler-object-layout-name-valid? name)
-    (return (Err "invalid ELF section name")))
+    (return (Err "invalid assembly section name")))
   (let
+    [simple (and (< group 0) (string.eq link-name ""))]
     [key
-      (if (and (< group 0) (string.eq link-name ""))
-        (string.copy name)
+      (if simple
+        ""
         (str_cat.str-cat
           (string.copy name)
           "|"
           (string.int->string group)
           "|"
           (string.copy link-name)))]
-    [i (section-index image (& key))]
+    [i
+      (if simple
+        (section-index image name)
+        (section-index image (& key)))]
     (when
       (>= i 0)
       (let
@@ -473,7 +507,12 @@
       (set! image.current i)
       (return (Ok unit)))
     (set! image.current image.items.len)
-    (section_map.insert-ref! (&mut image.index) key image.current)
+    (section_map.insert-ref!
+      (&mut image.index)
+      (if simple
+        (string.copy name)
+        key)
+      image.current)
     (sections.push-ref!
       (&mut image.items)
       (new-section
@@ -493,9 +532,19 @@
   [text : (& str)]
   [start : i64]
   [end : i64]
-  [width : i64]) : Status
+  [width : i64]
+  [rva : bool]) : Status
   (let
     [expr (try (sym.parse-expression-range! table text start end))]
+    (when
+      rva
+      (unless
+        (and
+          (>= expr.positive 0)
+          (= expr.negative -1)
+          (string.eq (& expr.modifier) ""))
+        (return (Err "expected RVA symbol")))
+      (set! expr.modifier "IMGREL"))
     (if (and (= expr.positive -1) (= expr.negative -1))
       (if (= s.ty 8)
         (if (= expr.constant 0)

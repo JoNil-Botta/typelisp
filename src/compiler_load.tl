@@ -2683,7 +2683,7 @@
 ;; Start answering `state`'s source reads from `overlay`. The ledger allocates
 ;; in the caller's current arena, which must outlive the provider.
 (define (compiler-load-session-state-source-provider-install!
-  [state : CompilerLoadSessionState]
+  [state : (&mut CompilerLoadSessionState)]
   [overlay : source_overlay.CompilerSourceOverlay]) : unit
   (let
     [ledger : source_overlay.CompilerSourceLedger
@@ -2694,10 +2694,10 @@
 
 ;; Stop the provider and return its ledger.
 (define (compiler-load-session-state-source-provider-finish!
-  [state : CompilerLoadSessionState]) : source_overlay.CompilerSourceLedger
+  [state : (&mut CompilerLoadSessionState)]) : source_overlay.CompilerSourceLedger
   (let
     [provider : CompilerLoadSourceProvider
-      (compiler-load-session-state-source-provider (& state))]
+      (compiler-load-session-state-source-provider state)]
     (in-arena
       (unsafe
         (arena.from-raw-handle state.owner-arena))
@@ -15962,12 +15962,13 @@
   [seen : (&mut load_path_map.Map)]
   [values : (& svec.Vec)]
   [directory : (& str)]
-  [paths : bool]) : unit
+  [paths : bool]
+  [from-manifest : bool]) : unit
   ;; Keep the CLI spelling for diagnostics while deduplicating physical roots.
   (for [index (iterator.range 0 (svec.len values))]
     (let
       [value : String (svec.get values index "")]
-      [manifest-path : bool (and paths (> (string.string-length directory) 0))]
+      [manifest-path : bool (and paths from-manifest)]
       [key : String
         (if paths
           (compiler-load-canonical-path
@@ -15996,19 +15997,21 @@
   (let
     [out : svec.Vec (svec.new)]
     [seen : load_path_map.Map (load_path_map.with-capacity 8)]
-    (compiler-pkg-add-setting-list! (&mut out) (&mut seen) cli "" paths)
+    (compiler-pkg-add-setting-list! (&mut out) (&mut seen) cli "" paths false)
     (compiler-pkg-add-setting-list!
       (&mut out)
       (&mut seen)
       specific
       directory
-      paths)
+      paths
+      true)
     (compiler-pkg-add-setting-list!
       (&mut out)
       (&mut seen)
       project
       directory
-      paths)
+      paths
+      true)
     out))
 
 (define (compiler-pkg-enable-cfg-list
@@ -16297,16 +16300,6 @@
           value
           "manifest target must be a symbol"))]))
 
-(define (compiler-load-manifest-reserved-cfg? [name : (& str)]) : bool
-  (or
-    (string.eq name "compiler-backtrace")
-    (string.eq name "linux")
-    (string.eq name "os-linux")
-    (string.eq name "target-linux")
-    (string.eq name "windows")
-    (string.eq name "os-windows")
-    (string.eq name "target-windows")))
-
 (define (compiler-load-manifest-setting-list
   [path : (& str)]
   [field : reader.SpannedSexpr]
@@ -16345,7 +16338,11 @@
                         (string.copy key)
                         "` values must not be empty")))))
               (when
-                (and is-cfg (compiler-load-manifest-reserved-cfg? (& text)))
+                (and
+                  is-cfg
+                  (or
+                    (string.eq text "compiler-backtrace")
+                    (target_cfg.compiler-target-derived-cfg? (& text))))
                 (return
                   (Err
                     (compiler-load-manifest-setting-expected
@@ -17256,6 +17253,9 @@
         [parent : String (compiler-load-dirname trimmed)]
         (if (or
           (string.eq parent dir)
+          (=
+            (fs.path-unc-anchor-end (& trimmed))
+            (string.string-length (& trimmed)))
           (and (string.eq parent "") (fs.path-absolute? (& dir))))
           (CompilerLoadNoPath)
           (CompilerLoadSomePath parent))))))

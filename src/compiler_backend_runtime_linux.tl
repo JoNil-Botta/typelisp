@@ -1345,31 +1345,35 @@ tl_tlci_call_macro_entry:
 ")
 
 (define (compiler-backend-runtime-backtrace-functions) : String
-  "    .globl tl_backtrace_map_begin
+  "    .hidden __start_tl_backtrace_map_data
+    .hidden __stop_tl_backtrace_map_data
+    .hidden __start_tl_backtrace_string_data
+    .hidden __stop_tl_backtrace_string_data
+    .globl tl_backtrace_map_begin
     .type tl_backtrace_map_begin,@function
 tl_backtrace_map_begin:
-    leaq tl_backtrace_map_data_begin(%rip), %rax
+    leaq __start_tl_backtrace_map_data(%rip), %rax
     ret
     .size tl_backtrace_map_begin, . - tl_backtrace_map_begin
 
     .globl tl_backtrace_map_end
     .type tl_backtrace_map_end,@function
 tl_backtrace_map_end:
-    leaq tl_backtrace_map_data_end(%rip), %rax
+    leaq __stop_tl_backtrace_map_data(%rip), %rax
     ret
     .size tl_backtrace_map_end, . - tl_backtrace_map_end
 
     .globl tl_backtrace_string_begin
     .type tl_backtrace_string_begin,@function
 tl_backtrace_string_begin:
-    leaq tl_backtrace_string_data_begin(%rip), %rax
+    leaq __start_tl_backtrace_string_data(%rip), %rax
     ret
     .size tl_backtrace_string_begin, . - tl_backtrace_string_begin
 
     .globl tl_backtrace_string_end
     .type tl_backtrace_string_end,@function
 tl_backtrace_string_end:
-    leaq tl_backtrace_string_data_end(%rip), %rax
+    leaq __stop_tl_backtrace_string_data(%rip), %rax
     ret
     .size tl_backtrace_string_end, . - tl_backtrace_string_end
 

@@ -51,6 +51,7 @@
 (import compiler_windows_coff_core)
 (import doc_test)
 (import test_cli_core)
+(import compiler_source_overlay as source_overlay)
 (import package_source_core)
 (import package_cache_core)
 (import package_lock_core)
@@ -4450,6 +4451,34 @@
         (build-package-transcript-field "runtime-output" artifact-digest)
         (build-package-transcript-field "tlci-output" tlci-digest)))))
 
+;; Re-resolve imports through the normal loader before accepting an archive.
+;; The ledger records the bytes actually parsed, including external roots;
+;; paths from an old fingerprint cannot reveal new, higher-priority matches.
+(define (build-package-lib-source-transcript
+  [base : (& str)]
+  [ledger : (& source_overlay.CompilerSourceLedger)]) : String
+  (if (source_overlay.compiler-source-ledger-failed? ledger)
+    ""
+    (let
+      [buf : text_buf.TextBuf
+        (text_buf.append (text_buf.empty) (string.copy base))]
+      (for [i
+        (iterator.range 0 (source_overlay.compiler-source-ledger-count ledger))]
+        (let
+          [entry : source_overlay.CompilerSourceLedgerEntry
+            (source_overlay.compiler-source-ledger-get ledger i)]
+          (match entry.class
+            [(Disk)
+              (set!
+                buf
+                (text_buf.append
+                  buf
+                  (build-package-transcript-field
+                    (str_cat.str-cat "resolved-source-sha256:" entry.path)
+                    entry.content.sha256)))]
+            [_ unit])))
+      (text_buf.render buf))))
+
 (define (build-package-lib-fresh?
   [input-transcript : String]
   [tli-path : (& str)]
@@ -6296,6 +6325,7 @@
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (build-package-lib-finish-archive!
     [request : (& BuildPackageEmitRequest)]
+    [input-transcript : String]
     [stage : BuildPackageStagePaths]
     [mods-dir : String]
     [emitted : tli_extract.TliPartitionedEmitResult]
@@ -6355,7 +6385,7 @@
               (io.print-error message)
               (return 1)]))
         (match (build-package-lib-output-fingerprint
-          (string.copy (& request.lib-input-transcript))
+          input-transcript
           (& stage.tli)
           (& stage.artifact)
           (&
@@ -6435,6 +6465,7 @@
   (define (build-package-emit-lib-tli!
     [scope : compiler_driver_core.CompilerDriverPackageRuntimeScope]
     [request : (& BuildPackageEmitRequest)]
+    [input-transcript : String]
     [decls : ast.AstDeclList]
     [raw-paths : ast.AstDeclPathList]
     [owned-paths : ast.AstDeclPathList]
@@ -6748,6 +6779,7 @@
                           [(Emitted emitted)
                             (build-package-lib-finish-archive!
                               request
+                              input-transcript
                               stage
                               mods-dir
                               emitted
@@ -7002,122 +7034,182 @@
           (io.print-error tli-msg)
           (return (Finished 1))]
         [(Ok) unit])
-      (match (compiler_driver_core.compiler-driver-package-runtime-load
-        (owned_view.compiler-owned-shared-view scope)
-        (string.copy (& request.entry-path))
-        (cli_svec.clone-vec (& request.stdlib-roots))
-        (string.copy (& request.manifest-dir))
-        (load.clone-compiler-pkg-deps (& request.manifest.deps))
-        request.emit-entry
-        cfgs)
-        [(Err diag)
-          (io.print-error
-            (compiler_driver_core.compiler-driver-render-source-diagnostic
-              (deref diag)))
-          (Finished 1)]
-        [(Ok decls paths _ seen)
+      (let
+        [capture-inputs : bool (and is-lib (not request.interface-only))]
+        [_install : unit
           (when
-            check-closure
+            capture-inputs
+            (load.compiler-load-session-state-source-provider-install!
+              (&mut scope.state.load-session)
+              (source_overlay.compiler-source-overlay-empty (fs.current-dir))))]
+        [loaded : load.ResultCompilerLoadWithPaths
+          (compiler_driver_core.compiler-driver-package-runtime-load
+            (owned_view.compiler-owned-shared-view scope)
+            (string.copy (& request.entry-path))
+            (cli_svec.clone-vec (& request.stdlib-roots))
+            (string.copy (& request.manifest-dir))
+            (load.clone-compiler-pkg-deps (& request.manifest.deps))
+            request.emit-entry
+            cfgs)]
+        [input-transcript : String
+          (if capture-inputs
             (let
-              [files : cli_svec.Vec
-                (package_source_core.package-source-reachable-owned-files
+              [ledger : source_overlay.CompilerSourceLedger
+                (load.compiler-load-session-state-source-provider-finish!
+                  (&mut scope.state.load-session))]
+              (build-package-lib-source-transcript
+                (& request.lib-input-transcript)
+                (& ledger)))
+            "")]
+        [verify-lib-deps? : bool
+          (cfg
+            dependency-tlci-verification
+            (and
+              (>
+                (load.compiler-pkg-dep-list-count
                   (&
-                    (load.compiler-load-package-reachable-paths
-                      (& request.entry-path)
-                      (& paths)
-                      seen))
-                  (& request.manifest-dir)
-                  (& request.stdlib-roots))]
-              [inline-sources : cli_svec.Vec (cli_svec.new)]
-              [doctests : bool false]
-              (for [index (iterator.range 0 (cli_svec.len (& files)))]
-                (let
-                  [path : String (cli_svec.get (& files) index "")]
-                  (when
-                    (test_cli_core.tltest-source-has-inline-tests?
-                      (string.copy (& path)))
-                    (cli_svec.push-ref!
-                      (&mut inline-sources)
-                      (string.copy (& path))))
-                  (unless
-                    doctests
-                    (set!
-                      doctests
-                      (doc_test.doc-test-package-file-has-examples? (& path))))))
-              (when
-                (or doctests (> (cli_svec.len (& inline-sources)) 0))
-                (return (Preflight inline-sources doctests)))))
-          (let
-            [owned-paths : ast.AstDeclPathList
-              (load.compiler-load-package-owned-paths-for-decls
-                (& request.manifest.name)
-                (& request.manifest-dir)
-                (& request.stdlib-roots)
-                (& request.entry-path)
-                (& decls)
-                (& paths))]
-            (if is-lib
-              (Finished
-                (build-package-emit-lib-tli!
-                  scope
-                  request
-                  decls
-                  paths
-                  owned-paths
-                  cfgs))
+                    (load.compiler-pkg-deps-list
+                      (load.clone-compiler-pkg-deps (& request.manifest.deps)))))
+                0)
+              (match (env.get "TYPELISP_DEPENDENCY_TLCI_VERIFY")
+                [(EnvSomeString v) (string.eq (& v) "1")]
+                [_ false]))
+            false)]
+        (match loaded
+          [(Err diag)
+            (io.print-error
+              (compiler_driver_core.compiler-driver-render-source-diagnostic
+                (deref diag)))
+            (Finished 1)]
+          [(Ok decls paths _ seen)
+            (when
+              (and
+                capture-inputs
+                (not verify-lib-deps?)
+                (> (string.string-length (& input-transcript)) 0)
+                (build-package-lib-fresh?
+                  (string.copy (& input-transcript))
+                  (& request.tli-path)
+                  (& request.artifact-path)
+                  (& request.tlci-path)
+                  (&
+                    (build-package-runtime-fingerprint-path
+                      (string.copy (& request.artifact-path))))))
+              (return
+                (Finished
+                  (build-package-announce-freshness
+                    (string.copy (& request.artifact-path))
+                    (if (build-package-file-regular?
+                      (string.copy (& request.tlci-path)))
+                      (string.copy (& request.tlci-path))
+                      "")
+                    false
+                    false
+                    request.announce))))
+            (when
+              check-closure
               (let
-                [metadata-link-inputs : build_run_core.SourceToolLinkInputs
-                  (build_run_core.source-tool-link-inputs-from-decls
-                    (& decls)
-                    (build_run_core.source-tool-link-inputs-empty))]
-                ;; The dependency section keeps each package's raw arguments.
-                [effective-link-inputs : build_run_core.SourceToolLinkInputs
-                  (build_run_core.clone-source-tool-link-inputs
+                [files : cli_svec.Vec
+                  (package_source_core.package-source-reachable-owned-files
                     (&
-                      (build_run_core.source-tool-link-inputs-merge-with
-                        (build_run_core.source-tool-link-inputs-merge
+                      (load.compiler-load-package-reachable-paths
+                        (& request.entry-path)
+                        (& paths)
+                        seen))
+                    (& request.manifest-dir)
+                    (& request.stdlib-roots))]
+                [inline-sources : cli_svec.Vec (cli_svec.new)]
+                [doctests : bool false]
+                (for [index (iterator.range 0 (cli_svec.len (& files)))]
+                  (let
+                    [path : String (cli_svec.get (& files) index "")]
+                    (when
+                      (test_cli_core.tltest-source-has-inline-tests?
+                        (string.copy (& path)))
+                      (cli_svec.push-ref!
+                        (&mut inline-sources)
+                        (string.copy (& path))))
+                    (unless
+                      doctests
+                      (set!
+                        doctests
+                        (doc_test.doc-test-package-file-has-examples? (& path))))))
+                (when
+                  (or doctests (> (cli_svec.len (& inline-sources)) 0))
+                  (return (Preflight inline-sources doctests)))))
+            (let
+              [owned-paths : ast.AstDeclPathList
+                (load.compiler-load-package-owned-paths-for-decls
+                  (& request.manifest.name)
+                  (& request.manifest-dir)
+                  (& request.stdlib-roots)
+                  (& request.entry-path)
+                  (& decls)
+                  (& paths))]
+              (if is-lib
+                (Finished
+                  (build-package-emit-lib-tli!
+                    scope
+                    request
+                    input-transcript
+                    decls
+                    paths
+                    owned-paths
+                    cfgs))
+                (let
+                  [metadata-link-inputs : build_run_core.SourceToolLinkInputs
+                    (build_run_core.source-tool-link-inputs-from-decls
+                      (& decls)
+                      (build_run_core.source-tool-link-inputs-empty))]
+                  ;; The dependency section keeps each package's raw arguments.
+                  [effective-link-inputs : build_run_core.SourceToolLinkInputs
+                    (build_run_core.clone-source-tool-link-inputs
+                      (&
+                        (build_run_core.source-tool-link-inputs-merge-with
+                          (build_run_core.source-tool-link-inputs-merge
+                            (build_run_core.clone-source-tool-link-inputs
+                              (& request.manifest-link-inputs))
+                            metadata-link-inputs)
                           (build_run_core.clone-source-tool-link-inputs
-                            (& request.manifest-link-inputs))
-                          metadata-link-inputs)
-                        (build_run_core.clone-source-tool-link-inputs
-                          (& request.dep-link-inputs))
-                        false)))]
-                [crt-entry : bool
-                  (and
-                    request.emit-entry
-                    (build_run_core.source-tool-linux-crt-entry?
+                            (& request.dep-link-inputs))
+                          false)))]
+                  [crt-entry : bool
+                    (and
+                      request.emit-entry
+                      (build_run_core.source-tool-linux-crt-entry?
+                        (be_state.clone-compiler-backend-target
+                          (& request.target))
+                        effective-link-inputs))]
+                  (Finished
+                    (build-package-finish-bin-artifacts
+                      scope
+                      (& request.manifest-path)
+                      (& request.manifest-dir)
+                      (& request.manifest)
+                      (string.copy (& request.manifest.name))
+                      (load.clone-compiler-pkg-kind (& request.kind))
                       (be_state.clone-compiler-backend-target
                         (& request.target))
-                      effective-link-inputs))]
-                (Finished
-                  (build-package-finish-bin-artifacts
-                    scope
-                    (& request.manifest-path)
-                    (& request.manifest-dir)
-                    (& request.manifest)
-                    (string.copy (& request.manifest.name))
-                    (load.clone-compiler-pkg-kind (& request.kind))
-                    (be_state.clone-compiler-backend-target (& request.target))
-                    request.opt-level
-                    (pkg_profile.clone-package-profile (& request.profile))
-                    (be_state.clone-compiler-backend-mode (& request.mode))
-                    (string.copy (& request.producer-identity))
-                    (string.copy (& request.entry-path))
-                    request.emit-entry
-                    crt-entry
-                    decls
-                    owned-paths
-                    (build-package-output-dir-profile
-                      (string.copy (& request.manifest-dir))
-                      (string.copy (& request.manifest.name))
-                      (pkg_profile.clone-package-profile (& request.profile)))
-                    (string.copy (& request.asm-path))
-                    (string.copy (& request.obj-path))
-                    (string.copy (& request.artifact-path))
-                    effective-link-inputs
-                    request.announce
-                    cfgs
-                    (& request.stdlib-roots))))))]))))
+                      request.opt-level
+                      (pkg_profile.clone-package-profile (& request.profile))
+                      (be_state.clone-compiler-backend-mode (& request.mode))
+                      (string.copy (& request.producer-identity))
+                      (string.copy (& request.entry-path))
+                      request.emit-entry
+                      crt-entry
+                      decls
+                      owned-paths
+                      (build-package-output-dir-profile
+                        (string.copy (& request.manifest-dir))
+                        (string.copy (& request.manifest.name))
+                        (pkg_profile.clone-package-profile (& request.profile)))
+                      (string.copy (& request.asm-path))
+                      (string.copy (& request.obj-path))
+                      (string.copy (& request.artifact-path))
+                      effective-link-inputs
+                      request.announce
+                      cfgs
+                      (& request.stdlib-roots))))))])))))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -7251,43 +7343,6 @@
                           (return 1)]
                         [(Ok transcript) transcript])])])
               "")]
-          [verify-lib-deps? : bool
-            (cfg
-              dependency-tlci-verification
-              (and
-                (build-package-kind-lib? kind)
-                (>
-                  (load.compiler-pkg-dep-list-count
-                    (&
-                      (load.compiler-pkg-deps-list
-                        (load.clone-compiler-pkg-deps (& manifest.deps)))))
-                  0)
-                (match (env.get "TYPELISP_DEPENDENCY_TLCI_VERIFY")
-                  [(EnvSomeString v) (string.eq (& v) "1")]
-                  [_ false]))
-              false)]
-          (when
-            (and
-              (build-package-kind-lib? kind)
-              (not interface-only)
-              (not verify-lib-deps?)
-              (build-package-lib-fresh?
-                (string.copy (& lib-input-transcript))
-                (& tli-path)
-                (& artifact-path)
-                (& tlci-path)
-                (&
-                  (build-package-runtime-fingerprint-path
-                    (string.copy (& artifact-path))))))
-            (return
-              (build-package-announce-freshness
-                artifact-path
-                (if (build-package-file-regular? (string.copy (& tlci-path)))
-                  tlci-path
-                  "")
-                false
-                false
-                announce)))
           (let
             [manifest-link-inputs : build_run_core.SourceToolLinkInputs
               (build-package-manifest-link-inputs

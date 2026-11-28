@@ -25879,6 +25879,11 @@
                                     symbol)
                                   c-entry
                                   "\n"
+                                  (be_scalar.compiler-backend-debug-cv-line-table
+                                    target
+                                    program-index
+                                    name
+                                    (& symbol))
                                   (be_scalar.compiler-backend-backtrace-function-entry
                                     target
                                     program-index
@@ -27007,7 +27012,8 @@ tl_shared_object_init:
               (be_scalar.compiler-backend-backtrace-map-prefix
                 target
                 (be_state.compiler-backend-state-library-object?
-                  program-index.backend-state))
+                  program-index.backend-state)
+                target-policy.shared-object)
               (be_scalar.compiler-backend-abort-table-prefix
                 target
                 (be_state.compiler-backend-state-library-object?
@@ -27106,11 +27112,9 @@ tl_shared_object_init:
                       (be_scalar.compiler-backend-backtrace-map-trailer
                         target
                         (be_state.compiler-backend-state-library-object?
-                          program-index.backend-state))
-                      (be_scalar.compiler-backend-debug-trailer
-                        target
-                        functions
-                        program-index))))
+                          program-index.backend-state)
+                        target-policy.shared-object)
+                      (be_scalar.compiler-backend-debug-trailer target))))
                   [(Ok with-adapters)
                     (begin
                       (cfg

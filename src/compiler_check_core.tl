@@ -935,7 +935,7 @@
           (compiler_load.compiler-load-serial-test-session-state)]
         [_install : unit
           (compiler_load.compiler-load-session-state-source-provider-install!
-            (owned_view.compiler-owned-shared-view state)
+            (&mut state)
             (owned_view.compiler-owned-shared-view overlay))]
         [source : String
           (compiler_load.compiler-load-session-read-source-text (& path))]
@@ -947,7 +947,7 @@
             cfgs)]
         [ledger : source_overlay.CompilerSourceLedger
           (compiler_load.compiler-load-session-state-source-provider-finish!
-            state)]
+            (&mut state))]
         (match (compiler-check-overlay-ledger-status
           (& overlay)
           (& ledger)
@@ -974,7 +974,7 @@
           (compiler_load.compiler-load-serial-test-session-state)]
         [_install : unit
           (compiler_load.compiler-load-session-state-source-provider-install!
-            (owned_view.compiler-owned-shared-view state)
+            (&mut state)
             (owned_view.compiler-owned-shared-view overlay))]
         [check : ResultCompilerCheckWithPaths
           (compiler-check-package-entry-file-with-roots-and-cfg
@@ -989,7 +989,7 @@
             (tc.tc-serial-job-state))]
         [ledger : source_overlay.CompilerSourceLedger
           (compiler_load.compiler-load-session-state-source-provider-finish!
-            state)]
+            (&mut state))]
         (match (compiler-check-overlay-ledger-status
           (& overlay)
           (& ledger)

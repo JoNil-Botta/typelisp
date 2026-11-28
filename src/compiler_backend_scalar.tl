@@ -3066,55 +3066,52 @@
                     (str_cat.str-cat "    .file " file-number " \"" path "\"\n"))))))
           (text_buf.render buf))])))
 
-(define (compiler-backend-debug-cv-function-seq-from
+(define (compiler-backend-debug-cv-function-ids-from
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [program-index : be_state.CompilerBackendProgramIndex]
-  [line-tables : bool]
   [index : i64]) : String
   (if (>= index functions.len)
     ""
     (match (owned_view.compiler-owned-element-view functions.slots index)
       [(Function name _ _ _ _ _ _)
-        (match (be_operand.compiler-backend-index-function-slot
-          program-index
-          name)
-          [(LookupFound function-id)
-            (str_cat.str-cat
-              (if line-tables
-                (str_cat.str-cat
-                  "    .cv_linetable "
-                  (string.int->string function-id)
-                  ", "
-                  (be_operand.compiler-backend-function-symbol-index
-                    program-index
-                    name)
-                  ", .Lcv_func_end_"
-                  (string.int->string function-id))
-                (str_cat.str-cat
-                  "    .cv_func_id "
-                  (string.int->string function-id)))
-              "\n"
-              (compiler-backend-debug-cv-function-seq-from
-                functions
-                program-index
-                line-tables
-                (+ index 1)))]
-          [(LookupMissing)
-            (compiler-backend-debug-cv-function-seq-from
-              functions
-              program-index
-              line-tables
-              (+ index 1))])])))
+        (str_cat.str-cat
+          (match (be_operand.compiler-backend-index-function-slot
+            program-index
+            name)
+            [(LookupFound function-id)
+              (str_cat.str-cat
+                "    .cv_func_id "
+                (string.int->string function-id)
+                "\n")]
+            [(LookupMissing) ""])
+          (compiler-backend-debug-cv-function-ids-from
+            functions
+            program-index
+            (+ index 1)))])))
 
-(define (compiler-backend-debug-cv-functions
-  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+;; Keep the line table with its body so optional runtime pruning removes both.
+(define (compiler-backend-debug-cv-line-table
+  [target : be_state.CompilerBackendTarget]
   [program-index : be_state.CompilerBackendProgramIndex]
-  [line-tables : bool]) : String
-  (compiler-backend-debug-cv-function-seq-from
-    functions
-    program-index
-    line-tables
-    0))
+  [name : i64]
+  [symbol : (& str)]) : String
+  (if (and
+    (compiler_ir_types.compiler-debug-info-enabled?)
+    (be_state.compiler-backend-target-coff? target))
+    (match (be_operand.compiler-backend-index-function-slot program-index name)
+      [(LookupFound function-id)
+        (let
+          [id : String (string.int->string function-id)]
+          (str_cat.str-cat
+            "    .pushsection .debug$S,\"dr\"\n    .cv_linetable "
+            (string.copy (& id))
+            ", "
+            (string.copy symbol)
+            ", .Lcv_func_end_"
+            id
+            "\n    .popsection\n"))]
+      [(LookupMissing) ""])
+    ""))
 
 (define (compiler-backend-debug-prefix
   [target : be_state.CompilerBackendTarget]
@@ -3129,7 +3126,7 @@
         "    .long 4\n"
         "    .cv_stringtable\n"
         (compiler-backend-debug-file-directives target span-index)
-        (compiler-backend-debug-cv-functions functions program-index false)
+        (compiler-backend-debug-cv-function-ids-from functions program-index 0)
         "    .text\n")
       (compiler-backend-debug-file-directives target span-index))))
 
@@ -3219,22 +3216,12 @@
           ctx.source-function)])))
 
 (define (compiler-backend-debug-trailer
-  [target : be_state.CompilerBackendTarget]
-  [functions : compiler_ir_types.CompilerIrFunctionSeq]
-  [program-index : be_state.CompilerBackendProgramIndex]) : String
-  (if (and
-    (compiler_ir_types.compiler-debug-info-enabled?)
-    (be_state.compiler-backend-target-coff? target))
-    (str_cat.str-cat
-      "    .section .debug$S,\"dr\"\n"
-      "    .cv_filechecksums\n"
-      (compiler-backend-debug-cv-functions functions program-index true)
-      "    .text\n")
-    (if (and
-      (compiler_ir_types.compiler-debug-info-enabled?)
-      (be_state.compiler-backend-target-elf? target))
-      "    .section .text.typelisp_runtime,\"ax\"\n"
-      "")))
+  [target : be_state.CompilerBackendTarget]) : String
+  (if (not (compiler_ir_types.compiler-debug-info-enabled?))
+    ""
+    (if (be_state.compiler-backend-target-coff? target)
+      "    .section .debug$S,\"dr\"\n    .cv_filechecksums\n    .text\n"
+      "    .section .text.typelisp_runtime,\"ax\"\n")))
 
 ;; Allocation-free fatal backtraces use a deliberately small, target-neutral
 ;; map instead of teaching the runtime to parse DWARF, CodeView, or PDB files.
@@ -3245,10 +3232,26 @@
 ;; compiler-driver installs `compiler-backtrace` together with debug-info, and
 ;; direct-object release builds therefore keep their existing section model.
 (define (compiler-backend-backtrace-map-section
-  [target : be_state.CompilerBackendTarget]) : String
-  (if (be_state.compiler-backend-target-coff? target)
-    "    .section .rdata$TLBT,\"dr\"\n"
-    "    .section .typelisp_backtrace,\"a\",@progbits\n"))
+  [target : be_state.CompilerBackendTarget]
+  [function-section : (& str)]
+  [shared-object : bool]) : String
+  (cond
+    [(be_state.compiler-backend-target-coff? target)
+      (if (string.eq function-section "")
+        "    .section .rdata$TLBTM,\"dr\"\n"
+        (str_cat.str-cat
+          "    .section .rdata$TLBTM,\"dr\",associative,"
+          function-section
+          "\n"))]
+    [shared-object
+      "    .section .data.rel.ro.typelisp_backtrace,\"aw\",@progbits\n"]
+    [else
+      (str_cat.str-cat
+        "    .section tl_backtrace_map_data,\"ao\",@progbits,"
+        (if (string.eq function-section "")
+          ".text"
+          (string.copy function-section))
+        "\n")]))
 
 ;; The row travels with its call through speculative function emission and
 ;; cold-stub placement. Only an assembled row marks the table and its kind as
@@ -3411,7 +3414,10 @@
         [else ""])
       (if debug?
         (str_cat.str-cat
-          (compiler-backend-backtrace-map-section target)
+          (compiler-backend-backtrace-map-section
+            target
+            "tl_abort_lookup"
+            local-table?)
           "    .balign 8\n    .quad tl_abort_lookup\n    .quad tl_abort_lookup_end\n"
           "    .quad tl_backtrace_string_data_begin\n    .quad 0\n"
           "    .quad tl_backtrace_string_data_begin\n    .quad 0\n"
@@ -3424,45 +3430,56 @@
 (define (compiler-backend-backtrace-string-section
   [target : be_state.CompilerBackendTarget]) : String
   (if (be_state.compiler-backend-target-coff? target)
-    "    .section .rdata$TLBS,\"dr\"\n"
-    "    .section .rodata.typelisp_backtrace,\"a\",@progbits\n"))
+    "    .section .rdata$TLBSM,\"dr\"\n"
+    "    .section tl_backtrace_string_data,\"a\",@progbits\n"))
 
-;; Archive members carry their own debug rows and string bounds. The
-;; executable's runtime anchors belong to the executable object.
+;; COFF orders contributions by their $ suffix across objects and archives.
+;; ELF linkers define the bounds for executable links. A shared object has its
+;; own table and defines hidden bounds for it in the same assembly file.
 (define (compiler-backend-backtrace-map-prefix
   [target : be_state.CompilerBackendTarget]
-  [library-object : bool]) : String
+  [library-object : bool]
+  [shared-object : bool]) : String
   (if (not (compiler_ir_types.compiler-debug-info-enabled?))
     ""
     (str_cat.str-cat
-      (compiler-backend-backtrace-string-section target)
-      (if library-object
-        ""
-        "    .globl tl_backtrace_string_data_begin\n")
+      (if (and
+        (be_state.compiler-backend-target-coff? target)
+        (not library-object))
+        "    .section .rdata$TLBSA,\"dr\"\n"
+        (compiler-backend-backtrace-string-section target))
+      (if shared-object
+        ".hidden __start_tl_backtrace_string_data\n__start_tl_backtrace_string_data:\n"
+        "")
       "tl_backtrace_string_data_begin:\n"
-      (compiler-backend-backtrace-map-section target)
+      (if (and
+        (be_state.compiler-backend-target-coff? target)
+        (not library-object))
+        "    .section .rdata$TLBTA,\"dr\"\n"
+        (compiler-backend-backtrace-map-section target "" shared-object))
       "    .balign 8\n"
-      (if library-object
-        ""
-        "    .globl tl_backtrace_map_data_begin\n")
+      (if shared-object
+        ".hidden __start_tl_backtrace_map_data\n__start_tl_backtrace_map_data:\n"
+        "")
       "tl_backtrace_map_data_begin:\n    .text\n")))
 
 (define (compiler-backend-backtrace-map-trailer
   [target : be_state.CompilerBackendTarget]
-  [library-object : bool]) : String
-  (if (not (compiler_ir_types.compiler-debug-info-enabled?))
-    ""
-    (str_cat.str-cat
-      (compiler-backend-backtrace-map-section target)
-      (if library-object
-        ""
-        "    .globl tl_backtrace_map_data_end\n")
-      "tl_backtrace_map_data_end:\n"
-      (compiler-backend-backtrace-string-section target)
-      (if library-object
-        ""
-        "    .globl tl_backtrace_string_data_end\n")
-      "tl_backtrace_string_data_end:\n    .text\n")))
+  [library-object : bool]
+  [shared-object : bool]) : String
+  (cond
+    [(not (compiler_ir_types.compiler-debug-info-enabled?)) ""]
+    [(and (be_state.compiler-backend-target-coff? target) (not library-object))
+      "    .section .rdata$TLBTZ,\"dr\"\n    .balign 8\ntl_backtrace_map_data_end:
+    .section .rdata$TLBSZ,\"dr\"\ntl_backtrace_string_data_end:
+    .text\n"]
+    [shared-object
+      (str_cat.str-cat
+        (compiler-backend-backtrace-map-section target "" shared-object)
+        ".hidden __stop_tl_backtrace_map_data\n__stop_tl_backtrace_map_data:\n"
+        (compiler-backend-backtrace-string-section target)
+        ".hidden __stop_tl_backtrace_string_data\n__stop_tl_backtrace_string_data:\n    .text\n")]
+    [else ""]))
 
 ;; ABI bridges own unwind frames but no source frame. A validated map row with
 ;; an empty name marks that distinction without inventing a source location.
@@ -3472,7 +3489,7 @@
   [end : String]) : String
   (str_cat.str-cat
     end
-    ":\n    .section .rdata$TLBT,\"dr\"\n    .balign 8\n    .quad "
+    ":\n    .section .rdata$TLBTM,\"dr\"\n    .balign 8\n    .quad "
     begin
     "\n    .quad "
     end
@@ -3557,7 +3574,15 @@
             (be_facts.compiler-backend-escape-string
               (be_state.compiler-backend-global-shared-view path))
             "\"\n"
-            (compiler-backend-backtrace-map-section target)
+            (compiler-backend-backtrace-map-section
+              target
+              (&
+                (if (be_state.compiler-backend-state-library-object?
+                  program-index.backend-state)
+                  (string.copy (& symbol))
+                  ""))
+              (be_state.compiler-backend-state-emission-target-policy
+                program-index.backend-state).shared-object)
             "    .balign 8\n    .quad "
             symbol
             "\n    .quad "

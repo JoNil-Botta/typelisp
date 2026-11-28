@@ -17635,9 +17635,9 @@ f:
       (asm-ok?
         (backend.compiler-backend-emit-source "(define (main) : i64 0)")
         (has
-          ".section .typelisp_backtrace,\"a\",@progbits"
+          ".section tl_backtrace_map_data,\"ao\",@progbits,.text"
           "tl_backtrace_string_data_begin:"
-          "tl_backtrace_map_data_end:"
+          "leaq __stop_tl_backtrace_map_data(%rip), %rax"
           ".quad main"))]
     [windows-ok : bool
       (asm-ok?
@@ -17645,8 +17645,8 @@ f:
           "(define (main) : i64 0)"
           (be_state.CompilerBackendTarget.Windows))
         (has
-          ".section .rdata$TLBT,\"dr\""
-          ".section .rdata$TLBS,\"dr\""
+          ".section .rdata$TLBTM,\"dr\""
+          ".section .rdata$TLBSM,\"dr\""
           "tl_backtrace_map_begin:"))]
     [bridge-ok : bool
       (asm-ok?
@@ -46820,7 +46820,7 @@ user_fn:
 .L_mask:
     .quad 0x8000000000000000
     .quad -1
-    .section .typelisp_backtrace,\"a\",@progbits
+    .section .data.rel.ro.typelisp_backtrace,\"aw\",@progbits
     .quad user_fn
     .data
     .quad .+8
@@ -46846,7 +46846,7 @@ user_fn:
         ;; Only the read-only run holding an address moves.
         "    .section .data.rel.ro,\"aw\",@progbits\n.L_tl_str_data_0:\n"
         "    .section .rodata\n    .balign 8\n.L_mask:\n"
-        "    .section .typelisp_backtrace,\"aw\",@progbits\n    .quad user_fn\n"
+        "    .section .data.rel.ro.typelisp_backtrace,\"aw\",@progbits\n    .quad user_fn\n"
         ;; Data that spells `@tpoff` is not code.
         "    .string \"movq %fs:tl_current_arena@tpoff, \"\n"
         "    .data\n    .quad .+8\n")

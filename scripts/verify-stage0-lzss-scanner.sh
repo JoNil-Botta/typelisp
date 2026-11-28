@@ -257,22 +257,48 @@ stamp_index() {
     u64 "$index_hash" | dd of="$work/v3" bs=1 seek=60 conv=notrunc 2>/dev/null
 }
 # magic(36) + raw, index end, count, hash, stream bytes, groups(84),
-# model(4413), one group record(32), one frame record(80: six words and the
-# frame image SHA-256), then the stream.
+# model(4413), group records(32 each), frame records(80 each: six words and
+# the frame image SHA-256), frame names, then the stream.
 model_start=84
 model_bytes=4413
 group_table=$((model_start + model_bytes))
-directory=$((group_table + 32))
-index_end=$((directory + 80))
 write_v3() {
+    frame_count=$1
+    group_frames=$2
+    ordinary_frames=$((frame_count - 1))
+    groups=$((1 + (ordinary_frames + group_frames - 1) / group_frames))
+    directory=$((group_table + groups * 32))
+    names=$((directory + frame_count * 80))
+    index_end=$((names + ordinary_frames))
     {
         printf '__typelisp_embedded_stdlib_tlci_v4__'
-        u64 176; u64 "$index_end"; u64 1; u64 0; u64 1; u64 1
+        u64 "$((frame_count * 176))"; u64 "$index_end"; u64 "$frame_count"
+        u64 0; u64 "$groups"; u64 "$groups"
         dd if=/dev/zero bs="$model_bytes" count=1 2>/dev/null
         u64 0; u64 1; u64 0; u64 176
-        u64 "$index_end"; u64 0; u64 0; u64 176; u64 0; u64 1
+        group=1
+        while [ "$group" -lt "$groups" ]; do
+            first=$((1 + (group - 1) * group_frames))
+            count=$((frame_count - first))
+            [ "$count" -le "$group_frames" ] || count=$group_frames
+            u64 "$group"; u64 1; u64 "$((first * 176))"; u64 "$((count * 176))"
+            group=$((group + 1))
+        done
+        u64 "$names"; u64 0; u64 0; u64 176; u64 0; u64 1
         dd if=/dev/zero bs=32 count=1 2>/dev/null
-        printf 'x'
+        i=1
+        while [ "$i" -le "$ordinary_frames" ]; do
+            u64 "$((names + i - 1))"; u64 1; u64 "$((i * 176))"
+            u64 176; u64 "$((1 + (i - 1) / group_frames))"; u64 1
+            dd if=/dev/zero bs=32 count=1 2>/dev/null
+            i=$((i + 1))
+        done
+        i=1
+        while [ "$i" -le "$ordinary_frames" ]; do
+            printf "\\$(printf '%03o' "$((96 + i))")"
+            i=$((i + 1))
+        done
+        printf '%*s' "$groups" '' | tr ' ' x
     } > "$work/v3"
     stamp_index "$index_end"
 }
@@ -283,12 +309,16 @@ reject_v3() {
     fi
     grep -F "$1" "$work/err" >/dev/null || { cat "$work/err" >&2; exit 1; }
 }
-write_v3
-actual=$(scan_stage0_tlch "$work/v3")
-[ "$actual" = "1 176 1 $((index_end + 1))" ] || {
-    echo "TLCH scanner: expected 1 176 1 $((index_end + 1)), got $actual" >&2
-    exit 1
+expect_v3() {
+    actual=$(scan_stage0_tlch "$work/v3")
+    expected="1 $((frame_count * 176)) $groups $((index_end + groups))"
+    [ "$actual" = "$expected" ] || {
+        echo "TLCH scanner: expected $expected, got $actual" >&2
+        exit 1
+    }
 }
+write_v3 1 16
+expect_v3
 {
     cat "$work/frame-a"
     cat "$work/frame-aaaa"
@@ -302,9 +332,30 @@ printf X | dd of="$work/v3" bs=1 seek="$directory" conv=notrunc 2>/dev/null
 reject_v3 'index hash mismatch'
 # A corrupted index fails its authenticated hash.
 label=index-hash-record
-write_v3
+write_v3 1 16
 printf X | dd of="$work/v3" bs=1 seek="$((directory + 8))" conv=notrunc 2>/dev/null
 reject_v3 'index hash mismatch'
+
+# Both bootstrap group widths, singleton groups, and a shorter final group.
+write_v3 18 16
+expect_v3
+write_v3 4 1
+expect_v3
+write_v3 6 2
+expect_v3
+
+label=nonuniform-frame-groups
+u64 3 | dd of="$work/v3" bs=1 seek="$((directory + 4 * 80 + 32))" conv=notrunc 2>/dev/null
+stamp_index "$index_end"
+reject_v3 'invalid frame group'
+
+label=unreferenced-final-group
+write_v3 6 2
+u64 1 | dd of="$work/v3" bs=1 seek="$((directory + 3 * 80 + 32))" conv=notrunc 2>/dev/null
+u64 2 | dd of="$work/v3" bs=1 seek="$((directory + 5 * 80 + 32))" conv=notrunc 2>/dev/null
+stamp_index "$index_end"
+reject_v3 'invalid group count'
+
 bytes=$(wc -c < "$work/frame-text" | tr -d ' ')
 n=36
 # Every cut that removes token bytes must fail; a cut that only drops trailing

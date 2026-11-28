@@ -386,20 +386,14 @@ function tlch_finish() {
     tlch_static_total += tlch_index_end + tlch_stream
     tlch_reset()
 }
-# Group g holds frame 0 alone, then sixteen frames at a time.
-function tlch_group_of(frame_index) {
-    return frame_index <= 0 ? 0 : 1 + int((frame_index - 1) / 16)
-}
 function tlch_check_index(    tcount, groups, directory, i, record, name, name_len,
                               raw_offset, expanded, group, checksum, names, previous,
                               previous_len, j, order, sum, hash, stream_cursor,
                               raw_cursor, stream_off, stream_len, group_raw_off,
-                              group_raw_len) {
+                              group_raw_len, group_frames, expected_group) {
     tcount = tlch_word(52); groups = tlch_word(76)
     directory = tlch_model_start + tlch_model_bytes + tlch_group_bytes * groups
     names = directory + tlch_record_bytes * tcount
-    if (groups != (tcount <= 1 ? 1 : 2 + int((tcount - 2) / 16)))
-        tlch_fail("invalid group count")
     hash = 1
     for (i = 0; i < tlch_index_end; i++)
         hash = (hash * 131 + ((i >= 60 && i < 68) ? 0 : tlch_index_bytes[i])) % 2147483647
@@ -421,13 +415,19 @@ function tlch_check_index(    tcount, groups, directory, i, record, name, name_l
         tlch_fail("group ranges do not cover the stream")
     sum = 0
     previous = 0; previous_len = 0
+    group_frames = 0
     for (i = 0; i < tcount; i++) {
         record = directory + i * tlch_record_bytes
         name = tlch_word(record); name_len = tlch_word(record + 8)
         raw_offset = tlch_word(record + 16); expanded = tlch_word(record + 24)
         group = tlch_word(record + 32); checksum = tlch_word(record + 40)
         if (checksum < 0 || checksum > 2147483647) tlch_fail("invalid frame checksum")
-        if (group != tlch_group_of(i)) tlch_fail("invalid frame group")
+        # Frame zero stands alone. The first departure from group 1 fixes the
+        # width for all ordinary groups, with a possibly shorter last group.
+        if (i > 1 && group_frames == 0 && group != 1) group_frames = i - 1
+        expected_group = i == 0 ? 0 : 1
+        if (group_frames != 0) expected_group += int((i - 1) / group_frames)
+        if (group != expected_group || group >= groups) tlch_fail("invalid frame group")
         if (name != names || name_len < 0 || name_len > tlch_index_end - names ||
             (i == 0 ? name_len != 0 : name_len == 0) || expanded < 176 ||
             expanded > 268435456 - sum || raw_offset != sum)
@@ -444,6 +444,10 @@ function tlch_check_index(    tcount, groups, directory, i, record, name, name_l
         previous = name
         previous_len = name_len
     }
+    # With a single ordinary group, only its actual width is observable.
+    if (group_frames == 0) group_frames = tcount - 1
+    if (groups != (tcount == 1 ? 1 : 2 + int((tcount - 2) / group_frames)))
+        tlch_fail("invalid group count")
     if (names != tlch_index_end || sum != tlch_raw || tlch_index_end + tlch_stream > binary_size - tlch_start)
         tlch_fail("inconsistent index length")
 }

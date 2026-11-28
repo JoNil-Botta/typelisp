@@ -7522,10 +7522,11 @@
   [a : (& a ir.CompilerIrFunction)]
   [b : (& b ir.CompilerIrFunction)]) : bool
   (match a
-    [(Function aname aparams aret aframe ablocks aabi _)
+    [(Function aname aparams aret aframe ablocks aabi acold?)
       (match b
-        [(Function bname bparams bret bframe bblocks babi _)
+        [(Function bname bparams bret bframe bblocks babi bcold?)
           (and
+            (= acold? bcold?)
             (ir.compiler-ir-symbol-eq? aname bname)
             (= aframe bframe)
             (return_storage.function-abi-equal?
@@ -100580,8 +100581,11 @@
             func)
           changed))
       (let
-        [_size : unit
-          (set! summaries.optimize-for-size (opt_level.opt-level-size? level))]
+        [func-cold? : bool
+          (match (& func)
+            [(Function _ _ _ _ _ _ cold?) cold?])]
+        [size-opt? : bool (or (opt_level.opt-level-size? level) func-cold?)]
+        [_size : unit (set! summaries.optimize-for-size size-opt?)]
         [s : OptPassState
           (match (optimize-function-fixed-pass-with-summaries
             pools
@@ -100624,7 +100628,7 @@
         ;; leaves it out so inlining prices what it always did.
         [s
           (if (or
-            (opt_level.opt-level-size? level)
+            size-opt?
             s.priced?
             (not (opt-licm-guard-function-shape? (& (opt-pass-blocks s)))))
             s
@@ -100638,7 +100642,7 @@
                 s)
               "licm_guard"))]
         [s
-          (if (opt_level.opt-level-size? level)
+          (if size-opt?
             s
             (opt-pass-observed
               (opt-pass-with-cfg-func
@@ -100678,7 +100682,7 @@
               (& (opt-pass-func s)))
             s)]
         [s
-          (if (opt_level.opt-level-size? level)
+          (if size-opt?
             s
             (opt-pass-with-result
               (opt-thread-const-branch-final-pass
@@ -100690,7 +100694,7 @@
         ;; longer does and costs a taken `jmp` on the path around it. Once more,
         ;; below it.
         [s
-          (if (opt_level.opt-level-size? level)
+          (if size-opt?
             s
             (opt-pass-with-result
               (opt-cfg-straighten-below-threader-pass
@@ -105431,6 +105435,104 @@
           (ast.clone-ast-type ret)))]
     [else (Phi dst inputs (ast.clone-ast-type ret))]))
 
+(define (opt-function-is-cold? [func : (& ir.CompilerIrFunction)]) : bool
+  (match func
+    [(Function _ _ _ _ _ _ cold?) cold?]))
+
+(define opt-inline-program-has-cold? : bool
+  false)
+(define opt-inline-program-cold-callees : (__tl_dyn-array opt_i64_i64_map.Map)
+  (__tl_make-array (opt_i64_i64_map.with-capacity 0)))
+(define opt-inline-cold-retained-all? : bool
+  false)
+(define opt-inline-cold-retained-has-exports? : bool
+  false)
+(define opt-inline-cold-retained : (__tl_dyn-array opt_i64_i64_map.Map)
+  (__tl_make-array (opt_i64_i64_map.with-capacity 0)))
+(define opt-inline-caller-cold? : bool
+  false)
+(define opt-inline-caller-cold-blocks-ready? : bool
+  false)
+(define opt-inline-caller-cold-blocks : (__tl_dyn-array opt_i64_i64_map.Map)
+  (__tl_make-array (opt_i64_i64_map.with-capacity 0)))
+
+(define (opt-inline-cold-site-retained?
+  [index : (& OptFunctionIndex)]
+  [callee-name : i64]) : bool
+  (cond
+    [opt-inline-cold-retained-all? true]
+    [(not opt-inline-cold-retained-has-exports?) false]
+    [else
+      (match (opt-function-index-slot index callee-name)
+        [(Some slot)
+          (opt_i64_i64_map.contains?
+            (& (array-ref opt-inline-cold-retained 0))
+            slot)]
+        [(None) false])]))
+
+(define (opt-inline-cold-retained-install!
+  [index : (& OptFunctionIndex)]
+  [functions : (& ir.CompilerIrFunctionSeq)]
+  [externs : (& ir.CompilerIrExternSeq)]) : unit
+  (if (not (opt-function-seq-defines? functions "main"))
+    (begin
+      (set! opt-inline-cold-retained-all? true)
+      (set! opt-inline-cold-retained-has-exports? false))
+    (let
+      [ecount : i64 (ir.compiler-ir-extern-seq-count externs)]
+      [found : i64 0]
+      (for [i (iterator.range 0 ecount)]
+        (match (ir.compiler-ir-extern-seq-borrow externs i)
+          [(Extern name-id _ _ _ _ _ _ provided _ _ _ _)
+            (when
+              provided
+              (match (opt-function-index-slot-id index name-id)
+                [(Some _) (+= found 1)]
+                [(None) unit]))]))
+      (set! opt-inline-cold-retained-all? false)
+      (if (= found 0)
+        (set! opt-inline-cold-retained-has-exports? false)
+        (let
+          [out : opt_i64_i64_map.Map
+            (opt_i64_i64_map.with-capacity (+ (* found 2) 1))]
+          (for [i (iterator.range 0 ecount)]
+            (match (ir.compiler-ir-extern-seq-borrow externs i)
+              [(Extern name-id _ _ _ _ _ _ provided _ _ _ _)
+                (when
+                  provided
+                  (match (opt-function-index-slot-id index name-id)
+                    [(Some slot)
+                      (opt_i64_i64_map.insert-ref! (&mut out) slot 1)]
+                    [(None) unit]))]))
+          (set! (array-ref opt-inline-cold-retained 0) out)
+          (set! opt-inline-cold-retained-has-exports? true))))))
+
+(define (opt-inline-caller-is-cold?
+  [index : (& OptFunctionIndex)]
+  [caller : i64]) : bool
+  (if (= caller opt-inline-caller-name)
+    opt-inline-caller-cold?
+    (match (opt-function-index-slot index caller)
+      [(Some slot) (opt-function-is-cold? (& (array-ref index.values slot)))]
+      [(None) false])))
+
+(define (opt-inline-current-site-cold?) : bool
+  (cond
+    [opt-inline-caller-cold? true]
+    [(not opt-inline-program-has-cold?) false]
+    [else
+      (unless
+        opt-inline-caller-cold-blocks-ready?
+        (set!
+          (array-ref opt-inline-caller-cold-blocks 0)
+          (ir.compiler-ir-cold-block-label-set
+            (& (array-ref opt-inline-caller-facts-blocks 0))
+            (& (array-ref opt-inline-program-cold-callees 0))))
+        (set! opt-inline-caller-cold-blocks-ready? true))
+      (opt_i64_i64_map.contains?
+        (& (array-ref opt-inline-caller-cold-blocks 0))
+        opt-inline-current-block-label)]))
+
 ;; The site's own location moved onto an instruction the rewrite mints in the
 ;; caller. Located in both build modes for the same reason the clone walk is:
 ;; a `stdlib.io/panic` call is an abort site, and an entry carrying path id 0
@@ -105444,9 +105546,13 @@
   [multiblock? : bool]) : option_i64.Option
   (match (opt-function-index-slot index cname)
     [(Some slot)
-      (if (and
-        (>= caller-scc 0)
-        (= (array-ref scc-result.scc-of slot) caller-scc))
+      (if (or
+        (and
+          (>= caller-scc 0)
+          (= (array-ref scc-result.scc-of slot) caller-scc))
+        (and
+          (opt-function-is-cold? (& (array-ref index.values slot)))
+          (not (opt-inline-caller-is-cold? index caller))))
         (None)
         (if (if multiblock?
           (opt-inline-multiblock-callee-ok-cached?
@@ -105609,7 +105715,8 @@
   [index : (& index OptFunctionIndex)]
   [census : (& census OptInlineCensus)]
   [name : i64]
-  [blocks : (& blocks ir.CompilerIrBlockList)]) : unit
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [cold? : bool]) : unit
   (set!
     (array-ref opt-inline-caller-facts-blocks 0)
     (owned_view.compiler-owned-reference-shared-view blocks))
@@ -105621,6 +105728,8 @@
   (set! (array-ref opt-inline-caller-loop-labels 0) (OptLabelSet.Nil))
   (set! opt-inline-caller-has-bounds? false)
   (set! opt-inline-caller-name name)
+  (set! opt-inline-caller-cold? cold?)
+  (set! opt-inline-caller-cold-blocks-ready? false)
   (set! opt-inline-caller-recursion-known? false)
   (set! opt-inline-caller-recursion? false)
   (set! opt-inline-caller-hot-loop-blocks 0)
@@ -105645,6 +105754,13 @@
     (ir.compiler-ir-block-list-empty))
   (set! (array-ref opt-inline-caller-loop-labels 0) (OptLabelSet.Nil))
   (set! opt-inline-caller-facts-ready? false)
+  (set! opt-inline-caller-cold? false)
+  (when
+    opt-inline-caller-cold-blocks-ready?
+    (set!
+      (array-ref opt-inline-caller-cold-blocks 0)
+      (opt_i64_i64_map.with-capacity 0))
+    (set! opt-inline-caller-cold-blocks-ready? false))
   (set! (array-ref opt-inline-pred-renames 0) (OptInlinePredRenameList.Nil)))
 
 (define (opt-inline-caller-facts-ensure!) : unit
@@ -110678,7 +110794,7 @@
   [caller-blocks : i64]
   [added-so-far : i64]) : bool
   (when
-    census.optimize-for-size
+    (or census.optimize-for-size (opt-inline-current-site-cold?))
     (return
       (let
         [body-cost : i64 (opt-inline-single-block-cost-instrs cblocks)]
@@ -110687,7 +110803,8 @@
             (opt-inline-size-absorption-cost-ok?
               (+ body-cost captures)
               (+ (opt-inline-frame-growth vars np) captures))
-            (opt-inline-census-absorbable? index census func-name callee-name))
+            (opt-inline-census-absorbable? index census func-name callee-name)
+            (not (opt-inline-cold-site-retained? index callee-name)))
           (and
             (< body-cost (opt-inline-cost-call-bonus))
             (opt-inline-blocks-call-free? cblocks)
@@ -111166,17 +111283,19 @@
               (+ (opt-inline-multiblock-cost-instrs cblocks) staging.count)]
             [_size : unit
               (when
-                census.optimize-for-size
-                (if (opt-inline-size-sole-call-absorb-ok?
-                  absorb-class
-                  (& staging)
-                  cblocks
-                  site-ctx.caller-blocks
-                  site-ctx.added-so-far
-                  added-blocks
-                  merged-vars
-                  (- merged-vars site-ctx.vars)
-                  callee-instrs)
+                (or census.optimize-for-size (opt-inline-current-site-cold?))
+                (if (and
+                  (not (opt-inline-cold-site-retained? index callee-name))
+                  (opt-inline-size-sole-call-absorb-ok?
+                    absorb-class
+                    (& staging)
+                    cblocks
+                    site-ctx.caller-blocks
+                    site-ctx.added-so-far
+                    added-blocks
+                    merged-vars
+                    (- merged-vars site-ctx.vars)
+                    callee-instrs))
                   (return
                     (SitePlan
                       (OptInlineSitePlan
@@ -112300,7 +112419,7 @@
         [_reset-sites : unit
           (begin
             (set! opt-inline-caller-site-count 0)
-            (opt-inline-caller-facts-install! index census name blocks)
+            (opt-inline-caller-facts-install! index census name blocks cold?)
             (set!
               (array-ref opt-inline-pred-renames 0)
               (OptInlinePredRenameList.Nil)))]
@@ -112712,10 +112831,11 @@
 
 (define (opt-inline-tiny-leaf-callee-ok? [callee : (& ir.CompilerIrFunction)]) : bool
   (match callee
-    [(Function _ cparams _ cvars cblocks _ _)
+    [(Function _ cparams _ cvars cblocks _ cold?)
       (let
         [np : i64 (opt-inline-param-count cparams)]
         (and
+          (not cold?)
           (not (opt-inline-params-have-private-memory? (& cparams)))
           (opt-inline-params-sequential? (& cparams) 0)
           (>= cvars np)
@@ -113150,6 +113270,21 @@
             (& inline-functions)
             externs
             (&mut census)))]
+      [_cold-callees : unit
+        (let
+          [cold-map : opt_i64_i64_map.Map
+            (ir.compiler-ir-cold-callees-build (& inline-functions) externs)]
+          (if (> (opt_i64_i64_map.len (& cold-map)) 0)
+            (begin
+              (set! opt-inline-program-has-cold? true)
+              (set! (array-ref opt-inline-program-cold-callees 0) cold-map)
+              (unless
+                (opt_level.opt-level-size? level)
+                (opt-inline-cold-retained-install!
+                  (& index)
+                  (& inline-functions)
+                  externs)))
+            (set! opt-inline-program-has-cold? false)))]
       [program : OptProgramIndex (OptProgramIndex index graph scc-result)]
       [_install-owned-state : unit
         (opt-inline-owned-state-install-with-program!
@@ -113182,6 +113317,19 @@
                 spans)]
             [out : OptInlineSpanProgram
               (Program (opt-function-index-to-seq index) next-spans)]
+            (when
+              opt-inline-program-has-cold?
+              (set! opt-inline-program-has-cold? false)
+              (set!
+                (array-ref opt-inline-program-cold-callees 0)
+                (opt_i64_i64_map.with-capacity 0))
+              (set! opt-inline-cold-retained-all? false)
+              (when
+                opt-inline-cold-retained-has-exports?
+                (set! opt-inline-cold-retained-has-exports? false)
+                (set!
+                  (array-ref opt-inline-cold-retained 0)
+                  (opt_i64_i64_map.with-capacity 0))))
             (opt-inline-synth-reset!)
             (opt-inline-owned-state-reset! true)
             (opt-pure-call-inline-memory-reset!)

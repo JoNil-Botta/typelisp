@@ -19122,10 +19122,15 @@
           [else unit])
         (set! start (+ stop 1))))))
 
-(define (compiler-backend-arg-entry-optimize
+(define (compiler-backend-arg-entry-optimize-with-ranges
   [final : text_buf.TextBuf]
   [metadata : be_state.CompilerBackendArgEntries]
-  [home : arena.Arena]) : text_buf.TextBuf
+  [home : arena.Arena]
+  [range-count : i64]
+  [range-chunk-starts : (& (__tl_dyn-array i64))]
+  [range-chunk-ends : (& (__tl_dyn-array i64))]
+  [range-starts : (&mut (__tl_dyn-array i64))]
+  [range-ends : (&mut (__tl_dyn-array i64))]) : text_buf.TextBuf
   (let
     [chunks : text_buf.TextBufChunkList final.chunks]
     [chunk-count : i64 (text_buf.chunk-count (& chunks) 0)]
@@ -19158,9 +19163,13 @@
           [view : (& events (Slice CompilerBackendArgEntryEvent))
             (arg_entry_events.view (& events))]
           [start : i64 0]
+          [r : i64 0]
           (for [i (iterator.range 0 chunk-count)]
             (let
               [end : i64 (array-ref event-ends i)]
+              (when
+                (and (< r range-count) (= i (array-ref range-chunk-starts r)))
+                (set! (array-ref range-starts r) (text_buf.length (& out))))
               (set!
                 out
                 (compiler-backend-arg-entry-splice
@@ -19172,8 +19181,32 @@
                   (& best)
                   (& defined)
                   (slice-view view start (- end start))))
+              (when
+                (and
+                  (< r range-count)
+                  (= (+ i 1) (array-ref range-chunk-ends r)))
+                (set! (array-ref range-ends r) (text_buf.length (& out)))
+                (+= r 1))
               (set! start end)))
           out)))))
+
+(define (compiler-backend-arg-entry-optimize
+  [final : text_buf.TextBuf]
+  [metadata : be_state.CompilerBackendArgEntries]
+  [home : arena.Arena]) : text_buf.TextBuf
+  (let
+    [empty : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [ends : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    (compiler-backend-arg-entry-optimize-with-ranges
+      final
+      metadata
+      home
+      0
+      (& empty)
+      (& empty)
+      (&mut starts)
+      (&mut ends))))
 
 (cfg test (import stdlib.test))
 
@@ -19273,6 +19306,7 @@
   (helper-len outline_i64s.Vec)
   (helper-stdlib outline_i64s.Vec)
   (fn-xdata outline_i64s.Vec)
+  (tail-base i64)
   (tails i64)
   (size i64))
 
@@ -19316,6 +19350,11 @@
   16)
 (define compiler-backend-outline-block-jump-entry : i64
   32)
+
+;; Block excluded from filtered -O2 outlining (warm block inside a function
+;; that also contains cold blocks).
+(define compiler-backend-outline-block-ineligible : i64
+  64)
 
 ;; Register facts of one `%name` operand.
 (define compiler-backend-outline-reg-ext : i64
@@ -19385,6 +19424,13 @@
     (if (= h 0)
       1
       h)))
+
+(define (compiler-backend-outline-hash-string [text : (& text str)]) : i64
+  (compiler-backend-outline-hash
+    (unsafe
+      (string-data text))
+    0
+    (string.string-length text)))
 
 ;; The decimal or 0x-hex value spelled in [s,e), or `fallback` for a symbol.
 (define (compiler-backend-outline-number
@@ -20189,6 +20235,7 @@
     (outline_i64s.with-capacity 64)
     (outline_i64s.with-capacity 256)
     0
+    0
     0))
 
 (define (compiler-backend-outline-at [v : (& outline_i64s.Vec)] [i : i64]) : i64
@@ -20537,14 +20584,20 @@
           f
           (compiler-backend-outline-number data (+ x 12) e -1))))))
 
-;; Lines, functions, blocks and tokens of the program text.
-(define (compiler-backend-outline-scan!
+;; Lines, functions, blocks and tokens of one byte span [span-start, span-end).
+;; `mode` controls block eligibility: 2 = all blocks (full -Os or `is_cold`
+;; function), 1 = entry block plus labels in `cold-labels`, 0 = labels in
+;; `cold-labels` only.
+(define (compiler-backend-outline-scan-span!
   [st : (&mut CompilerBackendOutline)]
   [data : (Ptr u8)]
-  [length : i64]
+  [span-start : i64]
+  [span-end : i64]
+  [mode : i64]
+  [cold-labels : (& backend_label_i64_map.Map)]
   [complete? : bool]) : unit
   (let
-    [pos : i64 0]
+    [pos : i64 span-start]
     [code : bool true]
     [sections : outline_i64s.Vec (outline_i64s.with-capacity 8)]
     [opaque : i64 0]
@@ -20553,13 +20606,14 @@
     [open? : bool false]
     [filled? : bool false]
     [prefix? : bool false]
-    (while (< pos length)
+    [eligible? : bool (= mode 2)]
+    (while (< pos span-end)
       (let
         [nl : i64
           (be_operand.compiler-backend-peephole-scan-byte-range
             data
             pos
-            length
+            span-end
             10)]
         [first : i64 (compiler-backend-cold-line-first data pos nl)]
         [last : i64 (compiler-backend-cold-line-last data first nl)]
@@ -20588,6 +20642,7 @@
                     (+ first 1)
                     first)]
                 [numeric? : bool (compiler-backend-outline-digit? b0)]
+                [label-hash : i64 (compiler-backend-outline-hash data first ne)]
                 (cond
                   [(and
                     (not numeric?)
@@ -20615,6 +20670,13 @@
                       (outline_i64s.push-ref! (&mut st.fn-xdata) -1))
                     (outline_i64s.push-ref! (&mut st.fn-block) st.block-fn.len)
                     (set! blk (compiler-backend-outline-new-block! st f))
+                    (set! eligible? (>= mode 1))
+                    (when
+                      (not eligible?)
+                      (compiler-backend-outline-or!
+                        (&mut st.block-flags)
+                        blk
+                        compiler-backend-outline-block-ineligible))
                     (set! open? true)
                     (set! filled? false)]
                   [(< f 0) unit]
@@ -20629,11 +20691,32 @@
                         (&mut st.fn-flags)
                         f
                         compiler-backend-outline-fn-unwind))
-                    (when
-                      (or (not open?) filled?)
-                      (set! blk (compiler-backend-outline-new-block! st f))
-                      (set! open? true)
-                      (set! filled? false))
+                    (let
+                      [next-eligible? : bool
+                        (or
+                          (= mode 2)
+                          (backend_label_i64_map.contains?
+                            cold-labels
+                            label-hash))]
+                      (if (or (not open?) filled?)
+                        (begin
+                          (set! blk (compiler-backend-outline-new-block! st f))
+                          (set! eligible? next-eligible?)
+                          (when
+                            (not eligible?)
+                            (compiler-backend-outline-or!
+                              (&mut st.block-flags)
+                              blk
+                              compiler-backend-outline-block-ineligible))
+                          (set! open? true)
+                          (set! filled? false))
+                        (when
+                          (not next-eligible?)
+                          (set! eligible? false)
+                          (compiler-backend-outline-or!
+                            (&mut st.block-flags)
+                            blk
+                            compiler-backend-outline-block-ineligible))))
                     (when
                       numeric?
                       (compiler-backend-outline-or!
@@ -20644,17 +20727,30 @@
                   (>= f 0)
                   (set! kind compiler-backend-outline-line-label)
                   (set! owner blk)
-                  (let
-                    [key : i64 (compiler-backend-outline-hash data first ne)]
-                    (when
-                      (and
-                        complete?
-                        (backend_label_i64_map.contains? (& st.labels) key))
-                      (backend_label_i64_map.insert-ref! (&mut st.taken) key 1))
+                  (when
+                    (and
+                      complete?
+                      (compiler-backend-cold-prefix?
+                        data
+                        first
+                        ne
+                        ".L_tl_tail_"))
+                    (let
+                      [n : i64
+                        (compiler-backend-outline-number data (+ first 11) ne 0)]
+                      (when (> n st.tail-base) (set! st.tail-base n))))
+                  (when
+                    (and
+                      complete?
+                      (backend_label_i64_map.contains? (& st.labels) label-hash))
                     (backend_label_i64_map.insert-ref!
-                      (&mut st.labels)
-                      key
-                      (+ blk 1))))))]
+                      (&mut st.taken)
+                      label-hash
+                      1))
+                  (backend_label_i64_map.insert-ref!
+                    (&mut st.labels)
+                    label-hash
+                    (+ blk 1)))))]
           [(= b0 46)
             (let
               [de : i64 (compiler-backend-cold-token-end data first last)]
@@ -20734,6 +20830,12 @@
             (when
               (not open?)
               (set! blk (compiler-backend-outline-new-block! st f))
+              (when
+                (not eligible?)
+                (compiler-backend-outline-or!
+                  (&mut st.block-flags)
+                  blk
+                  compiler-backend-outline-block-ineligible))
               (set! open? true))
             (set! filled? true)
             (set! owner blk)
@@ -20777,55 +20879,143 @@
         (outline_i64s.push-ref! (&mut st.mark) 0)
         (set!
           pos
-          (if (< nl length)
+          (if (< nl span-end)
             (+ nl 1)
-            length))))
-    (outline_i64s.push-ref! (&mut st.start) length)
-    (outline_i64s.push-ref! (&mut st.fn-block) st.block-fn.len)
-    ;; Address-taken blocks; a branch to a block of its own function is local.
-    (for [line (iterator.range 0 st.kind.len)]
+            span-end))))))
+
+(define (compiler-backend-outline-push-gap!
+  [st : (&mut CompilerBackendOutline)]
+  [at : i64]) : unit
+  (outline_i64s.push-ref! (&mut st.start) at)
+  (outline_i64s.push-ref! (&mut st.first) at)
+  (outline_i64s.push-ref! (&mut st.last) at)
+  (outline_i64s.push-ref! (&mut st.token) -1)
+  (outline_i64s.push-ref! (&mut st.kind) 0)
+  (outline_i64s.push-ref! (&mut st.block) -1)
+  (outline_i64s.push-ref! (&mut st.edit) 0)
+  (outline_i64s.push-ref! (&mut st.mark) 0))
+
+(define (compiler-backend-outline-scan-finish!
+  [st : (&mut CompilerBackendOutline)]
+  [data : (Ptr u8)]
+  [length : i64]
+  [complete? : bool]
+  [mark-indirect-taken? : bool]) : unit
+  (outline_i64s.push-ref! (&mut st.start) length)
+  (outline_i64s.push-ref! (&mut st.fn-block) st.block-fn.len)
+  ;; Address-taken blocks; a branch to a block of its own function is local.
+  (for [line (iterator.range 0 st.kind.len)]
+    (when
+      (=
+        (compiler-backend-outline-at (& st.kind) line)
+        compiler-backend-outline-line-label)
       (when
-        (=
-          (compiler-backend-outline-at (& st.kind) line)
-          compiler-backend-outline-line-label)
-        (when
-          (backend_label_i64_map.contains?
-            (& st.taken)
-            (compiler-backend-outline-hash
-              data
-              (compiler-backend-outline-at (& st.first) line)
-              (- (compiler-backend-outline-at (& st.last) line) 1)))
-          (compiler-backend-outline-or!
-            (&mut st.block-flags)
-            (compiler-backend-outline-at (& st.block) line)
-            compiler-backend-outline-block-taken))))
-    (for [b (iterator.range 0 st.block-fn.len)]
-      (when
-        (and
-          complete?
-          (!=
-            (bit-and
-              (compiler-backend-outline-at (& st.block-flags) b)
-              compiler-backend-outline-block-final)
-            0))
-        (let
-          [key : i64 (compiler-backend-outline-at (& st.block-target) b)]
-          [target : i64
-            (backend_label_i64_map.get-value-or (& st.labels) key 0)]
+        (backend_label_i64_map.contains?
+          (& st.taken)
+          (compiler-backend-outline-hash
+            data
+            (compiler-backend-outline-at (& st.first) line)
+            (- (compiler-backend-outline-at (& st.last) line) 1)))
+        (compiler-backend-outline-or!
+          (&mut st.block-flags)
+          (compiler-backend-outline-at (& st.block) line)
+          compiler-backend-outline-block-taken))))
+  ;; When scanning only cold function ranges (skipping `.rodata` switch tables),
+  ;; conservatively treat every block of a function containing an indirect jump
+  ;; as address-taken so loop detection over switch-bearing cycles stays sound.
+  (when
+    mark-indirect-taken?
+    (for [f (iterator.range 0 st.fn-flags.len)]
+      (let
+        [lo : i64 (compiler-backend-outline-at (& st.fn-block) f)]
+        [hi : i64 (compiler-backend-outline-at (& st.fn-block) (+ f 1))]
+        [indirect? : bool false]
+        (for [b (iterator.range lo hi)]
           (when
-            (> target 0)
+            (!=
+              (bit-and
+                (compiler-backend-outline-at (& st.block-flags) b)
+                compiler-backend-outline-block-indirect)
+              0)
+            (set! indirect? true)))
+        (when
+          indirect?
+          (for [b (iterator.range lo hi)]
             (compiler-backend-outline-or!
               (&mut st.block-flags)
-              (- target 1)
-              compiler-backend-outline-block-jump-entry))))
-      (when
-        (>= (compiler-backend-outline-local-target (& st) b) 0)
-        (outline_i64s.set-ref!
-          (&mut st.block-flags)
-          b
+              b
+              compiler-backend-outline-block-taken))))))
+  (for [b (iterator.range 0 st.block-fn.len)]
+    (when
+      (and
+        complete?
+        (!=
           (bit-and
             (compiler-backend-outline-at (& st.block-flags) b)
-            (bit-not compiler-backend-outline-block-tail)))))))
+            compiler-backend-outline-block-final)
+          0))
+      (let
+        [key : i64 (compiler-backend-outline-at (& st.block-target) b)]
+        [target : i64 (backend_label_i64_map.get-value-or (& st.labels) key 0)]
+        (when
+          (> target 0)
+          (compiler-backend-outline-or!
+            (&mut st.block-flags)
+            (- target 1)
+            compiler-backend-outline-block-jump-entry))))
+    (when
+      (>= (compiler-backend-outline-local-target (& st) b) 0)
+      (outline_i64s.set-ref!
+        (&mut st.block-flags)
+        b
+        (bit-and
+          (compiler-backend-outline-at (& st.block-flags) b)
+          (bit-not compiler-backend-outline-block-tail))))))
+
+;; Lines, functions, blocks and tokens of the whole program text.
+(define (compiler-backend-outline-scan!
+  [st : (&mut CompilerBackendOutline)]
+  [data : (Ptr u8)]
+  [length : i64]
+  [complete? : bool]) : unit
+  (let
+    [empty : backend_label_i64_map.Map (backend_label_i64_map.with-capacity 0)]
+    (compiler-backend-outline-scan-span! st data 0 length 2 (& empty) complete?)
+    (compiler-backend-outline-scan-finish! st data length complete? false)))
+
+;; Scan only sorted, non-overlapping eligible cold function/block byte ranges,
+;; representing untouched warm spans as single `kind = 0` gap entries so
+;; `compiler-backend-outline-render-into` copies them verbatim without walking
+;; warm assembly.
+(define (compiler-backend-outline-scan-ranges!
+  [st : (&mut CompilerBackendOutline)]
+  [data : (Ptr u8)]
+  [length : i64]
+  [range-count : i64]
+  [range-starts : (& (__tl_dyn-array i64))]
+  [range-ends : (& (__tl_dyn-array i64))]
+  [range-modes : (& (__tl_dyn-array i64))]
+  [cold-labels : (& backend_label_i64_map.Map)]) : unit
+  (let
+    [cursor : i64 0]
+    (for [r (iterator.range 0 range-count)]
+      (let
+        [rs : i64 (array-ref range-starts r)]
+        [re : i64 (array-ref range-ends r)]
+        (when
+          (and (>= rs cursor) (< rs re) (<= re length))
+          (when (< cursor rs) (compiler-backend-outline-push-gap! st cursor))
+          (compiler-backend-outline-scan-span!
+            st
+            data
+            rs
+            re
+            (array-ref range-modes r)
+            cold-labels
+            false)
+          (set! cursor re))))
+    (when (< cursor length) (compiler-backend-outline-push-gap! st cursor))
+    (compiler-backend-outline-scan-finish! st data length false true)))
 
 ;; The block of `b`'s direct branch target when it is in `b`'s function, or -1.
 (define (compiler-backend-outline-local-target
@@ -21016,6 +21206,11 @@
             (bit-and
               (compiler-backend-outline-at (& st.block-flags) b)
               compiler-backend-outline-block-tail)
+            0)
+          (=
+            (bit-and
+              (compiler-backend-outline-at (& st.block-flags) b)
+              compiler-backend-outline-block-ineligible)
             0)
           (not
             (compiler-backend-outline-fn-skip?
@@ -21257,7 +21452,10 @@
                         (when
                           (= (compiler-backend-outline-at (& st.mark) anchor) 0)
                           (+= st.tails 1)
-                          (outline_i64s.set-ref! (&mut st.mark) anchor st.tails))
+                          (outline_i64s.set-ref!
+                            (&mut st.mark)
+                            anchor
+                            (+ st.tail-base st.tails)))
                         (outline_i64s.set-ref!
                           (&mut redirect)
                           b
@@ -21339,7 +21537,9 @@
               (=
                 (bit-and
                   (compiler-backend-outline-at (& st.block-flags) b)
-                  compiler-backend-outline-block-loop)
+                  (bit-or
+                    compiler-backend-outline-block-loop
+                    compiler-backend-outline-block-ineligible))
                 0)
               (let
                 [f : i64 (compiler-backend-outline-at (& st.block-fn) b)]
@@ -22029,15 +22229,14 @@
             (set! at (compiler-backend-outline-put-text! out write? at "\n"))))))
     at))
 
-(define (compiler-backend-outline-plan
+(define (compiler-backend-outline-plan-finish!
+  [st : (&mut CompilerBackendOutline)]
   [data : (Ptr u8)]
   [length : i64]
   [coff? : bool]
-  [size? : bool]) : CompilerBackendOutline
+  [size? : bool]) : unit
   (let
-    [st : CompilerBackendOutline (compiler-backend-outline-empty)]
     [probe : (__tl_dyn-array u8) (__tl_make-array u8 1)]
-    (compiler-backend-outline-scan! (&mut st) data length (not size?))
     ;; A Win64 leaf without a `.pdata` row must not call: keep it whole.
     (when
       (and size? coff?)
@@ -22057,11 +22256,11 @@
           (+= g 1))))
     (if size?
       (begin
-        (compiler-backend-outline-loops! (&mut st))
-        (unless coff? (compiler-backend-outline-tails! (&mut st)))
-        (compiler-backend-outline-runs! (&mut st))
-        (compiler-backend-outline-select! (&mut st)))
-      (compiler-backend-outline-complete-tails! (&mut st) data coff?))
+        (compiler-backend-outline-loops! st)
+        (unless coff? (compiler-backend-outline-tails! st))
+        (compiler-backend-outline-runs! st)
+        (compiler-backend-outline-select! st))
+      (compiler-backend-outline-complete-tails! st data coff?))
     (set!
       st.size
       (compiler-backend-outline-render-into
@@ -22071,8 +22270,58 @@
         coff?
         (unsafe
           (__tl_array-data probe))
-        false))
+        false))))
+
+(define (compiler-backend-outline-plan
+  [data : (Ptr u8)]
+  [length : i64]
+  [coff? : bool]
+  [size? : bool]) : CompilerBackendOutline
+  (let
+    [st : CompilerBackendOutline (compiler-backend-outline-empty)]
+    (compiler-backend-outline-scan! (&mut st) data length (not size?))
+    (compiler-backend-outline-plan-finish! (&mut st) data length coff? size?)
     st))
+
+(define (compiler-backend-outline-plan-ranges
+  [data : (Ptr u8)]
+  [length : i64]
+  [coff? : bool]
+  [range-count : i64]
+  [range-starts : (& (__tl_dyn-array i64))]
+  [range-ends : (& (__tl_dyn-array i64))]
+  [range-modes : (& (__tl_dyn-array i64))]
+  [cold-labels : (& backend_label_i64_map.Map)]) : CompilerBackendOutline
+  (let
+    [st : CompilerBackendOutline (compiler-backend-outline-empty)]
+    (compiler-backend-outline-scan-ranges!
+      (&mut st)
+      data
+      length
+      range-count
+      range-starts
+      range-ends
+      range-modes
+      cold-labels)
+    (compiler-backend-outline-plan-finish! (&mut st) data length coff? true)
+    st))
+
+(define (compiler-backend-outline-materialize
+  [asm : String]
+  [data : (Ptr u8)]
+  [length : i64]
+  [coff? : bool]
+  [plan : (& CompilerBackendOutline)]) : String
+  (if (and (= plan.tails 0) (= plan.helper-pos.len 0))
+    asm
+    (let
+      [buf : (__tl_dyn-array u8) (__tl_make-array u8 plan.size)]
+      [dst : (MutPtr u8)
+        (unsafe
+          (__tl_array-data buf))]
+      (compiler-backend-outline-render-into plan data length coff? dst true)
+      (unsafe
+        (string-from-bytes (ptr-cast dst : (Ptr u8)) plan.size)))))
 
 ;; At -O2 only complete tails are redirected. At -Os COFF uses osC alone.
 ;; The analysis lives in a scratch arena destroyed before returning, so only
@@ -22093,24 +22342,45 @@
           (arena.from-raw-handle (arena.raw-handle scratch))
           (compiler-backend-outline-plan data length coff? size?)))]
     [result : String
-      (if (and (= plan.tails 0) (= plan.helper-pos.len 0))
-        asm
-        (let
-          [buf : (__tl_dyn-array u8) (__tl_make-array u8 plan.size)]
-          [dst : (MutPtr u8)
-            (unsafe
-              (__tl_array-data buf))]
-          (compiler-backend-outline-render-into
-            (& plan)
-            data
-            length
-            coff?
-            dst
-            true)
-          (unsafe
-            (string-from-bytes (ptr-cast dst : (Ptr u8)) plan.size))))]
+      (compiler-backend-outline-materialize asm data length coff? (& plan))]
     (arena.destroy-safe! scratch)
     result))
+
+;; Filtered -O2 Machine Outliner entry: scans only eligible cold function/block
+;; ranges without walking untouched warm assembly.
+(define (compiler-backend-machine-outline-ranges
+  [asm : String]
+  [coff? : bool]
+  [range-count : i64]
+  [range-starts : (& (__tl_dyn-array i64))]
+  [range-ends : (& (__tl_dyn-array i64))]
+  [range-modes : (& (__tl_dyn-array i64))]
+  [cold-labels : (& backend_label_i64_map.Map)]) : String
+  (if (= range-count 0)
+    asm
+    (let
+      [data : (Ptr u8)
+        (unsafe
+          (string-data (& asm)))]
+      [length : i64 (string.string-length (& asm))]
+      [scratch : arena.Arena (arena.make)]
+      [plan : CompilerBackendOutline
+        (unsafe
+          (in-arena
+            (arena.from-raw-handle (arena.raw-handle scratch))
+            (compiler-backend-outline-plan-ranges
+              data
+              length
+              coff?
+              range-count
+              range-starts
+              range-ends
+              range-modes
+              cold-labels)))]
+      [result : String
+        (compiler-backend-outline-materialize asm data length coff? (& plan))]
+      (arena.destroy-safe! scratch)
+      result)))
 
 (define (compiler-backend-outline-test-bytes [line : String] [shift : i64]) : i64
   (compiler-backend-outline-insn-bytes
@@ -22370,3 +22640,94 @@ k:
     (test.assert-true
       (not (string.contains (& output) ".type _tl_outline_"))
       "COFF helpers carry no ELF symbol types")))
+
+(test
+  compiler-backend-machine-outline-ranges-mixed-and-coff
+  (let
+    [mixed-fn : String
+      "mixed:
+    movq %rdi, 8(%rsp)
+    movq %rsi, 120(%rsp)
+    leaq 32(%rsp), %rdx
+    movabsq $1311768467463790320, %rcx
+    jne .Lmixed_cold
+    call hot_path
+    ret
+.Lmixed_cold:
+    movq %rdi, 8(%rsp)
+    movq %rsi, 120(%rsp)
+    leaq 32(%rsp), %rdx
+    movabsq $1311768467463790320, %rcx
+    call cold_a
+    ret
+.L_tl_seh_end_0:
+    .pushsection .pdata,\"dr\"
+    .rva mixed, .L_tl_seh_end_0, .L_tl_xdata_0
+    .popsection
+"]
+    [cold-1 : String
+      "cold1:
+    movq %rdi, 8(%rsp)
+    movq %rsi, 120(%rsp)
+    leaq 32(%rsp), %rdx
+    movabsq $1311768467463790320, %rcx
+    call cold_b
+    ret
+.L_tl_seh_end_1:
+    .pushsection .pdata,\"dr\"
+    .rva cold1, .L_tl_seh_end_1, .L_tl_xdata_0
+    .popsection
+"]
+    [cold-leaf : String
+      "cold_leaf:
+    movq %rdi, 8(%rsp)
+    movq %rsi, 120(%rsp)
+    leaq 32(%rsp), %rdx
+    movabsq $1311768467463790320, %rcx
+    ret
+"]
+    [coff-asm : String (str_cat.str-cat mixed-fn cold-1 cold-leaf)]
+    [m-len : i64 (string.string-length (& mixed-fn))]
+    [c1-len : i64 (string.string-length (& cold-1))]
+    [cl-len : i64 (string.string-length (& cold-leaf))]
+    [starts : (__tl_dyn-array i64) (__tl_make-array 0 m-len (+ m-len c1-len))]
+    [ends : (__tl_dyn-array i64)
+      (__tl_make-array m-len (+ m-len c1-len) (+ (+ m-len c1-len) cl-len))]
+    [modes : (__tl_dyn-array i64) (__tl_make-array 0 2 2)]
+    [cold-labels : backend_label_i64_map.Map
+      (backend_label_i64_map.with-capacity 8)]
+    [_ins : unit
+      (backend_label_i64_map.insert-ref!
+        (&mut cold-labels)
+        (compiler-backend-outline-hash-string ".Lmixed_cold")
+        1)]
+    [output : String
+      (compiler-backend-machine-outline-ranges
+        coff-asm
+        true
+        3
+        (& starts)
+        (& ends)
+        (& modes)
+        (& cold-labels))]
+    (test.assert-true
+      (string.contains
+        (& output)
+        "mixed:\n    movq %rdi, 8(%rsp)\n    movq %rsi, 120(%rsp)\n")
+      "warm entry block of mixed function stays untouched")
+    (test.assert-true
+      (string.contains
+        (& output)
+        ".Lmixed_cold:\n    call _tl_outline_1\n    call cold_a\n")
+      "eligible cold block in mixed Win64 function with .pdata calls helper")
+    (test.assert-true
+      (string.contains
+        (& output)
+        "cold1:\n    call _tl_outline_1\n    call cold_b\n")
+      "cold Win64 function with .pdata calls helper")
+    (test.assert-true
+      (string.contains (& output) "cold_leaf:\n    movq %rdi, 8(%rsp)\n")
+      "cold Win64 leaf without .pdata stays untouched")
+    (test.assert-true
+      (not (string.contains (& output) "L_tl_tail_"))
+      "filtered Win64 outliner uses osC only")))

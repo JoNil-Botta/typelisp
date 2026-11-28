@@ -2579,8 +2579,15 @@
 
 (define (compiler-backend-compact-switch-blocks?
   [backend-state : be_state.CompilerBackendState]
-  [blocks : (& compiler_ir_types.CompilerIrBlockSeq)]) : bool
-  (if (not (be_state.compiler-backend-state-optimize-for-size? backend-state))
+  [blocks : (& compiler_ir_types.CompilerIrBlockSeq)]
+  [cold? : bool]) : bool
+  (if (not
+    (or
+      (be_state.compiler-backend-state-optimize-for-size? backend-state)
+      (and
+        cold?
+        (be_state.compiler-backend-state-scalar-registers-enabled?
+          backend-state))))
     false
     (let
       [n : i64 (compiler_ir_types.compiler-ir-block-seq-count blocks)]
@@ -2838,7 +2845,7 @@
   (if (>= index (compiler_ir_types.compiler-ir-function-seq-count functions))
     buf
     (match (owned_view.compiler-owned-element-view functions.slots index)
-      [(Function name _ _ _ blocks _ _)
+      [(Function name _ _ _ blocks _ cold?)
         (let
           [_phi-targets : unit
             (compiler-backend-function-state-install-phi-targets!
@@ -2858,7 +2865,8 @@
                 [compact? : bool
                   (compiler-backend-compact-switch-blocks?
                     program-index.backend-state
-                    (& seq))]
+                    (& seq)
+                    cold?)]
                 [want-rodata? : bool (or absolute compact?)]
                 [next-rodata? : bool current-rodata?]
                 [next-buf : text_buf.TextBuf

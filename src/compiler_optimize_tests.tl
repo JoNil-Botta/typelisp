@@ -19792,7 +19792,8 @@
       index
       census
       (opt-inline-pos-caller-name)
-      blocks)))
+      blocks
+      false)))
 
 ;; The position class the checked inliner gives the site labelled `name`.
 (define (opt-inline-pos-site [mode : i64] [position : i64] [name : String]) : i64
@@ -24084,13 +24085,23 @@
           (let
             [func (opt-inline-switch-caller-named symbols callee-name)]
             (opt.opt-function-blocks func))]
-        (opt.opt-inline-caller-facts-install! index census symbols.main blocks))]
+        (opt.opt-inline-caller-facts-install!
+          index
+          census
+          symbols.main
+          blocks
+          false))]
     [flat-loop-free? : bool (opt.opt-inline-caller-loop-free?)]
     [flat-recursive? : bool (opt.opt-inline-caller-recursive?)]
     [_install-recursive : unit
       (let
         [blocks (opt-inline-recursive-caller-blocks symbols.main callee-name)]
-        (opt.opt-inline-caller-facts-install! index census symbols.main blocks))]
+        (opt.opt-inline-caller-facts-install!
+          index
+          census
+          symbols.main
+          blocks
+          false))]
     [recursive-loop-free? : bool (opt.opt-inline-caller-loop-free?)]
     [recursive-recursive? : bool (opt.opt-inline-caller-recursive?)]
     [_install-loop : unit
@@ -24099,7 +24110,12 @@
           (opt-inline-loop-site-caller-blocks
             callee-name
             (opt-inline-loop-site-entry-instrs))]
-        (opt.opt-inline-caller-facts-install! index census symbols.main blocks))]
+        (opt.opt-inline-caller-facts-install!
+          index
+          census
+          symbols.main
+          blocks
+          false))]
     [loop-loop-free? : bool (opt.opt-inline-caller-loop-free?)]
     [loop-recursive? : bool (opt.opt-inline-caller-recursive?)]
     (and
@@ -91956,3 +91972,263 @@ inl.entry.0.cont:
         (& scalar-elem-store)
         (& header-entry))
       "header-free OptLoadStoreElement preserves scalar buffer header load")))
+
+(test
+  c60-cold-function-eq-distinguishes-cold-flag
+  (let
+    [type-bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [warm-prog : ir.CompilerIrProgram
+      (irt.program
+        "function @same_body(x=%0:i64) -> i64 vars 1 {
+         entry:
+           return %0
+         }")]
+    [cold-prog : ir.CompilerIrProgram
+      (irt.program
+        "function @same_body(x=%0:i64) -> i64 vars 1 cold {
+         entry:
+           return %0
+         }")]
+    (match (& warm-prog)
+      [(Program _ warm-fns _ _)
+        (match (& cold-prog)
+          [(Program _ cold-fns _ _)
+            (test.assert-true
+              (not
+                (opt.opt-function-eq
+                  type-bases
+                  (ir.compiler-ir-function-seq-borrow warm-fns 0)
+                  (ir.compiler-ir-function-seq-borrow cold-fns 0)))
+              "opt-function-eq distinguishes warm vs cold identical bodies")
+            (test.assert-true
+              (opt.opt-function-eq
+                type-bases
+                (ir.compiler-ir-function-seq-borrow cold-fns 0)
+                (ir.compiler-ir-function-seq-borrow cold-fns 0))
+              "opt-function-eq matches identical cold functions")])])))
+
+(test
+  c60-cold-cfg-propagation-least-fixed-point
+  (let
+    [prog : ir.CompilerIrProgram
+      (irt.program
+        "extern @ext_cold symbol \"ext_cold\" : (-> i64 i64) abi typelisp cold
+         function @local_cold(x=%0:i64) -> i64 vars 1 cold {
+         entry:
+           return %0
+         }
+         function @caller(x=%0:i64) -> i64 vars 10 {
+         entry:
+           %1 = eq %0, 0 : i64
+           branch %1, all_cold_pred, check_ret_cold
+         all_cold_pred:
+           %2 = eq %0, 1 : i64
+           branch %2, direct_cold, tail_cold
+         direct_cold:
+           %3 = call local_cold(%0) : i64
+           return %3
+         tail_cold:
+           tailcall local_cold(%0) : i64
+         check_ret_cold:
+           %4 = eq %0, 2 : i64
+           branch %4, ext_cold_call, check_cycle
+         ext_cold_call:
+           %5 = call ext_cold(%0) : i64
+           jump cont_after_cold
+         cont_after_cold:
+           return %5
+         check_cycle:
+           %6 = eq %0, 3 : i64
+           branch %6, cycle_a, check_abort
+         cycle_a:
+           jump cycle_b
+         cycle_b:
+           jump cycle_a
+         check_abort:
+           %7 = eq %0, 4 : i64
+           branch %7, abort_blk, warm_trap
+         abort_blk:
+           %8 = call tl_oob_abort() : i64
+           return %8
+         warm_trap:
+           bounds_check %0, 10 message \"oob\"
+           %9 = div %0, 2 : i64
+           return %9
+         }")]
+    (match (& prog)
+      [(Program _ fns externs _)
+        (let
+          [callees : opt_i64_i64_map.Map
+            (ir.compiler-ir-cold-callees-build fns externs)]
+          (match (ir.compiler-ir-function-seq-borrow fns 1)
+            [(Function _ _ _ _ blocks _ _)
+              (let
+                [cold-labels : opt_i64_i64_map.Map
+                  (ir.compiler-ir-cold-block-label-set blocks (& callees))]
+                (test.assert-true
+                  (opt_i64_i64_map.contains?
+                    (& cold-labels)
+                    (ir.compiler-ir-label "direct_cold"))
+                  "direct call to cold function seeds coldness")
+                (test.assert-true
+                  (opt_i64_i64_map.contains?
+                    (& cold-labels)
+                    (ir.compiler-ir-label "tail_cold"))
+                  "tail call to cold function seeds coldness")
+                (test.assert-true
+                  (opt_i64_i64_map.contains?
+                    (& cold-labels)
+                    (ir.compiler-ir-label "all_cold_pred"))
+                  "predecessor whose every successor is cold propagates coldness")
+                (test.assert-true
+                  (opt_i64_i64_map.contains?
+                    (& cold-labels)
+                    (ir.compiler-ir-label "ext_cold_call"))
+                  "direct call to imported cold extern seeds coldness")
+                (test.assert-true
+                  (opt_i64_i64_map.contains?
+                    (& cold-labels)
+                    (ir.compiler-ir-label "abort_blk"))
+                  "proven terminal abort seeds coldness")
+                (test.assert-true
+                  (not
+                    (opt_i64_i64_map.contains?
+                      (& cold-labels)
+                      (ir.compiler-ir-label "entry")))
+                  "mixed-successor entry block stays warm")
+                (test.assert-true
+                  (not
+                    (opt_i64_i64_map.contains?
+                      (& cold-labels)
+                      (ir.compiler-ir-label "cont_after_cold")))
+                  "returning cold call leaves continuation block warm")
+                (test.assert-true
+                  (not
+                    (opt_i64_i64_map.contains?
+                      (& cold-labels)
+                      (ir.compiler-ir-label "cycle_a")))
+                  "unseeded cycle stays warm under least fixed point (a)")
+                (test.assert-true
+                  (not
+                    (opt_i64_i64_map.contains?
+                      (& cold-labels)
+                      (ir.compiler-ir-label "cycle_b")))
+                  "unseeded cycle stays warm under least fixed point (b)")
+                (test.assert-true
+                  (not
+                    (opt_i64_i64_map.contains?
+                      (& cold-labels)
+                      (ir.compiler-ir-label "warm_trap")))
+                  "ordinary returns and potentially trapping instructions never seed coldness"))]))])))
+
+(test
+  c60-cold-inliner-rejects-warm-to-cold-and-gates-cold-sites
+  (let
+    [prog : ir.CompilerIrProgram
+      (irt.program
+        "function @cold_leaf(x=%0:i64) -> i64 vars 2 cold {
+         entry:
+           %1 = add %0, 7 : i64
+           return %1
+         }
+         function @warm_medium(x=%0:i64) -> i64 vars 12 {
+         entry:
+           %1 = add %0, 1 : i64
+           %2 = mul %1, 3 : i64
+           %3 = add %2, 5 : i64
+           %4 = mul %3, 7 : i64
+           %5 = add %4, 9 : i64
+           %6 = mul %5, 11 : i64
+           %7 = add %6, 13 : i64
+           %8 = mul %7, 15 : i64
+           %9 = add %8, 17 : i64
+           %10 = mul %9, 19 : i64
+           %11 = add %10, 21 : i64
+           return %11
+         }
+         function @main(x=%0:i64) -> i64 vars 5 {
+         entry:
+           %1 = eq %0, 0 : i64
+           branch %1, cold_arm, warm_arm
+         cold_arm:
+           %2 = call warm_medium(%0) : i64
+           %3 = call cold_leaf(%2) : i64
+           return %3
+         warm_arm:
+           %4 = call warm_medium(%0) : i64
+           return %4
+         }")]
+    (match (opt.optimize-program-with-spans-and-level
+      (& prog)
+      (ir.compiler-source-spans-empty)
+      2)
+      [(opt.CompilerOptimizedProgram.Program opt-prog _)
+        (match (& opt-prog)
+          [(Program _ opt-fns _ _)
+            (let
+              [main-sym : i64
+                (ir.compiler-ir-symbol-id (opt-test-symbol "main"))]
+              [main-idx : i64 (opt-lga-find (& opt-fns) main-sym)]
+              (test.assert-true
+                (>= main-idx 0)
+                "main present after -O2 optimization")
+              (let
+                [main-text : String
+                  (ir.compiler-ir-function-render
+                    (cis.InternStructuralSessionHandle 0)
+                    (ast.ast-node-pool-reader-type-segment-bases)
+                    (& (array-ref opt-fns.slots main-idx)))]
+                (test.assert-true
+                  (string.contains (& main-text) "cold_leaf")
+                  "warm caller does NOT inline (:cold) callee at -O2")
+                (test.assert-true
+                  (string.contains (& main-text) "warm_medium")
+                  "cold block inside warm caller applies -Os budget and keeps medium callee out-of-line")))])])))
+
+(test
+  c60-cold-inliner-retains-library-helper-at-o2
+  ;; Without `main` (library build), a single-call-site helper is retained for
+  ;; external callers and must not be absorbed into a cold caller at -O2.
+  (let
+    [prog : ir.CompilerIrProgram
+      (irt.program
+        "function @lib_helper(x=%0:i64) -> i64 vars 8 {
+         entry:
+           %1 = add %0, 1 : i64
+           %2 = mul %1, 3 : i64
+           %3 = add %2, 5 : i64
+           %4 = mul %3, 7 : i64
+           %5 = add %4, 9 : i64
+           %6 = mul %5, 11 : i64
+           %7 = add %6, 13 : i64
+           return %7
+         }
+         function @cold_caller(x=%0:i64) -> i64 vars 3 cold {
+         entry:
+           %1 = call lib_helper(%0) : i64
+           %2 = add %1, 1 : i64
+           return %2
+         }")]
+    (match (opt.optimize-program-with-spans-and-level
+      (& prog)
+      (ir.compiler-source-spans-empty)
+      2)
+      [(opt.CompilerOptimizedProgram.Program opt-prog _)
+        (match (& opt-prog)
+          [(Program _ opt-fns _ _)
+            (let
+              [caller-sym : i64
+                (ir.compiler-ir-symbol-id (opt-test-symbol "cold_caller"))]
+              [caller-idx : i64 (opt-lga-find (& opt-fns) caller-sym)]
+              (test.assert-true
+                (>= caller-idx 0)
+                "cold_caller present after -O2 optimization")
+              (let
+                [caller-text : String
+                  (ir.compiler-ir-function-render
+                    (cis.InternStructuralSessionHandle 0)
+                    (ast.ast-node-pool-reader-type-segment-bases)
+                    (& (array-ref opt-fns.slots caller-idx)))]
+                (test.assert-true
+                  (string.contains (& caller-text) "lib_helper")
+                  "single-call-site library helper is not absorbed into cold caller at -O2")))])])))

@@ -403,7 +403,101 @@
         (ptr-write! (ptr-offset out kept-length) 0)
         (string-from-bytes (ptr-cast out : (Ptr u8)) kept-length)))))
 
-(define (prune [asm : String]) : String
+(define (prune-skip-fragment?
+  [ranges : (& fragment_vec.Vec)]
+  [live : (MutPtr u8)]
+  [f : i64]
+  [pos : i64]) : bool
+  (or
+    (!=
+      (unsafe
+        (ptr-read (ptr-offset live f)))
+      0)
+    (let
+      [frag : RuntimeFragment (array-ref (fragment_vec.slots ranges) f)]
+      (<= frag.end pos))))
+
+(define (prune-map-offset
+  [ranges : (& fragment_vec.Vec)]
+  [live : (MutPtr u8)]
+  [count : i64]
+  [f : i64]
+  [removed : i64]
+  [pos : i64]) : i64
+  (if (and
+    (< f count)
+    (=
+      (unsafe
+        (ptr-read (ptr-offset live f)))
+      0))
+    (let
+      [frag : RuntimeFragment (array-ref (fragment_vec.slots ranges) f)]
+      (if (< frag.start pos)
+        (- frag.start removed)
+        (- pos removed)))
+    (- pos removed)))
+
+;; Updates sorted, non-overlapping [start, end) byte ranges in place for the
+;; text produced by deleting every fragment in `ranges` whose `live` byte is 0.
+;; Ranges completely contained inside deleted fragments collapse to [0, 0).
+(define (remap-ranges-after-prune!
+  [ranges : (& fragment_vec.Vec)]
+  [live : (MutPtr u8)]
+  [range-count : i64]
+  [range-starts : (&mut (__tl_dyn-array i64))]
+  [range-ends : (&mut (__tl_dyn-array i64))]) : unit
+  (let
+    [count : i64 (fragment_vec.len ranges)]
+    [f : i64 0]
+    [removed : i64 0]
+    (for [r (iterator.range 0 range-count)]
+      (let
+        [rs : i64 (array-ref range-starts r)]
+        [re : i64 (array-ref range-ends r)]
+        (if (<= re rs)
+          (begin
+            (set! (array-ref range-starts r) 0)
+            (set! (array-ref range-ends r) 0))
+          (begin
+            (while (and (< f count) (prune-skip-fragment? ranges live f rs))
+              (when
+                (=
+                  (unsafe
+                    (ptr-read (ptr-offset live f)))
+                  0)
+                (let
+                  [frag : RuntimeFragment
+                    (array-ref (fragment_vec.slots ranges) f)]
+                  (+= removed (- frag.end frag.start))))
+              (+= f 1))
+            (let
+              [new-rs : i64 (prune-map-offset ranges live count f removed rs)]
+              (while (and (< f count) (prune-skip-fragment? ranges live f re))
+                (when
+                  (=
+                    (unsafe
+                      (ptr-read (ptr-offset live f)))
+                    0)
+                  (let
+                    [frag : RuntimeFragment
+                      (array-ref (fragment_vec.slots ranges) f)]
+                    (+= removed (- frag.end frag.start))))
+                (+= f 1))
+              (let
+                [new-re : i64 (prune-map-offset ranges live count f removed re)]
+                (if (< new-rs new-re)
+                  (begin
+                    (set! (array-ref range-starts r) new-rs)
+                    (set! (array-ref range-ends r) new-re))
+                  (begin
+                    (set! (array-ref range-starts r) 0)
+                    (set! (array-ref range-ends r) 0)))))))))))
+
+(define (prune-with-ranges!
+  [asm : String]
+  [range-count : i64]
+  [range-starts : (&mut (__tl_dyn-array i64))]
+  [range-ends : (&mut (__tl_dyn-array i64))]) : String
   (let
     [data : (Ptr u8)
       (unsafe
@@ -426,7 +520,22 @@
               (reachable-fragments data length (& ranges) live))]
           (if (= kept count)
             asm
-            (render-kept data length (& ranges) live)))))))
+            (begin
+              (when
+                (> range-count 0)
+                (remap-ranges-after-prune!
+                  (& ranges)
+                  live
+                  range-count
+                  range-starts
+                  range-ends))
+              (render-kept data length (& ranges) live))))))))
+
+(define (prune [asm : String]) : String
+  (let
+    [empty-starts : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [empty-ends : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    (prune-with-ranges! asm 0 (&mut empty-starts) (&mut empty-ends))))
 
 ;; -Os cross-function epilogue interning. A return tail is the run of
 ;; stack-releasing instructions (`addq $N, %rsp`, `popq %reg`, `leave`) that

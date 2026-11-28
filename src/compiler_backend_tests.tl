@@ -38,6 +38,7 @@
 (import compiler_backend_runtime_common as runtime_common)
 (import compiler_backend_runtime_linux as runtime_linux)
 (import compiler_backend_runtime_windows as runtime_windows)
+(import compiler_backend_runtime_prune as runtime_prune)
 (import compiler_parallel_move as pmove)
 (import compiler_builtin_ids as cbi)
 (import compiler_float as cfloat)
@@ -42338,7 +42339,12 @@ b_keep:
   [blocks : ir.CompilerIrBlockList]) : (__tl_dyn-array i64)
   (match blocks
     [(Array seq)
-      (match (backend.compiler-backend-placement-plan-for-seq seq true 0 true)
+      (match (backend.compiler-backend-placement-plan-for-seq
+        seq
+        true
+        0
+        true
+        (& (__tl_make-array i64 0)))
         [(Some st) st.order]
         [(No) (__tl_make-array i64 0)])]))
 
@@ -42491,7 +42497,8 @@ b_keep:
           seq
           false
           0
-          false)
+          false
+          (& (__tl_make-array i64 0)))
           [(Some _) false]
           [(No) true])])
     (match (compiler-backend-placement-guard-blocks "lt %0, 0")
@@ -42500,12 +42507,18 @@ b_keep:
           seq
           true
           2
-          false)
+          false
+          (& (__tl_make-array i64 0)))
           [(Some _) false]
           [(No) true])])
     (match (compiler-backend-placement-guard-blocks "lt %0, 0")
       [(Array seq)
-        (match (backend.compiler-backend-placement-plan-for-seq seq true 0 true)
+        (match (backend.compiler-backend-placement-plan-for-seq
+          seq
+          true
+          0
+          true
+          (& (__tl_make-array i64 0)))
           [(Some _) false]
           [(No) true])])))
 
@@ -43931,7 +43944,8 @@ b_keep:
           seq
           true
           0
-          false)
+          false
+          (& (__tl_make-array i64 0)))
           [(Some st) st.order]
           [(No) (__tl_make-array i64 0)])])))
 
@@ -50715,3 +50729,457 @@ user_fn:
         [(Eligible) true]
         [_ false])
       "non-archive-runtime TypeLisp extern call stays eligible for library extraction")))
+
+(test
+  c60-cold-placement-sinks-cold-blocks-stably
+  (let
+    [ir-text : String
+      "entry:
+         %1 = eq %0, 0 : i64
+         branch %1, cold_arm, hot_arm
+       cold_arm:
+         %2 = add %0, 1 : i64
+         jump cont
+       hot_arm:
+         %3 = add %0, 2 : i64
+         jump cont
+       cont:
+         %4 = phi [%2, cold_arm], [%3, hot_arm] : i64
+         return %4"]
+    [blocks1 : ir.CompilerIrBlockList (irt.blocks (string.copy (& ir-text)))]
+    [blocks2 : ir.CompilerIrBlockList (irt.blocks ir-text)]
+    [cold-labels : (__tl_dyn-array i64)
+      (__tl_make-array (ir.compiler-ir-label "cold_arm"))]
+    (match blocks1
+      [(Array seq)
+        (match (backend.compiler-backend-placement-plan-for-seq
+          seq
+          true
+          0
+          false
+          (& cold-labels))
+          [(Some st)
+            (test.assert-true
+              (compiler-backend-placement-test-order-eq?
+                st.order
+                (__tl_make-array 0 2 3 1))
+              "cold block sinks behind warm hot_arm and cont while preserving entry and phi order")]
+          [(No)
+            (test.assert-true
+              false
+              "expected placement plan for cold block sinking")])])
+    ;; Pinning prefix [0, 2) keeps cold_arm at index 1 untouched.
+    (match blocks2
+      [(Array seq)
+        (match (backend.compiler-backend-placement-plan-for-seq
+          seq
+          true
+          2
+          false
+          (& cold-labels))
+          [(No)
+            (test.assert-true true "pinned shrink-wrap prefix does not move")]
+          [(Some _)
+            (test.assert-true
+              false
+              "pinned cold block in shrink-wrap prefix must not move")])])))
+
+(test
+  c60-cold-compact-switch-and-direct-object-fallback
+  (let
+    [state-o2 : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [state-o1 : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [switch-blocks : ir.CompilerIrBlockList
+      (irt.blocks
+        "entry:
+           switch %0 base 0 [0:c0, 1:c1, 2:c2, 3:c3] default c0
+         c0:
+           return 0
+         c1:
+           return 1
+         c2:
+           return 2
+         c3:
+           return 3")]
+    [cold-prog : ir.CompilerIrProgram
+      (irt.program
+        "function @cold_fn(x=%0:i64) -> i64 vars 1 cold {
+         entry:
+           return %0
+         }
+         function @main() -> i64 vars 1 {
+         entry:
+           %0 = call cold_fn(42) : i64
+           return %0
+         }")]
+    (be_state.compiler-backend-state-set-opt-level! state-o2 2)
+    (be_state.compiler-backend-state-set-opt-level! state-o1 1)
+    (match (& switch-blocks)
+      [(Array seq)
+        (test.assert-true
+          (be_facts.compiler-backend-compact-switch-blocks? state-o2 seq true)
+          "cold function gets compact .word switch table at -O2")
+        (test.assert-true
+          (not
+            (be_facts.compiler-backend-compact-switch-blocks?
+              state-o2
+              seq
+              false))
+          "warm function keeps standard switch table at -O2")
+        (test.assert-true
+          (not
+            (be_facts.compiler-backend-compact-switch-blocks? state-o1 seq true))
+          "cold function skips compact switch table at -O1")])
+    (test.assert-true
+      (match (backend.compiler-backend-object-program-eligibility-with-pools-and-profile-state
+        state-o2
+        (ast.ast-node-pool-context-capture-active)
+        (ir.clone-compiler-ir-program (& cold-prog))
+        (be_state.CompilerBackendTarget.Linux)
+        (profile_state.compiler-profile-state-new))
+        [(Unsupported (UnsupportedSemantics)) true]
+        [_ false])
+      "eligible cold function at -O2 uses driver assembly fallback on direct-object route")
+    (test.assert-true
+      (match (backend.compiler-backend-object-program-eligibility-with-pools-and-profile-state
+        state-o1
+        (ast.ast-node-pool-context-capture-active)
+        cold-prog
+        (be_state.CompilerBackendTarget.Linux)
+        (profile_state.compiler-profile-state-new))
+        [(Eligible) true]
+        [_ false])
+      "cold function at -O1 keeps direct-object route")
+    (backend.compiler-backend-state-release-final-arenas! state-o2)
+    (backend.compiler-backend-state-release-final-arenas! state-o1)))
+
+(test
+  c60-cold-filtered-machine-outline-ranges
+  (let
+    [warm-fn : String
+      "warm_f:
+    movq %rdi, 8(%rsp)
+    movq %rsi, 120(%rsp)
+    leaq 32(%rsp), %rdx
+    movabsq $1311768467463790320, %rcx
+    call wa
+    movl $7, %eax
+    addq $24, %rsp
+    popq %rbx
+    popq %r12
+    ret
+    .size warm_f, . - warm_f
+"]
+    [cold-a : String
+      "cold_a:
+    movq %rdi, 8(%rsp)
+    movq %rsi, 120(%rsp)
+    leaq 32(%rsp), %rdx
+    movabsq $1311768467463790320, %rcx
+    call ca
+    movl $7, %eax
+    addq $24, %rsp
+    popq %rbx
+    popq %r12
+    ret
+    .size cold_a, . - cold_a
+"]
+    [cold-b : String
+      "cold_b:
+    movq %rdi, 8(%rsp)
+    movq %rsi, 120(%rsp)
+    leaq 32(%rsp), %rdx
+    movabsq $1311768467463790320, %rcx
+    call cb
+    xorl %edx, %edx
+    movl $7, %eax
+    addq $24, %rsp
+    popq %rbx
+    popq %r12
+    ret
+    .size cold_b, . - cold_b
+"]
+    [cold-c : String
+      "cold_c:
+    movq %rdi, 8(%rsp)
+    movq %rsi, 120(%rsp)
+    leaq 32(%rsp), %rdx
+    movabsq $1311768467463790320, %rcx
+    call cc
+    ret
+    .size cold_c, . - cold_c
+"]
+    [elf-asm : String (str_cat.str-cat warm-fn cold-a cold-b cold-c)]
+    [wlen : i64 (string.string-length (& warm-fn))]
+    [alen : i64 (string.string-length (& cold-a))]
+    [blen : i64 (string.string-length (& cold-b))]
+    [clen : i64 (string.string-length (& cold-c))]
+    [starts : (__tl_dyn-array i64)
+      (__tl_make-array wlen (+ wlen alen) (+ (+ wlen alen) blen))]
+    [ends : (__tl_dyn-array i64)
+      (__tl_make-array
+        (+ wlen alen)
+        (+ (+ wlen alen) blen)
+        (+ (+ (+ wlen alen) blen) clen))]
+    [modes : (__tl_dyn-array i64) (__tl_make-array 2 2 2)]
+    [empty-labels : backend_i64_i64_map.Map
+      (backend_i64_i64_map.with-capacity 0)]
+    [elf-out : String
+      (be_peephole.compiler-backend-machine-outline-ranges
+        elf-asm
+        false
+        3
+        (& starts)
+        (& ends)
+        (& modes)
+        (& empty-labels))]
+    (test.assert-true
+      (string.contains (& elf-out) (& warm-fn))
+      "filtered ELF outliner leaves warm function completely untouched")
+    (test.assert-true
+      (string.contains (& elf-out) "cold_a:\n    call _tl_outline_1\n")
+      "filtered ELF outliner runs osC on cold functions")
+    (test.assert-true
+      (string.contains (& elf-out) "    jmp .L_tl_tail_1\n    .size cold_b")
+      "filtered ELF outliner runs osD on cold functions")))
+
+(test
+  c60-cold-mid-stream-optional-runtime-prune-alignment
+  (let
+    [cold-a : String
+      "cold_a:
+    movq %rdi, 8(%rsp)
+    movq %rsi, 120(%rsp)
+    leaq 32(%rsp), %rdx
+    movabsq $1311768467463790320, %rcx
+    call ca
+    ret
+    .size cold_a, . - cold_a
+"]
+    [dead-mid : String
+      (runtime_prune.optional-fragment
+        "dead_rt_helper:
+    movq %rdi, 8(%rsp)
+    movq %rsi, 120(%rsp)
+    leaq 32(%rsp), %rdx
+    movabsq $1311768467463790320, %rcx
+    call rt_dead
+    ret
+    .size dead_rt_helper, . - dead_rt_helper
+")]
+    [cold-b : String
+      "cold_b:
+    movq %rdi, 8(%rsp)
+    movq %rsi, 120(%rsp)
+    leaq 32(%rsp), %rdx
+    movabsq $1311768467463790320, %rcx
+    call cb
+    ret
+    .size cold_b, . - cold_b
+"]
+    [warm-c : String
+      "warm_c:
+    movq %rdi, 8(%rsp)
+    movq %rsi, 120(%rsp)
+    leaq 32(%rsp), %rdx
+    movabsq $1311768467463790320, %rcx
+    call wc
+    ret
+    .size warm_c, . - warm_c
+"]
+    [raw-asm : String (str_cat.str-cat cold-a dead-mid cold-b warm-c)]
+    [a-len : i64 (string.string-length (& cold-a))]
+    [m-len : i64 (string.string-length (& dead-mid))]
+    [b-len : i64 (string.string-length (& cold-b))]
+    [starts : (__tl_dyn-array i64) (__tl_make-array 0 a-len (+ a-len m-len))]
+    [ends : (__tl_dyn-array i64)
+      (__tl_make-array a-len (+ a-len m-len) (+ (+ a-len m-len) b-len))]
+    [modes : (__tl_dyn-array i64) (__tl_make-array 2 2 2)]
+    [empty-labels : backend_i64_i64_map.Map
+      (backend_i64_i64_map.with-capacity 0)]
+    [pruned : String
+      (runtime_prune.prune-with-ranges! raw-asm 3 (&mut starts) (&mut ends))]
+    [outlined : String
+      (be_peephole.compiler-backend-machine-outline-ranges
+        pruned
+        false
+        3
+        (& starts)
+        (& ends)
+        (& modes)
+        (& empty-labels))]
+    (test.assert-true
+      (not (string.contains (& outlined) "dead_rt_helper"))
+      "unreachable mid-stream optional-runtime fragment is pruned")
+    (test.assert-i64-eq
+      (array-ref starts 1)
+      0
+      "cold range inside pruned mid-stream fragment is dropped")
+    (test.assert-i64-eq (array-ref ends 1) 0 "dropped cold range has empty end")
+    (test.assert-i64-eq
+      (array-ref starts 2)
+      a-len
+      "cold_b range start aligns immediately after cold_a")
+    (test.assert-i64-eq
+      (array-ref ends 2)
+      (+ a-len b-len)
+      "cold_b range end stays aligned before warm_c")
+    (test.assert-true
+      (string.contains (& outlined) "cold_a:\n    call _tl_outline_1\n")
+      "cold_a is outlined after mid-stream prune")
+    (test.assert-true
+      (string.contains (& outlined) "cold_b:\n    call _tl_outline_1\n")
+      "cold_b stays aligned and is outlined after mid-stream prune")
+    (test.assert-true
+      (string.contains (& outlined) (& warm-c))
+      "warm_c is never touched by cold outlining after mid-stream prune")))
+
+(test
+  c60-cold-buffer-route-closed-executable-and-reset
+  ;; 1. Verify reset! clears cold-outline-labels even when count == 0 (for
+  ;;    example when emission fails on the first function with a cold block
+  ;;    after compiler-backend-cold-outline-function-mode populated the map).
+  (let
+    [reset-prog : ir.CompilerIrProgram
+      (irt.program
+        "function @cold_target(x=%0:i64) -> i64 vars 1 cold {
+         entry:
+           return %0
+         }
+         function @warm_with_cold_block(x=%0:i64) -> i64 vars 3 {
+         entry:
+           %1 = eq %0, 0 : i64
+           branch %1, cold_arm, hot_arm
+         cold_arm:
+           %2 = call cold_target(%0) : i64
+           return %2
+         hot_arm:
+           return %0
+         }")]
+    (match (& reset-prog)
+      [(Program _ fns externs _)
+        (let
+          [program-index : be_state.CompilerBackendProgramIndex
+            (compiler-backend-program-index-build
+              (ast.ast-node-pool-reader-type-segment-bases)
+              (ir.clone-compiler-ir-function-seq fns)
+              (ir.clone-compiler-ir-extern-seq externs))]
+          (backend.compiler-backend-cold-outline-reset!)
+          (backend.compiler-backend-cold-callees-install! fns externs)
+          (let
+            [mode : i64
+              (backend.compiler-backend-cold-outline-function-mode
+                program-index
+                (arena.raw-handle (arena.current))
+                (ir.compiler-ir-function-seq-borrow fns 1))]
+            (test.assert-i64-eq
+              mode
+              0
+              "warm function with cold block returns partial cold outline mode")
+            (test.assert-i64-eq
+              backend.compiler-backend-cold-outline-count
+              0
+              "cold-outline-count is 0 before record!")
+            (test.assert-i64-eq
+              (backend_i64_i64_map.len
+                (& (array-ref backend.compiler-backend-cold-outline-labels 0)))
+              1
+              "cold-outline-labels populated while count == 0")
+            (backend.compiler-backend-cold-outline-reset!)
+            (backend.compiler-backend-cold-callees-clear!)
+            (test.assert-i64-eq
+              (backend_i64_i64_map.len
+                (& (array-ref backend.compiler-backend-cold-outline-labels 0)))
+              0
+              "reset! clears cold-outline-labels even when count == 0")))]))
+  ;; 2. Verify the Buffer route with closed-executable? = true at -O2 runs
+  ;;    closed-executable-finish (cold outlining + pruning) and resets globals.
+  (let
+    [src : String
+      "(define (cold-sink [a : i64] [b : i64]) (:cold) : i64
+         (+ a b))
+       (define (cold-a [x : i64] [y : i64]) (:cold) : i64
+         (let
+           [t0 : i64 (+ (* x 31) 17)]
+           [t1 : i64 (+ (* t0 13) y)]
+           [t2 : i64 (bit-xor t1 1311768467463790320)]
+           [t3 : i64 (cold-sink t2 x)]
+           (+ (* (+ t3 19) 7) 11)))
+       (define (cold-b [x : i64] [y : i64]) (:cold) : i64
+         (let
+           [t0 : i64 (+ (* x 31) 17)]
+           [t1 : i64 (+ (* t0 13) y)]
+           [t2 : i64 (bit-xor t1 1311768467463790320)]
+           [t3 : i64 (cold-sink t2 y)]
+           (+ (* (+ t3 19) 7) 11)))
+       (define (cold-c [x : i64] [y : i64]) (:cold) : i64
+         (let
+           [t0 : i64 (+ (* x 31) 17)]
+           [t1 : i64 (+ (* t0 13) y)]
+           [t2 : i64 (bit-xor t1 1311768467463790320)]
+           [t3 : i64 (cold-sink t2 (+ x y))]
+           (+ (* (+ t3 19) 7) 11)))
+       (define (warm-f [x : i64] [y : i64]) : i64
+         (let
+           [t0 : i64 (+ (* x 31) 17)]
+           [t1 : i64 (+ (* t0 13) y)]
+           [t2 : i64 (bit-xor t1 1311768467463790320)]
+           [t3 : i64 (+ t2 x)]
+           (+ (+ t3 t1) 7)))
+       (define (main) : i64
+         (+ (+ (cold-a 2 3) (cold-b 2 3)) (+ (cold-c 2 3) (warm-f 2 3))))"]
+    (match (lower.lower-compiler-source src)
+      [(Ok prog spans lower-owner)
+        (let
+          [state : be_state.CompilerBackendState
+            (be_state.compiler-backend-state-new
+              (ci.intern-compat-state-capture-active))]
+          (be_state.compiler-backend-state-set-opt-level! state 2)
+          (be_state.compiler-backend-state-set-closed-executable! state true)
+          (match (backend.compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt-and-profile-state-backend-state
+            state
+            (ast.ast-node-pool-context-capture-active)
+            prog
+            (be_state.CompilerBackendTarget.Linux)
+            (be_state.CompilerBackendMode.Scalar)
+            spans
+            true
+            false
+            (profile_state.compiler-profile-state-new))
+            [(Ok buf)
+              (let
+                [asm : String (text_buf.render buf)]
+                (test.assert-true
+                  (string.contains (& asm) "_tl_outline_1")
+                  "Buffer route with closed-executable? runs filtered cold outlining")
+                (test.assert-true
+                  (not
+                    (string.contains
+                      (& asm)
+                      "# typelisp optional runtime begin"))
+                  "Buffer route with closed-executable? prunes optional runtime markers")
+                (test.assert-i64-eq
+                  backend.compiler-backend-cold-outline-count
+                  0
+                  "Buffer route resets cold-outline-count after closed-executable-finish")
+                (test.assert-i64-eq
+                  (backend_i64_i64_map.len
+                    (&
+                      (array-ref backend.compiler-backend-cold-outline-labels 0)))
+                  0
+                  "Buffer route clears cold-outline-labels after closed-executable-finish"))]
+            [(Err diag)
+              (test.assert-true
+                false
+                (cdiag.compiler-diagnostic-message (__tl-box-place diag)))])
+          (backend.compiler-backend-state-release-final-arenas! state)
+          (lower.compiler-lower-arena-state-release!
+            (lower.compiler-lower-state-arenas lower-owner)))]
+      [(Err diag)
+        (test.assert-true
+          false
+          (cdiag.compiler-diagnostic-message (__tl-box-place diag)))])))

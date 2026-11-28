@@ -27,6 +27,7 @@
 (import compiler_global_effects as global_effects)
 (import (vector.vector i64 core) as effect_words)
 (import (hashmap.hashmap i64 i64) as tc_i64_i64_map)
+(import (hashmap.hashmap (Tuple i64 i64) i64) as arena_store_nodes)
 (import compiler_parse_core as parser)
 (import read as reader)
 (import stdlib.string)
@@ -95368,6 +95369,7 @@
   ;; every body is checked, with the stored value nodes typing found
   ;; region-tagged and the call queries it answers then.
   (arena-graph global_effects.Graph)
+  (arena-nodes arena_store_nodes.Map)
   (arena-collected (__tl_dyn-array i64))
   (tagged tc_i64_i64_map.Map)
   (arena-pending i64)
@@ -95476,6 +95478,8 @@
 (define (tc-global-effect-enqueue!
   [collector : (&mut collector TcGlobalEffectCollector)]
   [node : i64]) : unit
+  ;; The indirect union discovers every synthetic node in the same scan.
+  (when (> node collector.graph.indirect) (set! node collector.graph.indirect))
   (unless
     (or collector.prefix-only (!= (array-ref collector.collected node) 0))
     (set! (array-ref collector.collected node) 1)
@@ -95520,6 +95524,9 @@
   [collector : (&mut collector TcGlobalEffectCollector)]
   [caller : i64]
   [callee : i64]) : unit
+  (when
+    (>= callee (array-length collector.graph.callers))
+    (global_effects.reserve-node! (&mut collector.graph) callee))
   (global_effects.add-call! (&mut collector.graph) caller callee)
   ;; Merely defining a lambda or taking a function value does not execute
   ;; the indirect union. Its outgoing edges become relevant when queried.
@@ -95610,37 +95617,63 @@
 (define (tc-arena-store-argument-key [indirect : i64]) : i64
   (+ indirect 2))
 
-;; The arena-store graph splits the indirect-call union by parameter types:
-;; a function value whose parameters are P can only be a function or lambda
-;; in bucket(P). Past the indirect node `indirect` (a call of unknown type,
-;; which reaches every bucket) come the wild node, holding lambdas and
-;; functions of unknown parameter types, which every bucket reaches, and the
-;; buckets. A shared bucket only merges candidates, so it stays sound.
-(define (tc-arena-store-bucket-count) : i64
-  64)
-
-(define (tc-arena-store-union-nodes) : i64
-  (+ 1 (tc-arena-store-bucket-count)))
-
 (define (tc-arena-store-wild-node [indirect : i64]) : i64
   (+ indirect 1))
 
-(define (tc-arena-store-bucket-node [indirect : i64] [hash : i64]) : i64
-  (+ indirect (+ 2 (bit-and hash (- (tc-arena-store-bucket-count) 1)))))
-
 (define (tc-arena-store-graph-new [count : i64]) : global_effects.Graph
   (let
-    [graph : global_effects.Graph
-      (global_effects.new-with-extra count (tc-arena-store-union-nodes))]
-    (for [bucket (iterator.range 0 (tc-arena-store-bucket-count))]
-      (let
-        [node : i64 (+ count (+ 2 bucket))]
-        (global_effects.add-call! (&mut graph) count node)
-        (global_effects.add-call!
-          (&mut graph)
-          node
-          (tc-arena-store-wild-node count))))
+    [graph : global_effects.Graph (global_effects.new-with-extra count 1)]
+    (global_effects.add-call!
+      (&mut graph)
+      count
+      (tc-arena-store-wild-node count))
     graph))
+
+;; Intern only observed (fixed arity, parameter hash bucket) pairs. A
+;; collision may merge functions within one arity. Unknown calls reach every
+;; pair and every pair reaches the wild candidates, including externs.
+(define (tc-arena-store-bucket-node
+  [ctx : TcContext]
+  [arity : i64]
+  [hash : i64]) : i64
+  (let
+    [state : (MutPtr TcGlobalCallEffects) (tc-global-call-effects-ensure! ctx)]
+    [key : (Tuple i64 i64) (tuple arity (bit-and hash 63))]
+    [nodes : arena_store_nodes.Map
+      (unsafe
+        (deref state).arena-nodes)]
+    [found : i64 (arena_store_nodes.get-value-or (& nodes) key 0)]
+    (when (!= found 0) (return found))
+    (let
+      [indirect : i64
+        (unsafe
+          (deref state).count)]
+      [node : i64 (+ indirect (+ 2 (arena_store_nodes.len (& nodes))))]
+      [graph : global_effects.Graph
+        (unsafe
+          (deref state).arena-graph)]
+      [enclosing : i64 (arena.tl_arena_current)]
+      (unsafe
+        (arena.tl_arena_set (deref state).arena))
+      (arena_store_nodes.insert-ref! (&mut nodes) key node)
+      (global_effects.reserve-node! (&mut graph) node)
+      (global_effects.add-call! (&mut graph) indirect node)
+      (global_effects.add-call!
+        (&mut graph)
+        node
+        (tc-arena-store-wild-node indirect))
+      (unsafe
+        (set! (deref state).arena-nodes nodes)
+        (set! (deref state).arena-graph graph)
+        (arena.tl_arena_set enclosing))
+      node)))
+
+(define (tc-arena-store-union-nodes [state : (MutPtr TcGlobalCallEffects)]) : i64
+  (let
+    [nodes : arena_store_nodes.Map
+      (unsafe
+        (deref state).arena-nodes)]
+    (+ 1 (arena_store_nodes.len (& nodes)))))
 
 ;; A structural hash of a resolved type that ignores regions and lifetimes,
 ;; or -1 when the type is not known well enough to place.
@@ -95689,27 +95722,17 @@
           (when (>= out 0) (set! out (hash.combine out part))))))
     out))
 
-;; The union node of a function value whose resolved parameter types are
-;; `params`: its bucket, or the wild node when a type is not known.
-(define (tc-arena-store-params-node
-  [indirect : i64]
-  [params : (& params ast.AstTypeList)]) : i64
-  (let
-    [hash : i64 (tc-arena-store-types-hash params 3)]
-    (if (< hash 0)
-      (tc-arena-store-wild-node indirect)
-      (tc-arena-store-bucket-node indirect hash))))
-
 ;; The union node a call through a function value of resolved parameter
 ;; types `params` may reach: that bucket, or every bucket when unknown.
 (define (tc-arena-store-call-node
+  [ctx : TcContext]
   [indirect : i64]
   [params : (& params ast.AstTypeList)]) : i64
   (let
     [hash : i64 (tc-arena-store-types-hash params 3)]
     (if (< hash 0)
       indirect
-      (tc-arena-store-bucket-node indirect hash))))
+      (tc-arena-store-bucket-node ctx (ast.ast-type-list-len params) hash))))
 
 ;; The final check of `ctx`'s program begins: from now on calls are noted.
 (define (tc-arena-store-begin-final! [ctx : TcContext]) : unit
@@ -95856,8 +95879,8 @@
         [_ (tc-arena-store-wild-node indirect)])]
     [(Err _) (tc-arena-store-wild-node indirect)]))
 
-;; The union node of a function or lambda declaring `params`, as
-;; `tc-arena-store-params-node` reads resolved types.
+;; Classify a definition or lambda by its explicit parameters. The closure
+;; environment is implicit and contributes no source-level argument.
 (define (tc-arena-store-param-list-node
   [ctx : TcContext]
   [indirect : i64]
@@ -95876,7 +95899,7 @@
               (when (>= out 0) (set! out (hash.combine out part)))))]))
     (if (< out 0)
       (tc-arena-store-wild-node indirect)
-      (tc-arena-store-bucket-node indirect out))))
+      (tc-arena-store-bucket-node ctx (ast.ast-param-list-len params) out))))
 
 ;; The union node a call through the function value `func` reaches: its
 ;; declared type's bucket when known, else the whole union.
@@ -95889,6 +95912,7 @@
       (match (tc-type-strip-region ty)
         [(Func args _)
           (tc-arena-store-call-node
+            ctx
             collector.graph.indirect
             (& (ast.ast-type-list-box-shared-view args)))]
         [_ collector.graph.indirect])]
@@ -98000,7 +98024,8 @@
               0
               0
               (tc-arena-store-graph-new count)
-              (__tl_make-array i64 (+ count (+ 1 (tc-arena-store-union-nodes))))
+              (arena_store_nodes.with-capacity 0)
+              (__tl_make-array i64 (+ count 1))
               (tc_i64_i64_map.with-capacity 0)
               0
               (tc_i64_i64_map.with-capacity 0)
@@ -98180,6 +98205,15 @@
           (deref state).arena-collected)
         (unsafe
           (deref state).collected))]
+    (when
+      (>
+        root
+        (unsafe
+          (deref state).count))
+      (set!
+        root
+        (unsafe
+          (deref state).count)))
     (when (!= (array-ref collected root) 0) (return unit))
     (let
       [enclosing : i64 (arena.tl_arena_current)]
@@ -98193,7 +98227,7 @@
               (unsafe
                 (deref state).count)
               (if arena?
-                (tc-arena-store-union-nodes)
+                (tc-arena-store-union-nodes state)
                 0))
             (tc_i64_i64_map.with-capacity 0)
             (unsafe
@@ -98232,11 +98266,6 @@
           (let
             [node : i64 (effect_words.get (& collector.pending) cursor 0)]
             (cond
-              ;; A bucket or the wild node is found by the union's one scan.
-              [(> node collector.graph.indirect)
-                (tc-global-effect-enqueue!
-                  (&mut collector)
-                  collector.graph.indirect)]
               [(= node collector.graph.indirect)
                 ;; Callable values in every runtime body contribute to the
                 ;; indirect union, even when their enclosing body is uncalled.
@@ -99194,7 +99223,7 @@
           indirect)]
       [callee : i64
         (if (= direct indirect)
-          (tc-arena-store-call-node indirect params)
+          (tc-arena-store-call-node ctx indirect params)
           direct)]
       (when (< callee 0) (return unit))
       (let
@@ -99289,7 +99318,10 @@
                             indirect)]
                         [function : i64
                           (if (= value indirect)
-                            (tc-arena-store-call-node indirect (& param-list))
+                            (tc-arena-store-call-node
+                              ctx
+                              indirect
+                              (& param-list))
                             value)]
                         (when
                           (>= function 0)
@@ -99357,11 +99389,13 @@
     (let
       [collector : TcGlobalEffectCollector
         (TcGlobalEffectCollector
-          (global_effects.new-with-extra count (tc-arena-store-union-nodes))
+          (global_effects.new-with-extra
+            count
+            (tc-arena-store-union-nodes state))
           (tc_i64_i64_map.with-capacity 0)
           (unsafe
             (deref state).typed-temporaries)
-          (__tl_make-array i64 (+ count (+ 1 (tc-arena-store-union-nodes))))
+          (__tl_make-array i64 (+ count 1))
           (effect_words.new)
           false
           false

@@ -39,6 +39,22 @@
     (__tl_make-array (__tl_dyn-array i64) 0)
     node-count))
 
+;; An arena-store graph may discover another synthetic node during collection.
+(define (reserve-node! [graph : (&mut graph Graph)] [node : i64]) : unit
+  (let
+    [old-size : i64 (array-length graph.callers)]
+    (when
+      (>= node old-size)
+      (let
+        [size : i64
+          (if (>= node (* 2 old-size))
+            (+ node 1)
+            (* 2 old-size))]
+        [grown : (__tl_dyn-array i64) (__tl_make-array i64 size)]
+        (for [index (iterator.range 0 old-size)]
+          (set! (array-ref grown index) (array-ref graph.callers index)))
+        (set! graph.callers grown)))))
+
 ;; Retained edges never point into the source collector's scratch arena.
 (define (append! [out : (&mut out Graph)] [source : (& source Graph)]) : unit
   (when (= (words.len (& source.links)) 0) (return unit))

@@ -1,0 +1,2 @@
+arena_store_disjoint_arity_ok|check-ok|tests/safety/arena_store_disjoint_arity_ok.tl|-|-
+arena_store_matching_callback_reject|check-fail|tests/safety/arena_store_matching_callback_reject.tl|tests/safety/arena_store_matching_callback_reject.tl:16:10|error[E0205]: typecheck: cannot call `invoke` here: it allocates in the active arena and may store an allocation into a global, which would outlive the arena (via invoke -> <indirect call/lambda> -> save); region value would escape

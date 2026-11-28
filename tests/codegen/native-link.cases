@@ -798,7 +798,7 @@ exit 42
 step semantic-probe
 exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --manifest-path "{{dir}}/fallback/typelisp.pkg" --target linux-x86_64 --stdlib-root "{{root}}/stdlib"
 stderr empty
-in file {{dir}}/fallback/target/release/semantic_fallback_pkg.runtime-inputs
+in file {{dir}}/fallback/target/dev/semantic_fallback_pkg.runtime-inputs
 contains direct-object 5:false
 contains assembler 21:typelisp-linux-x86_64
 step semantic

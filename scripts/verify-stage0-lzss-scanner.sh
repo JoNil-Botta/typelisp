@@ -20,34 +20,41 @@ if [ ! -x "$compiler" ]; then
     exit 2
 fi
 
-# One payload, extracted from the assembly the compiler emits for a program
-# whose only static data is the include.
+# This fixture has exactly one binary literal. Only its data label owns the
+# frame; other .byte directives can describe target-specific unwind records.
 payload_of() {
     mkdir -p "$work/build"
     printf '%s' "$1" > "$work/build/payload.txt"
     printf '(include-str-lzss payload "payload.txt")\n(define (main) : i64 0)\n' \
         > "$work/build/main.tl"
-    "$compiler" compile "$work/build/main.tl" -o "$work/build/main.s" \
-        --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" \
-        --opt-level 0 --no-prebuilt-stdlib \
-        >/dev/null 2>&1
-    # The assembler emits the payload as `.byte` rows of decimal values; awk's
-    # `%c` would re-encode them as UTF-8, so print the values and write bytes.
-    values=$(awk '
-        /^[ \t]*\.byte/ {
-            for (field = 2; field <= NF; field++) {
-                count = split($field, parts, ",")
-                for (i = 1; i <= count; i++)
-                    if (parts[i] != "") printf "%s ", parts[i]
+    for target in linux-x86_64 windows-x86_64; do
+        "$compiler" compile "$work/build/main.tl" -o "$work/build/main.s" \
+            --target "$target" --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" \
+            --opt-level 0 --no-prebuilt-stdlib >/dev/null
+        # Build octal escapes so shell printf writes raw bytes in any locale.
+        escapes=$(awk '
+            /^\.L_tl_bin_data_[^:]+:[[:space:]]*$/ { labels++; payload = 1; next }
+            payload && $1 == ".byte" {
+                sub(/^[[:space:]]*\.byte[[:space:]]+/, "")
+                count = split($0, bytes, ",")
+                for (i = 1; i <= count; i++) {
+                    if (bytes[i] !~ /^[[:space:]]*[0-9]+[[:space:]]*$/ || bytes[i] + 0 > 255)
+                        exit 1
+                    printf "\\0%03o", bytes[i]
+                }
+                total += count
+                next
             }
-            next
+            { payload = 0 }
+            END { if (labels != 1 || total == 0) exit 1 }
+        ' "$work/build/main.s") || {
+            echo "could not extract the fixture payload for $target" >&2
+            exit 1
         }
-    ' "$work/build/main.s")
-    : > "$2"
-    for value in $values; do
-        printf "\\$(printf '%03o' "$value")" >> "$2"
+        printf '%b' "$escapes" > "$work/build/$target.frame"
     done
-    [ -s "$2" ]
+    cmp "$work/build/linux-x86_64.frame" "$work/build/windows-x86_64.frame"
+    cp "$work/build/linux-x86_64.frame" "$2"
 }
 
 expect() {

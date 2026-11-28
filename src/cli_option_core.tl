@@ -209,7 +209,7 @@
   (Ok CliBackendMode)
   (Err String))
 
-;; Defaults belong to the command. Presence records survive parsing so later
+;; Presence records survive parsing so later
 ;; configuration resolution can distinguish an explicit value from a default.
 (defstruct CliCompileOptions
   (target target_cfg.CompilerTargetCfg)
@@ -223,15 +223,13 @@
   (debug bool)
   (has-debug bool))
 
-(define (cli-compile-options
-  [target : target_cfg.CompilerTargetCfg]
-  [opt-level : i64]) : CliCompileOptions
+(define (cli-compile-options) : CliCompileOptions
   (CliCompileOptions
-    target
+    (target_cfg.compiler-target-cfg-host)
     false
     Sse2
     false
-    opt-level
+    1
     false
     (cli_svec.new)
     (cli_svec.new)

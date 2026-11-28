@@ -27,7 +27,8 @@ safe program and [SPEC.md](../SPEC.md) section 6.5 for the model. The
 
 Task threading creates independently scheduled workers; SPMD is
 data-parallel lowering inside one task. `compile`, `run`, and `build` accept
-`--backend-mode scalar|avx2|avx512` (default `scalar`).
+`--backend-mode scalar|sse2|avx2|avx512`. The default follows the
+[command defaults table](../SPEC.md#command-defaults).
 
 - Every SPMD form has scalar reference lowering; backend modes must preserve
   its semantics.

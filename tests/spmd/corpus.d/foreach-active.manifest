@@ -1,0 +1,9 @@
+tests/spmd/foreach_active_simd_reject.tl
+tests/spmd/foreach_active_types.tl
+tests/spmd/foreach_active_masks.tl
+tests/spmd/foreach_active_order.tl
+tests/spmd/foreach_active_pressure.tl
+tests/spmd/foreach_active_histogram.tl
+tests/spmd/foreach_active_dependent_guard.tl
+tests/spmd/foreach_active_guard_call.tl
+tests/integration/foreach_active_effects.tl

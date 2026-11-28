@@ -20,13 +20,16 @@
 (import compiler_typecheck_core as tc)
 (import compiler_typecheck_api)
 
-(define (doc-cat2 [a : String] [b : String]) : String
+(define (doc-cat2 [a : String] [b : String])
+  (:cold) : String
   (str_cat.str-cat a b ""))
 
-(define (doc-cat3 [a : String] [b : String] [c : String]) : String
+(define (doc-cat3 [a : String] [b : String] [c : String])
+  (:cold) : String
   (str_cat.str-cat a b c))
 
-(define (doc-cat4 [a : String] [b : String] [c : String] [d : String]) : String
+(define (doc-cat4 [a : String] [b : String] [c : String] [d : String])
+  (:cold) : String
   (str_cat.str-cat a b c d ""))
 
 (define (doc-cat5
@@ -34,7 +37,8 @@
   [b : String]
   [c : String]
   [d : String]
-  [e : String]) : String
+  [e : String])
+  (:cold) : String
   (str_cat.str-cat a b c d e))
 
 (define (doc-cat6
@@ -43,7 +47,8 @@
   [c : String]
   [d : String]
   [e : String]
-  [f : String]) : String
+  [f : String])
+  (:cold) : String
   (str_cat.str-cat a b c d e f ""))
 
 (defenum DocMaybeItem
@@ -83,26 +88,30 @@
 
 (define (doc-expand-context-from-pools-and-intern-state
   [pools : (& pools ast.AstNodePoolContext)]
-  [intern-state : (& intern-state ci.InternCompatState)]) : DocExpandContext
+  [intern-state : (& intern-state ci.InternCompatState)])
+  (:cold) : DocExpandContext
   (doc-expand-context-from-pools-and-source-names
     pools
     (ci.intern-source-name-session-handle-from-state intern-state)))
 
 (define (doc-expand-context-from-pools-and-source-names
   [pools : (& pools ast.AstNodePoolContext)]
-  [source-names : ci.InternSourceNameSessionHandle]) : DocExpandContext
+  [source-names : ci.InternSourceNameSessionHandle])
+  (:cold) : DocExpandContext
   (DocExpandContext
     (ast.ast-node-pool-context-expr-segment-bases pools)
     (ast.ast-node-pool-context-type-segment-bases pools)
     source-names))
 
-(define (doc-expand-source-name [ctx : DocExpandContext] [id : i64]) : String
+(define (doc-expand-source-name [ctx : DocExpandContext] [id : i64])
+  (:cold) : String
   (ci.intern-source-name-session-handle-str ctx.source-names id))
 
 (define (doc-expand-structural-name
   [ctx : DocExpandContext]
   [session : cis.InternStructuralSessionHandle]
-  [name-id : i64]) : String
+  [name-id : i64])
+  (:cold) : String
   (match (cis.intern-structural-session-record-for-raw session name-id)
     [(Some record)
       (cond
@@ -155,7 +164,8 @@
         [else (doc-cat3 "<structural-id:" (string.int->string name-id) ">")])]
     [(No) (doc-cat3 "<structural-id:" (string.int->string name-id) ">")]))
 
-(define (doc-expand-name-text [ctx : DocExpandContext] [name-id : i64]) : String
+(define (doc-expand-name-text [ctx : DocExpandContext] [name-id : i64])
+  (:cold) : String
   (let
     [session : cis.InternStructuralSessionHandle
       (cis.intern-structural-session-handle-from-source-names ctx.source-names)]
@@ -172,7 +182,8 @@
 
 (define (doc-import-form-list-mut-contains-from?
   [forms : (&mut forms doc_import_form_vec.Vec)]
-  [form : (& form str)]) : bool
+  [form : (& form str)])
+  (:cold) : bool
   (let
     [view : (& forms (Slice String)) (doc_import_form_vec.view forms)]
     (for [index (iterator.range 0 (doc_import_form_vec.len forms))]
@@ -181,12 +192,14 @@
 
 (define (doc-import-form-list-mut-contains?
   [forms : (&mut forms doc_import_form_vec.Vec)]
-  [form : (& form str)]) : bool
+  [form : (& form str)])
+  (:cold) : bool
   (doc-import-form-list-mut-contains-from? forms form))
 
 (define (doc-import-form-list-push-unique!
   [forms : (&mut forms doc_import_form_vec.Vec)]
-  [form : String]) : unit
+  [form : String])
+  (:cold) : unit
   (if (doc-import-form-list-mut-contains? forms form)
     unit
     (doc_import_form_vec.push-ref! forms form)))
@@ -194,7 +207,8 @@
 (define (doc-import-form-list-source-from
   [forms : (& forms doc_import_form_vec.Vec)]
   [index : i64]
-  [count : i64]) : String
+  [count : i64])
+  (:cold) : String
   (if (>= index count)
     ""
     (let
@@ -204,20 +218,24 @@
         "\n"
         (doc-import-form-list-source-from forms (+ index 1) count)))))
 
-(define (doc-import-form-list-source [forms : doc_import_form_vec.Vec]) : String
+(define (doc-import-form-list-source [forms : doc_import_form_vec.Vec])
+  (:cold) : String
   (doc-import-form-list-source-from forms 0 (doc_import_form_vec.len (& forms))))
 
 (define (doc-import-alias-string
   [ctx : DocExpandContext]
-  [alias : ast.AstMaybeImportAlias]) : String
+  [alias : ast.AstMaybeImportAlias])
+  (:cold) : String
   (match alias
     [(Some name) (doc-expand-source-name ctx name)]
     [(No) ""]))
 
-(define (doc-symbol-text [ctx : DocExpandContext] [name-id : i64]) : String
+(define (doc-symbol-text [ctx : DocExpandContext] [name-id : i64])
+  (:cold) : String
   (doc-expand-name-text ctx name-id))
 
-(define (doc-ast-type-id-source [ctx : DocExpandContext] [ty-id : i64]) : String
+(define (doc-ast-type-id-source [ctx : DocExpandContext] [ty-id : i64])
+  (:cold) : String
   (doc-ast-type-source
     ctx
     (ast.ast-type-segment-bases-get ctx.type-segment-bases ty-id)))
@@ -226,7 +244,8 @@
   [ctx : DocExpandContext]
   [types : (& types ast.AstTypeList)]
   [index : i64]
-  [count : i64]) : String
+  [count : i64])
+  (:cold) : String
   (if (>= index count)
     ""
     (doc-cat3
@@ -238,14 +257,16 @@
 
 (define (doc-ast-type-list-source
   [ctx : DocExpandContext]
-  [types : ast.AstTypeList]) : String
+  [types : ast.AstTypeList])
+  (:cold) : String
   (doc-ast-type-list-source-from ctx types 0 (ast.ast-type-list-len (& types))))
 
 (define (doc-ast-lifetime-list-source-from
   [ctx : DocExpandContext]
   [lifetimes : (& lifetimes ast.AstLifetimeList)]
   [index : i64]
-  [count : i64]) : String
+  [count : i64])
+  (:cold) : String
   (if (>= index count)
     ""
     (doc-cat3
@@ -259,7 +280,8 @@
 
 (define (doc-ast-lifetime-list-source
   [ctx : DocExpandContext]
-  [lifetimes : ast.AstLifetimeList]) : String
+  [lifetimes : ast.AstLifetimeList])
+  (:cold) : String
   (let
     [count : i64 (ast.ast-lifetime-list-len (& lifetimes))]
     (if (= count 0)
@@ -269,7 +291,8 @@
         (doc-ast-lifetime-list-source-from ctx (& lifetimes) 0 count)
         ")"))))
 
-(define (doc-ast-type-source [ctx : DocExpandContext] [ty : ast.AstType]) : String
+(define (doc-ast-type-source [ctx : DocExpandContext] [ty : ast.AstType])
+  (:cold) : String
   (match ty
     [(I64) "i64"]
     [(I32) "i32"]
@@ -366,7 +389,8 @@
   [text : (& text str)]
   [index : i64]
   [count : i64]
-  [out : String]) : String
+  [out : String])
+  (:cold) : String
   (if (>= index count)
     out
     (let
@@ -383,10 +407,12 @@
         count
         (doc-cat2 out piece)))))
 
-(define (doc-expand-escape-string [text : String]) : String
+(define (doc-expand-escape-string [text : String])
+  (:cold) : String
   (doc-expand-escape-string-loop text 0 (string.string-length text) ""))
 
-(define (doc-ast-literal-source [ctx : DocExpandContext] [lit : ast.AstLiteral]) : String
+(define (doc-ast-literal-source [ctx : DocExpandContext] [lit : ast.AstLiteral])
+  (:cold) : String
   (match (owned_view.compiler-owned-shared-view lit)
     [(Int _ _) (ast.ast-lit-int-text lit)]
     [(Float text) text]
@@ -406,7 +432,8 @@
   [ctx : DocExpandContext]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
-  [count : i64]) : String
+  [count : i64])
+  (:cold) : String
   (if (>= index count)
     ""
     (doc-cat3
@@ -416,10 +443,12 @@
 
 (define (doc-ast-expr-list-source
   [ctx : DocExpandContext]
-  [exprs : ast.AstExprList]) : String
+  [exprs : ast.AstExprList])
+  (:cold) : String
   (doc-ast-expr-list-source-from ctx exprs 0 (ast.ast-expr-list-len (& exprs))))
 
-(define (doc-ast-expr-source [ctx : DocExpandContext] [expr-id : i64]) : String
+(define (doc-ast-expr-source [ctx : DocExpandContext] [expr-id : i64])
+  (:cold) : String
   (match (ast.ast-expr-unspan-with-segment-bases
     ctx.expr-segment-bases
     (& (ast.ast-expr-segment-bases-get ctx.expr-segment-bases expr-id)))
@@ -436,13 +465,15 @@
     [(Ann inner _) (doc-ast-expr-source ctx inner)]
     [_ "..."]))
 
-(define (doc-macro-import-example-fallback) : DocMacroImportExample
+(define (doc-macro-import-example-fallback)
+  (:cold) : DocMacroImportExample
   (DocMacroImportExample "" ""))
 
 (define (doc-macro-import-example-push!
   [examples : (&mut examples doc_macro_import_example_vec.Vec)]
   [alias : String]
-  [form : String]) : unit
+  [form : String])
+  (:cold) : unit
   (doc_macro_import_example_vec.push-ref!
     examples
     (DocMacroImportExample alias form)))
@@ -450,7 +481,8 @@
 (define (doc-macro-import-example-find-from
   [examples : (& examples doc_macro_import_example_vec.Vec)]
   [alias : String]
-  [index : i64]) : String
+  [index : i64])
+  (:cold) : String
   (if (< index 0)
     ""
     (let
@@ -463,7 +495,8 @@
 
 (define (doc-macro-import-example-find
   [examples : (& examples doc_macro_import_example_vec.Vec)]
-  [alias : String]) : String
+  [alias : String])
+  (:cold) : String
   (doc-macro-import-example-find-from
     (& examples)
     alias
@@ -472,7 +505,8 @@
 (define (doc-macro-import-form
   [ctx : DocExpandContext]
   [call-id : i64]
-  [alias : ast.AstMaybeImportAlias]) : String
+  [alias : ast.AstMaybeImportAlias])
+  (:cold) : String
   (match alias
     [(Some name)
       (doc-cat5
@@ -486,7 +520,8 @@
 (define (doc-macro-import-examples-from-decl
   [ctx : DocExpandContext]
   [decl : ast.AstDecl]
-  [examples : (&mut examples doc_macro_import_example_vec.Vec)]) : unit
+  [examples : (&mut examples doc_macro_import_example_vec.Vec)])
+  (:cold) : unit
   (match decl
     [(Import decl-meta (Spec kind _ _ alias _))
       (match kind
@@ -505,7 +540,8 @@
 (define (doc-macro-import-examples-from-decls-into
   [ctx : DocExpandContext]
   [decls : ast.AstDeclList]
-  [examples : (&mut examples doc_macro_import_example_vec.Vec)]) : unit
+  [examples : (&mut examples doc_macro_import_example_vec.Vec)])
+  (:cold) : unit
   (match (ast.ast-decl-list-step decls)
     [(Nil) unit]
     [(Cons decl rest)
@@ -514,20 +550,23 @@
 
 (define (doc-macro-import-examples-from-decls
   [ctx : DocExpandContext]
-  [decls : ast.AstDeclList]) : doc_macro_import_example_vec.Vec
+  [decls : ast.AstDeclList])
+  (:cold) : doc_macro_import_example_vec.Vec
   (let
     [examples : doc_macro_import_example_vec.Vec
       (doc_macro_import_example_vec.new)]
     (doc-macro-import-examples-from-decls-into ctx decls (&mut examples))
     examples))
 
-(define (doc-generated-target-example-fallback) : DocGeneratedTargetExample
+(define (doc-generated-target-example-fallback)
+  (:cold) : DocGeneratedTargetExample
   (DocGeneratedTargetExample "" ""))
 
 (define (doc-generated-target-example-find-from
   [examples : (& examples doc_generated_target_example_vec.Vec)]
   [target : (& target str)]
-  [count : i64]) : String
+  [count : i64])
+  (:cold) : String
   (let
     [view : (& examples (Slice DocGeneratedTargetExample))
       (doc_generated_target_example_vec.view examples)]
@@ -542,7 +581,8 @@
 
 (define (doc-generated-target-example-find
   [examples : (& examples doc_generated_target_example_vec.Vec)]
-  [target : (& target str)]) : String
+  [target : (& target str)])
+  (:cold) : String
   (doc-generated-target-example-find-from
     examples
     target
@@ -550,7 +590,8 @@
 
 (define (doc-generated-target-example-mut-find-from
   [examples : (&mut examples doc_generated_target_example_vec.Vec)]
-  [target : (& target str)]) : String
+  [target : (& target str)])
+  (:cold) : String
   (for [index (iterator.range 0 examples.len)]
     (let
       [example : DocGeneratedTargetExample
@@ -562,13 +603,15 @@
 
 (define (doc-generated-target-example-mut-find
   [examples : (&mut examples doc_generated_target_example_vec.Vec)]
-  [target : (& target str)]) : String
+  [target : (& target str)])
+  (:cold) : String
   (doc-generated-target-example-mut-find-from examples target))
 
 (define (doc-generated-target-example-add!
   [examples : (&mut examples doc_generated_target_example_vec.Vec)]
   [target : String]
-  [form : String]) : unit
+  [form : String])
+  (:cold) : unit
   (if (or
     (= (string.string-length target) 0)
     (= (string.string-length form) 0)
@@ -585,7 +628,8 @@
   [ctx : DocExpandContext]
   [decl : ast.AstDecl]
   [macro-examples : (& macro-examples doc_macro_import_example_vec.Vec)]
-  [targets : (&mut targets doc_generated_target_example_vec.Vec)]) : unit
+  [targets : (&mut targets doc_generated_target_example_vec.Vec)])
+  (:cold) : unit
   (match decl
     [(Import decl-meta (Spec kind _ expected alias _))
       (match kind
@@ -621,7 +665,8 @@
   [ctx : DocExpandContext]
   [decls : ast.AstDeclList]
   [macro-examples : (& macro-examples doc_macro_import_example_vec.Vec)]
-  [targets : (&mut targets doc_generated_target_example_vec.Vec)]) : unit
+  [targets : (&mut targets doc_generated_target_example_vec.Vec)])
+  (:cold) : unit
   (match (ast.ast-decl-list-step decls)
     [(Nil) unit]
     [(Cons decl rest)
@@ -635,7 +680,8 @@
 (define (doc-generated-target-examples-from-decls
   [ctx : DocExpandContext]
   [decls : ast.AstDeclList]
-  [macro-examples : doc_macro_import_example_vec.Vec]) : doc_generated_target_example_vec.Vec
+  [macro-examples : doc_macro_import_example_vec.Vec])
+  (:cold) : doc_generated_target_example_vec.Vec
   (let
     [targets : doc_generated_target_example_vec.Vec
       (doc_generated_target_example_vec.new)]
@@ -648,12 +694,14 @@
 
 (define (doc-ast-maybe-type-source
   [ctx : DocExpandContext]
-  [maybe-ty : ast.AstMaybeType]) : String
+  [maybe-ty : ast.AstMaybeType])
+  (:cold) : String
   (match maybe-ty
     [(No) ""]
     [(Some ty) (doc-cat2 " : " (doc-ast-type-source ctx ty))]))
 
-(define (doc-ast-param-source [ctx : DocExpandContext] [param : ast.AstParam]) : String
+(define (doc-ast-param-source [ctx : DocExpandContext] [param : ast.AstParam])
+  (:cold) : String
   (match param
     [(Param name ty _)
       (doc-cat5
@@ -667,7 +715,8 @@
   [ctx : DocExpandContext]
   [params : (& params ast.AstParamList)]
   [index : i64]
-  [count : i64]) : String
+  [count : i64])
+  (:cold) : String
   (if (>= index count)
     ""
     (doc-cat3
@@ -682,7 +731,8 @@
 
 (define (doc-ast-param-list-source
   [ctx : DocExpandContext]
-  [params : ast.AstParamList]) : String
+  [params : ast.AstParamList])
+  (:cold) : String
   (doc-ast-param-list-source-from
     ctx
     params
@@ -692,7 +742,8 @@
 (define (doc-ast-macro-type-kind-items-source-from
   [ctx : DocExpandContext]
   [kinds : (& kinds ast.AstMacroTypeKindList)]
-  [index : i64]) : String
+  [index : i64])
+  (:cold) : String
   (if (>= index (ast.ast-macro-type-kind-list-len kinds))
     ""
     (doc-cat3
@@ -704,7 +755,8 @@
 
 (define (doc-ast-macro-type-kind-constraint-source
   [ctx : DocExpandContext]
-  [kinds : (& kinds ast.AstMacroTypeKindList)]) : String
+  [kinds : (& kinds ast.AstMacroTypeKindList)])
+  (:cold) : String
   (if (ast.ast-macro-type-kind-list-empty? kinds)
     ""
     (doc-cat3
@@ -714,7 +766,8 @@
 
 (define (doc-ast-macro-param-source
   [ctx : DocExpandContext]
-  [param : ast.AstMacroParam]) : String
+  [param : ast.AstMacroParam])
+  (:cold) : String
   (match param
     [(Param name ty _ type-kinds)
       (doc-cat6
@@ -729,7 +782,8 @@
   [ctx : DocExpandContext]
   [params : (& params ast.AstMacroParamList)]
   [index : i64]
-  [count : i64]) : String
+  [count : i64])
+  (:cold) : String
   (if (>= index count)
     ""
     (doc-cat3
@@ -744,7 +798,8 @@
 
 (define (doc-ast-macro-param-list-source
   [ctx : DocExpandContext]
-  [params : ast.AstMacroParamList]) : String
+  [params : ast.AstMacroParamList])
+  (:cold) : String
   (doc-ast-macro-param-list-source-from
     ctx
     params
@@ -752,7 +807,8 @@
     (ast.ast-macro-param-list-len (& params))))
 
 ;; A declared `(:align N)` is layout metadata, so generated signatures keep it.
-(define (doc-ast-declared-align-source [align : i64]) : String
+(define (doc-ast-declared-align-source [align : i64])
+  (:cold) : String
   (if (= align 0)
     ""
     (doc-cat3 " (:align " (string.int->string align) ")")))
@@ -760,7 +816,8 @@
 (define (doc-ast-field-source
   [ctx : DocExpandContext]
   [field : ast.AstFieldDef]
-  [align : i64]) : String
+  [align : i64])
+  (:cold) : String
   (let
     [opacity : String
       (if (ast.ast-field-def-opaque? (& field))
@@ -777,7 +834,8 @@
 
 ;; `(:repr c)` and the struct's declared alignment, in the canonical metadata
 ;; order after `:lifetimes`.
-(define (doc-ast-struct-repr-source [repr : (& repr ast.AstStructRepr)]) : String
+(define (doc-ast-struct-repr-source [repr : (& repr ast.AstStructRepr)])
+  (:cold) : String
   (if (ast.ast-struct-repr-c? repr)
     (doc-cat2
       " (:repr c)"
@@ -789,7 +847,8 @@
   [repr : (& repr ast.AstStructRepr)]
   [fields : (& fields ast.AstFieldDefList)]
   [index : i64]
-  [count : i64]) : String
+  [count : i64])
+  (:cold) : String
   (if (>= index count)
     ""
     (doc-cat2
@@ -805,7 +864,8 @@
 (define (doc-ast-field-list-source
   [ctx : DocExpandContext]
   [repr : (& repr ast.AstStructRepr)]
-  [fields : ast.AstFieldDefList]) : String
+  [fields : ast.AstFieldDefList])
+  (:cold) : String
   (doc-ast-field-list-source-from
     ctx
     repr
@@ -817,7 +877,8 @@
   [ctx : DocExpandContext]
   [fields : (& fields ast.AstTypeList)]
   [index : i64]
-  [count : i64]) : String
+  [count : i64])
+  (:cold) : String
   (if (>= index count)
     ""
     (doc-cat3
@@ -827,7 +888,8 @@
 
 (define (doc-ast-variant-source
   [ctx : DocExpandContext]
-  [variant : ast.AstVariantDef]) : String
+  [variant : ast.AstVariantDef])
+  (:cold) : String
   (match variant
     [(Def name fields _)
       (doc-cat4
@@ -844,7 +906,8 @@
   [ctx : DocExpandContext]
   [variants : (& variants ast.AstVariantDefList)]
   [index : i64]
-  [count : i64]) : String
+  [count : i64])
+  (:cold) : String
   (if (>= index count)
     ""
     (doc-cat2
@@ -861,7 +924,8 @@
 
 (define (doc-ast-variant-list-source
   [ctx : DocExpandContext]
-  [variants : ast.AstVariantDefList]) : String
+  [variants : ast.AstVariantDefList])
+  (:cold) : String
   (doc-ast-variant-list-source-from
     ctx
     variants
@@ -871,7 +935,8 @@
 (define (doc-ast-define-signature
   [ctx : DocExpandContext]
   [name : i64]
-  [maybe-ty : ast.AstMaybeType]) : String
+  [maybe-ty : ast.AstMaybeType])
+  (:cold) : String
   (doc-cat4
     "(define "
     (doc-expand-source-name ctx name)
@@ -883,7 +948,8 @@
   [name : i64]
   [params : ast.AstParamList]
   [ret : ast.AstType]
-  [cold? : bool]) : String
+  [cold? : bool])
+  (:cold) : String
   (str_cat.str-cat
     "(define ("
     (doc-expand-source-name ctx name)
@@ -900,7 +966,8 @@
   [ctx : DocExpandContext]
   [name : i64]
   [params : ast.AstMacroParamList]
-  [ret : ast.AstType]) : String
+  [ret : ast.AstType])
+  (:cold) : String
   (doc-cat6
     "(defmacro ("
     (doc-expand-source-name ctx name)
@@ -914,7 +981,8 @@
   [name : i64]
   [lifetimes : String]
   [repr : ast.AstStructRepr]
-  [fields : ast.AstFieldDefList]) : String
+  [fields : ast.AstFieldDefList])
+  (:cold) : String
   (doc-cat5
     "(defstruct "
     (doc-expand-source-name ctx name)
@@ -926,7 +994,8 @@
   [ctx : DocExpandContext]
   [name : i64]
   [lifetimes : String]
-  [variants : ast.AstVariantDefList]) : String
+  [variants : ast.AstVariantDefList])
+  (:cold) : String
   (doc-cat5
     "(defenum "
     (doc-expand-source-name ctx name)
@@ -937,7 +1006,8 @@
 (define (doc-ast-extern-signature
   [ctx : DocExpandContext]
   [name : i64]
-  [ty : ast.AstType]) : String
+  [ty : ast.AstType])
+  (:cold) : String
   (doc-cat5
     "(extern "
     (doc-expand-source-name ctx name)
@@ -945,7 +1015,8 @@
     (doc-ast-type-source ctx ty)
     ")"))
 
-(define (doc-ast-decl-item [ctx : DocExpandContext] [decl : ast.AstDecl]) : DocMaybeItem
+(define (doc-ast-decl-item [ctx : DocExpandContext] [decl : ast.AstDecl])
+  (:cold) : DocMaybeItem
   (let
     [opacity : String
       (if (ast.ast-decl-opaque? (& decl))
@@ -1035,12 +1106,14 @@
 
 (define (doc-ast-generated-decl-item
   [ctx : DocExpandContext]
-  [decl : ast.AstDecl]) : DocMaybeItem
+  [decl : ast.AstDecl])
+  (:cold) : DocMaybeItem
   (match (ast.ast-decl-generated-meta decl)
     [(Some _ _ _ _) (doc-ast-decl-item ctx decl)]
     [(No) (No)]))
 
-(define (doc-generated-import-item [form : String]) : doc_extract.DocItem
+(define (doc-generated-import-item [form : String])
+  (:cold) : doc_extract.DocItem
   (Item
     (GeneratedImport)
     "import"
@@ -1052,13 +1125,15 @@
   [out : (&mut out doc_item_vec.Vec)]
   [items : doc_item_vec.Vec]
   [index : i64]
-  [count : i64]) : unit
+  [count : i64])
+  (:cold) : unit
   (unless
     (>= index count)
     (doc_item_vec.push-ref! out (doc_extract.doc-item-list-ref items index))
     (doc-generated-copy-items out items (+ index 1) count)))
 
-(define (doc-generated-module-items [form : String] [items : doc_item_vec.Vec]) : doc_item_vec.Vec
+(define (doc-generated-module-items [form : String] [items : doc_item_vec.Vec])
+  (:cold) : doc_item_vec.Vec
   (let
     [count : i64 (doc_extract.doc-item-list-count items)]
     [out : doc_item_vec.Vec (doc_item_vec.with-capacity (+ count 1))]
@@ -1071,7 +1146,8 @@
   [items : doc_item_vec.Vec]
   [has-generated : bool]
   [targets : (& targets doc_generated_target_example_vec.Vec)]
-  [modules : (&mut modules doc_module_vec.Vec)]) : unit
+  [modules : (&mut modules doc_module_vec.Vec)])
+  (:cold) : unit
   (let
     [form : String (doc-generated-target-example-find (& targets) module-name)]
     (if (and
@@ -1090,7 +1166,8 @@
 (define (doc-generated-modules-from-expanded-decls
   [ctx : DocExpandContext]
   [decls : ast.AstDeclList]
-  [targets : doc_generated_target_example_vec.Vec]) : doc_module_vec.Vec
+  [targets : doc_generated_target_example_vec.Vec])
+  (:cold) : doc_module_vec.Vec
   (let
     [cursor : ast.AstDeclList decls]
     [current-module : String ""]
@@ -1147,7 +1224,8 @@
   [paths : ast.AstDeclPathList]
   [stdlib-roots : doc_svec.Vec]
   [pools : ast.AstNodePoolContext]
-  [intern-state : ci.InternCompatState]) : ResultDocExpandedModules
+  [intern-state : ci.InternCompatState])
+  (:cold) : ResultDocExpandedModules
   (let
     [ctx : DocExpandContext
       (doc-expand-context-from-pools-and-intern-state pools intern-state)]
@@ -1184,7 +1262,8 @@
 (define (doc-expand-find-prefix
   [text : (& text str)]
   [prefix : String]
-  [from : i64]) : i64
+  [from : i64])
+  (:cold) : i64
   (let
     [i : i64 from]
     [n : i64 (string.string-length text)]
@@ -1199,7 +1278,8 @@
 (define (doc-expand-fence-line-start
   [text : (& text str)]
   [line-start : i64]
-  [line-end : i64]) : i64
+  [line-end : i64])
+  (:cold) : i64
   (let
     [first : i64 (doc_extract.doc-first-nonspace text line-start line-end)]
     (if (string.is-string-prefix-at text "```" first)
@@ -1209,7 +1289,8 @@
 (define (doc-expand-ignored-fence-line?
   [text : (& text str)]
   [line-start : i64]
-  [line-end : i64]) : bool
+  [line-end : i64])
+  (:cold) : bool
   (let
     [fence : i64 (doc-expand-fence-line-start text line-start line-end)]
     (if (< fence line-end)
@@ -1221,7 +1302,8 @@
 (define (doc-expand-next-ignored-fence
   [text : (& text str)]
   [cursor : i64]
-  [n : i64]) : i64
+  [n : i64])
+  (:cold) : i64
   (let
     [pos : i64 cursor]
     [found : i64 n]
@@ -1234,7 +1316,8 @@
         (set! pos (source_text.next-line-start text line-end))))
     found))
 
-(define (doc-expand-skip-fence [text : (& text str)] [cursor : i64] [n : i64]) : i64
+(define (doc-expand-skip-fence [text : (& text str)] [cursor : i64] [n : i64])
+  (:cold) : i64
   (let
     [open-end : i64 (source_text.line-end text cursor)]
     [pos : i64 (source_text.next-line-start text open-end)]
@@ -1249,7 +1332,8 @@
           (set! pos (source_text.next-line-start text line-end)))))
     pos))
 
-(define (doc-import-forms-from-doc-text [doc-text : (& doc-text str)]) : DocImportFormScan
+(define (doc-import-forms-from-doc-text [doc-text : (& doc-text str)])
+  (:cold) : DocImportFormScan
   (let
     [cursor : i64 0]
     [n : i64 (string.string-length doc-text)]
@@ -1273,7 +1357,8 @@
             (set! cursor n)))))
     (DocImportFormScan forms has-macro)))
 
-(define (doc-expanded-example-source [forms : doc_import_form_vec.Vec]) : String
+(define (doc-expanded-example-source [forms : doc_import_form_vec.Vec])
+  (:cold) : String
   (doc-cat2
     "(module typelisp.docs.generated_examples)\n"
     (doc-import-form-list-source forms)))
@@ -1285,7 +1370,8 @@
   [docs : doc_extract.DocExtraction]
   [stdlib-roots : doc_svec.Vec]
   [pools : ast.AstNodePoolContext]
-  [intern-state : ci.InternCompatState]) : ResultDocExpandedModules
+  [intern-state : ci.InternCompatState])
+  (:cold) : ResultDocExpandedModules
   (match docs
     [(Extraction module-doc _)
       (let

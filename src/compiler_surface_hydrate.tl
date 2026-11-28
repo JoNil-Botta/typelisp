@@ -26,7 +26,8 @@
 ;; `tlci.tlci-aux-checked-directory` for the same rodata (#9449).
 (define (compiler-surface-identity-bytes
   [rodata : (& rodata (__tl_dyn-array u8))]
-  [checked : (& checked tlci.TlciAuxCheckedDirectory)]) : tlci.ResultTlciAuxLookup
+  [checked : (& checked tlci.TlciAuxCheckedDirectory)])
+  (:cold) : tlci.ResultTlciAuxLookup
   (tlci.tlci-aux-checked-find
     rodata
     checked
@@ -34,17 +35,20 @@
 
 (define (compiler-surface-ast-bytes
   [rodata : (& rodata (__tl_dyn-array u8))]
-  [checked : (& checked tlci.TlciAuxCheckedDirectory)]) : tlci.ResultTlciAuxLookup
+  [checked : (& checked tlci.TlciAuxCheckedDirectory)])
+  (:cold) : tlci.ResultTlciAuxLookup
   (tlci.tlci-aux-checked-find rodata checked tlci.tlci-aux-kind-frontend-ast))
 
 (define (compiler-surface-fact-bytes
   [rodata : (& rodata (__tl_dyn-array u8))]
-  [checked : (& checked tlci.TlciAuxCheckedDirectory)]) : tlci.ResultTlciAuxLookup
+  [checked : (& checked tlci.TlciAuxCheckedDirectory)])
+  (:cold) : tlci.ResultTlciAuxLookup
   (tlci.tlci-aux-checked-find rodata checked tlci.tlci-aux-kind-frontend-facts))
 
 (define (compiler-surface-key
   [rodata : (& (__tl_dyn-array u8))]
-  [checked : (& tlci.TlciAuxCheckedDirectory)]) : ResultCompilerSurfaceKey
+  [checked : (& tlci.TlciAuxCheckedDirectory)])
+  (:cold) : ResultCompilerSurfaceKey
   (match (compiler-surface-identity-bytes rodata checked)
     [(Missing) Missing]
     [(Err message) (Err message)]
@@ -61,7 +65,8 @@
   [fact-bytes : (& (__tl_dyn-array u8))]
   [expected-key : (& expected-key surface_identity.SurfaceIdentityKey)]
   [structural-session : cis.InternStructuralSessionHandle]
-  [pools : ast.AstNodePoolContext]) : ResultCompilerSurfaceHydration
+  [pools : ast.AstNodePoolContext])
+  (:cold) : ResultCompilerSurfaceHydration
   (match (surface_identity.surface-identity-hydrate identity-bytes expected-key)
     [(Err message) (Err message)]
     [(KeyMismatch message) (KeyMismatch message)]
@@ -85,7 +90,8 @@
   [checked : (& tlci.TlciAuxCheckedDirectory)]
   [expected-key : (& surface_identity.SurfaceIdentityKey)]
   [structural-session : cis.InternStructuralSessionHandle]
-  [pools : ast.AstNodePoolContext]) : ResultCompilerSurfaceHydration
+  [pools : ast.AstNodePoolContext])
+  (:cold) : ResultCompilerSurfaceHydration
   (match (compiler-surface-identity-bytes rodata checked)
     [(Missing) Missing]
     [(Err message) (Err message)]

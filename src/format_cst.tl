@@ -54,14 +54,16 @@
   (Ok i64)
   (Err tokens.FormatSourceError))
 
-(define (format-cst-vec-new) : FormatCstVec
+(define (format-cst-vec-new)
+  (:cold) : FormatCstVec
   (FormatCstVec (__tl_make-array FormatCst 4) 0))
 
 (define (format-cst-vec-copy-range!
   [dst : (&mut dst (__tl_dyn-array FormatCst))]
   [src : (& src (__tl_dyn-array FormatCst))]
   [index : i64]
-  [count : i64]) : unit
+  [count : i64])
+  (:cold) : unit
   (unless
     (>= index count)
     (set!
@@ -69,7 +71,8 @@
       (owned_view.compiler-owned-element-view src index))
     (format-cst-vec-copy-range! dst src (+ index 1) count)))
 
-(define (format-cst-vec-grow! [v : (&mut v FormatCstVec)]) : unit
+(define (format-cst-vec-grow! [v : (&mut v FormatCstVec)])
+  (:cold) : unit
   (let
     [count : i64 v.len]
     [old-cap : i64 (array-length v.slots)]
@@ -81,7 +84,8 @@
     (format-cst-vec-copy-range! (&mut bigger) (& v.slots) 0 count)
     (set! v.slots bigger)))
 
-(define (format-cst-vec-push! [v : (&mut v FormatCstVec)] [value : FormatCst]) : unit
+(define (format-cst-vec-push! [v : (&mut v FormatCstVec)] [value : FormatCst])
+  (:cold) : unit
   (if (< v.len (array-length v.slots))
     unit
     (format-cst-vec-grow! v))
@@ -90,29 +94,34 @@
     (set! (array-ref v.slots index) value)
     (set! v.len (+ index 1))))
 
-(define (fmt-cst-list-nil) : FormatCstList
+(define (fmt-cst-list-nil)
+  (:cold) : FormatCstList
   (FormatCstList (__tl_make-array FormatCst 0) 0 0))
 
-(define (fmt-cst-list-from-vec [items : FormatCstVec]) : FormatCstList
+(define (fmt-cst-list-from-vec [items : FormatCstVec])
+  (:cold) : FormatCstList
   (FormatCstList items.slots 0 items.len))
 
 (define (fmt-cst-vec-push-list!
   [v : (&mut v FormatCstVec)]
-  [items : FormatCstList]) : unit
+  [items : FormatCstList])
+  (:cold) : unit
   (match (fmt-cst-list-step items)
     [(Empty) unit]
     [(Item node rest)
       (format-cst-vec-push! v node)
       (fmt-cst-vec-push-list! v rest)]))
 
-(define (fmt-cst-list-cons [head : FormatCst] [rest : FormatCstList]) : FormatCstList
+(define (fmt-cst-list-cons [head : FormatCst] [rest : FormatCstList])
+  (:cold) : FormatCstList
   (let
     [out : FormatCstVec (format-cst-vec-new)]
     (format-cst-vec-push! (&mut out) head)
     (fmt-cst-vec-push-list! (&mut out) rest)
     (fmt-cst-list-from-vec out)))
 
-(define (fmt-cst-list-step [items : (& items FormatCstList)]) : FormatCstListStep
+(define (fmt-cst-list-step [items : (& items FormatCstList)])
+  (:cold) : FormatCstListStep
   (let
     [items : FormatCstList
       (owned_view.compiler-owned-reference-shared-view items)]
@@ -124,13 +133,16 @@
         (owned_view.compiler-owned-array-element-shared-view items.slots start)
         (FormatCstList items.slots (+ start 1) (- count 1))))))
 
-(define (fmt-cst-list-empty? [items : (& items FormatCstList)]) : bool
+(define (fmt-cst-list-empty? [items : (& items FormatCstList)])
+  (:cold) : bool
   (<= items.len 0))
 
-(define (fmt-unexpected-closing [tag : i64]) : bool
+(define (fmt-unexpected-closing [tag : i64])
+  (:cold) : bool
   (or (= tag (tokens.fmt-tag-rparen)) (= tag (tokens.fmt-tag-rbracket))))
 
-(define (fmt-prefix-tag? [tag : i64]) : bool
+(define (fmt-prefix-tag? [tag : i64])
+  (:cold) : bool
   (or
     (= tag (tokens.fmt-tag-quote))
     (= tag (tokens.fmt-tag-backtick))
@@ -141,7 +153,8 @@
   [stream : tokens.FormatTokenStream]
   [idx : i64]
   [stop-tag : i64]
-  [items : (&mut items FormatCstVec)]) : ResultFormatParseSeqEnd
+  [items : (&mut items FormatCstVec)])
+  (:cold) : ResultFormatParseSeqEnd
   (let
     [tag : i64 (tokens.format-token-tag (tokens.format-token-at stream idx))]
     (cond
@@ -173,7 +186,8 @@
 (define (fmt-parse-seq-result
   [stream : tokens.FormatTokenStream]
   [idx : i64]
-  [stop-tag : i64]) : ResultFormatParsedCstList
+  [stop-tag : i64])
+  (:cold) : ResultFormatParsedCstList
   (let
     [tag : i64 (tokens.format-token-tag (tokens.format-token-at stream idx))]
     (cond
@@ -214,7 +228,8 @@
 
 (define (fmt-parse-one-primary-result
   [stream : tokens.FormatTokenStream]
-  [idx : i64]) : ResultFormatParsedCst
+  [idx : i64])
+  (:cold) : ResultFormatParsedCst
   (let
     [tok : tokens.FormatToken (tokens.format-token-at stream idx)]
     [tag : i64 (tokens.format-token-tag (tokens.format-token-at stream idx))]
@@ -253,7 +268,8 @@
             (tokens.format-token-span stream idx)))]
       [else (Ok (Parsed (Atom tok) (+ idx 1)))])))
 
-(define (fmt-token-end [stream : tokens.FormatTokenStream] [idx : i64]) : i64
+(define (fmt-token-end [stream : tokens.FormatTokenStream] [idx : i64])
+  (:cold) : i64
   (+
     (tokens.format-token-start stream idx)
     (string.string-length
@@ -262,14 +278,16 @@
 (define (fmt-tokens-adjacent?
   [stream : tokens.FormatTokenStream]
   [left : i64]
-  [right : i64]) : bool
+  [right : i64])
+  (:cold) : bool
   (=
     (fmt-token-end (owned_view.compiler-owned-shared-view stream) left)
     (tokens.format-token-start stream right)))
 
 (define (fmt-parse-projection-suffix-result
   [stream : tokens.FormatTokenStream]
-  [parsed : FormatParsedCst]) : ResultFormatParsedCst
+  [parsed : FormatParsedCst])
+  (:cold) : ResultFormatParsedCst
   (match (owned_view.compiler-owned-shared-view parsed)
     [(Parsed node next)
       (let
@@ -302,7 +320,8 @@
               (Ok parsed)))
           (Ok parsed)))]))
 
-(define (fmt-parse-one-result [stream : tokens.FormatTokenStream] [idx : i64]) : ResultFormatParsedCst
+(define (fmt-parse-one-result [stream : tokens.FormatTokenStream] [idx : i64])
+  (:cold) : ResultFormatParsedCst
   (let
     [parsed
       (try
@@ -311,13 +330,15 @@
           idx))]
     (fmt-parse-projection-suffix-result stream parsed)))
 
-(define (parse-format-tokens-result [stream : tokens.FormatTokenStream]) : ResultFormatCst
+(define (parse-format-tokens-result [stream : tokens.FormatTokenStream])
+  (:cold) : ResultFormatCst
   (let
     [parsed (try (fmt-parse-seq-result stream 0 0))]
     (match parsed
       [(ParsedList items _) (Ok (Forms (box items)))])))
 
-(define (parse-format-source-result [src : String]) : ResultFormatCst
+(define (parse-format-source-result [src : String])
+  (:cold) : ResultFormatCst
   (let
     [stream (try (tokens.format-lex-result src))]
     (parse-format-tokens-result stream)))

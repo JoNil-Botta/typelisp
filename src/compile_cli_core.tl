@@ -169,17 +169,20 @@
   (Batch CompileCliBatchConfig)
   (Error String))
 
-(define (compile-cli-path-separator? [c : char]) : bool
+(define (compile-cli-path-separator? [c : char])
+  (:cold) : bool
   (or (= c '/') (= c '\\')))
 
-(define (compile-cli-after-pass? [value : String]) : bool
+(define (compile-cli-after-pass? [value : String])
+  (:cold) : bool
   (and
     (> (string.string-length value) 6)
     (source_text.starts-with? value "after-")))
 
 (define (compile-cli-default-output-with-extension
   [input-path : String]
-  [extension : String]) : String
+  [extension : String])
+  (:cold) : String
   (let
     [n : i64 (string.string-length input-path)]
     [last-dot : i64 -1]
@@ -197,18 +200,22 @@
       (str_cat.str-cat (string.substring input-path 0 last-dot) extension)
       (str_cat.str-cat input-path extension))))
 
-(define (compile-cli-default-output [input-path : String]) : String
+(define (compile-cli-default-output [input-path : String])
+  (:cold) : String
   (compile-cli-default-output-with-extension input-path ".s"))
 
-(define (compile-cli-default-ir-output [input-path : String]) : String
+(define (compile-cli-default-ir-output [input-path : String])
+  (:cold) : String
   (compile-cli-default-output-with-extension input-path ".ir"))
 
-(define (compile-cli-default-tli-output [input-path : String]) : String
+(define (compile-cli-default-tli-output [input-path : String])
+  (:cold) : String
   (compile-cli-default-output-with-extension input-path ".tli"))
 
 (define (compile-cli-common-option!
   [options : (&mut options cli_option.CliCompileOptions)]
-  [args : (&mut args cli_option.CliArgs)]) : bool
+  [args : (&mut args cli_option.CliArgs)])
+  (:cold) : bool
   (if (or
     (cli_option.cli-compile-option! options args)
     (tli_cli.tli-sysroot-option! (&mut compile-cli-sysroot-options) args))
@@ -241,19 +248,22 @@
         true]
       [else false])))
 
-(define (compile-cli-unknown-argument! [args : (&mut args cli_option.CliArgs)]) : unit
+(define (compile-cli-unknown-argument! [args : (&mut args cli_option.CliArgs)])
+  (:cold) : unit
   (if (cli_option.cli-flag? args.arg)
     (cli_option.cli-args-fail-arg! args "compile: unknown flag ")
     (cli_option.cli-args-fail-arg! args "compile: unexpected argument ")))
 
-(define (compile-cli-no-entry-option! [args : (&mut args cli_option.CliArgs)]) : unit
+(define (compile-cli-no-entry-option! [args : (&mut args cli_option.CliArgs)])
+  (:cold) : unit
   (if compile-cli-no-entry-requested
     (cli_option.cli-args-fail!
       args
       "compile: --no-entry was provided more than once")
     (set! compile-cli-no-entry-requested true)))
 
-(define (compile-cli-config-from [input-idx : i64] [count : i64]) : ResultCompileCliConfig
+(define (compile-cli-config-from [input-idx : i64] [count : i64])
+  (:cold) : ResultCompileCliConfig
   (cond
     [(>= input-idx count) (Err "compile: expected source path")]
     [(cli_option.cli-flag? (io.arg input-idx))
@@ -383,7 +393,8 @@
                     options.opt-level))
                 options.opt-level))]))]))
 
-(define (compile-cli-batch-config-from [batch-path-idx : i64] [count : i64]) : ResultCompileCliBatchConfig
+(define (compile-cli-batch-config-from [batch-path-idx : i64] [count : i64])
+  (:cold) : ResultCompileCliBatchConfig
   (if (or
     (>= batch-path-idx count)
     (cli_option.cli-flag? (io.arg batch-path-idx)))
@@ -492,7 +503,8 @@
               windows-coff-plan-path))]))))
 
 ;; `compile-cli-run` serves only `typelisp compile`.
-(define (compile-cli-dispatch [count : i64]) : CompileCliAction
+(define (compile-cli-dispatch [count : i64])
+  (:cold) : CompileCliAction
   (if (and (> count 2) (string.eq (io.arg 2) "--batch"))
     (match (compile-cli-batch-config-from 3 count)
       [(Ok config) (Batch config)]
@@ -502,13 +514,15 @@
       [(EmitTli config) (CompileCliAction.EmitTli config)]
       [(Err message) (Error message)])))
 
-(define (compile-cli-print-ir-verification-error [message : String]) : unit
+(define (compile-cli-print-ir-verification-error [message : String])
+  (:cold) : unit
   (io.print-error
     (str_cat.str-cat "compile: IR verification failed: " message "\n")))
 
 (define (compile-cli-reject-result-on-ir-verification
   [result : compiler_driver_core.ResultCompilerDriver]
-  [message : String]) : i64
+  [message : String])
+  (:cold) : i64
   (match result
     [(Ok _ advisories)
       (compiler_driver_core.compiler-driver-print-advisories (& advisories))]
@@ -519,7 +533,8 @@
 
 (define (compile-cli-reject-buffer-result-on-ir-verification
   [result : compiler_driver_core.ResultCompilerDriverBuffer]
-  [message : String]) : i64
+  [message : String])
+  (:cold) : i64
   (match result
     [(Ok _ advisories)
       (compiler_driver_core.compiler-driver-print-advisories (& advisories))]
@@ -530,7 +545,8 @@
 
 (define (compile-cli-reject-pic-result-on-ir-verification
   [result : compiler_driver_core.ResultCompilerDriverPic]
-  [message : String]) : i64
+  [message : String])
+  (:cold) : i64
   (match result
     [(Ok _ advisories)
       (compiler_driver_core.compiler-driver-print-advisories (& advisories))]
@@ -542,7 +558,8 @@
 (define (compile-cli-write-result-with-ir-verification
   [state : compiler_driver_core.CompilerDriverState]
   [result : compiler_driver_core.ResultCompilerDriver]
-  [output-path : String]) : i64
+  [output-path : String])
+  (:cold) : i64
   (let
     [message : String (opt.compiler-opt-debug-verification-error)]
     (if (> (string.string-length message) 0)
@@ -555,7 +572,8 @@
 (define (compile-cli-write-buffer-result-with-ir-verification
   [state : compiler_driver_core.CompilerDriverState]
   [result : compiler_driver_core.ResultCompilerDriverBuffer]
-  [output-path : String]) : i64
+  [output-path : String])
+  (:cold) : i64
   (let
     [message : String (opt.compiler-opt-debug-verification-error)]
     (if (> (string.string-length message) 0)
@@ -570,7 +588,8 @@
 (define (compile-cli-write-pic-result-with-ir-verification
   [state : compiler_driver_core.CompilerDriverState]
   [result : compiler_driver_core.ResultCompilerDriverPic]
-  [output-path : String]) : i64
+  [output-path : String])
+  (:cold) : i64
   (let
     [message : String (opt.compiler-opt-debug-verification-error)]
     (if (> (string.string-length message) 0)
@@ -584,10 +603,12 @@
 ;; (#8257). The cdylib target (#7481) will select it; until then this variable
 ;; is the test hook scripts/verify-linux-shared-object-code-model.sh drives it
 ;; with.
-(define (compile-cli-shared-object-env-name) : String
+(define (compile-cli-shared-object-env-name)
+  (:cold) : String
   "TYPELISP_BACKEND_CODE_MODEL")
 
-(define (compile-cli-shared-object-requested?) : bool
+(define (compile-cli-shared-object-requested?)
+  (:cold) : bool
   (match (env.get (& (compile-cli-shared-object-env-name)))
     [(EnvSomeString value) (string.eq value "shared-object")]
     [(EnvNoString) false]))
@@ -605,7 +626,8 @@
   [cfgs : (& cfgs cli_svec.Vec)]
   [backend-mode : be_state.CompilerBackendMode]
   [opt-level : i64]
-  [inline-preflight : bool]) : i64
+  [inline-preflight : bool])
+  (:cold) : i64
   (begin
     ;; Doctest and inline preflight still enter the standalone compiler-check
     ;; call graph before this job's state-aware reset. Make that residual
@@ -744,7 +766,8 @@
 
 (define (compile-cli-reject-windows-batch-artifact-on-ir-verification
   [result : compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact]
-  [message : String]) : ResultCompileCliWindowsBatchEntry
+  [message : String])
+  (:cold) : ResultCompileCliWindowsBatchEntry
   (match result
     [(or (CoffObject _ _ advisories) (Assembly _ _ advisories)
          (Err _ advisories))
@@ -756,7 +779,8 @@
   [_state : compiler_driver_core.CompilerDriverState]
   [result : compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact]
   [object-path : String]
-  [assembly-path : String]) : ResultCompileCliWindowsBatchEntry
+  [assembly-path : String])
+  (:cold) : ResultCompileCliWindowsBatchEntry
   (if (> (string.string-length (opt.compiler-opt-debug-verification-error)) 0)
     (compile-cli-reject-windows-batch-artifact-on-ir-verification
       result
@@ -877,7 +901,8 @@
   [stdlib-roots : cli_svec.Vec]
   [cfgs : (& cfgs cli_svec.Vec)]
   [backend-mode : be_state.CompilerBackendMode]
-  [opt-level : i64]) : ResultCompileCliWindowsBatchEntry
+  [opt-level : i64])
+  (:cold) : ResultCompileCliWindowsBatchEntry
   (begin
     ;; Match the legacy batch entry lifecycle exactly through the one-lowering
     ;; driver boundary. The selected bytes are written before the caller tears
@@ -965,7 +990,8 @@
   [target : be_state.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
   [cfgs : (& cfgs cli_svec.Vec)]
-  [ran-preflight : bool]) : i64
+  [ran-preflight : bool])
+  (:cold) : i64
   (if (>= index (cli_svec.len entries))
     (if ran-preflight
       (begin
@@ -1036,7 +1062,8 @@
   [entries : (& entries cli_svec.Vec)]
   [target : be_state.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : (& cfgs cli_svec.Vec)]) : i64
+  [cfgs : (& cfgs cli_svec.Vec)])
+  (:cold) : i64
   (compile-cli-run-batch-inline-tests-from
     (& entries)
     0
@@ -1050,7 +1077,8 @@
   [entries : (& entries cli_svec.Vec)]
   [target : be_state.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : (& cfgs cli_svec.Vec)]) : i64
+  [cfgs : (& cfgs cli_svec.Vec)])
+  (:cold) : i64
   (compile-cli-run-batch-inline-tests-from
     (& entries)
     0
@@ -1063,7 +1091,8 @@
 (define (compile-cli-batch-find-separator
   [text : (& text str)]
   [start : i64]
-  [end : i64]) : i64
+  [end : i64])
+  (:cold) : i64
   (let
     [i : i64 start]
     [found : i64 -1]
@@ -1073,7 +1102,8 @@
         (+= i 1)))
     found))
 
-(define (compile-cli-batch-line-error [line : i64] [message : String]) : i64
+(define (compile-cli-batch-line-error [line : i64] [message : String])
+  (:cold) : i64
   (io.print-error
     (str_cat.str-cat
       "compile: malformed --batch line "
@@ -1088,7 +1118,8 @@
   [start : i64]
   [line : i64]
   [n : i64]
-  [entries : (&mut entries cli_svec.Vec)]) : i64
+  [entries : (&mut entries cli_svec.Vec)])
+  (:cold) : i64
   (if (>= start n)
     0
     (let
@@ -1132,7 +1163,8 @@
   [text : String]
   [start : i64]
   [line : i64]
-  [n : i64]) : ResultCompileCliBatchEntryList
+  [n : i64])
+  (:cold) : ResultCompileCliBatchEntryList
   (let
     [entries : cli_svec.Vec (cli_svec.new)]
     [status : i64
@@ -1146,7 +1178,8 @@
   [start : i64]
   [line : i64]
   [n : i64]
-  [entries : (&mut entries cli_svec.Vec)]) : i64
+  [entries : (&mut entries cli_svec.Vec)])
+  (:cold) : i64
   (if (>= start n)
     0
     (let
@@ -1251,7 +1284,8 @@
   [text : (& text str)]
   [start : i64]
   [line : i64]
-  [n : i64]) : ResultCompileCliWindowsBatchEntryList
+  [n : i64])
+  (:cold) : ResultCompileCliWindowsBatchEntryList
   (let
     [entries : cli_svec.Vec (cli_svec.new)]
     [status : i64
@@ -1276,7 +1310,8 @@
   [cfgs : (& cfgs cli_svec.Vec)]
   [backend-mode : be_state.CompilerBackendMode]
   [opt-level : i64]
-  [previous-compat-arena : i64]) : i64
+  [previous-compat-arena : i64])
+  (:cold) : i64
   (if (>= index (cli_svec.len entries))
     0
     (let
@@ -1418,7 +1453,8 @@
 ;; baseline instead of being misattributed as leaked entry state.
 (define (compile-cli-batch-persistent-table-storage-ensure!
   [state : compiler_driver_core.CompilerDriverState]
-  [entry-count : i64]) : unit
+  [entry-count : i64])
+  (:cold) : unit
   (let
     [backend-state : be_state.CompilerBackendState
       (compiler_driver_core.compiler-driver-state-backend state)]
@@ -1470,7 +1506,8 @@
   [stdlib-roots : cli_svec.Vec]
   [cfgs : cli_svec.Vec]
   [backend-mode : be_state.CompilerBackendMode]
-  [opt-level : i64]) : i64
+  [opt-level : i64])
+  (:cold) : i64
   (compile-cli-batch-persistent-table-storage-ensure!
     (owned_view.compiler-owned-shared-view state)
     (/ (cli_svec.len (& entries)) 2))
@@ -1517,7 +1554,8 @@
   [backend-mode : be_state.CompilerBackendMode]
   [opt-level : i64]
   [previous-compat-arena : i64]
-  [results : (&mut results cli_svec.Vec)]) : i64
+  [results : (&mut results cli_svec.Vec)])
+  (:cold) : i64
   (if (>= index (cli_svec.len entries))
     0
     (let
@@ -1658,7 +1696,8 @@
             status))))))
 
 (define (compile-cli-windows-batch-result-plan
-  [results : (& results cli_svec.Vec)]) : String
+  [results : (& results cli_svec.Vec)])
+  (:cold) : String
   (let
     [out : text_buf.TextBuf (text_buf.empty)]
     [index : i64 0]
@@ -1679,7 +1718,8 @@
 
 (define (compile-cli-write-windows-batch-result-plan
   [plan-path : String]
-  [results : (& results cli_svec.Vec)]) : i64
+  [results : (& results cli_svec.Vec)])
+  (:cold) : i64
   (let
     [contents : String (compile-cli-windows-batch-result-plan results)]
     (match (io.try-write-file
@@ -1705,7 +1745,8 @@
   [stdlib-roots : cli_svec.Vec]
   [cfgs : cli_svec.Vec]
   [backend-mode : be_state.CompilerBackendMode]
-  [opt-level : i64]) : i64
+  [opt-level : i64])
+  (:cold) : i64
   (let
     [results : cli_svec.Vec (cli_svec.new)]
     [_tables : unit
@@ -1757,7 +1798,8 @@
   [stdlib-roots : cli_svec.Vec]
   [cfgs : cli_svec.Vec]
   [backend-mode : be_state.CompilerBackendMode]
-  [opt-level : i64]) : i64
+  [opt-level : i64])
+  (:cold) : i64
   (match (compile-cli-batch-parse-entries-from
     (owned_view.compiler-owned-shared-view text)
     start
@@ -1805,7 +1847,8 @@
   [stdlib-roots : cli_svec.Vec]
   [cfgs : cli_svec.Vec]
   [backend-mode : be_state.CompilerBackendMode]
-  [opt-level : i64]) : i64
+  [opt-level : i64])
+  (:cold) : i64
   (match (compile-cli-windows-batch-parse-entries-from
     text
     start
@@ -1835,7 +1878,8 @@
           inline-test-status))]
     [(Err status) status]))
 
-(define (compile-cli-remove-stale-windows-batch-plan [plan-path : String]) : i64
+(define (compile-cli-remove-stale-windows-batch-plan [plan-path : String])
+  (:cold) : i64
   (match (fs.try-remove-file-if-exists (& plan-path))
     [(OkIoUnit) 0]
     [(ErrIoUnit error)
@@ -1848,7 +1892,8 @@
           "\n"))
       1]))
 
-(define (compile-cli-run-batch [config : CompileCliBatchConfig]) : i64
+(define (compile-cli-run-batch [config : CompileCliBatchConfig])
+  (:cold) : i64
   (let
     [state : compiler_driver_core.CompilerDriverState
       (compiler_driver_core.compiler-driver-state-session-program-cache-disable
@@ -1927,14 +1972,16 @@
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (compile-cli-emit-tli-svec-find
     [items : (& cli_svec.Vec)]
-    [target : (& str)]) : i64
+    [target : (& str)])
+    (:cold) : i64
     (for [i (iterator.range 0 (cli_svec.len items))]
       (when (string.eq (& (array-ref items.slots i)) target) (return i)))
     -1))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
-  (define (compile-cli-emit-tli-file-sha256 [path : (& str)]) : (Array u8 32)
+  (define (compile-cli-emit-tli-file-sha256 [path : (& str)])
+    (:cold) : (Array u8 32)
     (match (io.try-read-file path)
       [(OkIoBytes raw)
         (tli_extract.tli-extract-sha256 (byte_buf.as-bytes (& raw)))]
@@ -1947,7 +1994,8 @@
     [decls : (& ast.AstDeclList)]
     [paths : (& ast.AstDeclPathList)]
     [modules : (& ast.AstDeclModuleList)]
-    [input-path : (& str)]) : (__tl_dyn-array tli_extract.TliSource)
+    [input-path : (& str)])
+    (:cold) : (__tl_dyn-array tli_extract.TliSource)
     (let
       [count : i64 (ast.ast-decl-list-len decls)]
       [seen-paths : cli_svec.Vec (cli_svec.new)]
@@ -2027,8 +2075,8 @@
   (define (compile-cli-emit-tli-filter-generated-sources
     [load-state : (& load.CompilerLoadSessionState)]
     [pre-count : i64]
-    [raw-all : (& (__tl_dyn-array tli_extract.TliSource))]) : (__tl_dyn-array
-      tli_extract.TliSource)
+    [raw-all : (& (__tl_dyn-array tli_extract.TliSource))])
+    (:cold) : (__tl_dyn-array tli_extract.TliSource)
     (let
       [total : i64 (array-length (deref raw-all))]
       [keep : (__tl_dyn-array bool) (__tl_make-array bool total)]
@@ -2064,7 +2112,8 @@
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (compile-cli-emit-tli-snapshot-external-imports!
     [bundle : (&mut tli_types.TliBundle)]
-    [load-state : (& load.CompilerLoadSessionState)]) : unit
+    [load-state : (& load.CompilerLoadSessionState)])
+    (:cold) : unit
     (for [m (iterator.range 0 (array-length bundle.modules))]
       (for [i
         (iterator.range 0 (array-length (array-ref bundle.modules m).imports))]
@@ -2083,7 +2132,8 @@
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
-  (define (compile-cli-run-emit-tli [config : CompileCliEmitTliConfig]) : i64
+  (define (compile-cli-run-emit-tli [config : CompileCliEmitTliConfig])
+    (:cold) : i64
     (match config
       [(CompileCliEmitTliConfig input-path output-path target stdlib-roots cfgs)
         (compiler_driver_core.compiler-driver-reset-file-state!)
@@ -2221,12 +2271,14 @@
 (cfg
   (not
     (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci))
-  (define (compile-cli-run-emit-tli [_config : CompileCliEmitTliConfig]) : i64
+  (define (compile-cli-run-emit-tli [_config : CompileCliEmitTliConfig])
+    (:cold) : i64
     (io.print-error
       "compile: --emit-tli requires checked frontend surface support\n")
     1))
 
-(define (compile-cli-run-action [action : CompileCliAction]) : i64
+(define (compile-cli-run-action [action : CompileCliAction])
+  (:cold) : i64
   (match action
     [(Run config)
       (begin
@@ -2285,7 +2337,8 @@
       (io.print-error message)
       1]))
 
-(define (compile-cli-run [count : i64]) : i64
+(define (compile-cli-run [count : i64])
+  (:cold) : i64
   (let
     [action : CompileCliAction
       (begin

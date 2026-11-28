@@ -3,7 +3,8 @@
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
 
-(define (spaces [count : i64]) : String
+(define (spaces [count : i64])
+  (:cold) : String
   (let
     [out : String ""]
     (for [i (iterator.range 0 count)]
@@ -20,10 +21,12 @@
   (data (__tl_dyn-array u8))
   (len i64))
 
-(define (fmt-render-buf-new) : FmtRenderBuf
+(define (fmt-render-buf-new)
+  (:cold) : FmtRenderBuf
   (FmtRenderBuf (__tl_make-array u8 1024) 0))
 
-(define (fmt-render-buf-reserve [buf : (&mut buf FmtRenderBuf)] [needed : i64]) : unit
+(define (fmt-render-buf-reserve [buf : (&mut buf FmtRenderBuf)] [needed : i64])
+  (:cold) : unit
   (let
     [cur : (__tl_dyn-array u8) buf.data]
     [cap : i64 (array-length cur)]
@@ -46,7 +49,8 @@
             unit)
           (set! buf.data bigger))))))
 
-(define (fmt-render-buf-append [buf : (&mut buf FmtRenderBuf)] [s : String]) : unit
+(define (fmt-render-buf-append [buf : (&mut buf FmtRenderBuf)] [s : String])
+  (:cold) : unit
   (let
     [slen : i64 (string.string-length s)]
     (if (= slen 0)
@@ -62,7 +66,8 @@
             slen))
         (set! buf.len (+ base slen))))))
 
-(define (fmt-render-buf-string [buf : FmtRenderBuf]) : String
+(define (fmt-render-buf-string [buf : FmtRenderBuf])
+  (:cold) : String
   (let
     [n : i64 buf.len]
     (if (= n 0)
@@ -71,6 +76,7 @@
         (string-from-bytes (ptr-cast (__tl_array-data buf.data) : (Ptr u8)) n)))))
 
 ;; Append a newline plus `indent` spaces to the buffer in place.
-(define (render-newline-into! [buf : (&mut buf FmtRenderBuf)] [indent : i64]) : unit
+(define (render-newline-into! [buf : (&mut buf FmtRenderBuf)] [indent : i64])
+  (:cold) : unit
   (fmt-render-buf-append buf "\n")
   (fmt-render-buf-append buf (spaces indent)))

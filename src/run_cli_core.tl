@@ -40,7 +40,8 @@
   (Ok RunCliConfig)
   (Err String))
 
-(define (run-cli-rewrite-build-error [message : String]) : String
+(define (run-cli-rewrite-build-error [message : String])
+  (:cold) : String
   (let
     [prefix : String "build: "]
     [prefix-len : i64 (string.string-length prefix)]
@@ -53,14 +54,16 @@
           (- (string.string-length message) prefix-len)))
       message)))
 
-(define (run-cli-runtime-separator-index [idx : i64] [count : i64]) : i64
+(define (run-cli-runtime-separator-index [idx : i64] [count : i64])
+  (:cold) : i64
   (if (>= idx count)
     count
     (if (string.eq (io.arg idx) "--")
       idx
       (run-cli-runtime-separator-index (+ idx 1) count))))
 
-(define (run-cli-package-config-from [idx : i64] [count : i64]) : ResultRunCliConfig
+(define (run-cli-package-config-from [idx : i64] [count : i64])
+  (:cold) : ResultRunCliConfig
   (let
     [separator : i64 (run-cli-runtime-separator-index idx count)]
     [runtime-args : process.ProcessStringList
@@ -105,7 +108,8 @@
             (Err
               "run: source file arguments must appear before run options; use -- before package runtime args")])])))
 
-(define (run-cli-config-from [idx : i64] [count : i64]) : ResultRunCliConfig
+(define (run-cli-config-from [idx : i64] [count : i64])
+  (:cold) : ResultRunCliConfig
   (if (or (<= count idx) (cli_option.cli-flag? (io.arg idx)))
     (run-cli-package-config-from idx count)
     (let
@@ -189,7 +193,8 @@
   [runtime-args : process.ProcessStringList]
   [opt-level : i64]
   [mode : be_state.CompilerBackendMode]
-  [link-inputs : build_run_core.SourceToolLinkInputs]) : i64
+  [link-inputs : build_run_core.SourceToolLinkInputs])
+  (:cold) : i64
   (let
     [doctest-status : i64
       (doc_test.doc-test-typecheck-file-status
@@ -224,7 +229,8 @@
 (define (run-cli-run-package-artifact
   [bin-path : String]
   [target : be_state.CompilerBackendTarget]
-  [runtime-args : process.ProcessStringList]) : i64
+  [runtime-args : process.ProcessStringList])
+  (:cold) : i64
   (match (build_run_core.source-tool-run-executable-inherit
     (string.copy (& bin-path))
     target
@@ -248,7 +254,8 @@
   [manifest-path : String]
   [manifest : load.CompilerPkgManifest]
   [profile : pkg_profile.PackageProfile]
-  [target : be_state.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget])
+  (:cold) : String
   (let
     [normalized-path : String
       (build_cli_core.build-package-normalize-manifest-path manifest-path)]
@@ -273,7 +280,8 @@
   [stdlib-roots : cli_svec.Vec]
   [cfg-names : (& cfg-names cli_svec.Vec)]
   [producer-identity : String]
-  [runtime-args : process.ProcessStringList]) : i64
+  [runtime-args : process.ProcessStringList])
+  (:cold) : i64
   (match (build_run_core.source-tool-parse-target (string.copy (& target-text)))
     [(Err message)
       (io.print-error (run-cli-rewrite-build-error message))
@@ -318,7 +326,8 @@
 (define (run-cli-run-package
   [config : build_cli_core.BuildConfig]
   [producer-identity : String]
-  [runtime-args : process.ProcessStringList]) : i64
+  [runtime-args : process.ProcessStringList])
+  (:cold) : i64
   (match config
     [(Package
         manifest-path
@@ -357,7 +366,8 @@
               runtime-args)]))]
     [_ 1]))
 
-(define (run-direct-from [idx : i64] [count : i64] [producer-identity : String]) : i64
+(define (run-direct-from [idx : i64] [count : i64] [producer-identity : String])
+  (:cold) : i64
   (match (run-cli-config-from idx count)
     [(Ok config)
       (match config
@@ -388,7 +398,8 @@
 ;; Run the `run` command over arguments starting at `start` (the index of the
 ;; first argument after any subcommand name). The bare form builds and executes
 ;; in-process.
-(define (run-run-from [start : i64] [count : i64] [producer-identity : String]) : i64
+(define (run-run-from [start : i64] [count : i64] [producer-identity : String])
+  (:cold) : i64
   (ir.compiler-debug-info-set-enabled! false)
   (ir.compiler-debug-path-remap-clear!)
   (if (and (> count start) (string.eq (io.arg start) "--direct"))

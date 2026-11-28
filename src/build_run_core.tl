@@ -93,37 +93,44 @@
   (Ok SourceToolLinkInputs)
   (Err String))
 
-(define (source-tool-target-name [target : be_state.CompilerBackendTarget]) : String
+(define (source-tool-target-name [target : be_state.CompilerBackendTarget])
+  (:cold) : String
   (be_state.compiler-backend-target-triple target))
 
-(define (source-tool-default-target) : be_state.CompilerBackendTarget
+(define (source-tool-default-target)
+  (:cold) : be_state.CompilerBackendTarget
   (source-tool-backend-target (target_cfg.compiler-target-cfg-host)))
 
-(define (source-tool-backend-target [target : target_cfg.CompilerTargetCfg]) : be_state.CompilerBackendTarget
+(define (source-tool-backend-target [target : target_cfg.CompilerTargetCfg])
+  (:cold) : be_state.CompilerBackendTarget
   (match target
     [(Linux) (Linux)]
     [(Windows) (Windows)]))
 
-(define (source-tool-backend-mode [mode : cli_option.CliBackendMode]) : be_state.CompilerBackendMode
+(define (source-tool-backend-mode [mode : cli_option.CliBackendMode])
+  (:cold) : be_state.CompilerBackendMode
   (match mode
     [(Scalar) (Scalar)]
     [(Sse2) (Sse2)]
     [(Avx2) (Avx2)]
     [(Avx512) (Avx512)]))
 
-(define (source-tool-parse-target [value : String]) : ResultSourceToolTarget
+(define (source-tool-parse-target [value : String])
+  (:cold) : ResultSourceToolTarget
   (match (cli_option.cli-option-target value)
     [(Ok target) (Ok (source-tool-backend-target target))]
     [(Err message) (Err message)]))
 
-(define (source-tool-parse-backend-mode [value : String]) : ResultSourceToolBackendMode
+(define (source-tool-parse-backend-mode [value : String])
+  (:cold) : ResultSourceToolBackendMode
   (match (cli_option.cli-option-backend-mode value)
     [(Ok mode) (Ok (source-tool-backend-mode mode))]
     [(Err message) (Err message)]))
 
 (define (source-tool-args-append
   [args : process.ProcessStringList]
-  [value : String]) : process.ProcessStringList
+  [value : String])
+  (:cold) : process.ProcessStringList
   (process.args-append args (process.args-single value)))
 
 (define (source-tool-command5
@@ -132,7 +139,8 @@
   [b : String]
   [c : String]
   [d : String]
-  [e : String]) : process.ProcessCommand
+  [e : String])
+  (:cold) : process.ProcessCommand
   (process.command
     executable
     (source-tool-args-append
@@ -152,7 +160,8 @@
   [c : String]
   [d : String]
   [e : String]
-  [f : String]) : process.ProcessCommand
+  [f : String])
+  (:cold) : process.ProcessCommand
   (process.command
     executable
     (source-tool-args-append
@@ -175,7 +184,8 @@
   [d : String]
   [e : String]
   [f : String]
-  [g : String]) : process.ProcessCommand
+  [g : String])
+  (:cold) : process.ProcessCommand
   (process.command
     executable
     (source-tool-args-append
@@ -192,10 +202,12 @@
         f)
       g)))
 
-(define (source-tool-git-executable) : String
+(define (source-tool-git-executable)
+  (:cold) : String
   (source-tool-resolve-command "git"))
 
-(define (source-tool-git-clone-command [remote : String] [root : String]) : process.ProcessCommand
+(define (source-tool-git-clone-command [remote : String] [root : String])
+  (:cold) : process.ProcessCommand
   (source-tool-command5
     (source-tool-git-executable)
     "-c"
@@ -206,7 +218,8 @@
 
 (define (source-tool-git-checkout-command
   [root : String]
-  [checkout-ref : String]) : process.ProcessCommand
+  [checkout-ref : String])
+  (:cold) : process.ProcessCommand
   ;; Dependency checkout must not discover a parent or inherit a different
   ;; work tree, including core.worktree in separate/linked metadata.
   (process.command-with-args
@@ -222,7 +235,8 @@
       "checkout"
       (process.args-cons "--detach" (process.args-single checkout-ref)))))
 
-(define (source-tool-git-rev-parse-command [root : String] [revision : String]) : process.ProcessCommand
+(define (source-tool-git-rev-parse-command [root : String] [revision : String])
+  (:cold) : process.ProcessCommand
   (source-tool-command6
     (source-tool-git-executable)
     "-c"
@@ -236,7 +250,8 @@
 ;; discovery and overrides an inherited GIT_DIR of any spelling.
 (define (source-tool-git-local-rev-parse-command
   [root : String]
-  [revision : String]) : process.ProcessCommand
+  [revision : String])
+  (:cold) : process.ProcessCommand
   (source-tool-command7
     (source-tool-git-executable)
     "-c"
@@ -250,7 +265,8 @@
 (define (source-tool-args-from-argv
   [idx : i64]
   [count : i64]
-  [args : process.ProcessStringList]) : process.ProcessStringList
+  [args : process.ProcessStringList])
+  (:cold) : process.ProcessStringList
   (if (>= idx count)
     args
     (source-tool-args-from-argv
@@ -258,7 +274,8 @@
       count
       (source-tool-args-append args (io.arg idx)))))
 
-(define (source-tool-link-origins-empty) : SourceToolLinkOrigins
+(define (source-tool-link-origins-empty)
+  (:cold) : SourceToolLinkOrigins
   (SourceToolLinkOrigins
     (process.args-empty)
     (process.args-empty)
@@ -266,13 +283,15 @@
 
 (define (source-tool-link-origins-append
   [left : SourceToolLinkOrigins]
-  [right : SourceToolLinkOrigins]) : SourceToolLinkOrigins
+  [right : SourceToolLinkOrigins])
+  (:cold) : SourceToolLinkOrigins
   (SourceToolLinkOrigins
     (process.args-append left.kinds right.kinds)
     (process.args-append left.values right.values)
     (process.args-append left.declared-by right.declared-by)))
 
-(define (source-tool-link-inputs-empty) : SourceToolLinkInputs
+(define (source-tool-link-inputs-empty)
+  (:cold) : SourceToolLinkInputs
   (SourceToolLinkInputs
     (process.args-empty)
     (process.args-empty)
@@ -282,7 +301,8 @@
 
 ;; Wrap fully-resolved package dependency static archives as link inputs.
 (define (source-tool-link-inputs-from-archives
-  [archives : process.ProcessStringList]) : SourceToolLinkInputs
+  [archives : process.ProcessStringList])
+  (:cold) : SourceToolLinkInputs
   (SourceToolLinkInputs
     (process.args-empty)
     (process.args-empty)
@@ -291,35 +311,40 @@
     (source-tool-link-origins-empty)))
 
 (define (source-tool-link-inputs-libs
-  [inputs : (& inputs SourceToolLinkInputs)]) : process.ProcessStringList
+  [inputs : (& inputs SourceToolLinkInputs)])
+  (:cold) : process.ProcessStringList
   (let
     [inputs : SourceToolLinkInputs
       (owned_view.compiler-owned-reference-shared-view inputs)]
     inputs.libs))
 
 (define (source-tool-link-inputs-search-dirs
-  [inputs : (& inputs SourceToolLinkInputs)]) : process.ProcessStringList
+  [inputs : (& inputs SourceToolLinkInputs)])
+  (:cold) : process.ProcessStringList
   (let
     [inputs : SourceToolLinkInputs
       (owned_view.compiler-owned-reference-shared-view inputs)]
     inputs.search-dirs))
 
 (define (source-tool-link-inputs-raw-args
-  [inputs : (& inputs SourceToolLinkInputs)]) : process.ProcessStringList
+  [inputs : (& inputs SourceToolLinkInputs)])
+  (:cold) : process.ProcessStringList
   (let
     [inputs : SourceToolLinkInputs
       (owned_view.compiler-owned-reference-shared-view inputs)]
     inputs.raw-args))
 
 (define (source-tool-link-inputs-archives
-  [inputs : (& inputs SourceToolLinkInputs)]) : process.ProcessStringList
+  [inputs : (& inputs SourceToolLinkInputs)])
+  (:cold) : process.ProcessStringList
   (let
     [inputs : SourceToolLinkInputs
       (owned_view.compiler-owned-reference-shared-view inputs)]
     inputs.archives))
 
 (define (source-tool-link-inputs-origins
-  [inputs : (& inputs SourceToolLinkInputs)]) : SourceToolLinkOrigins
+  [inputs : (& inputs SourceToolLinkInputs)])
+  (:cold) : SourceToolLinkOrigins
   (let
     [inputs : SourceToolLinkInputs
       (owned_view.compiler-owned-reference-shared-view inputs)]
@@ -329,7 +354,8 @@
   [inputs : SourceToolLinkInputs]
   [kind : String]
   [value : String]
-  [declared-by : String]) : SourceToolLinkInputs
+  [declared-by : String])
+  (:cold) : SourceToolLinkInputs
   (set!
     inputs.origins
     (SourceToolLinkOrigins
@@ -339,7 +365,8 @@
   inputs)
 
 (define (source-tool-link-inputs-empty?
-  [inputs : (& inputs SourceToolLinkInputs)]) : bool
+  [inputs : (& inputs SourceToolLinkInputs)])
+  (:cold) : bool
   (and
     (= (process.args-count inputs.libs) 0)
     (= (process.args-count inputs.search-dirs) 0)
@@ -347,12 +374,14 @@
     (= (process.args-count inputs.archives) 0)))
 
 (define (source-tool-link-inputs-have-archives?
-  [inputs : (& SourceToolLinkInputs)]) : bool
+  [inputs : (& SourceToolLinkInputs)])
+  (:cold) : bool
   (> (process.args-count inputs.archives) 0))
 
 (define (source-tool-linux-crt-entry?
   [target : be_state.CompilerBackendTarget]
-  [link-inputs : (& link-inputs SourceToolLinkInputs)]) : bool
+  [link-inputs : (& link-inputs SourceToolLinkInputs)])
+  (:cold) : bool
   (match target
     [(Linux)
       (or
@@ -363,7 +392,8 @@
 
 (define (source-tool-link-inputs-add-lib
   [inputs : SourceToolLinkInputs]
-  [name : String]) : SourceToolLinkInputs
+  [name : String])
+  (:cold) : SourceToolLinkInputs
   (SourceToolLinkInputs
     (source-tool-args-append (source-tool-link-inputs-libs inputs) name)
     (source-tool-link-inputs-search-dirs inputs)
@@ -373,7 +403,8 @@
 
 (define (source-tool-link-inputs-add-search-dir
   [inputs : SourceToolLinkInputs]
-  [dir : String]) : SourceToolLinkInputs
+  [dir : String])
+  (:cold) : SourceToolLinkInputs
   (SourceToolLinkInputs
     (source-tool-link-inputs-libs inputs)
     (source-tool-args-append (source-tool-link-inputs-search-dirs inputs) dir)
@@ -383,7 +414,8 @@
 
 (define (source-tool-link-inputs-add-raw-arg
   [inputs : SourceToolLinkInputs]
-  [arg-value : String]) : SourceToolLinkInputs
+  [arg-value : String])
+  (:cold) : SourceToolLinkInputs
   (SourceToolLinkInputs
     (source-tool-link-inputs-libs inputs)
     (source-tool-link-inputs-search-dirs inputs)
@@ -395,7 +427,8 @@
 
 (define (source-tool-link-inputs-add-archive
   [inputs : SourceToolLinkInputs]
-  [archive : String]) : SourceToolLinkInputs
+  [archive : String])
+  (:cold) : SourceToolLinkInputs
   (SourceToolLinkInputs
     (source-tool-link-inputs-libs inputs)
     (source-tool-link-inputs-search-dirs inputs)
@@ -405,7 +438,8 @@
 
 (define (source-tool-link-inputs-add-archive-unique
   [inputs : SourceToolLinkInputs]
-  [archive : String]) : SourceToolLinkInputs
+  [archive : String])
+  (:cold) : SourceToolLinkInputs
   (let
     [archives : process.ProcessStringList
       (source-tool-link-inputs-archives inputs)]
@@ -421,7 +455,8 @@
         (source-tool-link-inputs-origins inputs)))))
 
 (define (source-tool-link-inputs-with-hydrated-archives
-  [inputs : SourceToolLinkInputs]) : SourceToolLinkInputs
+  [inputs : SourceToolLinkInputs])
+  (:cold) : SourceToolLinkInputs
   (let
     [hydrated : (__tl_dyn-array String)
       (compiler_driver_core.compiler-driver-last-hydrated-archive-paths)]
@@ -436,7 +471,8 @@
 
 (define (source-tool-string-list-contains?
   [items : (& items process.ProcessStringList)]
-  [value : String]) : bool
+  [value : String])
+  (:cold) : bool
   (let
     [n : i64 (process.args-count items)]
     [i : i64 0]
@@ -450,7 +486,8 @@
 
 (define (source-tool-args-append-unique
   [items : process.ProcessStringList]
-  [value : String]) : process.ProcessStringList
+  [value : String])
+  (:cold) : process.ProcessStringList
   (if (source-tool-string-list-contains?
     items
     (owned_view.compiler-owned-shared-view value))
@@ -459,7 +496,8 @@
 
 (define (source-tool-string-list-merge-unique
   [left : process.ProcessStringList]
-  [right : process.ProcessStringList]) : process.ProcessStringList
+  [right : process.ProcessStringList])
+  (:cold) : process.ProcessStringList
   (let
     [n : i64 (process.args-count right)]
     [out : process.ProcessStringList left]
@@ -476,7 +514,8 @@
 (define (source-tool-link-inputs-merge-with
   [left : SourceToolLinkInputs]
   [right : SourceToolLinkInputs]
-  [dedup-raw? : bool]) : SourceToolLinkInputs
+  [dedup-raw? : bool])
+  (:cold) : SourceToolLinkInputs
   (SourceToolLinkInputs
     (source-tool-string-list-merge-unique
       (source-tool-link-inputs-libs left)
@@ -500,12 +539,14 @@
 
 (define (source-tool-link-inputs-merge
   [left : SourceToolLinkInputs]
-  [right : SourceToolLinkInputs]) : SourceToolLinkInputs
+  [right : SourceToolLinkInputs])
+  (:cold) : SourceToolLinkInputs
   (source-tool-link-inputs-merge-with left right true))
 
 (define (source-tool-link-inputs-add-ast
   [inputs : SourceToolLinkInputs]
-  [item : ast.AstExternLinkInput]) : SourceToolLinkInputs
+  [item : ast.AstExternLinkInput])
+  (:cold) : SourceToolLinkInputs
   (match item
     [(Lib name)
       (SourceToolLinkInputs
@@ -538,7 +579,8 @@
 (define (source-tool-link-inputs-add-ast-list
   [inputs : SourceToolLinkInputs]
   [items : (& items ast.AstExternLinkInputList)]
-  [index : i64]) : SourceToolLinkInputs
+  [index : i64])
+  (:cold) : SourceToolLinkInputs
   (if (>= index (ast.ast-extern-link-input-list-len items))
     inputs
     (source-tool-link-inputs-add-ast-list
@@ -553,7 +595,8 @@
 
 (define (source-tool-link-inputs-from-decls
   [decls : (& ast.AstDeclList)]
-  [inputs : SourceToolLinkInputs]) : SourceToolLinkInputs
+  [inputs : SourceToolLinkInputs])
+  (:cold) : SourceToolLinkInputs
   (let
     [out : SourceToolLinkInputs inputs]
     (for [index (iterator.range 0 (ast.ast-decl-list-len decls))]
@@ -577,7 +620,8 @@
   [mode : be_state.CompilerBackendMode]
   [user-cfgs : sym_i64_env.SymI64Env]
   [pdb-arg : String]
-  [link-inputs : (&mut SourceToolLinkInputs)]) : compiler_driver_core.ResultCompilerDriverLowered
+  [link-inputs : (&mut SourceToolLinkInputs)])
+  (:cold) : compiler_driver_core.ResultCompilerDriverLowered
   (let
     [profile : profile_state.CompilerProfileState
       (profile_state.compiler-profile-state-new)]
@@ -619,10 +663,12 @@
       profile
       loaded)))
 
-(define (source-tool-path-separator? [c : char]) : bool
+(define (source-tool-path-separator? [c : char])
+  (:cold) : bool
   (or (= c '/') (= c '\\')))
 
-(define (source-tool-has-path-separator? [path : (& path str)]) : bool
+(define (source-tool-has-path-separator? [path : (& path str)])
+  (:cold) : bool
   (let
     [n : i64 (string.string-length path)]
     [i : i64 0]
@@ -634,48 +680,60 @@
       (+= i 1))
     found))
 
-(define (source-tool-path-entry-command [dir : String] [tool : String]) : String
+(define (source-tool-path-entry-command [dir : String] [tool : String])
+  (:cold) : String
   (if (= (string.string-length dir) 0)
     tool
     (source-tool-fs-path-join dir tool)))
 
-(define (source-tool-fs-path-join [left : (& left str)] [right : String]) : String
+(define (source-tool-fs-path-join [left : (& left str)] [right : String])
+  (:cold) : String
   (fs.path-join left (& right)))
 
-(define (source-tool-fs-basename [path : (& path str)]) : String
+(define (source-tool-fs-basename [path : (& path str)])
+  (:cold) : String
   (fs.basename path))
 
-(define (source-tool-try-file-exists? [path : (& path str)]) : io.ResultIoBool
+(define (source-tool-try-file-exists? [path : (& path str)])
+  (:cold) : io.ResultIoBool
   (io.try-file-exists? path))
 
-(define (source-tool-try-remove-file-if-exists [path : (& path str)]) : io.ResultIoUnit
+(define (source-tool-try-remove-file-if-exists [path : (& path str)])
+  (:cold) : io.ResultIoUnit
   (fs.try-remove-file-if-exists path))
 
-(define (source-tool-try-remove-dir-if-exists [path : (& path str)]) : io.ResultIoUnit
+(define (source-tool-try-remove-dir-if-exists [path : (& path str)])
+  (:cold) : io.ResultIoUnit
   (fs.try-remove-dir-if-exists path))
 
-(define (source-tool-stdout-write [text : String]) : unit
+(define (source-tool-stdout-write [text : String])
+  (:cold) : unit
   (io.stdout-write (byte_buf.str-as-bytes (& text))))
 
-(define (source-tool-stderr-write [text : String]) : unit
+(define (source-tool-stderr-write [text : String])
+  (:cold) : unit
   (io.stderr-write (byte_buf.str-as-bytes (& text))))
 
-(define (source-tool-path-command-exists? [candidate : (& candidate str)]) : bool
+(define (source-tool-path-command-exists? [candidate : (& candidate str)])
+  (:cold) : bool
   (match (source-tool-try-file-exists? candidate)
     [(OkIoBool exists) exists]
     [(ErrIoBool _) false]))
 
-(define (source-tool-windows-host?) : bool
+(define (source-tool-windows-host?)
+  (:cold) : bool
   (string.eq (env.path-separator) ";"))
 
-(define (source-tool-windows-exe-candidate [candidate : String]) : String
+(define (source-tool-windows-exe-candidate [candidate : String])
+  (:cold) : String
   (if (source-tool-windows-host?)
     (str_cat.str-cat candidate ".exe")
     candidate))
 
 (define (source-tool-find-command-on-path-from
   [tool : String]
-  [paths : env.EnvStringList]) : String
+  [paths : env.EnvStringList])
+  (:cold) : String
   (for [index (iterator.range 0 (env.string-list-count paths))]
     (let
       [candidate : String
@@ -697,10 +755,12 @@
 
 (define (source-tool-find-command-on-path
   [tool : String]
-  [paths : env.EnvStringList]) : String
+  [paths : env.EnvStringList])
+  (:cold) : String
   (source-tool-find-command-on-path-from tool paths))
 
-(define (source-tool-resolve-command [tool : String]) : String
+(define (source-tool-resolve-command [tool : String])
+  (:cold) : String
   (if (source-tool-has-path-separator? tool)
     tool
     (let
@@ -712,7 +772,8 @@
 
 (define (source-tool-env-command-or-default
   [name : String]
-  [default-command : String]) : String
+  [default-command : String])
+  (:cold) : String
   (match (env.get (& name))
     [(EnvSomeString value)
       (if (string.eq value "")
@@ -722,18 +783,21 @@
 
 (define (source-tool-resolved-env-command-or-default
   [name : String]
-  [default-command : String]) : String
+  [default-command : String])
+  (:cold) : String
   (source-tool-resolve-command
     (source-tool-env-command-or-default name default-command)))
 
-(define (source-tool-env-command-set? [name : String]) : bool
+(define (source-tool-env-command-set? [name : String])
+  (:cold) : bool
   (match (env.get (& name))
     [(EnvSomeString value) (not (string.eq value ""))]
     [(EnvNoString) false]))
 
 (define (source-tool-replace-extension
   [input-path : String]
-  [extension : String]) : String
+  [extension : String])
+  (:cold) : String
   (let
     [n : i64 (string.string-length input-path)]
     [last-dot : i64 -1]
@@ -753,43 +817,50 @@
 
 (define (source-tool-default-output
   [source : String]
-  [target : be_state.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget])
+  (:cold) : String
   (match target
     [(Linux) (source-tool-replace-extension source "")]
     [(Windows) (source-tool-replace-extension source ".exe")]))
 
-(define (source-tool-object-extension [target : be_state.CompilerBackendTarget]) : String
+(define (source-tool-object-extension [target : be_state.CompilerBackendTarget])
+  (:cold) : String
   (match target
     [(Linux) "o"]
     [(Windows) "obj"]))
 
 (define (source-tool-executable-extension
-  [target : be_state.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget])
+  (:cold) : String
   (match target
     [(Linux) ""]
     [(Windows) ".exe"]))
 
 (define (source-tool-static-library-extension
-  [target : be_state.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget])
+  (:cold) : String
   (match target
     [(Linux) ".a"]
     [(Windows) ".lib"]))
 
 (define (source-tool-static-library-filename
   [name : String]
-  [target : be_state.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget])
+  (:cold) : String
   (match target
     [(Linux)
       (str_cat.str-cat "lib" name (source-tool-static-library-extension target))]
     [(Windows)
       (str_cat.str-cat name (source-tool-static-library-extension target))]))
 
-(define (source-tool-artifact-stem [source : (& source str)]) : String
+(define (source-tool-artifact-stem [source : (& source str)])
+  (:cold) : String
   (source-tool-replace-extension (source-tool-fs-basename source) ""))
 
 (define (source-tool-asm-path
   [temp-dir : (& temp-dir str)]
-  [source : (& source str)]) : String
+  [source : (& source str)])
+  (:cold) : String
   (source-tool-fs-path-join
     temp-dir
     (str_cat.str-cat (source-tool-artifact-stem source) ".s")))
@@ -797,7 +868,8 @@
 (define (source-tool-obj-path
   [temp-dir : (& temp-dir str)]
   [source : (& source str)]
-  [target : be_state.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget])
+  (:cold) : String
   (source-tool-fs-path-join
     temp-dir
     (str_cat.str-cat
@@ -808,14 +880,16 @@
 (define (source-tool-temp-bin-path
   [temp-dir : (& temp-dir str)]
   [source : (& source str)]
-  [target : be_state.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget])
+  (:cold) : String
   (source-tool-fs-path-join
     temp-dir
     (str_cat.str-cat
       (source-tool-artifact-stem source)
       (source-tool-executable-extension target))))
 
-(define (source-tool-create-temp-dir [prefix : String]) : ResultSourceToolString
+(define (source-tool-create-temp-dir [prefix : String])
+  (:cold) : ResultSourceToolString
   (match (fs.try-create-temp-dir (& prefix))
     [(OkIoString path) (Ok path)]
     [(ErrIoString error) (Err (io.error-message error))]))
@@ -828,7 +902,8 @@
   [mode : be_state.CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]
   [pdb-arg : String]
-  [link-inputs : (&mut SourceToolLinkInputs)]) : ResultSourceToolString
+  [link-inputs : (&mut SourceToolLinkInputs)])
+  (:cold) : ResultSourceToolString
   (let
     [lowered : compiler_driver_core.ResultCompilerDriverLowered
       (source-tool-lower-source
@@ -859,10 +934,12 @@
           (compiler_driver_core.compiler-driver-render-source-diagnostic
             (deref diag)))])))
 
-(define (source-tool-linux-direct-object-env-name) : String
+(define (source-tool-linux-direct-object-env-name)
+  (:cold) : String
   "TYPELISP_LINUX_DIRECT_OBJECT")
 
-(define (source-tool-linux-direct-object-enabled?) : bool
+(define (source-tool-linux-direct-object-enabled?)
+  (:cold) : bool
   (source-tool-env-command-set? (source-tool-linux-direct-object-env-name)))
 
 (defenum SourceToolLinuxDirectObjectEligibility
@@ -877,7 +954,8 @@
 ;; policy preflight must not duplicate these serializer/linkability checks.
 (define (source-tool-linux-direct-object-eligibility
   [kind : be_state.CompilerDirectObjectArtifactKind]
-  [image : cobj.CompilerObjectImage]) : SourceToolLinuxDirectObjectEligibility
+  [image : cobj.CompilerObjectImage])
+  (:cold) : SourceToolLinuxDirectObjectEligibility
   (cond
     [(not
         (compiler_object_elf.compiler-object-elf-sections-supported?
@@ -927,7 +1005,8 @@
 
 (define (source-tool-render-linux-direct-object
   [kind : be_state.CompilerDirectObjectArtifactKind]
-  [image : cobj.CompilerObjectImage]) : ResultSourceToolLinuxDirectObject
+  [image : cobj.CompilerObjectImage])
+  (:cold) : ResultSourceToolLinuxDirectObject
   (match (source-tool-linux-direct-object-eligibility
     kind
     (owned_view.compiler-owned-shared-view image))
@@ -941,7 +1020,8 @@
         [(Err _) (Fallback ObjectEncoding)])]))
 
 (define (source-tool-render-linkable-linux-elf-object
-  [image : cobj.CompilerObjectImage]) : ResultSourceToolString
+  [image : cobj.CompilerObjectImage])
+  (:cold) : ResultSourceToolString
   (match (source-tool-render-linux-direct-object Bin image)
     [(Ok object) (Ok object)]
     [(Fallback reason)
@@ -950,34 +1030,41 @@
           "linux direct object unavailable: "
           (be_object.compiler-direct-object-fallback-transcript reason)))]))
 
-(define (source-tool-windows-direct-object-env-name) : String
+(define (source-tool-windows-direct-object-env-name)
+  (:cold) : String
   "TYPELISP_WINDOWS_DIRECT_OBJECT")
 
-(define (source-tool-windows-direct-object-enabled?) : bool
+(define (source-tool-windows-direct-object-enabled?)
+  (:cold) : bool
   (source-tool-env-command-set? (source-tool-windows-direct-object-env-name)))
 
 (define (source-tool-windows-direct-object-linkable?
-  [image : cobj.CompilerObjectImage]) : bool
+  [image : cobj.CompilerObjectImage])
+  (:cold) : bool
   (compiler_windows_coff_core.compiler-windows-coff-linkable? image))
 
-(define (source-tool-windows-direct-object-unavailable-message) : String
+(define (source-tool-windows-direct-object-unavailable-message)
+  (:cold) : String
   "windows direct object unavailable: object image lacks encoded .text, _tl_start, or Windows runtime entry body")
 
 (define (source-tool-render-linkable-windows-coff-object
-  [image : cobj.CompilerObjectImage]) : ResultSourceToolString
+  [image : cobj.CompilerObjectImage])
+  (:cold) : ResultSourceToolString
   (if (source-tool-windows-direct-object-linkable?
     (owned_view.compiler-owned-shared-view image))
     (Ok (try (compiler_object_coff.compiler-object-coff-render image)))
     (Err (source-tool-windows-direct-object-unavailable-message))))
 
-(define (source-tool-noexecstack-note) : String
+(define (source-tool-noexecstack-note)
+  (:cold) : String
   "
     .section .note.GNU-stack,\"\",@progbits
 ")
 
 (define (source-tool-augment-assembly-for-target
   [asm : String]
-  [target : be_state.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget])
+  (:cold) : String
   (let
     [haystack : String asm]
     [needle : String ".note.GNU-stack"]
@@ -990,20 +1077,23 @@
 (define (source-tool-write-file
   [path : (& path str)]
   [contents : (& contents str)]
-  [context : String]) : SourceToolCommandStatus
+  [context : String])
+  (:cold) : SourceToolCommandStatus
   (match (io.try-write-file path (byte_buf.str-as-bytes contents))
     [(OkIoUnit) Ok]
     [(ErrIoUnit error)
       (Err (str_cat.str-cat context ": " (io.error-message error)))]))
 
-(define (source-tool-forward-output [output : (& output process.ProcessOutput)]) : unit
+(define (source-tool-forward-output [output : (& output process.ProcessOutput)])
+  (:cold) : unit
   (source-tool-stdout-write (process.output-stdout output))
   (source-tool-stderr-write (process.output-stderr output)))
 
 ;; The library a linker reported missing in `line`, or "": GNU ld's
 ;; `cannot find -lNAME`, lld's `unable to find library -lNAME`, and link.exe's
 ;; LNK1181 `cannot open input file 'NAME.lib'`.
-(define (source-tool-missing-library-in-line [line : (& line str)]) : String
+(define (source-tool-missing-library-in-line [line : (& line str)])
+  (:cold) : String
   (let
     [n : i64 (string.string-length line)]
     [gnu : i64
@@ -1049,7 +1139,8 @@
             name))))))
 
 ;; POSIX-shell single quoting, so a search path prints unambiguously.
-(define (source-tool-quote [value : (& value str)]) : String
+(define (source-tool-quote [value : (& value str)])
+  (:cold) : String
   (let
     [n : i64 (string.string-length value)]
     [out : String "'"]
@@ -1067,7 +1158,8 @@
 ;; requested it and the search paths it was looked for in.
 (define (source-tool-link-failure-notes
   [stderr : (& stderr str)]
-  [inputs : (& inputs SourceToolLinkInputs)]) : String
+  [inputs : (& inputs SourceToolLinkInputs)])
+  (:cold) : String
   (let
     [origins : SourceToolLinkOrigins (source-tool-link-inputs-origins inputs)]
     [dirs : process.ProcessStringList
@@ -1134,7 +1226,8 @@
 (define (source-tool-run-command
   [role : String]
   [target : be_state.CompilerBackendTarget]
-  [command : process.ProcessCommand]) : SourceToolCommandStatus
+  [command : process.ProcessCommand])
+  (:cold) : SourceToolCommandStatus
   (source-tool-run-command-for
     role
     target
@@ -1147,7 +1240,8 @@
   [role : String]
   [target : be_state.CompilerBackendTarget]
   [command : process.ProcessCommand]
-  [link-inputs : SourceToolLinkInputs]) : SourceToolCommandStatus
+  [link-inputs : SourceToolLinkInputs])
+  (:cold) : SourceToolCommandStatus
   (let
     [tool : String (process.command-executable command)]
     [command-to-run : process.ProcessCommand
@@ -1184,12 +1278,14 @@
 
 (define (source-tool-command-for-target
   [_target : be_state.CompilerBackendTarget]
-  [command : process.ProcessCommand]) : process.ProcessCommand
+  [command : process.ProcessCommand])
+  (:cold) : process.ProcessCommand
   command)
 
 (define (source-tool-windows-assembler-command
   [asm-path : String]
-  [obj-path : String]) : process.ProcessCommand
+  [obj-path : String])
+  (:cold) : process.ProcessCommand
   (process.command
     (source-tool-env-command-or-default
       "TYPELISP_WINDOWS_CLANG"
@@ -1210,7 +1306,8 @@
   [items : process.ProcessStringList]
   [prefix : String]
   [suffix : String]
-  [index : i64]) : process.ProcessStringList
+  [index : i64])
+  (:cold) : process.ProcessStringList
   (if (>= index (process.args-count items))
     (process.args-empty)
     (process.args-cons
@@ -1220,13 +1317,16 @@
         (owned_view.compiler-owned-shared-view suffix))
       (source-tool-decorated-args items prefix suffix (+ index 1)))))
 
-(define (source-tool-linux-link-search-args [dirs : process.ProcessStringList]) : process.ProcessStringList
+(define (source-tool-linux-link-search-args [dirs : process.ProcessStringList])
+  (:cold) : process.ProcessStringList
   (source-tool-decorated-args dirs "-L" "" 0))
 
-(define (source-tool-linux-link-lib-args [libs : process.ProcessStringList]) : process.ProcessStringList
+(define (source-tool-linux-link-lib-args [libs : process.ProcessStringList])
+  (:cold) : process.ProcessStringList
   (source-tool-decorated-args libs "-l" "" 0))
 
-(define (source-tool-link-inputs-linux-args [inputs : SourceToolLinkInputs]) : process.ProcessStringList
+(define (source-tool-link-inputs-linux-args [inputs : SourceToolLinkInputs])
+  (:cold) : process.ProcessStringList
   (let
     [archives : process.ProcessStringList
       (source-tool-link-inputs-archives inputs)]
@@ -1252,7 +1352,8 @@
 (define (source-tool-linker-command
   [obj-path : String]
   [bin-path : String]
-  [link-inputs : SourceToolLinkInputs]) : process.ProcessCommand
+  [link-inputs : SourceToolLinkInputs])
+  (:cold) : process.ProcessCommand
   (let
     [output : process.ProcessStringList
       (process.args-cons
@@ -1308,7 +1409,8 @@
 ;; kernel32 FFI only, so no advapi32; no COM (ole32/oleaut32) is needed either.
 ;; The import libraries the Windows runtime binding table names, in first-use
 ;; order (#8318): kernel32.lib, then ntdll.lib.
-(define (source-tool-windows-link-libs) : process.ProcessStringList
+(define (source-tool-windows-link-libs)
+  (:cold) : process.ProcessStringList
   (let
     [providers : (__tl_dyn-array String)
       (runtime_bindings.compiler-runtime-binding-providers "windows-x86_64")]
@@ -1325,19 +1427,23 @@
 ;; freestanding entry now uses this stack only for bounded argv/fiber bootstrap;
 ;; `main`, including a self-hosted compiler, runs on the runtime-owned 1 GiB
 ;; fiber stack and no longer depends on this linker setting for correctness.
-(define (source-tool-windows-stack-reserve-arg) : String
+(define (source-tool-windows-stack-reserve-arg)
+  (:cold) : String
   "/STACK:268435456")
 
 (define (source-tool-windows-link-search-args
-  [dirs : process.ProcessStringList]) : process.ProcessStringList
+  [dirs : process.ProcessStringList])
+  (:cold) : process.ProcessStringList
   (source-tool-decorated-args dirs "/LIBPATH:" "" 0))
 
-(define (source-tool-windows-link-lib-args [libs : process.ProcessStringList]) : process.ProcessStringList
+(define (source-tool-windows-link-lib-args [libs : process.ProcessStringList])
+  (:cold) : process.ProcessStringList
   (source-tool-decorated-args libs "" ".lib" 0))
 
 ;; `link.exe` resolves a symbol from any library on the command line, so the
 ;; archives need no group.
-(define (source-tool-link-inputs-windows-args [inputs : SourceToolLinkInputs]) : process.ProcessStringList
+(define (source-tool-link-inputs-windows-args [inputs : SourceToolLinkInputs])
+  (:cold) : process.ProcessStringList
   (process.args-append
     (source-tool-windows-link-search-args
       (source-tool-link-inputs-search-dirs inputs))
@@ -1350,7 +1456,8 @@
 (define (source-tool-windows-linker-args
   [obj-path : String]
   [bin-path : String]
-  [link-inputs : SourceToolLinkInputs]) : process.ProcessStringList
+  [link-inputs : SourceToolLinkInputs])
+  (:cold) : process.ProcessStringList
   (let
     [args : process.ProcessStringList
       (process.args-cons
@@ -1385,7 +1492,8 @@
 (define (source-tool-windows-linker-fallback-command
   [obj-path : String]
   [bin-path : String]
-  [link-inputs : SourceToolLinkInputs]) : process.ProcessCommand
+  [link-inputs : SourceToolLinkInputs])
+  (:cold) : process.ProcessCommand
   (process.command
     (source-tool-resolved-env-command-or-default
       "TYPELISP_WINDOWS_LINK"
@@ -1395,7 +1503,8 @@
 (define (source-tool-windows-linker-command
   [obj-path : String]
   [bin-path : String]
-  [link-inputs : SourceToolLinkInputs]) : ResultSourceToolCommand
+  [link-inputs : SourceToolLinkInputs])
+  (:cold) : ResultSourceToolCommand
   (if (source-tool-env-command-set? "TYPELISP_WINDOWS_LINK")
     (Ok
       (source-tool-windows-linker-fallback-command
@@ -1422,21 +1531,24 @@
 
 (define (source-tool-archiver-command-many
   [obj-paths : process.ProcessStringList]
-  [archive-path : String]) : process.ProcessCommand
+  [archive-path : String])
+  (:cold) : process.ProcessCommand
   (process.command
     (source-tool-resolve-command "ar")
     (process.args-cons "rcsD" (process.args-cons archive-path obj-paths))))
 
 (define (source-tool-archiver-command
   [obj-path : String]
-  [archive-path : String]) : process.ProcessCommand
+  [archive-path : String])
+  (:cold) : process.ProcessCommand
   (source-tool-archiver-command-many
     (process.args-cons obj-path (process.args-empty))
     archive-path))
 
 (define (source-tool-windows-msvc-archiver-args-many
   [obj-paths : process.ProcessStringList]
-  [archive-path : String]) : process.ProcessStringList
+  [archive-path : String])
+  (:cold) : process.ProcessStringList
   (process.args-cons
     "/NOLOGO"
     (process.args-cons
@@ -1445,31 +1557,36 @@
 
 (define (source-tool-windows-msvc-archiver-args
   [obj-path : String]
-  [archive-path : String]) : process.ProcessStringList
+  [archive-path : String])
+  (:cold) : process.ProcessStringList
   (source-tool-windows-msvc-archiver-args-many
     (process.args-cons obj-path (process.args-empty))
     archive-path))
 
 (define (source-tool-windows-llvm-archiver-args-many
   [obj-paths : process.ProcessStringList]
-  [archive-path : String]) : process.ProcessStringList
+  [archive-path : String])
+  (:cold) : process.ProcessStringList
   (process.args-cons
     "--format=coff"
     (process.args-cons "rcsD" (process.args-cons archive-path obj-paths))))
 
 (define (source-tool-windows-llvm-archiver-args
   [obj-path : String]
-  [archive-path : String]) : process.ProcessStringList
+  [archive-path : String])
+  (:cold) : process.ProcessStringList
   (source-tool-windows-llvm-archiver-args-many
     (process.args-cons obj-path (process.args-empty))
     archive-path))
 
-(define (source-tool-ascii-fold-char [c : char]) : char
+(define (source-tool-ascii-fold-char [c : char])
+  (:cold) : char
   (if (and (>= c 'A') (<= c 'Z'))
     (cast (+ (cast c : i64) 32) : char)
     c))
 
-(define (source-tool-ascii-case-eq [left : (& left str)] [right : String]) : bool
+(define (source-tool-ascii-case-eq [left : (& left str)] [right : String])
+  (:cold) : bool
   (let
     [left-n : i64 (string.string-length left)]
     [right-n : i64 (string.string-length right)]
@@ -1484,14 +1601,16 @@
       (+= i 1))
     same))
 
-(define (source-tool-windows-llvm-archiver-name? [command : (& command str)]) : bool
+(define (source-tool-windows-llvm-archiver-name? [command : (& command str)])
+  (:cold) : bool
   (let
     [basename : String (source-tool-fs-basename command)]
     (or
       (source-tool-ascii-case-eq basename "llvm-ar")
       (source-tool-ascii-case-eq basename "llvm-ar.exe"))))
 
-(define (source-tool-windows-msvc-archiver-name? [command : (& command str)]) : bool
+(define (source-tool-windows-msvc-archiver-name? [command : (& command str)])
+  (:cold) : bool
   (let
     [basename : String (source-tool-fs-basename command)]
     (or
@@ -1501,14 +1620,16 @@
 (define (source-tool-windows-llvm-archiver-command
   [command : String]
   [obj-path : String]
-  [archive-path : String]) : process.ProcessCommand
+  [archive-path : String])
+  (:cold) : process.ProcessCommand
   (process.command
     command
     (source-tool-windows-llvm-archiver-args obj-path archive-path)))
 
 (define (source-tool-windows-override-archiver-command-many
   [obj-paths : process.ProcessStringList]
-  [archive-path : String]) : ResultSourceToolCommand
+  [archive-path : String])
+  (:cold) : ResultSourceToolCommand
   (let
     [name : String "TYPELISP_WINDOWS_LIB"]
     [command : String
@@ -1532,7 +1653,8 @@
 
 (define (source-tool-windows-archiver-command-many
   [obj-paths : process.ProcessStringList]
-  [archive-path : String]) : ResultSourceToolCommand
+  [archive-path : String])
+  (:cold) : ResultSourceToolCommand
   (if (source-tool-env-command-set? "TYPELISP_WINDOWS_LIB")
     (source-tool-windows-override-archiver-command-many obj-paths archive-path)
     (let
@@ -1558,7 +1680,8 @@
 
 (define (source-tool-windows-archiver-command
   [obj-path : String]
-  [archive-path : String]) : ResultSourceToolCommand
+  [archive-path : String])
+  (:cold) : ResultSourceToolCommand
   (source-tool-windows-archiver-command-many
     (process.args-cons obj-path (process.args-empty))
     archive-path))
@@ -1568,7 +1691,8 @@
   [asm-path : String]
   [obj-path : String]
   [bin-path : String]
-  [remove-bin : bool]) : unit
+  [remove-bin : bool])
+  (:cold) : unit
   (source-tool-try-remove-file-if-exists asm-path)
   (source-tool-try-remove-file-if-exists obj-path)
   (if remove-bin
@@ -1580,7 +1704,8 @@
 (define (source-tool-assemble-linux-text
   [asm-path : (& asm-path str)]
   [obj-path : (& obj-path str)]
-  [asm : (& asm str)]) : SourceToolCommandStatus
+  [asm : (& asm str)])
+  (:cold) : SourceToolCommandStatus
   (match (linux_asm.assemble-linux-x64 asm)
     [(Err message)
       (Err
@@ -1599,7 +1724,8 @@
   [role : String]
   [target : be_state.CompilerBackendTarget]
   [asm-path : String]
-  [obj-path : String]) : SourceToolCommandStatus
+  [obj-path : String])
+  (:cold) : SourceToolCommandStatus
   (match target
     [(Linux)
       ;; Assembly input and serialized object belong to this write, including
@@ -1635,7 +1761,8 @@
   [target : be_state.CompilerBackendTarget]
   [obj-path : String]
   [bin-path : String]
-  [link-inputs : SourceToolLinkInputs]) : SourceToolCommandStatus
+  [link-inputs : SourceToolLinkInputs])
+  (:cold) : SourceToolCommandStatus
   (match target
     [(Linux)
       (source-tool-run-command-for
@@ -1659,7 +1786,8 @@
 (define (source-tool-archive-many
   [target : be_state.CompilerBackendTarget]
   [obj-paths : process.ProcessStringList]
-  [archive-path : String]) : SourceToolCommandStatus
+  [archive-path : String])
+  (:cold) : SourceToolCommandStatus
   (match target
     [(Linux)
       (source-tool-run-command
@@ -1676,7 +1804,8 @@
 (define (source-tool-archive
   [target : be_state.CompilerBackendTarget]
   [obj-path : String]
-  [archive-path : String]) : SourceToolCommandStatus
+  [archive-path : String])
+  (:cold) : SourceToolCommandStatus
   (source-tool-archive-many
     target
     (process.args-cons obj-path (process.args-empty))
@@ -1687,7 +1816,8 @@
   [asm-path : String]
   [obj-path : String]
   [bin-path : String]
-  [link-inputs : SourceToolLinkInputs]) : SourceToolCommandStatus
+  [link-inputs : SourceToolLinkInputs])
+  (:cold) : SourceToolCommandStatus
   (let
     [_
       (try
@@ -1704,7 +1834,8 @@
   [obj-path : String]
   [bin-path : String]
   [asm : (& asm str)]
-  [link-inputs : SourceToolLinkInputs]) : SourceToolCommandStatus
+  [link-inputs : SourceToolLinkInputs])
+  (:cold) : SourceToolCommandStatus
   (match target
     [(Linux)
       ;; The emitter has already written the assembly artifact. Assemble its
@@ -1727,7 +1858,8 @@
   [target : be_state.CompilerBackendTarget]
   [asm-path : String]
   [obj-path : String]
-  [archive-path : String]) : SourceToolCommandStatus
+  [archive-path : String])
+  (:cold) : SourceToolCommandStatus
   (let
     [_
       (try
@@ -1744,7 +1876,8 @@
   [target : be_state.CompilerBackendTarget]
   [link-inputs : SourceToolLinkInputs]
   [obj : String]
-  [context : String]) : SourceToolDirectObjectStatus
+  [context : String])
+  (:cold) : SourceToolDirectObjectStatus
   (match (source-tool-write-file obj-path obj context)
     [(Err message) (Err message)]
     [(Ok)
@@ -1757,7 +1890,8 @@
   [archive-path : String]
   [target : be_state.CompilerBackendTarget]
   [obj : String]
-  [context : String]) : SourceToolDirectObjectStatus
+  [context : String])
+  (:cold) : SourceToolDirectObjectStatus
   (match (source-tool-write-file obj-path obj context)
     [(Err message) (Err message)]
     [(Ok)
@@ -1808,7 +1942,8 @@
 (define (source-tool-temp-files
   [dir : String]
   [source : (& source str)]
-  [target : be_state.CompilerBackendTarget]) : SourceToolTempFiles
+  [target : be_state.CompilerBackendTarget])
+  (:cold) : SourceToolTempFiles
   (let
     [asm : String (source-tool-asm-path dir source)]
     [obj : String (source-tool-obj-path dir source target)]
@@ -1817,22 +1952,26 @@
 
 (define (source-tool-clean-temp-files
   [files : SourceToolTempFiles]
-  [remove-bin : bool]) : unit
+  [remove-bin : bool])
+  (:cold) : unit
   (source-tool-clean-temp files.dir files.asm files.obj files.bin remove-bin))
 
-(define (source-tool-program-lowered? [program : (& program SourceToolProgram)]) : bool
+(define (source-tool-program-lowered? [program : (& program SourceToolProgram)])
+  (:cold) : bool
   (match program
     [(Lowered _ _ _) true]
     [_ false]))
 
 (define (source-tool-program-assembly?
-  [program : (& program SourceToolProgram)]) : bool
+  [program : (& program SourceToolProgram)])
+  (:cold) : bool
   (match program
     [(Assembly _) true]
     [_ false]))
 
 (define (source-tool-program-uses-simd?
-  [program : (& program SourceToolProgram)]) : bool
+  [program : (& program SourceToolProgram)])
+  (:cold) : bool
   (match program
     [(Lowered lowered _ _)
       (backend.compiler-backend-program-uses-simd? lowered)]
@@ -1842,7 +1981,8 @@
 ;; program has to take the assembly route instead.
 (define (source-tool-render-object-result
   [target : be_state.CompilerBackendTarget]
-  [result : compiler_driver_core.ResultCompilerDriverObject]) : ResultSourceToolString
+  [result : compiler_driver_core.ResultCompilerDriverObject])
+  (:cold) : ResultSourceToolString
   (match result
     [(Ok image advisories)
       (compiler_driver_core.compiler-driver-print-advisories (& advisories))
@@ -1865,7 +2005,8 @@
   [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
   [mode : be_state.CompilerBackendMode]
-  [link-inputs : (&mut SourceToolLinkInputs)]) : ResultSourceToolString
+  [link-inputs : (&mut SourceToolLinkInputs)])
+  (:cold) : ResultSourceToolString
   (match program
     [(Source stdlib-roots cfgs pdb-arg)
       (let
@@ -1914,7 +2055,8 @@
 ;; has zero SIMD instructions; SIMD programs go to assembly with their mode
 ;; intact instead of pairing vector IR with the scalar object encoder (#7030).
 (define (source-tool-try-direct-object-and-link
-  [request : SourceToolLinkRequest]) : SourceToolDirectObjectStatus
+  [request : SourceToolLinkRequest])
+  (:cold) : SourceToolDirectObjectStatus
   (let
     [lowered : bool (source-tool-program-lowered? (& request.program))]
     [link-inputs : SourceToolLinkInputs request.link-inputs]
@@ -1957,7 +2099,8 @@
   [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
   [mode : be_state.CompilerBackendMode]
-  [link-inputs : (&mut SourceToolLinkInputs)]) : ResultSourceToolString
+  [link-inputs : (&mut SourceToolLinkInputs)])
+  (:cold) : ResultSourceToolString
   (match program
     [(Source stdlib-roots cfgs pdb-arg)
       (source-tool-emit-assembly
@@ -1992,7 +2135,8 @@
 ;; Compile `request`'s program and link it into `request.files.bin`: through a
 ;; direct object when that route is enabled and the object is linkable, else
 ;; through the target's assembly route.
-(define (source-tool-link-program [request : SourceToolLinkRequest]) : SourceToolCommandStatus
+(define (source-tool-link-program [request : SourceToolLinkRequest])
+  (:cold) : SourceToolCommandStatus
   (let
     [lower-owner : i64
       (match (& request.program)
@@ -2048,7 +2192,8 @@
   [request : SourceToolLinkRequest]
   [args : process.ProcessStringList]
   [env : process.ProcessEnvList]
-  [inherit : bool]) : SourceToolRunOutcome
+  [inherit : bool])
+  (:cold) : SourceToolRunOutcome
   (let
     [target : be_state.CompilerBackendTarget request.target]
     [bin-path : String
@@ -2080,7 +2225,8 @@
   (Direct)
   (Failed String))
 
-(define (source-tool-link-destination [destination : (& destination str)]) : SourceToolLinkDestination
+(define (source-tool-link-destination [destination : (& destination str)])
+  (:cold) : SourceToolLinkDestination
   (let
     [parent : String (fs.dirname destination)]
     [prefix : String ".typelisp-link"]
@@ -2098,7 +2244,8 @@
                 (io.error-message error)))])])))
 
 ;; Remove the private link directory and every file the tools wrote in it.
-(define (source-tool-remove-private-link-dir [dir : (& dir str)]) : unit
+(define (source-tool-remove-private-link-dir [dir : (& dir str)])
+  (:cold) : unit
   (match (fs.try-read-dir dir)
     [(OkIoStringVector entries)
       (for [index (iterator.range 0 (fs.string-vector-len (& entries)))]
@@ -2116,7 +2263,8 @@
 (define (source-tool-pdb-arg-for-destination
   [target : be_state.CompilerBackendTarget]
   [link-dir : (& SourceToolLinkDestination)]
-  [destination : (& str)]) : String
+  [destination : (& str)])
+  (:cold) : String
   (match target
     [(Windows)
       (match link-dir
@@ -2133,7 +2281,8 @@
 (define (source-tool-publish-linked-output
   [link-dir : (& link-dir SourceToolLinkDestination)]
   [linked : (& linked str)]
-  [destination : (& destination str)]) : SourceToolCommandStatus
+  [destination : (& destination str)])
+  (:cold) : SourceToolCommandStatus
   (match link-dir
     [(Private _)
       (match (fs.try-atomic-replace linked destination)
@@ -2157,7 +2306,8 @@
   [opt-level : i64]
   [mode : be_state.CompilerBackendMode]
   [link-inputs : SourceToolLinkInputs]
-  [temp-dir : String]) : i64
+  [temp-dir : String])
+  (:cold) : i64
   (let
     [files : SourceToolTempFiles
       (source-tool-temp-files temp-dir source target)]
@@ -2229,7 +2379,8 @@
   [cfg-names : cli_svec.Vec]
   [opt-level : i64]
   [mode : be_state.CompilerBackendMode]
-  [link-inputs : SourceToolLinkInputs]) : i64
+  [link-inputs : SourceToolLinkInputs])
+  (:cold) : i64
   (match (source-tool-create-temp-dir "typelisp-build")
     [(Ok temp-dir)
       (source-tool-build-source-in-temp
@@ -2253,7 +2404,8 @@
 (define (source-tool-run-executable-inherit
   [bin-path : String]
   [target : be_state.CompilerBackendTarget]
-  [runtime-args : process.ProcessStringList]) : process.ResultProcessOutput
+  [runtime-args : process.ProcessStringList])
+  (:cold) : process.ResultProcessOutput
   (process.inherit
     (source-tool-command-for-target
       target
@@ -2269,7 +2421,8 @@
   [mode : be_state.CompilerBackendMode]
   [link-inputs : SourceToolLinkInputs]
   [stream-output : bool]
-  [temp-dir : String]) : i64
+  [temp-dir : String])
+  (:cold) : i64
   (let
     [files : SourceToolTempFiles
       (source-tool-temp-files temp-dir source target)]
@@ -2320,7 +2473,8 @@
   [opt-level : i64]
   [mode : be_state.CompilerBackendMode]
   [link-inputs : SourceToolLinkInputs]
-  [stream-output : bool]) : i64
+  [stream-output : bool])
+  (:cold) : i64
   (match (source-tool-create-temp-dir "typelisp-run")
     [(Ok temp-dir)
       (source-tool-run-source-in-temp
@@ -2342,7 +2496,8 @@
 (define (source-tool-append-opt-values
   [args : process.ProcessStringList]
   [flag : String]
-  [values : (& cli_svec.Vec)]) : process.ProcessStringList
+  [values : (& cli_svec.Vec)])
+  (:cold) : process.ProcessStringList
   (let
     [out : process.ProcessStringList args]
     (for [i (iterator.range 0 (cli_svec.len values))]
@@ -2359,7 +2514,8 @@
   [target : be_state.CompilerBackendTarget]
   [stdlib-roots : (& cli_svec.Vec)]
   [cfg-names : (& cli_svec.Vec)]
-  [deps : (& load.CompilerPkgDeps)]) : SourceToolCommandStatus
+  [deps : (& load.CompilerPkgDeps)])
+  (:cold) : SourceToolCommandStatus
   (when
     (or
       (= (load.compiler-pkg-dep-list-count (& deps.ordered)) 0)

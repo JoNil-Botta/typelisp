@@ -6,17 +6,20 @@
 (import stdlib.iterator)
 (import stdlib.string)
 
-(define (surface-binary-string-length [text : (& text str)]) : i64
+(define (surface-binary-string-length [text : (& text str)])
+  (:cold) : i64
   (string.string-length text))
 
-(define (surface-binary-string-ref [text : (& text str)] [index : i64]) : char
+(define (surface-binary-string-ref [text : (& text str)] [index : i64])
+  (:cold) : char
   (string.string-ref text index))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-binary-push-string!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
-    [text : String]) : unit
+    [text : String])
+    (:cold) : unit
     (let
       [length : i64 (surface-binary-string-length text)]
       (for [index (iterator.range 0 length)]
@@ -28,7 +31,8 @@
 (define (surface-binary-bytes->string
   [bytes : (& bytes (__tl_dyn-array u8))]
   [offset : i64]
-  [length : i64]) : String
+  [length : i64])
+  (:cold) : String
   (let
     [out : (__tl_dyn-array u8) (__tl_make-array u8 length)]
     (for [index (iterator.range 0 length)]

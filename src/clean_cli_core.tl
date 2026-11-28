@@ -27,7 +27,8 @@
   (Ok CleanConfig)
   (Err String))
 
-(define (clean-vcs-metadata-path? [path : (& path str)]) : bool
+(define (clean-vcs-metadata-path? [path : (& path str)])
+  (:cold) : bool
   (or
     (string.eq path ".git")
     (source_text.starts-with? path ".git/")
@@ -37,7 +38,8 @@
     (source_text.ends-with? path "/.git")
     (source_text.ends-with? path "\\.git")))
 
-(define (clean-dangerous-path? [path : (& path str)]) : bool
+(define (clean-dangerous-path? [path : (& path str)])
+  (:cold) : bool
   (or
     (= (string.string-length path) 0)
     (string.eq path ".")
@@ -46,12 +48,14 @@
     (string.eq path "\\")
     (clean-vcs-metadata-path? path)))
 
-(define (clean-file-exists? [path : (& path str)]) : bool
+(define (clean-file-exists? [path : (& path str)])
+  (:cold) : bool
   (match (build_run.source-tool-try-file-exists? path)
     [(OkIoBool exists) exists]
     [(ErrIoBool _) false]))
 
-(define (clean-report [dry-run : bool] [path : String]) : unit
+(define (clean-report [dry-run : bool] [path : String])
+  (:cold) : unit
   (io.print-format
     "{}"
     (str_cat.str-cat
@@ -61,7 +65,8 @@
       path
       "\n")))
 
-(define (clean-remove-file [dry-run : bool] [path : String]) : i64
+(define (clean-remove-file [dry-run : bool] [path : String])
+  (:cold) : i64
   (if (clean-file-exists? path)
     (if dry-run
       (begin
@@ -81,7 +86,8 @@
           1]))
     0))
 
-(define (clean-remove-dir [dry-run : bool] [path : String]) : i64
+(define (clean-remove-dir [dry-run : bool] [path : String])
+  (:cold) : i64
   (if (clean-file-exists? path)
     (if dry-run
       (begin
@@ -104,11 +110,13 @@
 (define (clean-report-error
   [prefix : String]
   [path : String]
-  [error : io.IoError]) : i64
+  [error : io.IoError])
+  (:cold) : i64
   (io.print-error (str_cat.str-cat prefix path ": " (io.error-message error)))
   1)
 
-(define (clean-remove-tree-entry [path : String]) : i64
+(define (clean-remove-tree-entry [path : String])
+  (:cold) : i64
   (if (clean-vcs-metadata-path? path)
     (begin
       (io.print-error
@@ -135,7 +143,8 @@
 
 (define (clean-remove-tree-entries
   [root : (& root str)]
-  [entries : fs.FsStringVector]) : i64
+  [entries : fs.FsStringVector])
+  (:cold) : i64
   (for [index (iterator.range 0 (fs.string-vector-len (& entries)))]
     (let
       [name : String (fs.string-vector-get (& entries) index "")]
@@ -144,7 +153,8 @@
       (unless (= status 0) (return status))))
   0)
 
-(define (clean-remove-tree-dir [path : String]) : i64
+(define (clean-remove-tree-dir [path : String])
+  (:cold) : i64
   (match (fs.try-read-dir (& path))
     [(ErrIoStringVector error)
       (clean-report-error "clean: failed to read directory " path error)]
@@ -161,7 +171,8 @@
                 path
                 error)])))]))
 
-(define (clean-remove-tree [dry-run : bool] [path : String]) : i64
+(define (clean-remove-tree [dry-run : bool] [path : String])
+  (:cold) : i64
   (if (not (clean-file-exists? path))
     0
     (if dry-run
@@ -177,12 +188,14 @@
             0)
           status)))))
 
-(define (clean-merge-status [left : i64] [right : i64]) : i64
+(define (clean-merge-status [left : i64] [right : i64])
+  (:cold) : i64
   (if (= left 0)
     right
     left))
 
-(define (clean-source-artifact-safe? [source : String] [path : (& path str)]) : bool
+(define (clean-source-artifact-safe? [source : String] [path : (& path str)])
+  (:cold) : bool
   (and
     (not (clean-dangerous-path? path))
     (not (string.eq source path))
@@ -191,12 +204,14 @@
 (define (clean-remove-source-artifact
   [source : String]
   [dry-run : bool]
-  [path : String]) : i64
+  [path : String])
+  (:cold) : i64
   (if (clean-source-artifact-safe? source path)
     (clean-remove-file dry-run path)
     0))
 
-(define (clean-source [source : String] [dry-run : bool]) : i64
+(define (clean-source [source : String] [dry-run : bool])
+  (:cold) : i64
   (let
     [status : i64 0]
     (set!
@@ -259,7 +274,8 @@
           (build_run.source-tool-replace-extension source ".exe"))))
     status))
 
-(define (clean-package-name-safe? [name : String]) : bool
+(define (clean-package-name-safe? [name : String])
+  (:cold) : bool
   (and
     (load.compiler-load-package-token-valid? (& name))
     (not (string.contains name "/"))
@@ -268,7 +284,8 @@
 (define (clean-package-artifact-safe?
   [manifest-dir : String]
   [name : (& name str)]
-  [path : (& path str)]) : bool
+  [path : (& path str)])
+  (:cold) : bool
   (let
     [release-dir : String
       (build_cli_core.build-package-output-dir-profile
@@ -295,7 +312,8 @@
   [manifest-dir : String]
   [name : (& name str)]
   [dry-run : bool]
-  [path : String]) : i64
+  [path : String])
+  (:cold) : i64
   (if (clean-package-artifact-safe? manifest-dir name path)
     (clean-remove-file dry-run path)
     (begin
@@ -307,7 +325,8 @@
   [manifest-dir : String]
   [name : (& name str)]
   [dry-run : bool]
-  [path : String]) : i64
+  [path : String])
+  (:cold) : i64
   (clean-merge-status
     (clean-remove-package-file
       (owned_view.compiler-owned-shared-view manifest-dir)
@@ -324,7 +343,8 @@
   [manifest-dir : String]
   [name : (& name str)]
   [dry-run : bool]
-  [path : String]) : i64
+  [path : String])
+  (:cold) : i64
   (if (clean-package-artifact-safe? manifest-dir name path)
     (clean-remove-dir dry-run path)
     (begin
@@ -336,7 +356,8 @@
   [manifest-dir : String]
   [name : String]
   [dry-run : bool]
-  [profile : pkg_profile.PackageProfile]) : i64
+  [profile : pkg_profile.PackageProfile])
+  (:cold) : i64
   (let
     [status : i64 0]
     (set!
@@ -467,7 +488,8 @@
             profile))))
     status))
 
-(define (clean-package-from-path [manifest-path : String] [dry-run : bool]) : i64
+(define (clean-package-from-path [manifest-path : String] [dry-run : bool])
+  (:cold) : i64
   (match (build_cli_core.build-load-manifest
     (owned_view.compiler-owned-shared-view manifest-path))
     [(Err message)
@@ -499,7 +521,8 @@
 (define (clean-package
   [manifest-path : String]
   [has-manifest : bool]
-  [dry-run : bool]) : i64
+  [dry-run : bool])
+  (:cold) : i64
   (let
     [resolved-manifest : load.CompilerLoadMaybePath
       (if has-manifest
@@ -513,7 +536,8 @@
       [(CompilerLoadSomePath path) (clean-package-from-path path dry-run)])))
 
 (define (clean-experiments-artifact-path
-  [manifest-path : (& manifest-path str)]) : String
+  [manifest-path : (& manifest-path str)])
+  (:cold) : String
   (load.compiler-load-normalize-path
     (load.compiler-load-join-root-path
       (load.compiler-load-dirname manifest-path)
@@ -521,7 +545,8 @@
 
 (define (clean-experiments-artifact-safe?
   [manifest-path : String]
-  [path : (& path str)]) : bool
+  [path : (& path str)])
+  (:cold) : bool
   (let
     [expected : String (clean-experiments-artifact-path manifest-path)]
     [normalized : String (load.compiler-load-normalize-path path)]
@@ -533,7 +558,8 @@
         (source_text.ends-with? expected "/target/exp")
         (source_text.ends-with? expected "\\target\\exp")))))
 
-(define (clean-experiments-from-path [manifest-path : String] [dry-run : bool]) : i64
+(define (clean-experiments-from-path [manifest-path : String] [dry-run : bool])
+  (:cold) : i64
   (match (build_cli_core.build-load-manifest
     (owned_view.compiler-owned-shared-view manifest-path))
     [(Err message)
@@ -555,7 +581,8 @@
 (define (clean-experiments
   [manifest-path : String]
   [has-manifest : bool]
-  [dry-run : bool]) : i64
+  [dry-run : bool])
+  (:cold) : i64
   (let
     [resolved-manifest : load.CompilerLoadMaybePath
       (if has-manifest
@@ -568,7 +595,8 @@
         1]
       [(CompilerLoadSomePath path) (clean-experiments-from-path path dry-run)])))
 
-(define (clean-config-from [idx : i64] [count : i64]) : ResultCleanConfig
+(define (clean-config-from [idx : i64] [count : i64])
+  (:cold) : ResultCleanConfig
   (let
     [args : cli_option.CliArgs
       (cli_option.cli-args
@@ -618,7 +646,8 @@
       [experiments (Ok (Experiments manifest has-manifest dry-run))]
       [else (Ok (Package manifest has-manifest dry-run))])))
 
-(define (clean-run-from [idx : i64] [count : i64]) : i64
+(define (clean-run-from [idx : i64] [count : i64])
+  (:cold) : i64
   (match (clean-config-from idx count)
     [(Ok config)
       (match config

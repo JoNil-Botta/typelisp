@@ -20,7 +20,8 @@
   (define (surface-ast-write-optional-name!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
-    [name : i64]) : unit
+    [name : i64])
+    (:cold) : unit
     (if (< name 0)
       (codec.surface-ast-write-bool! out false)
       (begin
@@ -28,7 +29,8 @@
         (codec.surface-ast-write-name! out context name)))))
 
 (define (surface-ast-read-optional-name!
-  [reader : (&mut reader codec.SurfaceAstReader)]) : i64
+  [reader : (&mut reader codec.SurfaceAstReader)])
+  (:cold) : i64
   (if (codec.surface-ast-read-bool! reader)
     (codec.surface-ast-read-name! reader)
     -1))
@@ -37,7 +39,8 @@
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-expr-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
-    [items : (& ast.AstExprList)]) : unit
+    [items : (& ast.AstExprList)])
+    (:cold) : unit
     (let
       [count : i64 items.len]
       (codec.surface-ast-write-i64! out count)
@@ -45,7 +48,8 @@
         (codec.surface-ast-write-i64! out (array-ref items.slots index))))))
 
 (define (surface-ast-read-expr-list!
-  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstExprList
+  [reader : (&mut reader codec.SurfaceAstReader)])
+  (:cold) : ast.AstExprList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array i64) (__tl_make-array i64 count)]
@@ -58,7 +62,8 @@
   (define (surface-ast-write-param!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
-    [param : (& ast.AstParam)]) : unit
+    [param : (& ast.AstParam)])
+    (:cold) : unit
     (match param
       [(Param name ty is-comptime)
         (codec.surface-ast-write-name! out context name)
@@ -66,7 +71,8 @@
         (codec.surface-ast-write-bool! out is-comptime)])))
 
 (define (surface-ast-read-param!
-  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstParam
+  [reader : (&mut reader codec.SurfaceAstReader)])
+  (:cold) : ast.AstParam
   (Param
     (codec.surface-ast-read-name! reader)
     (codec.surface-ast-read-type! reader)
@@ -77,7 +83,8 @@
   (define (surface-ast-write-param-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
-    [params : (& ast.AstParamList)]) : unit
+    [params : (& ast.AstParamList)])
+    (:cold) : unit
     (let
       [count : i64 params.len]
       (codec.surface-ast-write-i64! out count)
@@ -88,7 +95,8 @@
           (& (array-ref params.slots index)))))))
 
 (define (surface-ast-read-param-list!
-  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstParamList
+  [reader : (&mut reader codec.SurfaceAstReader)])
+  (:cold) : ast.AstParamList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstParam) (__tl_make-array ast.AstParam count)]
@@ -101,7 +109,8 @@
   (define (surface-ast-write-pattern-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
-    [patterns : (& ast.AstPatternList)]) : unit
+    [patterns : (& ast.AstPatternList)])
+    (:cold) : unit
     (let
       [count : i64 patterns.len]
       (codec.surface-ast-write-i64! out count)
@@ -116,7 +125,8 @@
   (define (surface-ast-write-pattern!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
-    [pattern : (& ast.AstPattern)]) : unit
+    [pattern : (& ast.AstPattern)])
+    (:cold) : unit
     (match pattern
       [(Var name maybe-ty)
         (codec.surface-ast-write-i64! out 0)
@@ -155,7 +165,8 @@
         (surface-ast-write-pattern-list! out context (& (deref items)))])))
 
 (define (surface-ast-read-pattern-list!
-  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstPatternList
+  [reader : (&mut reader codec.SurfaceAstReader)])
+  (:cold) : ast.AstPatternList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstPattern)
@@ -165,7 +176,8 @@
     (ast.AstPatternList slots count)))
 
 (define (surface-ast-read-pattern!
-  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstPattern
+  [reader : (&mut reader codec.SurfaceAstReader)])
+  (:cold) : ast.AstPattern
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (cond
@@ -203,7 +215,8 @@
   (define (surface-ast-write-let-binding-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
-    [bindings : (& ast.AstLetBindingList)]) : unit
+    [bindings : (& ast.AstLetBindingList)])
+    (:cold) : unit
     (let
       [count : i64 bindings.len]
       (codec.surface-ast-write-i64! out count)
@@ -215,7 +228,8 @@
             (codec.surface-ast-write-i64! out value)])))))
 
 (define (surface-ast-read-let-binding-list!
-  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstLetBindingList
+  [reader : (&mut reader codec.SurfaceAstReader)])
+  (:cold) : ast.AstLetBindingList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstLetBinding)
@@ -234,7 +248,8 @@
   (define (surface-ast-write-resource-binding-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
-    [bindings : (& ast.AstResourceBindingList)]) : unit
+    [bindings : (& ast.AstResourceBindingList)])
+    (:cold) : unit
     (let
       [count : i64 bindings.len]
       (codec.surface-ast-write-i64! out count)
@@ -247,7 +262,8 @@
             (codec.surface-ast-write-bool! out fallible)])))))
 
 (define (surface-ast-read-resource-binding-list!
-  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstResourceBindingList
+  [reader : (&mut reader codec.SurfaceAstReader)])
+  (:cold) : ast.AstResourceBindingList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstResourceBinding)
@@ -267,7 +283,8 @@
   (define (surface-ast-write-match-arm-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
-    [arms : (& ast.AstMatchArmList)]) : unit
+    [arms : (& ast.AstMatchArmList)])
+    (:cold) : unit
     (let
       [count : i64 arms.len]
       (codec.surface-ast-write-i64! out count)
@@ -278,7 +295,8 @@
             (codec.surface-ast-write-i64! out body)])))))
 
 (define (surface-ast-read-match-arm-list!
-  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstMatchArmList
+  [reader : (&mut reader codec.SurfaceAstReader)])
+  (:cold) : ast.AstMatchArmList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstMatchArm)
@@ -296,7 +314,8 @@
   (define (surface-ast-write-expr!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
-    [expr : (& ast.AstExpr)]) : unit
+    [expr : (& ast.AstExpr)])
+    (:cold) : unit
     (match (owned_view.compiler-owned-reference-shared-view expr)
       [(Spanned inner span)
         (codec.surface-ast-write-i64! out 0)
@@ -710,7 +729,8 @@
           (ci.intern-composite-right-id-unchecked provenance-id))
         (surface-ast-write-optional-name! out context macro-name-id)])))
 
-(define (surface-ast-read-expr! [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstExpr
+(define (surface-ast-read-expr! [reader : (&mut reader codec.SurfaceAstReader)])
+  (:cold) : ast.AstExpr
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (cond

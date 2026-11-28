@@ -44,7 +44,8 @@
 
 ;; Parse the `check` config from arguments starting at `start`. `count` is
 ;; `(arg-count)`.
-(define (selfhost-check-config-from [start : i64] [count : i64]) : ResultSelfhostCheckConfig
+(define (selfhost-check-config-from [start : i64] [count : i64])
+  (:cold) : ResultSelfhostCheckConfig
   (let
     [args : cli_option.CliArgs
       (cli_option.cli-args
@@ -112,12 +113,14 @@
       [has-input (Ok (File input-path options))]
       [else (Ok (Package manifest-path has-manifest options))])))
 
-(define (selfhost-check-print-passed) : i64
+(define (selfhost-check-print-passed)
+  (:cold) : i64
   (io.print-format "{}" "Type checking passed!\n")
   0)
 
 (define (selfhost-check-report-diagnostics
-  [diagnostics : cdiag.CompilerDiagnosticList]) : unit
+  [diagnostics : cdiag.CompilerDiagnosticList])
+  (:cold) : unit
   (let
     [count : i64 (cdiag.compiler-diagnostic-list-count diagnostics)]
     [sources : compiler_driver_core.CompilerDriverDiagnosticSources
@@ -130,7 +133,8 @@
 
 (define (selfhost-check-append-diagnostics
   [diagnostics : cdiag.CompilerDiagnosticList]
-  [err-buf : text_buf.TextBuf]) : text_buf.TextBuf
+  [err-buf : text_buf.TextBuf])
+  (:cold) : text_buf.TextBuf
   (let
     [count : i64 (cdiag.compiler-diagnostic-list-count diagnostics)]
     [sources : compiler_driver_core.CompilerDriverDiagnosticSources
@@ -145,14 +149,16 @@
     out))
 
 (define (selfhost-check-copy-target
-  [target : (& target target_cfg.CompilerTargetCfg)]) : target_cfg.CompilerTargetCfg
+  [target : (& target target_cfg.CompilerTargetCfg)])
+  (:cold) : target_cfg.CompilerTargetCfg
   (match target
     [(Linux) (Linux)]
     [(Windows) (Windows)]))
 
 (define (selfhost-check-outcome-from-doctest-report
   [err-buf : text_buf.TextBuf]
-  [report : doc_test.DocTestRunReport]) : SelfhostCheckOutcome
+  [report : doc_test.DocTestRunReport])
+  (:cold) : SelfhostCheckOutcome
   (let
     [advisories : String (doc_test.doc-test-run-report-advisories (& report))]
     [err-buf : text_buf.TextBuf
@@ -172,7 +178,8 @@
 
 (define (selfhost-check-file-outcome
   [input-path : String]
-  [options : (& options cli_option.CliCompileOptions)]) : SelfhostCheckOutcome
+  [options : (& options cli_option.CliCompileOptions)])
+  (:cold) : SelfhostCheckOutcome
   (let
     [target : target_cfg.CompilerTargetCfg
       (selfhost-check-copy-target (& options.target))]
@@ -223,7 +230,8 @@
 
 (define (selfhost-check-file
   [input-path : String]
-  [options : cli_option.CliCompileOptions]) : i64
+  [options : cli_option.CliCompileOptions])
+  (:cold) : i64
   (let
     [outcome : SelfhostCheckOutcome
       (selfhost-check-file-outcome input-path (& options))]
@@ -235,7 +243,8 @@
       (io.print-format "{}" outcome.stdout))
     outcome.status))
 
-(define (selfhost-check-batch-line-count [text : (& text str)]) : i64
+(define (selfhost-check-batch-line-count [text : (& text str)])
+  (:cold) : i64
   (let
     [n : i64 (string.string-length text)]
     (if (= n 0)
@@ -250,7 +259,8 @@
 
 (define (selfhost-check-batch-append-stream
   [out : text_buf.TextBuf]
-  [text : (& text str)]) : text_buf.TextBuf
+  [text : (& text str)])
+  (:cold) : text_buf.TextBuf
   (let
     [n : i64 (string.string-length text)]
     (if (= n 0)
@@ -264,7 +274,8 @@
 (define (selfhost-check-batch-format-entry
   [index : i64]
   [input-path : (& input-path str)]
-  [outcome : SelfhostCheckOutcome]) : String
+  [outcome : SelfhostCheckOutcome])
+  (:cold) : String
   (let
     [out-lines : i64 (selfhost-check-batch-line-count (& outcome.stdout))]
     [err-lines : i64 (selfhost-check-batch-line-count (& outcome.stderr))]
@@ -288,12 +299,14 @@
 (define (selfhost-check-batch-emit-entry
   [index : i64]
   [input-path : (& input-path str)]
-  [outcome : SelfhostCheckOutcome]) : unit
+  [outcome : SelfhostCheckOutcome])
+  (:cold) : unit
   (io.print-format
     "{}"
     (selfhost-check-batch-format-entry index input-path outcome)))
 
-(define (selfhost-check-batch-paths-from-text [text : (& text str)]) : svec.Vec
+(define (selfhost-check-batch-paths-from-text [text : (& text str)])
+  (:cold) : svec.Vec
   (let
     [n : i64 (string.string-length text)]
     [start : i64 0]
@@ -313,7 +326,8 @@
 (define (selfhost-check-batch-run-entry
   [index : i64]
   [input-path : (& input-path str)]
-  [options : (& options cli_option.CliCompileOptions)]) : unit
+  [options : (& options cli_option.CliCompileOptions)])
+  (:cold) : unit
   (let
     [entry : test_cli_core.TlTestEntry (test_cli_core.tltest-entry-new)]
     (in-arena
@@ -327,7 +341,8 @@
 
 (define (selfhost-check-batch
   [batch-path : String]
-  [options : cli_option.CliCompileOptions]) : i64
+  [options : cli_option.CliCompileOptions])
+  (:cold) : i64
   (match (io.try-read-file (& batch-path))
     [(ErrIoBytes error)
       (io.print-error
@@ -362,18 +377,21 @@
             0)))]))
 
 (define (selfhost-check-package-kind-entry?
-  [kind : compiler_load.CompilerPkgKind]) : bool
+  [kind : compiler_load.CompilerPkgKind])
+  (:cold) : bool
   (match kind
     [(CompilerPkgKindBin) true]
     [(CompilerPkgKindLib) false]))
 
 (define (selfhost-check-package-entry-path
   [manifest-dir : String]
-  [manifest : compiler_load.CompilerPkgManifest]) : String
+  [manifest : compiler_load.CompilerPkgManifest])
+  (:cold) : String
   (compiler_load.compiler-load-normalize-path
     (compiler_load.compiler-load-join-root-path manifest-dir manifest.entry)))
 
-(define (selfhost-check-package-has-inline-tests? [sources : (& svec.Vec)]) : bool
+(define (selfhost-check-package-has-inline-tests? [sources : (& svec.Vec)])
+  (:cold) : bool
   (for [index (iterator.range 0 (svec.len sources))]
     (when
       (test_cli_core.tltest-source-has-inline-tests?
@@ -384,7 +402,8 @@
 (define (selfhost-check-package
   [manifest-path : String]
   [has-manifest : bool]
-  [options : cli_option.CliCompileOptions]) : i64
+  [options : cli_option.CliCompileOptions])
+  (:cold) : i64
   (match (package_source_core.package-source-resolve-manifest
     "check"
     manifest-path
@@ -528,7 +547,8 @@
                 1]))))]))
 
 ;; Run the `check` command over arguments starting at `start`.
-(define (selfhost-check-run-from [start : i64] [count : i64]) : i64
+(define (selfhost-check-run-from [start : i64] [count : i64])
+  (:cold) : i64
   (match (selfhost-check-config-from start count)
     [(Ok config)
       (match config

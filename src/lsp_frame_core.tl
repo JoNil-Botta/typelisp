@@ -49,19 +49,24 @@
   `(unsafe
     (ptr-read (ptr-addr-of ,place))))
 
-(define (lsp-read-file-text-or [path : (& source str)] [fallback : String]) : String
+(define (lsp-read-file-text-or [path : (& source str)] [fallback : String])
+  (:cold) : String
   (byte_buf.to-string (io.read-file-or path (byte_buf.from-string fallback))))
 
-(define (lsp-write-file-text [path : String] [contents : String]) : unit
+(define (lsp-write-file-text [path : String] [contents : String])
+  (:cold) : unit
   (io.write-file path (byte_buf.str-as-bytes (& contents))))
 
-(define (lsp-str2 [a : String] [b : String]) : String
+(define (lsp-str2 [a : String] [b : String])
+  (:cold) : String
   (str_cat.str-cat a b ""))
 
-(define (lsp-str3 [a : String] [b : String] [c : String]) : String
+(define (lsp-str3 [a : String] [b : String] [c : String])
+  (:cold) : String
   (str_cat.str-cat a b c))
 
-(define (lsp-str4 [a : String] [b : String] [c : String] [d : String]) : String
+(define (lsp-str4 [a : String] [b : String] [c : String] [d : String])
+  (:cold) : String
   (str_cat.str-cat a b c d))
 
 (define (lsp-str5
@@ -69,7 +74,8 @@
   [b : String]
   [c : String]
   [d : String]
-  [e : String]) : String
+  [e : String])
+  (:cold) : String
   (str_cat.str-cat a b c d e))
 
 (define (lsp-str7
@@ -79,7 +85,8 @@
   [d : String]
   [e : String]
   [f : String]
-  [g : String]) : String
+  [g : String])
+  (:cold) : String
   (str_cat.str-cat (lsp-str4 a b c d) (lsp-str3 e f g) ""))
 
 (defenum LspFrameRead
@@ -404,10 +411,12 @@
   (semantic-index compiler_semantic_index.CompilerSemanticSourceIndex)
   (semantic-present bool))
 
-(define (lsp-frame-space? [c : char]) : bool
+(define (lsp-frame-space? [c : char])
+  (:cold) : bool
   (or (= c ' ') (= c '\t')))
 
-(define (lsp-frame-trim-right-space-cr [text : String]) : String
+(define (lsp-frame-trim-right-space-cr [text : String])
+  (:cold) : String
   (let
     [i : i64 (string.string-length text)]
     [end : i64 (string.string-length text)]
@@ -424,7 +433,8 @@
             (set! done true)))))
     (string.substring text 0 end)))
 
-(define (lsp-frame-trim-left-space [text : String]) : String
+(define (lsp-frame-trim-left-space [text : String])
+  (:cold) : String
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
@@ -440,13 +450,16 @@
           (set! done true))))
     (string.substring text start (- n start))))
 
-(define (lsp-frame-trim-header-value [text : String]) : String
+(define (lsp-frame-trim-header-value [text : String])
+  (:cold) : String
   (lsp-frame-trim-left-space (lsp-frame-trim-right-space-cr text)))
 
-(define (lsp-frame-digit? [c : char]) : bool
+(define (lsp-frame-digit? [c : char])
+  (:cold) : bool
   (and (>= c '0') (<= c '9')))
 
-(define (lsp-frame-decimal? [text : (& text str)]) : bool
+(define (lsp-frame-decimal? [text : (& text str)])
+  (:cold) : bool
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
@@ -464,7 +477,8 @@
             (set! i n)))
         ok))))
 
-(define (lsp-frame-parse-content-length [line : String]) : LspLengthParse
+(define (lsp-frame-parse-content-length [line : String])
+  (:cold) : LspLengthParse
   (if (source_text.starts-with? line "Content-Length:")
     (let
       [value : String
@@ -505,7 +519,8 @@
     ""
     ""))
 
-(define (lsp-frame-memory-reset!) : unit
+(define (lsp-frame-memory-reset!)
+  (:cold) : unit
   (set!
     lsp-frame-memory-state
     (LspFrameMemoryState
@@ -520,7 +535,8 @@
 
 (define (lsp-frame-memory-install!
   [input : (& input str)]
-  [transport-arena : i64]) : unit
+  [transport-arena : i64])
+  (:cold) : unit
   (set!
     lsp-frame-memory-state
     (in-arena
@@ -536,24 +552,28 @@
         ""
         ""))))
 
-(define (lsp-frame-memory-stdout-append! [text : String]) : unit
+(define (lsp-frame-memory-stdout-append! [text : String])
+  (:cold) : unit
   (in-arena
     lsp-frame-memory-state.owner
     (set!
       lsp-frame-memory-state.stdout
       (str_cat.str-cat-scoped lsp-frame-memory-state.stdout text))))
 
-(define (lsp-frame-memory-copy-stdout) : String
+(define (lsp-frame-memory-copy-stdout)
+  (:cold) : String
   (string.copy (& lsp-frame-memory-state.stdout)))
 
-(define (lsp-frame-memory-stderr-append! [text : String]) : unit
+(define (lsp-frame-memory-stderr-append! [text : String])
+  (:cold) : unit
   (in-arena
     lsp-frame-memory-state.owner
     (set!
       lsp-frame-memory-state.stderr
       (str_cat.str-cat-scoped lsp-frame-memory-state.stderr text))))
 
-(define (lsp-frame-memory-read-line) : io.StdinRead
+(define (lsp-frame-memory-read-line)
+  (:cold) : io.StdinRead
   (let
     [n : i64 (string.string-length lsp-frame-memory-state.input)]
     [start : i64 lsp-frame-memory-state.input-offset]
@@ -589,7 +609,8 @@
                   (- n start)))
               true)))))))
 
-(define (lsp-frame-memory-read-bytes [count : i64]) : io.StdinRead
+(define (lsp-frame-memory-read-bytes [count : i64])
+  (:cold) : io.StdinRead
   (let
     [n : i64 (string.string-length lsp-frame-memory-state.input)]
     [start : i64 lsp-frame-memory-state.input-offset]
@@ -609,17 +630,20 @@
         (string.substring lsp-frame-memory-state.input start take))
       lsp-frame-memory-state.eof)))
 
-(define (lsp-frame-input-read-line) : io.StdinRead
+(define (lsp-frame-input-read-line)
+  (:cold) : io.StdinRead
   (if lsp-frame-memory-state.active
     (lsp-frame-memory-read-line)
     (io.stdin-read-line)))
 
-(define (lsp-frame-input-read-bytes [count : i64]) : io.StdinRead
+(define (lsp-frame-input-read-bytes [count : i64])
+  (:cold) : io.StdinRead
   (if lsp-frame-memory-state.active
     (lsp-frame-memory-read-bytes count)
     (io.stdin-read-bytes count)))
 
-(define (lsp-frame-read-message) : LspFrameRead
+(define (lsp-frame-read-message)
+  (:cold) : LspFrameRead
   (let
     [content-length : i64 -1]
     [saw-header : bool false]
@@ -683,22 +707,26 @@
             (Err "lsp: truncated payload")
             (Ok payload)))])))
 
-(define (lsp-frame-stdout-write [text : String]) : unit
+(define (lsp-frame-stdout-write [text : String])
+  (:cold) : unit
   (if lsp-frame-memory-state.active
     (lsp-frame-memory-stdout-append! text)
     (io.stdout-write (byte_buf.str-as-bytes (& text)))))
 
-(define (lsp-frame-stderr-write [text : String]) : unit
+(define (lsp-frame-stderr-write [text : String])
+  (:cold) : unit
   (if lsp-frame-memory-state.active
     (lsp-frame-memory-stderr-append! text)
     (io.stderr-write (byte_buf.str-as-bytes (& text)))))
 
-(define (lsp-frame-stdout-flush) : unit
+(define (lsp-frame-stdout-flush)
+  (:cold) : unit
   (if lsp-frame-memory-state.active
     unit
     (io.stdout-flush)))
 
-(define (lsp-frame-write-body [body : String]) : unit
+(define (lsp-frame-write-body [body : String])
+  (:cold) : unit
   (lsp-frame-stdout-write
     (lsp-str5
       "Content-Length: "
@@ -708,35 +736,43 @@
       ""))
   (lsp-frame-stdout-flush))
 
-(define (lsp-json-number [value : i64]) : json.Json
+(define (lsp-json-number [value : i64])
+  (:cold) : json.Json
   (JsonNumber (string.int->string value)))
 
 (define (lsp-json-member
   [k : String]
   [v : json.Json]
-  [rest : json.JsonMemberSeq]) : json.JsonMemberSeq
+  [rest : json.JsonMemberSeq])
+  (:cold) : json.JsonMemberSeq
   (json.member-cons k v rest))
 
-(define (lsp-json-object [members : json.JsonMemberSeq]) : json.Json
+(define (lsp-json-object [members : json.JsonMemberSeq])
+  (:cold) : json.Json
   (JsonObject (box members)))
 
-(define (lsp-json-list-cons [value : json.Json] [rest : json.JsonSeq]) : json.JsonSeq
+(define (lsp-json-list-cons [value : json.Json] [rest : json.JsonSeq])
+  (:cold) : json.JsonSeq
   (json.list-cons value rest))
 
-(define (lsp-json-array [items : json.JsonSeq]) : json.Json
+(define (lsp-json-array [items : json.JsonSeq])
+  (:cold) : json.Json
   (JsonArray (box items)))
 
-(define (lsp-json-rpc-member [rest : json.JsonMemberSeq]) : json.JsonMemberSeq
+(define (lsp-json-rpc-member [rest : json.JsonMemberSeq])
+  (:cold) : json.JsonMemberSeq
   (lsp-json-member "jsonrpc" (JsonString "2.0") rest))
 
-(define (lsp-json-object1 [k : String] [v : json.Json]) : json.Json
+(define (lsp-json-object1 [k : String] [v : json.Json])
+  (:cold) : json.Json
   (lsp-json-object (lsp-json-member k v (json.member-list-empty))))
 
 (define (lsp-json-object2
   [k1 : String]
   [v1 : json.Json]
   [k2 : String]
-  [v2 : json.Json]) : json.Json
+  [v2 : json.Json])
+  (:cold) : json.Json
   (lsp-json-object
     (lsp-json-member k1 v1 (lsp-json-member k2 v2 (json.member-list-empty)))))
 
@@ -746,7 +782,8 @@
   [k2 : String]
   [v2 : json.Json]
   [k3 : String]
-  [v3 : json.Json]) : json.Json
+  [v3 : json.Json])
+  (:cold) : json.Json
   (lsp-json-object
     (lsp-json-member
       k1
@@ -761,7 +798,8 @@
   [k3 : String]
   [v3 : json.Json]
   [k4 : String]
-  [v4 : json.Json]) : json.Json
+  [v4 : json.Json])
+  (:cold) : json.Json
   (lsp-json-object
     (lsp-json-member
       k1
@@ -771,8 +809,8 @@
         v2
         (lsp-json-member k3 v3 (lsp-json-member k4 v4 (json.member-list-empty)))))))
 
-(define (lsp-json-field-ref [value : (& value json.Json)] [key : (& key str)]) : (LspJsonFieldRef
-    value)
+(define (lsp-json-field-ref [value : (& value json.Json)] [key : (& key str)])
+  (:cold) : (LspJsonFieldRef value)
   (match value
     [(JsonObject members)
       (let
@@ -785,7 +823,8 @@
         Missing)]
     [_ Missing]))
 
-(define (lsp-json-string-field [value : (& value json.Json)] [key : String]) : LspJsonText
+(define (lsp-json-string-field [value : (& value json.Json)] [key : String])
+  (:cold) : LspJsonText
   (let
     [value : json.Json (owned_view.compiler-owned-reference-shared-view value)]
     (match (json.object-get value (& key))
@@ -798,7 +837,8 @@
 (define (lsp-json-string-field-default
   [value : json.Json]
   [key : String]
-  [fallback : String]) : String
+  [fallback : String])
+  (:cold) : String
   (match (lsp-json-string-field value key)
     [(Ok text) text]
     [(Missing) fallback]))
@@ -810,34 +850,41 @@
 (define lsp-position-encoding-utf8 : bool
   false)
 
-(define (lsp-language-config-reset!) : unit
+(define (lsp-language-config-reset!)
+  (:cold) : unit
   (set! lsp-language-target (target_cfg.compiler-target-cfg-host))
   (set! lsp-language-cfg-names (lsp_svec.new))
   (set! lsp-position-encoding-utf8 false))
 
 (define (lsp-language-config-install!
   [target : target_cfg.CompilerTargetCfg]
-  [cfg-names : lsp_svec.Vec]) : unit
+  [cfg-names : lsp_svec.Vec])
+  (:cold) : unit
   (set! lsp-language-target target)
   (set! lsp-language-cfg-names cfg-names))
 
-(define (lsp-language-cfgs) : sym_i64_env.SymI64Env
+(define (lsp-language-cfgs)
+  (:cold) : sym_i64_env.SymI64Env
   (target_cfg.compiler-target-cfgs-with-names
     lsp-language-target
     (lsp-global-shared-view lsp-language-cfg-names)))
 
-(define (lsp-position-encoding-name) : String
+(define (lsp-position-encoding-name)
+  (:cold) : String
   (if lsp-position-encoding-utf8
     "utf-8"
     "utf-16"))
 
-(define (lsp-position-encoding-use-utf16!) : unit
+(define (lsp-position-encoding-use-utf16!)
+  (:cold) : unit
   (set! lsp-position-encoding-utf8 false))
 
-(define (lsp-position-encoding-use-utf8!) : unit
+(define (lsp-position-encoding-use-utf8!)
+  (:cold) : unit
   (set! lsp-position-encoding-utf8 true))
 
-(define (lsp-position-encodings-offer-utf8? [items : json.JsonSeq]) : bool
+(define (lsp-position-encodings-offer-utf8? [items : json.JsonSeq])
+  (:cold) : bool
   (let
     [i : i64 0]
     [n : i64 (json.list-count (owned_view.compiler-owned-shared-view items))]
@@ -859,7 +906,8 @@
 
 ;; LSP 3.17 defaults to UTF-16. TypeLisp also supports UTF-8 positions and
 ;; selects them whenever the client explicitly offers that encoding.
-(define (lsp-initialize-position-encoding-utf8? [message : json.Json]) : bool
+(define (lsp-initialize-position-encoding-utf8? [message : json.Json])
+  (:cold) : bool
   (let
     [params-key : String "params"]
     [capabilities-key : String "capabilities"]
@@ -884,7 +932,8 @@
           [(JsonMissing) false])]
       [(JsonMissing) false])))
 
-(define (lsp-initialize-cfg-names [options : json.Json]) : LspInitializeLanguageConfig
+(define (lsp-initialize-cfg-names [options : json.Json])
+  (:cold) : LspInitializeLanguageConfig
   (let
     [target : target_cfg.CompilerTargetCfg
       (target_cfg.compiler-target-cfg-host)]
@@ -933,7 +982,8 @@
       (Ok target cfg-names)
       (Err error))))
 
-(define (lsp-initialize-language-config [message : json.Json]) : LspInitializeLanguageConfig
+(define (lsp-initialize-language-config [message : json.Json])
+  (:cold) : LspInitializeLanguageConfig
   (let
     [params-key : String "params"]
     [options-key : String "initializationOptions"]
@@ -952,10 +1002,12 @@
                 (lsp-initialize-cfg-names typelisp-options)]
               [(JsonMissing) (lsp-initialize-cfg-names options)])])])))
 
-(define (lsp-write-json [value : json.Json]) : unit
+(define (lsp-write-json [value : json.Json])
+  (:cold) : unit
   (lsp-frame-write-body (json.stringify value)))
 
-(define (lsp-write-response [id : json.Json] [result : json.Json]) : unit
+(define (lsp-write-response [id : json.Json] [result : json.Json])
+  (:cold) : unit
   (lsp-write-json
     (lsp-json-object
       (lsp-json-rpc-member
@@ -964,7 +1016,8 @@
           id
           (lsp-json-member "result" result (json.member-list-empty)))))))
 
-(define (lsp-write-error [id : json.Json] [code : i64] [message : String]) : unit
+(define (lsp-write-error [id : json.Json] [code : i64] [message : String])
+  (:cold) : unit
   (lsp-write-json
     (lsp-json-object
       (lsp-json-rpc-member
@@ -984,7 +1037,8 @@
   [id : json.Json]
   [code : i64]
   [message : String]
-  [data : json.Json]) : unit
+  [data : json.Json])
+  (:cold) : unit
   (lsp-write-json
     (lsp-json-object
       (lsp-json-rpc-member
@@ -1006,7 +1060,8 @@
   [id : json.Json]
   [code : i64]
   [message : String]
-  [context : json.Json]) : unit
+  [context : json.Json])
+  (:cold) : unit
   (lsp-write-json
     (lsp-json-object
       (lsp-json-rpc-member
@@ -1034,10 +1089,12 @@
                     (json.member-list-empty)))))
             (json.member-list-empty)))))))
 
-(define (lsp-write-parse-error [message : String]) : unit
+(define (lsp-write-parse-error [message : String])
+  (:cold) : unit
   (lsp-write-error JsonNull -32700 message))
 
-(define (lsp-semantic-token-legend-types) : json.Json
+(define (lsp-semantic-token-legend-types)
+  (:cold) : json.Json
   (let
     [items : (__tl_dyn-array json.Json) (__tl_make-array json.Json 13)]
     (set! (array-ref items 0) (json.JsonString "namespace"))
@@ -1055,7 +1112,8 @@
     (set! (array-ref items 12) (json.JsonString "operator"))
     (lsp-json-array (json.JsonSeq items 13))))
 
-(define (lsp-semantic-token-legend-modifiers) : json.Json
+(define (lsp-semantic-token-legend-modifiers)
+  (:cold) : json.Json
   (let
     [items : (__tl_dyn-array json.Json) (__tl_make-array json.Json 4)]
     (set! (array-ref items 0) (json.JsonString "declaration"))
@@ -1064,7 +1122,8 @@
     (set! (array-ref items 3) (json.JsonString "defaultLibrary"))
     (lsp-json-array (json.JsonSeq items 4))))
 
-(define (lsp-semantic-token-provider-capability) : json.Json
+(define (lsp-semantic-token-provider-capability)
+  (:cold) : json.Json
   (lsp-json-object2
     "legend"
     (lsp-json-object2
@@ -1075,7 +1134,8 @@
     "full"
     (JsonBool true)))
 
-(define (lsp-initialize-result) : json.Json
+(define (lsp-initialize-result)
+  (:cold) : json.Json
   (lsp-json-object2
     "capabilities"
     (lsp-json-object
@@ -1168,21 +1228,25 @@
       "version"
       (JsonString "selfhost"))))
 
-(define (lsp-diagnostic-uris-empty) : lsp_vector_families.LspDiagnosticUris
+(define (lsp-diagnostic-uris-empty)
+  (:cold) : lsp_vector_families.LspDiagnosticUris
   (lsp_vector_families.LspDiagnosticUris (__tl_make-array String 0) 0))
 
 (define (lsp-diagnostic-uris-len
-  [uris : (& uris lsp_vector_families.LspDiagnosticUris)]) : i64
+  [uris : (& uris lsp_vector_families.LspDiagnosticUris)])
+  (:cold) : i64
   uris.len)
 
 (define (lsp-diagnostic-uris-get
   [uris : lsp_vector_families.LspDiagnosticUris]
-  [index : i64]) : String
+  [index : i64])
+  (:cold) : String
   (owned_view.compiler-owned-element-view uris.slots index))
 
 (define (lsp-diagnostic-uris-contains-from?
   [uris : lsp_vector_families.LspDiagnosticUris]
-  [uri : String]) : bool
+  [uri : String])
+  (:cold) : bool
   (for [index (iterator.range 0 (lsp-diagnostic-uris-len uris))]
     (when
       (string.eq
@@ -1195,12 +1259,14 @@
 
 (define (lsp-diagnostic-uris-contains?
   [uris : lsp_vector_families.LspDiagnosticUris]
-  [uri : String]) : bool
+  [uri : String])
+  (:cold) : bool
   (lsp-diagnostic-uris-contains-from? uris uri))
 
 (define (lsp-diagnostic-uris-add
   [uris : lsp_vector_families.LspDiagnosticUris]
-  [uri : String]) : lsp_vector_families.LspDiagnosticUris
+  [uri : String])
+  (:cold) : lsp_vector_families.LspDiagnosticUris
   (if (lsp-diagnostic-uris-contains?
     (owned_view.compiler-owned-shared-view uris)
     (owned_view.compiler-owned-shared-view uri))
@@ -1225,7 +1291,8 @@
       (set! (array-ref slots n) uri)
       (lsp_vector_families.LspDiagnosticUris slots (+ n 1)))))
 
-(define (lsp-semantic-snapshot-empty) : lsp_vector_families.LspSemanticSnapshot
+(define (lsp-semantic-snapshot-empty)
+  (:cold) : lsp_vector_families.LspSemanticSnapshot
   (lsp_vector_families.LspSemanticSnapshot
     (compiler_semantic_index.compiler-semantic-source-index-empty)
     -1
@@ -1234,7 +1301,8 @@
     false))
 
 (define (lsp-semantic-snapshot-release!
-  [snapshot : (&mut snapshot lsp_vector_families.LspSemanticSnapshot)]) : unit
+  [snapshot : (&mut snapshot lsp_vector_families.LspSemanticSnapshot)])
+  (:cold) : unit
   (when
     snapshot.present
     (compiler_semantic_index.compiler-semantic-source-index-release!
@@ -1245,7 +1313,8 @@
     (set! snapshot.present false)))
 
 (define (lsp-document-semantic-snapshot-status
-  [doc : (& doc lsp_vector_families.LspDocument)]) : LspSemanticSnapshotStatus
+  [doc : (& doc lsp_vector_families.LspDocument)])
+  (:cold) : LspSemanticSnapshotStatus
   (let
     [snapshot : lsp_vector_families.LspSemanticSnapshot doc.semantic]
     (if (not snapshot.present)
@@ -1268,7 +1337,8 @@
 
 (define (lsp-document-semantic-record-at
   [doc : (& doc lsp_vector_families.LspDocument)]
-  [byte-position : i64]) : i64
+  [byte-position : i64])
+  (:cold) : i64
   (match (lsp-document-semantic-snapshot-status doc)
     [(Current _ _)
       (compiler_semantic_index.compiler-semantic-source-index-find-editable-record-at
@@ -1278,7 +1348,8 @@
     [_ -1]))
 
 (define (lsp-semantic-record-exact-editable?
-  [record : (& record compiler_semantic_index.CompilerSemanticRecord)]) : bool
+  [record : (& record compiler_semantic_index.CompilerSemanticRecord)])
+  (:cold) : bool
   (let
     [span : compiler_semantic_index.CompilerSemanticSpan record.span]
     [source-span : ast.AstSourceSpan span.source]
@@ -1299,13 +1370,15 @@
 
 (define (lsp-document-semantic-symbol-query
   [doc : (& doc lsp_vector_families.LspDocument)]
-  [byte-position : i64]) : LspSemanticSymbolQuery
+  [byte-position : i64])
+  (:cold) : LspSemanticSymbolQuery
   (lsp-document-semantic-symbol-query-with-hover doc byte-position false))
 
 (define (lsp-document-semantic-symbol-query-with-hover
   [doc : (& doc lsp_vector_families.LspDocument)]
   [byte-position : i64]
-  [hover? : bool]) : LspSemanticSymbolQuery
+  [hover? : bool])
+  (:cold) : LspSemanticSymbolQuery
   (match (lsp-document-semantic-snapshot-status doc)
     [(Current _ _)
       (let
@@ -1352,7 +1425,8 @@
               Missing))))]
     [_ Missing]))
 
-(define (lsp-document-fallback) : lsp_vector_families.LspDocument
+(define (lsp-document-fallback)
+  (:cold) : lsp_vector_families.LspDocument
   (lsp_vector_families.LspDocument
     ""
     ""
@@ -1370,7 +1444,8 @@
 (define (lsp-documents-find-index-from
   [docs : (& docs lsp_document_vec.Vec)]
   [uri : (& uri str)]
-  [index : i64]) : i64
+  [index : i64])
+  (:cold) : i64
   (let
     [i : i64 index]
     [found : i64 -1]
@@ -1393,7 +1468,8 @@
 
 (define (lsp-documents-find-index
   [docs : (& docs lsp_document_vec.Vec)]
-  [uri : (& uri str)]) : i64
+  [uri : (& uri str)])
+  (:cold) : i64
   (lsp-documents-find-index-from docs uri 0))
 
 (define (lsp-documents-set-versioned
@@ -1402,7 +1478,8 @@
   [path : String]
   [text : String]
   [version : i64]
-  [diagnostic-uris : lsp_vector_families.LspDiagnosticUris]) : lsp_document_vec.Vec
+  [diagnostic-uris : lsp_vector_families.LspDiagnosticUris])
+  (:cold) : lsp_document_vec.Vec
   (let
     [docs : lsp_document_vec.Vec docs]
     [index : i64 (lsp-documents-find-index docs uri)]
@@ -1447,13 +1524,15 @@
   [uri : String]
   [path : String]
   [text : String]
-  [diagnostic-uris : lsp_vector_families.LspDiagnosticUris]) : lsp_document_vec.Vec
+  [diagnostic-uris : lsp_vector_families.LspDiagnosticUris])
+  (:cold) : lsp_document_vec.Vec
   (lsp-documents-set-versioned docs uri path text -1 diagnostic-uris))
 
 (define (lsp-documents-set-check-cache!
   [docs : (&mut docs lsp_document_vec.Vec)]
   [uri : (& uri str)]
-  [check-cache : lsp_vector_families.LspCheckCache]) : unit
+  [check-cache : lsp_vector_families.LspCheckCache])
+  (:cold) : unit
   (let
     [index : i64 0]
     [found : i64 -1]
@@ -1468,7 +1547,8 @@
 (define (lsp-documents-set-check-cache
   [docs : lsp_document_vec.Vec]
   [uri : (& uri str)]
-  [check-cache : lsp_vector_families.LspCheckCache]) : lsp_document_vec.Vec
+  [check-cache : lsp_vector_families.LspCheckCache])
+  (:cold) : lsp_document_vec.Vec
   (let
     [docs : lsp_document_vec.Vec docs]
     (lsp-documents-set-check-cache! (&mut docs) uri check-cache)
@@ -1478,7 +1558,8 @@
   [docs : lsp_document_vec.Vec]
   [uri : (& uri str)]
   [version : i64]
-  [semantic-index : compiler_semantic_index.CompilerSemanticSourceIndex]) : lsp_document_vec.Vec
+  [semantic-index : compiler_semantic_index.CompilerSemanticSourceIndex])
+  (:cold) : lsp_document_vec.Vec
   (let
     [docs : lsp_document_vec.Vec docs]
     [semantic-index : compiler_semantic_index.CompilerSemanticSourceIndex
@@ -1507,13 +1588,15 @@
 
 (define (lsp-documents-release-index!
   [docs : (&mut docs lsp_document_vec.Vec)]
-  [index : i64]) : unit
+  [index : i64])
+  (:cold) : unit
   (if (and (>= index 0) (< index (lsp_document_vec.len (& docs))))
     (lsp-semantic-snapshot-release!
       (&mut (array-ref docs.slots index).semantic))
     unit))
 
-(define (lsp-documents-release-all! [docs : (&mut docs lsp_document_vec.Vec)]) : unit
+(define (lsp-documents-release-all! [docs : (&mut docs lsp_document_vec.Vec)])
+  (:cold) : unit
   (let
     [index : i64 0]
     (while (< index (lsp_document_vec.len (& docs)))
@@ -1522,7 +1605,8 @@
 
 (define (lsp-documents-shift-left!
   [docs : (&mut docs lsp_document_vec.Vec)]
-  [index : i64]) : unit
+  [index : i64])
+  (:cold) : unit
   (let
     [last : i64 (- (lsp_document_vec.len (& docs)) 1)]
     (for [i (iterator.range index last)]
@@ -1532,7 +1616,8 @@
         (unsafe
           (ptr-read (ptr-offset (__tl_array-data docs.slots) (+ i 1))))))))
 
-(define (lsp-documents-remove-index [docs : lsp_document_vec.Vec] [index : i64]) : lsp_document_vec.Vec
+(define (lsp-documents-remove-index [docs : lsp_document_vec.Vec] [index : i64])
+  (:cold) : lsp_document_vec.Vec
   (let
     [docs : lsp_document_vec.Vec docs]
     (if (if (>= index 0)
@@ -1545,14 +1630,16 @@
         docs)
       docs)))
 
-(define (lsp-documents-remove [docs : lsp_document_vec.Vec] [uri : String]) : lsp_document_vec.Vec
+(define (lsp-documents-remove [docs : lsp_document_vec.Vec] [uri : String])
+  (:cold) : lsp_document_vec.Vec
   (let
     [index : i64 (lsp-documents-find-index docs uri)]
     (lsp-documents-remove-index docs index)))
 
 (define (lsp-documents-lookup
   [docs : (& docs lsp_document_vec.Vec)]
-  [uri : (& uri str)]) : LspDocumentLookup
+  [uri : (& uri str)])
+  (:cold) : LspDocumentLookup
   (let
     [index : i64 (lsp-documents-find-index docs uri)]
     (if (>= index 0)
@@ -1569,7 +1656,8 @@
 
 (define (lsp-document-refresh-from-disk
   [docs : lsp_document_vec.Vec]
-  [index : i64]) : lsp_vector_families.LspDocument
+  [index : i64])
+  (:cold) : lsp_vector_families.LspDocument
   (let
     [path : String (string.copy (& (array-ref docs.slots index).path))]
     ;; Versioned documents are client-owned open buffers. Only unversioned
@@ -1601,7 +1689,8 @@
 
 (define (lsp-documents-lookup-resynced
   [docs : lsp_document_vec.Vec]
-  [uri : (& uri str)]) : LspDocumentLookup
+  [uri : (& uri str)])
+  (:cold) : LspDocumentLookup
   (let
     [index : i64 (lsp-documents-find-index docs uri)]
     (if (>= index 0)
@@ -1611,10 +1700,12 @@
         (Found doc.path doc.text doc.diagnostic-uris))
       Missing)))
 
-(define (lsp-workspace-root-fallback) : lsp_vector_families.LspWorkspaceRoot
+(define (lsp-workspace-root-fallback)
+  (:cold) : lsp_vector_families.LspWorkspaceRoot
   (lsp_vector_families.LspWorkspaceRoot "" ""))
 
-(define (lsp-workspace-source-fallback) : lsp_vector_families.LspWorkspaceSource
+(define (lsp-workspace-source-fallback)
+  (:cold) : lsp_vector_families.LspWorkspaceSource
   (lsp_vector_families.LspWorkspaceSource
     ""
     ""
@@ -1625,18 +1716,21 @@
     false
     (lsp_decl_vec.new)))
 
-(define (lsp-workspace-roots-new) : lsp_vector_families.LspWorkspaceRoots
+(define (lsp-workspace-roots-new)
+  (:cold) : lsp_vector_families.LspWorkspaceRoots
   (lsp_vector_families.LspWorkspaceRoots
     (__tl_make-array lsp_vector_families.LspWorkspaceRoot 0)
     0))
 
 (define (lsp-workspace-roots-len
-  [roots : (& roots lsp_vector_families.LspWorkspaceRoots)]) : i64
+  [roots : (& roots lsp_vector_families.LspWorkspaceRoots)])
+  (:cold) : i64
   roots.len)
 
 (define (lsp-workspace-roots-get
   [roots : (& roots lsp_vector_families.LspWorkspaceRoots)]
-  [index : i64]) : lsp_vector_families.LspWorkspaceRoot
+  [index : i64])
+  (:cold) : lsp_vector_families.LspWorkspaceRoot
   (if (and (>= index 0) (< index roots.len))
     (owned_view.compiler-owned-element-view (& roots.slots) index)
     (lsp-workspace-root-fallback)))
@@ -1644,14 +1738,16 @@
 (define (lsp-workspace-roots-copy-range!
   [dst : (&mut dst (__tl_dyn-array lsp_vector_families.LspWorkspaceRoot))]
   [src : (& src (__tl_dyn-array lsp_vector_families.LspWorkspaceRoot))]
-  [count : i64]) : unit
+  [count : i64])
+  (:cold) : unit
   (for [index (iterator.range 0 count)]
     (set!
       (array-ref dst index)
       (owned_view.compiler-owned-element-view src index))))
 
 (define (lsp-workspace-roots-grow!
-  [roots : (&mut roots lsp_vector_families.LspWorkspaceRoots)]) : unit
+  [roots : (&mut roots lsp_vector_families.LspWorkspaceRoots)])
+  (:cold) : unit
   (let
     [old-cap : i64 (array-length roots.slots)]
     [new-cap : i64
@@ -1665,7 +1761,8 @@
 
 (define (lsp-workspace-roots-push!
   [roots : (&mut roots lsp_vector_families.LspWorkspaceRoots)]
-  [root : lsp_vector_families.LspWorkspaceRoot]) : unit
+  [root : lsp_vector_families.LspWorkspaceRoot])
+  (:cold) : unit
   (if (>= roots.len (array-length roots.slots))
     (lsp-workspace-roots-grow! roots)
     unit)
@@ -1674,7 +1771,8 @@
 
 (define (lsp-workspace-roots-find-uri
   [roots : (& roots lsp_vector_families.LspWorkspaceRoots)]
-  [uri : String]) : i64
+  [uri : String])
+  (:cold) : i64
   (let
     [index : i64 0]
     [found : i64 -1]
@@ -1686,7 +1784,8 @@
 
 (define (lsp-workspace-roots-remove-index!
   [roots : (&mut roots lsp_vector_families.LspWorkspaceRoots)]
-  [index : i64]) : unit
+  [index : i64])
+  (:cold) : unit
   (if (or (< index 0) (>= index roots.len))
     unit
     (let
@@ -1699,18 +1798,21 @@
             (+ cursor 1))))
       (set! roots.len last))))
 
-(define (lsp-workspace-sources-new) : lsp_vector_families.LspWorkspaceSources
+(define (lsp-workspace-sources-new)
+  (:cold) : lsp_vector_families.LspWorkspaceSources
   (lsp_vector_families.LspWorkspaceSources
     (__tl_make-array lsp_vector_families.LspWorkspaceSource 0)
     0))
 
 (define (lsp-workspace-sources-len
-  [sources : (& sources lsp_vector_families.LspWorkspaceSources)]) : i64
+  [sources : (& sources lsp_vector_families.LspWorkspaceSources)])
+  (:cold) : i64
   sources.len)
 
 (define (lsp-workspace-sources-get
   [sources : (& sources lsp_vector_families.LspWorkspaceSources)]
-  [index : i64]) : lsp_vector_families.LspWorkspaceSource
+  [index : i64])
+  (:cold) : lsp_vector_families.LspWorkspaceSource
   (if (and (>= index 0) (< index sources.len))
     (owned_view.compiler-owned-element-view (& sources.slots) index)
     (lsp-workspace-source-fallback)))
@@ -1718,14 +1820,16 @@
 (define (lsp-workspace-sources-copy-range!
   [dst : (&mut dst (__tl_dyn-array lsp_vector_families.LspWorkspaceSource))]
   [src : (& src (__tl_dyn-array lsp_vector_families.LspWorkspaceSource))]
-  [count : i64]) : unit
+  [count : i64])
+  (:cold) : unit
   (for [index (iterator.range 0 count)]
     (set!
       (array-ref dst index)
       (owned_view.compiler-owned-element-view src index))))
 
 (define (lsp-workspace-sources-grow!
-  [sources : (&mut sources lsp_vector_families.LspWorkspaceSources)]) : unit
+  [sources : (&mut sources lsp_vector_families.LspWorkspaceSources)])
+  (:cold) : unit
   (let
     [old-cap : i64 (array-length sources.slots)]
     [new-cap : i64
@@ -1742,7 +1846,8 @@
 
 (define (lsp-workspace-sources-push!
   [sources : (&mut sources lsp_vector_families.LspWorkspaceSources)]
-  [source : lsp_vector_families.LspWorkspaceSource]) : unit
+  [source : lsp_vector_families.LspWorkspaceSource])
+  (:cold) : unit
   (if (>= sources.len (array-length sources.slots))
     (lsp-workspace-sources-grow! sources)
     unit)
@@ -1752,14 +1857,16 @@
 (define (lsp-workspace-sources-set!
   [sources : (&mut sources lsp_vector_families.LspWorkspaceSources)]
   [index : i64]
-  [source : lsp_vector_families.LspWorkspaceSource]) : unit
+  [source : lsp_vector_families.LspWorkspaceSource])
+  (:cold) : unit
   (if (and (>= index 0) (< index sources.len))
     (set! (array-ref sources.slots index) source)
     unit))
 
 (define (lsp-workspace-sources-find-uri
   [sources : (& sources lsp_vector_families.LspWorkspaceSources)]
-  [uri : String]) : i64
+  [uri : String])
+  (:cold) : i64
   (let
     [index : i64 0]
     [found : i64 -1]
@@ -1773,7 +1880,8 @@
 
 (define (lsp-workspace-sources-remove-index!
   [sources : (&mut sources lsp_vector_families.LspWorkspaceSources)]
-  [index : i64]) : unit
+  [index : i64])
+  (:cold) : unit
   (if (or (< index 0) (>= index sources.len))
     unit
     (let
@@ -1788,7 +1896,8 @@
 
 (define (lsp-documents-find-path-index
   [docs : (& docs lsp_document_vec.Vec)]
-  [path : (& path str)]) : i64
+  [path : (& path str)])
+  (:cold) : i64
   (let
     [normalized : String (compiler_load.compiler-load-normalize-path path)]
     [index : i64 0]
@@ -1806,7 +1915,8 @@
           (+= index 1))))
     found))
 
-(define (lsp-hex-value [c : char]) : i64
+(define (lsp-hex-value [c : char])
+  (:cold) : i64
   (let
     [code : i64 (cast c : i64)]
     (cond
@@ -1820,7 +1930,8 @@
 ;; the two bytes of its UTF-8 spelling. That inverts `lsp-percent-encode-path`
 ;; for every path it encodes. Decoded bytes that are not well-formed UTF-8, or
 ;; that contain NUL, are refused rather than repaired.
-(define (lsp-percent-decode [text : String]) : LspStringResult
+(define (lsp-percent-decode [text : String])
+  (:cold) : LspStringResult
   (let
     [n : i64 (string.string-length text)]
     ;; Decoding never lengthens the text.
@@ -1865,7 +1976,8 @@
               (ptr-cast (__tl_array-data bytes) : (Ptr u8))
               len)))])))
 
-(define (lsp-uri-path-strip-windows-leading-slash [path : String]) : String
+(define (lsp-uri-path-strip-windows-leading-slash [path : String])
+  (:cold) : String
   (let
     [n : i64 (string.string-length path)]
     (if (and
@@ -1875,7 +1987,8 @@
       (string.substring path 1 (- n 1))
       path)))
 
-(define (lsp-file-uri-to-path [uri : (& uri str)]) : LspUriPath
+(define (lsp-file-uri-to-path [uri : (& uri str)])
+  (:cold) : LspUriPath
   (if (source_text.starts-with? uri "file://")
     (let
       [decoded
@@ -1888,7 +2001,8 @@
         (Err "unsupported TypeLisp LSP URI: empty file path")))
     (Err "unsupported TypeLisp LSP URI: expected file:// URI")))
 
-(define (lsp-uri-safe-code? [code : i64]) : bool
+(define (lsp-uri-safe-code? [code : i64])
+  (:cold) : bool
   (or
     (and (>= code 65) (<= code 90))
     (and (>= code 97) (<= code 122))
@@ -1900,7 +2014,8 @@
     (= code 47)
     (= code 58)))
 
-(define (lsp-percent-encode-path [path : String]) : String
+(define (lsp-percent-encode-path [path : String])
+  (:cold) : String
   (let
     [n : i64 (string.string-length path)]
     [out : String ""]
@@ -1918,12 +2033,14 @@
               (json.hex-digit (- code (* (/ code 16) 16))))))))
     out))
 
-(define (lsp-path-to-file-uri [path : String]) : String
+(define (lsp-path-to-file-uri [path : String])
+  (:cold) : String
   (if (and (> (string.string-length path) 0) (= (string.string-ref path 0) '/'))
     (lsp-str2 "file://" (lsp-percent-encode-path path))
     (lsp-str2 "file:///" (lsp-percent-encode-path path))))
 
-(define (lsp-resolved-path-to-file-uri [path : (& path str)]) : String
+(define (lsp-resolved-path-to-file-uri [path : (& path str)])
+  (:cold) : String
   (let
     [normalized : String (fs.path-normalize (& path))]
     (lsp-path-to-file-uri
@@ -1934,7 +2051,8 @@
           [joined : String (fs.path-join (& cwd) (& normalized))]
           (fs.path-normalize (& joined)))))))
 
-(define (lsp-normalized-absolute-path [path : String]) : String
+(define (lsp-normalized-absolute-path [path : String])
+  (:cold) : String
   (let
     [normalized : String (fs.path-normalize (& path))]
     (if (fs.path-absolute? (& normalized))
@@ -1944,7 +2062,8 @@
         [joined : String (fs.path-join (& cwd) (& normalized))]
         (fs.path-normalize (& joined))))))
 
-(define (lsp-workspace-root-from-uri [uri : String]) : lsp_vector_families.LspWorkspaceRootLookup
+(define (lsp-workspace-root-from-uri [uri : String])
+  (:cold) : lsp_vector_families.LspWorkspaceRootLookup
   (match (lsp-file-uri-to-path uri)
     [(Err _) Missing]
     [(Ok path)
@@ -1960,7 +2079,8 @@
 
 (define (lsp-workspace-roots-add-uri!
   [roots : (&mut roots lsp_vector_families.LspWorkspaceRoots)]
-  [uri : String]) : unit
+  [uri : String])
+  (:cold) : unit
   (match (lsp-workspace-root-from-uri uri)
     [(Missing) unit]
     [(Found root)
@@ -1974,7 +2094,8 @@
 
 (define (lsp-workspace-roots-add-folder-items!
   [roots : (&mut roots lsp_vector_families.LspWorkspaceRoots)]
-  [items : json.JsonSeq]) : unit
+  [items : json.JsonSeq])
+  (:cold) : unit
   (let
     [count : i64
       (json.list-count (owned_view.compiler-owned-shared-view items))]
@@ -1988,7 +2109,8 @@
             [(Missing) unit]
             [(Ok uri) (lsp-workspace-roots-add-uri! roots uri)])]))))
 
-(define (lsp-initialize-workspace-roots [message : json.Json]) : lsp_vector_families.LspWorkspaceRoots
+(define (lsp-initialize-workspace-roots [message : json.Json])
+  (:cold) : lsp_vector_families.LspWorkspaceRoots
   (let
     [roots : lsp_vector_families.LspWorkspaceRoots (lsp-workspace-roots-new)]
     [params-key : String "params"]
@@ -2015,19 +2137,22 @@
             unit))])
     roots))
 
-(define (lsp-zero-based [value : i64]) : i64
+(define (lsp-zero-based [value : i64])
+  (:cold) : i64
   (if (> value 0)
     (- value 1)
     0))
 
-(define (lsp-position [line : i64] [character : i64]) : json.Json
+(define (lsp-position [line : i64] [character : i64])
+  (:cold) : json.Json
   (lsp-json-object2
     "line"
     (lsp-json-number (lsp-zero-based line))
     "character"
     (lsp-json-number (lsp-zero-based character))))
 
-(define (lsp-range [line : i64] [col : i64]) : json.Json
+(define (lsp-range [line : i64] [col : i64])
+  (:cold) : json.Json
   (lsp-json-object2
     "start"
     (lsp-position line col)
@@ -2037,7 +2162,8 @@
 (define (lsp-source-for-compiler-span
   [fallback-path : (& fallback-path str)]
   [fallback-text : String]
-  [span : (& span cdiag.CompilerDiagnosticSpan)]) : String
+  [span : (& span cdiag.CompilerDiagnosticSpan)])
+  (:cold) : String
   (let
     [path : String (cdiag.compiler-diagnostic-span-path span)]
     (if (or (string.eq path "") (string.eq path fallback-path))
@@ -2047,7 +2173,8 @@
 (define (lsp-position-from-byte-line-col
   [text : (& text str)]
   [line : i64]
-  [col : i64]) : json.Json
+  [col : i64])
+  (:cold) : json.Json
   (let
     [offset : i64
       (source_text.source-text-offset-at-byte-position
@@ -2060,7 +2187,8 @@
 (define (lsp-range-from-compiler-span
   [fallback-path : String]
   [fallback-text : String]
-  [span : (& span cdiag.CompilerDiagnosticSpan)]) : json.Json
+  [span : (& span cdiag.CompilerDiagnosticSpan)])
+  (:cold) : json.Json
   (let
     [text : String
       (lsp-source-for-compiler-span fallback-path fallback-text span)]
@@ -2084,7 +2212,8 @@
 
 (define (lsp-diagnostic-related-uri
   [fallback-path : String]
-  [span : (& span cdiag.CompilerDiagnosticSpan)]) : String
+  [span : (& span cdiag.CompilerDiagnosticSpan)])
+  (:cold) : String
   (let
     [path : String (cdiag.compiler-diagnostic-span-path span)]
     [path-arg
@@ -2094,7 +2223,8 @@
     (lsp-resolved-path-to-file-uri path-arg)))
 
 (define (lsp-diagnostic-related-message
-  [label : cdiag.CompilerDiagnosticMaybeString]) : String
+  [label : cdiag.CompilerDiagnosticMaybeString])
+  (:cold) : String
   (match label
     [(CompilerDiagnosticSomeString text) text]
     [CompilerDiagnosticNoString "related location"]))
@@ -2102,7 +2232,8 @@
 (define (lsp-diagnostic-related-information
   [fallback-path : String]
   [fallback-text : String]
-  [entry : cdiag.CompilerDiagnosticLabel]) : json.Json
+  [entry : cdiag.CompilerDiagnosticLabel])
+  (:cold) : json.Json
   (let
     [span : cdiag.CompilerDiagnosticSpan entry.span]
     (lsp-json-object2
@@ -2121,7 +2252,8 @@
 (define (lsp-diagnostic-related-information-list
   [fallback-path : String]
   [fallback-text : String]
-  [labels : cdiag.CompilerDiagnosticLabelList]) : json.JsonSeq
+  [labels : cdiag.CompilerDiagnosticLabelList])
+  (:cold) : json.JsonSeq
   (let
     [index : i64 (- (cdiag.compiler-diagnostic-label-list-count labels) 1)]
     [out : json.JsonSeq (json.list-empty)]
@@ -2137,10 +2269,12 @@
       (-= index 1))
     out))
 
-(define (lsp-diagnostic-message-tail [message : String]) : json.JsonMemberSeq
+(define (lsp-diagnostic-message-tail [message : String])
+  (:cold) : json.JsonMemberSeq
   (lsp-json-member "message" (JsonString message) (json.member-list-empty)))
 
-(define (lsp-diagnostic-data [version : i64] [kind : String] [index : i64]) : json.Json
+(define (lsp-diagnostic-data [version : i64] [kind : String] [index : i64])
+  (:cold) : json.Json
   (lsp-json-object3
     "version"
     (lsp-json-number version)
@@ -2153,10 +2287,12 @@
   [version : i64]
   [kind : String]
   [index : i64]
-  [tail : json.JsonMemberSeq]) : json.JsonMemberSeq
+  [tail : json.JsonMemberSeq])
+  (:cold) : json.JsonMemberSeq
   (lsp-json-member "data" (lsp-diagnostic-data version kind index) tail))
 
-(define (lsp-diagnostic-code-tail [code : String] [tail : json.JsonMemberSeq]) : json.JsonMemberSeq
+(define (lsp-diagnostic-code-tail [code : String] [tail : json.JsonMemberSeq])
+  (:cold) : json.JsonMemberSeq
   (if (string.eq code "")
     tail
     (lsp-json-member "code" (JsonString code) tail)))
@@ -2164,7 +2300,8 @@
 (define (lsp-diagnostic-with-range-tail
   [range : json.Json]
   [code : String]
-  [tail : json.JsonMemberSeq]) : json.Json
+  [tail : json.JsonMemberSeq])
+  (:cold) : json.Json
   (lsp-json-object
     (lsp-json-member
       "range"
@@ -2180,7 +2317,8 @@
 (define (lsp-diagnostic-with-range
   [range : json.Json]
   [message : String]
-  [code : String]) : json.Json
+  [code : String])
+  (:cold) : json.Json
   (lsp-diagnostic-with-range-tail
     range
     code
@@ -2192,7 +2330,8 @@
   [code : String]
   [version : i64]
   [kind : String]
-  [index : i64]) : json.Json
+  [index : i64])
+  (:cold) : json.Json
   (lsp-diagnostic-with-range-tail
     range
     code
@@ -2206,13 +2345,15 @@
   [line : i64]
   [col : i64]
   [message : String]
-  [code : String]) : json.Json
+  [code : String])
+  (:cold) : json.Json
   (lsp-diagnostic-with-range (lsp-range line col) message code))
 
 (define (lsp-one-codepoint-range-from-byte-position
   [text : (& text str)]
   [line : i64]
-  [col : i64]) : json.Json
+  [col : i64])
+  (:cold) : json.Json
   (let
     [n : i64 (string.string-length text)]
     [start : i64
@@ -2243,7 +2384,8 @@
   [code : String]
   [version : i64]
   [kind : String]
-  [index : i64]) : json.Json
+  [index : i64])
+  (:cold) : json.Json
   (lsp-diagnostic-with-range-data
     (lsp-one-codepoint-range-from-byte-position text line col)
     message
@@ -2253,7 +2395,8 @@
     index))
 
 (define (lsp-compiler-diagnostic-kind
-  [diag : (& diag cdiag.CompilerDiagnostic)]) : String
+  [diag : (& diag cdiag.CompilerDiagnostic)])
+  (:cold) : String
   (let
     [code : String (cdiag.compiler-diagnostic-code-or-empty diag)]
     (if (cdiag.compiler-diagnostic-parse-code? (& code))
@@ -2265,7 +2408,8 @@
   [fallback-text : String]
   [version : i64]
   [index : i64]
-  [diag : cdiag.CompilerDiagnostic]) : json.Json
+  [diag : cdiag.CompilerDiagnostic])
+  (:cold) : json.Json
   (let
     [span : cdiag.CompilerDiagnosticSpan
       (cdiag.compiler-diagnostic-primary-span diag)]
@@ -2301,14 +2445,16 @@
 (define (lsp-diagnostic-uri
   [root-uri : String]
   [root-path : (& root-path str)]
-  [diag : (& diag cdiag.CompilerDiagnostic)]) : String
+  [diag : (& diag cdiag.CompilerDiagnostic)])
+  (:cold) : String
   (let
     [diag-path : String (cdiag.compiler-diagnostic-path diag)]
     (if (or (string.eq diag-path "") (string.eq diag-path root-path))
       root-uri
       (lsp-resolved-path-to-file-uri diag-path))))
 
-(define (lsp-publish-diagnostics [uri : String] [diagnostics : json.JsonSeq]) : unit
+(define (lsp-publish-diagnostics [uri : String] [diagnostics : json.JsonSeq])
+  (:cold) : unit
   (lsp-write-json
     (lsp-json-object
       (lsp-json-rpc-member
@@ -2324,14 +2470,16 @@
               (lsp-json-array diagnostics))
             (json.member-list-empty)))))))
 
-(define (lsp-publish-uri-diagnostic [uri : String] [message : String]) : unit
+(define (lsp-publish-uri-diagnostic [uri : String] [message : String])
+  (:cold) : unit
   (lsp-publish-diagnostics
     uri
     (lsp-json-list-cons (lsp-diagnostic 1 1 message "") (json.list-empty))))
 
 (define (lsp-clear-diagnostic-uris-not-in
   [old-uris : lsp_vector_families.LspDiagnosticUris]
-  [next-uris : lsp_vector_families.LspDiagnosticUris]) : unit
+  [next-uris : lsp_vector_families.LspDiagnosticUris])
+  (:cold) : unit
   (let
     ;; Dense construction appends first-seen URIs. Walk backward so stale
     ;; clears go out newest first, the established wire order.
@@ -2352,7 +2500,8 @@
 (define (lsp-clear-stale-diagnostics
   [docs : (& docs lsp_document_vec.Vec)]
   [uri : (& uri str)]
-  [next-diagnostic-uris : lsp_vector_families.LspDiagnosticUris]) : unit
+  [next-diagnostic-uris : lsp_vector_families.LspDiagnosticUris])
+  (:cold) : unit
   (match (lsp-documents-lookup docs uri)
     [(Found _ _ old-diagnostic-uris)
       (lsp-clear-diagnostic-uris-not-in
@@ -2362,7 +2511,8 @@
 
 (define (lsp-clear-close-diagnostics
   [docs : (& docs lsp_document_vec.Vec)]
-  [uri : String]) : unit
+  [uri : String])
+  (:cold) : unit
   (match (lsp-documents-lookup docs uri)
     [(Found _ _ old-diagnostic-uris)
       (lsp-publish-diagnostics uri (json.list-empty))
@@ -2382,7 +2532,8 @@
   [message : String]
   [code : String]
   [version : i64]
-  [index : i64]) : json.Json
+  [index : i64])
+  (:cold) : json.Json
   (lsp-json-object
     (lsp-json-member
       "range"
@@ -2408,7 +2559,8 @@
   [text : String]
   [version : i64]
   [index : i64]
-  [finding : lint.LintFinding]) : json.Json
+  [finding : lint.LintFinding])
+  (:cold) : json.Json
   (let
     [span : ast.AstSourceSpan finding.span]
     (lsp-lint-diagnostic
@@ -2426,7 +2578,8 @@
   [version : i64]
   [findings : lint.LintFindings]
   [i : i64]
-  [acc : json.JsonSeq]) : json.JsonSeq
+  [acc : json.JsonSeq])
+  (:cold) : json.JsonSeq
   (if (>=
     i
     (lint.lint-findings-count (owned_view.compiler-owned-shared-view findings)))
@@ -2454,7 +2607,8 @@
   [path : String]
   [text : String]
   [version : i64]
-  [stdlib-roots : lsp_svec.Vec]) : json.JsonSeq
+  [stdlib-roots : lsp_svec.Vec])
+  (:cold) : json.JsonSeq
   (lsp-lint-findings-to-json
     (owned_view.compiler-owned-shared-view text)
     version
@@ -2473,7 +2627,8 @@
   [version : i64]
   [diagnostics : cdiag.CompilerDiagnosticList]
   [index : i64]
-  [tail : json.JsonSeq]) : json.JsonSeq
+  [tail : json.JsonSeq])
+  (:cold) : json.JsonSeq
   (let
     [cursor : i64 (- (cdiag.compiler-diagnostic-list-count diagnostics) 1)]
     [out : json.JsonSeq tail]
@@ -2508,7 +2663,8 @@
   [version : i64]
   [diagnostics : cdiag.CompilerDiagnosticList]
   [remaining : cdiag.CompilerDiagnosticList]
-  [published : lsp_vector_families.LspDiagnosticUris]) : lsp_vector_families.LspDiagnosticUris
+  [published : lsp_vector_families.LspDiagnosticUris])
+  (:cold) : lsp_vector_families.LspDiagnosticUris
   (let
     [count : i64 (cdiag.compiler-diagnostic-list-count remaining)]
     [result : lsp_vector_families.LspDiagnosticUris published]
@@ -2547,7 +2703,8 @@
   [line : i64]
   [col : i64]
   [msg : String]
-  [ctx : String]) : LspAnalyzeResult
+  [ctx : String])
+  (:cold) : LspAnalyzeResult
   (let
     [message : String (lsp-validation-error-message line col msg ctx)]
     (lsp-publish-diagnostics
@@ -2576,7 +2733,8 @@
   [version : i64]
   [lint-diags : json.JsonSeq]
   [diag : (Box cdiag.CompilerDiagnosticList)]
-  [semantic-index : compiler_semantic_index.CompilerSemanticSourceIndex]) : LspAnalyzeResult
+  [semantic-index : compiler_semantic_index.CompilerSemanticSourceIndex])
+  (:cold) : LspAnalyzeResult
   (let
     [diagnostics : cdiag.CompilerDiagnosticList (deref diag)]
     [first-diag : cdiag.CompilerDiagnostic
@@ -2613,7 +2771,8 @@
   [path : String]
   [text : String]
   [version : i64]
-  [stdlib-roots : lsp_svec.Vec]) : LspAnalyzeResult
+  [stdlib-roots : lsp_svec.Vec])
+  (:cold) : LspAnalyzeResult
   (match (lsp-validate-forms-result
     (owned_view.compiler-owned-shared-view text))
     [(Invalid line col msg ctx)
@@ -2699,7 +2858,8 @@
                 (compiler_semantic_index.compiler-semantic-source-index-empty)
                 false))]))]))
 
-(define (lsp-first-change-text [params : json.Json]) : LspJsonText
+(define (lsp-first-change-text [params : json.Json])
+  (:cold) : LspJsonText
   (let
     [key : String "contentChanges"]
     (match (json.object-get params (& key))
@@ -2715,7 +2875,8 @@
 (define (lsp-did-open
   [params : json.Json]
   [docs : lsp_document_vec.Vec]
-  [stdlib-roots : lsp_svec.Vec]) : LspDocumentHandleResult
+  [stdlib-roots : lsp_svec.Vec])
+  (:cold) : LspDocumentHandleResult
   (let
     [key : String "textDocument"]
     (match (json.object-get params (& key))
@@ -2774,7 +2935,8 @@
 (define (lsp-did-change
   [params : json.Json]
   [docs : lsp_document_vec.Vec]
-  [stdlib-roots : lsp_svec.Vec]) : LspDocumentHandleResult
+  [stdlib-roots : lsp_svec.Vec])
+  (:cold) : LspDocumentHandleResult
   (let
     [key : String "textDocument"]
     (match (json.object-get
@@ -2861,7 +3023,8 @@
           [(Missing) (Continue docs)])]
       [(JsonMissing) (Continue docs)])))
 
-(define (lsp-did-close [params : json.Json] [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
+(define (lsp-did-close [params : json.Json] [docs : lsp_document_vec.Vec])
+  (:cold) : LspDocumentHandleResult
   (let
     [key : String "textDocument"]
     (match (json.object-get params (& key))
@@ -2883,20 +3046,23 @@
 ;; current overlay, then uses that token to associate the client's diagnostic
 ;; with structured data. It never parses a rendered diagnostic message.
 ;; --------------------------------------------------------------------------
-(define (lsp-code-action-position-key [line : i64] [character : i64]) : i64
+(define (lsp-code-action-position-key [line : i64] [character : i64])
+  (:cold) : i64
   (+ (* line 2147483648) character))
 
 (define (lsp-code-action-range-field
   [range : json.Json]
   [endpoint : String]
-  [coordinate : String]) : i64
+  [coordinate : String])
+  (:cold) : i64
   (match (json.object-get range (& endpoint))
     [(JsonFound position) (lsp-json-int-field-default position coordinate -1)]
     [(JsonMissing) -1]))
 
 (define (lsp-code-action-ranges-intersect?
   [left : json.Json]
-  [right : json.Json]) : bool
+  [right : json.Json])
+  (:cold) : bool
   (let
     [left-start-line : i64
       (lsp-code-action-range-field
@@ -2968,7 +3134,8 @@
               (and (<= left-start right-start) (< right-start left-end))
               (and (< left-start right-end) (< right-start left-end)))))))))
 
-(define (lsp-code-action-array-has-quickfix? [items : json.JsonSeq]) : bool
+(define (lsp-code-action-array-has-quickfix? [items : json.JsonSeq])
+  (:cold) : bool
   (for [index
     (iterator.range
       0
@@ -2983,7 +3150,8 @@
       [(JsonMissing) (break)]))
   false)
 
-(define (lsp-code-action-kind-requested? [context : json.Json]) : bool
+(define (lsp-code-action-kind-requested? [context : json.Json])
+  (:cold) : bool
   (let
     [only-key : String "only"]
     (match (json.object-get context (& only-key))
@@ -2998,7 +3166,8 @@
   [diagnostic : json.Json]
   [version : i64]
   [kind : (& kind str)]
-  [index : i64]) : bool
+  [index : i64])
+  (:cold) : bool
   (let
     [data-key : String "data"]
     (match (json.object-get diagnostic (& data-key))
@@ -3013,7 +3182,8 @@
   [items : json.JsonSeq]
   [request-range : json.Json]
   [version : i64]
-  [kind : String]) : bool
+  [kind : String])
+  (:cold) : bool
   (for [index
     (iterator.range
       0
@@ -3053,7 +3223,8 @@
   [version : i64]
   [kind : String]
   [wanted-index : i64]
-  [index : i64]) : LspJsonValue
+  [index : i64])
+  (:cold) : LspJsonValue
   (if (>= index (json.list-count (owned_view.compiler-owned-shared-view items)))
     Missing
     (match (json.list-get-index
@@ -3093,7 +3264,8 @@
                 wanted-index
                 (+ index 1))]))])))
 
-(define (lsp-code-action-context-diagnostics [context : json.Json]) : json.JsonSeq
+(define (lsp-code-action-context-diagnostics [context : json.Json])
+  (:cold) : json.JsonSeq
   (let
     [key : String "diagnostics"]
     (match (json.object-get context (& key))
@@ -3103,14 +3275,16 @@
           [_ (json.list-empty)])]
       [(JsonMissing) (json.list-empty)])))
 
-(define (lsp-code-action-request-range [params : json.Json]) : LspJsonValue
+(define (lsp-code-action-request-range [params : json.Json])
+  (:cold) : LspJsonValue
   (let
     [key : String "range"]
     (match (json.object-get params (& key))
       [(JsonFound range) (Found range)]
       [(JsonMissing) Missing])))
 
-(define (lsp-code-action-path [path : String] [fallback-path : String]) : String
+(define (lsp-code-action-path [path : String] [fallback-path : String])
+  (:cold) : String
   (let
     [selected : String
       (if (string.eq path "")
@@ -3120,7 +3294,8 @@
 
 (define (lsp-code-action-document-for-path
   [docs : (& docs lsp_document_vec.Vec)]
-  [path : String]) : LspCodeActionDocument
+  [path : String])
+  (:cold) : LspCodeActionDocument
   (let
     [wanted : String (fs.path-normalize (& path))]
     [index : i64 0]
@@ -3148,7 +3323,8 @@
 (define (lsp-code-action-all-edits-open?
   [docs : (& docs lsp_document_vec.Vec)]
   [fallback-path : String]
-  [edits : (& edits cdiag.CompilerDiagnosticTextEditSeq)]) : bool
+  [edits : (& edits cdiag.CompilerDiagnosticTextEditSeq)])
+  (:cold) : bool
   (let
     [slots : (__tl_dyn-array cdiag.CompilerDiagnosticTextEdit) edits.slots]
     [count : i64 edits.len]
@@ -3175,7 +3351,8 @@
 (define (lsp-code-action-text-edit
   [path : String]
   [text : String]
-  [edit : cdiag.CompilerDiagnosticTextEdit]) : json.Json
+  [edit : cdiag.CompilerDiagnosticTextEdit])
+  (:cold) : json.Json
   (let
     [span : cdiag.CompilerDiagnosticSpan
       (cdiag.compiler-diagnostic-text-edit-span
@@ -3201,7 +3378,8 @@
   [path : String]
   [text : String]
   [index : i64]
-  [acc : json.JsonSeq]) : json.JsonSeq
+  [acc : json.JsonSeq])
+  (:cold) : json.JsonSeq
   (if (>= index edits.len)
     acc
     (let
@@ -3234,7 +3412,8 @@
 (define (lsp-code-action-document-edit
   [uri : String]
   [version : i64]
-  [edits : json.JsonSeq]) : json.Json
+  [edits : json.JsonSeq])
+  (:cold) : json.Json
   (lsp-json-object2
     "textDocument"
     (lsp-json-object2
@@ -3250,7 +3429,8 @@
   [fallback-path : String]
   [edits : (& edits cdiag.CompilerDiagnosticTextEditSeq)]
   [index : i64]
-  [acc : json.JsonSeq]) : json.JsonSeq
+  [acc : json.JsonSeq])
+  (:cold) : json.JsonSeq
   (if (>= index (lsp_document_vec.len (& docs)))
     acc
     (let
@@ -3289,7 +3469,8 @@
 (define (lsp-code-action-workspace-edit
   [docs : (& docs lsp_document_vec.Vec)]
   [fallback-path : String]
-  [edits : (& edits cdiag.CompilerDiagnosticTextEditSeq)]) : json.Json
+  [edits : (& edits cdiag.CompilerDiagnosticTextEditSeq)])
+  (:cold) : json.Json
   (lsp-json-object1
     "documentChanges"
     (lsp-json-array
@@ -3303,7 +3484,8 @@
 (define (lsp-code-action
   [title : String]
   [diagnostic : json.Json]
-  [edit : json.Json]) : json.Json
+  [edit : json.Json])
+  (:cold) : json.Json
   (lsp-json-object
     (lsp-json-member
       "title"
@@ -3325,7 +3507,8 @@
   [diagnostic : json.Json]
   [fixes : cdiag.CompilerDiagnosticFixSeq]
   [index : i64]
-  [acc : json.JsonSeq]) : json.JsonSeq
+  [acc : json.JsonSeq])
+  (:cold) : json.JsonSeq
   (if (>= index fixes.len)
     acc
     (let
@@ -3373,7 +3556,8 @@
   [context-diagnostics : json.JsonSeq]
   [diagnostics : cdiag.CompilerDiagnosticList]
   [index : i64]
-  [acc : json.JsonSeq]) : json.JsonSeq
+  [acc : json.JsonSeq])
+  (:cold) : json.JsonSeq
   (let
     [count : i64 (cdiag.compiler-diagnostic-list-count diagnostics)]
     [out : json.JsonSeq acc]
@@ -3420,7 +3604,8 @@
   [request-range : json.Json]
   [context-diagnostics : json.JsonSeq]
   [stdlib-roots : lsp_svec.Vec]
-  [acc : json.JsonSeq]) : json.JsonSeq
+  [acc : json.JsonSeq])
+  (:cold) : json.JsonSeq
   (match (compiler_check_core.compiler-check-source-with-roots-and-cfg
     (owned_view.compiler-owned-shared-view path)
     text
@@ -3439,7 +3624,8 @@
         0
         acc)]))
 
-(define (lsp-code-action-leading-indent [text : (& text str)] [line : i64]) : String
+(define (lsp-code-action-leading-indent [text : (& text str)] [line : i64])
+  (:cold) : String
   (let
     [start : i64 (lint_driver_core.selfhost-lint-line-start-index text line)]
     [length : i64 (string.string-length text)]
@@ -3452,7 +3638,8 @@
       (+= end 1))
     (string.substring text start (- end start))))
 
-(define (lsp-code-action-newline [text : String]) : String
+(define (lsp-code-action-newline [text : String])
+  (:cold) : String
   (let
     [crlf : String "\r\n"]
     (if (string.contains (& text) (& crlf))
@@ -3462,7 +3649,8 @@
 (define (lsp-code-action-lint-duplicate-before?
   [findings : lint.LintFindings]
   [finding : lint.LintFinding]
-  [index : i64]) : bool
+  [index : i64])
+  (:cold) : bool
   (let
     [wanted-span : ast.AstSourceSpan finding.span]
     [wanted-line : i64 (ast.ast-source-span-start-line wanted-span)]
@@ -3484,7 +3672,8 @@
   [uri : String]
   [version : i64]
   [text : String]
-  [finding : lint.LintFinding]) : json.Json
+  [finding : lint.LintFinding])
+  (:cold) : json.Json
   (let
     [span : ast.AstSourceSpan finding.span]
     [line : i64 (ast.ast-source-span-start-line span)]
@@ -3525,7 +3714,8 @@
   [request-range : json.Json]
   [context-diagnostics : json.JsonSeq]
   [index : i64]
-  [acc : json.JsonSeq]) : json.JsonSeq
+  [acc : json.JsonSeq])
+  (:cold) : json.JsonSeq
   (if (>=
     index
     (lint.lint-findings-count (owned_view.compiler-owned-shared-view findings)))
@@ -3595,7 +3785,8 @@
   [id : json.Json]
   [params : json.Json]
   [docs : (& docs lsp_document_vec.Vec)]
-  [stdlib-roots : lsp_svec.Vec]) : unit
+  [stdlib-roots : lsp_svec.Vec])
+  (:cold) : unit
   (let
     [text-document-key : String "textDocument"]
     [context-key : String "context"]
@@ -3710,7 +3901,8 @@
   [id : json.Json]
   [params : json.Json]
   [docs : (& docs lsp_document_vec.Vec)]
-  [stdlib-roots : lsp_svec.Vec]) : unit
+  [stdlib-roots : lsp_svec.Vec])
+  (:cold) : unit
   (lsp-code-action-respond id params docs stdlib-roots))
 
 ;; --------------------------------------------------------------------------
@@ -3721,7 +3913,8 @@
 ;; skip string literals, character literals, and `;` comments so fixture
 ;; sources that embed TypeLisp inside literals never produce a false match.
 ;; --------------------------------------------------------------------------
-(define (lsp-ident-char? [c : char]) : bool
+(define (lsp-ident-char? [c : char])
+  (:cold) : bool
   (or
     (and (>= c 'a') (<= c 'z'))
     (and (>= c 'A') (<= c 'Z'))
@@ -3741,7 +3934,8 @@
     (= c '.')
     (= c '%')))
 
-(define (lsp-scan-ident [text : (& text str)] [i : i64] [n : i64]) : i64
+(define (lsp-scan-ident [text : (& text str)] [i : i64] [n : i64])
+  (:cold) : i64
   (let
     [j : i64 i]
     (while (and (< j n) (lsp-ident-char? (string.string-ref text j)))
@@ -3749,7 +3943,8 @@
     j))
 
 ;; Maximal identifier token covering `off`, or "" when `off` is not on one.
-(define (lsp-symbol-at-offset [text : (& text str)] [off : i64]) : String
+(define (lsp-symbol-at-offset [text : (& text str)] [off : i64])
+  (:cold) : String
   (let
     [n : i64 (string.string-length text)]
     (if (or (< off 0) (>= off n))
@@ -3765,7 +3960,8 @@
             (-= start 1))
           (string.substring text start (- end start)))))))
 
-(define (lsp-symbol-start-at-offset [text : (& text str)] [off : i64]) : i64
+(define (lsp-symbol-start-at-offset [text : (& text str)] [off : i64])
+  (:cold) : i64
   (let
     [n : i64 (string.string-length text)]
     [start : i64 off]
@@ -3783,7 +3979,8 @@
 
 ;; Base name of a possibly module-qualified symbol (`core/cond` -> `cond`,
 ;; `core.cond` -> `cond`).
-(define (lsp-symbol-base [s : String]) : String
+(define (lsp-symbol-base [s : String])
+  (:cold) : String
   (let
     [n : i64 (string.string-length s)]
     [k : i64 -1]
@@ -3797,10 +3994,12 @@
 
 ;; Negotiated LSP character units contributed by one UTF-8 byte. In UTF-16,
 ;; a four-byte lead spans a surrogate pair and continuation bytes add nothing.
-(define (lsp-position-units-for-byte [c : char]) : i64
+(define (lsp-position-units-for-byte [c : char])
+  (:cold) : i64
   (source_text.source-text-column-units c (not lsp-position-encoding-utf8)))
 
-(define (lsp-string-position-units [text : String]) : i64
+(define (lsp-string-position-units [text : String])
+  (:cold) : i64
   (let
     [n : i64 (string.string-length text)]
     [units : i64 0]
@@ -3808,14 +4007,16 @@
       (+= units (lsp-position-units-for-byte (string.string-ref text i))))
     units))
 
-(define (lsp-using-utf16-positions?) : bool
+(define (lsp-using-utf16-positions?)
+  (:cold) : bool
   (not lsp-position-encoding-utf8))
 
 ;; Byte offset of a negotiated 0-based LSP position, clamped to the line.
 (define (lsp-offset-at-position
   [text : (& text str)]
   [line0 : i64]
-  [char0 : i64]) : i64
+  [char0 : i64])
+  (:cold) : i64
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
@@ -3845,7 +4046,8 @@
 (define (lsp-offset-at-position-checked
   [text : String]
   [line0 : i64]
-  [char0 : i64]) : LspOffsetLookup
+  [char0 : i64])
+  (:cold) : LspOffsetLookup
   (if (or (< line0 0) (< char0 0))
     Missing
     (let
@@ -3892,7 +4094,8 @@
 ;; arguments, classify the syntactic completion position, and retain exact
 ;; token spans. Symbol resolution and candidate selection belong to providers.
 ;; --------------------------------------------------------------------------
-(define (lsp-call-frame-fallback) : lsp_vector_families.LspCallFrame
+(define (lsp-call-frame-fallback)
+  (:cold) : lsp_vector_families.LspCallFrame
   (lsp_vector_families.LspCallFrame
     0
     -1
@@ -3906,7 +4109,8 @@
     false
     false))
 
-(define (lsp-call-token-delimiter? [c : char]) : bool
+(define (lsp-call-token-delimiter? [c : char])
+  (:cold) : bool
   (or
     (source_text.source-text-space? c)
     (= c '(')
@@ -3919,7 +4123,8 @@
     (= c '`')
     (= c ',')))
 
-(define (lsp-call-scan-token [text : (& text str)] [start : i64] [limit : i64]) : i64
+(define (lsp-call-scan-token [text : (& text str)] [start : i64] [limit : i64])
+  (:cold) : i64
   (let
     [i : i64 start]
     (while (and
@@ -3931,7 +4136,8 @@
 (define (lsp-completion-scan-token
   [text : (& text str)]
   [start : i64]
-  [limit : i64]) : LspCompletionTokenScan
+  [limit : i64])
+  (:cold) : LspCompletionTokenScan
   (let
     [i : i64 start]
     [last-dot : i64 -1]
@@ -3944,7 +4150,8 @@
       (+= i 1))
     (LspCompletionTokenScan i last-dot)))
 
-(define (lsp-call-clamp [offset : i64] [limit : i64]) : i64
+(define (lsp-call-clamp [offset : i64] [limit : i64])
+  (:cold) : i64
   (if (> offset limit)
     limit
     offset))
@@ -3953,7 +4160,8 @@
 ;; without whitespace; a chain of reader prefixes remains one incomplete
 ;; datum until its payload completes.
 (define (lsp-call-frame-start-datum!
-  [frame : (&mut frame lsp_vector_families.LspCallFrame)]) : unit
+  [frame : (&mut frame lsp_vector_families.LspCallFrame)])
+  (:cold) : unit
   (if frame.datum-active
     (when
       frame.datum-complete
@@ -3964,7 +4172,8 @@
       (set! frame.datum-complete false))))
 
 (define (lsp-call-frame-complete-datum!
-  [frame : (&mut frame lsp_vector_families.LspCallFrame)]) : unit
+  [frame : (&mut frame lsp_vector_families.LspCallFrame)])
+  (:cold) : unit
   (if (not frame.datum-active)
     (lsp-call-frame-start-datum! frame)
     unit)
@@ -3973,7 +4182,8 @@
 ;; A separator after a completed argument moves the cursor to the next
 ;; zero-based argument. Separators after a quote prefix leave that datum open.
 (define (lsp-call-frame-separate!
-  [frame : (&mut frame lsp_vector_families.LspCallFrame)]) : unit
+  [frame : (&mut frame lsp_vector_families.LspCallFrame)])
+  (:cold) : unit
   (when
     (and frame.datum-active frame.datum-complete)
     (+= frame.argument-index 1)
@@ -3982,7 +4192,8 @@
 
 (define (lsp-call-frames-update-top-datum!
   [frames : (&mut frames lsp_vector_families.LspCallFrames)]
-  [complete : bool]) : unit
+  [complete : bool])
+  (:cold) : unit
   (let
     [index : i64 (- (lsp_vector_families.lsp-call-frames-len frames) 1)]
     (if (< index 0)
@@ -4003,7 +4214,8 @@
         (lsp_vector_families.lsp-call-frames-set! frames index frame)))))
 
 (define (lsp-call-frames-complete-top-datum!
-  [frames : (&mut frames lsp_vector_families.LspCallFrames)]) : unit
+  [frames : (&mut frames lsp_vector_families.LspCallFrames)])
+  (:cold) : unit
   (let
     [index : i64 (- (lsp_vector_families.lsp-call-frames-len frames) 1)]
     (if (< index 0)
@@ -4020,7 +4232,8 @@
         (lsp_vector_families.lsp-call-frames-set! frames index frame)))))
 
 (define (lsp-call-frames-separate-top!
-  [frames : (&mut frames lsp_vector_families.LspCallFrames)]) : unit
+  [frames : (&mut frames lsp_vector_families.LspCallFrames)])
+  (:cold) : unit
   (let
     [index : i64 (- (lsp_vector_families.lsp-call-frames-len frames) 1)]
     (if (< index 0)
@@ -4035,7 +4248,8 @@
         (lsp_vector_families.lsp-call-frames-set! frames index frame)))))
 
 (define (lsp-call-context-from-frames
-  [frames : (& frames lsp_vector_families.LspCallFrames)]) : LspCallContextLookup
+  [frames : (& frames lsp_vector_families.LspCallFrames)])
+  (:cold) : LspCallContextLookup
   (let
     [index : i64 (- (lsp_vector_families.lsp-call-frames-len frames) 1)]
     [result : LspCallContextLookup Missing]
@@ -4061,7 +4275,8 @@
         (-= index 1)))
     result))
 
-(define (lsp-completion-field-head? [head : (& head str)]) : bool
+(define (lsp-completion-field-head? [head : (& head str)])
+  (:cold) : bool
   (or
     (string.eq head "struct-get")
     (string.eq head "struct-set")
@@ -4080,7 +4295,8 @@
   [token-suppressed : bool]
   [cursor-suppressed : bool]
   [token-type : bool]
-  [quote-pending : bool]) : LspCompletionContextLookup
+  [quote-pending : bool])
+  (:cold) : LspCompletionContextLookup
   (let
     [frame-count : i64 (lsp_vector_families.lsp-call-frames-len frames)]
     [top-index : i64 (- frame-count 1)]
@@ -4204,7 +4420,8 @@
 (define (lsp-cursor-context-at-offset
   [text : (& text str)]
   [limit : i64]
-  [include-completion : bool]) : LspCursorContextScan
+  [include-completion : bool])
+  (:cold) : LspCursorContextScan
   (let
     [n : i64 (string.string-length text)]
     (if (or (< limit 0) (> limit n))
@@ -4435,13 +4652,15 @@
               quote-pending)
             Missing))))))
 
-(define (lsp-call-context-at-offset [text : String] [limit : i64]) : LspCallContextLookup
+(define (lsp-call-context-at-offset [text : String] [limit : i64])
+  (:cold) : LspCallContextLookup
   (let
     [scan : LspCursorContextScan
       (lsp-cursor-context-at-offset text limit false)]
     scan.call))
 
-(define (lsp-completion-context-at-offset [text : String] [limit : i64]) : LspCompletionContextLookup
+(define (lsp-completion-context-at-offset [text : String] [limit : i64])
+  (:cold) : LspCompletionContextLookup
   (let
     [scan : LspCursorContextScan (lsp-cursor-context-at-offset text limit true)]
     scan.completion))
@@ -4449,7 +4668,8 @@
 (define (lsp-completion-context-at-position
   [text : String]
   [line0 : i64]
-  [char0 : i64]) : LspCompletionContextLookup
+  [char0 : i64])
+  (:cold) : LspCompletionContextLookup
   (match (lsp-offset-at-position-checked
     (owned_view.compiler-owned-shared-view text)
     line0
@@ -4458,7 +4678,8 @@
     [(Missing) Missing]))
 
 ;; 1-based negotiated LSP line/column of a byte offset.
-(define (lsp-line-col-at-offset [text : (& text str)] [off : i64]) : LspLineCol
+(define (lsp-line-col-at-offset [text : (& text str)] [off : i64])
+  (:cold) : LspLineCol
   (let
     [position : source_text.SourceTextLineCol
       (source_text.source-text-line-col-at-offset
@@ -4468,7 +4689,8 @@
     (LspLineCol position.line position.col)))
 
 ;; 1-based byte-counted line/column of a byte offset.
-(define (lsp-byte-line-col-at-offset [text : (& text str)] [off : i64]) : LspLineCol
+(define (lsp-byte-line-col-at-offset [text : (& text str)] [off : i64])
+  (:cold) : LspLineCol
   (let
     [position : source_text.SourceTextLineCol
       (source_text.source-text-line-col-at-offset text off false)]
@@ -4477,7 +4699,8 @@
 (define (lsp-line-col-cache-at-offset!
   [cache : (&mut cache LspLineColCache)]
   [text : (& text str)]
-  [off : i64]) : LspLineCol
+  [off : i64])
+  (:cold) : LspLineCol
   (if (= off cache.offset)
     (LspLineCol cache.line cache.col)
     (let
@@ -4508,7 +4731,8 @@
       (set! cache.col col)
       (LspLineCol line col))))
 
-(define (lsp-def-keyword? [kw : String]) : bool
+(define (lsp-def-keyword? [kw : String])
+  (:cold) : bool
   (or
     (string.eq kw "define")
     (string.eq kw "defmacro")
@@ -4520,7 +4744,8 @@
 ;; When `text[i]` opens a top-level definition form, return the byte offset of
 ;; the defined name (skipping an optional `(` for function/extern forms);
 ;; otherwise -1.
-(define (lsp-def-name-offset-at [text : (& text str)] [i : i64] [n : i64]) : i64
+(define (lsp-def-name-offset-at [text : (& text str)] [i : i64] [n : i64])
+  (:cold) : i64
   (let
     [after-open : i64 (source_text.source-text-skip-space text (+ i 1) n)]
     [kw-end : i64 (lsp-scan-ident text after-open n)]
@@ -4544,7 +4769,8 @@
 
 (define (lsp-dotted-import-name-kind
   [name : (& name str)]
-  [token-complete : bool]) : LspDottedImportNameKind
+  [token-complete : bool])
+  (:cold) : LspDottedImportNameKind
   (cond
     [(module_name.compiler-module-name-valid? name) Complete]
     [(not token-complete)
@@ -4556,7 +4782,8 @@
     [else Invalid]))
 
 ;; An identifier scanner stop at an unsupported byte is not a token boundary.
-(define (lsp-dotted-import-token-boundary? [text : (& text str)] [end : i64]) : bool
+(define (lsp-dotted-import-token-boundary? [text : (& text str)] [end : i64])
+  (:cold) : bool
   (if (= end (string.string-length text))
     true
     (let
@@ -4574,7 +4801,8 @@
 (define (lsp-resolve-module-import-target
   [path : String]
   [module-name : String]
-  [stdlib-roots : lsp_svec.Vec]) : String
+  [stdlib-roots : lsp_svec.Vec])
+  (:cold) : String
   (match (compiler_load.compiler-load-resolve-module-import-with-roots
     (& path)
     (compiler_load.compiler-load-dirname path)
@@ -4587,7 +4815,8 @@
   [text : (& text str)]
   [path : String]
   [stdlib-roots : lsp_svec.Vec]
-  [operand-start : i64]) : LspImportTarget
+  [operand-start : i64])
+  (:cold) : LspImportTarget
   (let
     [n : i64 (string.string-length text)]
     (if (>= operand-start n)
@@ -4641,7 +4870,8 @@
   [text : (& text str)]
   [path : String]
   [stdlib-roots : lsp_svec.Vec]
-  [off : i64]) : LspImportTarget
+  [off : i64])
+  (:cold) : LspImportTarget
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
@@ -4689,7 +4919,8 @@
 (define (lsp-json-int-field-default
   [value : (& value json.Json)]
   [key : String]
-  [fallback : i64]) : i64
+  [fallback : i64])
+  (:cold) : i64
   (let
     [value : json.Json (owned_view.compiler-owned-reference-shared-view value)]
     (match (json.object-get value (& key))
@@ -4706,7 +4937,8 @@
   [uri : String]
   [line : i64]
   [col : i64]
-  [len : i64]) : json.Json
+  [len : i64])
+  (:cold) : json.Json
   (lsp-json-object2
     "uri"
     (JsonString uri)
@@ -4719,7 +4951,8 @@
 
 (define (lsp-semantic-span-position
   [span : compiler_semantic_index.CompilerSemanticSpan]
-  [start : bool]) : json.Json
+  [start : bool])
+  (:cold) : json.Json
   (let
     [source : ast.AstSourceSpan span.source]
     [line : i64
@@ -4741,7 +4974,8 @@
         utf16-col))))
 
 (define (lsp-semantic-definition-location
-  [record : compiler_semantic_index.CompilerSemanticRecord]) : json.Json
+  [record : compiler_semantic_index.CompilerSemanticRecord])
+  (:cold) : json.Json
   (let
     [span : compiler_semantic_index.CompilerSemanticSpan record.span]
     (lsp-json-object2
@@ -4761,7 +4995,8 @@
   [uri : String]
   [position : json.Json]
   [docs : (& docs lsp_document_vec.Vec)]
-  [stdlib-roots : lsp_svec.Vec]) : unit
+  [stdlib-roots : lsp_svec.Vec])
+  (:cold) : unit
   (let
     [doc-index : i64 (lsp-documents-find-index docs uri)]
     (if (< doc-index 0)
@@ -4799,7 +5034,8 @@
   [id : json.Json]
   [params : json.Json]
   [docs : (& docs lsp_document_vec.Vec)]
-  [stdlib-roots : lsp_svec.Vec]) : unit
+  [stdlib-roots : lsp_svec.Vec])
+  (:cold) : unit
   (let
     [td-key : String "textDocument"]
     (match (json.object-get
@@ -4825,13 +5061,15 @@
 ;; the current document-owned semantic snapshot, and its definition must carry
 ;; a callable rendered type. No spelling-based fallback is permitted.
 ;; --------------------------------------------------------------------------
-(define (lsp-signature-space? [c : char]) : bool
+(define (lsp-signature-space? [c : char])
+  (:cold) : bool
   (or (= c ' ') (= c '\t') (= c '\n') (= c '\r')))
 
 ;; Split `(-> parameter ... result)` at balanced top-level boundaries. A valid
 ;; zero-parameter signature has one component (the result); an empty vector is
 ;; therefore an unambiguous malformed/non-callable result.
-(define (lsp-signature-type-components [type-text : String]) : lsp_svec.Vec
+(define (lsp-signature-type-components [type-text : String])
+  (:cold) : lsp_svec.Vec
   (let
     [parts : lsp_svec.Vec (lsp_svec.new)]
     [n : i64 (string.string-length type-text)]
@@ -4881,13 +5119,15 @@
       (lsp_svec.new))))
 
 (define (lsp-signature-record-use?
-  [record : compiler_semantic_index.CompilerSemanticRecord]) : bool
+  [record : compiler_semantic_index.CompilerSemanticRecord])
+  (:cold) : bool
   (match record.role
     [(Use) true]
     [_ false]))
 
 (define (lsp-signature-callable-kind?
-  [kind : compiler_semantic_index.CompilerSemanticSymbolKind]) : bool
+  [kind : compiler_semantic_index.CompilerSemanticSymbolKind])
+  (:cold) : bool
   (match kind
     [(or (Value) (Function) (Macro) (ExternValue) (ExternFunction) (Parameter)
          (Local))
@@ -4895,7 +5135,8 @@
     [_ false]))
 
 (define (lsp-signature-named-parameter-owner?
-  [record : (& record compiler_semantic_index.CompilerSemanticRecord)]) : bool
+  [record : (& record compiler_semantic_index.CompilerSemanticRecord)])
+  (:cold) : bool
   (and
     (= record.symbol.local-ordinal -1)
     (match record.kind
@@ -4909,7 +5150,8 @@
 (define (lsp-signature-parameter-names
   [index : (& index compiler_semantic_index.CompilerSemanticSourceIndex)]
   [definition : (& definition compiler_semantic_index.CompilerSemanticRecord)]
-  [components : (& components lsp_svec.Vec)]) : lsp_svec.Vec
+  [components : (& components lsp_svec.Vec)])
+  (:cold) : lsp_svec.Vec
   (let
     [names : lsp_svec.Vec (lsp_svec.new)]
     [parameter-count : i64 (- (lsp_svec.len components) 1)]
@@ -4961,7 +5203,8 @@
 
 (define (lsp-signature-parameter-labels
   [components : (& components lsp_svec.Vec)]
-  [names : (& names lsp_svec.Vec)]) : lsp_svec.Vec
+  [names : (& names lsp_svec.Vec)])
+  (:cold) : lsp_svec.Vec
   (let
     [labels : lsp_svec.Vec (lsp_svec.new)]
     [parameter-count : i64 (- (lsp_svec.len components) 1)]
@@ -4979,7 +5222,8 @@
 (define (lsp-signature-label
   [call-name : String]
   [parameter-labels : (& parameter-labels lsp_svec.Vec)]
-  [result-label : String]) : String
+  [result-label : String])
+  (:cold) : String
   (let
     [label : String (lsp-str2 "(" call-name)]
     (for [index (iterator.range 0 (lsp_svec.len parameter-labels))]
@@ -4988,7 +5232,8 @@
 
 ;; Parameter label offsets are always UTF-16 code units by the LSP 3.17
 ;; SignatureInformation contract, regardless of negotiated document positions.
-(define (lsp-signature-utf16-length [text : String]) : i64
+(define (lsp-signature-utf16-length [text : String])
+  (:cold) : i64
   (-
     (compiler_semantic_index.compiler-semantic-source-utf16-col-at-offset
       (lsp-global-shared-view text)
@@ -4998,7 +5243,8 @@
 (define (lsp-signature-parameter-information-list
   [labels : (& labels lsp_svec.Vec)]
   [index : i64]
-  [prior-end : i64]) : json.JsonSeq
+  [prior-end : i64])
+  (:cold) : json.JsonSeq
   (if (>= index (lsp_svec.len labels))
     (json.list-empty)
     (let
@@ -5018,7 +5264,8 @@
   [call-name : String]
   [definition : compiler_semantic_index.CompilerSemanticRecord]
   [parameter-labels : (& parameter-labels lsp_svec.Vec)]
-  [result-label : String]) : json.Json
+  [result-label : String])
+  (:cold) : json.Json
   (let
     [label : String
       (lsp-signature-label
@@ -5047,7 +5294,8 @@
   [text : String]
   [context : LspCallContext]
   [definition : compiler_semantic_index.CompilerSemanticRecord]
-  [components : (& components lsp_svec.Vec)]) : json.Json
+  [components : (& components lsp_svec.Vec)])
+  (:cold) : json.Json
   (let
     [parameter-count : i64 (- (lsp_svec.len components) 1)]
     [call-name : String
@@ -5084,7 +5332,8 @@
 (define (lsp-signature-help-at
   [doc : (& doc lsp_vector_families.LspDocument)]
   [line0 : i64]
-  [char0 : i64]) : json.Json
+  [char0 : i64])
+  (:cold) : json.Json
   (match (lsp-offset-at-position-checked (string.copy (& doc.text)) line0 char0)
     [(Missing) JsonNull]
     [(Found offset)
@@ -5117,7 +5366,8 @@
 (define (lsp-signature-help-uri-result
   [params : json.Json]
   [docs : (& docs lsp_document_vec.Vec)]
-  [uri : String]) : json.Json
+  [uri : String])
+  (:cold) : json.Json
   (let
     [doc-index : i64 (lsp-documents-find-index docs uri)]
     [position-key : String "position"]
@@ -5137,7 +5387,8 @@
 
 (define (lsp-signature-help-document-result
   [params : json.Json]
-  [docs : (& docs lsp_document_vec.Vec)]) : json.Json
+  [docs : (& docs lsp_document_vec.Vec)])
+  (:cold) : json.Json
   (let
     [text-document-key : String "textDocument"]
     (match (json.object-get
@@ -5152,7 +5403,8 @@
 (define (lsp-signature-help-respond
   [id : json.Json]
   [params : json.Json]
-  [docs : (& docs lsp_document_vec.Vec)]) : unit
+  [docs : (& docs lsp_document_vec.Vec)])
+  (:cold) : unit
   (lsp-write-response id (lsp-signature-help-document-result params docs)))
 
 ;; --------------------------------------------------------------------------
@@ -5162,16 +5414,20 @@
 ;; semantic and workspace declarations. Candidates must match the typed prefix
 ;; and only the best-ranked rows are returned (`lsp-completion-results-insert!`).
 ;; --------------------------------------------------------------------------
-(define (lsp-completion-keywords) : String
+(define (lsp-completion-keywords)
+  (:cold) : String
   "define lambda let if begin while set! return match foreach cond when unless and or with-arena with-escape with-scratch try unsafe quote quasiquote unquote ann init cast type defstruct defenum defmacro defdispatch import export extern module comptime include-str include-bin test spmd-reduce spmd-scan spmd-broadcast spmd-shuffle program-index program-count")
 
-(define (lsp-completion-builtins) : String
+(define (lsp-completion-builtins)
+  (:cold) : String
   "c-fn-check ptr-null ptr-read ptr-write! ptr-offset ptr-cast ptr->int int->ptr ptr-null? ptr-addr-of array-ref tuple-ref deref string-data string-from-bytes program-argc program-argv program-envp cpuid-eax cpuid-ebx cpuid-ecx cpuid-edx xgetbv syscall box array tuple slice fields")
 
-(define (lsp-completion-types) : String
+(define (lsp-completion-types)
+  (:cold) : String
   "i64 i32 i16 i8 u64 u32 u16 u8 f64 f32 bool char String str unit never Array Tuple CFunc Box Ptr MutPtr")
 
-(define (lsp-split-spaces [s : String]) : lsp_svec.Vec
+(define (lsp-split-spaces [s : String])
+  (:cold) : lsp_svec.Vec
   (let
     [n : i64 (string.string-length s)]
     [start : i64 0]
@@ -5191,10 +5447,12 @@
 (define lsp-completion-result-limit : i64
   256)
 
-(define (lsp-completion-candidate-fallback) : LspCompletionCandidate
+(define (lsp-completion-candidate-fallback)
+  (:cold) : LspCompletionCandidate
   (LspCompletionCandidate 2 9 9 1 "" "" "" "" "" 0 0 "" ""))
 
-(define (lsp-completion-results-new) : LspCompletionResults
+(define (lsp-completion-results-new)
+  (:cold) : LspCompletionResults
   (LspCompletionResults
     (__tl_make-array LspCompletionCandidate lsp-completion-result-limit)
     0
@@ -5202,12 +5460,14 @@
 
 (define (lsp-completion-results-get
   [results : (& results LspCompletionResults)]
-  [index : i64]) : LspCompletionCandidate
+  [index : i64])
+  (:cold) : LspCompletionCandidate
   (if (and (>= index 0) (< index results.len))
     (owned_view.compiler-owned-element-view (& results.slots) index)
     (lsp-completion-candidate-fallback)))
 
-(define (lsp-completion-match-rank [label : (& label str)] [prefix : String]) : i64
+(define (lsp-completion-match-rank [label : (& label str)] [prefix : String])
+  (:cold) : i64
   (cond
     [(string.eq label prefix) 0]
     [(or
@@ -5218,7 +5478,8 @@
 
 (define (lsp-completion-candidate-less?
   [left : LspCompletionCandidate]
-  [right : LspCompletionCandidate]) : bool
+  [right : LspCompletionCandidate])
+  (:cold) : bool
   (cond
     [(< left.match-rank right.match-rank) true]
     [(> left.match-rank right.match-rank) false]
@@ -5245,7 +5506,8 @@
 
 (define (lsp-completion-results-contain-key?
   [results : (& results LspCompletionResults)]
-  [stable-key : String]) : bool
+  [stable-key : String])
+  (:cold) : bool
   (let
     [index : i64 0]
     [found : bool false]
@@ -5263,7 +5525,8 @@
 ;; even when that match ranks below every retained row.
 (define (lsp-completion-results-insert!
   [results : (&mut results LspCompletionResults)]
-  [candidate : LspCompletionCandidate]) : unit
+  [candidate : LspCompletionCandidate])
+  (:cold) : unit
   (if (lsp-completion-results-contain-key?
     results
     (owned_view.compiler-owned-shared-view candidate.stable-key))
@@ -5298,7 +5561,8 @@
             (set! results.incomplete true)))))))
 
 (define (lsp-completion-symbol-kind
-  [kind : (& kind compiler_semantic_index.CompilerSemanticSymbolKind)]) : i64
+  [kind : (& kind compiler_semantic_index.CompilerSemanticSymbolKind)])
+  (:cold) : i64
   (match (deref kind)
     [(or (Function) (ExternFunction) (Macro)) 3]
     [(Field) 5]
@@ -5310,14 +5574,16 @@
 
 (define (lsp-completion-namespace-rank
   [namespace
-    : (& namespace compiler_semantic_index.CompilerSemanticBindingNamespace)]) : i64
+    : (& namespace compiler_semantic_index.CompilerSemanticBindingNamespace)])
+  (:cold) : i64
   (match (deref namespace)
     [(Value) 0]
     [(Type) 1]
     [(Macro) 2]))
 
 (define (lsp-completion-kind-name
-  [kind : (& kind compiler_semantic_index.CompilerSemanticSymbolKind)]) : String
+  [kind : (& kind compiler_semantic_index.CompilerSemanticSymbolKind)])
+  (:cold) : String
   (match (deref kind)
     [(Value) "value"]
     [(Function) "function"]
@@ -5333,7 +5599,8 @@
     [_ "local"]))
 
 (define (lsp-completion-semantic-stable-key
-  [binding : (& binding compiler_semantic_index.CompilerSemanticVisibleBinding)]) : String
+  [binding : (& binding compiler_semantic_index.CompilerSemanticVisibleBinding)])
+  (:cold) : String
   (lsp-str3
     (lsp-str3 "semantic:" (string.int->string binding.symbol.module-id) ":")
     (lsp-str3
@@ -5348,7 +5615,8 @@
 (define (lsp-completion-source-rank
   [kind : compiler_semantic_index.CompilerSemanticSymbolKind]
   [definition-path : (& definition-path str)]
-  [current-path : String]) : i64
+  [current-path : String])
+  (:cold) : i64
   (match kind
     [(or (Parameter) (Local)) 0]
     [_
@@ -5360,7 +5628,8 @@
   [results : (&mut results LspCompletionResults)]
   [binding : compiler_semantic_index.CompilerSemanticVisibleBinding]
   [prefix : String]
-  [current-path : String]) : unit
+  [current-path : String])
+  (:cold) : unit
   (let
     [rank : i64 (lsp-completion-match-rank binding.display-name prefix)]
     (if (or (< rank 0) (not binding.editable))
@@ -5394,7 +5663,8 @@
   [results : (&mut results LspCompletionResults)]
   [doc : (& doc lsp_vector_families.LspDocument)]
   [context : (& context LspCompletionContext)]
-  [namespace-mask : i64]) : unit
+  [namespace-mask : i64])
+  (:cold) : unit
   (match (compiler_semantic_index.compiler-semantic-source-index-query
     (& doc.semantic.index)
     (string.copy (& doc.path))
@@ -5428,7 +5698,8 @@
   [kind : i64]
   [source-rank : i64]
   [identity-prefix : String]
-  [detail : String]) : unit
+  [detail : String])
+  (:cold) : unit
   (let
     [split : lsp_svec.Vec (lsp-split-spaces labels)]
     (for [index (iterator.range 0 (lsp_svec.len (& split)))]
@@ -5461,7 +5732,8 @@
           unit)))))
 
 (define (lsp-completion-record-definition?
-  [record : (& record compiler_semantic_index.CompilerSemanticRecord)]) : bool
+  [record : (& record compiler_semantic_index.CompilerSemanticRecord)])
+  (:cold) : bool
   (match record.role
     [(Definition) true]
     [_ false]))
@@ -5469,7 +5741,8 @@
 (define (lsp-completion-record-kind-allowed?
   [kind : compiler_semantic_index.CompilerSemanticSymbolKind]
   [type-context : bool]
-  [member-context : bool]) : bool
+  [member-context : bool])
+  (:cold) : bool
   (if member-context
     (if type-context
       false
@@ -5512,7 +5785,8 @@
           [_ false])))))
 
 (define (lsp-completion-record-stable-key
-  [record : (& record compiler_semantic_index.CompilerSemanticRecord)]) : String
+  [record : (& record compiler_semantic_index.CompilerSemanticRecord)])
+  (:cold) : String
   (lsp-str3
     (lsp-str3 "record:" (string.int->string record.symbol.module-id) ":")
     (lsp-str3
@@ -5529,7 +5803,8 @@
   [record : compiler_semantic_index.CompilerSemanticRecord]
   [prefix : String]
   [source-rank : i64]
-  [module : (& module str)]) : unit
+  [module : (& module str)])
+  (:cold) : unit
   (let
     [rank : i64 (lsp-completion-match-rank record.display-name prefix)]
     (if (or (< rank 0) (not record.editable))
@@ -5553,7 +5828,8 @@
           (lsp-completion-record-stable-key (& record))
           (string.copy (& record.display-name)))))))
 
-(define (lsp-completion-workspace-item-kind [symbol-kind : i64]) : i64
+(define (lsp-completion-workspace-item-kind [symbol-kind : i64])
+  (:cold) : i64
   (cond
     [(= symbol-kind 12) 3]
     [(= symbol-kind 23) 22]
@@ -5565,7 +5841,8 @@
   [source : (& source lsp_vector_families.LspWorkspaceSource)]
   [decl : lsp_vector_families.LspDeclEntry]
   [prefix : String]
-  [source-rank : i64]) : unit
+  [source-rank : i64])
+  (:cold) : unit
   (let
     [rank : i64 (lsp-completion-match-rank decl.name prefix)]
     (if (< rank 0)
@@ -5597,7 +5874,8 @@
             (lsp-str3 ":" decl.kind ""))
           (string.copy (& decl.name)))))))
 
-(define (lsp-completion-first-module-segment [text : String]) : String
+(define (lsp-completion-first-module-segment [text : String])
+  (:cold) : String
   (let
     [index : i64 0]
     [n : i64 (string.string-length text)]
@@ -5609,7 +5887,8 @@
 ;; indexed module is outside that subtree.
 (define (lsp-completion-module-next-segment
   [module : String]
-  [receiver : String]) : String
+  [receiver : String])
+  (:cold) : String
   (if (= (string.string-length receiver) 0)
     (lsp-completion-first-module-segment module)
     (let
@@ -5625,7 +5904,8 @@
 (define (lsp-completion-collect-import!
   [results : (&mut results LspCompletionResults)]
   [workspace : (& workspace lsp_vector_families.LspWorkspaceIndex)]
-  [context : (& context LspCompletionContext)]) : unit
+  [context : (& context LspCompletionContext)])
+  (:cold) : unit
   (let
     [sources : lsp_vector_families.LspWorkspaceSources workspace.sources]
     (for [source-index
@@ -5687,7 +5967,8 @@
           unit)))))
 
 (define (lsp-completion-record-is-value-receiver?
-  [record : (& record compiler_semantic_index.CompilerSemanticRecord)]) : bool
+  [record : (& record compiler_semantic_index.CompilerSemanticRecord)])
+  (:cold) : bool
   (or
     (match record.kind
       [(Value) true]
@@ -5702,7 +5983,8 @@
       [(Field) true]
       [_ false])))
 
-(define (lsp-completion-rendered-type-tail [type-text : String]) : String
+(define (lsp-completion-rendered-type-tail [type-text : String])
+  (:cold) : String
   ;; `tc-type-render` emits wrapper types as S-expressions. Find their final
   ;; top-level component so reference and region wrappers can be peeled without
   ;; confusing a lifetime argument with the nominal referent.
@@ -5742,7 +6024,8 @@
       (string.substring type-text start (- end start))
       "")))
 
-(define (lsp-completion-rendered-type-owner-name [type-text : String]) : String
+(define (lsp-completion-rendered-type-owner-name [type-text : String])
+  (:cold) : String
   ;; A field receiver can be a nominal value, a lifetime-instantiated nominal,
   ;; or a shared/mutable reference (possibly carrying an outer Region tag).
   ;; Extract only that nominal head. A raw substring match is not semantic:
@@ -5774,7 +6057,8 @@
 
 (define (lsp-completion-record-owns-rendered-type?
   [record : (& record compiler_semantic_index.CompilerSemanticRecord)]
-  [owner-name : (& owner-name str)]) : bool
+  [owner-name : (& owner-name str)])
+  (:cold) : bool
   (let
     [module : String (tc.macro-decl-module-display record.symbol.module-id)]
     [module-len : i64 (string.string-length module)]
@@ -5795,7 +6079,8 @@
 
 (define (lsp-completion-find-type-owner
   [index : (& index compiler_semantic_index.CompilerSemanticSourceIndex)]
-  [type-text : String]) : i64
+  [type-text : String])
+  (:cold) : i64
   (let
     [record-index : i64 0]
     [found : i64 -1]
@@ -5829,7 +6114,8 @@
   [index : (& index compiler_semantic_index.CompilerSemanticSourceIndex)]
   [path : String]
   [start : i64]
-  [end : i64]) : i64
+  [end : i64])
+  (:cold) : i64
   (let
     [found : i64 -1]
     [best-start : i64 -1]
@@ -5858,7 +6144,8 @@
 
 (define (lsp-completion-find-member-owner
   [index : (& index compiler_semantic_index.CompilerSemanticSourceIndex)]
-  [member-index : i64]) : i64
+  [member-index : i64])
+  (:cold) : i64
   (if (< member-index 0)
     -1
     (let
@@ -5909,7 +6196,8 @@
   [index : (& index compiler_semantic_index.CompilerSemanticSourceIndex)]
   [path : String]
   [cursor-byte : i64]
-  [receiver : String]) : i64
+  [receiver : String])
+  (:cold) : i64
   (match (compiler_semantic_index.compiler-semantic-source-index-query
     index
     path
@@ -5941,7 +6229,8 @@
 (define (lsp-completion-find-field-receiver
   [index : (& index compiler_semantic_index.CompilerSemanticSourceIndex)]
   [path : String]
-  [context : (& context LspCompletionContext)]) : i64
+  [context : (& context LspCompletionContext)])
+  (:cold) : i64
   (let
     [found : i64 -1]
     [best-end : i64 -1]
@@ -5967,7 +6256,8 @@
 
 (define (lsp-completion-workspace-module-exists?
   [workspace : (& workspace lsp_vector_families.LspWorkspaceIndex)]
-  [module : String]) : bool
+  [module : String])
+  (:cold) : bool
   (let
     [sources : lsp_vector_families.LspWorkspaceSources workspace.sources]
     [source-index : i64 0]
@@ -5990,7 +6280,8 @@
   [workspace : (& workspace lsp_vector_families.LspWorkspaceIndex)]
   [module : String]
   [prefix : String]
-  [type-context : bool]) : unit
+  [type-context : bool])
+  (:cold) : unit
   (let
     [sources : lsp_vector_families.LspWorkspaceSources workspace.sources]
     (for [source-index
@@ -6035,7 +6326,8 @@
   [query : compiler_semantic_index.CompilerSemanticVisibleBindingQuery]
   [index : (& index compiler_semantic_index.CompilerSemanticSourceIndex)]
   [owner-index : i64]
-  [prefix : String]) : unit
+  [prefix : String])
+  (:cold) : unit
   (if (< owner-index 0)
     unit
     (let
@@ -6077,7 +6369,8 @@
   [module-id : i64]
   [module : (& module str)]
   [prefix : String]
-  [type-context : bool]) : unit
+  [type-context : bool])
+  (:cold) : unit
   (for [record-index
     (iterator.range
       0
@@ -6110,7 +6403,8 @@
   [doc : (& doc lsp_vector_families.LspDocument)]
   [workspace : (& workspace lsp_vector_families.LspWorkspaceIndex)]
   [context : (& context LspCompletionContext)]
-  [type-context : bool]) : unit
+  [type-context : bool])
+  (:cold) : unit
   (let
     [index : compiler_semantic_index.CompilerSemanticSourceIndex
       doc.semantic.index]
@@ -6227,7 +6521,8 @@
 (define (lsp-completion-collect-field!
   [results : (&mut results LspCompletionResults)]
   [doc : (& doc lsp_vector_families.LspDocument)]
-  [context : (& context LspCompletionContext)]) : unit
+  [context : (& context LspCompletionContext)])
+  (:cold) : unit
   (let
     [index : compiler_semantic_index.CompilerSemanticSourceIndex
       doc.semantic.index]
@@ -6259,7 +6554,8 @@
 (define (lsp-completion-collect
   [doc : (& doc lsp_vector_families.LspDocument)]
   [workspace : (& workspace lsp_vector_families.LspWorkspaceIndex)]
-  [context : (& context LspCompletionContext)]) : LspCompletionResults
+  [context : (& context LspCompletionContext)])
+  (:cold) : LspCompletionResults
   (let
     [results : LspCompletionResults (lsp-completion-results-new)]
     (match context.kind
@@ -6331,7 +6627,8 @@
 (define (lsp-completion-text-edit
   [candidate : (& candidate LspCompletionCandidate)]
   [text : (& text str)]
-  [context : (& context LspCompletionContext)]) : json.Json
+  [context : (& context LspCompletionContext)])
+  (:cold) : json.Json
   (let
     [start : LspLineCol (lsp-line-col-at-offset text context.replace-start)]
     [end : LspLineCol (lsp-line-col-at-offset text context.replace-end)]
@@ -6348,7 +6645,8 @@
 (define (lsp-completion-item-json
   [candidate : (& candidate LspCompletionCandidate)]
   [text : (& text str)]
-  [context : (& context LspCompletionContext)]) : json.Json
+  [context : (& context LspCompletionContext)])
+  (:cold) : json.Json
   (lsp-json-object
     (lsp-json-member
       "label"
@@ -6389,7 +6687,8 @@
   [results : (& results LspCompletionResults)]
   [text : String]
   [context : (& context LspCompletionContext)]
-  [index : i64]) : json.JsonSeq
+  [index : i64])
+  (:cold) : json.JsonSeq
   (if (>= index results.len)
     (json.list-empty)
     (lsp-json-list-cons
@@ -6399,7 +6698,8 @@
         context)
       (lsp-completion-items-json results text context (+ index 1)))))
 
-(define (lsp-completion-empty-result) : json.Json
+(define (lsp-completion-empty-result)
+  (:cold) : json.Json
   (lsp-json-object2
     "isIncomplete"
     (JsonBool false)
@@ -6409,7 +6709,8 @@
 (define (lsp-completion-result-json
   [doc : (& doc lsp_vector_families.LspDocument)]
   [workspace : (& workspace lsp_vector_families.LspWorkspaceIndex)]
-  [context : (& context LspCompletionContext)]) : json.Json
+  [context : (& context LspCompletionContext)])
+  (:cold) : json.Json
   (let
     [results : LspCompletionResults
       (lsp-completion-collect doc workspace context)]
@@ -6426,7 +6727,8 @@
 
 (define (lsp-completion-result-for-params
   [params : json.Json]
-  [state : lsp_vector_families.LspServerState]) : json.Json
+  [state : lsp_vector_families.LspServerState])
+  (:cold) : json.Json
   (match (lsp-get-semantic-document
     (owned_view.compiler-owned-shared-view params)
     state.documents)
@@ -6458,7 +6760,8 @@
 
 (define (lsp-handle-completion-message
   [message : json.Json]
-  [state : lsp_vector_families.LspServerState]) : LspHandleResult
+  [state : lsp_vector_families.LspServerState])
+  (:cold) : LspHandleResult
   (let
     [id-key : String "id"]
     (match (json.object-get
@@ -6498,7 +6801,8 @@
 ;; --------------------------------------------------------------------------
 ;; True when `off` is the start of the value in an un-annotated `[name value]`
 ;; binding: the char before (past whitespace) is the name, preceded by `[`.
-(define (lsp-inlay-valid-binding? [text : (& text str)] [off : i64]) : bool
+(define (lsp-inlay-valid-binding? [text : (& text str)] [off : i64])
+  (:cold) : bool
   (let
     [p : i64 (- off 1)]
     (while (and
@@ -6518,7 +6822,8 @@
             (-= p 1))
           (and (>= p 0) (= (string.string-ref text p) '[')))))))
 
-(define (lsp-inlay-valid-expr? [text : (& text str)] [off : i64]) : bool
+(define (lsp-inlay-valid-expr? [text : (& text str)] [off : i64])
+  (:cold) : bool
   (let
     [p : i64 (- off 1)]
     (while (and
@@ -6532,7 +6837,8 @@
 (define (lsp-inlay-range-line
   [range : json.Json]
   [which : String]
-  [fallback : i64]) : i64
+  [fallback : i64])
+  (:cold) : i64
   (match (json.object-get range (& which))
     [(JsonFound endpoint) (lsp-json-int-field-default endpoint "line" fallback)]
     [(JsonMissing) fallback]))
@@ -6541,7 +6847,8 @@
   [text : (& text str)]
   [line : i64]
   [col : i64]
-  [ty : String]) : json.Json
+  [ty : String])
+  (:cold) : json.Json
   (let
     [offset : i64
       (source_text.source-text-offset-at-byte-position
@@ -6563,7 +6870,8 @@
   [inlay-state : tc.TcInlayHintState]
   [text : (& text str)]
   [start-line : i64]
-  [end-line : i64]) : json.JsonSeq
+  [end-line : i64])
+  (:cold) : json.JsonSeq
   (let
     [size : i64 (tc.tc-inlay-hints-size-for-state inlay-state)]
     [acc : json.JsonSeq (json.list-empty)]
@@ -6601,7 +6909,8 @@
   [range : json.Json]
   [docs : (& docs lsp_document_vec.Vec)]
   [stdlib-roots : lsp_svec.Vec]
-  [job-state : tc.TcJobState]) : unit
+  [job-state : tc.TcJobState])
+  (:cold) : unit
   (match (lsp-documents-lookup docs uri)
     [(Found path text _)
       (let
@@ -6651,7 +6960,8 @@
   [params : json.Json]
   [docs : (& docs lsp_document_vec.Vec)]
   [stdlib-roots : lsp_svec.Vec]
-  [job-state : tc.TcJobState]) : unit
+  [job-state : tc.TcJobState])
+  (:cold) : unit
   (let
     [td-key : String "textDocument"]
     (match (json.object-get
@@ -6677,7 +6987,8 @@
 ;; error the document is left untouched (empty edit list) so saving never
 ;; mangles in-progress code.
 ;; --------------------------------------------------------------------------
-(define (lsp-formatting-edit [text : (& text str)] [formatted : String]) : json.Json
+(define (lsp-formatting-edit [text : (& text str)] [formatted : String])
+  (:cold) : json.Json
   (let
     [end : LspLineCol (lsp-line-col-at-offset text (string.string-length text))]
     (lsp-json-object2
@@ -6693,7 +7004,8 @@
 (define (lsp-formatting-respond
   [id : json.Json]
   [uri : String]
-  [docs : (& docs lsp_document_vec.Vec)]) : unit
+  [docs : (& docs lsp_document_vec.Vec)])
+  (:cold) : unit
   (match (lsp-documents-lookup docs uri)
     [(Found _ text _)
       (match (format_rules.format-rules-render-source-width-result
@@ -6709,7 +7021,8 @@
         [(Err _) (lsp-write-response id (lsp-json-array (json.list-empty)))])]
     [(Missing) (lsp-write-response id (lsp-json-array (json.list-empty)))]))
 
-(define (lsp-format-edit-text [text : String]) : String
+(define (lsp-format-edit-text [text : String])
+  (:cold) : String
   (match (format_rules.format-rules-render-source-width-result
     (owned_view.compiler-owned-shared-view text)
     80)
@@ -6719,7 +7032,8 @@
 (define (lsp-handle-formatting
   [id : json.Json]
   [params : json.Json]
-  [docs : (& docs lsp_document_vec.Vec)]) : unit
+  [docs : (& docs lsp_document_vec.Vec)])
+  (:cold) : unit
   (let
     [td-key : String "textDocument"]
     (match (json.object-get params (& td-key))
@@ -6737,7 +7051,8 @@
 ;; and special forms have no semantic identity and use the curated table below.
 ;; --------------------------------------------------------------------------
 ;; Offset just past a balanced ( ... ) group starting at `i`.
-(define (lsp-skip-paren-group [text : (& text str)] [i : i64] [n : i64]) : i64
+(define (lsp-skip-paren-group [text : (& text str)] [i : i64] [n : i64])
+  (:cold) : i64
   (let
     [j : i64 i]
     [depth : i64 0]
@@ -6763,12 +7078,14 @@
     j))
 
 ;; End offset of one type expression (a ( ... ) group or a single token).
-(define (lsp-scan-type [text : (& text str)] [i : i64] [n : i64]) : i64
+(define (lsp-scan-type [text : (& text str)] [i : i64] [n : i64])
+  (:cold) : i64
   (if (and (< i n) (= (string.string-ref text i) '('))
     (lsp-skip-paren-group text i n)
     (lsp-scan-ident text i n)))
 
-(define (lsp-text-has-form-content? [text : (& text str)]) : bool
+(define (lsp-text-has-form-content? [text : (& text str)])
+  (:cold) : bool
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
@@ -6783,7 +7100,8 @@
 ;; Validate that text contains one or more complete parenthesized forms.
 ;; Returns true if all non-comment content consists of valid forms, using the
 ;; real compiler parser.
-(define (lsp-text-is-valid-forms [text : String]) : bool
+(define (lsp-text-is-valid-forms [text : String])
+  (:cold) : bool
   (if (not (lsp-text-has-form-content? text))
     false
     (match (lsp-validate-forms-result text)
@@ -6794,7 +7112,8 @@
   [line : i64]
   [col : i64]
   [msg : String]
-  [ctx : String]) : String
+  [ctx : String])
+  (:cold) : String
   (lsp-str7
     msg
     " at line "
@@ -6804,7 +7123,8 @@
     " | "
     ctx))
 
-(define (lsp-replace-body-validation-message [new-body : String]) : String
+(define (lsp-replace-body-validation-message [new-body : String])
+  (:cold) : String
   (let
     [detail : String
       (if (lsp-text-has-form-content? new-body)
@@ -6828,7 +7148,8 @@
   [line : i64]
   [col : i64]
   [msg : String]
-  [ctx : String]) : json.Json
+  [ctx : String])
+  (:cold) : json.Json
   (lsp-json-object
     (lsp-json-member
       "operation"
@@ -6861,7 +7182,8 @@
                     (JsonBool false)
                     (json.member-list-empty)))))))))))
 
-(define (lsp-replace-body-validation-data [new-body : String]) : json.Json
+(define (lsp-replace-body-validation-data [new-body : String])
+  (:cold) : json.Json
   (if (lsp-text-has-form-content? new-body)
     (match (lsp-validate-forms-result new-body)
       [(Valid) JsonNull]
@@ -6874,12 +7196,14 @@
       "<empty body>")))
 
 ;; Return a formatted error message, or empty string if valid.
-(define (lsp-validate-forms-error [text : String]) : String
+(define (lsp-validate-forms-error [text : String])
+  (:cold) : String
   (match (lsp-validate-forms-result text)
     [(Valid) ""]
     [(Invalid line col msg ctx) (lsp-validation-error-message line col msg ctx)]))
 
-(define (lsp-validate-edited-document [text : String]) : LspEditResult
+(define (lsp-validate-edited-document [text : String])
+  (:cold) : LspEditResult
   (match (lsp-validate-forms-result
     (owned_view.compiler-owned-shared-view text))
     [(Valid) (Ok text)]
@@ -6890,7 +7214,8 @@
           (lsp-validation-error-message line col msg ctx)))]))
 
 ;; Extract the line at position (1-based line)
-(define (lsp-line-at [text : (& text str)] [line1 : i64]) : String
+(define (lsp-line-at [text : (& text str)] [line1 : i64])
+  (:cold) : String
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
@@ -6914,7 +7239,8 @@
 
 ;; Validate forms using real parser. Returns `LspValidationResult.Valid` on
 ;; success, or `Invalid` with line, col, message, and context on failure.
-(define (lsp-validate-forms-result [text : String]) : LspValidationResult
+(define (lsp-validate-forms-result [text : String])
+  (:cold) : LspValidationResult
   (cbi.compiler-builtin-initialize-for-parse!)
   (match (lexer.spanned-result (& text))
     [(Err err)
@@ -6985,7 +7311,8 @@
 
 ;; Find the byte offset where the body of a define/defmacro begins,
 ;; given the offset of the opening '(' of the form.
-(define (lsp-find-body-start-offset [text : (& text str)] [form-start : i64]) : i64
+(define (lsp-find-body-start-offset [text : (& text str)] [form-start : i64])
+  (:cold) : i64
   (let
     [n : i64 (string.string-length text)]
     [i : i64 form-start]
@@ -7011,7 +7338,8 @@
 
 ;; Declared type of the nearest [sym : TYPE] binding whose name starts at or
 ;; before `limit`, or "" if none (function params and let bindings).
-(define (lsp-binding-type [text : (& text str)] [sym : String] [limit : i64]) : String
+(define (lsp-binding-type [text : (& text str)] [sym : String] [limit : i64])
+  (:cold) : String
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
@@ -7052,7 +7380,8 @@
           [else (+= i 1)])))
     result))
 
-(define (lsp-hover-markdown [body : String] [docs : String]) : String
+(define (lsp-hover-markdown [body : String] [docs : String])
+  (:cold) : String
   (if (string.eq docs "")
     (str_cat.str-cat "```typelisp\n" body "\n```")
     (str_cat.str-cat "```typelisp\n" body "\n```\n\n" docs)))
@@ -7061,7 +7390,8 @@
   [markdown : String]
   [text : String]
   [start : i64]
-  [end : i64]) : json.Json
+  [end : i64])
+  (:cold) : json.Json
   (lsp-json-object2
     "contents"
     (lsp-json-object2
@@ -7075,7 +7405,8 @@
 (define (lsp-semantic-hover-body
   [doc : (& doc lsp_vector_families.LspDocument)]
   [offset : i64]
-  [record : (& record compiler_semantic_index.CompilerSemanticRecord)]) : String
+  [record : (& record compiler_semantic_index.CompilerSemanticRecord)])
+  (:cold) : String
   (let
     [name : String (string.copy (& record.display-name))]
     [resolved-type : String (string.copy (& record.resolved-type))]
@@ -7132,7 +7463,8 @@
 
 ;; Curated hover for builtins, operators, and special forms (no source
 ;; (define ...) exists for these). Returns markdown, or "" when unknown.
-(define (lsp-builtin-hover [name : String]) : String
+(define (lsp-builtin-hover [name : String])
+  (:cold) : String
   (cond
     [(or
         (string.eq name "i64")
@@ -7333,7 +7665,8 @@
   [id : json.Json]
   [uri : String]
   [position : json.Json]
-  [docs : (& docs lsp_document_vec.Vec)]) : unit
+  [docs : (& docs lsp_document_vec.Vec)])
+  (:cold) : unit
   (let
     [doc-index : i64 (lsp-documents-find-index docs uri)]
     (if (< doc-index 0)
@@ -7394,7 +7727,8 @@
 (define (lsp-handle-hover
   [id : json.Json]
   [params : json.Json]
-  [docs : (& docs lsp_document_vec.Vec)]) : unit
+  [docs : (& docs lsp_document_vec.Vec)])
+  (:cold) : unit
   (let
     [td-key : String "textDocument"]
     (match (json.object-get
@@ -7420,7 +7754,8 @@
   [text : (& text str)]
   [resolved : String]
   [content-start : i64]
-  [content-end : i64]) : json.Json
+  [content-end : i64])
+  (:cold) : json.Json
   (let
     [start-lc : LspLineCol (lsp-line-col-at-offset text content-start)]
     [end-lc : LspLineCol (lsp-line-col-at-offset text content-end)]
@@ -7437,7 +7772,8 @@
 (define (lsp-document-links
   [text : (& text str)]
   [path : String]
-  [stdlib-roots : lsp_svec.Vec]) : json.JsonSeq
+  [stdlib-roots : lsp_svec.Vec])
+  (:cold) : json.JsonSeq
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
@@ -7484,7 +7820,8 @@
   [id : json.Json]
   [uri : String]
   [docs : (& docs lsp_document_vec.Vec)]
-  [stdlib-roots : lsp_svec.Vec]) : unit
+  [stdlib-roots : lsp_svec.Vec])
+  (:cold) : unit
   (match (lsp-documents-lookup docs uri)
     [(Found path text _)
       (lsp-write-response
@@ -7496,7 +7833,8 @@
   [id : json.Json]
   [params : json.Json]
   [docs : (& docs lsp_document_vec.Vec)]
-  [stdlib-roots : lsp_svec.Vec]) : unit
+  [stdlib-roots : lsp_svec.Vec])
+  (:cold) : unit
   (let
     [td-key : String "textDocument"]
     (match (json.object-get params (& td-key))
@@ -7506,17 +7844,20 @@
           [(Missing) (lsp-write-response id (lsp-json-array (json.list-empty)))])]
       [(JsonMissing) (lsp-write-response id (lsp-json-array (json.list-empty)))])))
 
-(define (lsp-maybe-write-method-not-found [message : json.Json]) : unit
+(define (lsp-maybe-write-method-not-found [message : json.Json])
+  (:cold) : unit
   (let
     [key : String "id"]
     (match (json.object-get message (& key))
       [(JsonFound id) (lsp-write-error id -32601 "Method not found")]
       [(JsonMissing) unit])))
 
-(define (lsp-decl-entry-fallback) : lsp_vector_families.LspDeclEntry
+(define (lsp-decl-entry-fallback)
+  (:cold) : lsp_vector_families.LspDeclEntry
   (lsp_vector_families.LspDeclEntry "" "" 0 0 0 0 0 0 0 13 false))
 
-(define (lsp-decl-kind-at [text : (& text str)] [i : i64] [n : i64]) : String
+(define (lsp-decl-kind-at [text : (& text str)] [i : i64] [n : i64])
+  (:cold) : String
   (let
     [after-open : i64 (source_text.source-text-skip-space text (+ i 1) n)]
     [kw-end : i64 (lsp-scan-ident text after-open n)]
@@ -7538,7 +7879,8 @@
 ;; the tl/findPosition kind filter). In particular, those tools continue to
 ;; classify every define as "function", while the standard outline
 ;; distinguishes function-head and value declarations.
-(define (lsp-decl-symbol-kind-at [text : (& text str)] [i : i64] [n : i64]) : i64
+(define (lsp-decl-symbol-kind-at [text : (& text str)] [i : i64] [n : i64])
+  (:cold) : i64
   (let
     [after-open : i64 (source_text.source-text-skip-space text (+ i 1) n)]
     [kw-end : i64 (lsp-scan-ident text after-open n)]
@@ -7559,7 +7901,8 @@
               13)]
           [else 13])))))
 
-(define (lsp-scan-decls [text : String]) : lsp_decl_vec.Vec
+(define (lsp-scan-decls [text : String])
+  (:cold) : lsp_decl_vec.Vec
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
@@ -7627,7 +7970,8 @@
           [else (+= i 1)])))
     result))
 
-(define (lsp-explicit-module-name [text : (& text str)]) : String
+(define (lsp-explicit-module-name [text : (& text str)])
+  (:cold) : String
   (let
     [n : i64 (string.string-length text)]
     [index : i64 0]
@@ -7677,12 +8021,14 @@
           [else (+= index 1)])))
     module-name))
 
-(define (lsp-decl-entry-copy [entry : lsp_vector_families.LspDeclEntry]) : lsp_vector_families.LspDeclEntry
+(define (lsp-decl-entry-copy [entry : lsp_vector_families.LspDeclEntry])
+  (:cold) : lsp_vector_families.LspDeclEntry
   (set! entry.kind (string.copy (& entry.kind)))
   (set! entry.name (string.copy (& entry.name)))
   entry)
 
-(define (lsp-decls-copy [decls : (& decls lsp_decl_vec.Vec)]) : lsp_decl_vec.Vec
+(define (lsp-decls-copy [decls : (& decls lsp_decl_vec.Vec)])
+  (:cold) : lsp_decl_vec.Vec
   (let
     [count : i64 (lsp_decl_vec.len decls)]
     [copy : lsp_decl_vec.Vec (lsp_decl_vec.with-capacity count)]
@@ -7696,13 +8042,15 @@
     copy))
 
 (define (lsp-check-cache-copy
-  [cache : (& cache lsp_vector_families.LspCheckCache)]) : lsp_vector_families.LspCheckCache
+  [cache : (& cache lsp_vector_families.LspCheckCache)])
+  (:cold) : lsp_vector_families.LspCheckCache
   (match cache
     [(LspCheckCacheInvalid) LspCheckCacheInvalid]
     [(LspCheckCacheOk) LspCheckCacheOk]
     [(LspCheckCacheErr message) (LspCheckCacheErr (string.copy message))]))
 
-(define (lsp-document-copy [doc : (& doc lsp_vector_families.LspDocument)]) : lsp_vector_families.LspDocument
+(define (lsp-document-copy [doc : (& doc lsp_vector_families.LspDocument)])
+  (:cold) : lsp_vector_families.LspDocument
   (let
     [sem-ref : (& doc lsp_vector_families.LspSemanticSnapshot) (& doc.semantic)]
     [sem-cell : (Array (& doc lsp_vector_families.LspSemanticSnapshot) 1)
@@ -7725,7 +8073,8 @@
               (__tl_array-data sem-cell)
               : (Ptr (Ptr lsp_vector_families.LspSemanticSnapshot)))))))))
 
-(define (lsp-documents-copy [docs : (& docs lsp_document_vec.Vec)]) : lsp_document_vec.Vec
+(define (lsp-documents-copy [docs : (& docs lsp_document_vec.Vec)])
+  (:cold) : lsp_document_vec.Vec
   (let
     [view : (& docs (Slice lsp_vector_families.LspDocument))
       (lsp_document_vec.view docs)]
@@ -7737,13 +8086,15 @@
         (lsp-document-copy (& (array-ref view index)))))
     copy))
 
-(define (lsp-workspace-root-copy [root : lsp_vector_families.LspWorkspaceRoot]) : lsp_vector_families.LspWorkspaceRoot
+(define (lsp-workspace-root-copy [root : lsp_vector_families.LspWorkspaceRoot])
+  (:cold) : lsp_vector_families.LspWorkspaceRoot
   (lsp_vector_families.LspWorkspaceRoot
     (string.copy (& root.uri))
     (string.copy (& root.path))))
 
 (define (lsp-workspace-roots-copy
-  [roots : (& roots lsp_vector_families.LspWorkspaceRoots)]) : lsp_vector_families.LspWorkspaceRoots
+  [roots : (& roots lsp_vector_families.LspWorkspaceRoots)])
+  (:cold) : lsp_vector_families.LspWorkspaceRoots
   (let
     [copy : lsp_vector_families.LspWorkspaceRoots (lsp-workspace-roots-new)]
     (for [index (iterator.range 0 (lsp-workspace-roots-len (& roots)))]
@@ -7753,7 +8104,8 @@
     copy))
 
 (define (lsp-workspace-source-copy
-  [source : lsp_vector_families.LspWorkspaceSource]) : lsp_vector_families.LspWorkspaceSource
+  [source : lsp_vector_families.LspWorkspaceSource])
+  (:cold) : lsp_vector_families.LspWorkspaceSource
   (lsp_vector_families.LspWorkspaceSource
     (string.copy (& source.root-uri))
     (string.copy (& source.root-path))
@@ -7765,7 +8117,8 @@
     (lsp-decls-copy source.decls)))
 
 (define (lsp-workspace-sources-copy
-  [sources : (& sources lsp_vector_families.LspWorkspaceSources)]) : lsp_vector_families.LspWorkspaceSources
+  [sources : (& sources lsp_vector_families.LspWorkspaceSources)])
+  (:cold) : lsp_vector_families.LspWorkspaceSources
   (let
     [copy : lsp_vector_families.LspWorkspaceSources (lsp-workspace-sources-new)]
     (for [index (iterator.range 0 (lsp-workspace-sources-len (& sources)))]
@@ -7776,12 +8129,14 @@
     copy))
 
 (define (lsp-workspace-index-copy
-  [index : (& index lsp_vector_families.LspWorkspaceIndex)]) : lsp_vector_families.LspWorkspaceIndex
+  [index : (& index lsp_vector_families.LspWorkspaceIndex)])
+  (:cold) : lsp_vector_families.LspWorkspaceIndex
   (lsp_vector_families.LspWorkspaceIndex
     (lsp-workspace-roots-copy index.roots)
     (lsp-workspace-sources-copy index.sources)))
 
-(define (lsp-workspace-semantic-cache-new) : lsp_vector_families.LspWorkspaceSemanticCache
+(define (lsp-workspace-semantic-cache-new)
+  (:cold) : lsp_vector_families.LspWorkspaceSemanticCache
   (lsp_vector_families.LspWorkspaceSemanticCache
     ""
     (__tl_make-array lsp_vector_families.LspWorkspaceSemanticCacheEntry 0)
@@ -7790,7 +8145,8 @@
 
 (define (lsp-workspace-semantic-cache-find-uri
   [cache : (& cache lsp_vector_families.LspWorkspaceSemanticCache)]
-  [uri : String]) : i64
+  [uri : String])
+  (:cold) : i64
   (let
     [index : i64 0]
     [found : i64 -1]
@@ -7804,7 +8160,8 @@
 
 (define (lsp-workspace-semantic-cache-remove-index!
   [cache : (&mut cache lsp_vector_families.LspWorkspaceSemanticCache)]
-  [index : i64]) : unit
+  [index : i64])
+  (:cold) : unit
   (if (or (< index 0) (>= index cache.len))
     unit
     (let
@@ -7821,7 +8178,8 @@
       (set! cache.len last))))
 
 (define (lsp-workspace-semantic-cache-release-all!
-  [cache : (&mut cache lsp_vector_families.LspWorkspaceSemanticCache)]) : unit
+  [cache : (&mut cache lsp_vector_families.LspWorkspaceSemanticCache)])
+  (:cold) : unit
   (for [index (iterator.range 0 cache.len)]
     (if (> (array-ref cache.slots index).index.owner-arena 0)
       (compiler_semantic_index.compiler-semantic-source-index-release!
@@ -7832,7 +8190,8 @@
   (set! cache.source-checks 0))
 
 (define (lsp-workspace-semantic-cache-copy
-  [cache : (& cache lsp_vector_families.LspWorkspaceSemanticCache)]) : lsp_vector_families.LspWorkspaceSemanticCache
+  [cache : (& cache lsp_vector_families.LspWorkspaceSemanticCache)])
+  (:cold) : lsp_vector_families.LspWorkspaceSemanticCache
   (let
     [copy : lsp_vector_families.LspWorkspaceSemanticCache
       (lsp-workspace-semantic-cache-new)]
@@ -7869,7 +8228,8 @@
 ;; be recomputed once rather than risking a stale negative result.
 (define (lsp-workspace-semantic-cache-invalidate-path!
   [cache : (&mut cache lsp_vector_families.LspWorkspaceSemanticCache)]
-  [path : String]) : unit
+  [path : String])
+  (:cold) : unit
   (let
     [normalized : String (lsp-normalized-absolute-path path)]
     [index : i64 0]
@@ -7893,7 +8253,8 @@
 (define (lsp-workspace-root-for-path
   [roots : (& roots lsp_vector_families.LspWorkspaceRoots)]
   [path : (& path str)]
-  [require-file : bool]) : lsp_vector_families.LspWorkspaceRootLookup
+  [require-file : bool])
+  (:cold) : lsp_vector_families.LspWorkspaceRootLookup
   (let
     [index : i64 0]
     [found : lsp_vector_families.LspWorkspaceRootLookup Missing]
@@ -7920,7 +8281,8 @@
 (define (lsp-workspace-source-module
   [root-path : (& root-path str)]
   [path : (& path str)]
-  [text : (& text str)]) : String
+  [text : (& text str)])
+  (:cold) : String
   (let
     [explicit : String (lsp-explicit-module-name text)]
     (if (> (string.string-length explicit) 0)
@@ -7934,7 +8296,8 @@
   [root : lsp_vector_families.LspWorkspaceRootLookup]
   [path : String]
   [text : String]
-  [overlay : bool]) : lsp_vector_families.LspWorkspaceSource
+  [overlay : bool])
+  (:cold) : lsp_vector_families.LspWorkspaceSource
   (let
     [normalized-path : String (lsp-normalized-absolute-path path)]
     [uri : String
@@ -7968,7 +8331,8 @@
   [root : lsp_vector_families.LspWorkspaceRootLookup]
   [path : String]
   [text : String]
-  [overlay : bool]) : unit
+  [overlay : bool])
+  (:cold) : unit
   (let
     [source : lsp_vector_families.LspWorkspaceSource
       (lsp-workspace-source-from-text root path text overlay)]
@@ -7982,7 +8346,8 @@
   [root : lsp_vector_families.LspWorkspaceRootLookup]
   [path : String]
   [text : String]
-  [overlay : bool]) : unit
+  [overlay : bool])
+  (:cold) : unit
   (let
     [source : lsp_vector_families.LspWorkspaceSource
       (lsp-workspace-source-from-text root path text overlay)]
@@ -7998,7 +8363,8 @@
   [index : (&mut index lsp_vector_families.LspWorkspaceIndex)]
   [docs : (& docs lsp_document_vec.Vec)]
   [root : lsp_vector_families.LspWorkspaceRootLookup]
-  [path : String]) : unit
+  [path : String])
+  (:cold) : unit
   (let
     [doc-index : i64 (lsp-documents-find-path-index (& docs) path)]
     (if (>= doc-index 0)
@@ -8023,7 +8389,8 @@
 (define (lsp-workspace-index-build-root!
   [index : (&mut index lsp_vector_families.LspWorkspaceIndex)]
   [docs : (& docs lsp_document_vec.Vec)]
-  [root : lsp_vector_families.LspWorkspaceRoot]) : unit
+  [root : lsp_vector_families.LspWorkspaceRoot])
+  (:cold) : unit
   (match (package_source_core.package-source-discover-root-for "lsp" root.path)
     [(Err _) unit]
     [(Ok paths)
@@ -8036,7 +8403,8 @@
 
 (define (lsp-workspace-index-add-rootless-overlays!
   [index : (&mut index lsp_vector_families.LspWorkspaceIndex)]
-  [docs : (& docs lsp_document_vec.Vec)]) : unit
+  [docs : (& docs lsp_document_vec.Vec)])
+  (:cold) : unit
   (for [doc-index (iterator.range 0 (lsp_document_vec.len (& docs)))]
     (let
       [view : (& docs (Slice lsp_vector_families.LspDocument))
@@ -8061,7 +8429,8 @@
 
 (define (lsp-workspace-index-build-sources!
   [index : (&mut index lsp_vector_families.LspWorkspaceIndex)]
-  [docs : (& docs lsp_document_vec.Vec)]) : unit
+  [docs : (& docs lsp_document_vec.Vec)])
+  (:cold) : unit
   (let
     [root-index : i64 0]
     (while (< root-index (lsp-workspace-roots-len (& index.roots)))
@@ -8073,7 +8442,8 @@
     (lsp-workspace-index-add-rootless-overlays! index docs)))
 
 (define (lsp-server-state-copy-in-current
-  [state : (& state lsp_vector_families.LspServerState)]) : lsp_vector_families.LspServerState
+  [state : (& state lsp_vector_families.LspServerState)])
+  (:cold) : lsp_vector_families.LspServerState
   (lsp_vector_families.LspServerState
     0
     (lsp-documents-copy state.documents)
@@ -8084,7 +8454,8 @@
   [old-state : (& old-state lsp_vector_families.LspServerState)]
   [draft : lsp_vector_families.LspServerState]
   [owner : i64]
-  [previous-arena : i64]) : lsp_vector_families.LspServerState
+  [previous-arena : i64])
+  (:cold) : lsp_vector_families.LspServerState
   (let
     [next : lsp_vector_families.LspServerState
       (lsp_vector_families.LspServerState
@@ -8101,7 +8472,8 @@
     (set! lsp-document-cache-arena owner)
     next))
 
-(define (lsp-server-state-new) : lsp_vector_families.LspServerState
+(define (lsp-server-state-new)
+  (:cold) : lsp_vector_families.LspServerState
   (let
     [previous : i64 (arena.tl_arena_current)]
     [owner : i64 (arena.tl_arena_make)]
@@ -8121,7 +8493,8 @@
     (set! lsp-document-cache-arena owner)
     (lsp_vector_families.LspServerState owner docs workspace semantic-cache)))
 
-(define (lsp-server-state-destroy! [state : lsp_vector_families.LspServerState]) : unit
+(define (lsp-server-state-destroy! [state : lsp_vector_families.LspServerState])
+  (:cold) : unit
   (let
     [state : lsp_vector_families.LspServerState state]
     [owner : i64 state.owner-arena]
@@ -8133,7 +8506,8 @@
         (arena.tl_arena_destroy owner))
       unit)))
 
-(define (lsp-workspace-semantic-key-field [value : String]) : String
+(define (lsp-workspace-semantic-key-field [value : String])
+  (:cold) : String
   (str_cat.str-cat (string.int->string (string.string-length value)) ":" value))
 
 ;; Exact framing avoids accidental cache reuse when roots/cfgs are reordered or
@@ -8142,7 +8516,8 @@
 ;; negotiated rendering choice.
 (define (lsp-workspace-semantic-context-key
   [workspace : (& workspace lsp_vector_families.LspWorkspaceIndex)]
-  [stdlib-roots : (& stdlib-roots lsp_svec.Vec)]) : String
+  [stdlib-roots : (& stdlib-roots lsp_svec.Vec)])
+  (:cold) : String
   (let
     [cfg-names : lsp_svec.Vec (lsp-global-shared-view lsp-language-cfg-names)]
     [key : String
@@ -8202,7 +8577,8 @@
         (+= index 1)))
     key))
 
-(define (lsp-workspace-semantic-source-fingerprint [text : (& text str)]) : i64
+(define (lsp-workspace-semantic-source-fingerprint [text : (& text str)])
+  (:cold) : i64
   (let
     ;; Two independent 31-bit polynomial hashes fit losslessly in one i64.
     ;; Keeping the byte length beside this value makes accidental reuse far
@@ -8221,7 +8597,8 @@
 
 (define (lsp-workspace-semantic-index-overlay-mismatch?
   [index : (& index compiler_semantic_index.CompilerSemanticSourceIndex)]
-  [docs : (& docs lsp_document_vec.Vec)]) : bool
+  [docs : (& docs lsp_document_vec.Vec)])
+  (:cold) : bool
   (let
     [doc-index : i64 0]
     [mismatch : bool false]
@@ -8259,7 +8636,8 @@
   [source : lsp_vector_families.LspWorkspaceSource]
   [fingerprint : i64]
   [source-len : i64]
-  [semantic-index : compiler_semantic_index.CompilerSemanticSourceIndex]) : unit
+  [semantic-index : compiler_semantic_index.CompilerSemanticSourceIndex])
+  (:cold) : unit
   (unsafe
     (ptr-write!
       (ptr-offset (__tl_array-data cache.slots) cache.len)
@@ -8275,7 +8653,8 @@
   [cache : (&mut cache lsp_vector_families.LspWorkspaceSemanticCache)]
   [source : lsp_vector_families.LspWorkspaceSource]
   [docs : (& docs lsp_document_vec.Vec)]
-  [stdlib-roots : lsp_svec.Vec]) : i64
+  [stdlib-roots : lsp_svec.Vec])
+  (:cold) : i64
   (match (io.try-read-file (& source.path))
     [(ErrIoBytes _)
       (let
@@ -8364,7 +8743,8 @@
   [cache : (&mut cache lsp_vector_families.LspWorkspaceSemanticCache)]
   [workspace : (& workspace lsp_vector_families.LspWorkspaceIndex)]
   [docs : (& docs lsp_document_vec.Vec)]
-  [stdlib-roots : lsp_svec.Vec]) : i64
+  [stdlib-roots : lsp_svec.Vec])
+  (:cold) : i64
   (let
     [context-key : String
       (lsp-workspace-semantic-context-key workspace stdlib-roots)]
@@ -8432,7 +8812,8 @@
 ;; reports zero source checks and retains the same bounded owners.
 (define (lsp-server-state-refresh-semantic-cache
   [state : (& state lsp_vector_families.LspServerState)]
-  [stdlib-roots : lsp_svec.Vec]) : lsp_vector_families.LspServerState
+  [stdlib-roots : lsp_svec.Vec])
+  (:cold) : lsp_vector_families.LspServerState
   (let
     [previous : i64 (arena.tl_arena_current)]
     [owner : i64 (arena.tl_arena_make)]
@@ -8452,7 +8833,8 @@
     (set! next.semantic-cache.source-checks source-checks)
     next))
 
-(define (lsp-workspace-semantic-fact-fallback) : lsp_vector_families.LspWorkspaceSemanticFact
+(define (lsp-workspace-semantic-fact-fallback)
+  (:cold) : lsp_vector_families.LspWorkspaceSemanticFact
   (lsp_vector_families.LspWorkspaceSemanticFact
     ""
     false
@@ -8471,14 +8853,16 @@
 
 (define (lsp-workspace-semantic-facts-get
   [facts : (& facts LspWorkspaceSemanticQuery)]
-  [index : i64]) : lsp_vector_families.LspWorkspaceSemanticFact
+  [index : i64])
+  (:cold) : lsp_vector_families.LspWorkspaceSemanticFact
   (if (and (>= index 0) (< index facts.len))
     (owned_view.compiler-owned-array-element-shared-view facts.slots index)
     (lsp-workspace-semantic-fact-fallback)))
 
 (define (lsp-workspace-semantic-facts-contain?
   [facts : (& facts LspWorkspaceSemanticQuery)]
-  [candidate : (& candidate lsp_vector_families.LspWorkspaceSemanticFact)]) : bool
+  [candidate : (& candidate lsp_vector_families.LspWorkspaceSemanticFact)])
+  (:cold) : bool
   (let
     [index : i64 0]
     [found : bool false]
@@ -8507,14 +8891,16 @@
     found))
 
 (define (lsp-workspace-semantic-role-order
-  [role : (& role compiler_semantic_index.CompilerSemanticRecordRole)]) : i64
+  [role : (& role compiler_semantic_index.CompilerSemanticRecordRole)])
+  (:cold) : i64
   (match (deref role)
     [(Definition) 0]
     [(Use) 1]))
 
 (define (lsp-workspace-semantic-fact-less?
   [left : (& left lsp_vector_families.LspWorkspaceSemanticFact)]
-  [right : (& right lsp_vector_families.LspWorkspaceSemanticFact)]) : bool
+  [right : (& right lsp_vector_families.LspWorkspaceSemanticFact)])
+  (:cold) : bool
   (cond
     [(not (string.eq left.uri right.uri))
       (stdlib.sort.string-less-borrowed? (& left.uri) (& right.uri))]
@@ -8532,7 +8918,8 @@
 ;; alias or overwrite it.
 (define (lsp-workspace-semantic-facts-insert!
   [facts : (&mut facts LspWorkspaceSemanticQuery)]
-  [candidate : lsp_vector_families.LspWorkspaceSemanticFact]) : unit
+  [candidate : lsp_vector_families.LspWorkspaceSemanticFact])
+  (:cold) : unit
   (unless
     (lsp-workspace-semantic-facts-contain? facts candidate)
     (if (>= facts.len (array-length facts.slots))
@@ -8576,7 +8963,8 @@
   [semantic-index
     : (& semantic-index compiler_semantic_index.CompilerSemanticSourceIndex)]
   [docs : (& docs lsp_document_vec.Vec)]
-  [canonical-key : (& canonical-key str)]) : unit
+  [canonical-key : (& canonical-key str)])
+  (:cold) : unit
   (for [record-index
     (iterator.range
       0
@@ -8653,7 +9041,8 @@
 
 (define (lsp-document-semantic-canonical-key-at
   [doc : (& doc lsp_vector_families.LspDocument)]
-  [byte-position : i64]) : String
+  [byte-position : i64])
+  (:cold) : String
   (let
     [record-index : i64 (lsp-document-semantic-record-at doc byte-position)]
     (if (< record-index 0)
@@ -8673,7 +9062,8 @@
 (define (lsp-workspace-semantic-query
   [state : (& state lsp_vector_families.LspServerState)]
   [stdlib-roots : (& stdlib-roots lsp_svec.Vec)]
-  [canonical-key : (& canonical-key str)]) : LspWorkspaceSemanticQuery
+  [canonical-key : (& canonical-key str)])
+  (:cold) : LspWorkspaceSemanticQuery
   (let
     [facts : LspWorkspaceSemanticQuery
       (LspWorkspaceSemanticQuery
@@ -8766,7 +9156,8 @@
     facts))
 
 (define (lsp-workspace-semantic-fact-real-location?
-  [fact : lsp_vector_families.LspWorkspaceSemanticFact]) : bool
+  [fact : lsp_vector_families.LspWorkspaceSemanticFact])
+  (:cold) : bool
   (let
     [span : compiler_semantic_index.CompilerSemanticSpan fact.span]
     [source : ast.AstSourceSpan span.source]
@@ -8783,13 +9174,15 @@
       (> span.utf16-end-col 0))))
 
 (define (lsp-workspace-semantic-fact-definition?
-  [fact : (& fact lsp_vector_families.LspWorkspaceSemanticFact)]) : bool
+  [fact : (& fact lsp_vector_families.LspWorkspaceSemanticFact)])
+  (:cold) : bool
   (match fact.role
     [(Definition) true]
     [(Use) false]))
 
 (define (lsp-reference-location
-  [fact : lsp_vector_families.LspWorkspaceSemanticFact]) : json.Json
+  [fact : lsp_vector_families.LspWorkspaceSemanticFact])
+  (:cold) : json.Json
   (lsp-json-object2
     "uri"
     (JsonString fact.uri)
@@ -8802,7 +9195,8 @@
 
 (define (lsp-reference-result-json
   [query : (& query LspWorkspaceSemanticQuery)]
-  [include-declaration : bool]) : json.Json
+  [include-declaration : bool])
+  (:cold) : json.Json
   (let
     [index : i64 (- query.len 1)]
     [locations : json.JsonSeq (json.list-empty)]
@@ -8825,7 +9219,8 @@
 
 (define (lsp-rename-span-real?
   [span : compiler_semantic_index.CompilerSemanticSpan]
-  [text : (& text str)]) : bool
+  [text : (& text str)])
+  (:cold) : bool
   (and
     (>= span.start-byte 0)
     (> span.end-byte span.start-byte)
@@ -8837,7 +9232,8 @@
 (define (lsp-rename-effective-span
   [span : compiler_semantic_index.CompilerSemanticSpan]
   [display-name : (& display-name str)]
-  [text : (& text str)]) : compiler_semantic_index.CompilerSemanticSpan
+  [text : (& text str)])
+  (:cold) : compiler_semantic_index.CompilerSemanticSpan
   (if (not (lsp-rename-span-real? (lsp-global-shared-view span) text))
     span
     (let
@@ -8873,14 +9269,16 @@
 
 (define (lsp-rename-span-text
   [span : compiler_semantic_index.CompilerSemanticSpan]
-  [text : (& text str)]) : String
+  [text : (& text str)])
+  (:cold) : String
   (if (lsp-rename-span-real? (lsp-global-shared-view span) text)
     (string.substring text span.start-byte (- span.end-byte span.start-byte))
     ""))
 
 (define (lsp-rename-target-at
   [doc : (& doc lsp_vector_families.LspDocument)]
-  [byte-position : i64]) : LspRenameTargetLookup
+  [byte-position : i64])
+  (:cold) : LspRenameTargetLookup
   (match (lsp-document-semantic-snapshot-status doc)
     [(Current _ complete)
       (if (not complete)
@@ -8950,7 +9348,8 @@
 
 (define (lsp-rename-source-for-fact
   [state : (& state lsp_vector_families.LspServerState)]
-  [fact : (& fact lsp_vector_families.LspWorkspaceSemanticFact)]) : LspRenameSourceLookup
+  [fact : (& fact lsp_vector_families.LspWorkspaceSemanticFact)])
+  (:cold) : LspRenameSourceLookup
   (let
     [doc-index : i64
       (lsp-documents-find-path-index (& state.documents) fact.span.path)]
@@ -8967,24 +9366,28 @@
 
 (define (lsp-rename-fact-surface-span
   [fact : lsp_vector_families.LspWorkspaceSemanticFact]
-  [text : (& text str)]) : compiler_semantic_index.CompilerSemanticSpan
+  [text : (& text str)])
+  (:cold) : compiler_semantic_index.CompilerSemanticSpan
   (lsp-rename-effective-span fact.span fact.display-name text))
 
 (define (lsp-rename-fact-selected?
   [fact : lsp_vector_families.LspWorkspaceSemanticFact]
   [text : (& text str)]
-  [surface-name : (& surface-name str)]) : bool
+  [surface-name : (& surface-name str)])
+  (:cold) : bool
   (string.eq
     (lsp-rename-span-text (lsp-rename-fact-surface-span fact text) text)
     surface-name))
 
 (define (lsp-rename-module-kind?
-  [kind : (& kind compiler_semantic_index.CompilerSemanticSymbolKind)]) : bool
+  [kind : (& kind compiler_semantic_index.CompilerSemanticSymbolKind)])
+  (:cold) : bool
   (match (deref kind)
     [(Module) true]
     [_ false]))
 
-(define (lsp-rename-path-leaf-start [path : (& path str)] [name : String]) : i64
+(define (lsp-rename-path-leaf-start [path : (& path str)] [name : String])
+  (:cold) : i64
   (let
     [path-len : i64 (string.string-length path)]
     [leaf-len : i64 (+ (string.string-length name) 3)]
@@ -9002,7 +9405,8 @@
 (define (lsp-rename-module-new-path
   [path : (& path str)]
   [old-name : String]
-  [new-name : String]) : String
+  [new-name : String])
+  (:cold) : String
   (let
     [start : i64 (lsp-rename-path-leaf-start path old-name)]
     (if (< start 0)
@@ -9016,7 +9420,8 @@
   [old-path : String]
   [new-path : String]
   [inside-workspace : bool]
-  [probe : io.ResultIoBool]) : LspRenameModuleMoveLookup
+  [probe : io.ResultIoBool])
+  (:cold) : LspRenameModuleMoveLookup
   (if (not inside-workspace)
     (Err "Renamed module path would leave the editable workspace")
     (match probe
@@ -9034,7 +9439,8 @@
   [state : (& state lsp_vector_families.LspServerState)]
   [query : (& query LspWorkspaceSemanticQuery)]
   [target : LspRenameTarget]
-  [new-name : String]) : LspRenameModuleMoveLookup
+  [new-name : String])
+  (:cold) : LspRenameModuleMoveLookup
   (if (not (lsp-rename-module-kind? (& target.kind)))
     (Ok Missing)
     (let
@@ -9093,7 +9499,8 @@
               [probe : io.ResultIoBool (io.try-file-exists? (& new-path))]
               (lsp-rename-module-move-from-probe old-path new-path true probe))])))))
 
-(define (lsp-rename-space-list-contains? [items : String] [name : (& name str)]) : bool
+(define (lsp-rename-space-list-contains? [items : String] [name : (& name str)])
+  (:cold) : bool
   (let
     [len : i64 (string.string-length items)]
     [name-len : i64 (string.string-length name)]
@@ -9109,7 +9516,8 @@
         (+= index 1)))
     false))
 
-(define (lsp-rename-valid-new-name? [name : (& name str)]) : bool
+(define (lsp-rename-valid-new-name? [name : (& name str)])
+  (:cold) : bool
   (let
     [len : i64 (string.string-length name)]
     [index : i64 0]
@@ -9143,7 +9551,8 @@
 
 (define (lsp-rename-valid-new-name-for-target?
   [target : (& target LspRenameTarget)]
-  [name : (& name str)]) : bool
+  [name : (& name str)])
+  (:cold) : bool
   (and
     (lsp-rename-valid-new-name? name)
     (if (lsp-rename-module-kind? (& target.kind))
@@ -9154,7 +9563,8 @@
 
 (define (lsp-rename-fact-workspace-editable?
   [state : (& state lsp_vector_families.LspServerState)]
-  [fact : lsp_vector_families.LspWorkspaceSemanticFact]) : bool
+  [fact : lsp_vector_families.LspWorkspaceSemanticFact])
+  (:cold) : bool
   (and
     fact.editable
     (lsp-workspace-semantic-fact-real-location? (lsp-global-shared-view fact))
@@ -9171,7 +9581,8 @@
   [index : (& index compiler_semantic_index.CompilerSemanticSourceIndex)]
   [fact : lsp_vector_families.LspWorkspaceSemanticFact]
   [canonical-key : (& canonical-key str)]
-  [new-name : (& new-name str)]) : bool
+  [new-name : (& new-name str)])
+  (:cold) : bool
   (compiler_semantic_index.compiler-semantic-source-index-rename-collision?
     index
     canonical-key
@@ -9184,7 +9595,8 @@
   [state : (& state lsp_vector_families.LspServerState)]
   [fact : lsp_vector_families.LspWorkspaceSemanticFact]
   [canonical-key : (& canonical-key str)]
-  [new-name : (& new-name str)]) : bool
+  [new-name : (& new-name str)])
+  (:cold) : bool
   (for [doc-index (iterator.range 0 (lsp_document_vec.len (& state.documents)))]
     (let
       [view : (& state (Slice lsp_vector_families.LspDocument))
@@ -9213,7 +9625,8 @@
   [query : (& query LspWorkspaceSemanticQuery)]
   [target : (& target LspRenameTarget)]
   [new-name : String]
-  [check-collisions : bool]) : LspRenameValidation
+  [check-collisions : bool])
+  (:cold) : LspRenameValidation
   (if (not (= query.completeness 0))
     (Err "Workspace semantic rename information is currently incomplete")
     (let
@@ -9273,7 +9686,8 @@
 
 (define (lsp-rename-text-edit
   [span : compiler_semantic_index.CompilerSemanticSpan]
-  [new-name : String]) : json.Json
+  [new-name : String])
+  (:cold) : json.Json
   (lsp-json-object2
     "range"
     (lsp-json-object2
@@ -9288,7 +9702,8 @@
   [uri : String]
   [open : bool]
   [version : i64]
-  [edits : json.JsonSeq]) : json.Json
+  [edits : json.JsonSeq])
+  (:cold) : json.Json
   (lsp-json-object2
     "textDocument"
     (lsp-json-object2
@@ -9301,7 +9716,8 @@
     "edits"
     (lsp-json-array edits)))
 
-(define (lsp-rename-file-operation [old-path : String] [new-path : String]) : json.Json
+(define (lsp-rename-file-operation [old-path : String] [new-path : String])
+  (:cold) : json.Json
   (lsp-json-object3
     "kind"
     (JsonString "rename")
@@ -9312,7 +9728,8 @@
 
 (define (lsp-rename-append-module-move
   [changes : json.JsonSeq]
-  [module-move : LspRenameModuleMove]) : json.JsonSeq
+  [module-move : LspRenameModuleMove])
+  (:cold) : json.JsonSeq
   (match module-move
     [(Found old-path new-path)
       (json.list-concat
@@ -9327,7 +9744,8 @@
   [query : (& query LspWorkspaceSemanticQuery)]
   [target : LspRenameTarget]
   [new-name : String]
-  [module-move : LspRenameModuleMove]) : json.Json
+  [module-move : LspRenameModuleMove])
+  (:cold) : json.Json
   (let
     [index : i64 (- query.len 1)]
     [changes : json.JsonSeq (json.list-empty)]
@@ -9382,7 +9800,8 @@
     (set! changes (lsp-rename-append-module-move changes module-move))
     (lsp-json-object1 "documentChanges" (lsp-json-array changes))))
 
-(define (lsp-prepare-rename-result [target : LspRenameTarget]) : json.Json
+(define (lsp-prepare-rename-result [target : LspRenameTarget])
+  (:cold) : json.Json
   (lsp-json-object2
     "range"
     (lsp-json-object2
@@ -9397,7 +9816,8 @@
 
 (define (lsp-server-state-initialize-workspaces
   [state : lsp_vector_families.LspServerState]
-  [message : json.Json]) : lsp_vector_families.LspServerState
+  [message : json.Json])
+  (:cold) : lsp_vector_families.LspServerState
   (let
     [previous : i64 (arena.tl_arena_current)]
     [owner : i64 (arena.tl_arena_make)]
@@ -9421,7 +9841,8 @@
 (define lsp-workspace-symbol-result-limit : i64
   256)
 
-(define (lsp-workspace-decl-row-fallback) : lsp_vector_families.LspWorkspaceDeclRow
+(define (lsp-workspace-decl-row-fallback)
+  (:cold) : lsp_vector_families.LspWorkspaceDeclRow
   (lsp_vector_families.LspWorkspaceDeclRow
     ""
     ""
@@ -9432,10 +9853,12 @@
     false
     (lsp-decl-entry-fallback)))
 
-(define (lsp-workspace-symbol-candidate-fallback) : LspWorkspaceSymbolCandidate
+(define (lsp-workspace-symbol-candidate-fallback)
+  (:cold) : LspWorkspaceSymbolCandidate
   (LspWorkspaceSymbolCandidate 3 (lsp-workspace-decl-row-fallback)))
 
-(define (lsp-workspace-symbol-results-new) : LspWorkspaceSymbolResults
+(define (lsp-workspace-symbol-results-new)
+  (:cold) : LspWorkspaceSymbolResults
   (LspWorkspaceSymbolResults
     (__tl_make-array
       LspWorkspaceSymbolCandidate
@@ -9443,19 +9866,22 @@
     0))
 
 (define (lsp-workspace-symbol-results-len
-  [results : (& results LspWorkspaceSymbolResults)]) : i64
+  [results : (& results LspWorkspaceSymbolResults)])
+  (:cold) : i64
   results.len)
 
 (define (lsp-workspace-symbol-results-get
   [results : (& results LspWorkspaceSymbolResults)]
-  [index : i64]) : LspWorkspaceSymbolCandidate
+  [index : i64])
+  (:cold) : LspWorkspaceSymbolCandidate
   (if (and (>= index 0) (< index results.len))
     (owned_view.compiler-owned-element-view (& results.slots) index)
     (lsp-workspace-symbol-candidate-fallback)))
 
 (define (lsp-workspace-symbol-match-rank
   [name : (& name str)]
-  [query : (& query str)]) : i64
+  [query : (& query str)])
+  (:cold) : i64
   (cond
     [(= (string.string-length query) 0) 0]
     [(string.eq name query) 0]
@@ -9465,7 +9891,8 @@
 
 (define (lsp-workspace-symbol-candidate-less?
   [left : LspWorkspaceSymbolCandidate]
-  [right : LspWorkspaceSymbolCandidate]) : bool
+  [right : LspWorkspaceSymbolCandidate])
+  (:cold) : bool
   (let
     [left-row : lsp_vector_families.LspWorkspaceDeclRow left.row]
     [right-row : lsp_vector_families.LspWorkspaceDeclRow right.row]
@@ -9497,7 +9924,8 @@
 ;; malformed duplicate summary from producing two protocol results.
 (define (lsp-workspace-symbol-candidate-same?
   [left : (& left LspWorkspaceSymbolCandidate)]
-  [right : LspWorkspaceSymbolCandidate]) : bool
+  [right : LspWorkspaceSymbolCandidate])
+  (:cold) : bool
   (let
     [left-row : lsp_vector_families.LspWorkspaceDeclRow left.row]
     [right-row : lsp_vector_families.LspWorkspaceDeclRow right.row]
@@ -9511,7 +9939,8 @@
 
 (define (lsp-workspace-symbol-results-contain?
   [results : (& results LspWorkspaceSymbolResults)]
-  [candidate : (& candidate LspWorkspaceSymbolCandidate)]) : bool
+  [candidate : (& candidate LspWorkspaceSymbolCandidate)])
+  (:cold) : bool
   (let
     [index : i64 0]
     [found : bool false]
@@ -9529,7 +9958,8 @@
 ;; number of indexed declarations and uses constant request-local storage.
 (define (lsp-workspace-symbol-results-insert!
   [results : (&mut results LspWorkspaceSymbolResults)]
-  [candidate : LspWorkspaceSymbolCandidate]) : unit
+  [candidate : LspWorkspaceSymbolCandidate])
+  (:cold) : unit
   (if (lsp-workspace-symbol-results-contain? results candidate)
     unit
     (let
@@ -9563,7 +9993,8 @@
 
 (define (lsp-workspace-symbol-query
   [index : (& index lsp_vector_families.LspWorkspaceIndex)]
-  [query : String]) : LspWorkspaceSymbolResults
+  [query : String])
+  (:cold) : LspWorkspaceSymbolResults
   (let
     [results : LspWorkspaceSymbolResults (lsp-workspace-symbol-results-new)]
     [sources : lsp_vector_families.LspWorkspaceSources index.sources]
@@ -9603,7 +10034,8 @@
   [index : (&mut index lsp_vector_families.LspWorkspaceIndex)]
   [docs : (& docs lsp_document_vec.Vec)]
   [path : String]
-  [deleted : bool]) : unit
+  [deleted : bool])
+  (:cold) : unit
   (let
     [normalized : String (lsp-normalized-absolute-path path)]
     [uri : String
@@ -9655,7 +10087,8 @@
 
 (define (lsp-workspace-index-refresh-documents!
   [index : (&mut index lsp_vector_families.LspWorkspaceIndex)]
-  [docs : (& docs lsp_document_vec.Vec)]) : unit
+  [docs : (& docs lsp_document_vec.Vec)])
+  (:cold) : unit
   (let
     [doc-index : i64 0]
     (while (< doc-index (lsp_document_vec.len (& docs)))
@@ -9677,7 +10110,8 @@
   [state : lsp_vector_families.LspServerState]
   [result : LspDocumentHandleResult]
   [uri : String]
-  [deleted : bool]) : LspHandleResult
+  [deleted : bool])
+  (:cold) : LspHandleResult
   (match result
     [(Continue next-documents)
       (match (lsp-file-uri-to-path uri)
@@ -9723,7 +10157,8 @@
 (define (lsp-server-state-copy-document-result
   [state : lsp_vector_families.LspServerState]
   [result : LspDocumentHandleResult]
-  [refresh-documents : bool]) : LspHandleResult
+  [refresh-documents : bool])
+  (:cold) : LspHandleResult
   (match result
     [(Continue next-documents)
       (let
@@ -9761,7 +10196,8 @@
   [semantic-cache
     : (&mut semantic-cache lsp_vector_families.LspWorkspaceSemanticCache)]
   [docs : (& docs lsp_document_vec.Vec)]
-  [items : json.JsonSeq]) : unit
+  [items : json.JsonSeq])
+  (:cold) : unit
   (let
     [count : i64
       (json.list-count (owned_view.compiler-owned-shared-view items))]
@@ -9790,7 +10226,8 @@
 
 (define (lsp-server-state-did-change-watched-files
   [state : (& state lsp_vector_families.LspServerState)]
-  [params : json.Json]) : lsp_vector_families.LspServerState
+  [params : json.Json])
+  (:cold) : lsp_vector_families.LspServerState
   (let
     [previous : i64 (arena.tl_arena_current)]
     [owner : i64 (arena.tl_arena_make)]
@@ -9816,7 +10253,8 @@
 
 (define (lsp-workspace-index-remove-root-uri!
   [workspace : (&mut workspace lsp_vector_families.LspWorkspaceIndex)]
-  [uri : String]) : unit
+  [uri : String])
+  (:cold) : unit
   (let
     [root-index : i64
       (lsp-workspace-roots-find-uri
@@ -9842,7 +10280,8 @@
 (define (lsp-workspace-index-recover-live-paths!
   [workspace : (&mut workspace lsp_vector_families.LspWorkspaceIndex)]
   [docs : (& docs lsp_document_vec.Vec)]
-  [paths : lsp_svec.Vec]) : unit
+  [paths : lsp_svec.Vec])
+  (:cold) : unit
   (for [index (iterator.range 0 (lsp_svec.len (& paths)))]
     (lsp-workspace-index-refresh-path!
       workspace
@@ -9853,7 +10292,8 @@
 (define (lsp-workspace-index-remove-root!
   [workspace : (&mut workspace lsp_vector_families.LspWorkspaceIndex)]
   [docs : (& docs lsp_document_vec.Vec)]
-  [root : lsp_vector_families.LspWorkspaceRoot]) : unit
+  [root : lsp_vector_families.LspWorkspaceRoot])
+  (:cold) : unit
   (let
     [paths : lsp_svec.Vec (lsp_svec.new)]
     (for [source-index
@@ -9873,7 +10313,8 @@
 (define (lsp-workspace-index-adopt-rootless-overlays!
   [workspace : (&mut workspace lsp_vector_families.LspWorkspaceIndex)]
   [docs : (& docs lsp_document_vec.Vec)]
-  [root : (& root lsp_vector_families.LspWorkspaceRoot)]) : unit
+  [root : (& root lsp_vector_families.LspWorkspaceRoot)])
+  (:cold) : unit
   (let
     [paths : lsp_svec.Vec (lsp_svec.new)]
     (for [source-index
@@ -9893,7 +10334,8 @@
 (define (lsp-workspace-index-add-root!
   [workspace : (&mut workspace lsp_vector_families.LspWorkspaceIndex)]
   [docs : (& docs lsp_document_vec.Vec)]
-  [root : lsp_vector_families.LspWorkspaceRoot]) : unit
+  [root : lsp_vector_families.LspWorkspaceRoot])
+  (:cold) : unit
   (unless
     (>=
       (lsp-workspace-roots-find-uri
@@ -9911,7 +10353,8 @@
 (define (lsp-workspace-folders-remove-items!
   [workspace : (&mut workspace lsp_vector_families.LspWorkspaceIndex)]
   [docs : (& docs lsp_document_vec.Vec)]
-  [items : json.JsonSeq]) : unit
+  [items : json.JsonSeq])
+  (:cold) : unit
   (let
     [count : i64
       (json.list-count (owned_view.compiler-owned-shared-view items))]
@@ -9932,7 +10375,8 @@
 (define (lsp-workspace-folders-add-items!
   [workspace : (&mut workspace lsp_vector_families.LspWorkspaceIndex)]
   [docs : (& docs lsp_document_vec.Vec)]
-  [items : json.JsonSeq]) : unit
+  [items : json.JsonSeq])
+  (:cold) : unit
   (let
     [count : i64
       (json.list-count (owned_view.compiler-owned-shared-view items))]
@@ -9953,7 +10397,8 @@
 (define (lsp-workspace-folders-apply-event!
   [workspace : (&mut workspace lsp_vector_families.LspWorkspaceIndex)]
   [docs : (& docs lsp_document_vec.Vec)]
-  [event : json.Json]) : unit
+  [event : json.Json])
+  (:cold) : unit
   (let
     [removed-key : String "removed"]
     [added-key : String "added"]
@@ -9976,7 +10421,8 @@
 
 (define (lsp-server-state-did-change-workspace-folders
   [state : (& state lsp_vector_families.LspServerState)]
-  [params : json.Json]) : lsp_vector_families.LspServerState
+  [params : json.Json])
+  (:cold) : lsp_vector_families.LspServerState
   (let
     [previous : i64 (arena.tl_arena_current)]
     [owner : i64 (arena.tl_arena_make)]
@@ -9999,7 +10445,8 @@
     (lsp-server-state-finish-swap state draft owner previous)))
 
 ;; Helper: extract document from params
-(define (lsp-get-document [params : json.Json] [docs : lsp_document_vec.Vec]) : LspDocumentLookup
+(define (lsp-get-document [params : json.Json] [docs : lsp_document_vec.Vec])
+  (:cold) : LspDocumentLookup
   (let
     [key : String "textDocument"]
     (match (json.object-get params (& key))
@@ -10011,7 +10458,8 @@
 
 (define (lsp-get-semantic-document
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspSemanticDocumentLookup
+  [docs : lsp_document_vec.Vec])
+  (:cold) : LspSemanticDocumentLookup
   (let
     [key : String "textDocument"]
     (match (json.object-get params (& key))
@@ -10066,28 +10514,32 @@
 (define lsp-semantic-token-modifier-definition : i64
   2)
 
-(define (lsp-semantic-token-candidates-new) : LspSemanticTokenCandidates
+(define (lsp-semantic-token-candidates-new)
+  (:cold) : LspSemanticTokenCandidates
   (LspSemanticTokenCandidates (__tl_make-array LspSemanticTokenCandidate 32) 0))
 
 (define (lsp-semantic-token-candidate-copy-one!
   [dst : (&mut dst (__tl_dyn-array LspSemanticTokenCandidate))]
   [dst-index : i64]
   [src : (& src (__tl_dyn-array LspSemanticTokenCandidate))]
-  [src-index : i64]) : unit
+  [src-index : i64])
+  (:cold) : unit
   (set! (array-ref dst dst-index) (array-ref src src-index)))
 
 (define (lsp-semantic-token-candidate-copy-range!
   [dst : (&mut dst (__tl_dyn-array LspSemanticTokenCandidate))]
   [src : (& src (__tl_dyn-array LspSemanticTokenCandidate))]
   [index : i64]
-  [count : i64]) : unit
+  [count : i64])
+  (:cold) : unit
   (when
     (< index count)
     (lsp-semantic-token-candidate-copy-one! dst index src index)
     (lsp-semantic-token-candidate-copy-range! dst src (+ index 1) count)))
 
 (define (lsp-semantic-token-candidates-grow!
-  [tokens : (&mut tokens LspSemanticTokenCandidates)]) : unit
+  [tokens : (&mut tokens LspSemanticTokenCandidates)])
+  (:cold) : unit
   (let
     [old-cap : i64 (array-length tokens.slots)]
     [new-cap : i64
@@ -10105,7 +10557,8 @@
 
 (define (lsp-semantic-token-candidates-push!
   [tokens : (&mut tokens LspSemanticTokenCandidates)]
-  [candidate : LspSemanticTokenCandidate]) : unit
+  [candidate : LspSemanticTokenCandidate])
+  (:cold) : unit
   (if (>= tokens.len (array-length tokens.slots))
     (lsp-semantic-token-candidates-grow! tokens)
     unit)
@@ -10121,7 +10574,8 @@
   [end : i64]
   [token-type : i64]
   [modifiers : i64]
-  [priority : i64]) : unit
+  [priority : i64])
+  (:cold) : unit
   (let
     [n : i64 (string.string-length text)]
     [safe-start : i64
@@ -10174,19 +10628,22 @@
             priority))
         unit))))
 
-(define (lsp-semantic-token-keyword? [name : (& name str)]) : bool
+(define (lsp-semantic-token-keyword? [name : (& name str)])
+  (:cold) : bool
   (lsp-rename-space-list-contains?
     "define lambda let if begin while break continue set! return match foreach cond when unless and or with-arena with-escape with-scratch in-arena try unsafe quote quasiquote unquote ann init cast type defstruct defenum defmacro defdispatch import export extern module comptime include-str include-bin test cfg spmd-reduce spmd-scan spmd-broadcast spmd-shuffle program-index program-count else"
     name))
 
-(define (lsp-semantic-token-operator? [name : (& name str)]) : bool
+(define (lsp-semantic-token-operator? [name : (& name str)])
+  (:cold) : bool
   (lsp-rename-space-list-contains?
     "+ - * / % = != < <= > >= neg bit-and bit-or bit-xor bit-not shl shr"
     name))
 
 (define (lsp-semantic-token-add-lexical!
   [tokens : (&mut tokens LspSemanticTokenCandidates)]
-  [text : String]) : unit
+  [text : String])
+  (:cold) : unit
   (let
     [stream : format_tokens.FormatTokenStream
       (format_tokens.format-lex-recover
@@ -10291,7 +10748,8 @@
     unit))
 
 (define (lsp-semantic-token-type-for-kind
-  [kind : compiler_semantic_index.CompilerSemanticSymbolKind]) : i64
+  [kind : compiler_semantic_index.CompilerSemanticSymbolKind])
+  (:cold) : i64
   (match kind
     [(Module) lsp-semantic-token-type-namespace]
     [(or (Struct) (Enum)) lsp-semantic-token-type-type]
@@ -10303,7 +10761,8 @@
     [_ lsp-semantic-token-type-variable]))
 
 (define (lsp-semantic-token-modifiers-for-record
-  [record : compiler_semantic_index.CompilerSemanticRecord]) : i64
+  [record : compiler_semantic_index.CompilerSemanticRecord])
+  (:cold) : i64
   (match record.role
     [(Use) 0]
     [(Definition)
@@ -10314,7 +10773,8 @@
 
 (define (lsp-semantic-token-add-records!
   [tokens : (&mut tokens LspSemanticTokenCandidates)]
-  [doc : (& doc lsp_vector_families.LspDocument)]) : unit
+  [doc : (& doc lsp_vector_families.LspDocument)])
+  (:cold) : unit
   (match (lsp-document-semantic-snapshot-status doc)
     [(Current _ _)
       (let
@@ -10364,7 +10824,8 @@
 
 (define (lsp-semantic-token-radix-copy-back!
   [tokens : (&mut tokens LspSemanticTokenCandidates)]
-  [scratch : (& scratch (__tl_dyn-array LspSemanticTokenCandidate))]) : unit
+  [scratch : (& scratch (__tl_dyn-array LspSemanticTokenCandidate))])
+  (:cold) : unit
   (lsp-semantic-token-candidate-copy-range!
     (&mut tokens.slots)
     scratch
@@ -10372,7 +10833,8 @@
     tokens.len))
 
 (define (lsp-semantic-token-sort!
-  [tokens : (&mut tokens LspSemanticTokenCandidates)]) : unit
+  [tokens : (&mut tokens LspSemanticTokenCandidates)])
+  (:cold) : unit
   (let
     [scratch : (__tl_dyn-array LspSemanticTokenCandidate)
       (__tl_make-array LspSemanticTokenCandidate tokens.len)]
@@ -10445,7 +10907,8 @@
       (lsp-semantic-token-radix-copy-back! tokens (& scratch)))))
 
 (define (lsp-semantic-tokens-for-document
-  [doc : (& doc lsp_vector_families.LspDocument)]) : json.Json
+  [doc : (& doc lsp_vector_families.LspDocument)])
+  (:cold) : json.Json
   (let
     [source-text : String (string.copy (& doc.text))]
     [tokens : LspSemanticTokenCandidates (lsp-semantic-token-candidates-new)]
@@ -10515,7 +10978,8 @@
 (define (lsp-handle-semantic-tokens-with-params!
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : unit
+  [docs : lsp_document_vec.Vec])
+  (:cold) : unit
   (match (lsp-get-semantic-document params docs)
     [(Found doc)
       (lsp-write-response id (lsp-semantic-tokens-for-document (& doc)))]
@@ -10523,7 +10987,8 @@
 
 (define (lsp-get-document-decls
   [params : (& params json.Json)]
-  [docs : (& docs lsp_document_vec.Vec)]) : LspDocumentDeclsLookup
+  [docs : (& docs lsp_document_vec.Vec)])
+  (:cold) : LspDocumentDeclsLookup
   (let
     [params : json.Json
       (owned_view.compiler-owned-reference-shared-view params)]
@@ -10556,7 +11021,8 @@
 ;; Helper: get cached decls or scan and cache them
 (define (lsp-document-decls-cache-on-current-arena
   [doc : lsp_vector_families.LspDocument]
-  [docs : lsp_document_vec.Vec]) : lsp_decl_vec.Vec
+  [docs : lsp_document_vec.Vec])
+  (:cold) : lsp_decl_vec.Vec
   (let
     [text : String (owned_view.compiler-owned-shared-view doc.text)]
     [uri : String doc.uri]
@@ -10578,7 +11044,8 @@
 
 (define (lsp-document-decls
   [doc : lsp_vector_families.LspDocument]
-  [docs : lsp_document_vec.Vec]) : lsp_decl_vec.Vec
+  [docs : lsp_document_vec.Vec])
+  (:cold) : lsp_decl_vec.Vec
   (let
     [cached : lsp_decl_vec.Vec
       (owned_view.compiler-owned-shared-view doc.decls)]
@@ -10592,7 +11059,8 @@
         (lsp-document-decls-cache-on-current-arena doc docs)))))
 
 ;; Helper: build a json.Json array of names from the canonical declaration vector.
-(define (lsp-decls-to-name-list [decls : lsp_decl_vec.Vec] [idx : i64]) : json.JsonSeq
+(define (lsp-decls-to-name-list [decls : lsp_decl_vec.Vec] [idx : i64])
+  (:cold) : json.JsonSeq
   (if (>= idx (lsp_decl_vec.len (& decls)))
     (json.list-empty)
     (let
@@ -10607,7 +11075,8 @@
         (lsp-decls-to-name-list decls (+ idx 1))))))
 
 (define (lsp-decl-selection-range-json
-  [entry : (& entry lsp_vector_families.LspDeclEntry)]) : json.Json
+  [entry : (& entry lsp_vector_families.LspDeclEntry)])
+  (:cold) : json.Json
   (lsp-json-object2
     "start"
     (lsp-position entry.name-line entry.name-col)
@@ -10615,7 +11084,8 @@
     (lsp-position entry.name-line (+ entry.name-col entry.name-len))))
 
 (define (lsp-workspace-symbol-information-json
-  [candidate : LspWorkspaceSymbolCandidate]) : json.Json
+  [candidate : LspWorkspaceSymbolCandidate])
+  (:cold) : json.Json
   (let
     [row : lsp_vector_families.LspWorkspaceDeclRow candidate.row]
     [decl : lsp_vector_families.LspDeclEntry row.decl]
@@ -10635,7 +11105,8 @@
 
 (define (lsp-workspace-symbol-information-list
   [results : (& results LspWorkspaceSymbolResults)]
-  [index : i64]) : json.JsonSeq
+  [index : i64])
+  (:cold) : json.JsonSeq
   (if (>= index (lsp-workspace-symbol-results-len results))
     (json.list-empty)
     (lsp-json-list-cons
@@ -10645,7 +11116,8 @@
 
 (define (lsp-workspace-symbol-result-json
   [index : (& index lsp_vector_families.LspWorkspaceIndex)]
-  [query : String]) : json.Json
+  [query : String])
+  (:cold) : json.Json
   (let
     [results : LspWorkspaceSymbolResults
       (lsp-workspace-symbol-query index query)]
@@ -10653,7 +11125,8 @@
 
 (define (lsp-project-search-result-list
   [results : (& results LspWorkspaceSymbolResults)]
-  [index : i64]) : json.JsonSeq
+  [index : i64])
+  (:cold) : json.JsonSeq
   (if (>= index (lsp-workspace-symbol-results-len results))
     (json.list-empty)
     (let
@@ -10674,7 +11147,8 @@
 
 (define (lsp-project-search-result-json
   [index : (& index lsp_vector_families.LspWorkspaceIndex)]
-  [name : String]) : json.Json
+  [name : String])
+  (:cold) : json.Json
   (let
     [results : LspWorkspaceSymbolResults
       (lsp-workspace-symbol-query index name)]
@@ -10685,7 +11159,8 @@
       (lsp-json-array (lsp-project-search-result-list (& results) 0)))))
 
 (define (lsp-decl-document-symbol-json
-  [entry : lsp_vector_families.LspDeclEntry]) : json.Json
+  [entry : lsp_vector_families.LspDeclEntry])
+  (:cold) : json.Json
   (lsp-json-object4
     "name"
     (JsonString (owned_view.compiler-owned-shared-view entry.name))
@@ -10698,7 +11173,8 @@
 
 (define (lsp-decls-to-document-symbol-list
   [decls : lsp_decl_vec.Vec]
-  [idx : i64]) : json.JsonSeq
+  [idx : i64])
+  (:cold) : json.JsonSeq
   (if (>= idx (lsp_decl_vec.len (& decls)))
     (json.list-empty)
     (let
@@ -10711,13 +11187,15 @@
         (lsp-decl-document-symbol-json entry)
         (lsp-decls-to-document-symbol-list decls (+ idx 1))))))
 
-(define (lsp-document-symbols-json [decls : lsp_decl_vec.Vec]) : json.Json
+(define (lsp-document-symbols-json [decls : lsp_decl_vec.Vec])
+  (:cold) : json.Json
   (lsp-json-array (lsp-decls-to-document-symbol-list decls 0)))
 
 (define (lsp-handle-document-symbol
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : unit
+  [docs : lsp_document_vec.Vec])
+  (:cold) : unit
   (match (lsp-get-document-decls params docs)
     [(Found _ _ _ decls)
       (lsp-write-response id (lsp-document-symbols-json decls))]
@@ -10725,7 +11203,8 @@
 
 (define (lsp-decls-to-position-map-members
   [decls : lsp_decl_vec.Vec]
-  [idx : i64]) : json.JsonMemberSeq
+  [idx : i64])
+  (:cold) : json.JsonMemberSeq
   (if (>= idx (lsp_decl_vec.len (& decls)))
     (json.member-list-empty)
     (let
@@ -10739,7 +11218,8 @@
         (lsp-position entry.name-line entry.name-col)
         (lsp-decls-to-position-map-members decls (+ idx 1))))))
 
-(define (lsp-position-map-for-text [text : String]) : json.Json
+(define (lsp-position-map-for-text [text : String])
+  (:cold) : json.Json
   (lsp-json-object (lsp-decls-to-position-map-members (lsp-scan-decls text) 0)))
 
 ;; Helper: replace text from (sl,sc) to (el,ec) with new-text
@@ -10748,7 +11228,8 @@
   [text : String]
   [start-off : i64]
   [end-off : i64]
-  [new-text : String]) : String
+  [new-text : String])
+  (:cold) : String
   (let
     [n : i64 (string.string-length text)]
     [new-len : i64 (string.string-length new-text)]
@@ -10772,7 +11253,8 @@
   [sc : i64]
   [el : i64]
   [ec : i64]
-  [new-text : String]) : String
+  [new-text : String])
+  (:cold) : String
   (let
     [start-off : i64 (lsp-offset-at-position text (- sl 1) (- sc 1))]
     [end-off : i64 (lsp-offset-at-position text (- el 1) (- ec 1))]
@@ -10782,7 +11264,8 @@
 (define (lsp-handle-tl-list-functions
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
+  [docs : lsp_document_vec.Vec])
+  (:cold) : LspDocumentHandleResult
   (match (lsp-get-document-decls params docs)
     [(Found path text _ decls)
       (let
@@ -10797,7 +11280,8 @@
 (define (lsp-handle-tl-find-position
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
+  [docs : lsp_document_vec.Vec])
+  (:cold) : LspDocumentHandleResult
   (match (lsp-get-document-decls params docs)
     [(Found path text _ decls)
       (match (lsp-json-string-field params "name")
@@ -10854,7 +11338,8 @@
 ;; Helper: get offset from LspDeclEntry start position
 (define (lsp-offset-from-entry-start
   [text : (& text str)]
-  [entry : (& entry lsp_vector_families.LspDeclEntry)]) : i64
+  [entry : (& entry lsp_vector_families.LspDeclEntry)])
+  (:cold) : i64
   (lsp-offset-at-position
     text
     (- entry.form-start-line 1)
@@ -10864,7 +11349,8 @@
 (define (lsp-move-form-after
   [text : (& text str)]
   [source : lsp_vector_families.LspDeclEntry]
-  [dest : lsp_vector_families.LspDeclEntry]) : String
+  [dest : lsp_vector_families.LspDeclEntry])
+  (:cold) : String
   (let
     [source-start : i64 (lsp-offset-from-entry-start text source)]
     [source-end : i64 (lsp-offset-from-entry-end text source)]
@@ -10895,7 +11381,8 @@
 ;; Helper: get offset from LspDeclEntry end position
 (define (lsp-offset-from-entry-end
   [text : (& text str)]
-  [entry : lsp_vector_families.LspDeclEntry]) : i64
+  [entry : lsp_vector_families.LspDeclEntry])
+  (:cold) : i64
   (lsp-offset-at-position
     text
     (- entry.form-end-line 1)
@@ -10904,7 +11391,8 @@
 (define (lsp-decl-entry-contains-offset?
   [text : (& text str)]
   [entry : lsp_vector_families.LspDeclEntry]
-  [offset : i64]) : bool
+  [offset : i64])
+  (:cold) : bool
   (let
     [start : i64 (lsp-offset-from-entry-start text entry)]
     [end : i64 (lsp-offset-from-entry-end text entry)]
@@ -10914,7 +11402,8 @@
   [text : (& text str)]
   [decls : (& decls lsp_decl_vec.Vec)]
   [line : i64]
-  [col : i64]) : i64
+  [col : i64])
+  (:cold) : i64
   (if (or (< line 0) (< col 0))
     -1
     (let
@@ -10941,7 +11430,8 @@
 (define (lsp-structural-name-from-position-with-decls
   [params : json.Json]
   [text : String]
-  [decls : lsp_decl_vec.Vec]) : String
+  [decls : lsp_decl_vec.Vec])
+  (:cold) : String
   (let
     [pos-key : String "position"]
     (match (json.object-get params (& pos-key))
@@ -10964,7 +11454,8 @@
 (define (lsp-structural-move-name-with-decls
   [params : json.Json]
   [text : String]
-  [decls : (& decls lsp_decl_vec.Vec)]) : String
+  [decls : (& decls lsp_decl_vec.Vec)])
+  (:cold) : String
   (let
     [decls : lsp_decl_vec.Vec
       (owned_view.compiler-owned-reference-shared-view decls)]
@@ -10976,14 +11467,16 @@
       [(Missing)
         (lsp-structural-name-from-position-with-decls params text decls)])))
 
-(define (lsp-structural-move-name [params : json.Json] [text : String]) : String
+(define (lsp-structural-move-name [params : json.Json] [text : String])
+  (:cold) : String
   (let
     [decls (lsp-scan-decls (owned_view.compiler-owned-shared-view text))]
     (lsp-structural-move-name-with-decls params text decls)))
 
 (define (lsp-decl-list-find-name
   [decls : (& decls lsp_decl_vec.Vec)]
-  [name : String]) : i64
+  [name : String])
+  (:cold) : i64
   (let
     [i : i64 0]
     [n : i64 (lsp_decl_vec.len decls)]
@@ -11000,7 +11493,8 @@
           (+= i 1))))
     found))
 
-(define (lsp-line-text-at [text : String] [line0 : i64]) : String
+(define (lsp-line-text-at [text : String] [line0 : i64])
+  (:cold) : String
   (if (< line0 0)
     ""
     (let
@@ -11023,7 +11517,8 @@
             (string.substring text start (- (- i 1) start))
             (string.substring text start (- i start))))))))
 
-(define (lsp-decl-range-distance [offset : i64] [start : i64] [end : i64]) : i64
+(define (lsp-decl-range-distance [offset : i64] [start : i64] [end : i64])
+  (:cold) : i64
   (if (< offset start)
     (- start offset)
     (if (> offset end)
@@ -11033,7 +11528,8 @@
 (define (lsp-nearest-decl-index
   [text : (& text str)]
   [decls : (& decls lsp_decl_vec.Vec)]
-  [offset : i64]) : i64
+  [offset : i64])
+  (:cold) : i64
   (let
     [n : i64 (lsp_decl_vec.len (& decls))]
     [best : i64 -1]
@@ -11055,14 +11551,16 @@
     best))
 
 (define (lsp-decl-entry-form-range-json
-  [entry : (& entry lsp_vector_families.LspDeclEntry)]) : json.Json
+  [entry : (& entry lsp_vector_families.LspDeclEntry)])
+  (:cold) : json.Json
   (lsp-json-object2
     "start"
     (lsp-position entry.form-start-line entry.form-start-col)
     "end"
     (lsp-position entry.form-end-line entry.form-end-col)))
 
-(define (lsp-position-context-json [text : String] [line : i64] [col : i64]) : json.Json
+(define (lsp-position-context-json [text : String] [line : i64] [col : i64])
+  (:cold) : json.Json
   (let
     [decls : lsp_decl_vec.Vec
       (lsp-scan-decls (owned_view.compiler-owned-shared-view text))]
@@ -11116,7 +11614,8 @@
                       nearest-range
                       (json.member-list-empty))))))))))))
 
-(define (lsp-position-error-message [base : String] [line : i64] [col : i64]) : String
+(define (lsp-position-error-message [base : String] [line : i64] [col : i64])
+  (:cold) : String
   (lsp-str7
     base
     " (line "
@@ -11131,7 +11630,8 @@
   [text : String]
   [line : i64]
   [col : i64]
-  [base-message : String]) : unit
+  [base-message : String])
+  (:cold) : unit
   (let
     [message : String (lsp-position-error-message base-message line col)]
     (lsp-write-error-with-context
@@ -11146,7 +11646,8 @@
 (define (lsp-decls-to-name-list-capped
   [decls : lsp_decl_vec.Vec]
   [idx : i64]
-  [remaining : i64]) : json.JsonSeq
+  [remaining : i64])
+  (:cold) : json.JsonSeq
   (if (or (>= idx (lsp_decl_vec.len (& decls))) (<= remaining 0))
     (json.list-empty)
     (let
@@ -11160,7 +11661,8 @@
         (JsonString name)
         (lsp-decls-to-name-list-capped decls (+ idx 1) (- remaining 1))))))
 
-(define (lsp-common-prefix-len [left : String] [right : String]) : i64
+(define (lsp-common-prefix-len [left : String] [right : String])
+  (:cold) : i64
   (let
     [left-len : i64 (string.string-length left)]
     [right-len : i64 (string.string-length right)]
@@ -11176,7 +11678,8 @@
         (set! done true)))
     i))
 
-(define (lsp-decl-name-similar? [needle : String] [name : String]) : bool
+(define (lsp-decl-name-similar? [needle : String] [name : String])
+  (:cold) : bool
   (if (or (= (string.string-length needle) 0) (= (string.string-length name) 0))
     false
     (or
@@ -11187,7 +11690,8 @@
 (define (lsp-decls-to-similar-name-list
   [decls : (& decls lsp_decl_vec.Vec)]
   [idx : i64]
-  [needle : String]) : json.JsonSeq
+  [needle : String])
+  (:cold) : json.JsonSeq
   (if (>= idx (lsp_decl_vec.len (& decls)))
     (json.list-empty)
     (let
@@ -11210,7 +11714,8 @@
 
 (define (lsp-declaration-context-json
   [decls : lsp_decl_vec.Vec]
-  [name : String]) : json.Json
+  [name : String])
+  (:cold) : json.Json
   (let
     [all-name-count : i64 (lsp_decl_vec.len (& decls))]
     (lsp-json-object
@@ -11241,7 +11746,8 @@
                     (lsp-json-number all-name-count)
                     (json.member-list-empty)))))))))))
 
-(define (lsp-declaration-not-found-message [name : String]) : String
+(define (lsp-declaration-not-found-message [name : String])
+  (:cold) : String
   (if (= (string.string-length name) 0)
     "Declaration not found"
     (lsp-str3 "Declaration '" name "' not found")))
@@ -11250,7 +11756,8 @@
   [id : json.Json]
   [decls : lsp_decl_vec.Vec]
   [name : String]
-  [message : String]) : unit
+  [message : String])
+  (:cold) : unit
   (lsp-write-error-with-context
     id
     -32600
@@ -11260,21 +11767,24 @@
 (define (lsp-write-declaration-not-found-error
   [id : json.Json]
   [decls : lsp_decl_vec.Vec]
-  [name : String]) : unit
+  [name : String])
+  (:cold) : unit
   (lsp-write-declaration-context-error
     id
     decls
     (owned_view.compiler-owned-shared-view name)
     (lsp-declaration-not-found-message name)))
 
-(define (lsp-tl-request-uri [params : json.Json]) : LspJsonText
+(define (lsp-tl-request-uri [params : json.Json])
+  (:cold) : LspJsonText
   (let
     [key : String "textDocument"]
     (match (json.object-get params (& key))
       [(JsonFound document) (lsp-json-string-field document "uri")]
       [(JsonMissing) Missing])))
 
-(define (lsp-cache-string-copy [text : String]) : String
+(define (lsp-cache-string-copy [text : String])
+  (:cold) : String
   (if (> lsp-document-cache-arena 0)
     (in-arena
       (unsafe
@@ -11283,7 +11793,8 @@
     (string.copy (& text))))
 
 (define (lsp-diagnostic-uris-copy
-  [uris : (& uris lsp_vector_families.LspDiagnosticUris)]) : lsp_vector_families.LspDiagnosticUris
+  [uris : (& uris lsp_vector_families.LspDiagnosticUris)])
+  (:cold) : lsp_vector_families.LspDiagnosticUris
   (let
     [n : i64 uris.len]
     [slots : (__tl_dyn-array String) (__tl_make-array String n)]
@@ -11294,7 +11805,8 @@
     (lsp_vector_families.LspDiagnosticUris slots n)))
 
 (define (lsp-cache-diagnostic-uris-copy
-  [uris : (& uris lsp_vector_families.LspDiagnosticUris)]) : lsp_vector_families.LspDiagnosticUris
+  [uris : (& uris lsp_vector_families.LspDiagnosticUris)])
+  (:cold) : lsp_vector_families.LspDiagnosticUris
   (if (> lsp-document-cache-arena 0)
     (in-arena
       (unsafe
@@ -11307,7 +11819,8 @@
   [uri : String]
   [path : String]
   [diagnostic-uris : lsp_vector_families.LspDiagnosticUris]
-  [formatted : String]) : LspSaveResult
+  [formatted : String])
+  (:cold) : LspSaveResult
   (let
     [_
       (try
@@ -11335,7 +11848,8 @@
   [uri : String]
   [path : String]
   [diagnostic-uris : lsp_vector_families.LspDiagnosticUris]
-  [formatted : String]) : LspDocumentHandleResult
+  [formatted : String])
+  (:cold) : LspDocumentHandleResult
   (match (lsp-tl-save-doc
     (owned_view.compiler-owned-shared-view docs)
     uri
@@ -11361,7 +11875,8 @@
   [id : json.Json]
   [params : json.Json]
   [docs : lsp_document_vec.Vec]
-  [formatted : String]) : LspDocumentHandleResult
+  [formatted : String])
+  (:cold) : LspDocumentHandleResult
   (match (lsp-tl-request-uri params)
     [(Ok uri)
       (match (lsp-documents-lookup docs uri)
@@ -11394,7 +11909,8 @@
   [id : json.Json]
   [params : json.Json]
   [docs : lsp_document_vec.Vec]
-  [result : String]) : LspDocumentHandleResult
+  [result : String])
+  (:cold) : LspDocumentHandleResult
   (let
     [formatted : String (lsp-format-edit-text result)]
     (lsp-tl-save-and-continue id params docs formatted)))
@@ -11403,7 +11919,8 @@
   [id : json.Json]
   [params : json.Json]
   [docs : lsp_document_vec.Vec]
-  [base-message : String]) : LspDocumentHandleResult
+  [base-message : String])
+  (:cold) : LspDocumentHandleResult
   (match (lsp-get-document
     (owned_view.compiler-owned-shared-view params)
     (owned_view.compiler-owned-shared-view docs))
@@ -11427,7 +11944,8 @@
 (define (lsp-write-declaration-context-error-from-params
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
+  [docs : lsp_document_vec.Vec])
+  (:cold) : LspDocumentHandleResult
   (match (lsp-get-document-decls params docs)
     [(Found _ text _ decls)
       (let
@@ -11442,7 +11960,8 @@
   [id : json.Json]
   [params : json.Json]
   [docs : lsp_document_vec.Vec]
-  [message : String]) : LspDocumentHandleResult
+  [message : String])
+  (:cold) : LspDocumentHandleResult
   (cond
     [(string.eq message "No form found at position")
       (lsp-write-position-context-error-from-params id params docs message)]
@@ -11456,7 +11975,8 @@
   [id : json.Json]
   [params : json.Json]
   [docs : lsp_document_vec.Vec]
-  [result : LspEditResult]) : LspDocumentHandleResult
+  [result : LspEditResult])
+  (:cold) : LspDocumentHandleResult
   (match result
     [(Ok replaced) (lsp-write-structural-edit-success id params docs replaced)]
     [(Err message) (lsp-write-contextual-edit-error id params docs message)]))
@@ -11464,7 +11984,8 @@
 (define (lsp-write-replace-body-validation-error
   [id : json.Json]
   [docs : lsp_document_vec.Vec]
-  [new-body : String]) : LspDocumentHandleResult
+  [new-body : String])
+  (:cold) : LspDocumentHandleResult
   (lsp-write-error-with-data
     id
     -32600
@@ -11476,7 +11997,8 @@
 (define (lsp-write-read-form-success
   [id : json.Json]
   [form-text : String]
-  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
+  [docs : lsp_document_vec.Vec])
+  (:cold) : LspDocumentHandleResult
   (lsp-write-response
     id
     (lsp-json-object2 "success" (JsonBool true) "form" (JsonString form-text)))
@@ -11486,7 +12008,8 @@
   [id : json.Json]
   [params : json.Json]
   [result : LspStringResult]
-  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
+  [docs : lsp_document_vec.Vec])
+  (:cold) : LspDocumentHandleResult
   (match result
     [(Ok form-text) (lsp-write-read-form-success id form-text docs)]
     [(Err message) (lsp-write-contextual-edit-error id params docs message)]))
@@ -11494,7 +12017,8 @@
 (define (lsp-write-missing-structural-name-error
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
+  [docs : lsp_document_vec.Vec])
+  (:cold) : LspDocumentHandleResult
   (let
     [pos-key : String "position"]
     (match (json.object-get
@@ -11517,7 +12041,8 @@
   [text : String]
   [decls : lsp_decl_vec.Vec]
   [name : String]
-  [destination : String]) : LspDocumentHandleResult
+  [destination : String])
+  (:cold) : LspDocumentHandleResult
   (match (lsp-structural-move-after-destination-text
     text
     decls
@@ -11547,7 +12072,8 @@
   [text : String]
   [decls : lsp_decl_vec.Vec]
   [name : String]
-  [direction : String]) : LspDocumentHandleResult
+  [direction : String])
+  (:cold) : LspDocumentHandleResult
   (match (lsp-structural-move-direction-text
     text
     decls
@@ -11567,7 +12093,8 @@
 (define (lsp-handle-tl-structural-move
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
+  [docs : lsp_document_vec.Vec])
+  (:cold) : LspDocumentHandleResult
   (match (lsp-get-document-decls params docs)
     [(Found path text _ decls)
       (let
@@ -11613,7 +12140,8 @@
 ;; invocation range in the document.
 (define (lsp-expand-frame-json
   [text : (& text str)]
-  [frame : expand.CompilerExpandFrame]) : json.Json
+  [frame : expand.CompilerExpandFrame])
+  (:cold) : json.Json
   (lsp-json-object3
     "macro"
     (JsonString frame.macro-name)
@@ -11628,7 +12156,8 @@
 
 (define (lsp-expand-frames-json
   [text : (& text str)]
-  [frames : (& frames expand.CompilerExpandFrames)]) : json.Json
+  [frames : (& frames expand.CompilerExpandFrames)])
+  (:cold) : json.Json
   (let
     [items : json.JsonSeq (json.list-empty)]
     [index : i64 (- frames.len 1)]
@@ -11651,7 +12180,8 @@
   [id : json.Json]
   [params : json.Json]
   [docs : lsp_document_vec.Vec]
-  [stdlib-roots : lsp_svec.Vec]) : LspDocumentHandleResult
+  [stdlib-roots : lsp_svec.Vec])
+  (:cold) : LspDocumentHandleResult
   (match (lsp-get-document
     (owned_view.compiler-owned-shared-view params)
     (owned_view.compiler-owned-shared-view docs))
@@ -11740,12 +12270,14 @@
       (Continue docs)]))
 
 (define (lsp-check-cache-valid?
-  [check-cache : lsp_vector_families.LspCheckCache]) : bool
+  [check-cache : lsp_vector_families.LspCheckCache])
+  (:cold) : bool
   (match check-cache
     [(LspCheckCacheInvalid) false]
     [_ true]))
 
-(define (lsp-check-cache-json [check-cache : lsp_vector_families.LspCheckCache]) : json.Json
+(define (lsp-check-cache-json [check-cache : lsp_vector_families.LspCheckCache])
+  (:cold) : json.Json
   (match check-cache
     [(LspCheckCacheOk) (lsp-json-object1 "success" (JsonBool true))]
     [(LspCheckCacheErr message)
@@ -11757,26 +12289,30 @@
         "error"
         (JsonString "Check cache invalid"))]))
 
-(define (lsp-typecheck-tool-session-before!) : unit
+(define (lsp-typecheck-tool-session-before!)
+  (:cold) : unit
   ;; Preserve the loader program cache across interactive checks. The loader
   ;; only caches imported files and embedded stdlib programs here; unsaved
   ;; document text still goes through compiler-load-source and is reparsed.
   (compiler_check_core.compiler-check-reset-pools!)
   (compiler_check_core.compiler-check-reset-interns!))
 
-(define (lsp-typecheck-tool-session-after!) : unit
+(define (lsp-typecheck-tool-session-after!)
+  (:cold) : unit
   (compiler_check_core.compiler-check-reset-pools!)
   (compiler_check_core.compiler-check-reset-interns!))
 
 (define (lsp-write-check-cache-response
   [id : json.Json]
-  [check-cache : lsp_vector_families.LspCheckCache]) : unit
+  [check-cache : lsp_vector_families.LspCheckCache])
+  (:cold) : unit
   (lsp-write-response id (lsp-check-cache-json check-cache)))
 
 (define (lsp-check-source-cache
   [path : String]
   [text : String]
-  [stdlib-roots : lsp_svec.Vec]) : lsp_vector_families.LspCheckCache
+  [stdlib-roots : lsp_svec.Vec])
+  (:cold) : lsp_vector_families.LspCheckCache
   (match (lsp-validate-forms-result
     (owned_view.compiler-owned-shared-view text))
     [(Valid)
@@ -11802,7 +12338,8 @@
   [path : String]
   [text : String]
   [docs : lsp_document_vec.Vec]
-  [stdlib-roots : lsp_svec.Vec]) : LspDocumentHandleResult
+  [stdlib-roots : lsp_svec.Vec])
+  (:cold) : LspDocumentHandleResult
   (let
     [check-cache : lsp_vector_families.LspCheckCache LspCheckCacheInvalid]
     (lsp-typecheck-tool-session-before!)
@@ -11817,7 +12354,8 @@
   [id : json.Json]
   [params : json.Json]
   [docs : lsp_document_vec.Vec]
-  [stdlib-roots : lsp_svec.Vec]) : LspDocumentHandleResult
+  [stdlib-roots : lsp_svec.Vec])
+  (:cold) : LspDocumentHandleResult
   (let
     [uri : String
       (match (lsp-json-string-field params "uri")
@@ -11887,7 +12425,8 @@
   [inlay-state : tc.TcInlayHintState]
   [text : (& text str)]
   [line1 : i64]
-  [col1 : i64]) : i64
+  [col1 : i64])
+  (:cold) : i64
   (let
     [size : i64 (tc.tc-inlay-hints-size-for-state inlay-state)]
     [best-idx : i64 -1]
@@ -11930,7 +12469,8 @@
   [params : json.Json]
   [docs : lsp_document_vec.Vec]
   [stdlib-roots : lsp_svec.Vec]
-  [job-state : tc.TcJobState]) : LspDocumentHandleResult
+  [job-state : tc.TcJobState])
+  (:cold) : LspDocumentHandleResult
   (match (lsp-get-document
     (owned_view.compiler-owned-shared-view params)
     (owned_view.compiler-owned-shared-view docs))
@@ -12007,7 +12547,8 @@
       (lsp-write-error id -32600 "Document not found")
       (Continue docs)]))
 
-(define (lsp-quoted-datum-end [text : (& text str)] [start : i64] [limit : i64]) : i64
+(define (lsp-quoted-datum-end [text : (& text str)] [start : i64] [limit : i64])
+  (:cold) : i64
   (let
     [datum-start : i64 (source_text.source-text-skip-space text start limit)]
     (if (>= datum-start limit)
@@ -12047,7 +12588,8 @@
   [start : i64]
   [limit : i64]
   [target : i64]
-  [quoted : bool]) : bool
+  [quoted : bool])
+  (:cold) : bool
   (let
     [cursor : i64 start]
     (while (and (< cursor limit) (<= cursor target))
@@ -12149,7 +12691,8 @@
                     (+ cursor 1)))))])))
     false))
 
-(define (lsp-symbol-in-quoted-data? [text : String] [target : i64]) : bool
+(define (lsp-symbol-in-quoted-data? [text : String] [target : i64])
+  (:cold) : bool
   (lsp-symbol-in-quoted-data-range?
     text
     0
@@ -12160,7 +12703,8 @@
 ;; Maximal identifier token covering `off`, limited to source code. Comments,
 ;; strings, character literals, and quoted data deliberately produce no
 ;; semantic fallback symbol.
-(define (lsp-code-symbol-at-offset [text : (& text str)] [off : i64]) : String
+(define (lsp-code-symbol-at-offset [text : (& text str)] [off : i64])
+  (:cold) : String
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
@@ -12187,7 +12731,8 @@
         ""))))
 
 (define (lsp-document-highlight-range
-  [candidate : (& candidate LspDocumentHighlightCandidate)]) : json.Json
+  [candidate : (& candidate LspDocumentHighlightCandidate)])
+  (:cold) : json.Json
   (lsp-json-object2
     "start"
     (lsp-position
@@ -12203,7 +12748,8 @@
         candidate.utf16-end-col))))
 
 (define (lsp-document-highlight
-  [candidate : (& candidate LspDocumentHighlightCandidate)]) : json.Json
+  [candidate : (& candidate LspDocumentHighlightCandidate)])
+  (:cold) : json.Json
   (lsp-json-object2
     "range"
     (lsp-document-highlight-range candidate)
@@ -12211,7 +12757,8 @@
     (lsp-json-number candidate.kind)))
 
 (define (lsp-document-highlight-kind
-  [access : compiler_semantic_index.CompilerSemanticAccess]) : i64
+  [access : compiler_semantic_index.CompilerSemanticAccess])
+  (:cold) : i64
   (match access
     [(None) 1]
     [(Read) 2]
@@ -12221,7 +12768,8 @@
 
 (define (lsp-document-highlight-candidate-less?
   [left : (& left LspDocumentHighlightCandidate)]
-  [right : (& right LspDocumentHighlightCandidate)]) : bool
+  [right : (& right LspDocumentHighlightCandidate)])
+  (:cold) : bool
   (cond
     [(< left.start-byte right.start-byte) true]
     [(> left.start-byte right.start-byte) false]
@@ -12229,7 +12777,8 @@
 
 (define (lsp-document-highlight-results-insert!
   [results : (&mut results LspDocumentHighlightResults)]
-  [candidate : LspDocumentHighlightCandidate]) : unit
+  [candidate : LspDocumentHighlightCandidate])
+  (:cold) : unit
   (let
     [index : i64 0]
     [duplicate : i64 -1]
@@ -12286,7 +12835,8 @@
 
 (define (lsp-document-highlights-at
   [doc : (& doc lsp_vector_families.LspDocument)]
-  [byte-position : i64]) : LspDocumentHighlightResults
+  [byte-position : i64])
+  (:cold) : LspDocumentHighlightResults
   (let
     [results : LspDocumentHighlightResults
       (LspDocumentHighlightResults
@@ -12346,7 +12896,8 @@
             results))))))
 
 (define (lsp-document-highlight-results-json
-  [results : (& results LspDocumentHighlightResults)]) : json.Json
+  [results : (& results LspDocumentHighlightResults)])
+  (:cold) : json.Json
   (let
     [index : i64 (- results.len 1)]
     [items : json.JsonSeq (json.list-empty)]
@@ -12361,7 +12912,8 @@
 
 (define (lsp-json-int-field-usable?
   [value : (& value json.Json)]
-  [key : String]) : bool
+  [key : String])
+  (:cold) : bool
   (match (lsp-json-field-ref value (& key))
     [(Found field)
       (match field
@@ -12376,7 +12928,8 @@
 (define (lsp-handle-document-highlight
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : unit
+  [docs : lsp_document_vec.Vec])
+  (:cold) : unit
   (match (lsp-get-semantic-document
     (owned_view.compiler-owned-shared-view params)
     docs)
@@ -12438,7 +12991,8 @@
 (define lsp-fold-kind-comment : i64
   1)
 
-(define (lsp-fold-range-fallback) : lsp_vector_families.LspFoldRange
+(define (lsp-fold-range-fallback)
+  (:cold) : lsp_vector_families.LspFoldRange
   (lsp_vector_families.LspFoldRange 0 0 0 0 lsp-fold-kind-region -1 false))
 
 ;; Advance the cursor across `[from, to)`. Used for spans the lexical skips
@@ -12448,7 +13002,8 @@
   [cursor : (&mut LspFoldCursor)]
   [text : (& text str)]
   [from : i64]
-  [to : i64]) : unit
+  [to : i64])
+  (:cold) : unit
   (for [i (iterator.range from to)]
     (let
       [c : char (string.string-ref text i)]
@@ -12463,7 +13018,8 @@
             unit
             (set! cursor.code true)))))))
 
-(define (lsp-fold-clamp [value : i64] [limit : i64]) : i64
+(define (lsp-fold-clamp [value : i64] [limit : i64])
+  (:cold) : i64
   (if (> value limit)
     limit
     value))
@@ -12475,7 +13031,8 @@
   [slot : i64]
   [previous-line : i64]
   [line : i64]
-  [end-col : i64]) : i64
+  [end-col : i64])
+  (:cold) : i64
   (if (and (>= slot 0) (= line (+ previous-line 1)))
     (let
       [open : lsp_vector_families.LspFoldRange
@@ -12509,7 +13066,8 @@
           false))
       fresh)))
 
-(define (lsp-fold-ranges-scan [text : (& text str)]) : lsp_vector_families.LspFoldRanges
+(define (lsp-fold-ranges-scan [text : (& text str)])
+  (:cold) : lsp_vector_families.LspFoldRanges
   (let
     [n : i64 (string.string-length text)]
     [folds : lsp_vector_families.LspFoldRanges
@@ -12622,7 +13180,8 @@
             (+= i 1)])))
     folds))
 
-(define (lsp-fold-range-json [fold : lsp_vector_families.LspFoldRange]) : json.Json
+(define (lsp-fold-range-json [fold : lsp_vector_families.LspFoldRange])
+  (:cold) : json.Json
   (lsp-json-object
     (lsp-json-member
       "startLine"
@@ -12646,7 +13205,8 @@
 ;; Start-ordered folding ranges. The result vector is already in start order,
 ;; so a reverse walk cons'd onto an accumulator emits forward order without
 ;; recursion over the document.
-(define (lsp-folding-ranges-in-text [text : String]) : json.JsonSeq
+(define (lsp-folding-ranges-in-text [text : String])
+  (:cold) : json.JsonSeq
   (let
     [folds : lsp_vector_families.LspFoldRanges (lsp-fold-ranges-scan text)]
     [i : i64 (- (lsp_vector_families.lsp-fold-ranges-len (& folds)) 1)]
@@ -12667,7 +13227,8 @@
 (define (lsp-handle-folding-range
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : unit
+  [docs : lsp_document_vec.Vec])
+  (:cold) : unit
   (match (lsp-get-document params docs)
     [(Found _ text _)
       (lsp-write-response id (lsp-json-array (lsp-folding-ranges-in-text text)))]
@@ -12677,7 +13238,8 @@
 (define (lsp-handle-tl-append-function
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
+  [docs : lsp_document_vec.Vec])
+  (:cold) : LspDocumentHandleResult
   (match (lsp-get-document-decls params docs)
     [(Found path text _ decls)
       (match (lsp-json-string-field params "newText")
@@ -12727,7 +13289,8 @@
   [message : json.Json]
   [docs : lsp_document_vec.Vec]
   [stdlib-roots : lsp_svec.Vec]
-  [job-state : tc.TcJobState]) : LspDocumentHandleResult
+  [job-state : tc.TcJobState])
+  (:cold) : LspDocumentHandleResult
   (match (lsp-json-string-field message "method")
     [(Ok method)
       (let
@@ -13085,7 +13648,8 @@
         result)]
     [(Missing) (Continue docs)]))
 
-(define (lsp-tool-method-mutates-document? [method : (& method str)]) : bool
+(define (lsp-tool-method-mutates-document? [method : (& method str)])
+  (:cold) : bool
   (or
     (string.eq method "tl/replace")
     (string.eq method "tl/move")
@@ -13099,7 +13663,8 @@
 
 (define (lsp-handle-initialize-state
   [message : json.Json]
-  [state : lsp_vector_families.LspServerState]) : LspHandleResult
+  [state : lsp_vector_families.LspServerState])
+  (:cold) : LspHandleResult
   (let
     [id-key : String "id"]
     (match (json.object-get
@@ -13130,7 +13695,8 @@
   [method : String]
   [params : json.Json]
   [state : lsp_vector_families.LspServerState]
-  [stdlib-roots : lsp_svec.Vec]) : LspHandleResult
+  [stdlib-roots : lsp_svec.Vec])
+  (:cold) : LspHandleResult
   (match (lsp-tl-request-uri (owned_view.compiler-owned-shared-view params))
     [(Missing) (Continue state)]
     [(Ok uri)
@@ -13160,7 +13726,8 @@
   [method : String]
   [message : json.Json]
   [state : lsp_vector_families.LspServerState]
-  [stdlib-roots : lsp_svec.Vec]) : LspHandleResult
+  [stdlib-roots : lsp_svec.Vec])
+  (:cold) : LspHandleResult
   (let
     [params-key : String "params"]
     (match (json.object-get message (& params-key))
@@ -13181,7 +13748,8 @@
 (define (lsp-handle-workspace-symbol-with-params!
   [id : json.Json]
   [params : json.Json]
-  [state : (& state lsp_vector_families.LspServerState)]) : unit
+  [state : (& state lsp_vector_families.LspServerState)])
+  (:cold) : unit
   (match (lsp-json-string-field params "query")
     [(Missing)
       (lsp-write-error id -32602 "workspace/symbol requires a string query")]
@@ -13193,7 +13761,8 @@
 (define (lsp-handle-project-search-with-params!
   [id : json.Json]
   [params : json.Json]
-  [state : (& state lsp_vector_families.LspServerState)]) : unit
+  [state : (& state lsp_vector_families.LspServerState)])
+  (:cold) : unit
   (match (lsp-json-string-field params "name")
     [(Missing) (lsp-write-error id -32602 "Missing name parameter")]
     [(Ok name)
@@ -13203,7 +13772,8 @@
           id
           (lsp-project-search-result-json (& state.workspace) name)))]))
 
-(define (lsp-reference-include-declaration? [params : json.Json]) : bool
+(define (lsp-reference-include-declaration? [params : json.Json])
+  (:cold) : bool
   (let
     [context-key : String "context"]
     [include-key : String "includeDeclaration"]
@@ -13220,7 +13790,8 @@
 (define (lsp-reference-write-query-result!
   [id : json.Json]
   [query : (& query LspWorkspaceSemanticQuery)]
-  [include-declaration : bool]) : unit
+  [include-declaration : bool])
+  (:cold) : unit
   (if (= query.completeness 0)
     (lsp-write-response
       id
@@ -13235,7 +13806,8 @@
   [state : lsp_vector_families.LspServerState]
   [stdlib-roots : lsp_svec.Vec]
   [canonical-key : (& canonical-key str)]
-  [include-declaration : bool]) : lsp_vector_families.LspServerState
+  [include-declaration : bool])
+  (:cold) : lsp_vector_families.LspServerState
   (let
     [query : LspWorkspaceSemanticQuery
       (lsp-workspace-semantic-query (& state) stdlib-roots canonical-key)]
@@ -13265,7 +13837,8 @@
   [params : json.Json]
   [state : lsp_vector_families.LspServerState]
   [stdlib-roots : lsp_svec.Vec]
-  [doc-index : i64]) : lsp_vector_families.LspServerState
+  [doc-index : i64])
+  (:cold) : lsp_vector_families.LspServerState
   (if (not
     (and
       (lsp-json-int-field-usable? (& position) "line")
@@ -13303,7 +13876,8 @@
   [id : json.Json]
   [params : json.Json]
   [state : lsp_vector_families.LspServerState]
-  [stdlib-roots : lsp_svec.Vec]) : lsp_vector_families.LspServerState
+  [stdlib-roots : lsp_svec.Vec])
+  (:cold) : lsp_vector_families.LspServerState
   (match (lsp-tl-request-uri (lsp-global-shared-view params))
     [(Missing)
       (lsp-write-response id (lsp-json-array (json.list-empty)))
@@ -13338,7 +13912,8 @@
 (define (lsp-handle-references-message
   [message : json.Json]
   [state : lsp_vector_families.LspServerState]
-  [stdlib-roots : lsp_svec.Vec]) : LspHandleResult
+  [stdlib-roots : lsp_svec.Vec])
+  (:cold) : LspHandleResult
   (let
     [id-key : String "id"]
     (match (json.object-get (lsp-global-shared-view message) (& id-key))
@@ -13374,7 +13949,8 @@
   [params : json.Json]
   [state : (& state lsp_vector_families.LspServerState)]
   [query : (& query LspWorkspaceSemanticQuery)]
-  [target : LspRenameTarget]) : unit
+  [target : LspRenameTarget])
+  (:cold) : unit
   (if (string.eq method "textDocument/prepareRename")
     (match (lsp-rename-validate-query state query target "" false)
       [(Ok _) (lsp-write-response id (lsp-prepare-rename-result target))]
@@ -13423,7 +13999,8 @@
   [params : json.Json]
   [state : lsp_vector_families.LspServerState]
   [stdlib-roots : lsp_svec.Vec]
-  [doc-index : i64]) : lsp_vector_families.LspServerState
+  [doc-index : i64])
+  (:cold) : lsp_vector_families.LspServerState
   (if (not
     (and
       (lsp-json-int-field-usable? (& position) "line")
@@ -13505,7 +14082,8 @@
   [id : json.Json]
   [params : json.Json]
   [state : lsp_vector_families.LspServerState]
-  [stdlib-roots : lsp_svec.Vec]) : lsp_vector_families.LspServerState
+  [stdlib-roots : lsp_svec.Vec])
+  (:cold) : lsp_vector_families.LspServerState
   (match (lsp-tl-request-uri (lsp-global-shared-view params))
     [(Missing)
       (lsp-write-error id -32602 "Rename requires textDocument.uri")
@@ -13539,7 +14117,8 @@
   [method : String]
   [message : json.Json]
   [state : lsp_vector_families.LspServerState]
-  [stdlib-roots : lsp_svec.Vec]) : LspHandleResult
+  [stdlib-roots : lsp_svec.Vec])
+  (:cold) : LspHandleResult
   (let
     [id-key : String "id"]
     (match (json.object-get (lsp-global-shared-view message) (& id-key))
@@ -13576,7 +14155,8 @@
 (define (lsp-handle-workspace-query-message
   [method : String]
   [message : json.Json]
-  [state : lsp_vector_families.LspServerState]) : LspHandleResult
+  [state : lsp_vector_families.LspServerState])
+  (:cold) : LspHandleResult
   (let
     [id-key : String "id"]
     (match (json.object-get
@@ -13612,7 +14192,8 @@
 ;; document and its immutable semantic owner remain in the server-state arena.
 (define (lsp-handle-semantic-tokens-message
   [message : json.Json]
-  [state : lsp_vector_families.LspServerState]) : LspHandleResult
+  [state : lsp_vector_families.LspServerState])
+  (:cold) : LspHandleResult
   (let
     [id-key : String "id"]
     (match (json.object-get
@@ -13639,12 +14220,14 @@
             (arena.tl_arena_destroy scratch))
           (Continue state))])))
 
-(define (lsp-json-rpc-id? [value : (& value json.Json)]) : bool
+(define (lsp-json-rpc-id? [value : (& value json.Json)])
+  (:cold) : bool
   (match value
     [(or (JsonString _) (JsonNumber _) (JsonNull)) true]
     [_ false]))
 
-(define (lsp-invalid-request-id [message : (& message json.Json)]) : json.Json
+(define (lsp-invalid-request-id [message : (& message json.Json)])
+  (:cold) : json.Json
   (let
     [key : String "id"]
     (match (lsp-json-field-ref message (& key))
@@ -13654,7 +14237,8 @@
           JsonNull)]
       [(Missing) JsonNull])))
 
-(define (lsp-json-rpc-error? [value : (& value json.Json)]) : bool
+(define (lsp-json-rpc-error? [value : (& value json.Json)])
+  (:cold) : bool
   (let
     [code-key : String "code"]
     [message-key : String "message"]
@@ -13675,7 +14259,8 @@
 
 ;; Only a valid request may dispatch. Valid client responses are ignored; a
 ;; missing method alone cannot distinguish a response from an invalid request.
-(define (lsp-message-envelope [message : (& message json.Json)]) : LspMessageEnvelope
+(define (lsp-message-envelope [message : (& message json.Json)])
+  (:cold) : LspMessageEnvelope
   (let
     [version-key : String "jsonrpc"]
     [method-key : String "method"]
@@ -13714,7 +14299,8 @@
               Invalid)]
           [(Missing) Invalid])])))
 
-(define (lsp-params-string? [params : (& params json.Json)] [key : (& key str)]) : bool
+(define (lsp-params-string? [params : (& params json.Json)] [key : (& key str)])
+  (:cold) : bool
   (match (lsp-json-field-ref params key)
     [(Found value)
       (match value
@@ -13722,7 +14308,8 @@
         [_ false])]
     [(Missing) false]))
 
-(define (lsp-params-position-error [params : (& params json.Json)]) : LspJsonText
+(define (lsp-params-position-error [params : (& params json.Json)])
+  (:cold) : LspJsonText
   (let
     [key : String "position"]
     (match (lsp-json-field-ref params (& key))
@@ -13736,7 +14323,8 @@
 
 (define (lsp-params-selector-error
   [method : (& method str)]
-  [params : (& params json.Json)]) : LspJsonText
+  [params : (& params json.Json)])
+  (:cold) : LspJsonText
   (let
     [path-key : String "path"]
     [name-key : String "name"]
@@ -13762,7 +14350,8 @@
 ;; lookup success. A well-typed lookup miss keeps its contextual handler error.
 (define (lsp-method-params-error
   [method : (& method str)]
-  [params : (& params json.Json)]) : LspJsonText
+  [params : (& params json.Json)])
+  (:cold) : LspJsonText
   (let
     [tool : bool (lsp-known-tool-method? method)]
     [position : bool
@@ -13903,7 +14492,8 @@
 
 (define (lsp-message-params-error
   [method : (& method str)]
-  [message : (& message json.Json)]) : LspJsonText
+  [message : (& message json.Json)])
+  (:cold) : LspJsonText
   (let
     [key : String "params"]
     (match (lsp-json-field-ref message (& key))
@@ -13920,7 +14510,8 @@
   [message : json.Json]
   [state : lsp_vector_families.LspServerState]
   [stdlib-roots : lsp_svec.Vec]
-  [job-state : tc.TcJobState]) : LspHandleResult
+  [job-state : tc.TcJobState])
+  (:cold) : LspHandleResult
   (match (lsp-message-envelope (& message))
     [(Invalid)
       (with-scratch
@@ -14007,7 +14598,8 @@
                   [(Continue _) (Continue state)]
                   [(Exit _) (Exit state)])]))])]))
 
-(define (lsp-known-tool-method? [method : (& method str)]) : bool
+(define (lsp-known-tool-method? [method : (& method str)])
+  (:cold) : bool
   (or
     (string.eq method "tl/listFunctions")
     (string.eq method "tl/findPosition")
@@ -14028,7 +14620,8 @@
 (define (lsp-handle-tool-missing-params!
   [method : String]
   [message : json.Json]
-  [id : json.Json]) : unit
+  [id : json.Json])
+  (:cold) : unit
   (if (lsp-known-tool-method? method)
     (lsp-write-error id -32602 "Missing params")
     (lsp-maybe-write-method-not-found message)))
@@ -14040,7 +14633,8 @@
   [params : json.Json]
   [docs : lsp_document_vec.Vec]
   [stdlib-roots : lsp_svec.Vec]
-  [job-state : tc.TcJobState]) : LspDocumentHandleResult
+  [job-state : tc.TcJobState])
+  (:cold) : LspDocumentHandleResult
   (cond
     [(string.eq method "tl/listFunctions")
       (lsp-handle-tl-list-functions id params docs)]
@@ -14093,7 +14687,8 @@
   [message : json.Json]
   [docs : lsp_document_vec.Vec]
   [stdlib-roots : lsp_svec.Vec]
-  [job-state : tc.TcJobState]) : LspDocumentHandleResult
+  [job-state : tc.TcJobState])
+  (:cold) : LspDocumentHandleResult
   (let
     [id-key : String "id"]
     (match (json.object-get
@@ -14123,12 +14718,14 @@
           unit)
         (Continue docs)])))
 
-(define (lsp-frame-session-cache-enable!) : unit
+(define (lsp-frame-session-cache-enable!)
+  (:cold) : unit
   (compiler_load.compiler-load-session-cache-enable!))
 
 (define (lsp-frame-run-with-config
   [stdlib-roots : lsp_svec.Vec]
-  [prefix-cache-stats : bool]) : i64
+  [prefix-cache-stats : bool])
+  (:cold) : i64
   (let
     [done : bool false]
     [status : i64 0]
@@ -14170,7 +14767,8 @@
 ;; Clear every serial LSP/compiler owner before a transcript arena is retired.
 ;; Server state is destroyed by lsp-frame-run-with-config; clearing the cache
 ;; arena here leaves no owner visible to the next run.
-(define (lsp-frame-fresh-session-reset!) : unit
+(define (lsp-frame-fresh-session-reset!)
+  (:cold) : unit
   (lsp-frame-memory-reset!)
   (lsp-language-config-reset!)
   (set! lsp-document-cache-arena 0)
@@ -14188,7 +14786,8 @@
 (define (lsp-frame-run-transcript
   [input : (& input str)]
   [stdlib-roots : lsp_svec.Vec]
-  [prefix-cache-stats : bool]) : LspTranscriptResult
+  [prefix-cache-stats : bool])
+  (:cold) : LspTranscriptResult
   (let
     [enclosing : i64 (arena.tl_arena_current)]
     [_fresh-before : unit (lsp-frame-fresh-session-reset!)]
@@ -14220,7 +14819,8 @@
 (define (lsp-transcript-batch-tab
   [text : (& text str)]
   [start : i64]
-  [end : i64]) : i64
+  [end : i64])
+  (:cold) : i64
   (let
     [i : i64 start]
     (while (and (< i end) (not (= (string.string-ref text i) '\t')))
@@ -14230,14 +14830,16 @@
 (define (lsp-transcript-batch-field
   [text : (& text str)]
   [start : i64]
-  [end : i64]) : String
+  [end : i64])
+  (:cold) : String
   (string.substring text start (- end start)))
 
 (define (lsp-transcript-batch-parse-entry
   [text : (& text str)]
   [start : i64]
   [end : i64]
-  [line-number : i64]) : ResultLspTranscriptBatchEntry
+  [line-number : i64])
+  (:cold) : ResultLspTranscriptBatchEntry
   (let
     [tab1 : i64 (lsp-transcript-batch-tab text start end)]
     [tab2 : i64
@@ -14285,7 +14887,8 @@
 
 (define (lsp-transcript-batch-id-seen?
   [ids : (& ids lsp_svec.Vec)]
-  [case-id : (& case-id str)]) : bool
+  [case-id : (& case-id str)])
+  (:cold) : bool
   (let
     [i : i64 0]
     [seen : bool false]
@@ -14296,7 +14899,8 @@
       (+= i 1))
     seen))
 
-(define (lsp-transcript-batch-validate [text : (& text str)]) : String
+(define (lsp-transcript-batch-validate [text : (& text str)])
+  (:cold) : String
   (let
     [n : i64 (string.string-length text)]
     [first-end : i64 (source_text.line-end text 0)]
@@ -14374,7 +14978,8 @@
 (define (lsp-transcript-batch-run-entries
   [text : (& text str)]
   [stdlib-roots : lsp_svec.Vec]
-  [prefix-cache-stats : bool]) : i64
+  [prefix-cache-stats : bool])
+  (:cold) : i64
   (let
     [n : i64 (string.string-length text)]
     [first-end : i64 (source_text.line-end text 0)]
@@ -14418,7 +15023,8 @@
 (define (lsp-transcript-batch-run
   [manifest-path : String]
   [stdlib-roots : lsp_svec.Vec]
-  [prefix-cache-stats : bool]) : i64
+  [prefix-cache-stats : bool])
+  (:cold) : i64
   (if (not
     (io.file-exists? (owned_view.compiler-owned-shared-view manifest-path)))
     (begin
@@ -14438,7 +15044,8 @@
           2)
         (lsp-transcript-batch-run-entries text stdlib-roots prefix-cache-stats)))))
 
-(define (lsp-frame-run-from [idx : i64] [count : i64]) : i64
+(define (lsp-frame-run-from [idx : i64] [count : i64])
+  (:cold) : i64
   (let
     [args : cli_option.CliArgs
       (cli_option.cli-args
@@ -14480,7 +15087,8 @@
 (define (lsp-replace-pattern-words
   [text : String]
   [old : (& old str)]
-  [new : String]) : String
+  [new : String])
+  (:cold) : String
   (let
     [n : i64 (string.string-length text)]
     [old-len : i64 (string.string-length old)]
@@ -14513,7 +15121,8 @@
   [text : String]
   [name : String]
   [new-body : String]
-  [decls : lsp_decl_vec.Vec]) : LspEditResult
+  [decls : lsp_decl_vec.Vec])
+  (:cold) : LspEditResult
   (let
     [i : i64 0]
     [n : i64 (lsp_decl_vec.len (& decls))]
@@ -14602,7 +15211,8 @@
   [name : String]
   [old-pattern : String]
   [new-pattern : String]
-  [decls : lsp_decl_vec.Vec]) : LspEditResult
+  [decls : lsp_decl_vec.Vec])
+  (:cold) : LspEditResult
   (if (string.eq old-pattern "")
     (Err "oldPattern cannot be empty")
     (let
@@ -14706,7 +15316,8 @@
   [text : String]
   [name : String]
   [new-text : String]
-  [decls : lsp_decl_vec.Vec]) : LspEditResult
+  [decls : lsp_decl_vec.Vec])
+  (:cold) : LspEditResult
   (if (not
     (lsp-text-is-valid-forms (owned_view.compiler-owned-shared-view new-text)))
     (Err
@@ -14746,7 +15357,8 @@
         (Err "Declaration not found")))))
 
 ;; tl/patch - Find and replace text anywhere in the file, then validate
-(define (lsp-patch-text [text : String] [old-text : String] [new-text : String]) : LspEditResult
+(define (lsp-patch-text [text : String] [old-text : String] [new-text : String])
+  (:cold) : LspEditResult
   (let
     [n : i64 (string.string-length text)]
     [old-len : i64 (string.string-length old-text)]
@@ -14790,7 +15402,8 @@
 (define (lsp-handle-tl-patch
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
+  [docs : lsp_document_vec.Vec])
+  (:cold) : LspDocumentHandleResult
   (match (lsp-get-document
     (owned_view.compiler-owned-shared-view params)
     (owned_view.compiler-owned-shared-view docs))
@@ -14818,7 +15431,8 @@
 ;; Position-based editing helpers
 ;; Find start index of innermost form containing offset. Returns -1 if not found.
 ;; Uses string.string-ref on literal parens since char literals for parens confuse the parser.
-(define (lsp-find-form-at-offset [text : String] [offset : i64]) : i64
+(define (lsp-find-form-at-offset [text : String] [offset : i64])
+  (:cold) : i64
   (if (or (< offset 0) (>= offset (string.string-length text)))
     -1
     (let
@@ -14839,7 +15453,8 @@
       result)))
 
 ;; Find end index (exclusive) of form starting at start. Returns -1 if unterminated.
-(define (lsp-find-form-end-at-offset [text : String] [start : i64]) : i64
+(define (lsp-find-form-end-at-offset [text : String] [start : i64])
+  (:cold) : i64
   (let
     [n : i64 (string.string-length text)]
     (if (or
@@ -14872,7 +15487,8 @@
   [decls : lsp_decl_vec.Vec]
   [line : i64]
   [col : i64]
-  [new-text : String]) : LspEditResult
+  [new-text : String])
+  (:cold) : LspEditResult
   (let
     [idx : i64 (lsp-decl-index-at-position text decls line col)]
     (if (= idx -1)
@@ -14893,7 +15509,8 @@
   [text : String]
   [decls : lsp_decl_vec.Vec]
   [params : json.Json]
-  [new-text : String]) : LspEditResult
+  [new-text : String])
+  (:cold) : LspEditResult
   (let
     [pos-key : String "position"]
     (match (json.object-get params (& pos-key))
@@ -14908,7 +15525,8 @@
 (define (lsp-handle-tl-structural-replace-at
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
+  [docs : lsp_document_vec.Vec])
+  (:cold) : LspDocumentHandleResult
   (match (lsp-get-document-decls params docs)
     [(Found path text _ decls)
       (match (lsp-json-string-field params "newText")
@@ -14968,7 +15586,8 @@
 
 ;; Find the start of the outer form enclosing the form at start.
 ;; outer = 0 means return start itself.
-(define (lsp-find-outer-form-start [text : String] [start : i64] [outer : i64]) : i64
+(define (lsp-find-outer-form-start [text : String] [start : i64] [outer : i64])
+  (:cold) : i64
   (if (<= outer 0)
     start
     (if (<= start 0)
@@ -14987,7 +15606,8 @@
   [text : String]
   [line : i64]
   [col : i64]
-  [outer : i64]) : String
+  [outer : i64])
+  (:cold) : String
   (if (or (< line 0) (< col 0))
     ""
     (let
@@ -15023,7 +15643,8 @@
 
 (define (lsp-read-form-at-position-from-params
   [text : String]
-  [params : json.Json]) : LspStringResult
+  [params : json.Json])
+  (:cold) : LspStringResult
   (let
     [pos-key : String "position"]
     (match (json.object-get
@@ -15042,7 +15663,8 @@
 
 (define (lsp-form-text-by-entry
   [text : (& text str)]
-  [entry : lsp_vector_families.LspDeclEntry]) : LspStringResult
+  [entry : lsp_vector_families.LspDeclEntry])
+  (:cold) : LspStringResult
   (let
     [start : i64 (lsp-offset-from-entry-start text entry)]
     [end : i64 (lsp-offset-from-entry-end text entry)]
@@ -15053,7 +15675,8 @@
 (define (lsp-read-form-by-name-with-decls
   [text : String]
   [name : String]
-  [decls : lsp_decl_vec.Vec]) : LspStringResult
+  [decls : lsp_decl_vec.Vec])
+  (:cold) : LspStringResult
   (let
     [idx : i64 (lsp-decl-list-find-name (& decls) name)]
     (if (= idx -1)
@@ -15065,12 +15688,14 @@
           idx
           (lsp-decl-entry-fallback))))))
 
-(define (lsp-json-has-field? [value : (& value json.Json)] [key : String]) : bool
+(define (lsp-json-has-field? [value : (& value json.Json)] [key : String])
+  (:cold) : bool
   (match (lsp-json-field-ref value (& key))
     [(Found _) true]
     [(Missing) false]))
 
-(define (lsp-json-list-all-strings? [items : (& items json.JsonSeq)]) : bool
+(define (lsp-json-list-all-strings? [items : (& items json.JsonSeq)])
+  (:cold) : bool
   (let
     [n : i64 (json.list-count-ref items)]
     (for [i (iterator.range 0 n)]
@@ -15079,7 +15704,8 @@
         [_ (return false)]))
     true))
 
-(define (lsp-json-path-field [params : (& params json.Json)]) : LspPathParam
+(define (lsp-json-path-field [params : (& params json.Json)])
+  (:cold) : LspPathParam
   (let
     [key : String "path"]
     (match (lsp-json-field-ref params (& key))
@@ -15094,7 +15720,8 @@
           [_ (Err "path must be an array")])]
       [(Missing) (Err "Missing path parameter")])))
 
-(define (lsp-json-path-single-name [path : json.JsonSeq]) : String
+(define (lsp-json-path-single-name [path : json.JsonSeq])
+  (:cold) : String
   (if (= (json.list-count (owned_view.compiler-owned-shared-view path)) 1)
     (match (json.list-get-index path 0)
       [(JsonFound first)
@@ -15104,7 +15731,8 @@
       [(JsonMissing) ""])
     ""))
 
-(define (lsp-form-head-name-at [text : (& text str)] [start : i64] [end : i64]) : String
+(define (lsp-form-head-name-at [text : (& text str)] [start : i64] [end : i64])
+  (:cold) : String
   (let
     [n0 : i64 (string.string-length text)]
     [limit : i64
@@ -15126,7 +15754,8 @@
             (string.substring text head-start (- head-end head-start)))
           "")))))
 
-(define (lsp-offset-position-json [text : (& text str)] [off : i64]) : json.Json
+(define (lsp-offset-position-json [text : (& text str)] [off : i64])
+  (:cold) : json.Json
   (let
     [lc : LspLineCol (lsp-line-col-at-offset text off)]
     (lsp-json-object2
@@ -15135,7 +15764,8 @@
       "character"
       (lsp-json-number (- lc.col 1)))))
 
-(define (lsp-offset-range-json [text : (& text str)] [start : i64] [end : i64]) : json.Json
+(define (lsp-offset-range-json [text : (& text str)] [start : i64] [end : i64])
+  (:cold) : json.Json
   (lsp-json-object2
     "start"
     (lsp-offset-position-json text start)
@@ -15146,7 +15776,8 @@
   [text : (& text str)]
   [start : i64]
   [end : i64]
-  [needle : (& needle str)]) : i64
+  [needle : (& needle str)])
+  (:cold) : i64
   (let
     [n : i64 (string.string-length text)]
     [limit : i64
@@ -15181,7 +15812,8 @@
   [text : (& text str)]
   [path : json.JsonSeq]
   [start : i64]
-  [end : i64]) : LspPathLookup
+  [end : i64])
+  (:cold) : LspPathLookup
   (match (json.list-get-index (owned_view.compiler-owned-shared-view path) 0)
     [(JsonMissing) (Found start end (lsp-form-head-name-at text start end))]
     [(JsonFound first)
@@ -15206,7 +15838,8 @@
 (define (lsp-lookup-form-path
   [text : (& text str)]
   [decls : lsp_decl_vec.Vec]
-  [path : json.JsonSeq]) : LspPathLookup
+  [path : json.JsonSeq])
+  (:cold) : LspPathLookup
   (match (json.list-get-index (owned_view.compiler-owned-shared-view path) 0)
     [(JsonMissing) (Err "path must not be empty")]
     [(JsonFound first)
@@ -15248,7 +15881,8 @@
   [text : String]
   [path : json.JsonSeq]
   [new-text : String]
-  [decls : lsp_decl_vec.Vec]) : LspEditResult
+  [decls : lsp_decl_vec.Vec])
+  (:cold) : LspEditResult
   (if (not
     (lsp-text-is-valid-forms (owned_view.compiler-owned-shared-view new-text)))
     (Err
@@ -15263,7 +15897,8 @@
 (define (lsp-generic-form-body-start
   [text : (& text str)]
   [start : i64]
-  [end : i64]) : i64
+  [end : i64])
+  (:cold) : i64
   (let
     [head-start : i64 (source_text.source-text-skip-space text (+ start 1) end)]
     [head-end : i64 (lsp-scan-ident text head-start end)]
@@ -15273,7 +15908,8 @@
   [text : String]
   [path : json.JsonSeq]
   [new-body : String]
-  [decls : lsp_decl_vec.Vec]) : LspEditResult
+  [decls : lsp_decl_vec.Vec])
+  (:cold) : LspEditResult
   (let
     [single-name : String
       (lsp-json-path-single-name (owned_view.compiler-owned-shared-view path))]
@@ -15301,7 +15937,8 @@
   [text : String]
   [decls : lsp_decl_vec.Vec]
   [line : i64]
-  [col : i64]) : LspEditResult
+  [col : i64])
+  (:cold) : LspEditResult
   (let
     [idx : i64 (lsp-decl-index-at-position text decls line col)]
     (if (= idx -1)
@@ -15321,7 +15958,8 @@
 (define (lsp-delete-form-at-position-from-params-with-decls
   [text : String]
   [decls : lsp_decl_vec.Vec]
-  [params : json.Json]) : LspEditResult
+  [params : json.Json])
+  (:cold) : LspEditResult
   (let
     [pos-key : String "position"]
     (match (json.object-get params (& pos-key))
@@ -15335,7 +15973,8 @@
 (define (lsp-delete-form-by-name-with-decls
   [text : String]
   [name : String]
-  [decls : lsp_decl_vec.Vec]) : LspEditResult
+  [decls : lsp_decl_vec.Vec])
+  (:cold) : LspEditResult
   (let
     [idx : i64 (lsp-decl-list-find-name (& decls) name)]
     (if (= idx -1)
@@ -15355,7 +15994,8 @@
 (define (lsp-insert-after-entry
   [text : (& text str)]
   [entry : lsp_vector_families.LspDeclEntry]
-  [new-text : String]) : LspEditResult
+  [new-text : String])
+  (:cold) : LspEditResult
   (let
     [form-end : i64 (lsp-offset-from-entry-end text entry)]
     (if (or (< form-end 0) (> form-end (string.string-length text)))
@@ -15374,7 +16014,8 @@
   [decls : lsp_decl_vec.Vec]
   [line : i64]
   [col : i64]
-  [new-text : String]) : LspEditResult
+  [new-text : String])
+  (:cold) : LspEditResult
   (let
     [idx : i64 (lsp-decl-index-at-position text decls line col)]
     (if (= idx -1)
@@ -15391,7 +16032,8 @@
   [text : String]
   [decls : lsp_decl_vec.Vec]
   [params : json.Json]
-  [new-text : String]) : LspEditResult
+  [new-text : String])
+  (:cold) : LspEditResult
   (let
     [pos-key : String "position"]
     (match (json.object-get params (& pos-key))
@@ -15406,7 +16048,8 @@
   [text : String]
   [params : json.Json]
   [new-text : String]
-  [decls : lsp_decl_vec.Vec]) : LspEditResult
+  [decls : lsp_decl_vec.Vec])
+  (:cold) : LspEditResult
   (if (not
     (lsp-text-is-valid-forms (owned_view.compiler-owned-shared-view new-text)))
     (Err
@@ -15443,7 +16086,8 @@
 (define (lsp-handle-tl-delete-at
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
+  [docs : lsp_document_vec.Vec])
+  (:cold) : LspDocumentHandleResult
   (match (lsp-get-document-decls params docs)
     [(Found path text _ decls)
       (match (lsp-json-string-field params "name")
@@ -15479,7 +16123,8 @@
 (define (lsp-handle-tl-insert-after
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
+  [docs : lsp_document_vec.Vec])
+  (:cold) : LspDocumentHandleResult
   (match (lsp-get-document-decls params docs)
     [(Found path text _ decls)
       (match (lsp-json-string-field params "newText")
@@ -15500,7 +16145,8 @@
 (define (lsp-handle-tl-replace-body
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
+  [docs : lsp_document_vec.Vec])
+  (:cold) : LspDocumentHandleResult
   (match (lsp-get-document-decls params docs)
     [(Found path text _ decls)
       (match (lsp-json-string-field params "newBody")
@@ -15548,7 +16194,8 @@
 (define (lsp-handle-tl-replace-pattern-at
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
+  [docs : lsp_document_vec.Vec])
+  (:cold) : LspDocumentHandleResult
   (match (lsp-get-document-decls params docs)
     [(Found path text _ decls)
       (match (lsp-json-string-field params "oldPattern")
@@ -15587,7 +16234,8 @@
 (define (lsp-handle-tl-read-form-at
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
+  [docs : lsp_document_vec.Vec])
+  (:cold) : LspDocumentHandleResult
   (match (lsp-get-document-decls params docs)
     [(Found path text _ decls)
       (match (lsp-json-string-field params "name")
@@ -15617,7 +16265,8 @@
   [text : String]
   [decls : (& decls lsp_decl_vec.Vec)]
   [name : String]
-  [destination : String]) : LspEditResult
+  [destination : String])
+  (:cold) : LspEditResult
   (let
     [found-idx : i64 (lsp-decl-list-find-name (& decls) name)]
     [dest-idx : i64 (lsp-decl-list-find-name (& decls) destination)]
@@ -15643,7 +16292,8 @@
   [text : (& text str)]
   [decls : (& decls lsp_decl_vec.Vec)]
   [name : String]
-  [direction : String]) : LspEditResult
+  [direction : String])
+  (:cold) : LspEditResult
   (let
     [found-idx : i64 (lsp-decl-list-find-name (& decls) name)]
     [n : i64 (lsp_decl_vec.len (& decls))]
@@ -15699,7 +16349,8 @@
 (define (lsp-structural-move-text-with-decls
   [text : String]
   [params : json.Json]
-  [decls : lsp_decl_vec.Vec]) : LspEditResult
+  [decls : lsp_decl_vec.Vec])
+  (:cold) : LspEditResult
   (let
     [name : String
       (lsp-structural-move-name-with-decls
@@ -15724,7 +16375,8 @@
 (define (lsp-batch-apply-edit
   [method : String]
   [params : json.Json]
-  [text : String]) : LspEditResult
+  [text : String])
+  (:cold) : LspEditResult
   (let
     [text-copy : String (string.copy (& text))]
     [decls : lsp_decl_vec.Vec (lsp-scan-decls text-copy)]
@@ -15825,19 +16477,22 @@
           [(Missing) (Err "Missing oldPattern parameter")])]
       [else (Err (lsp-str2 "Unsupported batch operation: " method))])))
 
-(define (lsp-batch-operation-result [index : i64]) : json.Json
+(define (lsp-batch-operation-result [index : i64])
+  (:cold) : json.Json
   (lsp-json-object2 "index" (lsp-json-number index) "success" (JsonBool true)))
 
 (define (lsp-batch-position-error?
   [operation : json.Json]
-  [message : (& message str)]) : bool
+  [message : (& message str)])
+  (:cold) : bool
   (if (lsp-json-has-field? operation "position")
     (or
       (string.eq message "No form found at position")
       (string.eq message "Missing name or position parameter"))
     false))
 
-(define (lsp-batch-position-message [operation : json.Json] [message : String]) : String
+(define (lsp-batch-position-message [operation : json.Json] [message : String])
+  (:cold) : String
   (if (lsp-batch-position-error?
     (owned_view.compiler-owned-shared-view operation)
     message)
@@ -15859,7 +16514,8 @@
 (define (lsp-batch-position-context
   [operation : json.Json]
   [text : String]
-  [message : String]) : json.Json
+  [message : String])
+  (:cold) : json.Json
   (if (lsp-batch-position-error?
     (owned_view.compiler-owned-shared-view operation)
     message)
@@ -15877,7 +16533,8 @@
 (define (lsp-batch-contextual-error-message
   [operation : json.Json]
   [text : String]
-  [message : String]) : String
+  [message : String])
+  (:cold) : String
   (cond
     [(and
         (string.eq
@@ -15907,7 +16564,8 @@
 (define (lsp-batch-contextual-error-context
   [operation : json.Json]
   [text : String]
-  [message : String]) : json.Json
+  [message : String])
+  (:cold) : json.Json
   (if (and
     (string.eq
       (lsp-json-string-field-default
@@ -15924,7 +16582,8 @@
 (define (lsp-batch-apply-operation
   [operation : json.Json]
   [index : i64]
-  [text : String]) : LspBatchOpResult
+  [text : String])
+  (:cold) : LspBatchOpResult
   (match (lsp-json-string-field operation "method")
     [(Ok method)
       (match (lsp-batch-apply-edit
@@ -15948,7 +16607,8 @@
 (define (lsp-batch-run-operations
   [ops : json.JsonSeq]
   [index : i64]
-  [text : String]) : LspBatchRunResult
+  [text : String])
+  (:cold) : LspBatchRunResult
   (match (json.list-get-index (owned_view.compiler-owned-shared-view ops) 0)
     [(JsonMissing) (Ok text (json.list-empty))]
     [(JsonFound first)
@@ -15967,7 +16627,8 @@
               (Err message failed-index partial-text context)])]
         [(Err message context) (Err message index text context)])]))
 
-(define (lsp-batch-success-json [text : String] [results : json.JsonSeq]) : json.Json
+(define (lsp-batch-success-json [text : String] [results : json.JsonSeq])
+  (:cold) : json.Json
   (lsp-json-object4
     "success"
     (JsonBool true)
@@ -15982,7 +16643,8 @@
   [message : String]
   [failed-index : i64]
   [partial-text : String]
-  [context : json.Json]) : json.Json
+  [context : json.Json])
+  (:cold) : json.Json
   (match (lsp-global-shared-view context)
     [(JsonNull)
       (lsp-json-object4
@@ -16018,7 +16680,8 @@
   [diagnostic-uris : lsp_vector_families.LspDiagnosticUris]
   [edited-text : String]
   [formatted : String]
-  [results : json.JsonSeq]) : LspDocumentHandleResult
+  [results : json.JsonSeq])
+  (:cold) : LspDocumentHandleResult
   (match (lsp-validate-edited-document
     (owned_view.compiler-owned-shared-view formatted))
     [(Ok _)
@@ -16043,7 +16706,8 @@
 (define (lsp-handle-tl-batch
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
+  [docs : lsp_document_vec.Vec])
+  (:cold) : LspDocumentHandleResult
   (match (lsp-tl-request-uri (owned_view.compiler-owned-shared-view params))
     [(Ok uri)
       (match (lsp-documents-lookup-resynced

@@ -8114,7 +8114,8 @@
 (define (compiler-ir-type-render
   [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
-  [ty : (& ast.AstType)]) : String
+  [ty : (& ast.AstType)])
+  (:cold) : String
   (match ty
     [(I64) "i64"]
     [(I32) "i32"]
@@ -8272,7 +8273,8 @@
 (define (compiler-ir-u64-payload-render [value : u64]) : String
   (string.int->string (cast value : i64)))
 
-(define (compiler-ir-value-render [value : (& CompilerIrValue)]) : String
+(define (compiler-ir-value-render [value : (& CompilerIrValue)])
+  (:cold) : String
   (match value
     [(Var id) (str_cat.str-cat "%" (string.int->string id))]
     [(Global name) (str_cat.str-cat "@" (compiler-ir-symbol-text name))]
@@ -8323,7 +8325,8 @@
 
 (define (compiler-ir-switch-case-seq-render-from
   [cases : (& cases CompilerIrSwitchCaseSeq)]
-  [index : i64]) : String
+  [index : i64])
+  (:cold) : String
   (if (>= index cases.len)
     ""
     (str_cat.str-cat
@@ -8379,7 +8382,8 @@
           ", "
           (compiler-ir-call-args-array-render values (+ index 1)))))))
 
-(define (compiler-ir-call-args-render [args : (& CompilerIrCallArgs)]) : String
+(define (compiler-ir-call-args-render [args : (& CompilerIrCallArgs)])
+  (:cold) : String
   (match (owned_view.compiler-owned-reference-shared-view args)
     [(Nil) ""]
     [(One a) (compiler-ir-value-render a)]
@@ -8631,7 +8635,8 @@
 
 (define (compiler-ir-phi-input-seq-render-from
   [inputs : (& CompilerIrPhiInputSeq)]
-  [index : i64]) : String
+  [index : i64])
+  (:cold) : String
   (if (>= index inputs.len)
     ""
     (let
@@ -8655,7 +8660,8 @@
   [type-segment-bases : i64]
   [slots : (& (__tl_dyn-array CompilerIrCAbiReturnSlot))]
   [index : i64]
-  [count : i64]) : String
+  [count : i64])
+  (:cold) : String
   (if (>= index count)
     ""
     (match (& (array-ref slots index))
@@ -8689,7 +8695,8 @@
 (define (compiler-ir-instr-render
   [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
-  [instr : (& CompilerIrInstr)]) : String
+  [instr : (& CompilerIrInstr)])
+  (:cold) : String
   (match (owned_view.compiler-owned-reference-shared-view instr)
     [(Mov dst value ty)
       (str_cat.str-cat
@@ -9228,7 +9235,8 @@
   [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [buf : text_buf.TextBuf]
-  [blocks : (& blocks (Slice CompilerIrBlock))]) : text_buf.TextBuf
+  [blocks : (& blocks (Slice CompilerIrBlock))])
+  (:cold) : text_buf.TextBuf
   (match blocks
     [(slice) buf]
     [(slice block)
@@ -9310,7 +9318,8 @@
 (define (compiler-ir-function-render
   [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
-  [func : (& CompilerIrFunction)]) : String
+  [func : (& CompilerIrFunction)])
+  (:cold) : String
   (match (owned_view.compiler-owned-reference-shared-view func)
     [(Function name params ret vars blocks function-abi cold?)
       (str_cat.str-cat
@@ -9361,7 +9370,8 @@
 (define (compiler-ir-return-storage-render
   [session : cis.InternStructuralSessionHandle]
   [bases : i64]
-  [storage : CompilerIrReturnStorageAbi]) : String
+  [storage : CompilerIrReturnStorageAbi])
+  (:cold) : String
   (str_cat.str-cat
     "return-storage "
     (compiler-ir-return-storage-convention-render storage.convention)
@@ -9385,7 +9395,8 @@
   [type-segment-bases : i64]
   [buf : text_buf.TextBuf]
   [functions : (& CompilerIrFunctionSeq)]
-  [index : i64]) : text_buf.TextBuf
+  [index : i64])
+  (:cold) : text_buf.TextBuf
   (if (>= index functions.len)
     buf
     (compiler-ir-function-seq-render-into-from
@@ -9461,7 +9472,8 @@
   [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [buf : text_buf.TextBuf]
-  [globals : (& CompilerIrGlobalSeq)]) : text_buf.TextBuf
+  [globals : (& CompilerIrGlobalSeq)])
+  (:cold) : text_buf.TextBuf
   (let
     [out : text_buf.TextBuf buf]
     (for [index (iterator.range 0 globals.len)]
@@ -9527,7 +9539,8 @@
   [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [buf : text_buf.TextBuf]
-  [externs : (& CompilerIrExternSeq)]) : text_buf.TextBuf
+  [externs : (& CompilerIrExternSeq)])
+  (:cold) : text_buf.TextBuf
   (let
     [out : text_buf.TextBuf buf]
     (for [index (iterator.range 0 externs.len)]
@@ -9809,7 +9822,8 @@
     (compiler-debug-path-remap-enabled?)
     (string.is-string-prefix-at path (& compiler-debug-path-remap-from) 0)))
 
-(define (compiler-debug-path-remap [path : String]) : String
+(define (compiler-debug-path-remap [path : String])
+  (:cold) : String
   (if (compiler-debug-path-remap-matches? (& path))
     (let
       [from-length (string.string-length compiler-debug-path-remap-from)]

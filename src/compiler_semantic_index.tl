@@ -165,10 +165,12 @@
   (module-index i64)
   (sequence i64))
 
-(define (compiler-semantic-scope-event-kind-end) : i64
+(define (compiler-semantic-scope-event-kind-end)
+  (:cold) : i64
   0)
 
-(define (compiler-semantic-scope-event-kind-start) : i64
+(define (compiler-semantic-scope-event-kind-start)
+  (:cold) : i64
   1)
 
 ;; Scope events form a persistent-snapshot boundary stream. At a start byte the
@@ -360,7 +362,8 @@
   (semantic-origin-cursors (__tl_dyn-array i64)))
 
 (define (compiler-semantic-origin-kind-tag
-  [kind : parse_core.CompilerParseSemanticOriginKind]) : i64
+  [kind : parse_core.CompilerParseSemanticOriginKind])
+  (:cold) : i64
   (match kind
     [(TypeDefinition) 0]
     [(TypeName) 1]
@@ -377,7 +380,8 @@
     [(BindingDefinition) 12]))
 
 (define (compiler-semantic-origin-cursors-reset!
-  [state : (& state CompilerSemanticWalkState)]) : unit
+  [state : (& state CompilerSemanticWalkState)])
+  (:cold) : unit
   (let
     [index : i64 0]
     (while (< index (array-length state.semantic-origin-cursors))
@@ -389,7 +393,8 @@
 
 (define (compiler-semantic-origin-take!
   [state : (& state CompilerSemanticWalkState)]
-  [kind : parse_core.CompilerParseSemanticOriginKind]) : CompilerSemanticMaybeOrigin
+  [kind : parse_core.CompilerParseSemanticOriginKind])
+  (:cold) : CompilerSemanticMaybeOrigin
   (match state.semantic-origin-run
     [(None) None]
     [(Some run)
@@ -422,7 +427,8 @@
 (define (compiler-semantic-origin-take-before!
   [state : CompilerSemanticWalkState]
   [kind : parse_core.CompilerParseSemanticOriginKind]
-  [ordinal-limit : i64]) : CompilerSemanticMaybeOrigin
+  [ordinal-limit : i64])
+  (:cold) : CompilerSemanticMaybeOrigin
   (match state.semantic-origin-run
     [(None) None]
     [(Some run)
@@ -451,7 +457,8 @@
         (set! (array-ref state.semantic-origin-cursors tag) cursor)
         None)]))
 
-(define (compiler-semantic-record-fallback) : CompilerSemanticRecord
+(define (compiler-semantic-record-fallback)
+  (:cold) : CompilerSemanticRecord
   (CompilerSemanticRecord
     (CompilerSemanticSymbolId 0 -1 -1)
     -1
@@ -466,22 +473,28 @@
     false
     EditableSource))
 
-(define (compiler-semantic-binding-namespace-value-mask) : i64
+(define (compiler-semantic-binding-namespace-value-mask)
+  (:cold) : i64
   1)
 
-(define (compiler-semantic-binding-namespace-type-mask) : i64
+(define (compiler-semantic-binding-namespace-type-mask)
+  (:cold) : i64
   2)
 
-(define (compiler-semantic-binding-namespace-macro-mask) : i64
+(define (compiler-semantic-binding-namespace-macro-mask)
+  (:cold) : i64
   4)
 
-(define (compiler-semantic-binding-namespace-from-tag [tag : i64]) : CompilerSemanticBindingNamespace
+(define (compiler-semantic-binding-namespace-from-tag [tag : i64])
+  (:cold) : CompilerSemanticBindingNamespace
   (cond [(= tag 2) Type] [(= tag 4) Macro] [else Value]))
 
-(define (compiler-semantic-binding-namespace-selected? [mask : i64] [tag : i64]) : bool
+(define (compiler-semantic-binding-namespace-selected? [mask : i64] [tag : i64])
+  (:cold) : bool
   (not (= (bit-and mask tag) 0)))
 
-(define (compiler-semantic-visible-binding-fallback) : CompilerSemanticVisibleBinding
+(define (compiler-semantic-visible-binding-fallback)
+  (:cold) : CompilerSemanticVisibleBinding
   (let
     [record : CompilerSemanticRecord (compiler-semantic-record-fallback)]
     (CompilerSemanticVisibleBinding
@@ -499,7 +512,8 @@
 (define compiler-semantic-source-index-live-owners : i64
   0)
 
-(define (compiler-semantic-source-index-empty) : CompilerSemanticSourceIndex
+(define (compiler-semantic-source-index-empty)
+  (:cold) : CompilerSemanticSourceIndex
   (CompilerSemanticSourceIndex
     0
     (__tl_make-array CompilerSemanticRecord 0)
@@ -524,7 +538,8 @@
     (__tl_make-array CompilerSemanticVisibleBinding 0)
     0))
 
-(define (compiler-semantic-source-index-empty-owned) : CompilerSemanticSourceIndex
+(define (compiler-semantic-source-index-empty-owned)
+  (:cold) : CompilerSemanticSourceIndex
   (let
     [owner : i64 (arena.tl_arena_make)]
     (+= compiler-semantic-source-index-live-owners 1)
@@ -555,10 +570,12 @@
         (__tl_make-array CompilerSemanticVisibleBinding 0)
         0))))
 
-(define (compiler-semantic-binding-snapshot-empty) : CompilerSemanticBindingSnapshot
+(define (compiler-semantic-binding-snapshot-empty)
+  (:cold) : CompilerSemanticBindingSnapshot
   (CompilerSemanticBindingSnapshot -1))
 
-(define (compiler-semantic-binding-vec-new [capacity : i64]) : CompilerSemanticBindingVec
+(define (compiler-semantic-binding-vec-new [capacity : i64])
+  (:cold) : CompilerSemanticBindingVec
   (CompilerSemanticBindingVec
     (__tl_make-array
       CompilerSemanticBinding
@@ -573,7 +590,8 @@
     0))
 
 (define (compiler-semantic-binding-vec-grow!
-  [bindings : (&mut bindings CompilerSemanticBindingVec)]) : unit
+  [bindings : (&mut bindings CompilerSemanticBindingVec)])
+  (:cold) : unit
   (let
     [old-items : (__tl_dyn-array CompilerSemanticBinding)
       (replace! bindings.items (__tl_make-array CompilerSemanticBinding 0))]
@@ -600,7 +618,8 @@
 
 (define (compiler-semantic-binding-vec-push!
   [bindings : (&mut bindings CompilerSemanticBindingVec)]
-  [binding : CompilerSemanticBinding]) : i64
+  [binding : CompilerSemanticBinding])
+  (:cold) : i64
   (if (>= bindings.len (array-length bindings.items))
     (compiler-semantic-binding-vec-grow! bindings)
     unit)
@@ -611,7 +630,8 @@
     (set! bindings.len (+ index 1))
     index))
 
-(define (compiler-semantic-scope-event-vec-new [capacity : i64]) : CompilerSemanticScopeEventVec
+(define (compiler-semantic-scope-event-vec-new [capacity : i64])
+  (:cold) : CompilerSemanticScopeEventVec
   (CompilerSemanticScopeEventVec
     (__tl_make-array
       CompilerSemanticScopeEvent
@@ -626,7 +646,8 @@
     0))
 
 (define (compiler-semantic-scope-event-vec-grow!
-  [events : (&mut events CompilerSemanticScopeEventVec)]) : unit
+  [events : (&mut events CompilerSemanticScopeEventVec)])
+  (:cold) : unit
   (let
     [old-items : (__tl_dyn-array CompilerSemanticScopeEvent)
       (replace! events.items (__tl_make-array CompilerSemanticScopeEvent 0))]
@@ -653,7 +674,8 @@
 
 (define (compiler-semantic-scope-event-vec-push!
   [events : (&mut events CompilerSemanticScopeEventVec)]
-  [event : CompilerSemanticScopeEvent]) : unit
+  [event : CompilerSemanticScopeEvent])
+  (:cold) : unit
   (if (>= events.len (array-length events.items))
     (compiler-semantic-scope-event-vec-grow! events)
     unit)
@@ -664,7 +686,8 @@
 (define (compiler-semantic-module-index-find
   [modules : (& modules (__tl_dyn-array CompilerSemanticModuleInfo))]
   [module-len : i64]
-  [module-id : i64]) : i64
+  [module-id : i64])
+  (:cold) : i64
   (for [index (iterator.range 0 module-len)]
     (when
       (or
@@ -678,7 +701,8 @@
 
 (define (compiler-semantic-module-index-ensure!
   [state : (& state CompilerSemanticWalkState)]
-  [module-id : i64]) : i64
+  [module-id : i64])
+  (:cold) : i64
   (let
     [module-len : i64
       (__tl-box-place
@@ -721,7 +745,8 @@
 (define (compiler-semantic-path-index-find
   [paths : (& paths (__tl_dyn-array CompilerSemanticSourcePathInfo))]
   [path-len : i64]
-  [path : String]) : i64
+  [path : String])
+  (:cold) : i64
   (for [index (iterator.range 0 path-len)]
     (when (string.eq (array-ref paths index).path path) (return index)))
   -1)
@@ -730,7 +755,8 @@
   [state : (& state CompilerSemanticWalkState)]
   [path-index : i64]
   [byte-offset : i64]
-  [module-index : i64]) : unit
+  [module-index : i64])
+  (:cold) : unit
   (if (or
     (not state.visibility-enabled)
     (< path-index 0)
@@ -787,7 +813,8 @@
   [state : (& state CompilerSemanticWalkState)]
   [path : (& path str)]
   [source-len : i64]
-  [module-index : i64]) : i64
+  [module-index : i64])
+  (:cold) : i64
   (if (or (not state.visibility-enabled) (string.eq path ""))
     -1
     (let
@@ -854,7 +881,8 @@
   [parent : CompilerSemanticBindingSnapshot]
   [child : CompilerSemanticBindingSnapshot]
   [start-byte : i64]
-  [end-byte : i64]) : unit
+  [end-byte : i64])
+  (:cold) : unit
   (if (or
     (not state.visibility-enabled)
     (< state.path-index 0)
@@ -919,7 +947,8 @@
   [state : CompilerSemanticWalkState]
   [parent : CompilerSemanticBindingSnapshot]
   [child : CompilerSemanticBindingSnapshot]
-  [node-id : i64]) : unit
+  [node-id : i64])
+  (:cold) : unit
   (let
     [start-byte : i64 (compiler-semantic-expr-start-offset state node-id -1)]
     [raw-end : i64
@@ -934,7 +963,8 @@
       start-byte
       raw-end)))
 
-(define (compiler-semantic-record-vec-new [capacity : i64]) : CompilerSemanticRecordVec
+(define (compiler-semantic-record-vec-new [capacity : i64])
+  (:cold) : CompilerSemanticRecordVec
   (CompilerSemanticRecordVec
     (__tl_make-array
       CompilerSemanticRecord
@@ -949,7 +979,8 @@
     0))
 
 (define (compiler-semantic-record-vec-grow!
-  [records : (&mut records CompilerSemanticRecordVec)]) : unit
+  [records : (&mut records CompilerSemanticRecordVec)])
+  (:cold) : unit
   (let
     [old-items : (__tl_dyn-array CompilerSemanticRecord)
       (replace! records.items (__tl_make-array CompilerSemanticRecord 0))]
@@ -976,7 +1007,8 @@
 
 (define (compiler-semantic-record-vec-push-index!
   [records : (&mut records CompilerSemanticRecordVec)]
-  [record : CompilerSemanticRecord]) : i64
+  [record : CompilerSemanticRecord])
+  (:cold) : i64
   (if (>= records.len (array-length records.items))
     (compiler-semantic-record-vec-grow! records)
     unit)
@@ -989,30 +1021,35 @@
 
 (define (compiler-semantic-record-vec-push!
   [records : (&mut records CompilerSemanticRecordVec)]
-  [record : CompilerSemanticRecord]) : unit
+  [record : CompilerSemanticRecord])
+  (:cold) : unit
   (compiler-semantic-record-vec-push-index! records record)
   unit)
 
 (define (compiler-semantic-source-index-len
-  [index : (& index CompilerSemanticSourceIndex)]) : i64
+  [index : (& index CompilerSemanticSourceIndex)])
+  (:cold) : i64
   index.len)
 
 (define (compiler-semantic-source-index-get
   [index : (& index CompilerSemanticSourceIndex)]
-  [record-index : i64]) : CompilerSemanticRecord
+  [record-index : i64])
+  (:cold) : CompilerSemanticRecord
   (if (and (>= record-index 0) (< record-index index.len))
     (owned_view.compiler-owned-element-view (& index.records) record-index)
     (compiler-semantic-record-fallback)))
 
 (define (compiler-semantic-source-index-complete?
-  [index : (& index CompilerSemanticSourceIndex)]) : bool
+  [index : (& index CompilerSemanticSourceIndex)])
+  (:cold) : bool
   index.complete)
 
 ;; Canonical keys are opaque and versioned. Equality is their only contract;
 ;; consumers must not parse their length-framed representation.
 (define (compiler-semantic-source-index-canonical-key
   [index : (& index CompilerSemanticSourceIndex)]
-  [canonical-index : i64]) : String
+  [canonical-index : i64])
+  (:cold) : String
   (if (and
     (>= canonical-index 0)
     (< canonical-index index.canonical-symbol-len))
@@ -1023,11 +1060,13 @@
 
 (define (compiler-semantic-source-index-record-canonical-key
   [index : (& index CompilerSemanticSourceIndex)]
-  [record : (& record CompilerSemanticRecord)]) : String
+  [record : (& record CompilerSemanticRecord)])
+  (:cold) : String
   (compiler-semantic-source-index-canonical-key index record.canonical-index))
 
 (define (compiler-semantic-source-index-release!
-  [index : (&mut index CompilerSemanticSourceIndex)]) : unit
+  [index : (&mut index CompilerSemanticSourceIndex)])
+  (:cold) : unit
   (let
     [owner : i64 index.owner-arena]
     (when
@@ -1052,7 +1091,8 @@
 ;; owned path table or retaining a duplicate dependency graph.
 (define (compiler-semantic-source-index-contains-path?
   [index : (& index CompilerSemanticSourceIndex)]
-  [path : String]) : bool
+  [path : String])
+  (:cold) : bool
   (let
     [normalized : String (cload.compiler-load-canonical-path (& path))]
     [path-index : i64 0]
@@ -1075,7 +1115,8 @@
 (define (compiler-semantic-source-index-query
   [index : (& index CompilerSemanticSourceIndex)]
   [path : String]
-  [byte-offset : i64]) : CompilerSemanticMaybeVisibleBindingQuery
+  [byte-offset : i64])
+  (:cold) : CompilerSemanticMaybeVisibleBindingQuery
   ;; Recovery indexes retain only identities and visibility boundaries proven
   ;; against the current buffer.  They are therefore safe for completion even
   ;; though consumers that require a fully checked program still distinguish
@@ -1140,7 +1181,8 @@
 (define (compiler-semantic-visible-binding-owned-copy
   [record : (& record CompilerSemanticRecord)]
   [namespace-tag : i64]
-  [display-name : (& display-name str)]) : CompilerSemanticVisibleBinding
+  [display-name : (& display-name str)])
+  (:cold) : CompilerSemanticVisibleBinding
   (CompilerSemanticVisibleBinding
     (CompilerSemanticSymbolId
       record.symbol.module-id
@@ -1189,7 +1231,8 @@
   [candidates : (& candidates (__tl_dyn-array CompilerSemanticTopCandidateRef))]
   [labels : (& labels (__tl_dyn-array String))]
   [candidate-len : i64]
-  [out : (&mut out (__tl_dyn-array CompilerSemanticVisibleBinding))]) : unit
+  [out : (&mut out (__tl_dyn-array CompilerSemanticVisibleBinding))])
+  (:cold) : unit
   (for [index (iterator.range 0 candidate-len)]
     (let
       [candidate : CompilerSemanticTopCandidateRef (array-ref candidates index)]
@@ -1204,7 +1247,8 @@
   [index : (& index CompilerSemanticSourceIndex)]
   [scope-head : i64]
   [binding-index : i64]
-  [name-id : i64]) : bool
+  [name-id : i64])
+  (:cold) : bool
   (let
     [cursor : i64 scope-head]
     (while (and (>= cursor 0) (!= cursor binding-index))
@@ -1220,7 +1264,8 @@
 
 (define (compiler-semantic-source-index-local-visible-binding-get
   [index : (& index CompilerSemanticSourceIndex)]
-  [binding-index : i64]) : CompilerSemanticVisibleBinding
+  [binding-index : i64])
+  (:cold) : CompilerSemanticVisibleBinding
   (if (and (>= binding-index 0) (< binding-index index.binding-len))
     (__tl-project-field
       (owned_view.compiler-owned-element-view (& index.bindings) binding-index)
@@ -1229,7 +1274,8 @@
 
 (define (compiler-semantic-source-index-top-visible-binding-get
   [index : (& index CompilerSemanticSourceIndex)]
-  [candidate-index : i64]) : CompilerSemanticVisibleBinding
+  [candidate-index : i64])
+  (:cold) : CompilerSemanticVisibleBinding
   (if (and (>= candidate-index 0) (< candidate-index index.top-candidate-len))
     (owned_view.compiler-owned-element-view
       (& index.top-visible-bindings)
@@ -1239,7 +1285,8 @@
 (define (compiler-semantic-scope-has-name?
   [index : (& index CompilerSemanticSourceIndex)]
   [scope-head : i64]
-  [name-id : i64]) : bool
+  [name-id : i64])
+  (:cold) : bool
   (let
     [cursor : i64 scope-head]
     (while (>= cursor 0)
@@ -1255,7 +1302,8 @@
 
 (define (compiler-semantic-visible-binding-query-valid?
   [index : (& index CompilerSemanticSourceIndex)]
-  [query : CompilerSemanticVisibleBindingQuery]) : bool
+  [query : CompilerSemanticVisibleBindingQuery])
+  (:cold) : bool
   (and
     (> index.owner-arena 0)
     (>= query.path-index 0)
@@ -1272,7 +1320,8 @@
   [index : (& index CompilerSemanticSourceIndex)]
   [query : CompilerSemanticVisibleBindingQuery]
   [owner-module : i64]
-  [provider : i64]) : bool
+  [provider : i64])
+  (:cold) : bool
   (and
     (compiler-semantic-visible-binding-query-valid? index query)
     (>= owner-module 0)
@@ -1289,7 +1338,8 @@
 (define (compiler-semantic-path-family-visible?
   [index : (& index CompilerSemanticSourceIndex)]
   [query : CompilerSemanticVisibleBindingQuery]
-  [owner-path : (& owner-path str)]) : bool
+  [owner-path : (& owner-path str)])
+  (:cold) : bool
   (let
     [path : i64
       (compiler-semantic-path-index-find
@@ -1309,7 +1359,8 @@
 (define (compiler-semantic-representation-visible?
   [index : (& index CompilerSemanticSourceIndex)]
   [query : CompilerSemanticVisibleBindingQuery]
-  [record : (& record CompilerSemanticRecord)]) : bool
+  [record : (& record CompilerSemanticRecord)])
+  (:cold) : bool
   (let
     [id : i64 record.canonical-index]
     (if (or (< id 0) (>= id index.canonical-symbol-len))
@@ -1328,7 +1379,8 @@
 
 (define (compiler-semantic-representation-signature
   [index : (& index CompilerSemanticSourceIndex)]
-  [record : (& record CompilerSemanticRecord)]) : String
+  [record : (& record CompilerSemanticRecord)])
+  (:cold) : String
   (let
     [id : i64 record.canonical-index]
     (if (or (< id 0) (>= id index.canonical-symbol-len))
@@ -1338,7 +1390,8 @@
 (define (compiler-semantic-visible-binding-cursor
   [index : (& index CompilerSemanticSourceIndex)]
   [query : CompilerSemanticVisibleBindingQuery]
-  [namespace-mask : i64]) : CompilerSemanticVisibleBindingCursor
+  [namespace-mask : i64])
+  (:cold) : CompilerSemanticVisibleBindingCursor
   (if (not (compiler-semantic-visible-binding-query-valid? index query))
     (CompilerSemanticVisibleBindingCursor query namespace-mask -1 -1 0 2)
     (CompilerSemanticVisibleBindingCursor
@@ -1351,7 +1404,8 @@
 
 (define (compiler-semantic-visible-binding-cursor-step
   [index : (& index CompilerSemanticSourceIndex)]
-  [cursor : CompilerSemanticVisibleBindingCursor]) : CompilerSemanticVisibleBindingStep
+  [cursor : CompilerSemanticVisibleBindingCursor])
+  (:cold) : CompilerSemanticVisibleBindingStep
   (if (not (compiler-semantic-visible-binding-query-valid? index cursor.query))
     Done
     (let
@@ -1449,7 +1503,8 @@
       (set! next.stage 2)
       Done)))
 
-(define (compiler-semantic-decl-symbol [decl : ast.AstDecl]) : CompilerSemanticMaybeDecl
+(define (compiler-semantic-decl-symbol [decl : ast.AstDecl])
+  (:cold) : CompilerSemanticMaybeDecl
   (match decl
     [(Def _ name _ _) (Some name Value)]
     [(or (DefFn _ name _ _ _ _) (DefDispatch _ name _)) (Some name Function)]
@@ -1469,7 +1524,8 @@
 (define (compiler-semantic-source-offset
   [source : (& source str)]
   [target-line : i64]
-  [target-col : i64]) : i64
+  [target-col : i64])
+  (:cold) : i64
   (let
     [index : i64 0]
     [line : i64 1]
@@ -1489,7 +1545,8 @@
 (define (compiler-semantic-state-source-offset
   [state : CompilerSemanticWalkState]
   [target-line : i64]
-  [target-col : i64]) : i64
+  [target-col : i64])
+  (:cold) : i64
   (let
     [storage : CompilerSemanticVisibilityBuildStorage
       (owned_view.compiler-owned-box-shared-view state.visibility-storage)]
@@ -1534,7 +1591,8 @@
   [state : (& state CompilerSemanticWalkState)]
   [offset : i64]
   [line : i64]
-  [col : i64]) : unit
+  [col : i64])
+  (:cold) : unit
   (owned_view.compiler-owned-box-cell-set!
     (__tl-project-field
       (__tl-box-place state.visibility-storage)
@@ -1553,7 +1611,8 @@
 
 (define (compiler-semantic-source-position
   [source : (& source str)]
-  [target : i64]) : ast.AstSourceSpan
+  [target : i64])
+  (:cold) : ast.AstSourceSpan
   (let
     [line : i64 1]
     [col : i64 1]
@@ -1569,10 +1628,12 @@
         (+= col 1)))
     (ast.ast-source-span line col line col)))
 
-(define (compiler-semantic-utf8-continuation-byte? [c : char]) : bool
+(define (compiler-semantic-utf8-continuation-byte? [c : char])
+  (:cold) : bool
   (= (bit-and (cast c : i64) 192) 128))
 
-(define (compiler-semantic-utf16-units-for-byte [c : char]) : i64
+(define (compiler-semantic-utf16-units-for-byte [c : char])
+  (:cold) : i64
   (let
     [byte : i64 (cast c : i64)]
     (cond
@@ -1585,7 +1646,8 @@
 ;; length for every semantic record.
 (define (compiler-semantic-source-utf16-col-at-offset
   [source : String]
-  [target : i64]) : i64
+  [target : i64])
+  (:cold) : i64
   (let
     [source-len : i64 (string.string-length source)]
     [limit : i64
@@ -1608,7 +1670,8 @@
   [source : String]
   [start : i64]
   [end : i64]
-  [source-span : ast.AstSourceSpan]) : CompilerSemanticSpan
+  [source-span : ast.AstSourceSpan])
+  (:cold) : CompilerSemanticSpan
   (CompilerSemanticSpan
     (string.copy path)
     start
@@ -1619,7 +1682,8 @@
       start)
     (compiler-semantic-source-utf16-col-at-offset source end)))
 
-(define (compiler-semantic-delimiter? [c : char]) : bool
+(define (compiler-semantic-delimiter? [c : char])
+  (:cold) : bool
   (or
     (= c ' ')
     (= c '\t')
@@ -1636,7 +1700,8 @@
   [source : (& source str)]
   [name : (& name str)]
   [start : i64]
-  [limit : i64]) : bool
+  [limit : i64])
+  (:cold) : bool
   (let
     [name-len : i64 (string.string-length name)]
     [offset : i64 0]
@@ -1666,7 +1731,8 @@
 (define (compiler-semantic-single-quote-end
   [source : (& source str)]
   [start : i64]
-  [limit : i64]) : i64
+  [limit : i64])
+  (:cold) : i64
   (cond
     [(and
         (<= (+ start 2) limit)
@@ -1683,7 +1749,8 @@
 (define (compiler-semantic-double-quote-end
   [source : (& source str)]
   [start : i64]
-  [limit : i64]) : i64
+  [limit : i64])
+  (:cold) : i64
   (let
     [cursor : i64 (+ start 1)]
     [escaped : bool false]
@@ -1701,7 +1768,8 @@
   [source : (& source str)]
   [name : (& name str)]
   [start : i64]
-  [limit : i64]) : i64
+  [limit : i64])
+  (:cold) : i64
   (let
     [cursor : i64
       (if (< start 0)
@@ -1744,7 +1812,8 @@
 (define (compiler-semantic-top-level-form-start
   [source : (& source str)]
   [before : i64]
-  [search-start : i64]) : i64
+  [search-start : i64])
+  (:cold) : i64
   (let
     [source-len : i64 (string.string-length source)]
     [limit : i64
@@ -1799,7 +1868,8 @@
   [source : String]
   [name : (& name str)]
   [origin : ast.AstSourceSpan]
-  [form-start : i64]) : CompilerSemanticSpan
+  [form-start : i64])
+  (:cold) : CompilerSemanticSpan
   (let
     [start : i64
       (if (>= form-start 0)
@@ -1831,7 +1901,8 @@
 (define (compiler-semantic-decl-origin
   [decls : (& decls ast.AstDeclList)]
   [index : i64]
-  [decl : ast.AstDecl]) : parse_core.CompilerParseMaybeDeclSpan
+  [decl : ast.AstDecl])
+  (:cold) : parse_core.CompilerParseMaybeDeclSpan
   (match (parse_core.compiler-parse-decl-origin-span decls index)
     [(Some span) (Some span)]
     [(None)
@@ -1856,7 +1927,8 @@
   [decl : ast.AstDecl]
   [kind : CompilerSemanticSymbolKind]
   [name-id : i64]
-  [name : String]) : String
+  [name : String])
+  (:cold) : String
   (match kind
     [(Struct) (str_cat.str-cat "struct " name)]
     [(Enum) (str_cat.str-cat "enum " name)]
@@ -1878,7 +1950,8 @@
             [(Ok ty) (tc.tc-type-render ty)]
             [(Err _) ""])])]))
 
-(define (compiler-semantic-decl-provenance [decl : ast.AstDecl]) : CompilerSemanticProvenance
+(define (compiler-semantic-decl-provenance [decl : ast.AstDecl])
+  (:cold) : CompilerSemanticProvenance
   (match (ast.ast-decl-generated-meta decl)
     [(No) EditableSource]
     [(Some generator item _ key)
@@ -1889,7 +1962,8 @@
 
 (define (compiler-semantic-decl-retains-checked-let-facts?
   [path : String]
-  [decl : ast.AstDecl]) : bool
+  [decl : ast.AstDecl])
+  (:cold) : bool
   (match decl
     ;; DefMacro templates are checked by CTFE/macro expansion rather than the
     ;; final runtime body checker that publishes retained let facts.
@@ -1903,7 +1977,8 @@
 (define (compiler-semantic-use-span-from-origin
   [path : String]
   [source : String]
-  [origin : ast.AstSourceSpan]) : CompilerSemanticSpan
+  [origin : ast.AstSourceSpan])
+  (:cold) : CompilerSemanticSpan
   (let
     [start : i64
       (compiler-semantic-source-offset
@@ -1934,7 +2009,8 @@
 
 (define (compiler-semantic-exact-span-from-origin
   [state : (& state CompilerSemanticWalkState)]
-  [origin : parse_core.CompilerParseSemanticOrigin]) : CompilerSemanticSpan
+  [origin : parse_core.CompilerParseSemanticOrigin])
+  (:cold) : CompilerSemanticSpan
   (let
     [state : CompilerSemanticWalkState
       (owned_view.compiler-owned-reference-shared-view state)]
@@ -1969,7 +2045,8 @@
   [source : String]
   [name : String]
   [start : i64]
-  [limit : i64]) : CompilerSemanticSpan
+  [limit : i64])
+  (:cold) : CompilerSemanticSpan
   (let
     [bounded-limit : i64
       (if (> limit (string.string-length source))
@@ -2000,7 +2077,8 @@
 
 (define (compiler-semantic-form-head-end
   [source : (& source str)]
-  [start : i64]) : i64
+  [start : i64])
+  (:cold) : i64
   (let
     [cursor : i64
       (if (< start 0)
@@ -2025,7 +2103,8 @@
 (define (compiler-semantic-binding-clause-end
   [source : String]
   [start : i64]
-  [limit : i64]) : i64
+  [limit : i64])
+  (:cold) : i64
   (let
     [cursor : i64 start]
     [depth : i64 1]
@@ -2043,7 +2122,8 @@
 
 (define (compiler-semantic-line-start-before
   [source : (& source str)]
-  [position : i64]) : i64
+  [position : i64])
+  (:cold) : i64
   (let
     [cursor : i64 position]
     (while (and
@@ -2054,7 +2134,8 @@
 
 (define (compiler-semantic-doc-comment-line?
   [source : (& source str)]
-  [line-start : i64]) : bool
+  [line-start : i64])
+  (:cold) : bool
   (let
     [cursor : i64 line-start]
     [len : i64 (string.string-length source)]
@@ -2073,7 +2154,8 @@
 
 (define (compiler-semantic-doc-comment-text
   [source : (& source str)]
-  [line-start : i64]) : String
+  [line-start : i64])
+  (:cold) : String
   (let
     [cursor : i64 line-start]
     [len : i64 (string.string-length source)]
@@ -2095,7 +2177,8 @@
 
 (define (compiler-semantic-documentation-above
   [source : (& source str)]
-  [form-start : i64]) : String
+  [form-start : i64])
+  (:cold) : String
   (let
     [line-start : i64 (compiler-semantic-line-start-before source form-start)]
     [documentation : String ""]
@@ -2122,7 +2205,8 @@
   [ctx : tc.TcContext]
   [module-id : i64]
   [name-id : i64]
-  [kind : CompilerSemanticSymbolKind]) : CompilerSemanticMaybeHandle
+  [kind : CompilerSemanticSymbolKind])
+  (:cold) : CompilerSemanticMaybeHandle
   (let
     [symbols : (& ctx csym.CompilerSymbols) (tc.tc-context-symbols ctx)]
     (match kind
@@ -2147,7 +2231,8 @@
           [(Some handle) (Some handle)]
           [(None) None])])))
 
-(define (compiler-semantic-use-handle [ctx : tc.TcContext] [lookup-id : i64]) : CompilerSemanticMaybeHandle
+(define (compiler-semantic-use-handle [ctx : tc.TcContext] [lookup-id : i64])
+  (:cold) : CompilerSemanticMaybeHandle
   (let
     [symbols : (& ctx csym.CompilerSymbols) (tc.tc-context-symbols ctx)]
     (match (csym.compiler-symbols-lookup-value-id symbols lookup-id)
@@ -2165,7 +2250,8 @@
                   [(Some handle) (Some handle)]
                   [(None) None])])])])))
 
-(define (compiler-semantic-handle-module-id [ctx : tc.TcContext] [handle : i64]) : i64
+(define (compiler-semantic-handle-module-id [ctx : tc.TcContext] [handle : i64])
+  (:cold) : i64
   (let
     [index : i64 (csym.compiler-symbol-handle-index handle)]
     [owners : (__tl_dyn-array i64)
@@ -2174,7 +2260,8 @@
       (array-ref owners index)
       cbi.compiler-builtin-id-fix-empty)))
 
-(define (compiler-semantic-handle-decl [ctx : tc.TcContext] [handle : i64]) : ast.AstDecl
+(define (compiler-semantic-handle-decl [ctx : tc.TcContext] [handle : i64])
+  (:cold) : ast.AstDecl
   (let
     [index : i64 (csym.compiler-symbol-handle-index handle)]
     [decls : (__tl_dyn-array ast.AstDecl)
@@ -2188,7 +2275,8 @@
   [module-id : i64]
   [fallback-ordinal : i64]
   [name-id : i64]
-  [kind : CompilerSemanticSymbolKind]) : CompilerSemanticSymbolId
+  [kind : CompilerSemanticSymbolKind])
+  (:cold) : CompilerSemanticSymbolId
   (match (compiler-semantic-decl-handle ctx module-id name-id kind)
     [(Some handle)
       (CompilerSemanticSymbolId
@@ -2202,20 +2290,23 @@
 (define (compiler-semantic-member-symbol
   [ctx : tc.TcContext]
   [owner-handle : i64]
-  [member-handle : i64]) : CompilerSemanticSymbolId
+  [member-handle : i64])
+  (:cold) : CompilerSemanticSymbolId
   (CompilerSemanticSymbolId
     (compiler-semantic-handle-module-id ctx owner-handle)
     member-handle
     -1))
 
-(define (compiler-semantic-field-owner-handle [handle : i64]) : i64
+(define (compiler-semantic-field-owner-handle [handle : i64])
+  (:cold) : i64
   (csym.compiler-symbol-make-handle
     (csym.compiler-symbol-kind-defstruct)
     (csym.compiler-registry-handle-owner-index handle)))
 
 (define (compiler-semantic-representation-restricted?
   [decl : (& decl ast.AstDecl)]
-  [child-index : i64]) : bool
+  [child-index : i64])
+  (:cold) : bool
   (or
     (ast.ast-decl-opaque? decl)
     (if (< child-index 0)
@@ -2225,7 +2316,8 @@
 (define (compiler-semantic-member-visible?
   [ctx : tc.TcContext]
   [owner-handle : i64]
-  [child-index : i64]) : bool
+  [child-index : i64])
+  (:cold) : bool
   (or
     (not
       (compiler-semantic-representation-restricted?
@@ -2240,7 +2332,8 @@
   [ctx : tc.TcContext]
   [records : (& records (__tl_dyn-array CompilerSemanticRecord))]
   [record-count : i64]
-  [symbol-count : i64]) : (__tl_dyn-array CompilerSemanticRepresentation)
+  [symbol-count : i64])
+  (:cold) : (__tl_dyn-array CompilerSemanticRepresentation)
   (let
     [representations : (__tl_dyn-array CompilerSemanticRepresentation)
       (__tl_make-array CompilerSemanticRepresentation symbol-count)]
@@ -2303,7 +2396,8 @@
     representations))
 
 (define (compiler-semantic-canonical-kind-tag
-  [kind : CompilerSemanticSymbolKind]) : i64
+  [kind : CompilerSemanticSymbolKind])
+  (:cold) : i64
   (match kind
     [(Value) 1]
     [(Function) 2]
@@ -2319,7 +2413,8 @@
     [(EnumMember) 12]))
 
 (define (compiler-semantic-canonical-namespace-tag
-  [kind : CompilerSemanticSymbolKind]) : i64
+  [kind : CompilerSemanticSymbolKind])
+  (:cold) : i64
   (match kind
     [(Macro) 3]
     [(or (Struct) (Enum)) 2]
@@ -2330,10 +2425,12 @@
 
 ;; Length framing makes the opaque key injective even when source identifiers,
 ;; paths, or generator keys contain punctuation used by this representation.
-(define (compiler-semantic-canonical-key-field [value : String]) : String
+(define (compiler-semantic-canonical-key-field [value : String])
+  (:cold) : String
   (str_cat.str-cat (string.int->string (string.string-length value)) ":" value))
 
-(define (compiler-semantic-canonical-top-key [record : CompilerSemanticRecord]) : String
+(define (compiler-semantic-canonical-top-key [record : CompilerSemanticRecord])
+  (:cold) : String
   (let
     [module-identity : String
       (tc.macro-decl-module-display record.symbol.module-id)]
@@ -2380,7 +2477,8 @@
 
 (define (compiler-semantic-canonical-local-key
   [parent-key : String]
-  [record : CompilerSemanticRecord]) : String
+  [record : CompilerSemanticRecord])
+  (:cold) : String
   (str_cat.str-cat
     "tl-semantic-v1|l|"
     (compiler-semantic-canonical-key-field parent-key)
@@ -2389,7 +2487,8 @@
     (compiler-semantic-canonical-key-field
       (string.int->string (compiler-semantic-canonical-kind-tag record.kind)))))
 
-(define (compiler-semantic-canonical-map-capacity [record-len : i64]) : i64
+(define (compiler-semantic-canonical-map-capacity [record-len : i64])
+  (:cold) : i64
   (let
     [target : i64
       (if (< record-len 1)
@@ -2401,7 +2500,8 @@
     capacity))
 
 (define (compiler-semantic-canonical-symbol-hash
-  [symbol : CompilerSemanticSymbolId]) : i64
+  [symbol : CompilerSemanticSymbolId])
+  (:cold) : i64
   (bit-xor
     (* symbol.module-id 6364136223846793005)
     (bit-xor
@@ -2410,7 +2510,8 @@
 
 (define (compiler-semantic-canonical-build
   [records : (__tl_dyn-array CompilerSemanticRecord)]
-  [record-len : i64]) : CompilerSemanticCanonicalBuildResult
+  [record-len : i64])
+  (:cold) : CompilerSemanticCanonicalBuildResult
   (let
     [capacity : i64 (compiler-semantic-canonical-map-capacity record-len)]
     ;; Hash slots and framed-key construction are scratch-only. with-escape
@@ -2538,7 +2639,8 @@
 (define (compiler-semantic-binding-lookup
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
-  [name-id : i64]) : CompilerSemanticMaybeBinding
+  [name-id : i64])
+  (:cold) : CompilerSemanticMaybeBinding
   (let
     [cursor : i64 scope.head]
     [bindings : CompilerSemanticBindingVec
@@ -2557,7 +2659,8 @@
   [state : CompilerSemanticWalkState]
   [binding : CompilerSemanticBinding]
   [span : CompilerSemanticSpan]
-  [access : CompilerSemanticAccess]) : unit
+  [access : CompilerSemanticAccess])
+  (:cold) : unit
   (compiler-semantic-record-vec-push!
     (&mut (__tl-box-place state.records))
     (CompilerSemanticRecord
@@ -2579,7 +2682,8 @@
 (define (compiler-semantic-variant-display-name
   [ctx : tc.TcContext]
   [lookup-id : i64]
-  [handle : i64]) : String
+  [handle : i64])
+  (:cold) : String
   (let
     [owner-handle : i64 (csym.compiler-registry-variant-owner-handle handle)]
     [owner-decl : ast.AstDecl (compiler-semantic-handle-decl ctx owner-handle)]
@@ -2607,7 +2711,8 @@
   [lookup-id : i64]
   [handle : i64]
   [span : CompilerSemanticSpan]
-  [access : CompilerSemanticAccess]) : unit
+  [access : CompilerSemanticAccess])
+  (:cold) : unit
   (let
     [ctx : tc.TcContext state.ctx]
     [owner-handle : i64 (csym.compiler-registry-variant-owner-handle handle)]
@@ -2644,7 +2749,8 @@
   [state : CompilerSemanticWalkState]
   [name-id : i64]
   [span : CompilerSemanticSpan]
-  [access : CompilerSemanticAccess]) : unit
+  [access : CompilerSemanticAccess])
+  (:cold) : unit
   (let
     [ctx : tc.TcContext state.ctx]
     [env : tc.TcTypeEnv state.top-env]
@@ -2747,7 +2853,8 @@
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
   [name-id : i64]
-  [maybe-span : CompilerSemanticMaybeSpan]) : unit
+  [maybe-span : CompilerSemanticMaybeSpan])
+  (:cold) : unit
   (let
     [span : CompilerSemanticSpan
       (match maybe-span
@@ -2796,7 +2903,8 @@
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
   [name-id : i64]
-  [span : CompilerSemanticSpan]) : unit
+  [span : CompilerSemanticSpan])
+  (:cold) : unit
   (match (compiler-semantic-binding-lookup
     (owned_view.compiler-owned-shared-view state)
     scope
@@ -2809,7 +2917,8 @@
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
   [name-id : i64]
-  [span : CompilerSemanticSpan]) : unit
+  [span : CompilerSemanticSpan])
+  (:cold) : unit
   (match (compiler-semantic-binding-lookup
     (owned_view.compiler-owned-shared-view state)
     scope
@@ -2822,7 +2931,8 @@
   [state : CompilerSemanticWalkState]
   [origin : parse_core.CompilerParseSemanticOrigin]
   [target-module-id : i64]
-  [role : CompilerSemanticRecordRole]) : unit
+  [role : CompilerSemanticRecordRole])
+  (:cold) : unit
   (let
     [display-name : String
       (tc.tc-env-key-name-text-for-session
@@ -2851,7 +2961,8 @@
 (define (compiler-semantic-record-module-origins-before!
   [state : CompilerSemanticWalkState]
   [ordinal-limit : i64]
-  [target-module-id : i64]) : unit
+  [target-module-id : i64])
+  (:cold) : unit
   (let
     [done : bool false]
     (while (not done)
@@ -2870,7 +2981,8 @@
 (define (compiler-semantic-record-value-qualifiers-before!
   [state : CompilerSemanticWalkState]
   [ordinal-limit : i64]
-  [target-module-id : i64]) : CompilerSemanticMaybeOrigin
+  [target-module-id : i64])
+  (:cold) : CompilerSemanticMaybeOrigin
   (let
     [done : bool false]
     [first : CompilerSemanticMaybeOrigin None]
@@ -2893,7 +3005,8 @@
 
 (define (compiler-semantic-span-through
   [start : CompilerSemanticSpan]
-  [end : CompilerSemanticSpan]) : CompilerSemanticSpan
+  [end : CompilerSemanticSpan])
+  (:cold) : CompilerSemanticSpan
   (CompilerSemanticSpan
     (string.copy (& start.path))
     start.start-byte
@@ -2911,7 +3024,8 @@
   [source-name-id : i64]
   [fallback : CompilerSemanticSpan]
   [target-module-id : i64]
-  [component-only : bool]) : CompilerSemanticSpan
+  [component-only : bool])
+  (:cold) : CompilerSemanticSpan
   (let
     [session : cis.InternStructuralSessionHandle
       (tc.tc-context-structural-session state.ctx)]
@@ -2953,7 +3067,8 @@
 
 (define (compiler-semantic-type-name-handle
   [ctx : tc.TcContext]
-  [name-id : i64]) : i64
+  [name-id : i64])
+  (:cold) : i64
   (let
     [symbols : (& ctx csym.CompilerSymbols) (tc.tc-context-symbols ctx)]
     [in-module : i64
@@ -2987,7 +3102,8 @@
 
 (define (compiler-semantic-record-type-name-use!
   [state : CompilerSemanticWalkState]
-  [name-id : i64]) : unit
+  [name-id : i64])
+  (:cold) : unit
   (match (compiler-semantic-origin-take! state TypeName)
     [(None) unit]
     [(Some origin)
@@ -3022,7 +3138,8 @@
   [handle : i64]
   [module-id : i64]
   [decl-name-id : i64]
-  [kind : CompilerSemanticSymbolKind]) : unit
+  [kind : CompilerSemanticSymbolKind])
+  (:cold) : unit
   (let
     [ctx : tc.TcContext state.ctx]
     [decl-ctx : tc.TcContext
@@ -3069,7 +3186,8 @@
 
 (define (compiler-semantic-walk-type!
   [state : (& state CompilerSemanticWalkState)]
-  [ty : ast.AstType]) : unit
+  [ty : ast.AstType])
+  (:cold) : unit
   (let
     [state : CompilerSemanticWalkState
       (owned_view.compiler-owned-reference-shared-view state)]
@@ -3097,7 +3215,8 @@
 
 (define (compiler-semantic-walk-type-child!
   [state : (& state CompilerSemanticWalkState)]
-  [ty-id : i64]) : unit
+  [ty-id : i64])
+  (:cold) : unit
   (let
     [state : CompilerSemanticWalkState
       (owned_view.compiler-owned-reference-shared-view state)]
@@ -3107,7 +3226,8 @@
 
 (define (compiler-semantic-walk-type-list!
   [state : CompilerSemanticWalkState]
-  [types : ast.AstTypeList]) : unit
+  [types : ast.AstTypeList])
+  (:cold) : unit
   (for [index (iterator.range 0 (ast.ast-type-list-len (& types)))]
     (compiler-semantic-walk-type!
       state
@@ -3123,7 +3243,8 @@
   [kind : CompilerSemanticSymbolKind]
   [maybe-ty : ast.AstMaybeType]
   [search-start : i64]
-  [search-limit : i64]) : CompilerSemanticBindResult
+  [search-limit : i64])
+  (:cold) : CompilerSemanticBindResult
   (let
     [state : CompilerSemanticWalkState
       (owned_view.compiler-owned-reference-shared-view state)]
@@ -3216,7 +3337,8 @@
   [maybe-ty : ast.AstMaybeType]
   [init-id : i64]
   [search-start : i64]
-  [search-limit : i64]) : CompilerSemanticBindResult
+  [search-limit : i64])
+  (:cold) : CompilerSemanticBindResult
   (let
     [ctx : tc.TcContext state.ctx]
     [facts : tc.TcCheckedLetBindingFactState
@@ -3275,7 +3397,8 @@
 (define (compiler-semantic-expr-start-offset
   [state : (& state CompilerSemanticWalkState)]
   [expr-id : i64]
-  [fallback : i64]) : i64
+  [fallback : i64])
+  (:cold) : i64
   (let
     [state : CompilerSemanticWalkState
       (owned_view.compiler-owned-reference-shared-view state)]
@@ -3290,7 +3413,8 @@
 (define (compiler-semantic-expr-end-offset
   [state : CompilerSemanticWalkState]
   [expr-id : i64]
-  [fallback : i64]) : i64
+  [fallback : i64])
+  (:cold) : i64
   (match (tc.tc-expr-id-maybe-span-installed expr-id)
     [(Some span)
       (compiler-semantic-state-source-offset
@@ -3302,7 +3426,8 @@
 (define (compiler-semantic-expr-visibility-end-offset
   [state : CompilerSemanticWalkState]
   [expr-id : i64]
-  [fallback : i64]) : i64
+  [fallback : i64])
+  (:cold) : i64
   (let
     [start : i64 (compiler-semantic-expr-start-offset state expr-id fallback)]
     [raw-end : i64
@@ -3332,7 +3457,8 @@
 (define (compiler-semantic-maybe-span-start
   [state : CompilerSemanticWalkState]
   [maybe-span : CompilerSemanticMaybeSpan]
-  [fallback : i64]) : i64
+  [fallback : i64])
+  (:cold) : i64
   (match maybe-span
     [(Some span)
       (compiler-semantic-state-source-offset
@@ -3344,7 +3470,8 @@
 (define (compiler-semantic-maybe-span-end
   [state : CompilerSemanticWalkState]
   [maybe-span : CompilerSemanticMaybeSpan]
-  [fallback : i64]) : i64
+  [fallback : i64])
+  (:cold) : i64
   (match maybe-span
     [(Some span)
       (compiler-semantic-state-source-offset
@@ -3359,7 +3486,8 @@
   [env : tc.TcTypeEnv]
   [params : ast.AstParamList]
   [search-start : i64]
-  [search-limit : i64]) : CompilerSemanticBindResult
+  [search-limit : i64])
+  (:cold) : CompilerSemanticBindResult
   (let
     [next-scope : CompilerSemanticBindingSnapshot scope]
     [next-env : tc.TcTypeEnv env]
@@ -3398,7 +3526,8 @@
   [env : tc.TcTypeEnv]
   [params : ast.AstMacroParamList]
   [search-start : i64]
-  [search-limit : i64]) : CompilerSemanticBindResult
+  [search-limit : i64])
+  (:cold) : CompilerSemanticBindResult
   (let
     [next-scope : CompilerSemanticBindingSnapshot scope]
     [next-env : tc.TcTypeEnv env]
@@ -3438,7 +3567,8 @@
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
   [env : tc.TcTypeEnv]
-  [items : ast.AstExprList]) : unit
+  [items : ast.AstExprList])
+  (:cold) : unit
   (for [index (iterator.range 0 (ast.ast-expr-list-len (& items)))]
     (compiler-semantic-walk-node!
       state
@@ -3450,7 +3580,8 @@
   [state : (& state CompilerSemanticWalkState)]
   [scope : CompilerSemanticBindingSnapshot]
   [env : tc.TcTypeEnv]
-  [node-id : i64]) : unit
+  [node-id : i64])
+  (:cold) : unit
   (match (ast.ast-node-get node-id)
     [(or (Unquote inner) (UnquoteSplicing inner))
       (compiler-semantic-walk-node! state scope env inner)]
@@ -3477,7 +3608,8 @@
   [env : tc.TcTypeEnv]
   [bindings : ast.AstLetBindingList]
   [body-id : i64]
-  [maybe-span : CompilerSemanticMaybeSpan]) : unit
+  [maybe-span : CompilerSemanticMaybeSpan])
+  (:cold) : unit
   (let
     [next-scope : CompilerSemanticBindingSnapshot scope]
     [next-env : tc.TcTypeEnv env]
@@ -3552,7 +3684,8 @@
   [params : ast.AstParamList]
   [maybe-ret : ast.AstMaybeType]
   [body-id : i64]
-  [maybe-span : CompilerSemanticMaybeSpan]) : unit
+  [maybe-span : CompilerSemanticMaybeSpan])
+  (:cold) : unit
   (let
     [form-start : i64
       (compiler-semantic-maybe-span-start
@@ -3591,7 +3724,8 @@
   [start-id : i64]
   [end-id : i64]
   [body-id : i64]
-  [maybe-span : CompilerSemanticMaybeSpan]) : unit
+  [maybe-span : CompilerSemanticMaybeSpan])
+  (:cold) : unit
   (compiler-semantic-walk-type!
     state
     (owned_view.compiler-owned-shared-view index-ty))
@@ -3643,7 +3777,8 @@
   [inner-start-id : i64]
   [inner-end-id : i64]
   [body-id : i64]
-  [maybe-span : CompilerSemanticMaybeSpan]) : unit
+  [maybe-span : CompilerSemanticMaybeSpan])
+  (:cold) : unit
   (let
     [form-start : i64
       (compiler-semantic-maybe-span-start
@@ -3704,7 +3839,8 @@
   [env : tc.TcTypeEnv]
   [lane : i64]
   [body-id : i64]
-  [maybe-span : CompilerSemanticMaybeSpan]) : unit
+  [maybe-span : CompilerSemanticMaybeSpan])
+  (:cold) : unit
   (let
     [form-start : i64
       (compiler-semantic-maybe-span-start
@@ -3741,7 +3877,8 @@
   [end-id : i64]
   [init-id : i64]
   [value-id : i64]
-  [maybe-span : CompilerSemanticMaybeSpan]) : unit
+  [maybe-span : CompilerSemanticMaybeSpan])
+  (:cold) : unit
   (let
     [form-start : i64
       (compiler-semantic-maybe-span-start
@@ -3790,7 +3927,8 @@
   [init-id : i64]
   [element-id : i64]
   [body-id : i64]
-  [maybe-span : CompilerSemanticMaybeSpan]) : unit
+  [maybe-span : CompilerSemanticMaybeSpan])
+  (:cold) : unit
   (let
     [form-start : i64
       (compiler-semantic-maybe-span-start
@@ -3882,7 +4020,8 @@
   [init-id : i64]
   [value-id : i64]
   [body-id : i64]
-  [maybe-span : CompilerSemanticMaybeSpan]) : unit
+  [maybe-span : CompilerSemanticMaybeSpan])
+  (:cold) : unit
   (compiler-semantic-walk-spmd-state!
     state
     scope
@@ -3911,7 +4050,8 @@
   [init-id : i64]
   [keep-id : i64]
   [body-id : i64]
-  [maybe-span : CompilerSemanticMaybeSpan]) : unit
+  [maybe-span : CompilerSemanticMaybeSpan])
+  (:cold) : unit
   (compiler-semantic-walk-spmd-state!
     state
     scope
@@ -3933,7 +4073,8 @@
   [env : tc.TcTypeEnv]
   [name-id : i64]
   [value-id : i64]
-  [maybe-span : CompilerSemanticMaybeSpan]) : unit
+  [maybe-span : CompilerSemanticMaybeSpan])
+  (:cold) : unit
   (let
     [form-start : i64
       (compiler-semantic-maybe-span-start
@@ -3981,7 +4122,8 @@
   [receiver-ty : ast.AstType]
   [field-name-id : i64]
   [origin : parse_core.CompilerParseSemanticOrigin]
-  [access : CompilerSemanticAccess]) : unit
+  [access : CompilerSemanticAccess])
+  (:cold) : unit
   (match receiver-ty
     [(or (Struct struct-name-id) (StructArgs struct-name-id _))
       (compiler-semantic-record-field-use-for-struct!
@@ -4004,7 +4146,8 @@
   [struct-name-id : i64]
   [field-name-id : i64]
   [origin : parse_core.CompilerParseSemanticOrigin]
-  [access : CompilerSemanticAccess]) : unit
+  [access : CompilerSemanticAccess])
+  (:cold) : unit
   (match (csym.compiler-registries-lookup-struct-field-id
     (tc.tc-context-registries state.ctx)
     struct-name-id
@@ -4062,7 +4205,8 @@
   [struct-name-id : i64]
   [field-name-id : i64]
   [span : CompilerSemanticSpan]
-  [access : CompilerSemanticAccess]) : bool
+  [access : CompilerSemanticAccess])
+  (:cold) : bool
   (match (csym.compiler-registries-lookup-struct-field-id
     (tc.tc-context-registries state.ctx)
     struct-name-id
@@ -4115,7 +4259,8 @@
   [env : tc.TcTypeEnv]
   [target-id : i64]
   [field-name-id : i64]
-  [access : CompilerSemanticAccess]) : unit
+  [access : CompilerSemanticAccess])
+  (:cold) : unit
   (if (ast.ast-tuple-set-field-id? field-name-id)
     unit
     (match (compiler-semantic-origin-take! state StructFieldUse)
@@ -4134,7 +4279,8 @@
 (define (compiler-semantic-record-variant-pattern-use!
   [state : CompilerSemanticWalkState]
   [scrutinee-maybe-ty : ast.AstMaybeType]
-  [variant-name-id : i64]) : unit
+  [variant-name-id : i64])
+  (:cold) : unit
   (match (compiler-semantic-origin-take! state EnumVariantPattern)
     [(None) unit]
     [(Some origin)
@@ -4204,7 +4350,8 @@
                         (owned_view.compiler-owned-shared-view state.provenance))))))))])]))
 
 (define (compiler-semantic-discard-variant-pattern-origin!
-  [state : CompilerSemanticWalkState]) : unit
+  [state : CompilerSemanticWalkState])
+  (:cold) : unit
   (match (compiler-semantic-origin-take! state EnumVariantPattern)
     [(or (None) (Some _)) unit]))
 
@@ -4218,7 +4365,8 @@
   [pattern : ast.AstPattern]
   [scrutinee-maybe-ty : ast.AstMaybeType]
   [search-start : i64]
-  [search-limit : i64]) : CompilerSemanticBindResult
+  [search-limit : i64])
+  (:cold) : CompilerSemanticBindResult
   (match pattern
     [(Var name maybe-ty)
       (if (tc.tc-name-id-list-contains bound-names name)
@@ -4350,7 +4498,8 @@
   [scope : CompilerSemanticBindingSnapshot]
   [name-id : i64]
   [search-start : i64]
-  [search-limit : i64]) : i64
+  [search-limit : i64])
+  (:cold) : i64
   (let
     [state : CompilerSemanticWalkState
       (owned_view.compiler-owned-reference-shared-view state)]
@@ -4406,7 +4555,8 @@
   [pattern : ast.AstPattern]
   [scrutinee-maybe-ty : ast.AstMaybeType]
   [search-start : i64]
-  [search-limit : i64]) : i64
+  [search-limit : i64])
+  (:cold) : i64
   (match pattern
     [(or (ast.AstPattern.Var name _) (ast.AstPattern.Binding name))
       (if (tc.tc-name-id-list-contains bound-names name)
@@ -4464,7 +4614,8 @@
   [patterns : ast.AstPatternList]
   [scrutinee-maybe-ty : ast.AstMaybeType]
   [search-start : i64]
-  [search-limit : i64]) : i64
+  [search-limit : i64])
+  (:cold) : i64
   (let
     [cursor : i64 search-start]
     (for [index (iterator.range 0 (ast.ast-pattern-list-len (& patterns)))]
@@ -4493,7 +4644,8 @@
   [patterns : ast.AstPatternList]
   [scrutinee-maybe-ty : ast.AstMaybeType]
   [search-start : i64]
-  [search-limit : i64]) : CompilerSemanticBindResult
+  [search-limit : i64])
+  (:cold) : CompilerSemanticBindResult
   (let
     [next-scope : CompilerSemanticBindingSnapshot scope]
     [next-env : tc.TcTypeEnv env]
@@ -4523,14 +4675,16 @@
 (define (compiler-semantic-pattern-bound-names
   [ctx : tc.TcContext]
   [scrutinee-ty : ast.AstType]
-  [pattern : ast.AstPattern]) : tc.TcNameIdList
+  [pattern : ast.AstPattern])
+  (:cold) : tc.TcNameIdList
   ;; An explicitly typed pattern variable is always a binder, including when
   ;; the scrutinee is an enum. Bare enum variant names, by contrast, are not.
   (match (owned_view.compiler-owned-shared-view pattern)
     [(Var name _) (tc.tc-name-id-list-add Nil name)]
     [_ (tc.tc-borrow-check-pattern-bound-names ctx scrutinee-ty pattern)]))
 
-(define (compiler-semantic-match-body-source-expr-id [body : i64]) : i64
+(define (compiler-semantic-match-body-source-expr-id [body : i64])
+  (:cold) : i64
   (let
     [inner : i64 (ast.ast-expr-span-wrapper-inner body)]
     (if (and (>= inner 0) (>= (ast.ast-expr-span-wrapper-inner inner) 0))
@@ -4543,7 +4697,8 @@
   [env : tc.TcTypeEnv]
   [scrutinee-ty : ast.AstMaybeType]
   [arms : ast.AstMatchArmList]
-  [search-start : i64]) : unit
+  [search-start : i64])
+  (:cold) : unit
   (let
     [cursor : i64 search-start]
     (for [index (iterator.range 0 (ast.ast-match-arm-list-len (& arms)))]
@@ -4660,7 +4815,8 @@
   [env : tc.TcTypeEnv]
   [bindings : ast.AstResourceBindingList]
   [body : ast.AstExprList]
-  [maybe-span : CompilerSemanticMaybeSpan]) : unit
+  [maybe-span : CompilerSemanticMaybeSpan])
+  (:cold) : unit
   (let
     [next-scope : CompilerSemanticBindingSnapshot scope]
     [next-env : tc.TcTypeEnv env]
@@ -4783,7 +4939,8 @@
                     bound.next-search)))))]))
     (compiler-semantic-walk-expr-list! state next-scope next-env body)))
 
-(define (compiler-semantic-dotted-field-count [remaining-id : i64]) : i64
+(define (compiler-semantic-dotted-field-count [remaining-id : i64])
+  (:cold) : i64
   (if (< remaining-id 0)
     0
     (+
@@ -4793,7 +4950,8 @@
 
 (define (compiler-semantic-struct-name-for-type
   [state : CompilerSemanticWalkState]
-  [ty : ast.AstType]) : i64
+  [ty : ast.AstType])
+  (:cold) : i64
   (match (tc.tc-resolve-type state.ctx ty)
     [(or (Struct name-id) (StructArgs name-id _)) name-id]
     [(or (Ref _ inner) (MutRef _ inner))
@@ -4807,7 +4965,8 @@
   [origin : ast.AstSourceSpan]
   [start : i64]
   [end : i64]
-  [column-offset : i64]) : CompilerSemanticSpan
+  [column-offset : i64])
+  (:cold) : CompilerSemanticSpan
   (compiler-semantic-span-from-byte-range
     state.path
     state.source
@@ -4822,7 +4981,8 @@
 (define (compiler-semantic-dotted-use-span!
   [state : CompilerSemanticWalkState]
   [source-name-id : i64]
-  [fallback : CompilerSemanticMaybeSpan]) : CompilerSemanticMaybeSpan
+  [fallback : CompilerSemanticMaybeSpan])
+  (:cold) : CompilerSemanticMaybeSpan
   (let
     [session : cis.InternStructuralSessionHandle
       (tc.tc-context-structural-session state.ctx)]
@@ -4843,7 +5003,8 @@
 (define (compiler-semantic-dotted-local-candidate?
   [state : CompilerSemanticWalkState]
   [env : tc.TcTypeEnv]
-  [source-name-id : i64]) : bool
+  [source-name-id : i64])
+  (:cold) : bool
   (let
     [session : cis.InternStructuralSessionHandle
       (tc.tc-context-structural-session state.ctx)]
@@ -4873,7 +5034,8 @@
   [env : tc.TcTypeEnv]
   [source-name-id : i64]
   [maybe-span : CompilerSemanticMaybeSpan]
-  [last-access : CompilerSemanticAccess]) : bool
+  [last-access : CompilerSemanticAccess])
+  (:cold) : bool
   (if (not
     (compiler-semantic-dotted-local-candidate?
       (owned_view.compiler-owned-shared-view state)
@@ -5014,7 +5176,8 @@
   [scope : CompilerSemanticBindingSnapshot]
   [env : tc.TcTypeEnv]
   [node-id : i64]
-  [maybe-span : CompilerSemanticMaybeSpan]) : unit
+  [maybe-span : CompilerSemanticMaybeSpan])
+  (:cold) : unit
   (let
     [visited : (__tl_dyn-array i64)
       (owned_view.compiler-owned-shared-view state.visited-expr-ids)]
@@ -5030,7 +5193,8 @@
   [state : (& state CompilerSemanticWalkState)]
   [scope : CompilerSemanticBindingSnapshot]
   [env : tc.TcTypeEnv]
-  [node-id : i64]) : unit
+  [node-id : i64])
+  (:cold) : unit
   (let
     [state : CompilerSemanticWalkState
       (owned_view.compiler-owned-reference-shared-view state)]
@@ -5041,7 +5205,8 @@
   [scope : CompilerSemanticBindingSnapshot]
   [env : tc.TcTypeEnv]
   [node-id : i64]
-  [maybe-span : CompilerSemanticMaybeSpan]) : unit
+  [maybe-span : CompilerSemanticMaybeSpan])
+  (:cold) : unit
   ;; A source-span wrapper hands its span to the wrapped node. The arms below
   ;; resolve names, scopes and fields; every other variant's children are
   ;; walked through the AstExpr child schema.
@@ -5251,7 +5416,8 @@
   [state : (& state CompilerSemanticWalkState)]
   [_scope : CompilerSemanticBindingSnapshot]
   [_env : tc.TcTypeEnv]
-  [ty-id : i64]) : unit
+  [ty-id : i64])
+  (:cold) : unit
   (let
     [state : CompilerSemanticWalkState
       (owned_view.compiler-owned-reference-shared-view state)]
@@ -5263,13 +5429,15 @@
   [state : (& state CompilerSemanticWalkState)]
   [_scope : CompilerSemanticBindingSnapshot]
   [_env : tc.TcTypeEnv]
-  [ty : ast.AstType]) : unit
+  [ty : ast.AstType])
+  (:cold) : unit
   (compiler-semantic-walk-type! state ty))
 
 (define (compiler-semantic-decl-param-search-start
   [state : CompilerSemanticWalkState]
   [name-id : i64]
-  [body-id : i64]) : i64
+  [body-id : i64])
+  (:cold) : i64
   (let
     [body-start : i64
       (compiler-semantic-expr-start-offset
@@ -5298,7 +5466,8 @@
   [struct-name-id : i64]
   [field-name-id : i64]
   [field-index : i64]
-  [ty : ast.AstType]) : unit
+  [ty : ast.AstType])
+  (:cold) : unit
   (match (compiler-semantic-origin-take! state StructFieldDefinition)
     [(None) unit]
     [(Some origin)
@@ -5346,7 +5515,8 @@
 (define (compiler-semantic-walk-field-defs!
   [state : CompilerSemanticWalkState]
   [struct-name-id : i64]
-  [fields : ast.AstFieldDefList]) : unit
+  [fields : ast.AstFieldDefList])
+  (:cold) : unit
   (for [index (iterator.range 0 (ast.ast-field-def-list-len (& fields)))]
     (match (ast.ast-field-def-list-get
       (& fields)
@@ -5365,7 +5535,8 @@
   [state : CompilerSemanticWalkState]
   [enum-name-id : i64]
   [variant-name-id : i64]
-  [variant-index : i64]) : unit
+  [variant-index : i64])
+  (:cold) : unit
   (match (compiler-semantic-origin-take! state EnumVariantDefinition)
     [(None) unit]
     [(Some origin)
@@ -5417,7 +5588,8 @@
 (define (compiler-semantic-walk-variant-defs!
   [state : CompilerSemanticWalkState]
   [enum-name-id : i64]
-  [variants : ast.AstVariantDefList]) : unit
+  [variants : ast.AstVariantDefList])
+  (:cold) : unit
   (for [index (iterator.range 0 (ast.ast-variant-def-list-len (& variants)))]
     (match (ast.ast-variant-def-list-get
       (& variants)
@@ -5435,7 +5607,8 @@
 
 (define (compiler-semantic-walk-dispatch-variants!
   [state : CompilerSemanticWalkState]
-  [variants : ast.AstDispatchVariantList]) : unit
+  [variants : ast.AstDispatchVariantList])
+  (:cold) : unit
   (for [index
     (iterator.range 0 (ast.ast-dispatch-variant-list-len (& variants)))]
     (match (ast.ast-dispatch-variant-list-get
@@ -5456,7 +5629,8 @@
                 Read))])])))
 
 (define (compiler-semantic-record-module-declaration!
-  [state : CompilerSemanticWalkState]) : unit
+  [state : CompilerSemanticWalkState])
+  (:cold) : unit
   (let
     [done : bool false]
     (while (not done)
@@ -5472,7 +5646,8 @@
 (define (compiler-semantic-record-import-alias-from-record!
   [state : CompilerSemanticWalkState]
   [record-index : i64]
-  [origin : parse_core.CompilerParseSemanticOrigin]) : unit
+  [origin : parse_core.CompilerParseSemanticOrigin])
+  (:cold) : unit
   (if (< record-index 0)
     unit
     (let
@@ -5501,7 +5676,8 @@
 (define (compiler-semantic-selected-import-handle
   [state : (& state CompilerSemanticWalkState)]
   [target-module-id : i64]
-  [item-id : i64]) : i64
+  [item-id : i64])
+  (:cold) : i64
   (let
     [symbols : (& state csym.CompilerSymbols) (tc.tc-context-symbols state.ctx)]
     [missing : i64 (csym.compiler-symbols-missing-handle)]
@@ -5531,7 +5707,8 @@
   [state : CompilerSemanticWalkState]
   [target-module-id : i64]
   [item-id : i64]
-  [origin : parse_core.CompilerParseSemanticOrigin]) : i64
+  [origin : parse_core.CompilerParseSemanticOrigin])
+  (:cold) : i64
   (let
     [handle : i64
       (compiler-semantic-selected-import-handle state target-module-id item-id)]
@@ -5597,7 +5774,8 @@
 
 (define (compiler-semantic-walk-import!
   [state : CompilerSemanticWalkState]
-  [spec : ast.AstImportSpec]) : unit
+  [spec : ast.AstImportSpec])
+  (:cold) : unit
   (match spec
     [(Spec kind _ maybe-module maybe-alias _)
       (let
@@ -5674,7 +5852,8 @@
 
 (define (compiler-semantic-walk-decl!
   [state : CompilerSemanticWalkState]
-  [decl : ast.AstDecl]) : unit
+  [decl : ast.AstDecl])
+  (:cold) : unit
   (match decl
     [(Def _ _ maybe-ty value)
       (match maybe-ty
@@ -5757,7 +5936,8 @@
 (define (compiler-semantic-source-for-path
   [path : String]
   [entry-path : (& entry-path str)]
-  [entry-source : (& entry-source str)]) : String
+  [entry-source : (& entry-source str)])
+  (:cold) : String
   (cond
     [(string.eq path entry-path) (string.copy entry-source)]
     [(and
@@ -5770,7 +5950,8 @@
   [state : CompilerSemanticWalkState]
   [sites : tc.TcMacroCallSiteState]
   [site-index : i64]
-  [source : String]) : unit
+  [source : String])
+  (:cold) : unit
   (let
     [ctx : tc.TcContext state.ctx]
     [env : tc.TcTypeEnv state.top-env]
@@ -5855,7 +6036,8 @@
 (define (compiler-semantic-record-macro-call-sites!
   [state : CompilerSemanticWalkState]
   [entry-path : (& entry-path str)]
-  [entry-source : (& entry-source str)]) : unit
+  [entry-source : (& entry-source str)])
+  (:cold) : unit
   (let
     [sites : tc.TcMacroCallSiteState
       (tc.tc-job-state-macro-call-sites (tc.tc-context-job-state state.ctx))]
@@ -5883,14 +6065,16 @@
             (owned_view.compiler-owned-shared-view cached-source)
             ""))))))
 
-(define (compiler-semantic-i64-min [left : i64] [right : i64]) : i64
+(define (compiler-semantic-i64-min [left : i64] [right : i64])
+  (:cold) : i64
   (if (< left right)
     left
     right))
 
 (define (compiler-semantic-scope-event-before?
   [left : CompilerSemanticScopeEvent]
-  [right : CompilerSemanticScopeEvent]) : bool
+  [right : CompilerSemanticScopeEvent])
+  (:cold) : bool
   (cond
     [(< left.byte-offset right.byte-offset) true]
     [(> left.byte-offset right.byte-offset) false]
@@ -5906,7 +6090,8 @@
 (define (compiler-semantic-scope-events-sort-segment!
   [items : (&mut items (__tl_dyn-array CompilerSemanticScopeEvent))]
   [offset : i64]
-  [len : i64]) : unit
+  [len : i64])
+  (:cold) : unit
   (if (< len 2)
     unit
     (let
@@ -5950,7 +6135,8 @@
 
 (define (compiler-semantic-module-event-before?
   [left : CompilerSemanticModuleEvent]
-  [right : CompilerSemanticModuleEvent]) : bool
+  [right : CompilerSemanticModuleEvent])
+  (:cold) : bool
   (if (= left.byte-offset right.byte-offset)
     (< left.sequence right.sequence)
     (< left.byte-offset right.byte-offset)))
@@ -5958,7 +6144,8 @@
 (define (compiler-semantic-module-events-sort-segment!
   [items : (&mut items (__tl_dyn-array CompilerSemanticModuleEvent))]
   [offset : i64]
-  [len : i64]) : unit
+  [len : i64])
+  (:cold) : unit
   (if (< len 2)
     unit
     (let
@@ -6005,7 +6192,8 @@
   [path-len : i64]
   [raw : (__tl_dyn-array CompilerSemanticScopeEvent)]
   [raw-len : i64]
-  [out : (&mut out (__tl_dyn-array CompilerSemanticScopeEvent))]) : unit
+  [out : (&mut out (__tl_dyn-array CompilerSemanticScopeEvent))])
+  (:cold) : unit
   (let
     [counts : (__tl_dyn-array i64) (__tl_make-array i64 path-len)]
     [cursors : (__tl_dyn-array i64) (__tl_make-array i64 path-len)]
@@ -6062,7 +6250,8 @@
   [path-len : i64]
   [raw : (__tl_dyn-array CompilerSemanticModuleEvent)]
   [raw-len : i64]
-  [out : (&mut out (__tl_dyn-array CompilerSemanticModuleEvent))]) : unit
+  [out : (&mut out (__tl_dyn-array CompilerSemanticModuleEvent))])
+  (:cold) : unit
   (let
     [counts : (__tl_dyn-array i64) (__tl_make-array i64 path-len)]
     [cursors : (__tl_dyn-array i64) (__tl_make-array i64 path-len)]
@@ -6116,7 +6305,8 @@
 
 (define (compiler-semantic-map-key-name-for-module
   [key-id : i64]
-  [module-id : i64]) : i64
+  [module-id : i64])
+  (:cold) : i64
   (cond
     [(csym.compiler-composite-triple-key-id? key-id) -1]
     [(csym.compiler-composite-pair-key-id? key-id)
@@ -6128,7 +6318,8 @@
 
 (define (compiler-semantic-map-kind-supported?
   [namespace-tag : i64]
-  [kind : i64]) : bool
+  [kind : i64])
+  (:cold) : bool
   (cond
     [(= namespace-tag (compiler-semantic-binding-namespace-value-mask))
       (or
@@ -6145,7 +6336,8 @@
 
 (define (compiler-semantic-map-has-module-macro?
   [map : (& map csym.CompilerSymbolMap)]
-  [module-id : i64]) : bool
+  [module-id : i64])
+  (:cold) : bool
   (for [slot (iterator.range 0 (array-length map.keys))]
     (let
       [stored-key : i64 (array-ref map.keys slot)]
@@ -6167,7 +6359,8 @@
   [left : CompilerSemanticTopCandidateRef]
   [right : CompilerSemanticTopCandidateRef]
   [labels : (__tl_dyn-array String)]
-  [records : (__tl_dyn-array CompilerSemanticRecord)]) : bool
+  [records : (__tl_dyn-array CompilerSemanticRecord)])
+  (:cold) : bool
   (let
     [left-label : String
       (owned_view.compiler-owned-array-element-shared-view
@@ -6211,7 +6404,8 @@
   [labels : (__tl_dyn-array String)]
   [records : (__tl_dyn-array CompilerSemanticRecord)]
   [offset : i64]
-  [len : i64]) : unit
+  [len : i64])
+  (:cold) : unit
   (if (< len 2)
     unit
     (let
@@ -6257,7 +6451,8 @@
 
 (define (compiler-semantic-top-candidate-count-increment!
   [counts : (&mut counts (__tl_dyn-array i64))]
-  [module-index : i64]) : unit
+  [module-index : i64])
+  (:cold) : unit
   (let
     [count : i64 (array-ref counts module-index)]
     (if (= count 9223372036854775807)
@@ -6269,7 +6464,8 @@
   [module-index : i64]
   [cursors : (& cursors (__tl_dyn-array i64))]
   [out : (& out (__tl_dyn-array CompilerSemanticTopCandidateRef))]
-  [labels : (& labels (__tl_dyn-array String))]) : i64
+  [labels : (& labels (__tl_dyn-array String))])
+  (:cold) : i64
   (let
     [info : (& modules CompilerSemanticModuleInfo)
       (& (array-ref modules module-index))]
@@ -6294,7 +6490,8 @@
   [counts-or-cursors : (&mut counts-or-cursors (__tl_dyn-array i64))]
   [out : (&mut out (__tl_dyn-array CompilerSemanticTopCandidateRef))]
   [labels : (&mut labels (__tl_dyn-array String))]
-  [count-only : bool]) : unit
+  [count-only : bool])
+  (:cold) : unit
   (for [slot (iterator.range 0 (array-length map.keys))]
     (let
       [stored-key : i64 (array-ref map.keys slot)]
@@ -6367,7 +6564,8 @@
   [symbols : (& symbols csym.CompilerSymbols)]
   [macros : (& macros csym.CompilerSymbolMap)]
   [module-id : i64]
-  [name-id : i64]) : bool
+  [name-id : i64])
+  (:cold) : bool
   (let
     [handle : i64
       (csym.compiler-symbol-map-lookup-handle-id
@@ -6394,7 +6592,8 @@
   [counts-or-cursors : (&mut counts-or-cursors (__tl_dyn-array i64))]
   [out : (&mut out (__tl_dyn-array CompilerSemanticTopCandidateRef))]
   [labels : (&mut labels (__tl_dyn-array String))]
-  [count-only : bool]) : unit
+  [count-only : bool])
+  (:cold) : unit
   (for [slot (iterator.range 0 (array-length macros.keys))]
     (let
       [stored-key : i64 (array-ref macros.keys slot)]
@@ -6460,7 +6659,8 @@
   [ctx : tc.TcContext]
   [modules : (&mut modules (__tl_dyn-array CompilerSemanticModuleInfo))]
   [module-len : i64]
-  [decl-record-indices : (& decl-record-indices (__tl_dyn-array i64))]) : i64
+  [decl-record-indices : (& decl-record-indices (__tl_dyn-array i64))])
+  (:cold) : i64
   (match (tc.tc-context-symbols ctx)
     [(CompilerSymbols values types macros _ _ _)
       (let
@@ -6542,7 +6742,8 @@
   [decl-record-indices : (__tl_dyn-array i64)]
   [records : (__tl_dyn-array CompilerSemanticRecord)]
   [out : (&mut out (__tl_dyn-array CompilerSemanticTopCandidateRef))]
-  [labels : (__tl_dyn-array String)]) : unit
+  [labels : (__tl_dyn-array String)])
+  (:cold) : unit
   (match (tc.tc-context-symbols ctx)
     [(CompilerSymbols values types macros _ _ _)
       (let
@@ -6644,7 +6845,8 @@
   [paths : ast.AstDeclPathList]
   [entry-path : String]
   [entry-source : String]
-  [complete : bool]) : CompilerSemanticSourceIndex
+  [complete : bool])
+  (:cold) : CompilerSemanticSourceIndex
   (let
     [owner : i64 (arena.tl_arena_make)]
     [previous-provider : i64 (tc.tc-context-provider-id ctx)]
@@ -7159,7 +7361,8 @@
   [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
-  [cache-scope : String]) : ResultCompilerCheckWithSemanticIndex
+  [cache-scope : String])
+  (:cold) : ResultCompilerCheckWithSemanticIndex
   (let
     [job-state : tc.TcJobState (tc.tc-serial-job-state)]
     [macro-sites : tc.TcMacroCallSiteState
@@ -7266,7 +7469,8 @@
   [loaded : cload.ResultCompilerLoadWithPaths]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
-  [cache-scope : String]) : ResultCompilerCheckWithSemanticIndex
+  [cache-scope : String])
+  (:cold) : ResultCompilerCheckWithSemanticIndex
   (match loaded
     [(Ok entry-decls entry-paths entry-modules _)
       (begin
@@ -7295,7 +7499,8 @@
 
 (define (compiler-semantic-index-result-with-parse-diagnostics
   [parse-diagnostics : cdiag.CompilerDiagnosticList]
-  [result : ResultCompilerCheckWithSemanticIndex]) : ResultCompilerCheckWithSemanticIndex
+  [result : ResultCompilerCheckWithSemanticIndex])
+  (:cold) : ResultCompilerCheckWithSemanticIndex
   (if (= (cdiag.compiler-diagnostic-list-count parse-diagnostics) 0)
     result
     (let
@@ -7352,7 +7557,8 @@
   [prelude-seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
-  [cache-scope : String]) : ResultCompilerCheckWithSemanticIndex
+  [cache-scope : String])
+  (:cold) : ResultCompilerCheckWithSemanticIndex
   (match (parse_core.parse-ast-source-recovery-diagnostic-with-cfg
     (owned_view.compiler-owned-shared-view path)
     (& source)
@@ -7393,7 +7599,8 @@
   [path : String]
   [source : String]
   [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheckWithSemanticIndex
+  [cfgs : sym_i64_env.SymI64Env])
+  (:cold) : ResultCompilerCheckWithSemanticIndex
   (begin
     (check_core.compiler-check-reset-pools!)
     (cfg compile-profile (check_core.compiler-check-profile-start))
@@ -7426,7 +7633,8 @@
 (define (compiler-semantic-source-index-find-editable-record-at
   [index : (& index CompilerSemanticSourceIndex)]
   [wanted-path : (& wanted-path str)]
-  [byte-position : i64]) : i64
+  [byte-position : i64])
+  (:cold) : i64
   (let
     [found : i64 -1]
     [found-priority : i64 -1]
@@ -7472,7 +7680,8 @@
 ;; has one lookup namespace. Members and modules use owner-specific checks
 ;; below in addition to any bindings visible at the occurrence.
 (define (compiler-semantic-rename-namespace-mask
-  [kind : (& kind CompilerSemanticSymbolKind)]) : i64
+  [kind : (& kind CompilerSemanticSymbolKind)])
+  (:cold) : i64
   (match (deref kind)
     [(Macro) (compiler-semantic-binding-namespace-macro-mask)]
     [(Struct)
@@ -7485,7 +7694,8 @@
 
 (define (compiler-semantic-rename-symbol-eq?
   [left : (& left CompilerSemanticSymbolId)]
-  [right : (& right CompilerSemanticSymbolId)]) : bool
+  [right : (& right CompilerSemanticSymbolId)])
+  (:cold) : bool
   (and
     (= left.module-id right.module-id)
     (= left.declaration-ordinal right.declaration-ordinal)
@@ -7495,7 +7705,8 @@
   [index : (& index CompilerSemanticSourceIndex)]
   [target : (& target CompilerSemanticRecord)]
   [byte-offset : i64]
-  [new-name : (& new-name str)]) : bool
+  [new-name : (& new-name str)])
+  (:cold) : bool
   (let
     [mask : i64 (compiler-semantic-rename-namespace-mask (& target.kind))]
     (if (= mask 0)
@@ -7528,7 +7739,8 @@
 
 (define (compiler-semantic-rename-member-owner-eq?
   [left : (& left CompilerSemanticRecord)]
-  [right : (& right CompilerSemanticRecord)]) : bool
+  [right : (& right CompilerSemanticRecord)])
+  (:cold) : bool
   (and
     (= left.symbol.module-id right.symbol.module-id)
     (=
@@ -7542,7 +7754,8 @@
 ;; callers never need access to the compiler registry that produced it.
 (define (compiler-semantic-member-symbol-owned-by?
   [owner : (& owner CompilerSemanticSymbolId)]
-  [member : (& member CompilerSemanticSymbolId)]) : bool
+  [member : (& member CompilerSemanticSymbolId)])
+  (:cold) : bool
   (and
     (= owner.module-id member.module-id)
     (=
@@ -7551,7 +7764,8 @@
 
 (define (compiler-semantic-rename-kind-eq?
   [left : (& left CompilerSemanticSymbolKind)]
-  [right : (& right CompilerSemanticSymbolKind)]) : bool
+  [right : (& right CompilerSemanticSymbolKind)])
+  (:cold) : bool
   (match (deref left)
     [(Value)
       (match (deref right)
@@ -7612,7 +7826,8 @@
   [path : String]
   [start-byte : i64]
   [end-byte : i64]
-  [new-name : (& new-name str)]) : bool
+  [new-name : (& new-name str)])
+  (:cold) : bool
   (let
     [record-index : i64 0]
     [target-index : i64 -1]
@@ -7711,7 +7926,8 @@
 
 (define (compiler-semantic-symbol-id-eq?
   [left : CompilerSemanticSymbolId]
-  [right : CompilerSemanticSymbolId]) : bool
+  [right : CompilerSemanticSymbolId])
+  (:cold) : bool
   (and
     (= left.module-id right.module-id)
     (= left.declaration-ordinal right.declaration-ordinal)
@@ -7720,7 +7936,8 @@
 (define (compiler-semantic-source-index-find-symbol-role
   [index : (& index CompilerSemanticSourceIndex)]
   [symbol : CompilerSemanticSymbolId]
-  [role : CompilerSemanticRecordRole]) : i64
+  [role : CompilerSemanticRecordRole])
+  (:cold) : i64
   (let
     [record-index : i64 0]
     [found : i64 -1]

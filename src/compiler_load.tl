@@ -2303,7 +2303,8 @@
 (define (compiler-load-dependency-catalog-capability-error
   [capability : (& CompilerLoadDependencyCatalogCapability)]
   [identity : String]
-  [message : String]) : String
+  [message : String])
+  (:cold) : String
   (str_cat.str-cat
     "dependency tlci: package "
     (ci.intern-str capability.package-name-id)
@@ -5537,7 +5538,8 @@
   [kind : CompilerLoadIncludeKind]
   [importer-path : String]
   [include-path : String]
-  [resolved : String]) : cdiag.CompilerDiagnostic
+  [resolved : String])
+  (:cold) : cdiag.CompilerDiagnostic
   (cdiag.compiler-diagnostic-load
     IncludeRead
     (cdiag.compiler-diagnostic-at-start
@@ -6988,7 +6990,8 @@
                 [(or (Ok) (Collision _)) unit]))])))))
 
 (define (compiler-load-unqualified-import-collision-message
-  [collision : CompilerLoadUnqualifiedImportCollision]) : String
+  [collision : CompilerLoadUnqualifiedImportCollision])
+  (:cold) : String
   (str_cat.str-cat
     "compiler-load: ambiguous unqualified import '"
     (str_cat.str-cat
@@ -15224,7 +15227,8 @@
 ;: composition/native-link alternatives.
 (define (compiler-pkg-library-dependency-message
   [package-name : String]
-  [alias : String]) : String
+  [alias : String])
+  (:cold) : String
   (str_cat.str-cat
     "library package `"
     package-name

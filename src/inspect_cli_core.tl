@@ -11,7 +11,8 @@
 (import tli_cli_core as tli_cli)
 (import stdlib.byte_le)
 
-(define (tlci-inspect-help-text) : String
+(define (tlci-inspect-help-text)
+  (:cold) : String
   "Usage:
     typelisp inspect <file.tli|file.tlci|embedded:stdlib.tlci>
     typelisp inspect sysroot [--sysroot <dir>] [--no-prebuilt-stdlib] [--target <target>]
@@ -21,12 +22,14 @@ Summary:
 ")
 
 (define (tlci-inspect-classification-name
-  [image : (& image tlci_core.TlciImage)]) : String
+  [image : (& image tlci_core.TlciImage)])
+  (:cold) : String
   (match (tlci_core.tlci-image-classify image)
     [(MetadataOnly) "metadata-only"]
     [(CodeBearing) "code-bearing"]))
 
-(define (tlci-inspect-section-line [name : String] [offset : i64] [len : i64]) : String
+(define (tlci-inspect-section-line [name : String] [offset : i64] [len : i64])
+  (:cold) : String
   (str_cat.str-cat
     "  "
     name
@@ -40,7 +43,8 @@ Summary:
   [name : String]
   [offset : i64]
   [count : i64]
-  [record-size : i64]) : String
+  [record-size : i64])
+  (:cold) : String
   (str_cat.str-cat
     "  "
     name
@@ -52,7 +56,8 @@ Summary:
     (string.int->string (* count record-size))
     "\n"))
 
-(define (tlci-inspect-import-line [offset : i64] [count : i64] [bytes : i64]) : String
+(define (tlci-inspect-import-line [offset : i64] [count : i64] [bytes : i64])
+  (:cold) : String
   (str_cat.str-cat
     "  imports: offset="
     (string.int->string offset)
@@ -63,7 +68,8 @@ Summary:
     "\n"))
 
 (define (tlci-inspect-spmd-specializations
-  [items : tlci_core.TlciSpmdSpecializations]) : String
+  [items : tlci_core.TlciSpmdSpecializations])
+  (:cold) : String
   (let
     [count : i64 (tlci_core.tlci-spmd-specializations-len items)]
     [out : String ""]
@@ -93,7 +99,8 @@ Summary:
     out))
 
 (define (tlci-inspect-spmd-callables
-  [items : (& items tlci_core.TlciSpmdCallables)]) : String
+  [items : (& items tlci_core.TlciSpmdCallables)])
+  (:cold) : String
   (let
     [count : i64 (tlci_core.tlci-spmd-callables-len items)]
     [out : String ""]
@@ -114,14 +121,16 @@ Summary:
     out))
 
 (define (tlci-inspect-spmd-section
-  [metadata : (& metadata tlci_core.TlciMetadata)]) : String
+  [metadata : (& metadata tlci_core.TlciMetadata)])
+  (:cold) : String
   (if (string.eq metadata.version (tlci_core.tlci-metadata-version-v2-current))
     (str_cat.str-cat
       "spmd-callables:\n"
       (tlci-inspect-spmd-callables metadata.spmd-callables))
     ""))
 
-(define (tlci-inspect-source-binding [rodata : (__tl_dyn-array u8)]) : String
+(define (tlci-inspect-source-binding [rodata : (__tl_dyn-array u8)])
+  (:cold) : String
   (match (tlci_core.tlci-package-source-binding-read rodata)
     [(Bound digest)
       (str_cat.str-cat
@@ -151,7 +160,8 @@ Summary:
 (define (tlci-inspect-surface-section
   [name : String]
   [rodata : (& rodata (__tl_dyn-array u8))]
-  [kind : i64]) : String
+  [kind : i64])
+  (:cold) : String
   (match (tlci_core.tlci-aux-find rodata kind)
     [(Missing) (str_cat.str-cat name ": missing\n")]
     [(Err message)
@@ -173,7 +183,8 @@ Summary:
 
 (define (tlci-inspect-surface
   [rodata : (__tl_dyn-array u8)]
-  [producer-identity : String]) : String
+  [producer-identity : String])
+  (:cold) : String
   (str_cat.str-cat
     (tlci-inspect-surface-section
       "surface-package-identity"
@@ -194,7 +205,8 @@ Summary:
 
 (define (tlci-inspect-render
   [bytes : (__tl_dyn-array u8)]
-  [image : tlci_core.TlciImage]) : String
+  [image : tlci_core.TlciImage])
+  (:cold) : String
   (let
     [metadata : tlci_core.TlciMetadata
       (owned_view.compiler-owned-shared-view image.metadata)]
@@ -281,12 +293,14 @@ Summary:
         (tlci_core.tlci-read-u64 bytes tlci_core.tlci-import-count-field-offset)
         (array-length image.imports)))))
 
-(define (tlci-inspect-error [path : String] [message : String]) : String
+(define (tlci-inspect-error [path : String] [message : String])
+  (:cold) : String
   (str_cat.str-cat "inspect: " path ": " message "\n"))
 
 (define (tlci-inspect-render-bytes
   [path : String]
-  [bytes : (__tl_dyn-array u8)]) : i64
+  [bytes : (__tl_dyn-array u8)])
+  (:cold) : i64
   (match (tlci_core.tlci-parse-image (& bytes))
     [(Err message)
       (io.print-error (tlci-inspect-error path message))
@@ -297,7 +311,8 @@ Summary:
 
 (cfg
   (not embedded-stdlib-tlci)
-  (define (tlci-inspect-embedded-stdlib) : i64
+  (define (tlci-inspect-embedded-stdlib)
+    (:cold) : i64
     (io.print-error
       (tlci-inspect-error
         "embedded:stdlib.tlci"
@@ -306,7 +321,8 @@ Summary:
 
 (cfg
   embedded-stdlib-tlci
-  (define (tlci-inspect-embedded-stdlib) : i64
+  (define (tlci-inspect-embedded-stdlib)
+    (:cold) : i64
     (match (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-validate)
       [(Err message)
         (io.print-error (tlci-inspect-error "embedded:stdlib.tlci" message))
@@ -322,7 +338,8 @@ Summary:
           "embedded:stdlib.tlci"
           (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-copy))])))
 
-(define (tlci-inspect-run-from [idx : i64] [count : i64]) : i64
+(define (tlci-inspect-run-from [idx : i64] [count : i64])
+  (:cold) : i64
   (cond
     [(and (< idx count) (string.eq (io.arg idx) "sysroot"))
       (tli_cli.tli-inspect-sysroot (+ idx 1) count)]

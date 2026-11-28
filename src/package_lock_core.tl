@@ -35,7 +35,8 @@
   (kind package_cache_core.PackageCachePinKind)
   (value String))
 
-(define (package-lock-symbol-text [name-id : ci.InternSyntaxId]) : String
+(define (package-lock-symbol-text [name-id : ci.InternSyntaxId])
+  (:cold) : String
   (reader.symbol-text-for-syntax-id name-id))
 
 (defenum PackageLockMaybeEntry
@@ -89,16 +90,19 @@
 (define package-lock-version : String
   "v1")
 
-(define (package-lock-version-shared-view) : String
+(define (package-lock-version-shared-view)
+  (:cold) : String
   (unsafe
     (ptr-read (ptr-addr-of package-lock-version))))
 
-(define (package-lock-char-code-at [text : (& text str)] [idx : i64]) : i64
+(define (package-lock-char-code-at [text : (& text str)] [idx : i64])
+  (:cold) : i64
   (cast (string.string-ref text idx) : i64))
 
 (define (package-lock-string-less?
   [left : (& left str)]
-  [right : (& right str)]) : bool
+  [right : (& right str)])
+  (:cold) : bool
   (let
     [left-len : i64 (string.string-length left)]
     [right-len : i64 (string.string-length right)]
@@ -122,7 +126,8 @@
       less
       (< left-len right-len))))
 
-(define (package-lock-alias-char? [c : char]) : bool
+(define (package-lock-alias-char? [c : char])
+  (:cold) : bool
   (let
     [code : i64 (cast c : i64)]
     (or
@@ -132,7 +137,8 @@
       (= code 45)
       (= code 95))))
 
-(define (package-lock-alias-token-valid? [value : (& value str)]) : bool
+(define (package-lock-alias-token-valid? [value : (& value str)])
+  (:cold) : bool
   (let
     [n : i64 (string.string-length value)]
     [i : i64 0]
@@ -145,17 +151,20 @@
         (set! ok false)))
     (= i n)))
 
-(define (package-lock-entry-list-fallback) : PackageLockEntry
+(define (package-lock-entry-list-fallback)
+  (:cold) : PackageLockEntry
   (PackageLockEntry "" "" (Rev) "" ""))
 
 (define (package-lock-pin-kind-copy
-  [kind : (& kind package_cache_core.PackageCachePinKind)]) : package_cache_core.PackageCachePinKind
+  [kind : (& kind package_cache_core.PackageCachePinKind)])
+  (:cold) : package_cache_core.PackageCachePinKind
   (match kind
     [(package_cache_core.Rev) (package_cache_core.Rev)]
     [(package_cache_core.Tag) (package_cache_core.Tag)]
     [(package_cache_core.Branch) (package_cache_core.Branch)]))
 
-(define (package-lock-entry-copy [entry : (& entry PackageLockEntry)]) : PackageLockEntry
+(define (package-lock-entry-copy [entry : (& entry PackageLockEntry)])
+  (:cold) : PackageLockEntry
   (PackageLockEntry
     (string.copy (& entry.alias))
     (string.copy (& entry.url))
@@ -165,7 +174,8 @@
 
 (define (package-lock-entry-list-lookup-from
   [entries : (& entries package_lock_entry_vec.Vec)]
-  [alias : (& alias str)]) : PackageLockMaybeEntry
+  [alias : (& alias str)])
+  (:cold) : PackageLockMaybeEntry
   (let
     [view : (& entries (Slice PackageLockEntry))
       (package_lock_entry_vec.view entries)]
@@ -179,13 +189,15 @@
 
 (define (package-lock-entry-list-lookup
   [entries : (& entries package_lock_entry_vec.Vec)]
-  [alias : (& alias str)]) : PackageLockMaybeEntry
+  [alias : (& alias str)])
+  (:cold) : PackageLockMaybeEntry
   (package-lock-entry-list-lookup-from entries alias))
 
 (define (package-lock-entry-list-insert-position
   [entries : (& entries package_lock_entry_vec.Vec)]
   [alias : (& alias str)]
-  [index : i64]) : i64
+  [index : i64])
+  (:cold) : i64
   (if (>= index (package_lock_entry_vec.len entries))
     index
     (let
@@ -201,7 +213,8 @@
 (define (package-lock-entry-list-insert-at!
   [entries : (&mut entries package_lock_entry_vec.Vec)]
   [entry : (& PackageLockEntry)]
-  [index : i64]) : unit
+  [index : i64])
+  (:cold) : unit
   (package_lock_entry_vec.push-ref! entries (package-lock-entry-list-fallback))
   (let
     [write : i64 (- (package_lock_entry_vec.len entries) 1)]
@@ -218,7 +231,8 @@
 
 (define (package-lock-entry-list-insert
   [entries : package_lock_entry_vec.Vec]
-  [entry : PackageLockEntry]) : ResultPackageLockEntryList
+  [entry : PackageLockEntry])
+  (:cold) : ResultPackageLockEntryList
   (let
     [next : package_lock_entry_vec.Vec entries]
     [index : i64
@@ -235,7 +249,8 @@
 
 (define (package-lock-field-string-value
   [ftail : (& program (Slice reader.SpannedSexpr))]
-  [fname : String]) : ResultPackageLockString
+  [fname : String])
+  (:cold) : ResultPackageLockString
   (match ftail
     [(slice (Str val-id _)) (Ok (ci.intern-id-str val-id))]
     [(slice (Str _ _) & _)
@@ -251,17 +266,20 @@
           fname
           "` must have a string value"))]))
 
-(define (package-lock-parse-pin-kind [value : String]) : ResultPackageLockPinKind
+(define (package-lock-parse-pin-kind [value : String])
+  (:cold) : ResultPackageLockPinKind
   (cond
     [(string.eq value "rev") (Ok (Rev))]
     [(string.eq value "tag") (Ok (Tag))]
     [(string.eq value "branch") (Ok (Branch))]
     [else (Err "package-lock: pin kind must be `rev`, `tag`, or `branch`")]))
 
-(define (package-lock-pin-shape-error) : ResultPackageLockPin
+(define (package-lock-pin-shape-error)
+  (:cold) : ResultPackageLockPin
   (Err "package-lock: pin must be `(rev|tag|branch \"value\")`"))
 
-(define (package-lock-pin-form [form : reader.SpannedSexpr]) : ResultPackageLockPin
+(define (package-lock-pin-form [form : reader.SpannedSexpr])
+  (:cold) : ResultPackageLockPin
   (match (reader.sexpr-view form)
     [(List (slice (Sym kind-name _) (Str pin-value-id _)))
       (let
@@ -277,7 +295,8 @@
     [_ (package-lock-pin-shape-error)]))
 
 (define (package-lock-field-pin-value
-  [ftail : (& program (Slice reader.SpannedSexpr))]) : ResultPackageLockPin
+  [ftail : (& program (Slice reader.SpannedSexpr))])
+  (:cold) : ResultPackageLockPin
   (match ftail
     [(slice pin-form) (package-lock-pin-form pin-form)]
     [_ (Err "package-lock: field `pin` takes one value")]))
@@ -292,7 +311,8 @@
   [pin-value : String]
   [has-pin : bool]
   [commit : String]
-  [has-commit : bool]) : ResultPackageLockEntry
+  [has-commit : bool])
+  (:cold) : ResultPackageLockEntry
   (match fields
     [(slice)
       (cond
@@ -408,13 +428,15 @@
           (Err "package-lock: dependency fields must start with a field name")]
         [_ (Err "package-lock: dependency fields must be lists")])]))
 
-(define (package-lock-entry-from-form [form : reader.SpannedSexpr]) : ResultPackageLockEntry
+(define (package-lock-entry-from-form [form : reader.SpannedSexpr])
+  (:cold) : ResultPackageLockEntry
   (match (reader.sexpr-view form)
     [(List items) (package-lock-entry-from-form-items items)]
     [_ (Err "package-lock: dependency entries must be lists")]))
 
 (define (package-lock-entry-from-form-items
-  [form : (& program (Slice reader.SpannedSexpr))]) : ResultPackageLockEntry
+  [form : (& program (Slice reader.SpannedSexpr))])
+  (:cold) : ResultPackageLockEntry
   (match form
     [(slice head & rest)
       (match (reader.sexpr-view head)
@@ -439,7 +461,8 @@
 
 (define (package-lock-dependencies-entries
   [entries : (& program (Slice reader.SpannedSexpr))]
-  [acc : package_lock_entry_vec.Vec]) : ResultPackageLockEntryList
+  [acc : package_lock_entry_vec.Vec])
+  (:cold) : ResultPackageLockEntryList
   (match entries
     [(slice) (Ok acc)]
     [(slice entry & rest)
@@ -453,7 +476,8 @@
   [version : String]
   [has-version : bool]
   [entries : package_lock_entry_vec.Vec]
-  [has-deps : bool]) : ResultPackageLockFile
+  [has-deps : bool])
+  (:cold) : ResultPackageLockFile
   (match fields
     [(slice)
       (cond
@@ -497,13 +521,15 @@
           (Err "package-lock: fields must start with a field name")]
         [_ (Err "package-lock: fields must be lists")])]))
 
-(define (package-lock-from-form [form : reader.SpannedSexpr]) : ResultPackageLockFile
+(define (package-lock-from-form [form : reader.SpannedSexpr])
+  (:cold) : ResultPackageLockFile
   (match (reader.sexpr-view form)
     [(List items) (package-lock-from-form-items items)]
     [_ (Err "package-lock: lockfile must be a `(typelisp-lock ...)` form")]))
 
 (define (package-lock-from-form-items
-  [form : (& program (Slice reader.SpannedSexpr))]) : ResultPackageLockFile
+  [form : (& program (Slice reader.SpannedSexpr))])
+  (:cold) : ResultPackageLockFile
   (match form
     [(slice head & rest)
       (match (reader.sexpr-view head)
@@ -523,7 +549,8 @@
         [_ (Err "package-lock: lockfile must start with `typelisp-lock`")])]
     [_ (Err "package-lock: lockfile must be a `(typelisp-lock ...)` form")]))
 
-(define (package-lock-parse [source : (& str)]) : ResultPackageLockFile
+(define (package-lock-parse [source : (& str)])
+  (:cold) : ResultPackageLockFile
   (let
     [mark : i64 (reader.sp-node-pool-len)]
     [result : ResultPackageLockFile
@@ -533,13 +560,16 @@
     (reader.sp-node-pool-truncate! mark)
     result))
 
-(define (package-lock-quote-text) : String
+(define (package-lock-quote-text)
+  (:cold) : String
   "\"")
 
-(define (package-lock-backslash-text) : String
+(define (package-lock-backslash-text)
+  (:cold) : String
   "\\")
 
-(define (package-lock-escape-string [text : (& text str)]) : String
+(define (package-lock-escape-string [text : (& text str)])
+  (:cold) : String
   (let
     [n : i64 (string.string-length text)]
     [out : String ""]
@@ -592,21 +622,25 @@
           [else (set! out (str_cat.str-cat out (string.substring text i 1) ""))])))
     out))
 
-(define (package-lock-quote-string [text : (& str)]) : String
+(define (package-lock-quote-string [text : (& str)])
+  (:cold) : String
   (str_cat.str-cat
     (package-lock-quote-text)
     (package-lock-escape-string text)
     (package-lock-quote-text)))
 
-(define (package-lock-emit-string-field [field : String] [value : (& str)]) : String
+(define (package-lock-emit-string-field [field : String] [value : (& str)])
+  (:cold) : String
   (str_cat.str-cat "      (" field " " (package-lock-quote-string value) ")\n"))
 
 (define (package-lock-emit-final-string-field
   [field : String]
-  [value : (& str)]) : String
+  [value : (& str)])
+  (:cold) : String
   (str_cat.str-cat "      (" field " " (package-lock-quote-string value) "))\n"))
 
-(define (package-lock-emit-pin-field [kind-name : String] [value : (& str)]) : String
+(define (package-lock-emit-pin-field [kind-name : String] [value : (& str)])
+  (:cold) : String
   (str_cat.str-cat
     "      (pin ("
     kind-name
@@ -614,7 +648,8 @@
     (package-lock-quote-string value)
     "))\n"))
 
-(define (package-lock-emit-entry [entry : (& entry PackageLockEntry)]) : String
+(define (package-lock-emit-entry [entry : (& entry PackageLockEntry)])
+  (:cold) : String
   (let
     [kind-name : String
       (package_cache_core.package-cache-pin-kind-name
@@ -628,7 +663,8 @@
 
 (define (package-lock-emit-entries-from
   [entries : (& entries package_lock_entry_vec.Vec)]
-  [index : i64]) : String
+  [index : i64])
+  (:cold) : String
   (if (>= index (package_lock_entry_vec.len entries))
     ""
     (let
@@ -638,10 +674,12 @@
         (package-lock-emit-entry (& (array-ref view index)))
         (package-lock-emit-entries-from entries (+ index 1))))))
 
-(define (package-lock-emit-entries [entries : (& package_lock_entry_vec.Vec)]) : String
+(define (package-lock-emit-entries [entries : (& package_lock_entry_vec.Vec)])
+  (:cold) : String
   (package-lock-emit-entries-from entries 0))
 
-(define (package-lock-emit [lock : (& PackageLockFile)]) : String
+(define (package-lock-emit [lock : (& PackageLockFile)])
+  (:cold) : String
   (str_cat.str-cat
     "(typelisp-lock\n"
     "  (version \"v1\")\n"
@@ -652,7 +690,8 @@
 (define (package-lock-transaction-error
   [phase : String]
   [path : String]
-  [detail : String]) : String
+  [detail : String])
+  (:cold) : String
   (str_cat.str-cat
     "package-lock transaction "
     phase
@@ -661,7 +700,8 @@
     "': "
     detail))
 
-(define (package-lock-transaction-read [path : String]) : ResultPackageLockSnapshot
+(define (package-lock-transaction-read [path : String])
+  (:cold) : ResultPackageLockSnapshot
   (match (io.try-file-exists? (& path))
     [(ErrIoBool error)
       (Err
@@ -681,7 +721,8 @@
 
 (define (package-lock-snapshot-identity-eq?
   [left : (& left PackageLockSnapshot)]
-  [right : (& right PackageLockSnapshot)]) : bool
+  [right : (& right PackageLockSnapshot)])
+  (:cold) : bool
   (and
     (= left.existed right.existed)
     (if left.existed
@@ -690,34 +731,40 @@
 
 (define (package-lock-snapshot-is-source?
   [snapshot : (& snapshot PackageLockSnapshot)]
-  [source : String]) : bool
+  [source : String])
+  (:cold) : bool
   (and snapshot.existed (string.eq snapshot.source source)))
 
-(define (package-lock-io-already-exists? [error : (& io.IoError)]) : bool
+(define (package-lock-io-already-exists? [error : (& io.IoError)])
+  (:cold) : bool
   (match error
     [(IoSystemCode code _) (= code fs.fs-status-already-exists)]
     [_ false]))
 
-(define (package-lock-io-retryable-replace? [error : (& io.IoError)]) : bool
+(define (package-lock-io-retryable-replace? [error : (& io.IoError)])
+  (:cold) : bool
   (match error
     [(IoSystemCode code _) (or (= code 32) (= code 33))]
     [_ false]))
 
-(define (package-lock-transaction-fault? [phase : String]) : bool
+(define (package-lock-transaction-fault? [phase : String])
+  (:cold) : bool
   (let
     [name : String "TYPELISP_PACKAGE_LOCK_TEST_FAULT"]
     (match (env.get (& name))
       [(EnvNoString) false]
       [(EnvSomeString value) (string.eq value phase)])))
 
-(define (package-lock-transaction-pause? [phase : String]) : bool
+(define (package-lock-transaction-pause? [phase : String])
+  (:cold) : bool
   (let
     [name : String "TYPELISP_PACKAGE_LOCK_TEST_PAUSE"]
     (match (env.get (& name))
       [(EnvNoString) false]
       [(EnvSomeString value) (string.eq value phase)])))
 
-(define (package-lock-transaction-wait-release [path : (& str)]) : ResultPackageLockString
+(define (package-lock-transaction-wait-release [path : (& str)])
+  (:cold) : ResultPackageLockString
   (let
     [attempt : i64 0]
     [done : bool false]
@@ -741,7 +788,8 @@
         (Err "package-lock transaction test pause timed out")
         (Ok "")))))
 
-(define (package-lock-transaction-maybe-pause [phase : String]) : ResultPackageLockString
+(define (package-lock-transaction-maybe-pause [phase : String])
+  (:cold) : ResultPackageLockString
   (if (package-lock-transaction-pause? phase)
     (let
       [name : String "TYPELISP_PACKAGE_LOCK_TEST_RELEASE_FILE"]
@@ -753,27 +801,32 @@
         [(EnvSomeString path) (package-lock-transaction-wait-release (& path))]))
     (Ok "")))
 
-(define (package-lock-stage-next-sequence) : i64
+(define (package-lock-stage-next-sequence)
+  (:cold) : i64
   (+= package-lock-stage-sequence 1)
   package-lock-stage-sequence)
 
 ;; The lock file a package root publishes. Replacement goes through a
 ;; transient sibling `<lock>.stage.<pid>.<sequence>.<attempt>`; the infix and
 ;; the stage-name predicate below are the only spellings of that sibling.
-(define (package-lock-file-name) : String
+(define (package-lock-file-name)
+  (:cold) : String
   "typelisp.lock")
 
-(define (package-lock-stage-infix) : String
+(define (package-lock-stage-infix)
+  (:cold) : String
   ".stage.")
 
-(define (package-lock-decimal-digit? [c : char]) : bool
+(define (package-lock-decimal-digit? [c : char])
+  (:cold) : bool
   (and (>= c '0') (<= c '9')))
 
 ;; True exactly when `name` is spelled like a stage sibling of the package
 ;; lock file as `package-lock-stage-path` builds it: the lock file name, the
 ;; stage infix, then three nonempty dot-separated decimal runs and nothing
 ;; else. Package source discovery never treats such a name as package content.
-(define (package-lock-stage-name? [name : (& name str)]) : bool
+(define (package-lock-stage-name? [name : (& name str)])
+  (:cold) : bool
   (let
     [prefix : String
       (str_cat.str-cat (package-lock-file-name) (package-lock-stage-infix))]
@@ -800,7 +853,8 @@
 (define (package-lock-stage-path
   [destination : String]
   [sequence : i64]
-  [attempt : i64]) : String
+  [attempt : i64])
+  (:cold) : String
   (str_cat.str-cat
     destination
     (package-lock-stage-infix)
@@ -810,7 +864,8 @@
     "."
     (string.int->string attempt)))
 
-(define (package-lock-remove-stage [path : String]) : ResultPackageLockString
+(define (package-lock-remove-stage [path : String])
+  (:cold) : ResultPackageLockString
   (match (fs.try-remove-file-if-exists (& path))
     [(OkIoUnit) (Ok "")]
     [(ErrIoUnit error)
@@ -820,7 +875,8 @@
 (define (package-lock-stage-write-opened
   [path : String]
   [source : (& str)]
-  [handle : io.FileHandle]) : ResultPackageLockString
+  [handle : io.FileHandle])
+  (:cold) : ResultPackageLockString
   (if (package-lock-transaction-fault? "during-stage")
     (begin
       (io.file-close handle)
@@ -863,7 +919,8 @@
 (define (package-lock-stage-write-attempt
   [destination : String]
   [source : String]
-  [sequence : i64]) : ResultPackageLockString
+  [sequence : i64])
+  (:cold) : ResultPackageLockString
   (for [attempt (iterator.range 0 100)]
     (let
       [path : String
@@ -886,13 +943,15 @@
       destination
       "could not allocate a unique sibling staging path")))
 
-(define (package-lock-stage-write [destination : String] [source : String]) : ResultPackageLockString
+(define (package-lock-stage-write [destination : String] [source : String])
+  (:cold) : ResultPackageLockString
   (package-lock-stage-write-attempt
     destination
     source
     (package-lock-stage-next-sequence)))
 
-(define (package-lock-stage-validate [path : String] [expected : String]) : ResultPackageLockString
+(define (package-lock-stage-validate [path : String] [expected : String])
+  (:cold) : ResultPackageLockString
   (match (io.try-read-file (& path))
     [(ErrIoBytes error)
       (Err
@@ -915,7 +974,8 @@
                 (package-lock-transaction-error "stage-validate" path message))]
             [(Ok _) (Ok path)])))]))
 
-(define (package-lock-transaction-ensure-dir [path : String]) : ResultPackageLockString
+(define (package-lock-transaction-ensure-dir [path : String])
+  (:cold) : ResultPackageLockString
   (match (fs.try-mkdir-if-missing (& path))
     [(OkIoUnit) (Ok path)]
     [(ErrIoUnit error)
@@ -925,7 +985,8 @@
           path
           (io.error-message error)))]))
 
-(define (package-lock-transaction-lock-path [destination : (& str)]) : ResultPackageLockString
+(define (package-lock-transaction-lock-path [destination : (& str)])
+  (:cold) : ResultPackageLockString
   (let
     [parent : String (fs.dirname destination)]
     [target-name : String "target"]
@@ -947,7 +1008,8 @@
   [lock : fs.FsFileLock]
   [stage : String]
   [remove-stage : bool]
-  [result : ResultPackageLockCommit]) : ResultPackageLockCommit
+  [result : ResultPackageLockCommit])
+  (:cold) : ResultPackageLockCommit
   (let
     [cleanup : ResultPackageLockString
       (if remove-stage
@@ -967,7 +1029,8 @@
 (define (package-lock-atomic-replace-attempt
   [stage : (& str)]
   [destination : String]
-  [attempt : i64]) : ResultPackageLockString
+  [attempt : i64])
+  (:cold) : ResultPackageLockString
   (match (fs.try-atomic-replace stage (& destination))
     [(OkIoUnit) (Ok destination)]
     [(ErrIoUnit error)
@@ -985,7 +1048,8 @@
   [snapshot : PackageLockSnapshot]
   [source : String]
   [stage : String]
-  [lock : fs.FsFileLock]) : ResultPackageLockCommit
+  [lock : fs.FsFileLock])
+  (:cold) : ResultPackageLockCommit
   (match (package-lock-transaction-read (string.copy snapshot.path))
     [(Err message)
       (package-lock-transaction-finish lock stage true (Err message))]
@@ -1043,7 +1107,8 @@
   [snapshot : PackageLockSnapshot]
   [source : String]
   [guard : String]
-  [stage : String]) : ResultPackageLockCommit
+  [stage : String])
+  (:cold) : ResultPackageLockCommit
   (match (package-lock-transaction-maybe-pause "before-lock")
     [(Err message)
       (package-lock-remove-stage stage)
@@ -1064,7 +1129,8 @@
   [snapshot : PackageLockSnapshot]
   [source : String]
   [guard : String]
-  [stage : String]) : ResultPackageLockCommit
+  [stage : String])
+  (:cold) : ResultPackageLockCommit
   (match (package-lock-stage-validate (string.copy stage) (string.copy source))
     [(Err message)
       (package-lock-remove-stage stage)
@@ -1083,7 +1149,8 @@
 (define (package-lock-transaction-with-guard
   [snapshot : PackageLockSnapshot]
   [source : String]
-  [guard : String]) : ResultPackageLockCommit
+  [guard : String])
+  (:cold) : ResultPackageLockCommit
   (let
     [stage
       (try
@@ -1094,7 +1161,8 @@
 
 (define (package-lock-transaction-commit
   [snapshot : PackageLockSnapshot]
-  [source : String]) : ResultPackageLockCommit
+  [source : String])
+  (:cold) : ResultPackageLockCommit
   (match (package-lock-parse (& (string.copy source)))
     [(Err message)
       (Err (package-lock-transaction-error "validate" snapshot.path message))]
@@ -1120,7 +1188,8 @@
   [url : String]
   [kind : package_cache_core.PackageCachePinKind]
   [pin-value : String]
-  [commit : String]) : bool
+  [commit : String])
+  (:cold) : bool
   (and
     (string.eq entry.alias alias)
     (string.eq entry.url url)
@@ -1134,7 +1203,8 @@
   [url : String]
   [kind : package_cache_core.PackageCachePinKind]
   [pin-value : String]
-  [commit : String]) : bool
+  [commit : String])
+  (:cold) : bool
   (match (package-lock-entry-list-lookup entries alias)
     [(No) false]
     [(Some entry)

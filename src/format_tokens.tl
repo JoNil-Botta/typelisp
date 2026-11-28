@@ -59,55 +59,72 @@
   (Ok i64)
   (Err FormatSourceError))
 
-(define (fmt-tag-lparen) : i64
+(define (fmt-tag-lparen)
+  (:cold) : i64
   1)
 
-(define (fmt-tag-rparen) : i64
+(define (fmt-tag-rparen)
+  (:cold) : i64
   2)
 
-(define (fmt-tag-lbracket) : i64
+(define (fmt-tag-lbracket)
+  (:cold) : i64
   3)
 
-(define (fmt-tag-rbracket) : i64
+(define (fmt-tag-rbracket)
+  (:cold) : i64
   4)
 
-(define (fmt-tag-colon) : i64
+(define (fmt-tag-colon)
+  (:cold) : i64
   5)
 
-(define (fmt-tag-quote) : i64
+(define (fmt-tag-quote)
+  (:cold) : i64
   6)
 
-(define (fmt-tag-backtick) : i64
+(define (fmt-tag-backtick)
+  (:cold) : i64
   7)
 
-(define (fmt-tag-dot) : i64
+(define (fmt-tag-dot)
+  (:cold) : i64
   8)
 
-(define (fmt-tag-comma) : i64
+(define (fmt-tag-comma)
+  (:cold) : i64
   9)
 
-(define (fmt-tag-comma-at) : i64
+(define (fmt-tag-comma-at)
+  (:cold) : i64
   10)
 
-(define (fmt-tag-int) : i64
+(define (fmt-tag-int)
+  (:cold) : i64
   11)
 
-(define (fmt-tag-symbol) : i64
+(define (fmt-tag-symbol)
+  (:cold) : i64
   12)
 
-(define (fmt-tag-string) : i64
+(define (fmt-tag-string)
+  (:cold) : i64
   13)
 
-(define (fmt-tag-char) : i64
+(define (fmt-tag-char)
+  (:cold) : i64
   14)
 
-(define (fmt-tag-comment) : i64
+(define (fmt-tag-comment)
+  (:cold) : i64
   15)
 
-(define (fmt-tag-end) : i64
+(define (fmt-tag-end)
+  (:cold) : i64
   16)
 
-(define (format-token-tag [tok : FormatToken]) : i64
+(define (format-token-tag [tok : FormatToken])
+  (:cold) : i64
   (match tok
     [(LParen) (fmt-tag-lparen)]
     [(RParen) (fmt-tag-rparen)]
@@ -126,7 +143,8 @@
     [(Comment _) (fmt-tag-comment)]
     [(End) (fmt-tag-end)]))
 
-(define (format-token-text [tok : FormatToken]) : String
+(define (format-token-text [tok : FormatToken])
+  (:cold) : String
   (match tok
     [(LParen) "("]
     [(RParen) ")"]
@@ -142,37 +160,47 @@
       text]
     [(End) ""]))
 
-(define (format-token-at [stream : (& stream FormatTokenStream)] [idx : i64]) : FormatToken
+(define (format-token-at [stream : (& stream FormatTokenStream)] [idx : i64])
+  (:cold) : FormatToken
   (let
     [stream : FormatTokenStream
       (owned_view.compiler-owned-reference-shared-view stream)]
     (owned_view.compiler-owned-element-view stream.tokens idx)))
 
-(define (format-token-start [stream : (& stream FormatTokenStream)] [idx : i64]) : i64
+(define (format-token-start [stream : (& stream FormatTokenStream)] [idx : i64])
+  (:cold) : i64
   (array-ref stream.starts idx))
 
-(define (format-token-count [stream : (& stream FormatTokenStream)]) : i64
+(define (format-token-count [stream : (& stream FormatTokenStream)])
+  (:cold) : i64
   stream.count)
 
-(define (fmt-position-line [pos : FormatPosition]) : i64
+(define (fmt-position-line [pos : FormatPosition])
+  (:cold) : i64
   pos.line)
 
-(define (fmt-position-col [pos : FormatPosition]) : i64
+(define (fmt-position-col [pos : FormatPosition])
+  (:cold) : i64
   pos.col)
 
-(define (format-source-error-message [err : FormatSourceError]) : String
+(define (format-source-error-message [err : FormatSourceError])
+  (:cold) : String
   err.message)
 
-(define (format-source-error-span [err : FormatSourceError]) : FormatSourceSpan
+(define (format-source-error-span [err : FormatSourceError])
+  (:cold) : FormatSourceSpan
   err.span)
 
-(define (format-source-span-start-line [span : FormatSourceSpan]) : i64
+(define (format-source-span-start-line [span : FormatSourceSpan])
+  (:cold) : i64
   span.start-line)
 
-(define (format-source-span-start-col [span : FormatSourceSpan]) : i64
+(define (format-source-span-start-col [span : FormatSourceSpan])
+  (:cold) : i64
   span.start-col)
 
-(define (fmt-source-position-at [src : (& src str)] [target : i64]) : FormatPosition
+(define (fmt-source-position-at [src : (& src str)] [target : i64])
+  (:cold) : FormatPosition
   (let
     [n : i64 (string.string-length src)]
     [i : i64 0]
@@ -189,7 +217,8 @@
         (+= i 1)))
     (FormatPosition line col)))
 
-(define (fmt-source-error-at [src : (& src str)] [idx : i64] [message : String]) : FormatSourceError
+(define (fmt-source-error-at [src : (& src str)] [idx : i64] [message : String])
+  (:cold) : FormatSourceError
   (let
     [pos : FormatPosition (fmt-source-position-at src idx)]
     (FormatSourceError
@@ -200,7 +229,8 @@
         (fmt-position-line pos)
         (fmt-position-col pos)))))
 
-(define (format-token-span [stream : (& stream FormatTokenStream)] [idx : i64]) : FormatSourceSpan
+(define (format-token-span [stream : (& stream FormatTokenStream)] [idx : i64])
+  (:cold) : FormatSourceSpan
   (let
     [pos : FormatPosition
       (fmt-source-position-at stream.source (format-token-start stream idx))]
@@ -210,19 +240,24 @@
       (fmt-position-line pos)
       (fmt-position-col pos))))
 
-(define (fmt-is-digit [c : char]) : bool
+(define (fmt-is-digit [c : char])
+  (:cold) : bool
   (and (>= c '0') (<= c '9')))
 
-(define (fmt-is-hex-digit [c : char]) : bool
+(define (fmt-is-hex-digit [c : char])
+  (:cold) : bool
   (or (fmt-is-digit c) (and (>= c 'a') (<= c 'f')) (and (>= c 'A') (<= c 'F'))))
 
-(define (fmt-is-alpha [c : char]) : bool
+(define (fmt-is-alpha [c : char])
+  (:cold) : bool
   (or (and (>= c 'A') (<= c 'Z')) (and (>= c 'a') (<= c 'z'))))
 
-(define (fmt-is-space [c : char]) : bool
+(define (fmt-is-space [c : char])
+  (:cold) : bool
   (or (= c ' ') (= c '\t') (= c '\n') (= c '\r')))
 
-(define (fmt-is-symbol-punct [c : char]) : bool
+(define (fmt-is-symbol-punct [c : char])
+  (:cold) : bool
   (or
     (= c '-')
     (= c '+')
@@ -239,7 +274,8 @@
     (= c '%')
     (= c '&')))
 
-(define (fmt-is-symbol-char [c : char]) : bool
+(define (fmt-is-symbol-char [c : char])
+  (:cold) : bool
   (or (fmt-is-alpha c) (fmt-is-digit c) (fmt-is-symbol-punct c)))
 
 ;; Caller must prove `idx` is within the original source string bounds.
@@ -260,7 +296,8 @@
 (define fmt-char-class-ready : bool
   false)
 
-(define (fmt-char-class-init) : unit
+(define (fmt-char-class-init)
+  (:cold) : unit
   (if fmt-char-class-ready
     unit
     (begin
@@ -290,7 +327,8 @@
 (defmacro (fmt-char-class? [c : Expr] [mask : i64]) : bool
   `(not (= 0 (bit-and (array-ref fmt-char-class-table (cast ,c : i64)) ,mask))))
 
-(define (fmt-starts-number [data : (Ptr u8)] [i : i64] [n : i64]) : bool
+(define (fmt-starts-number [data : (Ptr u8)] [i : i64] [n : i64])
+  (:cold) : bool
   (let
     [c : char (fmt-source-byte-bounds-proven data i)]
     (if (fmt-char-class? c 2)
@@ -301,12 +339,14 @@
           false)
         false))))
 
-(define (fmt-number-digits-start [data : (Ptr u8)] [start : i64]) : i64
+(define (fmt-number-digits-start [data : (Ptr u8)] [start : i64])
+  (:cold) : i64
   (if (= (fmt-source-byte-bounds-proven data start) '-')
     (+ start 1)
     start))
 
-(define (fmt-number-prefixed? [data : (Ptr u8)] [start : i64] [n : i64]) : bool
+(define (fmt-number-prefixed? [data : (Ptr u8)] [start : i64] [n : i64])
+  (:cold) : bool
   (let
     [digits-start : i64 (fmt-number-digits-start data start)]
     (if (< (+ digits-start 1) n)
@@ -318,7 +358,8 @@
         false)
       false)))
 
-(define (fmt-number-prefix-base [data : (Ptr u8)] [start : i64]) : i64
+(define (fmt-number-prefix-base [data : (Ptr u8)] [start : i64])
+  (:cold) : i64
   (let
     [prefix : char
       (fmt-source-byte-bounds-proven
@@ -328,7 +369,8 @@
       16
       2)))
 
-(define (fmt-starts-ellipsis [data : (Ptr u8)] [i : i64] [n : i64]) : bool
+(define (fmt-starts-ellipsis [data : (Ptr u8)] [i : i64] [n : i64])
+  (:cold) : bool
   (and
     (< (+ i 2) n)
     (= (fmt-source-byte-bounds-proven data i) '.')
@@ -339,7 +381,8 @@
   [data : (Ptr u8)]
   [start : i64]
   [n : i64]
-  [base : i64]) : i64
+  [base : i64])
+  (:cold) : i64
   (let
     [j : i64 start]
     [keep : bool true]
@@ -359,7 +402,8 @@
   [src : (& src str)]
   [data : (Ptr u8)]
   [start : i64]
-  [n : i64]) : result_fmt_i64.Result
+  [n : i64])
+  (:cold) : result_fmt_i64.Result
   (let
     [digits-start : i64 (fmt-number-digits-start data start)]
     [base : i64 (fmt-number-prefix-base data start)]
@@ -381,7 +425,8 @@
             "format lexer: malformed integer literal"))
         (Ok end)))))
 
-(define (fmt-scan-decimal-number-end [data : (Ptr u8)] [start : i64] [n : i64]) : i64
+(define (fmt-scan-decimal-number-end [data : (Ptr u8)] [start : i64] [n : i64])
+  (:cold) : i64
   (let
     [j : i64 start]
     [seen-dot : bool false]
@@ -452,7 +497,8 @@
   [src : (& src str)]
   [data : (Ptr u8)]
   [start : i64]
-  [n : i64]) : result_fmt_i64.Result
+  [n : i64])
+  (:cold) : result_fmt_i64.Result
   (if (fmt-number-prefixed? data start n)
     (fmt-scan-prefixed-number-end-result src data start n)
     (let
@@ -472,7 +518,8 @@
               (string.substring "format lexer: malformed integer literal" 31 8))))
         (Ok end)))))
 
-(define (fmt-scan-symbol-end [data : (Ptr u8)] [start : i64] [n : i64]) : i64
+(define (fmt-scan-symbol-end [data : (Ptr u8)] [start : i64] [n : i64])
+  (:cold) : i64
   (let
     [j : i64 start]
     [keep : bool true]
@@ -484,7 +531,8 @@
         (set! keep false)))
     j))
 
-(define (fmt-scan-comment-end [data : (Ptr u8)] [start : i64] [n : i64]) : i64
+(define (fmt-scan-comment-end [data : (Ptr u8)] [start : i64] [n : i64])
+  (:cold) : i64
   (let
     [j : i64 start]
     [keep : bool true]
@@ -500,7 +548,8 @@
   [src : (& src str)]
   [data : (Ptr u8)]
   [start : i64]
-  [n : i64]) : result_fmt_i64.Result
+  [n : i64])
+  (:cold) : result_fmt_i64.Result
   (let
     [j : i64 start]
     [escaped : bool false]
@@ -528,14 +577,16 @@
               "format lexer: unterminated string literal")))))
     (Ok j)))
 
-(define (fmt-apostrophe-escape? [c : char]) : bool
+(define (fmt-apostrophe-escape? [c : char])
+  (:cold) : bool
   (or (= c 'n') (= c 't') (= c 'r') (= c '0') (= c '\\') (= c '\'')))
 
 (define (fmt-char-close-error
   [src : (& src str)]
   [data : (Ptr u8)]
   [idx : i64]
-  [n : i64]) : ResultFmtMaybeCharEnd
+  [n : i64])
+  (:cold) : ResultFmtMaybeCharEnd
   (if (< idx n)
     (if (= (fmt-source-byte-bounds-proven data idx) '\'')
       (Ok (+ idx 1))
@@ -551,7 +602,8 @@
   [src : (& src str)]
   [data : (Ptr u8)]
   [start : i64]
-  [n : i64]) : ResultFmtMaybeCharEnd
+  [n : i64])
+  (:cold) : ResultFmtMaybeCharEnd
   (if (< (+ start 1) n)
     (let
       [payload : char (fmt-source-byte-bounds-proven data (+ start 1))]
@@ -587,7 +639,8 @@
   [starts : (__tl_dyn-array i64)]
   [count : i64]
   [start : i64]
-  [tok : FormatToken]) : unit
+  [tok : FormatToken])
+  (:cold) : unit
   (set! (array-ref tokens count) tok)
   (set! (array-ref starts count) start))
 
@@ -599,7 +652,8 @@
 (define (fmt-grow-token-array
   [old : (__tl_dyn-array FormatToken)]
   [count : i64]
-  [newcap : i64]) : (__tl_dyn-array FormatToken)
+  [newcap : i64])
+  (:cold) : (__tl_dyn-array FormatToken)
   (let
     [bigger : (__tl_dyn-array FormatToken) (__tl_make-array FormatToken newcap)]
     (for [j (iterator.range 0 count)]
@@ -609,7 +663,8 @@
 (define (fmt-grow-i64-array
   [old : (__tl_dyn-array i64)]
   [count : i64]
-  [newcap : i64]) : (__tl_dyn-array i64)
+  [newcap : i64])
+  (:cold) : (__tl_dyn-array i64)
   (let
     [bigger : (__tl_dyn-array i64) (__tl_make-array i64 newcap)]
     (for [j (iterator.range 0 count)]
@@ -618,10 +673,12 @@
 
 ;; Token-buffer capacity estimate for a `n`-byte source: roughly one token per
 ;; three bytes, with slack for short inputs and the trailing `FormatToken.End`.
-(define (fmt-token-capacity-estimate [n : i64]) : i64
+(define (fmt-token-capacity-estimate [n : i64])
+  (:cold) : i64
   (+ (/ n 3) 16))
 
-(define (fmt-recovery-token-delimiter? [c : char]) : bool
+(define (fmt-recovery-token-delimiter? [c : char])
+  (:cold) : bool
   (or
     (fmt-char-class? c 1)
     (= c '(')
@@ -634,7 +691,8 @@
     (= c '`')
     (= c ',')))
 
-(define (fmt-scan-recovery-token-end [data : (Ptr u8)] [start : i64] [n : i64]) : i64
+(define (fmt-scan-recovery-token-end [data : (Ptr u8)] [start : i64] [n : i64])
+  (:cold) : i64
   (let
     [i : i64 start]
     (while (and
@@ -650,7 +708,8 @@
 ;; retains every proven token before an error, treats an unterminated string as
 ;; a string through EOF, and advances past other malformed source without
 ;; guessing an identifier. The formatter keeps the strict result surface.
-(define (format-lex-mode-result [src : String] [recover : bool]) : ResultFormatTokenStream
+(define (format-lex-mode-result [src : String] [recover : bool])
+  (:cold) : ResultFormatTokenStream
   (let
     [n : i64 (string.string-length src)]
     [data : (Ptr u8)
@@ -908,10 +967,12 @@
       (End))
     (Ok (FormatTokenStream src tokens starts (+ count 1)))))
 
-(define (format-lex-result [src : String]) : ResultFormatTokenStream
+(define (format-lex-result [src : String])
+  (:cold) : ResultFormatTokenStream
   (format-lex-mode-result src false))
 
-(define (format-lex-recover [src : String]) : FormatTokenStream
+(define (format-lex-recover [src : String])
+  (:cold) : FormatTokenStream
   (match (format-lex-mode-result
     (owned_view.compiler-owned-shared-view src)
     true)

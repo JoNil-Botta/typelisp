@@ -40,14 +40,16 @@
 (defenum DocExtraction
   (Extraction String doc_item_vec.Vec))
 
-(define (doc-extraction-empty) : DocExtraction
+(define (doc-extraction-empty)
+  (:cold) : DocExtraction
   (Extraction "" (doc_item_vec.new)))
 
 (defenum DocMaybeDeclInfo
   (No)
   (DocDeclInfo DocItemKind String))
 
-(define (doc-kind-tag [kind : DocItemKind]) : i64
+(define (doc-kind-tag [kind : DocItemKind])
+  (:cold) : i64
   (match kind
     [(Define) 1]
     [(Function) 2]
@@ -57,7 +59,8 @@
     [(DefMacro) 6]
     [(GeneratedImport) 7]))
 
-(define (doc-kind-name [kind : DocItemKind]) : String
+(define (doc-kind-name [kind : DocItemKind])
+  (:cold) : String
   (match kind
     [(Define) "define"]
     [(Function) "define-function"]
@@ -67,38 +70,47 @@
     [(DefMacro) "defmacro"]
     [(GeneratedImport) "generated-module-import"]))
 
-(define (doc-extraction-module-doc [docs : DocExtraction]) : String
+(define (doc-extraction-module-doc [docs : DocExtraction])
+  (:cold) : String
   (match docs
     [(Extraction module-doc _) module-doc]))
 
-(define (doc-extraction-items [docs : DocExtraction]) : doc_item_vec.Vec
+(define (doc-extraction-items [docs : DocExtraction])
+  (:cold) : doc_item_vec.Vec
   (match docs
     [(Extraction _ items) items]))
 
-(define (doc-item-kind [item : DocItem]) : DocItemKind
+(define (doc-item-kind [item : DocItem])
+  (:cold) : DocItemKind
   (match item
     [(Item kind _ _ _ _) kind]))
 
-(define (doc-item-name [item : DocItem]) : String
+(define (doc-item-name [item : DocItem])
+  (:cold) : String
   (match item
     [(Item _ name _ _ _) name]))
 
-(define (doc-item-doc [item : DocItem]) : String
+(define (doc-item-doc [item : DocItem])
+  (:cold) : String
   (match item
     [(Item _ _ doc-text _ _) doc-text]))
 
-(define (doc-item-signature [item : DocItem]) : String
+(define (doc-item-signature [item : DocItem])
+  (:cold) : String
   (match item
     [(Item _ _ _ signature _) signature]))
 
-(define (doc-item-source-line [item : DocItem]) : i64
+(define (doc-item-source-line [item : DocItem])
+  (:cold) : i64
   (match item
     [(Item _ _ _ _ source-line) source-line]))
 
-(define (doc-item-fallback) : DocItem
+(define (doc-item-fallback)
+  (:cold) : DocItem
   (Item (Define) "" "" "" 0))
 
-(define (doc-item-copy [item : (& item DocItem)]) : DocItem
+(define (doc-item-copy [item : (& item DocItem)])
+  (:cold) : DocItem
   (match item
     [(Item kind name doc-text signature source-line)
       (Item
@@ -108,10 +120,12 @@
         (string.copy signature)
         source-line)]))
 
-(define (doc-item-list-count [items : (& items doc_item_vec.Vec)]) : i64
+(define (doc-item-list-count [items : (& items doc_item_vec.Vec)])
+  (:cold) : i64
   (doc_item_vec.len (& items)))
 
-(define (doc-item-list-ref [items : (& items doc_item_vec.Vec)] [index : i64]) : DocItem
+(define (doc-item-list-ref [items : (& items doc_item_vec.Vec)] [index : i64])
+  (:cold) : DocItem
   (if (and (>= index 0) (< index (doc_item_vec.len items)))
     (let
       [view : (& items (Slice DocItem)) (doc_item_vec.view items)]
@@ -122,7 +136,8 @@
   [out : (&mut out doc_item_vec.Vec)]
   [items : (__tl_dyn-array DocItem)]
   [index : i64]
-  [count : i64]) : unit
+  [count : i64])
+  (:cold) : unit
   (unless
     (>= index count)
     (doc_item_vec.push-ref!
@@ -130,7 +145,8 @@
       (owned_view.compiler-owned-array-element-shared-view items index))
     (doc-item-array-copy-to-list out items (+ index 1) count)))
 
-(define (doc-item-array-to-list [items : (__tl_dyn-array DocItem)]) : doc_item_vec.Vec
+(define (doc-item-array-to-list [items : (__tl_dyn-array DocItem)])
+  (:cold) : doc_item_vec.Vec
   (let
     [out : doc_item_vec.Vec (doc_item_vec.with-capacity (array-length items))]
     (doc-item-array-copy-to-list
@@ -140,13 +156,16 @@
       (array-length items))
     out))
 
-(define (doc-inline-space? [c : char]) : bool
+(define (doc-inline-space? [c : char])
+  (:cold) : bool
   (or (= c ' ') (= c '\t')))
 
-(define (doc-newline? [c : char]) : bool
+(define (doc-newline? [c : char])
+  (:cold) : bool
   (or (= c '\n') (= c '\r')))
 
-(define (doc-first-nonspace [src : (& src str)] [start : i64] [end : i64]) : i64
+(define (doc-first-nonspace [src : (& src str)] [start : i64] [end : i64])
+  (:cold) : i64
   (let
     [i : i64 start]
     [keep : bool true]
@@ -161,7 +180,8 @@
 (define (doc-append-line
   [current : String]
   [has-current : bool]
-  [line : String]) : String
+  [line : String])
+  (:cold) : String
   (if has-current
     (str_cat.str-cat current "\n" line)
     line))
@@ -170,7 +190,8 @@
   [src : (& src str)]
   [line-start : i64]
   [line-end : i64]
-  [prefix-len : i64]) : String
+  [prefix-len : i64])
+  (:cold) : String
   (let
     [body-start : i64 (+ line-start prefix-len)]
     (if (< body-start line-end)
@@ -180,17 +201,20 @@
       (set! body-start body-start))
     (string.substring src body-start (- line-end body-start))))
 
-(define (doc-module-doc-prefix-len [src : (& src str)] [line-start : i64]) : i64
+(define (doc-module-doc-prefix-len [src : (& src str)] [line-start : i64])
+  (:cold) : i64
   (if (string.is-string-prefix-at src ";#" line-start)
     2
     0))
 
-(define (doc-item-doc-prefix-len [src : (& src str)] [line-start : i64]) : i64
+(define (doc-item-doc-prefix-len [src : (& src str)] [line-start : i64])
+  (:cold) : i64
   (if (string.is-string-prefix-at src ";:" line-start)
     2
     0))
 
-(define (doc-scan-string-end [src : (& src str)] [start : i64] [n : i64]) : i64
+(define (doc-scan-string-end [src : (& src str)] [start : i64] [n : i64])
+  (:cold) : i64
   (let
     [i : i64 (+ start 1)]
     [escaped : bool false]
@@ -213,7 +237,8 @@
         (set! keep false)))
     i))
 
-(define (doc-scan-form-end [src : (& src str)] [start : i64] [n : i64]) : i64
+(define (doc-scan-form-end [src : (& src str)] [start : i64] [n : i64])
+  (:cold) : i64
   (let
     [i : i64 start]
     [depth : i64 0]
@@ -243,7 +268,8 @@
         (set! keep false)))
     i))
 
-(define (doc-decl-symbol-char? [c : char]) : bool
+(define (doc-decl-symbol-char? [c : char])
+  (:cold) : bool
   (or
     (and (>= c 'A') (<= c 'Z'))
     (and (>= c 'a') (<= c 'z'))
@@ -268,7 +294,8 @@
         0)
       1)))
 
-(define (doc-decl-symbol-start? [src : (& src str)] [idx : i64] [n : i64]) : bool
+(define (doc-decl-symbol-start? [src : (& src str)] [idx : i64] [n : i64])
+  (:cold) : bool
   (if (< idx n)
     (let
       [c : char (string.string-ref src idx)]
@@ -286,7 +313,8 @@
                 false))))))
     false))
 
-(define (doc-decl-next-token [src : (& src str)] [idx : i64] [n : i64]) : i64
+(define (doc-decl-next-token [src : (& src str)] [idx : i64] [n : i64])
+  (:cold) : i64
   (let
     [i : i64 idx]
     [keep : bool true]
@@ -304,7 +332,8 @@
         (set! keep false)))
     i))
 
-(define (doc-decl-symbol-end [src : (& src str)] [idx : i64] [n : i64]) : i64
+(define (doc-decl-symbol-end [src : (& src str)] [idx : i64] [n : i64])
+  (:cold) : i64
   (let
     [i : i64 idx]
     [keep : bool true]
@@ -319,7 +348,8 @@
 (define (doc-info-after-name
   [kind : DocItemKind]
   [src : (& src str)]
-  [idx : i64]) : DocMaybeDeclInfo
+  [idx : i64])
+  (:cold) : DocMaybeDeclInfo
   (let
     [n : i64 (string.string-length src)]
     [name-idx : i64 (doc-decl-next-token src idx n)]
@@ -332,7 +362,8 @@
           (- (doc-decl-symbol-end src name-idx n) name-idx)))
       (No))))
 
-(define (doc-info-after-define [src : (& src str)] [idx : i64]) : DocMaybeDeclInfo
+(define (doc-info-after-define [src : (& src str)] [idx : i64])
+  (:cold) : DocMaybeDeclInfo
   (let
     [n : i64 (string.string-length src)]
     [next : i64 (doc-decl-next-token src idx n)]
@@ -342,7 +373,8 @@
       (doc-info-after-name (Function) src (+ next 1))
       (doc-info-after-name (Define) src next))))
 
-(define (doc-info-after-extern [src : (& src str)] [idx : i64]) : DocMaybeDeclInfo
+(define (doc-info-after-extern [src : (& src str)] [idx : i64])
+  (:cold) : DocMaybeDeclInfo
   (let
     [n : i64 (string.string-length src)]
     [next : i64 (doc-decl-next-token src idx n)]
@@ -352,7 +384,8 @@
       (doc-info-after-name (Extern) src (+ next 1))
       (doc-info-after-name (Extern) src next))))
 
-(define (doc-info-after-defmacro [src : (& src str)] [idx : i64]) : DocMaybeDeclInfo
+(define (doc-info-after-defmacro [src : (& src str)] [idx : i64])
+  (:cold) : DocMaybeDeclInfo
   (let
     [n : i64 (string.string-length src)]
     [next : i64 (doc-decl-next-token src idx n)]
@@ -362,7 +395,8 @@
       (doc-info-after-name (DefMacro) src (+ next 1))
       (No))))
 
-(define (doc-decl-info-at-list [src : (& src str)] [open-idx : i64]) : DocMaybeDeclInfo
+(define (doc-decl-info-at-list [src : (& src str)] [open-idx : i64])
+  (:cold) : DocMaybeDeclInfo
   (let
     [n : i64 (string.string-length src)]
     (if (if (< open-idx n)
@@ -391,7 +425,8 @@
           (No)))
       (No))))
 
-(define (doc-decl-info [signature : (& signature str)]) : DocMaybeDeclInfo
+(define (doc-decl-info [signature : (& signature str)])
+  (:cold) : DocMaybeDeclInfo
   (let
     [n : i64 (string.string-length signature)]
     [open-idx : i64 (doc-decl-next-token signature 0 n)]
@@ -400,14 +435,16 @@
 ;; The extractor keeps the written signature for module pages and doc
 ;; expansion. Public renderers scan only immediate metadata forms, so
 ;; parentheses in a field type or comments cannot act as opacity markers.
-(define (doc-list-start? [src : (& src str)] [start : i64] [end : i64]) : bool
+(define (doc-list-start? [src : (& src str)] [start : i64] [end : i64])
+  (:cold) : bool
   (and
     (< start end)
     (let
       [c : char (string.string-ref src start)]
       (or (= c '(') (= c '[')))))
 
-(define (doc-opaque-form? [src : (& src str)] [start : i64] [end : i64]) : bool
+(define (doc-opaque-form? [src : (& src str)] [start : i64] [end : i64])
+  (:cold) : bool
   (let
     [head : i64 (doc-decl-next-token src (+ start 1) end)]
     [after : i64 (+ head 7)]
@@ -418,7 +455,8 @@
       (= (doc-decl-next-token src after end) (- end 1))
       (= (string.string-ref src (- end 1)) ')'))))
 
-(define (doc-field-opaque? [src : (& src str)] [start : i64] [end : i64]) : bool
+(define (doc-field-opaque? [src : (& src str)] [start : i64] [end : i64])
+  (:cold) : bool
   (let
     [name : i64 (doc-decl-next-token src (+ start 1) end)]
     [ty : i64 (doc-decl-next-token src (doc-decl-symbol-end src name end) end)]
@@ -445,7 +483,8 @@
   [src : (& src str)]
   [start : i64]
   [end : i64]
-  [struct? : bool]) : DocAggregateOpacity
+  [struct? : bool])
+  (:cold) : DocAggregateOpacity
   (let
     [previous-end : i64 start]
     [i : i64 (doc-decl-next-token src start end)]
@@ -463,7 +502,8 @@
 (define (doc-struct-constructor-restricted?
   [src : (& src str)]
   [name-end : i64]
-  [end : i64]) : bool
+  [end : i64])
+  (:cold) : bool
   (match (doc-next-aggregate-opacity src name-end end true)
     [(NoOpacity) false]
     [_ true]))
@@ -471,7 +511,8 @@
 (define (doc-field-inline-comment-end
   [src : (& src str)]
   [after-field : i64]
-  [end : i64]) : i64
+  [end : i64])
+  (:cold) : i64
   (let
     [i : i64 after-field]
     (while (and (< i end) (doc-inline-space? (string.string-ref src i)))
@@ -484,7 +525,8 @@
   [signature : String]
   [head : String]
   [name : String]
-  [struct? : bool]) : String
+  [struct? : bool])
+  (:cold) : String
   (let
     [n : i64 (string.string-length signature)]
     [open : i64 (doc-decl-next-token (& signature) 0 n)]
@@ -524,7 +566,8 @@
               signature))]))
     signature))
 
-(define (doc-item-public-signature [item : (& item DocItem)]) : String
+(define (doc-item-public-signature [item : (& item DocItem)])
+  (:cold) : String
   (match item
     [(Item kind name _ signature _)
       (match kind
@@ -542,7 +585,8 @@
             false)]
         [_ (string.copy signature)])]))
 
-(define (doc-source-line-at [src : (& src str)] [offset : i64]) : i64
+(define (doc-source-line-at [src : (& src str)] [offset : i64])
+  (:cold) : i64
   (let
     [line : i64 1]
     (for [i (iterator.range 0 offset)]
@@ -551,7 +595,8 @@
         unit))
     line))
 
-(define (doc-extract-source [src : String]) : DocExtraction
+(define (doc-extract-source [src : String])
+  (:cold) : DocExtraction
   (let
     [n : i64 (string.string-length src)]
     [i : i64 0]
@@ -637,5 +682,6 @@
                   (set! i (source_text.next-line-start src line-end)))))))))
     (Extraction module-doc (doc-item-array-to-list items))))
 
-(define (doc-extract-file [path : String]) : DocExtraction
+(define (doc-extract-file [path : String])
+  (:cold) : DocExtraction
   (doc-extract-source (byte_buf.to-string (io.read-file path))))

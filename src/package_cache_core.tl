@@ -48,7 +48,8 @@
 
 ;; Exact Git object IDs are lowercase SHA-1 or SHA-256 hex, never ref names
 ;; or abbreviations. Admission and checked-out HEADs use the same contract.
-(define (package-cache-canonical-commit? [commit : (& commit str)]) : bool
+(define (package-cache-canonical-commit? [commit : (& commit str)])
+  (:cold) : bool
   (let
     [n : i64 (string.string-length commit)]
     (when (not (or (= n 40) (= n 64))) (return false))
@@ -60,7 +61,8 @@
           (return false))))
     true))
 
-(define (package-cache-pin-kind-name [kind : PackageCachePinKind]) : String
+(define (package-cache-pin-kind-name [kind : PackageCachePinKind])
+  (:cold) : String
   (match kind
     [(Rev) "rev"]
     [(Tag) "tag"]
@@ -68,7 +70,8 @@
 
 (define (package-cache-pin-kind-eq?
   [left : PackageCachePinKind]
-  [right : PackageCachePinKind]) : bool
+  [right : PackageCachePinKind])
+  (:cold) : bool
   (match left
     [(Rev)
       (match right
@@ -87,7 +90,8 @@
   (Ok PackageCachePinKind)
   (Err String))
 
-(define (package-cache-safe-code? [code : i64]) : bool
+(define (package-cache-safe-code? [code : i64])
+  (:cold) : bool
   (or
     (and (>= code 48) (<= code 57))
     (and (>= code 65) (<= code 90))
@@ -95,7 +99,8 @@
     (= code 45)
     (= code 95)))
 
-(define (package-cache-hex-digit [value : i64]) : String
+(define (package-cache-hex-digit [value : i64])
+  (:cold) : String
   (cond
     [(= value 0) "0"]
     [(= value 1) "1"]
@@ -114,7 +119,8 @@
     [(= value 14) "e"]
     [else "f"]))
 
-(define (package-cache-escape-code [code : i64]) : String
+(define (package-cache-escape-code [code : i64])
+  (:cold) : String
   (let
     [byte : i64 (% code 256)]
     [hi : i64 (/ byte 16)]
@@ -125,7 +131,8 @@
       (package-cache-hex-digit lo)
       "_")))
 
-(define (package-cache-escape-component [text : (& text str)]) : String
+(define (package-cache-escape-component [text : (& text str)])
+  (:cold) : String
   (let
     [n : i64 (string.string-length text)]
     [out : String ""]
@@ -137,7 +144,8 @@
           (set! out (str_cat.str-cat out (package-cache-escape-code code) "")))))
     out))
 
-(define (package-cache-unversioned-root [package-root : (& package-root str)]) : String
+(define (package-cache-unversioned-root [package-root : (& package-root str)])
+  (:cold) : String
   (let
     [target : String
       (fs.path-join-owned-pair (string.copy package-root) "target")]
@@ -145,14 +153,16 @@
     [cache : String (fs.path-join-owned-pair typelisp "cache")]
     (fs.path-join-owned-pair cache "packages")))
 
-(define (package-cache-default-root [package-root : (& package-root str)]) : String
+(define (package-cache-default-root [package-root : (& package-root str)])
+  (:cold) : String
   (let
     [root : String (package-cache-unversioned-root package-root)]
     (fs.path-join-owned-pair root (string.copy (& package-cache-version)))))
 
 (define (package-cache-entry-url-dir
   [root : (& root str)]
-  [key : (& key PackageCacheKey)]) : String
+  [key : (& key PackageCacheKey)])
+  (:cold) : String
   (let
     [git-dir : String (fs.path-join-owned-pair (string.copy root) "git")]
     [url-dir : String (package-cache-escape-component (& key.url))]
@@ -160,25 +170,29 @@
 
 (define (package-cache-entry-rev-dir
   [root : (& root str)]
-  [key : (& key PackageCacheKey)]) : String
+  [key : (& key PackageCacheKey)])
+  (:cold) : String
   (let
     [url-dir : String (package-cache-entry-url-dir root key)]
     (fs.path-join-owned-pair url-dir "rev")))
 
 (define (package-cache-entry-path
   [root : (& root str)]
-  [key : (& key PackageCacheKey)]) : String
+  [key : (& key PackageCacheKey)])
+  (:cold) : String
   (let
     [rev-dir : String (package-cache-entry-rev-dir root key)]
     [commit-dir : String (package-cache-escape-component (& key.commit))]
     (fs.path-join-owned-pair rev-dir commit-dir)))
 
-(define (package-cache-staging-root [root : (& root str)]) : String
+(define (package-cache-staging-root [root : (& root str)])
+  (:cold) : String
   (fs.path-join-owned-pair (string.copy root) "_staging"))
 
 (define (package-cache-staging-url-dir
   [root : (& root str)]
-  [key : (& key PackageCacheKey)]) : String
+  [key : (& key PackageCacheKey)])
+  (:cold) : String
   (let
     [staging-root : String (package-cache-staging-root root)]
     [git-dir : String (fs.path-join-owned-pair staging-root "git")]
@@ -187,7 +201,8 @@
 
 (define (package-cache-staging-rev-dir
   [root : (& root str)]
-  [key : (& key PackageCacheKey)]) : String
+  [key : (& key PackageCacheKey)])
+  (:cold) : String
   (let
     [url-dir : String (package-cache-staging-url-dir root key)]
     (fs.path-join-owned-pair url-dir "rev")))
@@ -195,7 +210,8 @@
 (define (package-cache-staging-path
   [root : (& root str)]
   [key : (& key PackageCacheKey)]
-  [attempt : i64]) : String
+  [attempt : i64])
+  (:cold) : String
   (let
     [rev-dir : String (package-cache-staging-rev-dir root key)]
     [commit-dir : String (package-cache-escape-component (& key.commit))]
@@ -203,17 +219,20 @@
       (str_cat.str-cat commit-dir ".tmp." (string.int->string attempt))]
     (fs.path-join-owned-pair rev-dir staged-name)))
 
-(define (package-cache-metadata-path [entry-path : (& entry_path str)]) : String
+(define (package-cache-metadata-path [entry-path : (& entry_path str)])
+  (:cold) : String
   (fs.path-join-owned-pair
     (string.copy entry-path)
     (string.copy (& package-cache-metadata-name))))
 
-(define (package-cache-complete-marker-path [entry-path : (& entry_path str)]) : String
+(define (package-cache-complete-marker-path [entry-path : (& entry_path str)])
+  (:cold) : String
   (fs.path-join-owned-pair
     (string.copy entry-path)
     (string.copy (& package-cache-complete-marker-name))))
 
-(define (package-cache-metadata-content [key : (& key PackageCacheKey)]) : String
+(define (package-cache-metadata-content [key : (& key PackageCacheKey)])
+  (:cold) : String
   (let
     [url : String (string.copy (& key.url))]
     [commit : String (string.copy (& key.commit))]
@@ -224,17 +243,20 @@
       commit
       "\n")))
 
-(define (package-cache-complete-marker-content) : String
+(define (package-cache-complete-marker-content)
+  (:cold) : String
   "typelisp-package-cache-v1 complete\n")
 
-(define (package-cache-file-exists? [path : (& path str)]) : bool
+(define (package-cache-file-exists? [path : (& path str)])
+  (:cold) : bool
   (match (io.try-file-exists? path)
     [(OkIoBool exists) exists]
     [(ErrIoBool _) false]))
 
 (define (package-cache-entry-state
   [entry-path : (& entry_path str)]
-  [key : (& key PackageCacheKey)]) : PackageCacheEntryState
+  [key : (& key PackageCacheKey)])
+  (:cold) : PackageCacheEntryState
   (let
     [metadata-path : String (package-cache-metadata-path entry-path)]
     [marker-path : String (package-cache-complete-marker-path entry-path)]
@@ -278,14 +300,16 @@
                       (string.copy entry-path)
                       "completion marker mismatch"))]))])])))
 
-(define (package-cache-then-mkdir [result : io.ResultIoUnit] [path : String]) : io.ResultIoUnit
+(define (package-cache-then-mkdir [result : io.ResultIoUnit] [path : String])
+  (:cold) : io.ResultIoUnit
   (let
     [_ (try result)]
     (fs.try-mkdir-if-missing (& path))))
 
 (define (package-cache-prepare-entry-parents
   [root : (& root str)]
-  [key : (& key PackageCacheKey)]) : io.ResultIoUnit
+  [key : (& key PackageCacheKey)])
+  (:cold) : io.ResultIoUnit
   (let
     [git-dir : String (fs.path-join-owned-pair (string.copy root) "git")]
     [url-dir : String (package-cache-entry-url-dir root key)]
@@ -298,7 +322,8 @@
 
 (define (package-cache-prepare-staging-parents
   [root : (& root str)]
-  [key : (& key PackageCacheKey)]) : io.ResultIoUnit
+  [key : (& key PackageCacheKey)])
+  (:cold) : io.ResultIoUnit
   (let
     [staging-root : String (package-cache-staging-root root)]
     [git-dir : String
@@ -315,12 +340,14 @@
 
 (define (package-cache-finalize-staged
   [staged-path : String]
-  [entry-path : (& entry-path str)]) : io.ResultIoUnit
+  [entry-path : (& entry-path str)])
+  (:cold) : io.ResultIoUnit
   (fs.try-rename (& staged-path) entry-path))
 
 (define (package-cache-write-complete-marker
   [entry-path : (& entry_path str)]
-  [key : (& key PackageCacheKey)]) : io.ResultIoUnit
+  [key : (& key PackageCacheKey)])
+  (:cold) : io.ResultIoUnit
   (let
     [metadata-path : String (package-cache-metadata-path entry-path)]
     [marker-path : String (package-cache-complete-marker-path entry-path)]

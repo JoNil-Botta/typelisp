@@ -34,7 +34,8 @@
 (define default-chunk-bytes : i64
   65536)
 
-(define (unbounded) : UnifiedDiffOptions
+(define (unbounded)
+  (:cold) : UnifiedDiffOptions
   (UnifiedDiffOptions no-limit no-limit default-chunk-bytes))
 
 ;: Why a rendering stopped; stable event vocabulary for #7280.
@@ -64,10 +65,12 @@
 (define anchor-lines : i64
   3)
 
-(define (ascii [c : char]) : u8
+(define (ascii [c : char])
+  (:cold) : u8
   (cast c : u8))
 
-(define (newline-byte) : u8
+(define (newline-byte)
+  (:cold) : u8
   (ascii '\n'))
 
 ;; `starts[i]` is the offset of line `i` and `starts[count]` is one past the
@@ -78,7 +81,8 @@
   (starts (__tl_dyn-array i64))
   (count i64))
 
-(define (side [text : (& t str)]) : (Side t)
+(define (side [text : (& t str)])
+  (:cold) : (Side t)
   (let
     [count : i64 1]
     [cursor : i64 (string.index-of-byte text 0 (newline-byte))]
@@ -97,13 +101,16 @@
       (set! (array-ref starts count) (+ (string.string-length text) 1))
       (Side text starts count))))
 
-(define (line-start [lines : (& s (Side t))] [index : i64]) : i64
+(define (line-start [lines : (& s (Side t))] [index : i64])
+  (:cold) : i64
   (array-ref lines.starts index))
 
-(define (line-length [lines : (& s (Side t))] [index : i64]) : i64
+(define (line-length [lines : (& s (Side t))] [index : i64])
+  (:cold) : i64
   (- (array-ref lines.starts (+ index 1)) (+ (array-ref lines.starts index) 1)))
 
-(define (text-byte [text : (& t str)] [index : i64]) : i64
+(define (text-byte [text : (& t str)] [index : i64])
+  (:cold) : i64
   (cast (string.string-ref text index) : i64))
 
 ;; Compare two lines in place. `substring-view` would retain a
@@ -118,7 +125,8 @@
   [old : (& o (Side a))]
   [old-index : i64]
   [new : (& n (Side b))]
-  [new-index : i64]) : bool
+  [new-index : i64])
+  (:cold) : bool
   (let
     [len : i64 (line-length old old-index)]
     (and
@@ -172,7 +180,8 @@
   [old-end : i64]
   [new : (& n (Side b))]
   [new-index : i64]
-  [new-end : i64]) : bool
+  [new-end : i64])
+  (:cold) : bool
   (and
     (< old-index old-end)
     (< new-index new-end)
@@ -205,7 +214,8 @@
   [old-end : i64]
   [new : (& n (Side b))]
   [new-index : i64]
-  [new-end : i64]) : bool
+  [new-end : i64])
+  (:cold) : bool
   (let
     [old-left : i64 (- old-end old-index)]
     [new-left : i64 (- new-end new-index)]
@@ -241,7 +251,8 @@
   [old-end : i64]
   [new : (& n (Side b))]
   [new-index : i64]
-  [new-end : i64]) : Sync
+  [new-end : i64])
+  (:cold) : Sync
   (let
     [old-left : i64 (- old-end old-index)]
     [new-left : i64 (- new-end new-index)]
@@ -295,7 +306,8 @@
       (SyncFound found-old found-new)
       (SyncMissing))))
 
-(define (window-end [index : i64] [end : i64]) : i64
+(define (window-end [index : i64] [end : i64])
+  (:cold) : i64
   (if (< (- end index) lookahead-lines)
     end
     (+ index lookahead-lines)))
@@ -304,7 +316,8 @@
   [old : (& o (Side a))]
   [new : (& n (Side b))]
   [scan-old : i64]
-  [scan-new : i64]) : HunkStep
+  [scan-new : i64])
+  (:cold) : HunkStep
   (let
     [old-len : i64 old.count]
     [new-len : i64 new.count]
@@ -385,7 +398,8 @@
   (omitted-lines i64)
   (status i64))
 
-(define (output [options : UnifiedDiffOptions]) : Output
+(define (output [options : UnifiedDiffOptions])
+  (:cold) : Output
   (let
     [chunk : i64
       (if (< options.chunk-bytes default-chunk-bytes)
@@ -408,7 +422,8 @@
 
 ;; Hand the staged bytes to the sink. After a failure nothing is staged or
 ;; offered again, so the sink sees at most one failing call.
-(define (flush! [out : (&mut o Output)] [sink : (-> (& bytes) i64)]) : unit
+(define (flush! [out : (&mut o Output)] [sink : (-> (& bytes) i64)])
+  (:cold) : unit
   (when
     (and (= out.status 0) (> out.stage.len 0))
     (let
@@ -424,7 +439,8 @@
 (define (put-byte!
   [out : (&mut o Output)]
   [sink : (-> (& bytes) i64)]
-  [value : u8]) : unit
+  [value : u8])
+  (:cold) : unit
   (when (>= out.stage.len out.chunk-bytes) (flush! out sink))
   (when
     (= out.status 0)
@@ -440,7 +456,8 @@
   [sink : (-> (& bytes) i64)]
   [text : (& t str)]
   [start : i64]
-  [count : i64]) : unit
+  [count : i64])
+  (:cold) : unit
   (let
     [cursor : i64 start]
     [left : i64 count]
@@ -466,7 +483,8 @@
           (+= cursor n)
           (-= left n))))))
 
-(define (put-newline! [out : (&mut o Output)] [sink : (-> (& bytes) i64)]) : unit
+(define (put-newline! [out : (&mut o Output)] [sink : (-> (& bytes) i64)])
+  (:cold) : unit
   (put-byte! out sink (newline-byte))
   (when (= out.status 0) (+= out.staged-lines 1)))
 
@@ -474,7 +492,8 @@
 ;; of either input is rendered at most once, so all totals stay within a small
 ;; multiple of the input sizes; the cap test subtracts from the cap instead of
 ;; adding to the admitted total, so `no-limit` cannot overflow.
-(define (admit! [out : (&mut o Output)] [size : i64]) : bool
+(define (admit! [out : (&mut o Output)] [size : i64])
+  (:cold) : bool
   (cond
     [(!= out.status 0) false]
     [(and
@@ -490,7 +509,8 @@
       (+= out.omitted-lines 1)
       false]))
 
-(define (decimal-width [value : i64]) : i64
+(define (decimal-width [value : i64])
+  (:cold) : i64
   (let
     [width : i64 1]
     [rest : i64 (/ value 10)]
@@ -502,7 +522,8 @@
 (define (put-decimal!
   [out : (&mut o Output)]
   [sink : (-> (& bytes) i64)]
-  [value : i64]) : unit
+  [value : i64])
+  (:cold) : unit
   (let
     [divisor : i64 1]
     (for [digit (iterator.range 1 (decimal-width value))]
@@ -519,14 +540,16 @@
 ;: bytes are written as `\a \b \t \n \v \f \r \" \\` or three-digit octal.
 ;: Bytes >= 0x80 stay raw. Any other path is written verbatim, so an unquoted
 ;: name never starts with `"` and the rule is reversible.
-(define (escape-width [byte : i64]) : i64
+(define (escape-width [byte : i64])
+  (:cold) : i64
   (cond
     [(or (= byte (cast '"' : i64)) (= byte (cast '\\' : i64))) 2]
     [(and (>= byte 7) (<= byte 13)) 2]
     [(or (< byte 32) (= byte 127)) 4]
     [else 1]))
 
-(define (escaped-path-width [path : (& p str)]) : i64
+(define (escaped-path-width [path : (& p str)])
+  (:cold) : i64
   (let
     [width : i64 0]
     (for [index (iterator.range 0 (string.string-length path))]
@@ -536,7 +559,8 @@
 (define (put-escaped-byte!
   [out : (&mut o Output)]
   [sink : (-> (& bytes) i64)]
-  [byte : i64]) : unit
+  [byte : i64])
+  (:cold) : unit
   (let
     [width : i64 (escape-width byte)]
     (cond
@@ -567,7 +591,8 @@
   [sink : (-> (& bytes) i64)]
   [lead : u8]
   [side-letter : u8]
-  [path : (& p str)]) : unit
+  [path : (& p str)])
+  (:cold) : unit
   (let
     [escaped : i64 (escaped-path-width path)]
     [quoted : bool (!= escaped (string.string-length path))]
@@ -594,7 +619,8 @@
 (define (put-hunk-header!
   [out : (&mut o Output)]
   [sink : (-> (& bytes) i64)]
-  [hunk : Hunk]) : unit
+  [hunk : Hunk])
+  (:cold) : unit
   (let
     [old-first : i64 (+ hunk.old-start 1)]
     [old-count : i64 (- hunk.old-end hunk.old-start)]
@@ -626,7 +652,8 @@
   [marker : u8]
   [lines : (& s (Side t))]
   [from : i64]
-  [to : i64]) : unit
+  [to : i64])
+  (:cold) : unit
   (let
     [index : i64 from]
     (while (and (< index to) (= out.status 0))
@@ -644,7 +671,8 @@
   [sink : (-> (& bytes) i64)]
   [old : (& o (Side a))]
   [new : (& n (Side b))]
-  [hunk : Hunk]) : unit
+  [hunk : Hunk])
+  (:cold) : unit
   (let
     [old-index : i64 hunk.old-start]
     [new-index : i64 hunk.new-start]
@@ -688,7 +716,8 @@
               (set! old-index old-next)
               (set! new-index new-next))])))))
 
-(define (report [out : (& o Output)]) : UnifiedDiffReport
+(define (report [out : (& o Output)])
+  (:cold) : UnifiedDiffReport
   (UnifiedDiffReport
     (cond
       [(!= out.status 0) (SinkFailed out.status)]
@@ -707,7 +736,8 @@
   [old-text : (& o str)]
   [new-text : (& n str)]
   [options : UnifiedDiffOptions]
-  [sink : (-> (& bytes) i64)]) : UnifiedDiffReport
+  [sink : (-> (& bytes) i64)])
+  (:cold) : UnifiedDiffReport
   (if (or
     (< options.max-bytes 0)
     (< options.max-lines 0)

@@ -15,7 +15,8 @@
 
 ;; A package name must be non-empty and contain only name-safe characters
 ;; (alphanumerics, `-`, `_`): no path separators or whitespace.
-(define (scaffold-name-bad-char? [name : (& name str)]) : bool
+(define (scaffold-name-bad-char? [name : (& name str)])
+  (:cold) : bool
   (for [idx (iterator.range 0 (string.string-length name))]
     (let
       [c : char (string.string-ref name idx)]
@@ -29,12 +30,14 @@
         (return true))))
   false)
 
-(define (scaffold-name-ok? [name : (& name str)]) : bool
+(define (scaffold-name-ok? [name : (& name str)])
+  (:cold) : bool
   (and (> (string.string-length name) 0) (not (scaffold-name-bad-char? name))))
 
 ;; The `typelisp.pkg` manifest text, matching the `(package ...)` form parsed by
 ;; compiler_load.tl: name, version, kind ("bin"|"staticlib"), and entry path.
-(define (scaffold-manifest [name : String] [kind : String] [entry : String]) : String
+(define (scaffold-manifest [name : String] [kind : String] [entry : String])
+  (:cold) : String
   (str_cat.str-cat
     "(package (name \""
     name
@@ -44,21 +47,26 @@
     entry
     "\"))\n"))
 
-(define (scaffold-bin-source) : String
+(define (scaffold-bin-source)
+  (:cold) : String
   "(import stdlib.io)\n(cfg test (import stdlib.test))\n\n(define (answer) : i64\n  42)\n\n(test answer-is-42 (test.assert-i64-eq (answer) 42 \"answer should be 42\"))\n\n(define (main) : i64\n  (begin\n    (io.print-format \"{}\" \"Hello, TypeLisp!\\n\")\n    0))")
 
-(define (scaffold-lib-source) : String
+(define (scaffold-lib-source)
+  (:cold) : String
   "(cfg test (import stdlib.test))\n\n(define (answer) : i64\n  42)\n\n(test answer-is-42 (test.assert-i64-eq (answer) 42 \"answer should be 42\"))")
 
-(define (scaffold-try-mkdir [path : (& path str)]) : io.ResultIoUnit
+(define (scaffold-try-mkdir [path : (& path str)])
+  (:cold) : io.ResultIoUnit
   (fs.try-mkdir path))
 
-(define (scaffold-try-write-file [path : (& path str)] [contents : String]) : io.ResultIoUnit
+(define (scaffold-try-write-file [path : (& path str)] [contents : String])
+  (:cold) : io.ResultIoUnit
   (io.try-write-file path (byte_buf.str-as-bytes (& contents))))
 
 ;; Create a directory, treating an already-existing one as success. A genuine
 ;; create failure is an error.
-(define (scaffold-ensure-dir [path : String]) : io.ResultIoUnit
+(define (scaffold-ensure-dir [path : String])
+  (:cold) : io.ResultIoUnit
   (match (scaffold-try-mkdir path)
     [(OkIoUnit) OkIoUnit]
     [(ErrIoUnit _)
@@ -67,7 +75,8 @@
         (scaffold-try-mkdir path))]))
 
 ;; Write `contents` to `path`, refusing to overwrite an existing file.
-(define (scaffold-write-new [path : String] [contents : String]) : i64
+(define (scaffold-write-new [path : String] [contents : String])
+  (:cold) : i64
   (if (io.file-exists? (owned_view.compiler-owned-shared-view path))
     (begin
       (io.print-error
@@ -85,14 +94,16 @@
 
 ;; Create the package-local build-output ignore without changing an existing
 ;; repository policy during `typelisp init`.
-(define (scaffold-write-gitignore [path : String]) : i64
+(define (scaffold-write-gitignore [path : String])
+  (:cold) : i64
   (if (io.file-exists? (owned_view.compiler-owned-shared-view path))
     0
     (scaffold-write-new path "/target/\n")))
 
 ;; Create `root/src/`, then write the manifest, entry source, and build-output
 ;; ignore.
-(define (scaffold-emit [root : String] [name : String] [is-lib : bool]) : i64
+(define (scaffold-emit [root : String] [name : String] [is-lib : bool])
+  (:cold) : i64
   (let
     [kind : String
       (if is-lib
@@ -146,7 +157,8 @@
                 src-code))
             pkg-code))])))
 
-(define (scaffold-new [name : String] [is-lib : bool]) : i64
+(define (scaffold-new [name : String] [is-lib : bool])
+  (:cold) : i64
   (if (not (scaffold-name-ok? name))
     (begin
       (io.print-error
@@ -160,7 +172,8 @@
       [(OkIoUnit)
         (scaffold-emit (owned_view.compiler-owned-shared-view name) name is-lib)])))
 
-(define (scaffold-init [name : String] [is-lib : bool]) : i64
+(define (scaffold-init [name : String] [is-lib : bool])
+  (:cold) : i64
   (if (not (scaffold-name-ok? name))
     (begin
       (io.print-error
@@ -168,7 +181,8 @@
       2)
     (scaffold-emit "." name is-lib)))
 
-(define (scaffold-usage) : i64
+(define (scaffold-usage)
+  (:cold) : i64
   (io.print-error "scaffold: usage: (new|init) [--lib] <name>\n")
   2)
 
@@ -178,7 +192,8 @@
   [is-init : bool]
   [idx : i64]
   [count : i64]
-  [is-lib : bool]) : i64
+  [is-lib : bool])
+  (:cold) : i64
   (if (>= idx count)
     (scaffold-usage)
     (let
@@ -191,8 +206,10 @@
             (scaffold-new current is-lib))
           (scaffold-usage))))))
 
-(define (scaffold-new-run-from [start : i64] [count : i64]) : i64
+(define (scaffold-new-run-from [start : i64] [count : i64])
+  (:cold) : i64
   (scaffold-dispatch-from false start count false))
 
-(define (scaffold-init-run-from [start : i64] [count : i64]) : i64
+(define (scaffold-init-run-from [start : i64] [count : i64])
+  (:cold) : i64
   (scaffold-dispatch-from true start count false))

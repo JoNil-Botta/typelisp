@@ -44,18 +44,22 @@
   [command : String]
   [specs : String]
   [start : i64]
-  [count : i64]) : CliArgs
+  [count : i64])
+  (:cold) : CliArgs
   (CliArgs command specs count start start "" "" "" false false))
 
 ;; A leading `-` marks a flag: parsers reject unknown ones and treat anything
 ;; else as a positional argument.
-(define (cli-flag? [value : (& value str)]) : bool
+(define (cli-flag? [value : (& value str)])
+  (:cold) : bool
   (and (> (string.string-length value) 0) (= (string.string-ref value 0) '-')))
 
-(define (cli-spec-space? [c : char]) : bool
+(define (cli-spec-space? [c : char])
+  (:cold) : bool
   (or (= c ' ') (= c '\n')))
 
-(define (cli-spec-skip-space [specs : (& specs str)] [start : i64]) : i64
+(define (cli-spec-skip-space [specs : (& specs str)] [start : i64])
+  (:cold) : i64
   (let
     [n : i64 (string.string-length specs)]
     [i : i64 start]
@@ -63,7 +67,8 @@
       (+= i 1))
     i))
 
-(define (cli-spec-token-end [specs : (& specs str)] [start : i64]) : i64
+(define (cli-spec-token-end [specs : (& specs str)] [start : i64])
+  (:cold) : i64
   (let
     [n : i64 (string.string-length specs)]
     [i : i64 start]
@@ -72,7 +77,8 @@
     i))
 
 ;; End of the `|`-separated spelling at `start` in an entry ending at `end`.
-(define (cli-spec-alias-end [specs : (& specs str)] [start : i64] [end : i64]) : i64
+(define (cli-spec-alias-end [specs : (& specs str)] [start : i64] [end : i64])
+  (:cold) : i64
   (let
     [i : i64 start]
     (while (and (< i end) (not (= (string.string-ref specs i) '|')))
@@ -83,7 +89,8 @@
   [specs : (& specs str)]
   [start : i64]
   [end : i64]
-  [arg : (& arg str)]) : bool
+  [arg : (& arg str)])
+  (:cold) : bool
   (let
     [alias : i64 start]
     [found : bool false]
@@ -99,7 +106,8 @@
     found))
 
 ;; Find `arg` in a spec table: its canonical name and how many values it takes.
-(define (cli-option-lookup [specs : (& specs str)] [arg : (& arg str)]) : CliOptionMatch
+(define (cli-option-lookup [specs : (& specs str)] [arg : (& arg str)])
+  (:cold) : CliOptionMatch
   (let
     [n : i64 (string.string-length specs)]
     [i : i64 (cli-spec-skip-space specs 0)]
@@ -134,12 +142,14 @@
 
 (define (cli-option-missing-value-message
   [command : (& command str)]
-  [option : (& option str)]) : String
+  [option : (& option str)])
+  (:cold) : String
   (if (or (cli-compile-option? option) (string.eq option "--profile"))
     (string.concat3-borrowed "" option " requires a value")
     (string.concat4-borrowed command ": " option " requires a value")))
 
-(define (cli-args-fail! [args : (&mut args CliArgs)] [message : String]) : unit
+(define (cli-args-fail! [args : (&mut args CliArgs)] [message : String])
+  (:cold) : unit
   (set! args.error message)
   (set! args.failed true))
 
@@ -147,18 +157,21 @@
 ;; "clean: unknown flag --bogus".
 (define (cli-args-fail-arg!
   [args : (&mut args CliArgs)]
-  [prefix : (& prefix str)]) : unit
+  [prefix : (& prefix str)])
+  (:cold) : unit
   (let
     [message : String (string.concat3-borrowed prefix (& args.arg) "")]
     (cli-args-fail! args message)))
 
 ;; Stop before the next argument, leaving the rest of argv to the caller.
-(define (cli-args-stop! [args : (&mut args CliArgs)]) : unit
+(define (cli-args-stop! [args : (&mut args CliArgs)])
+  (:cold) : unit
   (set! args.stopped true))
 
 ;; Step to the next argument. False at the end of argv, after a failure, or
 ;; after `cli-args-stop!`.
-(define (cli-args-next! [args : (&mut args CliArgs)]) : bool
+(define (cli-args-next! [args : (&mut args CliArgs)])
+  (:cold) : bool
   (if (or args.failed args.stopped (>= args.next args.count))
     false
     (let
@@ -185,14 +198,17 @@
       (not args.failed))))
 
 ;; The first (or `n`th) value of the current option.
-(define (cli-args-value [args : (& args CliArgs)]) : String
+(define (cli-args-value [args : (& args CliArgs)])
+  (:cold) : String
   (io.arg (+ args.index 1)))
 
-(define (cli-args-value-at [args : (& args CliArgs)] [n : i64]) : String
+(define (cli-args-value-at [args : (& args CliArgs)] [n : i64])
+  (:cold) : String
   (io.arg (+ args.index n)))
 
 ;; Shared value validators.
-(define (cli-option-opt-level [value : (& value str)]) : i64
+(define (cli-option-opt-level [value : (& value str)])
+  (:cold) : i64
   (cond
     [(string.eq value "0") 0]
     [(string.eq value "1") 1]
@@ -200,7 +216,8 @@
     [(string.eq value "s") 3]
     [else -1]))
 
-(define (cli-option-opt-level-name [level : i64]) : String
+(define (cli-option-opt-level-name [level : i64])
+  (:cold) : String
   (if (opt_level.opt-level-size? level)
     "s"
     (string.int->string level)))
@@ -231,7 +248,8 @@
   (profile pkg_profile.PackageProfile)
   (has-profile bool))
 
-(define (cli-compile-options) : CliCompileOptions
+(define (cli-compile-options)
+  (:cold) : CliCompileOptions
   (CliCompileOptions
     (target_cfg.compiler-target-cfg-host)
     false
@@ -251,12 +269,14 @@
 (define (cli-compile-options-backend-mode
   [mode : CliBackendMode]
   [has-mode : bool]
-  [opt-level : i64]) : CliBackendMode
+  [opt-level : i64])
+  (:cold) : CliBackendMode
   (if (and (not has-mode) (opt_level.opt-level-size? opt-level))
     Scalar
     mode))
 
-(define (cli-compile-option? [name : (& name str)]) : bool
+(define (cli-compile-option? [name : (& name str)])
+  (:cold) : bool
   (or
     (string.eq name "--target")
     (string.eq name "--backend-mode")
@@ -268,7 +288,8 @@
     (string.eq name "-g")
     (string.eq name "--backtrace")))
 
-(define (cli-option-target [value : String]) : target_cfg.ResultCompilerTargetCfg
+(define (cli-option-target [value : String])
+  (:cold) : target_cfg.ResultCompilerTargetCfg
   (cond
     [(or (string.eq value "linux-x86_64") (string.eq value "linux_x86_64"))
       (Ok Linux)]
@@ -281,12 +302,14 @@
           (& value)
           "'; expected linux-x86_64 or windows-x86_64"))]))
 
-(define (cli-option-target-name [target : target_cfg.CompilerTargetCfg]) : String
+(define (cli-option-target-name [target : target_cfg.CompilerTargetCfg])
+  (:cold) : String
   (match target
     [(Linux) "linux-x86_64"]
     [(Windows) "windows-x86_64"]))
 
-(define (cli-option-backend-mode [value : String]) : ResultCliBackendMode
+(define (cli-option-backend-mode [value : String])
+  (:cold) : ResultCliBackendMode
   (cond
     [(string.eq value "scalar") (Ok Scalar)]
     [(string.eq value "sse2") (Ok Sse2)]
@@ -299,19 +322,22 @@
           (& value)
           "'; expected scalar, sse2, avx2, or avx512"))]))
 
-(define (cli-option-backend-mode-name [mode : CliBackendMode]) : String
+(define (cli-option-backend-mode-name [mode : CliBackendMode])
+  (:cold) : String
   (match mode
     [(Scalar) "scalar"]
     [(Sse2) "sse2"]
     [(Avx2) "avx2"]
     [(Avx512) "avx512"]))
 
-(define (cli-option-duplicate! [args : (&mut args CliArgs)]) : unit
+(define (cli-option-duplicate! [args : (&mut args CliArgs)])
+  (:cold) : unit
   (cli-args-fail!
     args
     (string.concat3-borrowed "" (& args.name) " was provided more than once")))
 
-(define (cli-package-profile-options) : String
+(define (cli-package-profile-options)
+  (:cold) : String
   " --profile <dev|release> --release ")
 
 (define cli-package-profile-mode-error : String
@@ -319,7 +345,8 @@
 
 (define (cli-package-profile-option!
   [options : (&mut options CliCompileOptions)]
-  [args : (&mut args CliArgs)]) : bool
+  [args : (&mut args CliArgs)])
+  (:cold) : bool
   (let
     [release : bool (string.eq args.name "--release")]
     (if (or release (string.eq args.name "--profile"))
@@ -347,7 +374,8 @@
         true)
       false)))
 
-(define (cli-package-opt-level [options : (& CliCompileOptions)]) : i64
+(define (cli-package-opt-level [options : (& CliCompileOptions)])
+  (:cold) : i64
   (if options.has-opt-level
     options.opt-level
     (pkg_profile.package-profile-opt-level (& options.profile))))
@@ -356,7 +384,8 @@
 ;; Parsing has no compiler-global side effects, including on rejected input.
 (define (cli-compile-option!
   [options : (&mut options CliCompileOptions)]
-  [args : (&mut args CliArgs)]) : bool
+  [args : (&mut args CliArgs)])
+  (:cold) : bool
   (cond
     [(not (cli-compile-option? (& args.name))) false]
     [(string.eq args.name "--debug")

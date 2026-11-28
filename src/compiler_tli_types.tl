@@ -436,7 +436,8 @@
   (flags i64)
   (init TliCompactValue))
 
-(define (tli-compact-ir-body-empty) : TliCompactIrBody
+(define (tli-compact-ir-body-empty)
+  (:cold) : TliCompactIrBody
   (TliCompactIrBody
     0
     0
@@ -447,7 +448,8 @@
     (TliCompactReturnStorage.None)
     (__tl_make-array TliCompactExternRef 0)))
 
-(define (tli-spmd-expr-empty) : TliSpmdExpr
+(define (tli-spmd-expr-empty)
+  (:cold) : TliSpmdExpr
   (TliSpmdExpr.Literal (TliSpmdLiteral.Unit)))
 
 (defstruct TliBundle
@@ -466,13 +468,15 @@
   (module-sha256 (Array u8 32)))
 
 ;; Shared spelling for the interface producer and the archive producer.
-(define (tli-module-init-symbol [module-name : (& str)]) : String
+(define (tli-module-init-symbol [module-name : (& str)])
+  (:cold) : String
   (str_cat.str-cat "__tl_mod_init_" (string.copy module-name)))
 
 ;; Canonical wire tags for AstMacroTypeKindList entries (matching the bit
 ;; positions in `tc-macro-abstract-kind-bit` so `.tli` files never serialize
 ;; process-local intern string IDs).
-(define (tli-macro-type-kind-tag [kind : (& str)]) : u8
+(define (tli-macro-type-kind-tag [kind : (& str)])
+  (:cold) : u8
   (cast
     (cond
       [(string.eq kind "i64") 0]
@@ -509,7 +513,8 @@
       [else 29])
     : u8))
 
-(define (tli-macro-type-kind-name [tag : u8]) : String
+(define (tli-macro-type-kind-name [tag : u8])
+  (:cold) : String
   (let
     [v : i64 (cast tag : i64)]
     (cond

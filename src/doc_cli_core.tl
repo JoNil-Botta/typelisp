@@ -73,13 +73,16 @@
   (Ok DocDefaultCliConfig)
   (Err String))
 
-(define (doc-print-wrote [output-path : String]) : unit
+(define (doc-print-wrote [output-path : String])
+  (:cold) : unit
   (io.print-format "{}" (str_cat.str-cat "Wrote " output-path "\n")))
 
-(define (doc-write-text [output-path : (& output-path str)] [contents : String]) : unit
+(define (doc-write-text [output-path : (& output-path str)] [contents : String])
+  (:cold) : unit
   (io.write-file output-path (byte_buf.str-as-bytes (& contents))))
 
-(define (doc-generate-file [input-path : String] [output-path : String]) : i64
+(define (doc-generate-file [input-path : String] [output-path : String])
+  (:cold) : i64
   (let
     [source : String (byte_buf.to-string (io.read-file input-path))]
     [markdown : String
@@ -88,7 +91,8 @@
     (doc-print-wrote output-path)
     0))
 
-(define (doc-read-modules [idx : i64] [end : i64]) : doc_module_vec.Vec
+(define (doc-read-modules [idx : i64] [end : i64])
+  (:cold) : doc_module_vec.Vec
   (let
     [modules : doc_module_vec.Vec (doc_module_vec.with-capacity (- end idx))]
     (for [i (iterator.range idx end)]
@@ -101,7 +105,8 @@
 
 (define (doc-modules-from-package-sources-from
   [paths : doc_svec.Vec]
-  [modules : (&mut modules doc_module_vec.Vec)]) : unit
+  [modules : (&mut modules doc_module_vec.Vec)])
+  (:cold) : unit
   (for [index (iterator.range 0 (doc_svec.len (& paths)))]
     (let
       [path : String (doc_svec.get (& paths) index "")]
@@ -112,7 +117,8 @@
           (doc_extract.doc-extract-file path)))
       unit)))
 
-(define (doc-modules-from-package-sources [paths : doc_svec.Vec]) : doc_module_vec.Vec
+(define (doc-modules-from-package-sources [paths : doc_svec.Vec])
+  (:cold) : doc_module_vec.Vec
   (let
     [modules : doc_module_vec.Vec
       (doc_module_vec.with-capacity (doc_svec.len (& paths)))]
@@ -122,7 +128,8 @@
 (define (doc-modules-from-package-sources-relative-from
   [paths : (& paths doc_svec.Vec)]
   [root : (& root str)]
-  [modules : (&mut modules doc_module_vec.Vec)]) : unit
+  [modules : (&mut modules doc_module_vec.Vec)])
+  (:cold) : unit
   (for [index (iterator.range 0 (doc_svec.len (& paths)))]
     (let
       [path : String (doc_svec.get (& paths) index "")]
@@ -136,7 +143,8 @@
       unit)))
 
 (define (doc-modules-from-package-source-set
-  [source-set : (& source-set package_source_core.PackageSourceSet)]) : doc_module_vec.Vec
+  [source-set : (& source-set package_source_core.PackageSourceSet)])
+  (:cold) : doc_module_vec.Vec
   (let
     [root : String
       (compiler_load.compiler-load-normalize-path source-set.manifest-dir)]
@@ -148,13 +156,15 @@
       (&mut modules))
     modules))
 
-(define (doc-path-set-new) : doc_path_map.Map
+(define (doc-path-set-new)
+  (:cold) : doc_path_map.Map
   (doc_path_map.with-capacity 64))
 
 (define (doc-modules-from-paths-into
   [paths : ast.AstDeclPathList]
   [seen : (&mut seen doc_path_map.Map)]
-  [modules : (&mut modules doc_module_vec.Vec)]) : unit
+  [modules : (&mut modules doc_module_vec.Vec)])
+  (:cold) : unit
   (match (ast.ast-decl-path-list-step paths)
     [(Nil) unit]
     [(Cons path rest)
@@ -173,7 +183,8 @@
             (doc-modules-from-paths-into rest seen modules))
           (doc-modules-from-paths-into rest seen modules)))]))
 
-(define (doc-modules-from-paths [paths : ast.AstDeclPathList]) : doc_module_vec.Vec
+(define (doc-modules-from-paths [paths : ast.AstDeclPathList])
+  (:cold) : doc_module_vec.Vec
   (let
     [modules : doc_module_vec.Vec (doc_module_vec.new)]
     [seen : doc_path_map.Map (doc-path-set-new)]
@@ -187,7 +198,8 @@
   [intern-state : ci.InternCompatState]
   [paths : ast.AstDeclPathList]
   [seen : (&mut seen doc_path_map.Map)]
-  [stdlib-roots : doc_svec.Vec]) : doc_expand.ResultDocExpandedModules
+  [stdlib-roots : doc_svec.Vec])
+  (:cold) : doc_expand.ResultDocExpandedModules
   (match (ast.ast-decl-path-list-step paths)
     [(Nil) (Ok (doc_module_vec.new))]
     [(Cons path rest)
@@ -237,7 +249,8 @@
   [pools : ast.AstNodePoolContext]
   [intern-state : ci.InternCompatState]
   [paths : ast.AstDeclPathList]
-  [stdlib-roots : doc_svec.Vec]) : doc_expand.ResultDocExpandedModules
+  [stdlib-roots : doc_svec.Vec])
+  (:cold) : doc_expand.ResultDocExpandedModules
   (let
     [seen : doc_path_map.Map (doc-path-set-new)]
     (doc-generated-modules-from-source-paths-into
@@ -252,7 +265,8 @@
 (define (doc-render-loaded-markdown
   [input-path : String]
   [paths : ast.AstDeclPathList]
-  [generated-modules : doc_module_vec.Vec]) : String
+  [generated-modules : doc_module_vec.Vec])
+  (:cold) : String
   (let
     [modules : doc_module_vec.Vec
       (doc-modules-from-paths
@@ -277,7 +291,8 @@
   [pools : ast.AstNodePoolContext]
   [intern-state : ci.InternCompatState]
   [input-path : (& input-path str)]
-  [stdlib-roots : doc_svec.Vec]) : compiler_load.ResultCompilerLoadWithPaths
+  [stdlib-roots : doc_svec.Vec])
+  (:cold) : compiler_load.ResultCompilerLoadWithPaths
   (let
     [intern-state : ci.InternCompatState intern-state]
     (compiler_load.compiler-load-session-state-use-with-intern-state!
@@ -317,7 +332,8 @@
 (define (doc-generate-loaded-file
   [input-path : String]
   [output-path : String]
-  [stdlib-roots : doc_svec.Vec]) : i64
+  [stdlib-roots : doc_svec.Vec])
+  (:cold) : i64
   (let
     [load-state : compiler_load.CompilerLoadSessionState
       (compiler_load.compiler-load-serial-test-session-state)]
@@ -375,7 +391,8 @@
         (io.print-error (cdiag.compiler-diagnostic-render (deref diag)))
         1])))
 
-(define (doc-ensure-directory [path : String]) : bool
+(define (doc-ensure-directory [path : String])
+  (:cold) : bool
   (match (fs.try-mkdir-if-missing (& path))
     [(OkIoUnit) true]
     [(ErrIoUnit error)
@@ -388,7 +405,8 @@
           "\n"))
       false]))
 
-(define (doc-linux-graphical-session?) : bool
+(define (doc-linux-graphical-session?)
+  (:cold) : bool
   (let
     [display-name : String "DISPLAY"]
     [wayland-name : String "WAYLAND_DISPLAY"]
@@ -396,7 +414,8 @@
       (> (string.string-length (env.var-value (& display-name))) 0)
       (> (string.string-length (env.var-value (& wayland-name))) 0))))
 
-(define (doc-windows-graphical-session?) : bool
+(define (doc-windows-graphical-session?)
+  (:cold) : bool
   (let
     [session-name : String "SESSIONNAME"]
     [terminal-name : String "WT_SESSION"]
@@ -407,17 +426,20 @@
         (> (string.string-length session) 0)
         (not (string.eq session "Services"))))))
 
-(define (doc-graphical-session?) : bool
+(define (doc-graphical-session?)
+  (:cold) : bool
   (cfg windows (doc-windows-graphical-session?) (doc-linux-graphical-session?)))
 
-(define (doc-open-program) : String
+(define (doc-open-program)
+  (:cold) : String
   (let
     [name : String "TYPELISP_DOC_OPEN_PROGRAM"]
     (match (env.get (& name))
       [(EnvSomeString value) value]
       [(EnvNoString) (cfg windows "explorer.exe" "xdg-open")])))
 
-(define (doc-open-generated-index [index-path : String]) : unit
+(define (doc-open-generated-index [index-path : String])
+  (:cold) : unit
   (if (not (doc-graphical-session?))
     (io.print-format
       "{}"
@@ -438,7 +460,8 @@
 (define (doc-generate-package-local-site
   [source-set : package_source_core.PackageSourceSet]
   [open? : bool]
-  [_no-deps? : bool]) : i64
+  [_no-deps? : bool])
+  (:cold) : i64
   (match (package_source_core.package-source-set-digest
     (owned_view.compiler-owned-shared-view source-set))
     [(Err message)
@@ -518,7 +541,8 @@
   [has-manifest : bool]
   [output-path : DocMaybeString]
   [open? : bool]
-  [no-deps? : bool]) : i64
+  [no-deps? : bool])
+  (:cold) : i64
   (match (package_source_core.package-source-discover-for
     "doc"
     manifest-path
@@ -537,7 +561,8 @@
           0]
         [(No) (doc-generate-package-local-site source-set open? no-deps?)])]))
 
-(define (doc-generate-html-file [input-path : String] [output-path : String]) : i64
+(define (doc-generate-html-file [input-path : String] [output-path : String])
+  (:cold) : i64
   (let
     [source : String
       (byte_buf.to-string
@@ -547,18 +572,21 @@
     (doc-print-wrote output-path)
     0))
 
-(define (doc-generate-html-module-graph [output-path : String]) : i64
+(define (doc-generate-html-module-graph [output-path : String])
+  (:cold) : i64
   (let
     [modules : doc_module_vec.Vec (doc-read-modules 2 (- (io.arg-count) 1))]
     (doc-write-text output-path (doc_html.doc-html-render-module-graph modules))
     (doc-print-wrote output-path)
     0))
 
-(define (doc-test-file [input-path : String] [stdlib-roots : doc_svec.Vec]) : i64
+(define (doc-test-file [input-path : String] [stdlib-roots : doc_svec.Vec])
+  (:cold) : i64
   (doc-test-print-file-report
     (doc_test.doc-test-run-file-with-roots input-path stdlib-roots)))
 
-(define (doc-test-print-file-report [report : doc_test.DocTestRunReport]) : i64
+(define (doc-test-print-file-report [report : doc_test.DocTestRunReport])
+  (:cold) : i64
   (let
     [advisories : String (doc_test.doc-test-run-report-advisories (& report))]
     (when
@@ -580,7 +608,8 @@
 (define (doc-modules-from-input-paths-before-last
   [paths : (& paths doc_svec.Vec)]
   [index : i64]
-  [last-index : i64]) : doc_module_vec.Vec
+  [last-index : i64])
+  (:cold) : doc_module_vec.Vec
   (let
     [modules : doc_module_vec.Vec
       (doc_module_vec.with-capacity (- last-index index))]
@@ -594,7 +623,8 @@
             (doc_extract.doc-extract-file path)))))
     modules))
 
-(define (doc-generate-module-graph-from-input-paths [paths : doc_svec.Vec]) : i64
+(define (doc-generate-module-graph-from-input-paths [paths : doc_svec.Vec])
+  (:cold) : i64
   (let
     [output-path : String (doc_svec.last (& paths) "")]
     [modules : doc_module_vec.Vec
@@ -608,7 +638,8 @@
     (doc-print-wrote output-path)
     0))
 
-(define (doc-test-batch-paths-from-text [text : String]) : doc_svec.Vec
+(define (doc-test-batch-paths-from-text [text : String])
+  (:cold) : doc_svec.Vec
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
@@ -623,7 +654,8 @@
         (set! i (source_text.next-line-start text line-end))))
     paths))
 
-(define (doc-test-batch-paths [list-path : String]) : ResultDocTestBatchPaths
+(define (doc-test-batch-paths [list-path : String])
+  (:cold) : ResultDocTestBatchPaths
   (match (io.try-read-file (& list-path))
     [(OkIoBytes contents)
       (Ok (doc-test-batch-paths-from-text (byte_buf.to-string contents)))]
@@ -638,7 +670,8 @@
   [manifest-path : String]
   [has-manifest : bool]
   [options : cli_option.CliCompileOptions]
-  [batch-list : DocMaybeString]) : ResultDocTestCliConfig
+  [batch-list : DocMaybeString])
+  (:cold) : ResultDocTestCliConfig
   (when
     (and
       options.has-profile
@@ -669,7 +702,8 @@
           (Err "doc: cannot combine input paths with --manifest-path")]
         [else (Ok (File input-paths options.stdlib-roots))])]))
 
-(define (doc-test-config-from [base : i64] [count : i64]) : ResultDocTestCliConfig
+(define (doc-test-config-from [base : i64] [count : i64])
+  (:cold) : ResultDocTestCliConfig
   (let
     [options : cli_option.CliCompileOptions (cli_option.cli-compile-options)]
     [args : cli_option.CliArgs
@@ -722,7 +756,8 @@
   [input-paths : (& input-paths doc_svec.Vec)]
   [stdlib-roots : doc_svec.Vec]
   [print-headers : bool]
-  [status : i64]) : i64
+  [status : i64])
+  (:cold) : i64
   (for [index (iterator.range 0 (doc_svec.len (& input-paths)))]
     (let
       [input-path : String (doc_svec.get (& input-paths) index "")]
@@ -750,14 +785,16 @@
   [input-paths : (& input-paths doc_svec.Vec)]
   [stdlib-roots : doc_svec.Vec]
   [print-headers : bool]
-  [status : i64]) : i64
+  [status : i64])
+  (:cold) : i64
   (doc-test-files-from input-paths stdlib-roots print-headers status))
 
 (define (doc-test-package-files-from
   [input-paths : doc_svec.Vec]
   [stdlib-roots : doc_svec.Vec]
   [execution : (& doc_test.DocTestExecution)]
-  [status : i64]) : i64
+  [status : i64])
+  (:cold) : i64
   (for [index (iterator.range 0 (doc_svec.len (& input-paths)))]
     (let
       [input-path : String (doc_svec.get (& input-paths) index "")]
@@ -782,7 +819,8 @@
   [manifest-path : (& str)]
   [manifest : compiler_load.CompilerPkgManifest]
   [profile : pkg_profile.PackageProfile]
-  [target : be_state.CompilerBackendTarget]) : build_run_core.ResultSourceToolLinkInputs
+  [target : be_state.CompilerBackendTarget])
+  (:cold) : build_run_core.ResultSourceToolLinkInputs
   (let
     [path : String
       (build_cli_core.build-package-normalize-manifest-path
@@ -824,7 +862,8 @@
 (define (doc-test-package
   [manifest-path : String]
   [has-manifest : bool]
-  [options : cli_option.CliCompileOptions]) : i64
+  [options : cli_option.CliCompileOptions])
+  (:cold) : i64
   (match (package_source_core.package-source-discover-for
     "doc"
     manifest-path
@@ -883,7 +922,8 @@
   [has-manifest : bool]
   [open? : bool]
   [no-deps? : bool]
-  [stdlib-roots : doc_svec.Vec]) : ResultDocDefaultCliConfig
+  [stdlib-roots : doc_svec.Vec])
+  (:cold) : ResultDocDefaultCliConfig
   (cond
     [(not (doc_svec.is-empty? (& input-paths)))
       (cond
@@ -902,7 +942,8 @@
             (Ok (Package manifest-path has-manifest (Some out) false no-deps?)))]
         [(No) (Ok (Package manifest-path has-manifest (No) open? no-deps?))])]))
 
-(define (doc-default-config-from [base : i64] [count : i64]) : ResultDocDefaultCliConfig
+(define (doc-default-config-from [base : i64] [count : i64])
+  (:cold) : ResultDocDefaultCliConfig
   (let
     [options : cli_option.CliCompileOptions (cli_option.cli-compile-options)]
     [args : cli_option.CliArgs
@@ -960,22 +1001,26 @@
         no-deps?
         options.stdlib-roots))))
 
-(define (doc-invalid-args) : i64
+(define (doc-invalid-args)
+  (:cold) : i64
   (io.print-error "doc: expected input and output paths")
   1)
 
-(define (doc-invalid-load-args) : i64
+(define (doc-invalid-load-args)
+  (:cold) : i64
   (io.print-error "doc: expected --load input and output paths")
   1)
 
-(define (doc-invalid-html-args) : i64
+(define (doc-invalid-html-args)
+  (:cold) : i64
   (io.print-error "doc: expected --html input and output paths")
   1)
 
 (define (doc-run-explicit-default
   [input-paths : doc_svec.Vec]
   [output-path : DocMaybeString]
-  [stdlib-roots : doc_svec.Vec]) : i64
+  [stdlib-roots : doc_svec.Vec])
+  (:cold) : i64
   (match output-path
     [(Some out)
       (if (doc_svec.is-empty? (& input-paths))
@@ -995,17 +1040,20 @@
             (doc-generate-module-graph-from-input-paths input-paths)
             (doc-invalid-args))))]))
 
-(define (doc-command-kind-load [value : String]) : i64
+(define (doc-command-kind-load [value : String])
+  (:cold) : i64
   (if (or (string.eq value "--load") (string.eq value "load"))
     3
     0))
 
-(define (doc-command-kind-html [value : String]) : i64
+(define (doc-command-kind-html [value : String])
+  (:cold) : i64
   (if (or (string.eq value "--html") (string.eq value "html"))
     2
     (doc-command-kind-load value)))
 
-(define (doc-command-kind [value : String]) : i64
+(define (doc-command-kind [value : String])
+  (:cold) : i64
   (if (or (string.eq value "--test") (string.eq value "test"))
     1
     (doc-command-kind-html value)))
@@ -1013,7 +1061,8 @@
 ;; The doc subcommands below take a `base` offset: `base` is the index of the
 ;; command-kind argument, so kind-relative arguments are at `base+1`, `base+2`,
 ;; ... The unified dispatcher passes base=2.
-(define (doc-main-test [base : i64]) : i64
+(define (doc-main-test [base : i64])
+  (:cold) : i64
   (compiler_load.compiler-load-session-cache-enable!)
   (compiler_load.compiler-load-session-program-cache-disable!)
   (match (doc-test-config-from base (io.arg-count))
@@ -1041,14 +1090,16 @@
       (io.print-error message)
       1]))
 
-(define (doc-main-html [base : i64]) : i64
+(define (doc-main-html [base : i64])
+  (:cold) : i64
   (if (= (io.arg-count) (+ base 3))
     (doc-generate-html-file (io.arg (+ base 1)) (io.arg (+ base 2)))
     (if (> (io.arg-count) (+ base 3))
       (doc-generate-html-module-graph (io.arg (- (io.arg-count) 1)))
       (doc-invalid-html-args))))
 
-(define (doc-main-load [base : i64]) : i64
+(define (doc-main-load [base : i64])
+  (:cold) : i64
   (if (< (io.arg-count) (+ base 3))
     (doc-invalid-load-args)
     (let
@@ -1072,7 +1123,8 @@
           (io.arg (+ base 2))
           options.stdlib-roots)))))
 
-(define (doc-main-default [base : i64]) : i64
+(define (doc-main-default [base : i64])
+  (:cold) : i64
   (match (doc-default-config-from base (io.arg-count))
     [(Ok config)
       (match config
@@ -1089,7 +1141,8 @@
       (io.print-error message)
       1]))
 
-(define (doc-main-dispatch [kind : i64] [base : i64]) : i64
+(define (doc-main-dispatch [kind : i64] [base : i64])
+  (:cold) : i64
   (match kind
     [1 (doc-main-test base)]
     [2 (doc-main-html base)]
@@ -1097,7 +1150,8 @@
     [_ (doc-main-default base)]))
 
 ;; Run the `doc` command; `start` is the index of the command-kind argument.
-(define (doc-run-from [start : i64] [count : i64]) : i64
+(define (doc-run-from [start : i64] [count : i64])
+  (:cold) : i64
   (if (< count (+ start 1))
     (doc-main-default start)
     (doc-main-dispatch (doc-command-kind (io.arg start)) start)))

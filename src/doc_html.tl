@@ -16,7 +16,8 @@
 (import source_text_core as source_text)
 (import stdlib.str_cat_runtime as str_cat)
 
-(define (doc-html-escape-one [text : (& text str)] [idx : i64]) : String
+(define (doc-html-escape-one [text : (& text str)] [idx : i64])
+  (:cold) : String
   (let
     [c : char (string.string-ref text idx)]
     (cond
@@ -26,7 +27,8 @@
       [(= c '"') "&quot;"]
       [else (string.substring text idx 1)])))
 
-(define (doc-html-escape [text : (& text str)]) : String
+(define (doc-html-escape [text : (& text str)])
+  (:cold) : String
   (let
     [n : i64 (string.string-length text)]
     [out : byte_buf.ByteBufBuilder (byte_buf.byte-buf-builder-with-capacity n)]
@@ -36,7 +38,8 @@
         (doc-html-escape-one text i)))
     (byte_buf.byte-buf-builder-finish-string (& out))))
 
-(define (doc-html-escape-text-one [text : (& text str)] [idx : i64]) : String
+(define (doc-html-escape-text-one [text : (& text str)] [idx : i64])
+  (:cold) : String
   (let
     [c : char (string.string-ref text idx)]
     (if (= c '\n')
@@ -45,7 +48,8 @@
         ""
         (doc-html-escape-one text idx)))))
 
-(define (doc-html-escape-text [text : (& text str)]) : String
+(define (doc-html-escape-text [text : (& text str)])
+  (:cold) : String
   (let
     [n : i64 (string.string-length text)]
     [out : byte_buf.ByteBufBuilder (byte_buf.byte-buf-builder-with-capacity n)]
@@ -55,7 +59,8 @@
         (doc-html-escape-text-one text i)))
     (byte_buf.byte-buf-builder-finish-string (& out))))
 
-(define (doc-html-page-open [title : String]) : String
+(define (doc-html-page-open [title : String])
+  (:cold) : String
   (str_cat.str-cat
     "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>"
     (doc-html-escape title)
@@ -67,7 +72,8 @@
   [title : String]
   [compiler-identity : String]
   [source-identity : String]
-  [package-identity : String]) : String
+  [package-identity : String])
+  (:cold) : String
   (str_cat.str-cat
     "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>"
     (doc-html-escape title)
@@ -81,10 +87,12 @@
     ""
     ""))
 
-(define (doc-html-page-close) : String
+(define (doc-html-page-close)
+  (:cold) : String
   "</body>\n</html>\n")
 
-(define (doc-html-header [title : String] [subtitle : String]) : String
+(define (doc-html-header [title : String] [subtitle : String])
+  (:cold) : String
   (str_cat.str-cat
     "<header class=\"tl-doc-header\">\n<h1>"
     (doc-html-escape title)
@@ -95,7 +103,8 @@
 (define (doc-html-doc-block
   [class-name : String]
   [doc-text : String]
-  [empty-text : String]) : String
+  [empty-text : String])
+  (:cold) : String
   (if (= (string.string-length doc-text) 0)
     (str_cat.str-cat
       "<p class=\"tl-doc-empty\">"
@@ -108,12 +117,14 @@
       (doc-html-escape-text doc-text)
       "</p></div>\n")))
 
-(define (doc-html-code-block-meta-attr [meta : String]) : String
+(define (doc-html-code-block-meta-attr [meta : String])
+  (:cold) : String
   (if (= (string.string-length meta) 0)
     ""
     (str_cat.str-cat " data-meta=\"" (doc-html-escape meta) "\"")))
 
-(define (doc-html-syntax-span [class-name : String] [text : String]) : String
+(define (doc-html-syntax-span [class-name : String] [text : String])
+  (:cold) : String
   (str_cat.str-cat
     "<span class=\""
     class-name
@@ -121,28 +132,35 @@
     (doc-html-escape text)
     "</span>"))
 
-(define (doc-html-syntax-space? [c : char]) : bool
+(define (doc-html-syntax-space? [c : char])
+  (:cold) : bool
   (or (= c ' ') (= c '\t') (= c '\n') (= c '\r')))
 
-(define (doc-html-syntax-alpha? [c : char]) : bool
+(define (doc-html-syntax-alpha? [c : char])
+  (:cold) : bool
   (or (and (>= c 'A') (<= c 'Z')) (and (>= c 'a') (<= c 'z'))))
 
-(define (doc-html-syntax-upper? [c : char]) : bool
+(define (doc-html-syntax-upper? [c : char])
+  (:cold) : bool
   (and (>= c 'A') (<= c 'Z')))
 
-(define (doc-html-syntax-digit? [c : char]) : bool
+(define (doc-html-syntax-digit? [c : char])
+  (:cold) : bool
   (and (>= c '0') (<= c '9')))
 
-(define (doc-html-syntax-hex-digit? [c : char]) : bool
+(define (doc-html-syntax-hex-digit? [c : char])
+  (:cold) : bool
   (or
     (doc-html-syntax-digit? c)
     (and (>= c 'A') (<= c 'F'))
     (and (>= c 'a') (<= c 'f'))))
 
-(define (doc-html-syntax-ident-start? [c : char]) : bool
+(define (doc-html-syntax-ident-start? [c : char])
+  (:cold) : bool
   (or (doc-html-syntax-alpha? c) (= c '_')))
 
-(define (doc-html-syntax-ident-part? [c : char]) : bool
+(define (doc-html-syntax-ident-part? [c : char])
+  (:cold) : bool
   (or
     (doc-html-syntax-ident-start? c)
     (doc-html-syntax-digit? c)
@@ -156,10 +174,12 @@
     (= c '+')
     (= c '-')))
 
-(define (doc-html-syntax-wordish? [c : char]) : bool
+(define (doc-html-syntax-wordish? [c : char])
+  (:cold) : bool
   (or (doc-html-syntax-alpha? c) (doc-html-syntax-digit? c) (= c '_') (= c '-')))
 
-(define (doc-html-syntax-operator-start? [c : char]) : bool
+(define (doc-html-syntax-operator-start? [c : char])
+  (:cold) : bool
   (or
     (= c '!')
     (= c '<')
@@ -172,10 +192,12 @@
     (= c '%')
     (= c '&')))
 
-(define (doc-html-syntax-token-start? [c : char]) : bool
+(define (doc-html-syntax-token-start? [c : char])
+  (:cold) : bool
   (or (doc-html-syntax-ident-start? c) (doc-html-syntax-operator-start? c)))
 
-(define (doc-html-syntax-token-delim? [c : char]) : bool
+(define (doc-html-syntax-token-delim? [c : char])
+  (:cold) : bool
   (or
     (doc-html-syntax-space? c)
     (= c '(')
@@ -186,7 +208,8 @@
     (= c '\'')
     (= c ';')))
 
-(define (doc-html-syntax-token-end [source : (& source str)] [start : i64]) : i64
+(define (doc-html-syntax-token-end [source : (& source str)] [start : i64])
+  (:cold) : i64
   (let
     [i : i64 start]
     [n : i64 (string.string-length source)]
@@ -197,7 +220,8 @@
         (+= i 1)))
     i))
 
-(define (doc-html-syntax-number-start? [source : (& source str)] [start : i64]) : bool
+(define (doc-html-syntax-number-start? [source : (& source str)] [start : i64])
+  (:cold) : bool
   (let
     [n : i64 (string.string-length source)]
     (if (>= start n)
@@ -218,7 +242,8 @@
               (< (+ start 1) n)
               (doc-html-syntax-digit? (string.string-ref source (+ start 1))))))))))
 
-(define (doc-html-syntax-string-end [source : (& source str)] [start : i64]) : i64
+(define (doc-html-syntax-string-end [source : (& source str)] [start : i64])
+  (:cold) : i64
   (let
     [i : i64 (+ start 1)]
     [n : i64 (string.string-length source)]
@@ -238,7 +263,8 @@
 (define (doc-html-syntax-valid-escape-end
   [source : (& source str)]
   [start : i64]
-  [limit : i64]) : i64
+  [limit : i64])
+  (:cold) : i64
   (if (>= (+ start 1) limit)
     start
     (let
@@ -265,7 +291,8 @@
 (define (doc-html-syntax-render-string
   [source : (& source str)]
   [start : i64]
-  [end : i64]) : String
+  [end : i64])
+  (:cold) : String
   (let
     [i : i64 start]
     [out : byte_buf.ByteBufBuilder
@@ -300,12 +327,14 @@
     (byte_buf.byte-buf-builder-append-string (&mut out) "</span>")
     (byte_buf.byte-buf-builder-finish-string (& out))))
 
-(define (doc-html-syntax-char-escape? [c : char]) : bool
+(define (doc-html-syntax-char-escape? [c : char])
+  (:cold) : bool
   (or (= c 'n') (= c 't') (= c 'r') (= c '0') (= c '\\') (= c '\'')))
 
 (define (doc-html-syntax-char-literal-end
   [source : (& source str)]
-  [start : i64]) : i64
+  [start : i64])
+  (:cold) : i64
   (let
     [n : i64 (string.string-length source)]
     (if (< (+ start 1) n)
@@ -329,38 +358,46 @@
               start)]))
       start)))
 
-(define (doc-html-syntax-list-member? [items : String] [token : String]) : bool
+(define (doc-html-syntax-list-member? [items : String] [token : String])
+  (:cold) : bool
   (let
     [needle : String (str_cat.str-cat "|" token "|")]
     (string.contains (& items) (& needle))))
 
-(define (doc-html-syntax-keyword? [token : String]) : bool
+(define (doc-html-syntax-keyword? [token : String])
+  (:cold) : bool
   (doc-html-syntax-list-member?
     "|comptime|defdispatch|defstruct|defmacro|defenum|define|include-str|include-bin|spmd-shuffle|spmd-broadcast|spmd-reduce|with-arena|with-escape|with|unquote-splicing|unquote|quasiquote|quote|foreach|unsafe|return|export|extern|import|module|lambda|begin|while|match|unless|when|cond|cast|test|try|set!|type|init|ann|let|and|or|if|"
     token))
 
-(define (doc-html-syntax-builtin? [token : String]) : bool
+(define (doc-html-syntax-builtin? [token : String])
+  (:cold) : bool
   (doc-html-syntax-list-member?
     "|ptr-addr-of|ptr-offset|ptr-write!|ptr-null?|ptr-null|ptr-read|ptr-cast|ptr->int|int->ptr|array-ref|tuple-ref|deref|string-from-bytes|string-data|program-argc|program-argv|program-envp|cpuid-eax|cpuid-ebx|cpuid-ecx|cpuid-edx|xgetbv|syscall|box|array|tuple|"
     token))
 
-(define (doc-html-syntax-operator? [token : String]) : bool
+(define (doc-html-syntax-operator? [token : String])
+  (:cold) : bool
   (doc-html-syntax-list-member?
     "|->|!=|<=|>=|+|-|*|/|%|=|<|>|bit-and|bit-or|bit-xor|bit-not|shl|shr|not|neg|&mut|&|"
     token))
 
-(define (doc-html-syntax-boolean? [token : (& token str)]) : bool
+(define (doc-html-syntax-boolean? [token : (& token str)])
+  (:cold) : bool
   (or (string.eq token "true") (string.eq token "false")))
 
-(define (doc-html-syntax-type? [token : String]) : bool
+(define (doc-html-syntax-type? [token : String])
+  (:cold) : bool
   (doc-html-syntax-list-member?
     "|i64|i32|i16|i8|u64|u32|u16|u8|f64|f32|bool|char|String|str|unit|never|Array|Tuple|CFunc|Box|MutPtr|Ptr|"
     token))
 
-(define (doc-html-syntax-head-position? [source : (& source str)] [start : i64]) : bool
+(define (doc-html-syntax-head-position? [source : (& source str)] [start : i64])
+  (:cold) : bool
   (and (> start 0) (= (string.string-ref source (- start 1)) '(')))
 
-(define (doc-html-syntax-skip-back-spaces [source : (& source str)] [pos : i64]) : i64
+(define (doc-html-syntax-skip-back-spaces [source : (& source str)] [pos : i64])
+  (:cold) : i64
   (let
     [i : i64 pos]
     [done : bool false]
@@ -370,7 +407,8 @@
         (set! done true)))
     i))
 
-(define (doc-html-syntax-word-start-back [source : (& source str)] [pos : i64]) : i64
+(define (doc-html-syntax-word-start-back [source : (& source str)] [pos : i64])
+  (:cold) : i64
   (let
     [i : i64 pos]
     [done : bool false]
@@ -380,7 +418,8 @@
         (set! done true)))
     (+ i 1)))
 
-(define (doc-html-syntax-preceding-form [source : (& source str)] [start : i64]) : String
+(define (doc-html-syntax-preceding-form [source : (& source str)] [start : i64])
+  (:cold) : String
   (let
     [before : i64 (doc-html-syntax-skip-back-spaces source (- start 1))]
     (if (and (>= before 0) (= (string.string-ref source before) '('))
@@ -398,7 +437,8 @@
 
 (define (doc-html-syntax-definition-name?
   [source : (& source str)]
-  [start : i64]) : bool
+  [start : i64])
+  (:cold) : bool
   (let
     [form : String (doc-html-syntax-preceding-form source start)]
     (or
@@ -411,7 +451,8 @@
 (define (doc-html-syntax-token-class
   [source : (& source str)]
   [start : i64]
-  [token : String]) : String
+  [token : String])
+  (:cold) : String
   (let
     [head : bool (doc-html-syntax-head-position? source start)]
     [before : i64 (doc-html-syntax-skip-back-spaces source (- start 1))]
@@ -442,10 +483,12 @@
         "tl-syn-call"]
       [else ""])))
 
-(define (doc-html-syntax-language? [language : String]) : bool
+(define (doc-html-syntax-language? [language : String])
+  (:cold) : bool
   (or (string.eq language "typelisp") (string.eq language "tl")))
 
-(define (doc-html-highlight-typelisp [source : (& source str)]) : String
+(define (doc-html-highlight-typelisp [source : (& source str)])
+  (:cold) : String
   (let
     [i : i64 0]
     [n : i64 (string.string-length source)]
@@ -527,7 +570,8 @@
 (define (doc-html-code-block-with-info
   [language : String]
   [meta : String]
-  [source : String]) : String
+  [source : String])
+  (:cold) : String
   (str_cat.str-cat
     "<pre><code class=\"language-"
     (doc-html-escape language)
@@ -539,10 +583,12 @@
       (doc-html-escape source))
     "</code></pre>\n"))
 
-(define (doc-html-code-block [source : String]) : String
+(define (doc-html-code-block [source : String])
+  (:cold) : String
   (doc-html-code-block-with-info "typelisp" "" source))
 
-(define (doc-html-item-nav-entry [path : String] [item : doc_extract.DocItem]) : String
+(define (doc-html-item-nav-entry [path : String] [item : doc_extract.DocItem])
+  (:cold) : String
   (let
     [name : String
       (doc_extract.doc-item-name (owned_view.compiler-owned-shared-view item))]
@@ -558,7 +604,8 @@
   [path : String]
   [items : doc_item_vec.Vec]
   [index : i64]
-  [count : i64]) : String
+  [count : i64])
+  (:cold) : String
   (if (>= index count)
     ""
     (str_cat.str-cat
@@ -567,14 +614,16 @@
         (doc_extract.doc-item-list-ref items index))
       (doc-html-item-nav-entries-from path items (+ index 1) count))))
 
-(define (doc-html-item-nav-entries [path : String] [items : doc_item_vec.Vec]) : String
+(define (doc-html-item-nav-entries [path : String] [items : doc_item_vec.Vec])
+  (:cold) : String
   (doc-html-item-nav-entries-from
     path
     (owned_view.compiler-owned-shared-view items)
     0
     (doc_extract.doc-item-list-count items)))
 
-(define (doc-html-item-nav [path : String] [items : doc_item_vec.Vec]) : String
+(define (doc-html-item-nav [path : String] [items : doc_item_vec.Vec])
+  (:cold) : String
   (if (= (doc_extract.doc-item-list-count items) 0)
     ""
     (str_cat.str-cat
@@ -582,7 +631,8 @@
       (doc-html-item-nav-entries path items)
       "</ul>\n</nav>\n")))
 
-(define (doc-html-source-link [source-url : (& source-url str)] [line : i64]) : String
+(define (doc-html-source-link [source-url : (& source-url str)] [line : i64])
+  (:cold) : String
   (if (= (string.string-length source-url) 0)
     ""
     (str_cat.str-cat
@@ -601,7 +651,8 @@
   [path : String]
   [source-url : (& source-url str)]
   [item : doc_extract.DocItem]
-  [show-representation? : bool]) : String
+  [show-representation? : bool])
+  (:cold) : String
   (let
     [name : String
       (doc_extract.doc-item-name (owned_view.compiler-owned-shared-view item))]
@@ -646,7 +697,8 @@
   [items : doc_item_vec.Vec]
   [show-representation? : bool]
   [index : i64]
-  [count : i64]) : String
+  [count : i64])
+  (:cold) : String
   (if (>= index count)
     ""
     (str_cat.str-cat
@@ -667,7 +719,8 @@
   [path : String]
   [source-url : String]
   [items : doc_item_vec.Vec]
-  [show-representation? : bool]) : String
+  [show-representation? : bool])
+  (:cold) : String
   (doc-html-item-list-from
     path
     source-url
@@ -680,12 +733,14 @@
   [path : String]
   [source-url : String]
   [items : doc_item_vec.Vec]
-  [show-representation? : bool]) : String
+  [show-representation? : bool])
+  (:cold) : String
   (if (= (doc_extract.doc-item-list-count items) 0)
     "<p class=\"tl-doc-empty\">No documented declarations.</p>\n"
     (doc-html-item-list path source-url items show-representation?)))
 
-(define (doc-html-json-escape-one [text : (& text str)] [idx : i64]) : String
+(define (doc-html-json-escape-one [text : (& text str)] [idx : i64])
+  (:cold) : String
   (let
     [c : char (string.string-ref text idx)]
     (cond
@@ -701,7 +756,8 @@
       [(= c '&') "\\u0026"]
       [else (string.substring text idx 1)])))
 
-(define (doc-html-json-string [text : (& text str)]) : String
+(define (doc-html-json-string [text : (& text str)])
+  (:cold) : String
   (let
     [n : i64 (string.string-length text)]
     [out : byte_buf.ByteBufBuilder
@@ -714,7 +770,8 @@
     (byte_buf.byte-buf-builder-append-string (&mut out) "\"")
     (byte_buf.byte-buf-builder-finish-string (& out))))
 
-(define (doc-html-short-doc [doc-text : String]) : String
+(define (doc-html-short-doc [doc-text : String])
+  (:cold) : String
   (let
     [n : i64 (string.string-length doc-text)]
     (if (> n 240)
@@ -729,7 +786,8 @@
   [href : String]
   [signature : String]
   [doc-text : String]
-  [source-line : i64]) : String
+  [source-line : i64])
+  (:cold) : String
   (str_cat.str-cat
     "{\"identity\":"
     (doc-html-json-string identity)
@@ -752,7 +810,8 @@
 (define (doc-html-search-item-record
   [page : String]
   [path : String]
-  [item : doc_extract.DocItem]) : String
+  [item : doc_extract.DocItem])
+  (:cold) : String
   (let
     [identity : String
       (doc_render.doc-render-item-anchor
@@ -774,7 +833,8 @@
   [path : String]
   [items : doc_item_vec.Vec]
   [index : i64]
-  [count : i64]) : String
+  [count : i64])
+  (:cold) : String
   (if (>= index count)
     ""
     (str_cat.str-cat
@@ -789,7 +849,8 @@
 ;; modules in deterministic site order and wraps the records in a JSON array.
 (define (doc-html-search-records-for-module
   [page : String]
-  [module : doc_render.DocModule]) : String
+  [module : doc_render.DocModule])
+  (:cold) : String
   (let
     [path : String
       (doc_render.doc-module-path
@@ -814,7 +875,8 @@
         1)
       (doc-html-search-item-records-from page path items 0 item-count))))
 
-(define (doc-html-module-nav-entry [module : doc_render.DocModule]) : String
+(define (doc-html-module-nav-entry [module : doc_render.DocModule])
+  (:cold) : String
   (let
     [path : String
       (doc_render.doc-module-path
@@ -831,7 +893,8 @@
 (define (doc-html-module-nav-entries-from
   [modules : doc_module_vec.Vec]
   [index : i64]
-  [count : i64]) : String
+  [count : i64])
+  (:cold) : String
   (if (>= index count)
     ""
     (str_cat.str-cat
@@ -839,13 +902,15 @@
         (doc_render.doc-module-list-ref (& modules) index))
       (doc-html-module-nav-entries-from modules (+ index 1) count))))
 
-(define (doc-html-module-nav-entries [modules : doc_module_vec.Vec]) : String
+(define (doc-html-module-nav-entries [modules : doc_module_vec.Vec])
+  (:cold) : String
   (doc-html-module-nav-entries-from
     (owned_view.compiler-owned-shared-view modules)
     0
     (doc_render.doc-module-list-count modules)))
 
-(define (doc-html-module-nav [modules : doc_module_vec.Vec]) : String
+(define (doc-html-module-nav [modules : doc_module_vec.Vec])
+  (:cold) : String
   (if (=
     (doc_render.doc-module-list-count
       (owned_view.compiler-owned-shared-view modules))
@@ -858,13 +923,15 @@
 
 (define (doc-html-module-section-with-source-url
   [module : doc_render.DocModule]
-  [source-url : String]) : String
+  [source-url : String])
+  (:cold) : String
   (doc-html-module-section-render module source-url true))
 
 (define (doc-html-module-section-render
   [module : doc_render.DocModule]
   [source-url : String]
-  [show-representation? : bool]) : String
+  [show-representation? : bool])
+  (:cold) : String
   (let
     [path : String
       (doc_render.doc-module-path
@@ -909,13 +976,15 @@
         show-representation?)
       "</section>\n")))
 
-(define (doc-html-module-section [module : doc_render.DocModule]) : String
+(define (doc-html-module-section [module : doc_render.DocModule])
+  (:cold) : String
   (doc-html-module-section-with-source-url module ""))
 
 (define (doc-html-module-sections-from
   [modules : doc_module_vec.Vec]
   [index : i64]
-  [count : i64]) : String
+  [count : i64])
+  (:cold) : String
   (if (>= index count)
     ""
     (str_cat.str-cat
@@ -925,7 +994,8 @@
         false)
       (doc-html-module-sections-from modules (+ index 1) count))))
 
-(define (doc-html-module-sections [modules : doc_module_vec.Vec]) : String
+(define (doc-html-module-sections [modules : doc_module_vec.Vec])
+  (:cold) : String
   (doc-html-module-sections-from
     (owned_view.compiler-owned-shared-view modules)
     0
@@ -933,7 +1003,8 @@
 
 (define (doc-html-render-module-page
   [path : String]
-  [docs : doc_extract.DocExtraction]) : String
+  [docs : doc_extract.DocExtraction])
+  (:cold) : String
   (let
     [title : String
       (str_cat.str-cat
@@ -950,10 +1021,12 @@
       "</main>\n"
       (doc-html-page-close))))
 
-(define (doc-html-render-source [path : String] [source : String]) : String
+(define (doc-html-render-source [path : String] [source : String])
+  (:cold) : String
   (doc-html-render-module-page path (doc_extract.doc-extract-source source)))
 
-(define (doc-html-render-module-graph [modules : doc_module_vec.Vec]) : String
+(define (doc-html-render-module-graph [modules : doc_module_vec.Vec])
+  (:cold) : String
   (str_cat.str-cat
     (doc-html-page-open "TypeLisp API")
     (doc-html-header "TypeLisp API" "module index")

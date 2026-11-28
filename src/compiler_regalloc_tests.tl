@@ -13196,6 +13196,7 @@
       3
       (& (live.compiler-live-set-empty))
       (& (__tl_make-array i64 0))
+      false
       false)
       [(Remap remap slots)
         (let
@@ -13255,6 +13256,7 @@
         vars
         (& (live.compiler-live-set-empty))
         (& (__tl_make-array i64 0))
+        false
         stack-only?)]))
 
 (define (compiler-reg-empty-private-param-homes-ok?) : bool
@@ -14419,6 +14421,7 @@
           vars
           (& (live.compiler-live-set-empty))
           (& (__tl_make-array i64 0))
+          false
           true)
           [(Remap remap slots)
             (let
@@ -17271,6 +17274,7 @@
     slot-candidate-vars
     (& identity-pinned)
     (& (__tl_make-array i64 0))
+    false
     false))
 
 (define (compiler-reg-move-list-contains?
@@ -17769,6 +17773,7 @@
           vars
           (& (live.compiler-live-set-empty))
           (& direct)
+          false
           false)
           [(Remap remap slots)
             (let
@@ -17842,6 +17847,7 @@
           vars
           (& (live.compiler-live-set-empty))
           (& direct)
+          false
           false)
           [(Remap remap slots)
             (let
@@ -17854,3 +17860,50 @@
             (test.assert-true
               false
               "expected coloring remap for >16-slot direct stack param test")])])))
+
+(test
+  reg-entry-projects-only-unobserved-parameter-storage
+  ;; All three pairs are initially eligible from their ABI positions. Only
+  ;; %0 is completely consumed in the prefix. AddrOf observes %1's home and
+  ;; %2's two projections straddle the branch.
+  (let
+    [func
+      (irt.func
+        "function @entry_words(a=%0:String, b=%1:String, c=%2:String) -> i64 vars 10 cold {
+       entry:
+         %3 = word %0, 1 : i64
+         %4 = word %1, 0 : u64
+         %5 = word %2, 0 : u64
+         %6 = addr_of %1 storage 2
+         %7 = eq %4, %5 : u64
+         branch %7, late, done
+       late:
+         %8 = word %2, 1 : i64
+         return %8
+       done:
+         return %3
+       }")]
+    [words : (__tl_dyn-array i64) (__tl_make-array i64 10)]
+    (for [i (iterator.range 0 3)]
+      (set! (array-ref words i) 1))
+    (match (reg.compiler-reg-project-entry-words func 3 words)
+      [(Function _ params _ vars (Array blocks) _ cold?)
+        (test.assert-true cold? "entry projection preserves the cold attribute")
+        (test.assert-true
+          (and
+            (= vars 11)
+            (= params.len 4)
+            (match (ir.compiler-ir-block-seq-borrow blocks 0)
+              [(Block _ instrs)
+                (and
+                  (match (ir.compiler-ir-instr-seq-borrow instrs 0)
+                    [(Mov 3 (Var 10) _) true]
+                    [_ false])
+                  (match (ir.compiler-ir-instr-seq-borrow instrs 1)
+                    [(Word 4 (Var 1) 0 _) true]
+                    [_ false])
+                  (match (ir.compiler-ir-instr-seq-borrow instrs 2)
+                    [(Word 5 (Var 2) 0 _) true]
+                    [_ false]))]))
+          "the sole unobserved pair reads its second scalar parameter")]
+      [_ (test.assert-true false "expected function blocks")])))

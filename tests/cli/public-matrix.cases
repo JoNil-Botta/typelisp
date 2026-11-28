@@ -427,6 +427,19 @@ file with space/ctor file.tl
     (ffi_ctor_value)
     1))
 end-file
+file native/inputs.tl
+(extern (ffi_ctor_value) : i64 (:link-lib "ffi_ctor"))
+end-file
+file link-metadata.tl
+(import stdlib.io)
+(import native.inputs)
+
+(extern (ffi_add7 [x : i64]) : i64 (:link-lib "ffi_add7"))
+
+(define (main) : i64
+  (io.print "linked\n")
+  (if (= (ffi_add7 35) 42) (inputs.ffi_ctor_value) 1))
+end-file
 step link-lib-assemble
 exec as "{{dir}}/ffi_add7.s" -o "{{dir}}/ffi_add7.o"
 stdout empty
@@ -478,6 +491,32 @@ step public-run-link-ctor
 run run "{{dir}}/with space/ctor file.tl" --target linux-x86_64 --stdlib-root "{{root}}/stdlib" --link-search "{{dir}}" --link-lib ffi_ctor
 exit 42
 stdout empty
+stderr empty
+# The entry and its import each supply a library. The imported archive
+# also checks CRT startup by returning a value set by its constructor.
+step prebuilt-build-link-metadata
+run build "{{dir}}/link-metadata.tl" --opt-level 2 --link-search "{{dir}}" -o "{{dir}}/prebuilt-metadata"
+stderr empty
+step prebuilt-link-metadata-output
+exec "{{dir}}/prebuilt-metadata"
+exit 42
+stdout contains linked
+step source-build-link-metadata
+run build "{{dir}}/link-metadata.tl" --opt-level 2 --link-search "{{dir}}" --no-prebuilt-stdlib -o "{{dir}}/source-metadata"
+stderr empty
+step source-link-metadata-output
+exec "{{dir}}/source-metadata"
+exit 42
+stdout contains linked
+step prebuilt-run-link-metadata
+run run "{{dir}}/link-metadata.tl" --opt-level 2 --link-search "{{dir}}"
+exit 42
+stdout contains linked
+stderr empty
+step source-run-link-metadata
+run run "{{dir}}/link-metadata.tl" --opt-level 2 --link-search "{{dir}}" --no-prebuilt-stdlib
+exit 42
+stdout contains linked
 stderr empty
 file pkg-link/typelisp.pkg
 (package

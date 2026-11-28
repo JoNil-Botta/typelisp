@@ -38,4 +38,8 @@
   (let
     [v : i64 (io.arg-count)]
     [xs : (__tl_dyn-array i64) (__tl_make-array i64 4)]
-    (probe xs (+ v 4) (+ v 6))))
+    (cond
+      [(= v 0) (probe xs 1 1)]
+      [(= v 99) (probe xs 2 2)]
+      [(= v 100) (probe xs 3 3)]
+      [else (probe xs (+ v 4) (+ v 6))])))

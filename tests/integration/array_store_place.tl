@@ -1,7 +1,7 @@
-;; A destination captures descriptor identity and index before the RHS, then
-;; resolves its live backing buffer after RHS mutation. Nested projections keep
-;; the same logical element, and rebinding a descriptor variable is different
-;; from growing the captured descriptor.
+;; A destination captures its inline descriptor storage address and index before
+;; the RHS, then resolves its live backing buffer after RHS mutation. Nested
+;; projections keep the same logical element, and assigning a by-value dynamic
+;; array updates its inline descriptor home like any other inline aggregate.
 (defstruct Triple
   (a i64)
   (b i64)
@@ -82,7 +82,7 @@
         (begin
           (set! items replacement)
           99))
-      (and (= (array-ref items 0) 30) (= (array-ref items 1) 40)))))
+      (and (= (array-ref items 0) 99) (= (array-ref items 1) 40)))))
 
 (define (zero-size?) : bool
   (let

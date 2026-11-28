@@ -22,13 +22,17 @@ count-fixed = 1 _tl_global_handle_cse_gtab(%rip)
 match call (\.L_tl_abort_)?tl_oob_abort
 
 # GAP4: one length load and one data load survive the interleaved stores, and
-# the store goes through the forwarded data register.
+# the store goes through the forwarded data register. With inline 16-byte
+# DynArray (#7963), the by-value descriptor is staged in a frame slot, so the
+# single `8(%r)` movq is the length load (xs[1] folds into `subq`/`addq`) and
+# the two `(%r)` loads are data_ptr + xs[0] (zero descriptor reloads across
+# the interleaved stores).
 case loadcse-forward
 source tests/integration/loadcse_forward.tl
 in fn _tl_loadcse_forward_poke_sum
-count = 1 ^[[:space:]]+movq 8\(%rdi\), %r[a-z0-9]+$
-count = 1 ^[[:space:]]+movq \(%rdi\), %r[a-z0-9]+$
-capture data_reg ^[[:space:]]*movq \(%rdi\), (%r[a-z0-9]*)$
+count = 1 ^[[:space:]]+movq 8\(%r[a-z0-9]+\), %r[a-z0-9]+$
+count = 2 ^[[:space:]]+movq \(%r[a-z0-9]+\), %r[a-z0-9]+$
+capture data_reg ^[[:space:]]*movq \(%r[a-z0-9]+\), (%r[a-z0-9]*)$
 count >= 1 ^[[:space:]]+movq %r[a-z0-9]+, 16\({{data_reg}}\)$
 
 # A non-PIC switch dispatch reads a 4-byte absolute case address out of the
@@ -84,19 +88,20 @@ in fn _tl_global_add_mem_fold_probe_refused
 match ^[[:space:]]+movq _tl_global_add_mem_fold_gadd_k\(%rip\), %r
 not-match ^[[:space:]]+addq _tl_global_add_mem_fold_gadd_k\(%rip\), %r
 
-# BE-3: the bounds check compares the length through the handle register the
-# line before loaded, reads the data word through the same register, and still
-# has its located abort tail.
+# BE-3: with inline 16-byte global DynArrays (#7963), the global's address
+# hoists into the preheader (`leaq`), the bounds check compares the length
+# through that handle register, reads the data word through the same register,
+# and still has its located abort tail.
 case global-len-fold
 source tests/integration/global_len_fold.tl
 target linux-x86_64 windows-x86_64
 in fn _tl_global_len_fold_probe_sum
-count = 1 ^[[:space:]]+cmpq 8\(%r[a-z0-9]+\), %r[a-z0-9]+$
-after movq _tl_global_len_fold_glf_items[(]%rip[)], %r[a-z0-9]+$
-next-line ^[[:space:]]+cmpq 8[(]%r[a-z0-9]+[)], %r[a-z0-9]+$
-capture handle ^[[:space:]]+cmpq 8\((%r[a-z0-9]+)\), %r.*$
+count = 1 ^[[:space:]]+leaq _tl_global_len_fold_glf_items\(%rip\), %r[a-z0-9]+$
+count = 2 ^[[:space:]]+cmpq 8\(%r[a-z0-9]+\), %r[a-z0-9]+$
+capture handle ^[[:space:]]+leaq _tl_global_len_fold_glf_items\(%rip\), (%r[a-z0-9]+)$
+match ^[[:space:]]+cmpq 8\({{handle}}\), %r[a-z0-9]+$
 match ^[[:space:]]+movq \({{handle}}\), %r
-match ^[[:space:]]+pushq 8\(%r[a-z0-9]+\)$
+match ^[[:space:]]+pushq 8\({{handle}}\)$
 
 # RMW-2 / INL-6: each `g = g op k` update of a global cell is one
 # memory-operand instruction with no staging load before or store after it,

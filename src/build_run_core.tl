@@ -9,6 +9,7 @@
 (import stdlib.vector)
 (import (vector.vector String) as cli_svec)
 (import compiler_driver_core)
+(import compiler_profile_state as profile_state)
 (import tli_cli_core as tli_cli)
 (import compiler_lower)
 (import compiler_backend as backend)
@@ -546,47 +547,72 @@
       (+ index 1))))
 
 (define (source-tool-link-inputs-from-decls
-  [decls : ast.AstDeclList]
+  [decls : (& ast.AstDeclList)]
   [inputs : SourceToolLinkInputs]) : SourceToolLinkInputs
-  (match (ast.ast-decl-list-step decls)
-    [(Nil) inputs]
-    [(Cons decl rest)
-      (let
-        [rest : ast.AstDeclList rest]
-        (match (ast.ast-decl-unwrapped (& decl))
-          [(Extern decl-meta _ _ metadata _)
-            (let
-              [metadata-items : ast.AstExternLinkInputList
-                (ast.ast-extern-metadata-link-inputs (deref metadata))]
-              (source-tool-link-inputs-from-decls
-                rest
-                (source-tool-link-inputs-add-ast-list
-                  inputs
-                  (& metadata-items)
-                  0)))]
-          [_ (source-tool-link-inputs-from-decls rest inputs)]))]))
+  (let
+    [out : SourceToolLinkInputs inputs]
+    (for [index (iterator.range 0 (ast.ast-decl-list-len decls))]
+      (match (ast.ast-decl-unwrapped
+        (ast.ast-decl-list-ref-borrowed decls index))
+        [(Extern _ _ _ metadata _)
+          (let
+            [items : ast.AstExternLinkInputList
+              (ast.ast-extern-metadata-link-inputs (deref metadata))]
+            (set! out (source-tool-link-inputs-add-ast-list out (& items) 0)))]
+        [_ unit]))
+    out))
 
-(define (source-tool-link-inputs-for-source
-  [source : String]
+;; Derive the native inputs before lowering can retire the declarations.
+;; Keep the inputs in the caller's scope for CRT selection and the linker.
+(define (source-tool-lower-source
+  [source : (& str)]
+  [target : be_state.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]
-  [explicit-inputs : SourceToolLinkInputs]) : ResultSourceToolLinkInputs
-  (match (load.compiler-load-file-with-paths-and-roots-cfg
-    (& source)
-    (sym_i64_env.sym-i64-empty)
-    (& stdlib-roots)
-    cfgs)
-    [(Ok decls _ _ _)
-      (Ok
-        (source-tool-link-inputs-merge
-          (source-tool-link-inputs-from-decls
-            decls
-            (source-tool-link-inputs-empty))
-          explicit-inputs))]
-    [(Err diag)
-      (Err
-        (compiler_driver_core.compiler-driver-render-source-diagnostic
-          (deref diag)))]))
+  [opt-level : i64]
+  [mode : be_state.CompilerBackendMode]
+  [user-cfgs : sym_i64_env.SymI64Env]
+  [pdb-arg : String]
+  [link-inputs : (&mut SourceToolLinkInputs)]) : compiler_driver_core.ResultCompilerDriverLowered
+  (let
+    [profile : profile_state.CompilerProfileState
+      (profile_state.compiler-profile-state-new)]
+    [cfgs : sym_i64_env.SymI64Env
+      (compiler_driver_core.compiler-driver-target-cfgs target user-cfgs)]
+    [_profile : unit
+      (cfg
+        compile-profile
+        (compiler_driver_core.compiler-driver-profile-start-total profile))]
+    [loaded : load.ResultCompilerLoadWithPaths
+      (compiler_driver_core.compiler-driver-load-escaping-with-opt-level
+        source
+        target
+        (& stdlib-roots)
+        cfgs
+        opt-level)]
+    (match (& loaded)
+      [(Ok decls _ _ _)
+        (let
+          [inputs : SourceToolLinkInputs
+            (source-tool-link-inputs-merge
+              (source-tool-link-inputs-from-decls
+                decls
+                (source-tool-link-inputs-empty))
+              (clone-source-tool-link-inputs link-inputs))]
+          (set!
+            (deref link-inputs)
+            (if (string.eq (& pdb-arg) "")
+              inputs
+              (source-tool-link-inputs-add-raw-arg inputs pdb-arg))))]
+      [_ unit])
+    (compiler_driver_core.compiler-driver-lower-loaded-escaping-with-opt-level-and-profile-state
+      (string.copy source)
+      target
+      stdlib-roots
+      mode
+      cfgs
+      opt-level
+      profile
+      loaded)))
 
 (define (source-tool-path-separator? [c : char]) : bool
   (or (= c '/') (= c '\\')))
@@ -616,11 +642,6 @@
 
 (define (source-tool-try-file-exists? [path : (& path str)]) : io.ResultIoBool
   (io.try-file-exists? path))
-
-(define (source-tool-try-read-file [path : (& path str)]) : io.ResultIoString
-  (let
-    [contents (try (io.try-read-file path))]
-    (OkIoString (byte_buf.to-string contents))))
 
 (define (source-tool-try-remove-file-if-exists [path : (& path str)]) : io.ResultIoUnit
   (fs.try-remove-file-if-exists path))
@@ -794,15 +815,6 @@
     [(OkIoString path) (Ok path)]
     [(ErrIoString error) (Err (io.error-message error))]))
 
-(define (source-tool-cannot-read-module-message
-  [source : String]
-  [error : io.IoError]) : String
-  (str_cat.str-cat
-    "Error: cannot read module '"
-    source
-    "': "
-    (io.error-message error)))
-
 (define (source-tool-emit-assembly
   [source : String]
   [target : be_state.CompilerBackendTarget]
@@ -810,29 +822,37 @@
   [opt-level : i64]
   [mode : be_state.CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]
-  [link-inputs : (& link-inputs SourceToolLinkInputs)]) : ResultSourceToolString
-  (match (source-tool-try-read-file source)
-    [(ErrIoString error)
-      (Err (source-tool-cannot-read-module-message source error))]
-    [(OkIoString _)
-      (match (compiler_driver_core.compiler-driver-emit-file-with-target-roots-level-mode-cfg-and-crt
-        source
+  [pdb-arg : String]
+  [link-inputs : (&mut SourceToolLinkInputs)]) : ResultSourceToolString
+  (let
+    [lowered : compiler_driver_core.ResultCompilerDriverLowered
+      (source-tool-lower-source
+        (& source)
         target
-        true
         stdlib-roots
         opt-level
         mode
         cfgs
-        (source-tool-linux-crt-entry? target link-inputs)
-        (source-tool-link-inputs-empty? link-inputs))
-        [(Ok asm advisories)
-          (compiler_driver_core.compiler-driver-print-advisories (& advisories))
-          (Ok (source-tool-augment-assembly-for-target asm target))]
-        [(Err diag advisories)
-          (compiler_driver_core.compiler-driver-print-advisories (& advisories))
-          (Err
-            (compiler_driver_core.compiler-driver-render-source-diagnostic
-              (deref diag)))])]))
+        pdb-arg
+        link-inputs)]
+    (match (compiler_driver_core.compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
+      source
+      lowered
+      target
+      true
+      mode
+      opt-level
+      true
+      (source-tool-linux-crt-entry? target link-inputs)
+      (source-tool-link-inputs-empty? link-inputs))
+      [(Ok asm advisories)
+        (compiler_driver_core.compiler-driver-print-advisories (& advisories))
+        (Ok (source-tool-augment-assembly-for-target asm target))]
+      [(Err diag advisories)
+        (compiler_driver_core.compiler-driver-print-advisories (& advisories))
+        (Err
+          (compiler_driver_core.compiler-driver-render-source-diagnostic
+            (deref diag)))])))
 
 (define (source-tool-linux-direct-object-env-name) : String
   "TYPELISP_LINUX_DIRECT_OBJECT")
@@ -1580,16 +1600,21 @@
       ;; Assembly input and serialized object belong to this write, including
       ;; when a caller links many programs in one compiler process.
       (with-scratch
-        (match (source-tool-try-read-file (& asm-path))
-          [(ErrIoString error)
+        (match (io.try-read-file (& asm-path))
+          [(ErrIoBytes error)
             (Err
               (str_cat.str-cat
                 "Error: cannot read assembly "
                 asm-path
                 ": "
                 (io.error-message error)))]
-          [(OkIoString asm)
-            (source-tool-assemble-linux-text (& asm-path) (& obj-path) (& asm))]))]
+          [(OkIoBytes contents)
+            (let
+              [asm : String (byte_buf.to-string contents)]
+              (source-tool-assemble-linux-text
+                (& asm-path)
+                (& obj-path)
+                (& asm)))]))]
     [(Windows)
       (source-tool-run-command
         role
@@ -1733,10 +1758,11 @@
 ;; --- One link route ----------------------------------------------------------
 ;;
 ;; What a link route compiles: a source file with its stdlib roots and cfg
-;; environment, a program the caller already lowered (the test harness), or
+;; environment and optional PDB argument, a program the caller already
+;; lowered (the test harness), or
 ;; assembly the caller already emitted (doctests).
 (defenum SourceToolProgram
-  (Source cli_svec.Vec sym_i64_env.SymI64Env)
+  (Source cli_svec.Vec sym_i64_env.SymI64Env String)
   (Lowered
     ir.CompilerIrProgram
     ir.CompilerSourceSpans
@@ -1829,43 +1855,48 @@
   [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
   [mode : be_state.CompilerBackendMode]
-  [link-inputs : (& link-inputs SourceToolLinkInputs)]) : ResultSourceToolString
-  (let
-    [crt-entry : bool (source-tool-linux-crt-entry? target link-inputs)]
-    (match program
-      [(Source stdlib-roots cfgs)
-        (match (source-tool-try-read-file source)
-          [(ErrIoString error)
-            (Err (source-tool-cannot-read-module-message source error))]
-          [(OkIoString _)
-            (source-tool-render-object-result
-              target
-              (compiler_driver_core.compiler-driver-emit-file-object-image-with-target-roots-level-mode-cfg-and-crt
-                source
-                target
-                true
-                stdlib-roots
-                opt-level
-                mode
-                cfgs
-                crt-entry
-                (source-tool-link-inputs-empty? link-inputs)))])]
-      [(Lowered lowered spans lower-state)
+  [link-inputs : (&mut SourceToolLinkInputs)]) : ResultSourceToolString
+  (match program
+    [(Source stdlib-roots cfgs pdb-arg)
+      (let
+        [lowered : compiler_driver_core.ResultCompilerDriverLowered
+          (source-tool-lower-source
+            (& source)
+            target
+            stdlib-roots
+            opt-level
+            mode
+            cfgs
+            pdb-arg
+            link-inputs)]
         (source-tool-render-object-result
           target
-          (compiler_driver_core.compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt
-            (ast.ast-node-pool-reader-context-current)
+          (compiler_driver_core.compiler-driver-emit-lowered-result-object-image-with-level-mode-entry-and-crt
             source
             lowered
-            spans
             target
             true
             mode
             opt-level
             true
-            crt-entry
-            lower-state))]
-      [(Assembly _) (Err "assembly has no direct object route")])))
+            (source-tool-linux-crt-entry? target link-inputs)
+            (source-tool-link-inputs-empty? link-inputs))))]
+    [(Lowered lowered spans lower-state)
+      (source-tool-render-object-result
+        target
+        (compiler_driver_core.compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt
+          (ast.ast-node-pool-reader-context-current)
+          source
+          lowered
+          spans
+          target
+          true
+          mode
+          opt-level
+          true
+          (source-tool-linux-crt-entry? target link-inputs)
+          lower-state))]
+    [(Assembly _) (Err "assembly has no direct object route")]))
 
 ;; The direct object route, taken only when TYPELISP_{LINUX,WINDOWS}_DIRECT_OBJECT
 ;; enables it for the target and no debug information is requested. Lowered
@@ -1876,6 +1907,7 @@
   [request : SourceToolLinkRequest]) : SourceToolDirectObjectStatus
   (let
     [lowered : bool (source-tool-program-lowered? (& request.program))]
+    [link-inputs : SourceToolLinkInputs request.link-inputs]
     (if (and
       (not (ir.compiler-debug-info-enabled?))
       (match request.target
@@ -1894,13 +1926,13 @@
         request.target
         request.opt-level
         request.mode
-        request.link-inputs)
+        (&mut link-inputs))
         [(Ok obj)
           (source-tool-write-direct-object-and-link
             request.files.obj
             request.files.bin
             request.target
-            (source-tool-link-inputs-with-hydrated-archives request.link-inputs)
+            (source-tool-link-inputs-with-hydrated-archives link-inputs)
             obj
             (if lowered
               "test: failed to write direct object artifact"
@@ -1915,9 +1947,9 @@
   [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
   [mode : be_state.CompilerBackendMode]
-  [link-inputs : (& link-inputs SourceToolLinkInputs)]) : ResultSourceToolString
+  [link-inputs : (&mut SourceToolLinkInputs)]) : ResultSourceToolString
   (match program
-    [(Source stdlib-roots cfgs)
+    [(Source stdlib-roots cfgs pdb-arg)
       (source-tool-emit-assembly
         source
         target
@@ -1925,6 +1957,7 @@
         opt-level
         mode
         cfgs
+        pdb-arg
         link-inputs)]
     [(Lowered lowered spans lower-state)
       (match (compiler_driver_core.compiler-driver-emit-lowered-with-level-and-mode
@@ -1961,32 +1994,34 @@
         [(Ok) Ok]
         [(Err message) (Err message)]
         [(Unavailable _)
-          (match (source-tool-emit-program-assembly
-            request.source
-            request.program
-            request.target
-            request.opt-level
-            request.mode
-            request.link-inputs)
-            [(Err message) (Err message)]
-            [(Ok asm)
-              (match (source-tool-write-file
-                request.files.asm
-                (& asm)
-                request.write-context)
-                [(Err message) (Err message)]
-                [(Ok)
-                  (let
-                    [effective-link-inputs : SourceToolLinkInputs
-                      (source-tool-link-inputs-with-hydrated-archives
-                        request.link-inputs)]
-                    (source-tool-assemble-text-and-link
-                      request.target
-                      request.files.asm
-                      request.files.obj
-                      request.files.bin
-                      (& asm)
-                      effective-link-inputs))])])])]
+          (let
+            [link-inputs : SourceToolLinkInputs request.link-inputs]
+            (match (source-tool-emit-program-assembly
+              request.source
+              request.program
+              request.target
+              request.opt-level
+              request.mode
+              (&mut link-inputs))
+              [(Err message) (Err message)]
+              [(Ok asm)
+                (match (source-tool-write-file
+                  request.files.asm
+                  (& asm)
+                  request.write-context)
+                  [(Err message) (Err message)]
+                  [(Ok)
+                    (let
+                      [effective-link-inputs : SourceToolLinkInputs
+                        (source-tool-link-inputs-with-hydrated-archives
+                          link-inputs)]
+                      (source-tool-assemble-text-and-link
+                        request.target
+                        request.files.asm
+                        request.files.obj
+                        request.files.bin
+                        (& asm)
+                        effective-link-inputs))])]))])]
     ;; Both direct output and every assembly fallback/error have finished
     ;; reading lowered IR before its exact owner can be retired.
     (unless
@@ -2068,24 +2103,21 @@
 
 ;; A Windows `/DEBUG` link names its PDB after `/OUT`. Name it after the
 ;; destination instead, so the PDB keeps its place and embedded path.
-(define (source-tool-link-inputs-for-destination
+(define (source-tool-pdb-arg-for-destination
   [target : be_state.CompilerBackendTarget]
-  [link-dir : (& link-dir SourceToolLinkDestination)]
-  [destination : (& destination str)]
-  [inputs : SourceToolLinkInputs]) : SourceToolLinkInputs
+  [link-dir : (& SourceToolLinkDestination)]
+  [destination : (& str)]) : String
   (match target
     [(Windows)
       (match link-dir
         [(Private _)
           (if (ir.compiler-debug-info-enabled?)
-            (source-tool-link-inputs-add-raw-arg
-              inputs
-              (str_cat.str-cat
-                "/PDB:"
-                (source-tool-replace-extension (string.copy destination) ".pdb")))
-            inputs)]
-        [_ inputs])]
-    [(Linux) inputs]))
+            (str_cat.str-cat
+              "/PDB:"
+              (source-tool-replace-extension (string.copy destination) ".pdb"))
+            "")]
+        [_ ""])]
+    [(Linux) ""]))
 
 ;; Move a privately linked output onto its destination.
 (define (source-tool-publish-linked-output
@@ -2140,50 +2172,38 @@
               [(Private dir)
                 (fs.path-join (& dir) (& (fs.basename (& destination))))]
               [_ (string.copy destination)]))
-          (match (source-tool-link-inputs-for-source
-            (owned_view.compiler-owned-shared-view source)
-            (owned_view.compiler-owned-shared-view stdlib-roots)
-            (compiler_driver_core.compiler-driver-target-cfgs
+          (match (source-tool-link-program
+            (SourceToolLinkRequest
+              source
+              (Source
+                stdlib-roots
+                (target_cfg.compiler-target-user-cfgs (& cfg-names))
+                (source-tool-pdb-arg-for-destination
+                  target
+                  (& link-dir)
+                  (& destination)))
               target
-              (target_cfg.compiler-target-user-cfgs (& cfg-names)))
-            link-inputs)
+              opt-level
+              mode
+              link-inputs
+              (owned_view.compiler-owned-shared-view files)
+              "build: failed to write assembly artifact"))
             [(Err message)
               (io.print-error message)
               1]
-            [(Ok effective-link-inputs)
-              (compiler_driver_core.compiler-driver-reset-file-state!)
-              (match (source-tool-link-program
-                (SourceToolLinkRequest
-                  source
-                  (Source
-                    stdlib-roots
-                    (target_cfg.compiler-target-user-cfgs (& cfg-names)))
-                  target
-                  opt-level
-                  mode
-                  (source-tool-link-inputs-for-destination
-                    target
-                    (& link-dir)
-                    (& destination)
-                    effective-link-inputs)
-                  (owned_view.compiler-owned-shared-view files)
-                  "build: failed to write assembly artifact"))
+            [(Ok)
+              (match (source-tool-publish-linked-output
+                (& link-dir)
+                (& files.bin)
+                (& destination))
                 [(Err message)
                   (io.print-error message)
                   1]
                 [(Ok)
-                  (match (source-tool-publish-linked-output
-                    (& link-dir)
-                    (& files.bin)
-                    (& destination))
-                    [(Err message)
-                      (io.print-error message)
-                      1]
-                    [(Ok)
-                      (io.print-format
-                        "{}"
-                        (str_cat.str-cat "Built " destination "\n"))
-                      0])])])])]
+                  (io.print-format
+                    "{}"
+                    (str_cat.str-cat "Built " destination "\n"))
+                  0])])])]
     (source-tool-clean-temp-files files false)
     (match link-dir
       [(Private dir) (source-tool-remove-private-link-dir (& dir))]
@@ -2244,51 +2264,40 @@
     [files : SourceToolTempFiles
       (source-tool-temp-files temp-dir source target)]
     [status : i64
-      (match (source-tool-link-inputs-for-source
-        (owned_view.compiler-owned-shared-view source)
-        (owned_view.compiler-owned-shared-view stdlib-roots)
-        (compiler_driver_core.compiler-driver-target-cfgs
+      (match (source-tool-link-and-run
+        (SourceToolLinkRequest
+          source
+          (Source
+            stdlib-roots
+            (target_cfg.compiler-target-user-cfgs (& cfg-names))
+            "")
           target
-          (target_cfg.compiler-target-user-cfgs (& cfg-names)))
-        link-inputs)
-        [(Err message)
+          opt-level
+          mode
+          link-inputs
+          (owned_view.compiler-owned-shared-view files)
+          "run: failed to write assembly artifact")
+        runtime-args
+        (process.env-empty)
+        stream-output)
+        [(LinkFailed message)
           (io.print-error message)
           1]
-        [(Ok effective-link-inputs)
-          (compiler_driver_core.compiler-driver-reset-file-state!)
-          (match (source-tool-link-and-run
-            (SourceToolLinkRequest
-              source
-              (Source
-                stdlib-roots
-                (target_cfg.compiler-target-user-cfgs (& cfg-names)))
-              target
-              opt-level
-              mode
-              effective-link-inputs
-              (owned_view.compiler-owned-shared-view files)
-              "run: failed to write assembly artifact")
-            runtime-args
-            (process.env-empty)
-            stream-output)
-            [(LinkFailed message)
-              (io.print-error message)
-              1]
-            [(Ran output)
-              (let
-                [status : i64 (process.output-status output)]
-                (unless stream-output (source-tool-forward-output output))
-                status)]
-            [(SpawnFailed error)
-              (io.print-error
-                (str_cat.str-cat
-                  "Error: failed to run executable '"
-                  (owned_view.compiler-owned-shared-view files.bin)
-                  "' for target "
-                  (source-tool-target-name target)
-                  ": "
-                  (process.error-message error)))
-              1])])]
+        [(Ran output)
+          (let
+            [status : i64 (process.output-status output)]
+            (unless stream-output (source-tool-forward-output output))
+            status)]
+        [(SpawnFailed error)
+          (io.print-error
+            (str_cat.str-cat
+              "Error: failed to run executable '"
+              (owned_view.compiler-owned-shared-view files.bin)
+              "' for target "
+              (source-tool-target-name target)
+              ": "
+              (process.error-message error)))
+          1])]
     (source-tool-clean-temp-files files true)
     status))
 

@@ -1701,7 +1701,7 @@
                     ctx
                     (& program)
                     "HDyn"
-                    "dynamic-buffer")
+                    "zii")
                   (compiler-typecheck-zii-struct-probe-ok?
                     ctx
                     (& program)
@@ -2496,7 +2496,7 @@
                   (ast.ast-ty-dyn-array (& (Struct (ci.intern "InlinePacket")))))
                   [(Ok info)
                     (if (and
-                      (= (tc_core.tc-layout-info-size info) 8)
+                      (= (tc_core.tc-layout-info-size info) 16)
                       (= (tc_core.tc-layout-info-align info) 8))
                       unit
                       (set! ok false))]

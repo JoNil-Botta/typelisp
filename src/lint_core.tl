@@ -297,6 +297,11 @@
   "remove the unsafe wrapper")
 
 (deflint-rule
+  unused-must-use-value
+  "unused must-use value"
+  "use the value or bind it to an underscore-prefixed name to discard it explicitly")
+
+(deflint-rule
   raw-arena-op
   "raw arena operation: direct set/destroy/rewind is restricted to audited modules"
   "use in-arena, with-scratch, with-arena, rewind-safe!, or destroy-safe!")
@@ -497,8 +502,14 @@
         (lint-rule-type-name-case-message)
         (lint-rule-type-name-case-suggestion)
         Allow
-        lint-group-style-mask))
-    28))
+        lint-group-style-mask)
+      (LintRule
+        (lint-rule-unused-must-use-value-id)
+        (lint-rule-unused-must-use-value-message)
+        (lint-rule-unused-must-use-value-suggestion)
+        Warn
+        lint-group-correctness-mask))
+    29))
 
 (define (lint-rule-find-at [rules : LintRuleList] [rule-id : String]) : LintMaybeRule
   (for [index (iterator.range 0 rules.len)]

@@ -464,3 +464,270 @@ run lint "{{dir}}/init_call.tl" --check
 exit 0
 stderr empty
 stdout contains lint: 0 finding(s)
+
+case lint-unused-must-use-value
+file lint_marked.tl
+(defstruct Marked
+  (:must-use)
+  (number i64))
+(defstruct Plain
+  (number i64))
+
+(define (make) : Marked (Marked 1))
+(define (consume [value : Marked]) : i64 value.number)
+
+(define (choose [flag : bool]) : Marked
+  (ann (if flag (make) (Marked 2)) : Marked)
+  (unsafe (make) unit)
+  (let
+    [_ignored (make)]
+    [make (lambda () : Plain (Plain 3))]
+    (make)
+    (consume (Marked 4))
+    (Marked 5)))
+end-file
+step lint-must-use-warns
+run lint "{{dir}}/lint_marked.tl"
+exit 0
+stderr empty
+stdout contains warning[unused-must-use-value]:
+stdout contains lint_marked.tl:11:3
+stdout contains lint_marked.tl:12:11
+stdout contains unused must-use value of type Marked
+stdout contains underscore-prefixed
+stdout not-contains lint_marked.tl:17:
+stdout not-contains lint_marked.tl:18:
+step lint-must-use-check
+run lint "{{dir}}/lint_marked.tl" --format flat --check
+exit nonzero
+stderr empty
+stdout contains lint_marked.tl:11:3: unused must-use value of type Marked
+stdout contains lint_marked.tl:12:11: unused must-use value of type Marked
+
+case lint-unused-must-use-value-acknowledged
+file lint_marked_consumed.tl
+(defstruct Marked
+  (:must-use)
+  (number i64))
+
+(define (make) : Marked (Marked 1))
+
+(define (keep) : Marked
+  ;; lint-allow: unused-must-use-value
+  (make)
+  (let [_ignored (make)]
+    (make)))
+end-file
+run lint "{{dir}}/lint_marked_consumed.tl" --check
+exit 0
+stderr empty
+stdout contains lint: 0 finding(s)
+
+case lint-unused-must-use-sequence-owners
+file lint_marked_sequences.tl
+(import stdlib.arena)
+
+(defstruct Marked
+  (:must-use)
+  (value i64))
+
+(defstruct Plain
+  (value i64))
+
+(defenum Result
+  (:must-use)
+  (OkNum i64)
+  (ErrNum i64))
+
+(defenum Outer
+  (OkMarked Marked)
+  (ErrMarked i64))
+
+(define (make) : Marked
+  (Marked 1))
+
+(define (consume [m : Marked]) : i64
+  m.value)
+
+(define (close [_m : Marked]) : unit
+  unit)
+
+(define (discarded [flag : bool]) : Result
+  (make)
+  (ann (ann (make) : Marked) : Marked)
+  (if flag
+    (make)
+    (Marked 2))
+  (match (make)
+    [(Marked n) (Marked n)])
+  (begin
+    (Marked 4)
+    (make))
+  (unsafe
+    (make)
+    unit)
+  (with-arena phase (make) unit)
+  (with-scratch (make) unit)
+  (let
+    [owner (arena.make)]
+    (with-escape owner (make) unit)
+    (in-arena owner (make) unit))
+  (with ([value (make) close]) (make) (consume value))
+  (let
+    [item (make)]
+    (replace! item (make))
+    (consume item))
+  (try (Outer.OkMarked (make)))
+  (Result.OkNum 2)
+  (Result.OkNum 0))
+
+(define (negative [flag : bool]) : Marked
+  (let
+    [_ignored (make)]
+    [make
+      (lambda () : Plain
+        (Plain 2))]
+    (make)
+    (consume (Marked 1))
+    (tuple (Marked 2))
+    (if flag
+      (Marked 3)
+      (Marked 4))))
+
+(test normal (make) unit)
+
+(test ignored (:ignore "fixture") (make) unit)
+
+(test slow (:slow) (make) unit)
+end-file
+run lint "{{dir}}/lint_marked_sequences.tl"
+exit 0
+stderr empty
+stdout contains lint: 19 finding(s)
+stdout contains lint_marked_sequences.tl:30:3
+stdout contains lint_marked_sequences.tl:34:3
+stdout contains lint_marked_sequences.tl:36:3
+stdout contains lint_marked_sequences.tl:37:5
+stdout contains lint_marked_sequences.tl:40:5
+stdout contains lint_marked_sequences.tl:42:21
+stdout contains lint_marked_sequences.tl:43:17
+stdout contains lint_marked_sequences.tl:46:24
+stdout contains lint_marked_sequences.tl:47:21
+stdout contains lint_marked_sequences.tl:48:32
+stdout contains lint_marked_sequences.tl:51:5
+stdout contains lint_marked_sequences.tl:53:3
+stdout contains lint_marked_sequences.tl:54:3
+stdout contains propagate the failure with try
+stdout contains lint_marked_sequences.tl:70:14
+stdout contains lint_marked_sequences.tl:72:35
+stdout contains lint_marked_sequences.tl:74:20
+
+case lint-unused-must-use-required-unit
+file lint_marked_required_unit.tl
+(defstruct Marked (:must-use) (value i64))
+
+(define (bad-loop) : unit
+  (while true (Marked 1)))
+
+(test bad-tail (:ignore "fixture")
+  (Marked 2))
+end-file
+step lint-required-unit
+run lint "{{dir}}/lint_marked_required_unit.tl"
+exit 0
+stderr empty
+stdout contains lint: 0 finding(s)
+step check-required-unit
+run check "{{dir}}/lint_marked_required_unit.tl"
+exit nonzero
+stdout empty
+stderr contains must be unit
+stderr not-contains unused-must-use-value
+
+case lint-unused-must-use-macro-argument
+file lint_marked_macro.tl
+(defstruct Marked (:must-use) (value i64))
+(defmacro (discard-argument [x : Expr]) : Expr `(begin ,x unit))
+(defmacro (synthetic) : Expr `(begin (Marked 42) unit))
+(defmacro (identity [x : Expr]) : Expr x)
+
+(define (main) : unit
+  (discard-argument (Marked 1))
+  (synthetic)
+  (identity (Marked 2))
+  unit)
+end-file
+run lint "{{dir}}/lint_marked_macro.tl" --format flat
+exit 0
+stderr empty
+stdout contains lint_marked_macro.tl:7:21: unused must-use value of type Marked
+stdout contains lint_marked_macro.tl:9:13: unused must-use value of type Marked
+stdout contains lint: 2 finding(s)
+
+case lint-unused-must-use-macro-forwarding
+file lint_marked_forward.tl
+(defstruct Marked (:must-use) (value i64))
+(defmacro (discard-argument [x : Expr]) : Expr `(begin ,x unit))
+(defmacro (forward [x : Expr]) : Expr `(discard-argument ,x))
+(defmacro (forward-twice [x : Expr]) : Expr `(forward ,x))
+(defmacro (synthetic) : Expr `(discard-argument (Marked 42)))
+(defmacro (synthetic-nested) : Expr `(forward-twice (Marked 43)))
+
+(define (main) : unit
+  (synthetic)
+  (synthetic-nested)
+  (forward (Marked 1))
+  (forward-twice (Marked 2)))
+end-file
+run lint "{{dir}}/lint_marked_forward.tl" --format flat
+exit 0
+stderr empty
+stdout not-contains lint_marked_forward.tl:5:
+stdout not-contains lint_marked_forward.tl:6:
+stdout contains lint_marked_forward.tl:11:12: unused must-use value of type Marked
+stdout contains lint_marked_forward.tl:12:18: unused must-use value of type Marked
+stdout contains lint: 2 finding(s)
+
+case lint-unused-must-use-preserves-unsafe-fallback-scope
+file lint_marked_test_unsafe.tl
+(defstruct Marked (:must-use) (number i64))
+(defmacro (identity [value : Expr]) : Expr value)
+
+(test with-unsafe
+  (unsafe (identity unit))
+  (Marked 7)
+  unit)
+end-file
+run lint "{{dir}}/lint_marked_test_unsafe.tl" --format flat
+exit 0
+stderr empty
+stdout contains lint_marked_test_unsafe.tl:6:3: unused must-use value of type Marked
+stdout not-contains unused unsafe block
+stdout contains lint: 1 finding(s)
+
+case lint-unused-must-use-preserves-cfg-test-unsafe-scope
+file lint_marked_cfg_test_unsafe.tl
+(defstruct Marked (:must-use) (number i64))
+(defmacro (identity [value : Expr]) : Expr value)
+
+(define (runtime) : unit
+  (unsafe (identity unit)))
+
+(test enable-test-cfg unit)
+
+(cfg
+  test
+  (test with-unsafe
+    (unsafe (identity unit))
+    (Marked 7)
+    unit))
+
+(test invalid (:slow) (Marked 9))
+end-file
+run lint "{{dir}}/lint_marked_cfg_test_unsafe.tl" --format flat
+exit 0
+stderr empty
+stdout contains lint_marked_cfg_test_unsafe.tl:5:3: unused unsafe block
+stdout contains lint_marked_cfg_test_unsafe.tl:13:5: unused must-use value of type Marked
+stdout not-contains lint_marked_cfg_test_unsafe.tl:12:
+stdout contains lint: 2 finding(s)

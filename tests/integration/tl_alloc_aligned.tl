@@ -6,6 +6,7 @@
 ;; scope; this fixture exercises the backend building block directly.
 (extern (tl_alloc_aligned [size : i64] [alignment : i64]) : i64)
 (extern (tl_arena_poison_enable) : unit)
+(cfg linux (extern (tl_alloc [size : i64]) : i64))
 
 (define (align-up [value : i64] [alignment : i64]) : i64
   (bit-and (+ value (- alignment 1)) (- 0 alignment)))
@@ -114,7 +115,7 @@
         (arena.set! owner))]
     [root : i64 (arena.raw-handle owner)]
     [cursor : i64 (arena.mark-raw-handle (arena.mark))]
-    [arena-end : i64 (+ root 67108864)]
+    [arena-end : i64 (+ root (cfg linux 262144 67108864))]
     [start : i64 (align-up cursor 4096)]
     [payload : i64 (- arena-end start)]
     [exact : i64 (tl_alloc_aligned payload 4096)]
@@ -145,6 +146,90 @@
   (unsafe
     (int->ptr (cast address : u64) : (MutPtr i64))))
 
+(cfg
+  linux
+  (define (chunk-word [chunk : i64] [offset : i64]) : i64
+    (unsafe
+      (ptr-read (address-as-i64-pointer (+ chunk offset))))))
+
+(cfg
+  linux
+  (define (geometric-rewind-ok?) : bool
+    (let
+      [owner : arena.Arena (arena.make)]
+      [home : arena.Arena (arena.current)]
+      [root : i64 (arena.raw-handle owner)]
+      [length : i64 262144]
+      [chunk : i64 root]
+      [live-before : i64 (profile.alloc-live)]
+      [valid : bool true]
+      (unsafe
+        ;; lint-allow: raw-arena-op -- inspect chunk lengths across growth.
+        (arena.set! owner))
+      (let
+        [mark : arena.ArenaMark (arena.mark)]
+        (while (< length 2097152)
+          (let
+            [end : i64 (chunk-word chunk 24)]
+            [cursor : i64 (chunk-word chunk 16)]
+            [fill : i64 (tl_alloc (- end cursor))]
+            [first : i64 (tl_alloc 8)]
+            [next : i64 (chunk-word root 56)]
+            (set!
+              valid
+              (and
+                valid
+                (= end (+ chunk length))
+                (= fill cursor)
+                (= first (+ next 64))
+                (= (chunk-word next 0) chunk)))
+            (set! chunk next)
+            (set! length (* length 2))))
+        (set! valid (and valid (= (chunk-word chunk 24) (+ chunk length))))
+        (unsafe
+          ;; lint-allow: raw-arena-op -- retire all growth chunks in one rewind.
+          (arena.rewind mark))
+        (set!
+          valid
+          (and
+            valid
+            (= (profile.alloc-live) live-before)
+            (= (chunk-word root 56) root)
+            (= (tl_alloc 8) (+ root 64)))))
+      (unsafe
+        ;; lint-allow: raw-arena-op -- restore the caller before retiring owner.
+        (arena.set! home)
+        ;; lint-allow: raw-arena-op -- final retirement after restoring the caller.
+        (arena.destroy owner))
+      (and valid (= (profile.alloc-live) live-before)))))
+
+(cfg
+  linux
+  (define (huge-then-capped-ok? [owner : arena.Arena]) : bool
+    (let
+      [home : arena.Arena (arena.current)]
+      [root : i64 (arena.raw-handle owner)]
+      [live-before : i64 (profile.alloc-live)]
+      (unsafe
+        ;; lint-allow: raw-arena-op -- exercise ordinary and atomic map paths.
+        (arena.set! owner))
+      (let
+        [huge : i64 (tl_alloc_aligned 67108872 4096)]
+        [huge-chunk : i64 (chunk-word root 56)]
+        [next : i64 (- (tl_alloc 4096) 64)]
+        [ok : bool
+          (and
+            (= huge (+ huge-chunk 4096))
+            (= (chunk-word huge-chunk 24) (+ huge-chunk 67117056))
+            (= (chunk-word next 0) huge-chunk)
+            (= (chunk-word next 24) (+ next 67108864)))]
+        (unsafe
+          ;; lint-allow: raw-arena-op -- restore the caller before retiring owner.
+          (arena.set! home)
+          ;; lint-allow: raw-arena-op -- final retirement after restoring the caller.
+          (arena.destroy owner))
+        (and ok (= (profile.alloc-live) live-before))))))
+
 (define (atomic-aligned-worker [context : i64]) : i64
   (let
     [context-ptr : (MutPtr i64) (address-as-i64-pointer context)]
@@ -153,65 +238,50 @@
         (ptr-read context-ptr))]
     [home : i64 (arena.tl_arena_current)]
     [i : i64 0]
-    [last : i64 0]
-    [valid : bool true]
     (unsafe
       ;; lint-allow: raw-arena-op -- install the shared atomic arena in this worker.
       (arena.tl_arena_set owner))
     (while (< i 4096)
       (let
         [current : i64 (tl_alloc_aligned 17 64)]
-        (unsafe
-          (ptr-write! (ptr-offset context-ptr (+ i 1)) current))
-        (if (or
-          (not (aligned? current 64))
-          (and (not (= last 0)) (<= current last)))
-          (set! valid false)
-          unit)
-        (set! last current)
+        (when
+          (aligned? current 64)
+          (unsafe
+            (atomic-store! (address-as-i64-pointer current) (+ context (* i 8)))
+            (ptr-write! (ptr-offset context-ptr (+ i 1)) current)))
         (set! i (+ i 1))))
     (unsafe
       ;; lint-allow: raw-arena-op -- restore the worker's original arena.
       (arena.tl_arena_set home))
-    (if valid
-      last
-      0)))
+    42))
 
-(define (atomic-records-nonoverlap?
-  [left : (& left (__tl_dyn-array i64))]
-  [right : (& right (__tl_dyn-array i64))]) : bool
+(define (atomic-records-intact?
+  [records : (& records (__tl_dyn-array i64))]
+  [context : i64]) : bool
+  ;; These 24-byte allocations can only overlap if their 64-byte-aligned
+  ;; addresses coincide. Each marker identifies a unique allocation even
+  ;; when chunk addresses decrease.
   (let
-    [left-index : i64 1]
-    [right-index : i64 1]
-    [previous : i64 0]
-    [valid : bool true]
-    (while (or (< left-index 4097) (< right-index 4097))
+    [i : i64 0]
+    (while (< i 4096)
       (let
-        [take-left : bool
-          (and
-            (< left-index 4097)
-            (or
-              (>= right-index 4097)
-              (<= (array-ref left left-index) (array-ref right right-index))))]
-        [current : i64
-          (if take-left
-            (array-ref left left-index)
-            (array-ref right right-index))]
-        (if (or
-          (not (aligned? current 64))
-          (and (not (= previous 0)) (< current (+ previous 24))))
-          (set! valid false)
-          unit)
-        (set! previous current)
-        (if take-left
-          (set! left-index (+ left-index 1))
-          (set! right-index (+ right-index 1)))))
-    valid))
+        [current : i64 (array-ref records (+ i 1))]
+        (when
+          (or
+            (= current 0)
+            (not (aligned? current 64))
+            (!=
+              (unsafe
+                (atomic-load (address-as-i64-pointer current)))
+              (+ context (* i 8))))
+          (return false))
+        (set! i (+ i 1))))
+    true))
 
-(define (joined-address [result : thread.ThreadJoinResult]) : i64
+(define (worker-completed? [result : thread.ThreadJoinResult]) : bool
   (match result
-    [(ThreadJoinOk value) value]
-    [(ThreadJoinErr _) 0]))
+    [(ThreadJoinOk value) (= value 42)]
+    [(ThreadJoinErr _) false]))
 
 (define (atomic-contention-ok?) : bool
   (let
@@ -232,22 +302,24 @@
             false]
           [(ThreadSpawnOk worker-b)
             (let
-              [address-a : i64
-                (joined-address
+              [done-a : bool
+                (worker-completed?
                   (unsafe
                     (thread.join worker-a)))]
-              [address-b : i64
-                (joined-address
+              [done-b : bool
+                (worker-completed?
                   (unsafe
                     (thread.join worker-b)))]
               [ok : bool
                 (and
-                  (not (= address-a 0))
-                  (not (= address-b 0))
-                  (not (= address-a address-b))
-                  (aligned? address-a 64)
-                  (aligned? address-b 64)
-                  (atomic-records-nonoverlap? (& context-a) (& context-b)))]
+                  done-a
+                  done-b
+                  (atomic-records-intact?
+                    (& context-a)
+                    (array-i64-address context-a))
+                  (atomic-records-intact?
+                    (& context-b)
+                    (array-i64-address context-b)))]
               (arena.destroy-safe! owner)
               ok)])])))
 
@@ -282,5 +354,8 @@
     [(not (rewind-reuses-aligned-start?)) 2]
     [(not (exact-end-fit-grows-afterward?)) 3]
     [(not (atomic-contention-ok?)) 4]
+    [(cfg linux (not (geometric-rewind-ok?)) false) 6]
+    [(cfg linux (not (huge-then-capped-ok? (arena.make))) false) 7]
+    [(cfg linux (not (huge-then-capped-ok? (arena.make-atomic))) false) 8]
     [(not (poison-reset-reuses-aligned-start?)) 5]
     [else 42]))

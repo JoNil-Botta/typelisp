@@ -25701,18 +25701,26 @@ entry:
           (backend.compiler-backend-string-count
             asm
             "    movq $9, %rax\n    syscall\n")
-          7)
+          4)
         (=
           (backend.compiler-backend-string-count
             asm
             "    movq $11, %rax\n    syscall\n")
           5)
-        (= (backend.compiler-backend-string-count asm "    syscall\n") 16)
+        (= (backend.compiler-backend-string-count asm "    syscall\n") 14)
         (=
           (backend.compiler-backend-string-count
             asm
             "    movq $60, %rax\n    movq $134, %rdi\n    syscall\n")
           3))
+      (=
+        (backend.compiler-backend-string-count
+          asm
+          "    call .L_tl_arena_map_chunk\n")
+        4)
+      (asm-has?
+        asm
+        "    testq $-0x200000, %rsi\n    jz .L_tl_arena_map_done\n    movq %rax, %rdi\n    movl $15, %edx\n    movl $28, %eax\n    syscall\n    movq %rdi, %rax\n")
       (asm-has? asm "    movq $158, %rax\n    syscall\n")
       (asm-lacks? asm "VirtualAlloc" "VirtualFree"))))
 
@@ -25844,10 +25852,12 @@ entry:
     (and
       (asm-has?
         asm
-        "    movq %r10, 0(%rax)\n    movq $0, 32(%rax)\n    movq %r9, 40(%rax)\n    movq $0, 48(%rax)\n    movq %rax, 56(%r9)\n    leaq 64(%rax), %r8\n"
+        "    movq %r10, 0(%rax)\n    movq %r8, 40(%rax)\n    movq %rax, 56(%r8)\n    leaq 64(%rax), %r9\n"
         "    movq 56(%r12), %rbx\n    testq %rbx, %rbx\n    jnz .L_tl_arena_destroy_head_ready\n    movq %r12, %rbx\n.L_tl_arena_destroy_head_ready:\n.L_tl_arena_destroy_retired_ready:\n    movq 32(%r12), %r12\n"
         "    movq %rbx, 16(%r8)\n    movq %r8, 56(%r12)\n")
-      (asm-lacks? asm "    movq %r8, %fs:tl_current_arena@tpoff\n")
+      (asm-lacks?
+        asm
+        "    movq %r9, %fs:tl_current_arena@tpoff\n    movq %r9, %rax\n")
       (asm-has?
         asm
         "    movq 56(%r10), %r8\n    testq %r8, %r8\n    jnz .L_tl_region_reset_all_head_ready\n    movq %r10, %r8\n.L_tl_region_reset_all_head_ready:\n.L_tl_region_reset_all_retired_ready:\n    movq 32(%r10), %rbx\n"))))
@@ -25875,9 +25885,11 @@ entry:
         (be_state.CompilerBackendTarget.Linux))]
     (asm-has?
       asm
-      "tl_arena_make_small:\n    movq $0x1000000, %rsi\n.L_tl_arena_make_sized:\n"
-      "    movq $0, 48(%rax)\n    movq %rax, 56(%rax)\n"
-      "    movq %rax, %rcx\n    addq %rsi, %rcx\n    movq %rcx, 24(%rax)\n")))
+      "tl_arena_make:\n    movq $0x40000, %rsi\n"
+      "tl_arena_make_small:\n    movq $0x40000, %rsi\n.L_tl_arena_make_sized:\n"
+      "tl_arena_make_atomic:\n    movq $0x40000, %rsi\n"
+      "    movq %rax, 40(%rax)\n    movq %rax, 56(%rax)\n"
+      "    leaq (%rax,%rsi), %rcx\n    movq %rcx, 24(%rax)\n")))
 
 (define (compiler-backend-runtime-small-arena-windows-ok?) : bool
   (let
@@ -40717,11 +40729,12 @@ entry:
     [_set-home : unit
       (unsafe
         (arena.set! home))]
-    ;; Leave eight bytes in the Linux root segment. The first retained chunk
+    ;; Leave eight bytes in the root segment. The first retained chunk
     ;; stays Inline; appending the second chunk forces dense-store materialization
-    ;; and grows the home chain without touching 64 MiB of pages. The public
-    ;; handle must remain the stable owner root throughout.
-    [_fill-home : i64 (compiler-backend-test-runtime-alloc 67108792)]
+    ;; and grows the home chain without touching the rest of the segment.
+    ;; The public handle must remain the stable owner root throughout.
+    [root-size : i64 (cfg linux 262144 67108864)]
+    [_fill-home : i64 (compiler-backend-test-runtime-alloc (- root-size 72))]
     [home-before-copy : arena.Arena (arena.current)]
     [_set-scratch : unit
       (unsafe
@@ -44869,18 +44882,19 @@ b_keep:
       "tl_arena_make_atomic:\n"
       "    movq %fs:tl_current_arena@tpoff, %r8\n"
       ".L_tl_alloc_new_arena:\n"
-      "    movq $0x4000000, %rdx\n"
-      "    addq $64, %rcx\n"
-      "    movq $0, 32(%rax)\n"
+      ".L_tl_arena_map_chunk:\n    testq %rdi, %rdi\n    jnz .L_tl_arena_map_grow\n    cmpq $0x4000000, %rsi\n    ja .L_tl_arena_map_round\n    movl $0x4000000, %esi\n"
+      ".L_tl_arena_map_grow:\n    movl $0x4000000, %eax\n    movq 24(%rdi), %rcx\n    subq %rdi, %rcx\n    xorq %rdi, %rdi\n    cmpq $0x2000000, %rcx\n    jae .L_tl_arena_map_len\n    leaq (%rcx,%rcx), %rax\n"
+      ".L_tl_arena_map_len:\n    cmpq %rax, %rsi\n    cmovbq %rax, %rsi\n    jbe .L_tl_arena_mmap\n.L_tl_arena_map_round:\n    addq $4095, %rsi\n    jc .L_tl_arena_map_overflow\n    andq $-4096, %rsi\n    jmp .L_tl_arena_mmap\n"
+      "    addq $64, %rsi\n"
+      "    leaq (%rax,%rsi), %rcx\n    pop %rsi\n    js .L_tl_alloc_abort\n"
       "    movq %r10, 0(%rax)\n"
-      "    movq %r9, 40(%rax)\n"
-      "    movq $0, 48(%rax)\n"
-      "    movq %rax, 56(%r9)\n"
-      "    leaq 64(%rax), %r8\n"
+      "    movq %r8, 40(%rax)\n"
+      "    movq %rax, 56(%r8)\n"
+      "    leaq 64(%rax), %r9\n"
       "    movq %rax, 40(%rax)\n"
       "    movq $1, 48(%rax)\n"
       "    leaq 64(%rax), %rcx\n"
-      "    movq %r9, %fs:tl_current_arena@tpoff\n")
+      "    movq %r8, %fs:tl_current_arena@tpoff\n")
     (lacks
       ".section .tdata"
       "    movq %rax, %fs:tl_current_arena@tpoff\n"
@@ -46793,7 +46807,8 @@ tl_region_reset:
     xorq %rbx, %rbx
     ret
 tl_thread_init:
-    subq $tl_current_arena@tpoff, %rsi
+    leaq 4080(%rax), %rsi
+    movq %rsi, %fs:tl_current_arena@tpoff
     ret
 tl_thread_local_word_addr:
     movq %fs:0, %rax
@@ -46836,7 +46851,7 @@ user_fn:
         "tl_arena_set:\n    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %rdi, %fs:(%rax)\n"
         "    movq tl_current_arena@gottpoff(%rip), %r8\n    movq %fs:(%r8), %r8\n"
         "    movq tl_current_arena@gottpoff(%rip), %rbx\n    movq $0, %fs:(%rbx)\n    xorq %rbx, %rbx\n"
-        "    negq %rsi\n    addq tl_current_arena@gottpoff(%rip), %rsi\n    negq %rsi\n"
+        "tl_thread_init:\n    leaq 4080(%rax), %rsi\n    movq tl_current_arena@gottpoff(%rip), %rdi\n    movq %rsi, %fs:(%rdi)\n"
         "    addq tl_thread_local_word@gottpoff(%rip), %rax\n"
         ;; Generated code stores TLS only at a call site, where %rax is free.
         "user_fn:\n    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %rdi, %fs:(%rax)\n"
@@ -46999,8 +47014,8 @@ user_fn:
     (and
       (asm-has?
         rewritten
-        "    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %r9, %fs:(%rax)\n    movq %r8, %rax\n"
-        "    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %r9, %fs:(%rax)\n    subq %rcx, %r10\n"
+        "    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %r8, %fs:(%rax)\n    movq %r9, %rax\n"
+        "    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %r8, %fs:(%rax)\n    subq %rcx, %r10\n"
         "    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %rdi, %fs:(%rax)\n    ret\n    .size tl_arena_set,"
         "    leaq .L_tl_global_aggregate_arena(%rip), %rbx\n    movq tl_current_arena@gottpoff(%rip), %r11\n    movq %rbx, %fs:(%r11)\n    call tl_alloc\n"
         "    call tl_alloc\n    movq tl_current_arena@gottpoff(%rip), %r11\n    movq %r13, %fs:(%r11)\n    addq $40, %rsp\n"

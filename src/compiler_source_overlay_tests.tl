@@ -522,7 +522,7 @@
     [entry : String "target/check_overlay/pkg/app/src/main.tl"]
     [dep : String "target/check_overlay/pkg/math/src/add.tl"]
     [manifest : String "target/check_overlay/pkg/math/typelisp.pkg"]
-    [tlci : String "target/check_overlay/pkg/math/target/release/math.tlci"]
+    [tlci : String "target/check_overlay/pkg/math/target/dev/math.tlci"]
     [deps : compiler_load.CompilerPkgDeps
       (compiler_load.compiler-pkg-deps-cons
         "math"
@@ -590,7 +590,7 @@
             unit
             unit)
           (if (compiler_load.compiler-load-test-mkdir
-            "target/check_overlay/pkg/math/target/release")
+            "target/check_overlay/pkg/math/target/dev")
             unit
             unit)
           (load_tests.compiler-load-write-file-text

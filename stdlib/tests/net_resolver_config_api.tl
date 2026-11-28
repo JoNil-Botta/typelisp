@@ -427,9 +427,21 @@
   0)
 (define short-read-close-count : i64
   0)
+(define short-read-token : i64
+  0)
+
+(define (open-short-read-source [path : (& path str)]) : io.FileHandle
+  (match (io.file-open path (OpenRead))
+    [(OkIoFile handle)
+      (set! short-read-token (io.format-writer-context-FileHandle handle))
+      handle]
+    [(ErrIoFile _) (io.panic "open short-read fixture")]))
 
 (define (one-byte-read [handle : io.FileHandle] [requested : i64]) : io.ResultIoRead
-  (test.assert-i64-eq handle.id 777 "injected read handle")
+  (test.assert-i64-eq
+    (io.format-writer-context-FileHandle handle)
+    short-read-token
+    "injected read handle")
   (let
     [bytes : byte_buf.ByteBuf (byte_buf.with-capacity requested)]
     (if (= short-read-position 256)
@@ -440,16 +452,25 @@
         (OkIoRead (io.FileRead bytes false))))))
 
 (define (count-source-close [handle : io.FileHandle]) : io.ResultIoUnit
-  (test.assert-i64-eq handle.id 777 "injected close handle")
+  (test.assert-i64-eq
+    (io.format-writer-context-FileHandle handle)
+    short-read-token
+    "injected close handle")
   (set! short-read-close-count (+ short-read-close-count 1))
-  (OkIoUnit))
+  (io.file-close handle))
 
 (define (zero-progress-read [handle : io.FileHandle] [_requested : i64]) : io.ResultIoRead
-  (test.assert-i64-eq handle.id 777 "zero-progress handle")
+  (test.assert-i64-eq
+    (io.format-writer-context-FileHandle handle)
+    short-read-token
+    "zero-progress handle")
   (OkIoRead (io.FileRead (byte_buf.new) false)))
 
 (define (failed-read [handle : io.FileHandle] [_requested : i64]) : io.ResultIoRead
-  (test.assert-i64-eq handle.id 777 "failed-read handle")
+  (test.assert-i64-eq
+    (io.format-writer-context-FileHandle handle)
+    short-read-token
+    "failed-read handle")
   (ErrIoRead (IoSystemCode 13 "injected")))
 
 (define (failed-close [handle : io.FileHandle]) : io.ResultIoUnit
@@ -457,19 +478,20 @@
     [result : io.ResultIoUnit (count-source-close handle)]
     (match result
       [(OkIoUnit) unit]
-      [(ErrIoUnit _) unit]))
+      [(ErrIoUnit _) (io.panic "close short-read fixture")]))
   (ErrIoUnit (IoSystemCode 5 "injected")))
 
-(define (short-read-checks) : unit
+(define (short-read-checks [path : (& path str)]) : unit
   (set! short-read-position 0)
   (set! short-read-close-count 0)
   (profile.alloc-reset-peak)
   (let
+    [handle : io.FileHandle (open-short-read-source path)]
     [before : i64 (profile.alloc-live)]
     [result : linux.ConfigBytesResult
       (linux.read-open-source
         (ConfigHosts)
-        (io.FileHandle 777)
+        handle
         one-byte-read
         count-source-close)]
     [retained : i64 (- (profile.alloc-live) before)]
@@ -505,7 +527,7 @@
   (set! short-read-close-count 0)
   (match (linux.read-open-source
     (ConfigHosts)
-    (io.FileHandle 777)
+    (open-short-read-source path)
     zero-progress-read
     count-source-close)
     [(ConfigBytesOk _) (io.panic "zero-progress read accepted")]
@@ -515,7 +537,7 @@
   (set! short-read-close-count 0)
   (match (linux.read-open-source
     (ConfigHosts)
-    (io.FileHandle 777)
+    (open-short-read-source path)
     failed-read
     failed-close)
     [(ConfigBytesOk _) (io.panic "failed read accepted")]
@@ -526,7 +548,7 @@
   (set! short-read-close-count 0)
   (match (linux.read-open-source
     (ConfigHosts)
-    (io.FileHandle 777)
+    (open-short-read-source path)
     one-byte-read
     failed-close)
     [(ConfigBytesOk _) (io.panic "close failure accepted")]
@@ -552,6 +574,7 @@
       (let
         [path : String (fs.path-join (& directory) "hosts")]
         (io.write-file (& path) (byte_buf.str-as-bytes "::1 fixture\r\n"))
+        (short-read-checks (& path))
         (match (linux.read-source-path (ConfigHosts) (& path))
           [(ConfigBytesErr _) (io.panic "bounded file read")]
           [(ConfigBytesOk source)
@@ -630,7 +653,6 @@
                     "IPv6 first")))]))])))
 
 (define (run-suite) : i64
-  (short-read-checks)
   (name-checks)
   (name-boundary-checks)
   (snapshot-checks)

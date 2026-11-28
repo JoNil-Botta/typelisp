@@ -139,7 +139,8 @@ The compiler front end, IR, optimizer, backends, and all tooling under
 [`../src/`](../src) are written in TypeLisp; compiler self-test conventions are
 documented in [`../src/TESTING.md`](../src/TESTING.md). The repository root is
 itself a package: from a checkout, `typelisp build` builds the unified
-selfhost CLI from `src/main.tl` into `target/release/`.
+selfhost CLI from `src/main.tl` into `target/dev/`. Use `typelisp build --release`
+for the optimized compiler in `target/release/`.
 
 The published stage0 is a single self-hosted binary per OS
 (`typelisp-stage0-linux`, `typelisp-stage0-windows.exe`). The
@@ -155,8 +156,12 @@ scripts/build-stage0.sh target/stage0/typelisp typelisp-stage0-linux            
 scripts/build-stage0.sh target/stage0/typelisp.exe typelisp-stage0-windows.exe # Windows (Git Bash)
 ```
 
-`build-stage0.sh` compiles `src/main.tl` with the seed and links through the
-host toolchain, so a stage0 never depends on its own `build` command.
+`build-stage0.sh` compiles `src/main.tl` to assembly and links each stage
+through the host linker. Linux stages turn that assembly into ELF objects
+with `typelisp assemble <file.s> -o <file.o>`. A published seed that predates
+the command uses GNU `as` for the first stage. The fixpoint gate compares the
+emitted `.s` files byte for byte. The Linux sysroot builder uses the same
+command for each stdlib module and archives the resulting objects with `ar`.
 
 `--version` records the source commit. `--producer-identity` reports its Git
 tree object name, which keys exact frontend-surface and embedded TLCI admission.

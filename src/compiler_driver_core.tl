@@ -5668,17 +5668,15 @@
 ;; later import fails. Capture immediately after load, before matching its
 ;; result; cleanup must own the last live generation on both exits.
 (define (compiler-driver-package-runtime-capture-frontend!
-  [scope : CompilerDriverPackageRuntimeScope]) : unit
-  (let
-    [state : CompilerDriverState scope.state]
-    (compiler-driver-state-adopt-pools!
-      state
-      (compiler_ast_types.ast-node-pool-context-capture-active))
-    (compiler-driver-state-capture-active-interns! (&mut state))
-    (compiler-driver-state-capture-active-builtins! (&mut state))))
+  [scope : (&mut CompilerDriverPackageRuntimeScope)]) : unit
+  (compiler-driver-state-adopt-pools!
+    (& scope.state)
+    (compiler_ast_types.ast-node-pool-context-capture-active))
+  (compiler-driver-state-capture-active-interns! (&mut scope.state))
+  (compiler-driver-state-capture-active-builtins! (&mut scope.state)))
 
 (define (compiler-driver-package-runtime-open-tli!
-  [scope : CompilerDriverPackageRuntimeScope]
+  [scope : (& CompilerDriverPackageRuntimeScope)]
   [entry-path : (& str)]
   [manifest-dir : (& str)]
   [deps : (& compiler_load.CompilerPkgDeps)]
@@ -5698,12 +5696,13 @@
     opt-level
     require-archive))
 
-(define (compiler-driver-package-runtime-load
-  [scope : CompilerDriverPackageRuntimeScope]
-  [path : String]
-  [roots : svec.Vec]
-  [manifest-dir : String]
-  [deps : compiler_load.CompilerPkgDeps]
+(define (compiler-driver-package-runtime-load-entry
+  [scope : (&mut CompilerDriverPackageRuntimeScope)]
+  [path : (& str)]
+  [source : compiler_load.CompilerLoadMaybeString]
+  [roots : (& svec.Vec)]
+  [manifest-dir : (& str)]
+  [deps : (& compiler_load.CompilerPkgDeps)]
   [emit-entry : bool]
   [cfgs : sym_i64_env.SymI64Env]) : compiler_load.ResultCompilerLoadWithPaths
   (let
@@ -5711,8 +5710,9 @@
       (in-arena
         (unsafe
           (arena.from-raw-handle (array-ref scope.frontend-arena 0)))
-        (compiler-driver-load-package-file-with-runtime-cfg
+        (compiler_load.compiler-load-package-entry-with-runtime-cfg
           path
+          source
           roots
           manifest-dir
           deps
@@ -5721,8 +5721,26 @@
     (compiler-driver-package-runtime-capture-frontend! scope)
     loaded))
 
-(define (compiler-driver-package-runtime-lower
+(define (compiler-driver-package-runtime-load
   [scope : CompilerDriverPackageRuntimeScope]
+  [path : String]
+  [roots : svec.Vec]
+  [manifest-dir : String]
+  [deps : compiler_load.CompilerPkgDeps]
+  [emit-entry : bool]
+  [cfgs : sym_i64_env.SymI64Env]) : compiler_load.ResultCompilerLoadWithPaths
+  (compiler-driver-package-runtime-load-entry
+    (&mut scope)
+    (& path)
+    compiler_load.CompilerLoadMaybeString.CompilerLoadNoString
+    (& roots)
+    (& manifest-dir)
+    (& deps)
+    emit-entry
+    cfgs))
+
+(define (compiler-driver-package-runtime-lower
+  [scope : (&mut CompilerDriverPackageRuntimeScope)]
   [package-name : String]
   [target : be_state.CompilerBackendTarget]
   [mode : be_state.CompilerBackendMode]
@@ -5732,7 +5750,7 @@
   [opt-level : i64]) : ResultCompilerDriverLowered
   (let
     [state : CompilerDriverState
-      (owned_view.compiler-owned-shared-view scope.state)]
+      (owned_view.compiler-owned-reference-shared-view (& scope.state))]
     [_configure-input : unit
       (compiler-driver-lower-state-configure-input!
         (compiler-driver-state-owned-lower-state state)
@@ -5744,8 +5762,7 @@
         ;; Package-owned paths and export preparation can intern additional
         ;; identities after loading. Publish that final frontend cursor before
         ;; generation installs the explicit job interner.
-        (compiler-driver-package-runtime-capture-frontend!
-          (owned_view.compiler-owned-shared-view scope))
+        (compiler-driver-package-runtime-capture-frontend! scope)
         ;; Hydrated dependency facts include frontend-owned observation arrays.
         ;; Keep their complete publication live through generation/macro source
         ;; retirement; file-state reset clears it before this arena is destroyed.
@@ -5764,7 +5781,7 @@
       (begin
         (set!
           compiler-driver-pending-frontend-return-arena
-          (__tl-project-field scope.home handle))
+          (arena.raw-handle scope.home))
         (unsafe
           (arena.tl_arena_set (array-ref scope.frontend-arena 0))))]
     [handoff : CompilerDriverCheckedLowerHandoff

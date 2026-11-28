@@ -322,9 +322,8 @@
         (deref state.handle.storage).message-length
         (- (hmac.max-message-bytes) 1))
       (set!
-        (deref state.handle.storage).inner.byte-length
-        (- (sha.max-byte-length) (cast 1 : u64)))
-      (set! (deref state.handle.storage).inner.block-length 62))
+        (deref state.handle.storage).inner
+        (sha.test-near-length-limit-state (deref state.handle.storage).inner)))
     (require-ok (hmac.update! (&mut state) (buf.str-as-bytes "x")))
     (match (unsafe
       (hmac.update-from-pointer!
@@ -516,7 +515,9 @@
     (let
       [bad : hmac.HmacSha256State (state-from (& key) (hmac.default-limits))]
       (unsafe
-        (set! (deref bad.handle.storage).inner.block-length 64))
+        (set!
+          (deref bad.handle.storage).inner
+          (sha.test-invalid-block-cursor-state (deref bad.handle.storage).inner)))
       (match (hmac.update! (&mut bad) (buf.str-as-bytes "x"))
         [(HmacSha256Err (HmacSha256ShaError (sha.Sha256InvalidState))) unit]
         [_ (test.assert-true false "internal SHA update failure")])
@@ -526,7 +527,9 @@
     (let
       [bad : hmac.HmacSha256State (state-from (& key) (hmac.default-limits))]
       (unsafe
-        (set! (deref bad.handle.storage).outer.finalized true))
+        (set!
+          (deref bad.handle.storage).outer
+          (sha.test-finalized-state (deref bad.handle.storage).outer)))
       (match (hmac.finalize-secret! (&mut bad))
         [(HmacSha256SecretErr (HmacSha256ShaError (sha.Sha256Finalized))) unit]
         [(HmacSha256SecretErr _)

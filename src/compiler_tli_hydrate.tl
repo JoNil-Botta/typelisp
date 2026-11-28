@@ -1966,9 +1966,13 @@
     [comptime-only : bool (!= (bit-and eflags 2) 0)]
     [must-use : bool (!= (bit-and eflags 128) 0)]
     [markers : i64
-      (if must-use
-        1
-        0)]
+      (bit-or
+        (if must-use
+          1
+          0)
+        (if (!= (bit-and eflags tli.tli-fn-cold) 0)
+          ast.ast-decl-cold-bit
+          0))]
     [meta : ast.AstDeclMeta (tli-hydrate-decl-meta comptime-only markers)]
     [archive-sym : String
       (tli-hydrate-archive-fn-symbol-with-mode is-stdlib source-path row)]

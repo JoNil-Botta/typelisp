@@ -497,7 +497,8 @@
           ret-ty
           slot-vars
           (owned_view.compiler-owned-shared-view emit-blocks)
-          Ordinary)]
+          Ordinary
+          false)]
       [liveness : compiler_liveness.CompilerFunctionLiveness
         (compiler_liveness.compiler-live-analyze-function (& func))]
       [starts : (__tl_dyn-array i64) (__tl_make-array i64 slot-vars)]
@@ -1724,7 +1725,8 @@
     1
     (ir.compiler-ir-blocks
       (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (compiler-backend-object-test-call-category?
   [index : be_state.CompilerBackendProgramIndex]
@@ -1763,7 +1765,8 @@
         (I64)
         1
         (ir.compiler-ir-block-list-empty)
-        Ordinary)]
+        Ordinary
+        false)]
     [bool-result-function : ir.CompilerIrFunction
       (Function
         bool-result-name
@@ -1771,7 +1774,8 @@
         (Bool)
         0
         (ir.compiler-ir-block-list-empty)
-        Ordinary)]
+        Ordinary
+        false)]
     [functions : ir.CompilerIrFunctionSeq
       (ir.compiler-ir-function-seq-prepend
         (& bool-param-function)
@@ -2899,7 +2903,8 @@
               (I64)
               1
               blocks
-              (Ordinary)))
+              (Ordinary)
+              false))
           (& (ir.compiler-ir-function-seq-empty)))
         (ir.compiler-ir-extern-seq-empty)
         (ir.CompilerIrReturnStorageAuthority.None))]
@@ -4239,7 +4244,8 @@
           false
           (ir.CompilerIrReturnStorage.None)
           false
-          (ir.CompilerIrGlobalStorage.Word)))]
+          (ir.CompilerIrGlobalStorage.Word)
+          false))]
     [index : be_state.CompilerBackendProgramIndex
       (compiler-backend-program-index-build
         bases
@@ -5594,7 +5600,8 @@
               (compiler-backend-test-instr-seq-prepend
                 (Return No)
                 (ir.compiler-ir-instr-seq-empty))))
-          Ordinary))
+          Ordinary
+          false))
       (&
         (ir.compiler-ir-function-seq-prepend
           (&
@@ -5607,7 +5614,8 @@
                 (ir.CompilerIrBlock.Block
                   (ir.compiler-ir-label "entry")
                   (compiler-backend-call-save-main-instrs)))
-              Ordinary))
+              Ordinary
+              false))
           (& (ir.compiler-ir-function-seq-empty)))))
     (ir.compiler-ir-extern-seq-empty)
     (ir.CompilerIrReturnStorageAuthority.None)))
@@ -6146,7 +6154,7 @@
       (str_cat.str-cat
         prefix
         "jump loop\nloop:\n%1 = phi [0, entry], [%2, loop] : i64\n%2 = add %1, 1 : i64\n%3 = lt %2, %0 : i64\nbranch %3, loop, exit\nexit:\nreturn %2\n}")))
-    [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks _ _)
       ;; Block lists are dense arrays (#8594).
       (let
         [ids : backend_i64_i64_map.Map
@@ -8652,7 +8660,8 @@ high:
             (I64)
             2
             blocks
-            Ordinary))
+            Ordinary
+            false))
         (& (ir.compiler-ir-function-seq-empty)))]
     [index : be_state.CompilerBackendProgramIndex
       (compiler-backend-program-index-build
@@ -8761,7 +8770,8 @@ high:
             (owned_view.compiler-owned-shared-view type3)
             4
             (ir.compiler-ir-block-list-empty)
-            Ordinary))
+            Ordinary
+            false))
         (& (ir.compiler-ir-function-seq-empty)))]
     [index : be_state.CompilerBackendProgramIndex
       (compiler-backend-program-index-build
@@ -9447,7 +9457,8 @@ high:
                           (& (ir.compiler-ir-value-seq-empty)))))
                     ty)
                   (ir.compiler-ir-instr-seq-empty))))
-            Ordinary))
+            Ordinary
+            false))
         (& (ir.compiler-ir-function-seq-empty)))
       (ir.compiler-ir-extern-seq-empty))))
 
@@ -9480,7 +9491,8 @@ high:
                           (& (ir.compiler-ir-value-seq-empty)))))
                     ty)
                   (ir.compiler-ir-instr-seq-empty))))
-            Ordinary))
+            Ordinary
+            false))
         (& (ir.compiler-ir-function-seq-empty)))
       (ir.compiler-ir-extern-seq-empty))))
 
@@ -9574,7 +9586,8 @@ high:
           (compiler-backend-test-instr-seq-prepend
             (Return (Some (Var 1)))
             (ir.compiler-ir-instr-seq-empty)))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (compiler-backend-descriptor-pair-main) : ir.CompilerIrFunction
   (let
@@ -9639,7 +9652,8 @@ high:
                                           (compiler-backend-test-instr-seq-prepend
                                             (Return (Some (Var 13)))
                                             (ir.compiler-ir-instr-seq-empty))))))))))))))))))))
-      Ordinary)))
+      Ordinary
+      false)))
 
 (define (compiler-backend-descriptor-pair-program) : ir.CompilerIrProgram
   (Program
@@ -9820,7 +9834,8 @@ high:
                 (compiler-backend-test-instr-seq-prepend
                   (ir.ir-instr-descriptor-pair-length 3 (Var 1))
                   (irt.instrs "return %3")))))))
-      Ordinary)))
+      Ordinary
+      false)))
 
 (define (compiler-backend-descriptor-pair-object-program) : ir.CompilerIrProgram
   (Program
@@ -10353,7 +10368,8 @@ high:
               (I64)
               3
               blocks
-              Ordinary))
+              Ordinary
+              false))
           (& (ir.compiler-ir-function-seq-empty)))]
       [globals : ir.CompilerIrGlobalSeq
         (compiler-backend-test-global-seq-single
@@ -10481,7 +10497,8 @@ high:
             (I64)
             5
             blocks
-            Ordinary))
+            Ordinary
+            false))
         (& (ir.compiler-ir-function-seq-empty)))]
     [index : be_state.CompilerBackendProgramIndex
       (compiler-backend-program-index-build
@@ -12803,7 +12820,8 @@ high:
                           (& (ir.compiler-ir-value-seq-empty)))))
                     (owned_view.compiler-owned-shared-view ty))
                   (ir.compiler-ir-instr-seq-empty))))
-            Ordinary))
+            Ordinary
+            false))
         (&
           (ir.compiler-ir-function-seq-prepend
             (&
@@ -12815,7 +12833,8 @@ high:
                 (I64)
                 1
                 (ir.compiler-ir-block-list-empty)
-                Ordinary))
+                Ordinary
+                false))
             (& (ir.compiler-ir-function-seq-empty)))))
       (ir.compiler-ir-extern-seq-empty))))
 
@@ -14771,7 +14790,8 @@ f:
               (compiler-backend-test-instr-seq-prepend
                 (Return (Some (I64 7)))
                 (ir.compiler-ir-instr-seq-empty))))
-          Ordinary))
+          Ordinary
+          false))
       (& (ir.compiler-ir-function-seq-empty)))
     (ir.compiler-ir-extern-seq-empty)
     (ir.CompilerIrReturnStorageAuthority.None)))
@@ -15326,7 +15346,8 @@ f:
               (compiler-backend-test-instr-seq-prepend
                 (Return (Some (I64 7)))
                 (ir.compiler-ir-instr-seq-empty))))
-          Ordinary))
+          Ordinary
+          false))
       (&
         (ir.compiler-ir-function-seq-prepend
           (&
@@ -15343,7 +15364,8 @@ f:
                     (compiler-backend-test-instr-seq-prepend
                       (Return (Some (Var 0)))
                       (ir.compiler-ir-instr-seq-empty)))))
-              Ordinary))
+              Ordinary
+              false))
           (& (ir.compiler-ir-function-seq-empty)))))
     (ir.compiler-ir-extern-seq-empty)
     (ir.CompilerIrReturnStorageAuthority.None)))
@@ -17578,12 +17600,20 @@ f:
     [mapped : String
       (ir.compiler-debug-path-remap "/private/build/src/main.tl")]
     [unchanged : String (ir.compiler-debug-path-remap "/other/src/main.tl")]
+    [from-relative
+      (be_scalar.compiler-backend-elf-debug-path "src/main.tl" "/private/build")]
+    [relative-map (ir.compiler-debug-path-remap-set! "src=REMAPPED")]
+    [already-mapped
+      (be_scalar.compiler-backend-elf-debug-path "src/main.tl" "/private/build")]
     [_restore : unit (ir.compiler-debug-path-remap-clear!)]
     (and
       invalid-ok
       configured
       (string.eq mapped "WORKSPACE/src/main.tl")
       (string.eq unchanged "/other/src/main.tl")
+      (string.eq from-relative "WORKSPACE/src/main.tl")
+      relative-map
+      (string.eq already-mapped "REMAPPED/main.tl")
       (not (ir.compiler-debug-path-remap-enabled?)))))
 
 (define (compiler-backend-backtrace-metadata-shape-ok?) : bool
@@ -17783,7 +17813,8 @@ f:
               (compiler-backend-test-instr-seq-prepend
                 (Return (Some (I64 0)))
                 (ir.compiler-ir-instr-seq-empty))))
-          Ordinary))
+          Ordinary
+          false))
       (& (ir.compiler-ir-function-seq-empty)))
     (ir.compiler-ir-extern-seq-empty)
     (ir.CompilerIrReturnStorageAuthority.None)))
@@ -17805,7 +17836,8 @@ f:
               (compiler-backend-test-instr-seq-prepend
                 (Return (Some (I64 0)))
                 (ir.compiler-ir-instr-seq-empty))))
-          Ordinary))
+          Ordinary
+          false))
       (&
         (ir.compiler-ir-function-seq-prepend
           (&
@@ -17820,7 +17852,8 @@ f:
                   (compiler-backend-test-instr-seq-prepend
                     (Return (Some (I64 0)))
                     (ir.compiler-ir-instr-seq-empty))))
-              Ordinary))
+              Ordinary
+              false))
           (& (ir.compiler-ir-function-seq-empty)))))
     (ir.compiler-ir-extern-seq-empty)
     (ir.CompilerIrReturnStorageAuthority.None)))
@@ -18427,7 +18460,8 @@ f:
                   (compiler-backend-test-instr-seq-prepend
                     instr
                     (ir.compiler-ir-instr-seq-empty))))
-              Ordinary))
+              Ordinary
+              false))
           (& (ir.compiler-ir-function-seq-empty)))
         (ir.compiler-ir-extern-seq-empty)
         (ir.CompilerIrReturnStorageAuthority.None))]
@@ -18470,7 +18504,8 @@ f:
           (I64)
           1
           (compiler-backend-switch-test-blocks)
-          Ordinary))
+          Ordinary
+          false))
       (& (ir.compiler-ir-function-seq-empty)))
     (ir.compiler-ir-extern-seq-empty)
     (ir.CompilerIrReturnStorageAuthority.None)))
@@ -18568,7 +18603,8 @@ f:
           (I64)
           2
           (compiler-backend-total-switch-test-blocks true)
-          Ordinary))
+          Ordinary
+          false))
       (& (ir.compiler-ir-function-seq-empty)))
     (ir.compiler-ir-extern-seq-empty)
     (ir.CompilerIrReturnStorageAuthority.None)))
@@ -18628,7 +18664,8 @@ f:
           (I64)
           2
           (compiler-backend-forwarded-total-switch-test-blocks)
-          Ordinary))
+          Ordinary
+          false))
       (& (ir.compiler-ir-function-seq-empty)))
     (ir.compiler-ir-extern-seq-empty)
     (ir.CompilerIrReturnStorageAuthority.None)))
@@ -18644,7 +18681,8 @@ f:
           (I64)
           2
           (compiler-backend-total-switch-test-blocks false)
-          Ordinary))
+          Ordinary
+          false))
       (& (ir.compiler-ir-function-seq-empty)))
     (ir.compiler-ir-extern-seq-empty)
     (ir.CompilerIrReturnStorageAuthority.None)))
@@ -18874,7 +18912,8 @@ f:
                   (ir.compiler-ir-label "match_total_trap")
                   (ir.compiler-ir-label "match_total_trap"))
                 (ir.compiler-ir-instr-seq-empty))))
-          Ordinary))
+          Ordinary
+          false))
       (& (ir.compiler-ir-function-seq-empty)))
     (ir.compiler-ir-extern-seq-empty)
     (ir.CompilerIrReturnStorageAuthority.None)))
@@ -18926,7 +18965,8 @@ f:
                       join-label)
                     (ir.compiler-ir-instr-seq-empty)))
                 (ir.CompilerIrBlock.Block join-label join-instrs))
-              Ordinary))
+              Ordinary
+              false))
           (& (ir.compiler-ir-function-seq-empty)))
         (ir.compiler-ir-extern-seq-empty)
         (ir.CompilerIrReturnStorageAuthority.None)))))
@@ -19108,7 +19148,8 @@ f:
               (compiler-backend-test-instr-seq-prepend
                 (Return (Some (I64 0)))
                 (ir.compiler-ir-instr-seq-empty))))
-          Ordinary))
+          Ordinary
+          false))
       (& (ir.compiler-ir-function-seq-empty)))
     (ir.compiler-ir-extern-seq-empty)
     (ir.CompilerIrReturnStorageAuthority.None)))
@@ -19152,7 +19193,8 @@ f:
                     (Case 2 (ir.compiler-ir-label "two")))
                   (ir.compiler-ir-label "other"))
                 (ir.compiler-ir-instr-seq-empty))))
-          Ordinary))
+          Ordinary
+          false))
       (& (ir.compiler-ir-function-seq-empty)))
     (ir.compiler-ir-extern-seq-empty)
     (ir.CompilerIrReturnStorageAuthority.None)))
@@ -19201,7 +19243,8 @@ f:
                 (compiler-backend-test-instr-seq-prepend
                   (Return (Some (Var 1)))
                   (ir.compiler-ir-instr-seq-empty)))))
-          Ordinary))
+          Ordinary
+          false))
       (& (ir.compiler-ir-function-seq-empty)))
     (ir.compiler-ir-extern-seq-empty)
     (ir.CompilerIrReturnStorageAuthority.None)))
@@ -19268,7 +19311,8 @@ f:
                 (compiler-backend-test-instr-seq-prepend
                   (Return (Some (Var 1)))
                   (ir.compiler-ir-instr-seq-empty)))))
-          Ordinary))
+          Ordinary
+          false))
       (& (ir.compiler-ir-function-seq-empty)))
     (ir.compiler-ir-extern-seq-empty)
     (ir.CompilerIrReturnStorageAuthority.None)))
@@ -22005,7 +22049,8 @@ entry:
             (compiler-backend-test-instr-seq-prepend
               (ir.ir-instr-vector-bin-op 2 (Add) (Var 0) (Var 0) 4 (I64))
               (irt.instrs "return"))))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (compiler-backend-avx2-vector-homes-ok?) : bool
   (asm-ok?
@@ -22532,7 +22577,8 @@ entry:
           (compiler-backend-avx512-mask-spill-reduces
             0
             (compiler-backend-avx512-mask-spill-sums)))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (compiler-backend-maybe-location-mask-stack?
   [location : regalloc.CompilerRegMaybeLocation]) : bool
@@ -22936,7 +22982,8 @@ entry:
               (compiler-backend-test-instr-seq-prepend
                 (ir.ir-instr-vector-bin-op 2 op lhs rhs 4 (I64))
                 (irt.instrs "return"))))))
-      Ordinary)))
+      Ordinary
+      false)))
 
 (define (compiler-backend-vector-load-binop-fold-program
   [op : ir.CompilerIrBinOp]
@@ -24349,7 +24396,8 @@ entry:
                   (compiler-backend-test-instr-seq-prepend
                     (ir.compiler-ir-global-shared-view phi)
                     (irt.instrs "return %0"))))
-              Ordinary))
+              Ordinary
+              false))
           (& (ir.compiler-ir-function-seq-empty)))
         (ir.compiler-ir-extern-seq-empty)
         (ir.CompilerIrReturnStorageAuthority.None))]
@@ -25285,7 +25333,8 @@ entry:
                   (compiler-backend-test-instr-seq-prepend
                     (Return (Some (Var 0)))
                     (ir.compiler-ir-instr-seq-empty)))))
-            Ordinary))
+            Ordinary
+            false))
         (& (ir.compiler-ir-function-seq-empty)))]
     (match (compiler-backend-runtime-plan-for
       functions
@@ -25342,7 +25391,8 @@ entry:
           true
           (ir.CompilerIrReturnStorage.None)
           false
-          (ir.CompilerIrGlobalStorage.Word)))]
+          (ir.CompilerIrGlobalStorage.Word)
+          false))]
     (match (compiler-backend-runtime-plan-for
       (ir.compiler-ir-function-seq-empty)
       externs)
@@ -25384,7 +25434,8 @@ entry:
                   (compiler-backend-test-instr-seq-prepend
                     (Return No)
                     (ir.compiler-ir-instr-seq-empty)))))
-            Ordinary))
+            Ordinary
+            false))
         (& (ir.compiler-ir-function-seq-empty)))]
     [externs : ir.CompilerIrExternSeq
       (ir.compiler-ir-extern-seq1
@@ -25401,7 +25452,8 @@ entry:
           false
           (ir.CompilerIrReturnStorage.None)
           false
-          (ir.CompilerIrGlobalStorage.Word)))]
+          (ir.CompilerIrGlobalStorage.Word)
+          false))]
     (match (compiler-backend-runtime-plan-for functions externs)
       [(Ok plan)
         (let
@@ -25434,7 +25486,8 @@ entry:
     (Unit)
     0
     (ir.compiler-ir-block-list-empty)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (compiler-backend-runtime-prelude-validation-plan-ok?) : bool
   (let
@@ -33465,7 +33518,8 @@ entry:
               (compiler-backend-test-instr-seq-prepend
                 (Return (Some (I64 42)))
                 (ir.compiler-ir-instr-seq-empty))))
-          Ordinary))
+          Ordinary
+          false))
       (& (ir.compiler-ir-function-seq-empty)))
     (ir.compiler-ir-extern-seq-empty)
     (ir.CompilerIrReturnStorageAuthority.None)))
@@ -34017,7 +34071,8 @@ entry:
             (I64)
             2
             (ir.compiler-ir-block-list-empty)
-            Ordinary))
+            Ordinary
+            false))
         (& (ir.compiler-ir-function-seq-empty)))
       (ir.compiler-ir-extern-seq-empty))))
 
@@ -34842,7 +34897,8 @@ entry:
             (&mut cons-builder)
             (ir.compiler-ir-block-list-empty))
           (ir.compiler-ir-block-builder-to-list cons-builder))
-        ir.CompilerIrFunctionAbi.Ordinary)]
+        ir.CompilerIrFunctionAbi.Ordinary
+        false)]
     [functions : ir.CompilerIrFunctionSeq
       (ir.compiler-ir-function-seq-prepend
         caller
@@ -34856,7 +34912,8 @@ entry:
                 0
                 (irt.blocks "entry:
                return 42")
-                ir.CompilerIrFunctionAbi.Ordinary)))))]
+                ir.CompilerIrFunctionAbi.Ordinary
+                false)))))]
     [externs : ir.CompilerIrExternSeq (ir.compiler-ir-extern-seq-empty)]
     (if (= route 1)
       (set!
@@ -34884,7 +34941,8 @@ entry:
                 "entry:
                  %1 = load %0 : i64
                  return %1")
-              ir.CompilerIrFunctionAbi.Ordinary))
+              ir.CompilerIrFunctionAbi.Ordinary
+              false))
           functions)))
     (ir.CompilerIrProgram.Program
       (ir.compiler-ir-global-seq-empty)
@@ -35125,7 +35183,8 @@ entry:
     false
     (ir.CompilerIrReturnStorage.None)
     false
-    (ir.CompilerIrGlobalStorage.Word)))
+    (ir.CompilerIrGlobalStorage.Word)
+    false))
 
 (define (compiler-backend-non-direct-tail-call-emit
   [target : be_state.CompilerBackendTarget]
@@ -35356,7 +35415,8 @@ entry:
         (I64)
         1
         (ir.compiler-ir-block-list-empty)
-        Ordinary))
+        Ordinary
+        false))
     (& (ir.compiler-ir-function-seq-empty))))
 
 (define (compiler-backend-known-function-call-index) : be_state.CompilerBackendProgramIndex
@@ -35752,7 +35812,8 @@ entry:
         (compiler-backend-test-instr-seq-prepend
           (Return (Some (I64 0)))
           (ir.compiler-ir-instr-seq-empty))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (compiler-backend-clean-module-symbol-collision-program) : ir.CompilerIrProgram
   (Program
@@ -35773,7 +35834,8 @@ entry:
                   (compiler-backend-test-instr-seq-prepend
                     (Return (Some (I64 1)))
                     (ir.compiler-ir-instr-seq-empty))))
-              Ordinary))
+              Ordinary
+              false))
           (&
             (ir.compiler-ir-function-seq-prepend
               (&
@@ -35788,7 +35850,8 @@ entry:
                       (compiler-backend-test-instr-seq-prepend
                         (Return (Some (I64 2)))
                         (ir.compiler-ir-instr-seq-empty))))
-                  Ordinary))
+                  Ordinary
+                  false))
               (& (ir.compiler-ir-function-seq-empty)))))))
     (ir.compiler-ir-extern-seq-empty)
     (ir.CompilerIrReturnStorageAuthority.None)))
@@ -35897,7 +35960,8 @@ entry:
                          jump header")))
             (irt.block "exit:
                return %1"))
-          Ordinary)))
+          Ordinary
+          false)))
     (ir.compiler-ir-extern-seq1
       (ir.compiler-ir-extern-default-id
         cbi.compiler-builtin-id-tl-alloc
@@ -36711,7 +36775,8 @@ entry:
         (I64)
         1
         (ir.compiler-ir-block-list-empty)
-        Ordinary))
+        Ordinary
+        false))
     (&
       (ir.compiler-ir-function-seq-prepend
         (&
@@ -36721,7 +36786,8 @@ entry:
             (Unit)
             0
             (ir.compiler-ir-block-list-empty)
-            Ordinary))
+            Ordinary
+            false))
         (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (compiler-backend-program-index-test-externs
@@ -36741,7 +36807,8 @@ entry:
       true
       (ir.CompilerIrReturnStorage.None)
       false
-      (ir.CompilerIrGlobalStorage.Word))
+      (ir.CompilerIrGlobalStorage.Word)
+      false)
     (Extern
       referenced-id
       referenced-id
@@ -36755,7 +36822,8 @@ entry:
       false
       (ir.CompilerIrReturnStorage.None)
       false
-      (ir.CompilerIrGlobalStorage.Word))))
+      (ir.CompilerIrGlobalStorage.Word)
+      false)))
 
 ;; A backend job owns one exact intern capability and one cache arena.  Keep a
 ;; compact one-word smoke here so the state boundary itself is exercised before
@@ -37275,7 +37343,8 @@ entry:
               (I64)
               0
               (ir.compiler-ir-block-list-empty)
-              Ordinary))
+              Ordinary
+              false))
           (& (ir.compiler-ir-function-seq-empty)))
         (ir.compiler-ir-extern-seq-empty))]
     (and
@@ -37393,7 +37462,8 @@ entry:
               (Unit)
               0
               (ir.compiler-ir-block-list-empty)
-              Ordinary))
+              Ordinary
+              false))
           (& (ir.compiler-ir-function-seq-empty)))
         (ir.compiler-ir-extern-seq2
           (Extern
@@ -37407,7 +37477,8 @@ entry:
             false
             (ir.CompilerIrReturnStorage.None)
             false
-            (ir.CompilerIrGlobalStorage.Word))
+            (ir.CompilerIrGlobalStorage.Word)
+            false)
           (Extern
             same-name-id
             same-name-id
@@ -37421,7 +37492,8 @@ entry:
             false
             (ir.CompilerIrReturnStorage.None)
             false
-            (ir.CompilerIrGlobalStorage.Word))))]
+            (ir.CompilerIrGlobalStorage.Word)
+            false)))]
     (and
       (= source-count-before (ci.intern-pool-len))
       (be_state.backend-and8
@@ -38378,7 +38450,7 @@ entry:
             cabi.compiler-reg-id-rbx))
         (= regalloc.compiler-reg-early-exit-prefix-count 2)
         (match rewritten
-          [(Function _ _ _ _ blocks _)
+          [(Function _ _ _ _ blocks _ _)
             (let
               [seq : ir.CompilerIrBlockSeq
                 (compiler_liveness.compiler-live-ir-block-list-to-seq
@@ -42463,7 +42535,8 @@ b_keep:
              jump header
            exit:
              return %2")
-    Ordinary))
+    Ordinary
+    false))
 
 (define (compiler-backend-placement-seh-main) : ir.CompilerIrFunction
   (Function
@@ -42477,7 +42550,8 @@ b_keep:
         (ir.compiler-ir-instr-seq2
           (Call 0 (ci.intern "placement_loop") (One (I64 4)) (I64))
           (Return (Some (Var 0))))))
-    Ordinary))
+    Ordinary
+    false))
 
 ;; This fixture reaches emission without lowering a source first, so nothing
 ;; upstream has installed builtin ids for whatever intern table the checks
@@ -42967,7 +43041,8 @@ b_keep:
                   false
                   (ir.CompilerIrReturnStorage.None)
                   false
-                  (ir.CompilerIrGlobalStorage.Word))))
+                  (ir.CompilerIrGlobalStorage.Word)
+                  false)))
             profile)]
         [expected : String
           (if (= mode 2)
@@ -44657,7 +44732,8 @@ b_keep:
                 (ir.CompilerIrBlock.Block
                   (ir.compiler-ir-label "entry")
                   (ir.compiler-ir-instr-seq1 (Return (Some (I64 42))))))
-              Ordinary))
+              Ordinary
+              false))
           (& (ir.compiler-ir-function-seq-empty)))))
     (ir.compiler-ir-extern-seq1
       (ir.compiler-ir-extern-default-id
@@ -44691,7 +44767,8 @@ b_keep:
               (ir.CompilerIrBlock.Block
                 (ir.compiler-ir-label "entry")
                 (ir.compiler-ir-instr-seq1 (Return (Some (I64 42))))))
-            Ordinary))
+            Ordinary
+            false))
         (& (ir.compiler-ir-function-seq-empty)))
       (ir.compiler-ir-extern-seq1
         (Extern
@@ -44705,7 +44782,8 @@ b_keep:
           false
           (ir.CompilerIrReturnStorage.None)
           false
-          (ir.CompilerIrGlobalStorage.Word)))
+          (ir.CompilerIrGlobalStorage.Word)
+          false))
       (ir.CompilerIrReturnStorageAuthority.None))))
 
 (define (compiler-backend-unused-foreign-link-extern-ok?) : bool
@@ -44742,7 +44820,8 @@ b_keep:
               (ir.CompilerIrBlock.Block
                 (ir.compiler-ir-label "entry")
                 (ir.compiler-ir-instr-seq1 (Return (Some (I64 42))))))
-            Ordinary))
+            Ordinary
+            false))
         (& (ir.compiler-ir-function-seq-empty)))
       (ir.compiler-ir-extern-seq1
         (Extern
@@ -44756,7 +44835,8 @@ b_keep:
           false
           (ir.CompilerIrReturnStorage.None)
           false
-          (ir.CompilerIrGlobalStorage.Word)))
+          (ir.CompilerIrGlobalStorage.Word)
+          false))
       (ir.CompilerIrReturnStorageAuthority.None))))
 
 (define (compiler-backend-source-referenced-foreign-link-extern-ok?) : bool
@@ -44849,7 +44929,8 @@ b_keep:
             (ir.CompilerIrBlock.Block
               (ir.compiler-ir-label "entry")
               (ir.compiler-ir-instr-seq1 (Return (Some (I64 7))))))
-          Ordinary))
+          Ordinary
+          false))
       (&
         (ir.compiler-ir-function-seq-prepend
           (&
@@ -44868,7 +44949,8 @@ b_keep:
                       (Nil)
                       (I64))
                     (Return (Some (Var 0))))))
-              Ordinary))
+              Ordinary
+              false))
           (& (ir.compiler-ir-function-seq-empty)))))
     (ir.compiler-ir-extern-seq-empty)
     (ir.CompilerIrReturnStorageAuthority.None)))
@@ -44919,7 +45001,8 @@ b_keep:
                         (& (ir.compiler-ir-value-seq3 (I64 0) (I64 0) (I64 0))))
                       (I64))
                     (Return (Some (Var 0))))))
-              Ordinary))
+              Ordinary
+              false))
           (& (ir.compiler-ir-function-seq-empty)))))
     (ir.compiler-ir-extern-seq1
       (ir.compiler-ir-extern-default-id
@@ -44960,7 +45043,8 @@ b_keep:
             (ir.CompilerIrBlock.Block
               (ir.compiler-ir-label "entry")
               (ir.compiler-ir-instr-seq1 (Return (Some (I64 7))))))
-          Ordinary))
+          Ordinary
+          false))
       (&
         (ir.compiler-ir-function-seq-prepend
           (&
@@ -44979,7 +45063,8 @@ b_keep:
                       (Nil)
                       (I64))
                     (Return (Some (Var 0))))))
-              Ordinary))
+              Ordinary
+              false))
           (& (ir.compiler-ir-function-seq-empty)))))
     (ir.compiler-ir-extern-seq-empty)
     (ir.CompilerIrReturnStorageAuthority.None)))
@@ -47004,7 +47089,8 @@ user_fn:
           false
           (ir.CompilerIrReturnStorage.None)
           false
-          (ir.CompilerIrGlobalStorage.Word)))]
+          (ir.CompilerIrGlobalStorage.Word)
+          false))]
     [_pointer : unit
       (ir.compiler-ir-extern-builder-push!
         (&mut externs)
@@ -47019,7 +47105,8 @@ user_fn:
           false
           (ir.CompilerIrReturnStorage.None)
           false
-          (ir.CompilerIrGlobalStorage.Word)))]
+          (ir.CompilerIrGlobalStorage.Word)
+          false))]
     [_value : unit
       (ir.compiler-ir-extern-builder-push!
         (&mut externs)
@@ -47036,7 +47123,8 @@ user_fn:
           false
           (ir.CompilerIrReturnStorage.None)
           false
-          (ir.CompilerIrGlobalStorage.Word)))]
+          (ir.CompilerIrGlobalStorage.Word)
+          false))]
     [globals : ir.CompilerIrGlobalBuilder
       (ir.compiler-ir-global-builder-with-capacity 1)]
     [_address : unit
@@ -47211,7 +47299,8 @@ user_fn:
           (>= kind 5)
           (ir.CompilerIrReturnStorage.None)
           false
-          (ir.CompilerIrGlobalStorage.Word)))
+          (ir.CompilerIrGlobalStorage.Word)
+          false))
       (let
         [index : be_state.CompilerBackendProgramIndex
           (compiler-backend-program-index-build
@@ -47229,7 +47318,8 @@ user_fn:
                     (I64)
                     8
                     (irt.blocks "entry:\nreturn %0")
-                    Ordinary))
+                    Ordinary
+                    false))
                 (& (ir.compiler-ir-function-seq-empty)))
               (ir.compiler-ir-function-seq-empty))
             (ir.compiler-ir-extern-builder-snapshot-seq (& externs)))]
@@ -47287,7 +47377,8 @@ user_fn:
             (I64)
             1
             (irt.blocks "entry:\nreturn 0")
-            Ordinary))
+            Ordinary
+            false))
         (& (ir.compiler-ir-function-seq-empty)))]
     [index : be_state.CompilerBackendProgramIndex
       (compiler-backend-program-index-build
@@ -47702,7 +47793,8 @@ user_fn:
       false
       (ir.CompilerIrReturnStorage.None)
       false
-      (ir.CompilerIrGlobalStorage.Word))))
+      (ir.CompilerIrGlobalStorage.Word)
+      false)))
 
 (define (compiler-backend-convention-site-builtin-call
   [symbol : String]
@@ -47730,7 +47822,8 @@ user_fn:
                 (& (ir.compiler-ir-value-seq-prepend (& (Var 0)) (& values))))
               ty)
             (ir.compiler-ir-instr-seq1 (Return (Some (I64 0)))))))
-      Ordinary)))
+      Ordinary
+      false)))
 
 (define (compiler-backend-convention-site-program) : ir.CompilerIrProgram
   (let
@@ -47808,7 +47901,8 @@ user_fn:
               "entry:
                %0 = call conv_sink(fn@conv_c_six, fn@conv_tl_six) : i64
                return %0")
-            Ordinary))
+            Ordinary
+            false))
         (& functions))
       (ir.compiler-ir-extern-builder-snapshot-seq (& externs))
       (ir.CompilerIrReturnStorageAuthority.None))))
@@ -48404,7 +48498,8 @@ user_fn:
               true
               (ir.CompilerIrReturnStorage.None)
               false
-              (ir.CompilerIrGlobalStorage.Word))]
+              (ir.CompilerIrGlobalStorage.Word)
+              false)]
           (Program
             (ir.compiler-ir-global-seq-empty)
             (ir.compiler-ir-function-seq-prepend
@@ -48885,7 +48980,7 @@ user_fn:
         (set-state-emit-current-count! state 0))]
     [result : be_state.ResultCompilerBackend
       (match func
-        [(Function name _ _ _ blocks _)
+        [(Function name _ _ _ blocks _ _)
           (backend.compiler-backend-emit-instr
             (be_state.CompilerBackendEmissionContext
               (ast.ast-node-pool-reader-type-segment-bases)
@@ -49077,7 +49172,8 @@ user_fn:
         7
         (irt.blocks "entry:
           return %0")
-        ir.CompilerIrFunctionAbi.Ordinary)]
+        ir.CompilerIrFunctionAbi.Ordinary
+        false)]
     [caller-params : ir.CompilerIrParamBuilder
       (ir.compiler-ir-param-builder-with-capacity 8)]
     [caller-vars : i64
@@ -49123,7 +49219,8 @@ user_fn:
         (ast.AstType.I64)
         caller-vars
         caller-blocks
-        ir.CompilerIrFunctionAbi.Ordinary)]
+        ir.CompilerIrFunctionAbi.Ordinary
+        false)]
     [main-fn : ir.CompilerIrFunction
       (ir.CompilerIrFunction.Function
         (ci.intern "main")
@@ -49132,7 +49229,8 @@ user_fn:
         0
         (irt.blocks "entry:
           return 0")
-        ir.CompilerIrFunctionAbi.Ordinary)]
+        ir.CompilerIrFunctionAbi.Ordinary
+        false)]
     [fns : ir.CompilerIrFunctionSeq
       (ir.compiler-ir-function-seq-prepend
         (& callee)
@@ -49304,7 +49402,8 @@ user_fn:
             %11 = add %5, %10 : i64
             %12 = add %6, %7 : i64
             tailcall ext_tc_sink(%8, %9, %11, %12) : unit")
-        ir.CompilerIrFunctionAbi.Ordinary)]
+        ir.CompilerIrFunctionAbi.Ordinary
+        false)]
     [win-bare-fn : ir.CompilerIrFunction
       (ir.CompilerIrFunction.Function
         (ci.intern "dsp_win_bare")
@@ -49325,7 +49424,8 @@ user_fn:
             return %6
            else:
             return %7")
-        ir.CompilerIrFunctionAbi.Ordinary)]
+        ir.CompilerIrFunctionAbi.Ordinary
+        false)]
     [main-fn : ir.CompilerIrFunction
       (ir.CompilerIrFunction.Function
         (ci.intern "main")
@@ -49334,7 +49434,8 @@ user_fn:
         0
         (irt.blocks "entry:
           return 0")
-        ir.CompilerIrFunctionAbi.Ordinary)]
+        ir.CompilerIrFunctionAbi.Ordinary
+        false)]
     [fns : ir.CompilerIrFunctionSeq
       (ir.compiler-ir-function-seq-prepend
         (& ext-tc-fn)
@@ -49957,7 +50058,8 @@ user_fn:
         false
         (ir.CompilerIrReturnStorage.None)
         false
-        (ir.CompilerIrGlobalStorage.Word))]
+        (ir.CompilerIrGlobalStorage.Word)
+        false)]
     [prog : ir.CompilerIrProgram
       (Program
         (ir.compiler-ir-global-seq-empty)
@@ -50007,7 +50109,7 @@ user_fn:
 ;; call result on the path that skipped `fill`.
 (define (compiler-backend-sret-reuse-test-text [body : String]) : String
   (match (irt.func body)
-    [(ir.CompilerIrFunction.Function _ params _ vars blocks _)
+    [(ir.CompilerIrFunction.Function _ params _ vars blocks _ _)
       (irt.blocks-text
         (backend.compiler-backend-sret-reuse-blocks
           (compiler-backend-program-index-build
@@ -50247,7 +50349,8 @@ user_fn:
     false
     (ir.CompilerIrReturnStorage.None)
     false
-    (ir.CompilerIrGlobalStorage.Word)))
+    (ir.CompilerIrGlobalStorage.Word)
+    false))
 
 (define (compiler-backend-archive-object-test-extern
   [name : i64]
@@ -50285,7 +50388,8 @@ user_fn:
         1
         (ir.compiler-ir-blocks
           (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs))
-        Ordinary)]
+        Ordinary
+        false)]
     [functions : ir.CompilerIrFunctionSeq
       (ir.compiler-ir-function-seq-prepend
         (& main-fn)

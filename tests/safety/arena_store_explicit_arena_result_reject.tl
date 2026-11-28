@@ -11,7 +11,7 @@
     [s : String (string.int->string 1234567)]
     [owner : arena.Arena
       (unsafe
-        (arena.Arena (arena.tl_arena_make_small)))]
+        (arena.from-raw-handle (arena.tl_arena_make_small)))]
     (set! g (in-arena owner s))))
 
 (define (main) : i64

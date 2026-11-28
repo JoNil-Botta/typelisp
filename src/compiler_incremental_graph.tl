@@ -1131,7 +1131,7 @@
             (compiler-graph-query-from-transcript
               (compiler-graph-range-bytes (& bytes) start length)
               limits
-              scratch.handle
+              (arena.raw-handle scratch)
               -1
               -1)]
           (arena.destroy-safe! scratch)
@@ -1276,7 +1276,7 @@
   (let
     [scratch : arena.Arena (arena.make)]
     [result : ResultCompilerIncrementalGraph
-      (compiler-graph-decode-in bytes limits scratch.handle)]
+      (compiler-graph-decode-in bytes limits (arena.raw-handle scratch))]
     (arena.destroy-safe! scratch)
     result))
 

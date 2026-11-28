@@ -15,7 +15,7 @@
     [name : String (string.int->string 1234567)]
     (in-arena
       (unsafe
-        (arena.Arena facts-arena))
+        (arena.from-raw-handle facts-arena))
       (svec.push-ref! (&mut names) name))))
 
 (define (main) : i64

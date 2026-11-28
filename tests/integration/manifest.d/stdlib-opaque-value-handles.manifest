@@ -1,0 +1,2 @@
+# Format: id|host|opt-levels|source|exit|stdout|stderr|source-imports|stdin
+stdlib_opaque_value_handle_layout|all|0,1,2|tests/integration/stdlib_opaque_value_handle_layout.tl|42|-|-|stdlib/arena.tl stdlib/crypto_sha256.tl stdlib/fs.tl stdlib/io.tl stdlib/sync.tl|-

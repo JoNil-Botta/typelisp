@@ -344,31 +344,8 @@
     (= state.last-hello-retry before.last-hello-retry)
     "unchanged HRR kind marker")
   (test.assert-true
-    (= state.hash.byte-length before.hash.byte-length)
-    "unchanged SHA length")
-  (test.assert-true
-    (= state.hash.finalized before.hash.finalized)
-    "unchanged SHA lifecycle")
-  (test.assert-i64-eq
-    state.hash.block-length
-    before.hash.block-length
-    "unchanged SHA cursor")
-  (let
-    [index : i64 0]
-    (while (< index 64)
-      (test.assert-true
-        (=
-          (array-ref state.hash.block index)
-          (array-ref before.hash.block index))
-        "unchanged SHA block")
-      (when
-        (< index 8)
-        (test.assert-true
-          (=
-            (array-ref state.hash.words index)
-            (array-ref before.hash.words index))
-          "unchanged SHA words"))
-      (set! index (+ index 1)))))
+    (sha.test-state-eq? (& state.hash) (& before.hash))
+    "unchanged SHA state"))
 
 (define (require-error [result : transcript.TlsTranscriptStatus]) : transcript.TlsTranscriptError
   (match result
@@ -485,14 +462,16 @@
     [reader : wire.TlsHandshakeReader (hold (byte_buf.as-bytes (& frame)))]
     (set! state.limits.max-input (sha.max-byte-length))
     (set! state.input-length (- (sha.max-byte-length) (cast 1 : u64)))
-    (set! state.hash.byte-length state.input-length)
-    (set! state.hash.block-length 62)
+    (set!
+      state.hash
+      (unsafe
+        (sha.test-near-length-limit-state state.hash)))
     (let
       [before : transcript.TlsTranscript (copy-state (& state))]
       (match (require-error (transcript.absorb! (&mut state) (& reader)))
         [(TlsTranscriptShaError 0 (Sha256MessageTooLong current additional))
           (test.assert-true
-            (= current before.hash.byte-length)
+            (= current (sha.state-byte-length (& before.hash)))
             "SHA count preserved")
           (test.assert-true
             (= additional (cast 4 : u64))
@@ -603,7 +582,7 @@
       (= state.input-length (cast 392 : u64))
       "exact cumulative work")
     (test.assert-true
-      (= state.hash.byte-length (cast 212 : u64))
+      (= (sha.state-byte-length (& state.hash)) (cast 212 : u64))
       "replacement hash stream length"))
   (let
     [state : transcript.TlsTranscript (new-transcript)]

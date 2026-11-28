@@ -22,7 +22,7 @@ GATE_FAIL_PREFIX='FAIL: '
 gate_compiler
 gate_compiler_absolute
 gate_require_compiler
-for tool in as ld; do
+for tool in as ld ar readelf; do
     command -v "$tool" >/dev/null 2>&1 || fail "missing tool: $tool"
 done
 

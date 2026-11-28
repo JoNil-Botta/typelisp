@@ -544,7 +544,7 @@
             [status : i64
               (unsafe
                 (stdlib.text_buf.write-chunks
-                  ,(comptime.expr-struct-get `handle "id")
+                  (io.format-writer-context-FileHandle handle)
                   (& buf.chunks)
                   (if (< buf.len limit)
                     buf.len

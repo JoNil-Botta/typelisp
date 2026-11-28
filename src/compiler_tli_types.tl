@@ -157,8 +157,10 @@
   512)
 (define tli-fn-no-module-inits : i64
   1024)
+(define tli-fn-cold : i64
+  2048)
 (define tli-fn-effect-flags-mask : i64
-  2047)
+  4095)
 (define tli-macro-uses-expr-type : i64
   16)
 (define tli-compact-body-has-ir : i64
@@ -361,12 +363,17 @@
   (None)
   (Some i64 i64 i64 i64 TliType TliType (__tl_dyn-array TliType) TliType))
 
+;; The compact extern ABI and declaration hint share a wire byte.
+(define tli-compact-extern-cold-bit : i64
+  4)
+
 (defstruct TliCompactExternRef
   (symbol String)
   (abi i64)
   (link-symbol String)
   (ty TliType)
-  (return-storage TliCompactReturnStorage))
+  (return-storage TliCompactReturnStorage)
+  (cold? bool))
 
 (defstruct TliCompactIrBody
   (ir-flags i64)

@@ -17,7 +17,6 @@
 (import tli_cli_core as tli_cli)
 (import doc_test)
 (import compiler_load)
-(import compiler_dependency_tlci)
 (import compiler_ast_types as ast)
 (import compiler_diagnostic as cdiag)
 (import compiler_intern as ci)
@@ -52,6 +51,7 @@
         "selfhost-check"
         (str_cat.str-cat
           "--stdlib-root <dir> --cfg <name> --target <target> --backend-mode <mode> --opt-level <0|1|2|s> -Os --debug|-g|--backtrace --manifest-path <file> --batch <file> "
+          (cli_option.cli-package-profile-options)
           (tli_cli.tli-sysroot-cli-options))
         start
         count)]
@@ -67,6 +67,8 @@
     (while (cli_option.cli-args-next! (&mut args))
       (cond
         [(tli_cli.tli-sysroot-option! (&mut sysroot) (&mut args)) unit]
+        [(cli_option.cli-package-profile-option! (&mut options) (&mut args))
+          unit]
         [(cli_option.cli-compile-option! (&mut options) (&mut args)) unit]
         [(string.eq args.name "--manifest-path")
           (if has-manifest
@@ -98,6 +100,8 @@
     (unless args.failed (tli_cli.tli-set-active-sysroot-options! (& sysroot)))
     (cond
       [args.failed (Err args.error)]
+      [(and options.has-profile (or has-input has-batch))
+        (Err (string.copy (& cli_option.cli-package-profile-mode-error)))]
       [(and has-batch has-input)
         (Err "selfhost-check: cannot combine input path with --batch")]
       [(and has-batch has-manifest)
@@ -397,26 +401,17 @@
             (owned_view.compiler-owned-shared-view manifest-dir)
             (owned_view.compiler-owned-shared-view manifest))]
         [emit-entry : bool (selfhost-check-package-kind-entry? manifest.kind)]
-        (compiler_load.compiler-load-set-package-artifact-profile! "dev")
-        (when
-          (and
-            (>
-              (compiler_load.compiler-pkg-dep-list-count
-                (&
-                  (compiler_load.compiler-pkg-deps-list
-                    (compiler_load.clone-compiler-pkg-deps (& manifest.deps)))))
-              0)
-            (not
-              (compiler_dependency_tlci.compiler-dependency-tlci-force-source?)))
-          (match (build_run_core.source-tool-build-package-deps-only!
-            (& source-set.manifest-path)
-            (build_run_core.source-tool-backend-target options.target)
-            (& options.stdlib-roots)
-            (& options.cfgs))
-            [(Ok) unit]
-            [(Err message)
-              (io.print-error message)
-              (return 1)]))
+        (match (build_run_core.source-tool-build-package-deps-only!
+          (& source-set.manifest-path)
+          options.profile
+          (build_run_core.source-tool-backend-target options.target)
+          (& options.stdlib-roots)
+          (& options.cfgs)
+          (& manifest.deps))
+          [(Ok) unit]
+          [(Err message)
+            (io.print-error message)
+            (return 1)])
         (let
           [_reset-file-state : unit
             (compiler_driver_core.compiler-driver-reset-file-state!)]
@@ -425,6 +420,10 @@
             (target_cfg.compiler-target-cfgs-with-names
               options.target
               (svec.clone-vec (& options.cfgs)))]
+          [_profile : unit
+            (compiler_load.compiler-load-session-set-package-profile!
+              (compiler_load.compiler-load-serial-test-session-state)
+              options.profile)]
           [_begin-check : unit
             (compiler_check_core.compiler-check-package-begin! job)]
           (match (compiler_check_core.compiler-check-package-open-tli-and-deps!

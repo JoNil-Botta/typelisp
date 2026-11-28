@@ -79,6 +79,7 @@ cli_transcripts_files() {
         3)
             printf '%s\n' \
                 tests/cli/public-check.cases \
+                tests/cli/public-root-read.cases \
                 tests/cli/public-fmt-doc.cases \
                 tests/cli/public-lint.cases \
                 tests/cli/public-help.cases \

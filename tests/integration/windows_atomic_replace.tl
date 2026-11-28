@@ -270,7 +270,7 @@
 
 (cfg
   windows
-  (define (check-rename-completion) : unit
+  (define (check-rename-completion [source : (& str)] [destination : (& str)]) : unit
     (test.assert-i64-eq
       (comptime (size-of (type fs.FsWindowsRenameInfo)))
       24
@@ -291,52 +291,53 @@
       (comptime (offset-of (type fs.FsWindowsRenameInfo) first-unit))
       20
       "name offset")
+    (write-text source "stage")
+    (write-text destination "old")
     (let
-      [calls : i64 0]
-      [compat : i64
-        (fs.fs-windows-finish-atomic-replace
-          87
-          0
-          (begin
-            (+= calls 1)
-            17))]
-      (test.assert-i64-eq
-        compat
-        17
-        "return the compatibility operation's status")
-      (test.assert-i64-eq calls 1 "call compatibility operation once"))
+      [from : (__tl_dyn-array u8) (io.c-string source)]
+      [to : (__tl_dyn-array u8) (io.c-string destination)]
+      (unsafe
+        (let
+          [from-path : (Ptr u8) (io.array-const-ptr from)]
+          [to-path : (Ptr u8) (io.array-const-ptr to)]
+          (test.assert-i64-eq
+            (fs.fs-windows-finish-atomic-replace 87 6 from-path to-path)
+            22
+            "preserve primary failure when cleanup fails")
+          (test.assert-i64-eq
+            (fs.fs-windows-finish-atomic-replace 5 6 from-path to-path)
+            13
+            "preserve permission denial when cleanup fails")
+          (test.assert-i64-eq
+            (fs.fs-windows-finish-atomic-replace 50 0 from-path to-path)
+            50
+            "preserve error 50")
+          (test.assert-i64-eq
+            (fs.fs-windows-finish-atomic-replace 33 0 from-path to-path)
+            33
+            "preserve lock violation")
+          (test.assert-i64-eq
+            (fs.fs-windows-finish-atomic-replace 0 32 from-path to-path)
+            -32
+            "report cleanup failure after commit")
+          (check-text source "stage")
+          (check-text destination "old")
+          (test.assert-i64-eq
+            (fs.fs-windows-finish-atomic-replace 87 0 from-path to-path)
+            0
+            "publish with the compatibility operation")
+          (test.assert-i64-eq
+            (fs.fs-windows-finish-atomic-replace 87 0 from-path to-path)
+            io.io-status-not-found
+            "propagate the compatibility operation's missing-source status"))))
+    (test.assert-true
+      (not (io.file-exists? (string.copy source)))
+      "compatibility operation removes the stage name")
+    (check-text destination "stage")
     (test.assert-i64-eq
-      (fs.fs-windows-finish-atomic-replace
-        87
-        6
-        (io.panic "fallback after failed close"))
-      22
-      "preserve primary failure when cleanup fails")
-    (test.assert-i64-eq
-      (fs.fs-windows-finish-atomic-replace 5 6 (io.panic "fallback on denial"))
-      13
-      "preserve permission denial when cleanup fails")
-    (test.assert-i64-eq
-      (fs.fs-windows-finish-atomic-replace
-        50
-        0
-        (io.panic "fallback on unsupported operation"))
-      50
-      "preserve error 50")
-    (test.assert-i64-eq
-      (fs.fs-windows-finish-atomic-replace
-        33
-        0
-        (io.panic "fallback on lock violation"))
-      33
-      "preserve lock violation")
-    (test.assert-i64-eq
-      (fs.fs-windows-finish-atomic-replace
-        0
-        32
-        (io.panic "fallback after commit"))
-      -32
-      "report cleanup failure after commit")))
+      (fs.remove-file-status destination)
+      0
+      "remove compatibility operation destination")))
 
 (cfg
   windows
@@ -395,7 +396,6 @@
     (when
       (and (= (io.arg-count) 5) (string.eq (io.arg 1) "--hold-reader"))
       (return (hold-reader)))
-    (check-rename-completion)
     (let
       [root : String
         (match (fs.try-create-temp-dir-in "." "rename-ex")
@@ -403,6 +403,7 @@
           [(ErrIoString error) (io.panic (io.error-message error))])]
       [source : String (fs.path-join (& root) "stage")]
       [destination : String (fs.path-join (& root) "published")]
+      (check-rename-completion (& source) (& destination))
       (check-control (& source) (& destination) true 0 false 0)
       (check-control (& source) (& destination) true 3 false 5)
       (check-control (& source) (& destination) true 7 false 5)

@@ -741,19 +741,20 @@
 ;; survives cleanup. A negative status reports a close failure after commit.
 (cfg
   windows
-  (defmacro (fs-windows-finish-atomic-replace
-    [rename-status : comptime.Expr]
-    [close-status : comptime.Expr]
-    [legacy-replace : comptime.Expr]) : i64
-    `(let
-      [rename-error : i64 ,rename-status]
-      [close-error : i64 ,close-status]
-      (cond
-        [(= rename-error 0) (- 0 close-error)]
-        ;; An older host or filesystem can reject a validated request with
-        ;; ERROR_INVALID_PARAMETER. Its fallback cannot replace open files.
-        [(and (= rename-error 87) (= close-error 0)) ,legacy-replace]
-        [else (fs-windows-error-status rename-error)]))))
+  (unsafe
+    (define (fs-windows-finish-atomic-replace
+      [rename-error : i64]
+      [close-error : i64]
+      [source : (Ptr u8)]
+      [destination : (Ptr u8)]) : i64
+      (unsafe
+        (cond
+          [(= rename-error 0) (- 0 close-error)]
+          ;; An older host or filesystem can reject a validated request with
+          ;; ERROR_INVALID_PARAMETER. Its fallback cannot replace open files.
+          [(and (= rename-error 87) (= close-error 0))
+            (fs-windows-legacy-atomic-replace source destination)]
+          [else (fs-windows-error-status rename-error)])))))
 
 (cfg
   windows
@@ -787,7 +788,8 @@
             (fs-windows-finish-atomic-replace
               rename-error
               close-error
-              (fs-windows-legacy-atomic-replace source destination))))))))
+              source
+              destination)))))))
 
 (cfg
   windows

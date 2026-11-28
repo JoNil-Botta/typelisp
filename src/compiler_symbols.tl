@@ -2359,6 +2359,51 @@
     importer-module
     alias))
 
+;; Replay a retained module import over just the appended handles. Bare
+;; cleanup is handle-specific, so it cannot erase a different provider's
+;; selected binding. Wildcard aliases are installed after bare cleanup.
+(define (compiler-symbols-replay-module-macro-import
+  [symbols : CompilerSymbols]
+  [first : i64]
+  [target-module-id : i64]
+  [importer-module-id : i64]
+  [remove-bare? : bool]) : CompilerSymbols
+  (let
+    [decls : (__tl_dyn-array ast.AstDecl) (compiler-symbols-decls (& symbols))]
+    [count : i64 (compiler-symbols-decl-count (& symbols))]
+    [cur-symbols : CompilerSymbols symbols]
+    (for [index (iterator.range first count)]
+      (when
+        (=
+          (compiler-symbols-owner-module-id-at-index-or
+            (& cur-symbols)
+            index
+            -1)
+          target-module-id)
+        (match (ast.ast-decl-unwrapped (& (array-ref decls index)))
+          [(DefMacro _ name _ _ _)
+            (let
+              [handle : i64
+                (compiler-symbol-make-handle
+                  (compiler-symbol-kind-defmacro)
+                  index)]
+              (set!
+                cur-symbols
+                (if remove-bare?
+                  (compiler-symbols-remove-macro-alias-if-handle
+                    (& cur-symbols)
+                    name
+                    handle)
+                  (compiler-symbols-add-macro-alias-key-id
+                    (& cur-symbols)
+                    (compiler-symbol-module-key-id-by-id
+                      importer-module-id
+                      name)
+                    handle
+                    false))))]
+          [_ unit])))
+    cur-symbols))
+
 (define (compiler-symbols-add-selected-item-alias
   [symbols : (& CompilerSymbols)]
   [target-module-id : i64]

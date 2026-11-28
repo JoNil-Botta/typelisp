@@ -324,8 +324,8 @@ run build --manifest-path "{{dir}}/typelisp.pkg" --backend-mode avx512
 stderr empty
 stdout match Built[ ]
 if-host linux
-test -f "{{dir}}/target/release/backend_mode_build.s"
-in file {{dir}}/target/release/backend_mode_build.s
+test -f "{{dir}}/target/dev/backend_mode_build.s"
+in file {{dir}}/target/dev/backend_mode_build.s
 contains %zmm
 contains %k
 contains vmovdqu64
@@ -538,9 +538,9 @@ step pkg-link-build
 run build --manifest-path "{{dir}}/pkg-link/typelisp.pkg" --target linux-x86_64
 stderr empty
 stdout match Built[ ]
-test -x "{{dir}}/pkg-link/target/release/pkg_link_app"
+test -x "{{dir}}/pkg-link/target/dev/pkg_link_app"
 step pkg-link-output
-exec "{{dir}}/pkg-link/target/release/pkg_link_app"
+exec "{{dir}}/pkg-link/target/dev/pkg_link_app"
 exit 42
 stdout empty
 stderr empty
@@ -564,9 +564,9 @@ step pkg-link-metadata-build
 run build --manifest-path "{{dir}}/pkg-link-metadata/typelisp.pkg" --target linux-x86_64
 stderr empty
 stdout match Built[ ]
-test -x "{{dir}}/pkg-link-metadata/target/release/pkg_link_metadata_app"
+test -x "{{dir}}/pkg-link-metadata/target/dev/pkg_link_metadata_app"
 step pkg-link-metadata-output
-exec "{{dir}}/pkg-link-metadata/target/release/pkg_link_metadata_app"
+exec "{{dir}}/pkg-link-metadata/target/dev/pkg_link_metadata_app"
 exit 42
 stdout empty
 stderr empty
@@ -608,6 +608,11 @@ file app/typelisp.pkg
     (wrap "../wrap")))
 end-file
 file app/src/main.tl
+;# ```tl run
+;# ;; doctest-exit: 42
+;# (import wrap.src.lib as w)
+;# (define (main) : i64 (w.wrap-add 35))
+;# ```
 (import wrap.src.lib as w)
 (define (main) : i64 (w.wrap-add 35))
 end-file
@@ -617,11 +622,11 @@ exec ar rcs "{{dir}}/wrap/vendor/libffi_add7.a" "{{dir}}/ffi_add7.o"
 step propagated-build
 run build --manifest-path "{{dir}}/app/typelisp.pkg" --target linux-x86_64 --opt-level 0
 stderr empty
-stdout contains Built {{dir}}/app/target/release/wrap_app
+stdout contains Built {{dir}}/app/target/dev/wrap_app
 step propagated-run
-exec "{{dir}}/app/target/release/wrap_app"
+exec "{{dir}}/app/target/dev/wrap_app"
 exit 42
-in file {{dir}}/app/target/release/wrap_app.runtime-inputs
+in file {{dir}}/app/target/dev/wrap_app.runtime-inputs
 contains native-link-value 8:ffi_add7
 contains field `linux-libraries`
 match ^native-link-value [0-9]+:.*/wrap/vendor$
@@ -631,7 +636,7 @@ step inactive-scope-change
 sh sed -i 's/wrap_missing_on_linux/wrap_still_missing_on_linux/' "{{dir}}/wrap/typelisp.pkg"
 run build --manifest-path "{{dir}}/app/typelisp.pkg" --target linux-x86_64 --opt-level 0
 stderr empty
-stdout contains Fresh {{dir}}/app/target/release/wrap_app
+stdout contains Fresh {{dir}}/app/target/dev/wrap_app
 # Replacing the wrapper's vendored archive relinks the binary; the library
 # archive and interface, which no native input reaches, stay fresh.
 file ffi_add8.s
@@ -647,17 +652,33 @@ exec as "{{dir}}/ffi_add8.s" -o "{{dir}}/ffi_add8.o"
 sh rm "{{dir}}/wrap/vendor/libffi_add7.a" && ar rcs "{{dir}}/wrap/vendor/libffi_add7.a" "{{dir}}/ffi_add8.o"
 run build --manifest-path "{{dir}}/app/typelisp.pkg" --target linux-x86_64 --opt-level 0
 stderr empty
-stdout match ^Built .*/app/target/release/wrap_app$
-stdout contains Fresh {{dir}}/wrap/target/release/libwrap.a
+stdout match ^Built .*/app/target/dev/wrap_app$
+stdout contains Fresh {{dir}}/wrap/target/dev/libwrap.a
 stdout not-contains wrap.tlci
 stdout not-contains wrap_app.tlci
-test -s "{{dir}}/wrap/target/release/wrap.tli"
-test ! -e "{{dir}}/wrap/target/release/wrap.tlci"
-test ! -e "{{dir}}/app/target/release/wrap_app.tlci"
+test -s "{{dir}}/wrap/target/dev/wrap.tli"
+test ! -e "{{dir}}/wrap/target/dev/wrap.tlci"
+test ! -e "{{dir}}/app/target/dev/wrap_app.tlci"
 step active-archive-run
-exec "{{dir}}/app/target/release/wrap_app"
+exec "{{dir}}/app/target/dev/wrap_app"
 exit 43
 sh rm "{{dir}}/wrap/vendor/libffi_add7.a" && ar rcs "{{dir}}/wrap/vendor/libffi_add7.a" "{{dir}}/ffi_add7.o"
+step propagated-release-run
+run run --manifest-path "{{dir}}/app/typelisp.pkg" --release
+exit 42
+stderr empty
+step propagated-release-doctest
+sh mv "{{dir}}/wrap/target/dev/libwrap.a" "{{dir}}/wrap/target/dev/libwrap.saved"
+sh printf 'CORRUPT' > "{{dir}}/wrap/target/dev/libwrap.a"
+run doc --test --manifest-path "{{dir}}/app/typelisp.pkg" --release
+stderr empty
+stdout contains Doc tests passed: 1 example(s)
+test "$(cat "{{dir}}/wrap/target/dev/libwrap.a")" = CORRUPT
+sh mv -f "{{dir}}/wrap/target/dev/libwrap.saved" "{{dir}}/wrap/target/dev/libwrap.a"
+step propagated-dev-doctest
+run doc --test --manifest-path "{{dir}}/app/typelisp.pkg"
+stderr empty
+stdout contains Doc tests passed: 1 example(s)
 # A library the linker cannot find names the manifest field that asked for it.
 step missing-library
 sh sed -i 's/(linux-libraries "ffi_add7")/(linux-libraries "ffi_add7" "wrap_no_such_native_lib")/' "{{dir}}/wrap/typelisp.pkg"
@@ -734,9 +755,9 @@ step mutual-build
 run build --manifest-path "{{dir}}/mutual/typelisp.pkg" --target linux-x86_64 --opt-level 0
 stderr empty
 step mutual-run
-exec "{{dir}}/mutual/target/release/mutual_app"
+exec "{{dir}}/mutual/target/dev/mutual_app"
 exit 14
-in file {{dir}}/mutual/target/release/mutual_app.runtime-inputs
+in file {{dir}}/mutual/target/dev/mutual_app.runtime-inputs
 count-fixed = 1 arg 3:-lm
 count-fixed = 2 arg 15:-Wl,--as-needed
 count-fixed = 1 arg 17:-Wl,--start-group
@@ -772,7 +793,7 @@ step fetched-build
 run build --manifest-path "{{dir}}/fetched/typelisp.pkg" --target linux-x86_64 --opt-level 0
 stderr empty
 step fetched-run
-exec "{{dir}}/fetched/target/release/fetched_app"
+exec "{{dir}}/fetched/target/dev/fetched_app"
 exit 42
 file escape/typelisp.pkg
 (package
@@ -803,7 +824,7 @@ step fetched-escape
 run build --manifest-path "{{dir}}/escape/typelisp.pkg" --target linux-x86_64 --opt-level 0
 exit nonzero
 stderr contains field `linux-search-paths` path `../..` is not confined to locked checkout
-test ! -e "{{dir}}/escape/target/release/escape_app"
+test ! -e "{{dir}}/escape/target/dev/escape_app"
 
 case selfhost-run-tool
 if-host windows
@@ -873,21 +894,21 @@ sh mkdir -p "{{dir}}/src/nested/deeper"
 step selfhost-build-package
 run build --direct --manifest-path "{{dir}}/typelisp.pkg" --opt-level 0
 stderr empty
-test -x "{{dir}}/target/release/selfhost_pkg{{exe}}"
-test -f "{{dir}}/target/release/selfhost_pkg.s"
-stdout contains Built {{native-dir}}/target/release/selfhost_pkg{{exe}}
-in file {{dir}}/target/release/selfhost_pkg.s
+test -x "{{dir}}/target/dev/selfhost_pkg{{exe}}"
+test -f "{{dir}}/target/dev/selfhost_pkg.s"
+stdout contains Built {{native-dir}}/target/dev/selfhost_pkg{{exe}}
+in file {{dir}}/target/dev/selfhost_pkg.s
 contains main:
 contains add_one
-exec "{{dir}}/target/release/selfhost_pkg{{exe}}"
+exec "{{dir}}/target/dev/selfhost_pkg{{exe}}"
 exit 42
 sh rm -rf "{{dir}}/target"
 step selfhost-build-package-discover
 cwd src/nested/deeper
 run build
 stderr empty
-test -x "{{dir}}/target/release/selfhost_pkg{{exe}}"
-test -f "{{dir}}/target/release/selfhost_pkg.s"
+test -x "{{dir}}/target/dev/selfhost_pkg{{exe}}"
+test -f "{{dir}}/target/dev/selfhost_pkg.s"
 stdout match Built[ ]
 cwd -
 step selfhost-build-package-opt-duplicate
@@ -904,9 +925,9 @@ sh rm -rf "{{dir}}/target"
 step selfhost-build-package-mode-staged
 run build --direct --manifest-path "{{dir}}/typelisp.pkg" --backend-mode avx2
 stderr empty
-test -f "{{dir}}/target/release/selfhost_pkg.s"
-stdout contains Built {{native-dir}}/target/release/selfhost_pkg{{exe}}
-in file {{dir}}/target/release/selfhost_pkg.s
+test -f "{{dir}}/target/dev/selfhost_pkg.s"
+stdout contains Built {{native-dir}}/target/dev/selfhost_pkg{{exe}}
+in file {{dir}}/target/dev/selfhost_pkg.s
 contains vzeroupper
 
 case selfhost-build-package-lib
@@ -922,8 +943,8 @@ file src/lib.tl
 end-file
 run build --direct --manifest-path "{{dir}}/typelisp.pkg"
 stderr empty
-test -s "{{dir}}/target/release/{{lib-prefix}}selfhost_lib{{lib-suffix}}"
-stdout contains Built {{native-dir}}/target/release/{{lib-prefix}}selfhost_lib{{lib-suffix}}
+test -s "{{dir}}/target/dev/{{lib-prefix}}selfhost_lib{{lib-suffix}}"
+stdout contains Built {{native-dir}}/target/dev/{{lib-prefix}}selfhost_lib{{lib-suffix}}
 
 case selfhost-build-package-errors
 file typelisp.pkg
@@ -1035,17 +1056,19 @@ end-if
 step selfhost-build-package-opt-default
 run build --direct --manifest-path "{{dir}}/optpkg/typelisp.pkg"
 stderr empty
-test -f "{{dir}}/optpkg/target/release/selfhost_opt_pkg.s"
-in file {{dir}}/optpkg/target/release/selfhost_opt_pkg.s
-contains-any {{o2a}} || {{o2b}}
-not-contains {{o0}}
+test -f "{{dir}}/optpkg/target/dev/selfhost_opt_pkg.s"
+in file {{dir}}/optpkg/target/dev/selfhost_opt_pkg.s
+contains {{o0}}
+not-contains {{o2a}}
+not-contains {{o2b}}
 step selfhost-build-package-worker-opt-default
 run build --package-worker --manifest-path "{{dir}}/worker/typelisp.pkg"
 stderr empty
-test -f "{{dir}}/worker/target/release/selfhost_opt_worker.s"
-in file {{dir}}/worker/target/release/selfhost_opt_worker.s
-contains-any {{o2a}} || {{o2b}}
-not-contains {{o0}}
+test -f "{{dir}}/worker/target/dev/selfhost_opt_worker.s"
+in file {{dir}}/worker/target/dev/selfhost_opt_worker.s
+contains {{o0}}
+not-contains {{o2a}}
+not-contains {{o2b}}
 sh rm -rf "{{dir}}/optpkg/target"
 step selfhost-build-package-profile-dev
 run build --direct --manifest-path "{{dir}}/optpkg/typelisp.pkg" --profile dev
@@ -1059,8 +1082,8 @@ sh rm -rf "{{dir}}/optpkg/target"
 step selfhost-build-package-opt-zero
 run build --direct --manifest-path "{{dir}}/optpkg/typelisp.pkg" --opt-level 0
 stderr empty
-test -f "{{dir}}/optpkg/target/release/selfhost_opt_pkg.s"
-in file {{dir}}/optpkg/target/release/selfhost_opt_pkg.s
+test -f "{{dir}}/optpkg/target/dev/selfhost_opt_pkg.s"
+in file {{dir}}/optpkg/target/dev/selfhost_opt_pkg.s
 contains {{o0}}
 not-contains {{o2a}}
 not-contains {{o2b}}
@@ -1068,16 +1091,16 @@ sh rm -rf "{{dir}}/optpkg/target"
 step selfhost-build-package-opt-one
 run build --direct --manifest-path "{{dir}}/optpkg/typelisp.pkg" --opt-level 1
 stderr empty
-test -f "{{dir}}/optpkg/target/release/selfhost_opt_pkg.s"
-in file {{dir}}/optpkg/target/release/selfhost_opt_pkg.s
+test -f "{{dir}}/optpkg/target/dev/selfhost_opt_pkg.s"
+in file {{dir}}/optpkg/target/dev/selfhost_opt_pkg.s
 not-contains {{o2a}}
 not-contains {{o2b}}
 sh rm -rf "{{dir}}/optpkg/target"
 step selfhost-build-package-opt-two
 run build --direct --manifest-path "{{dir}}/optpkg/typelisp.pkg" --opt-level 2
 stderr empty
-test -f "{{dir}}/optpkg/target/release/selfhost_opt_pkg.s"
-in file {{dir}}/optpkg/target/release/selfhost_opt_pkg.s
+test -f "{{dir}}/optpkg/target/dev/selfhost_opt_pkg.s"
+in file {{dir}}/optpkg/target/dev/selfhost_opt_pkg.s
 contains-any {{o2a}} || {{o2b}}
 not-contains {{o0}}
 sh rm -rf "{{dir}}/optpkg/target"
@@ -1085,6 +1108,14 @@ step selfhost-run-package-opt-size
 run run --manifest-path "{{dir}}/optpkg/typelisp.pkg" -Os
 exit 45
 stderr empty
+sh rm -rf "{{dir}}/optpkg/target"
+step selfhost-build-package-opt-release
+run build --direct --manifest-path "{{dir}}/optpkg/typelisp.pkg" --release
+stderr empty
+test -f "{{dir}}/optpkg/target/release/selfhost_opt_pkg.s"
+in file {{dir}}/optpkg/target/release/selfhost_opt_pkg.s
+contains-any {{o2a}} || {{o2b}}
+not-contains {{o0}}
 sh rm -rf "{{dir}}/optpkg/target"
 step selfhost-build-package-profile-release-opt-zero
 run build --direct --manifest-path "{{dir}}/optpkg/typelisp.pkg" --profile release --opt-level 0
@@ -1115,12 +1146,12 @@ step selfhost-build-package-profile-invalid
 run build --direct --manifest-path "{{dir}}/optpkg/typelisp.pkg" --profile fast
 exit nonzero
 stdout empty
-stderr contains build: unknown profile 'fast'; expected dev or release
+stderr contains unknown profile 'fast'; expected dev or release
 step selfhost-build-package-profile-duplicate
 run build --direct --manifest-path "{{dir}}/optpkg/typelisp.pkg" --profile dev --release
 exit nonzero
 stdout empty
-stderr contains build: profile was provided more than once
+stderr contains profile was provided more than once
 step selfhost-build-package-opt-missing
 run build --direct --manifest-path "{{dir}}/optpkg/typelisp.pkg" --opt-level
 exit nonzero

@@ -51,6 +51,13 @@ stderr contains Usage:
 stderr contains typelisp {{each}}
 stderr contains Summary:
 
+case package-profile-help
+each build run check test lint doc
+run {{each}} --help
+stderr contains --profile dev|release
+stderr contains default dev
+stderr contains Alias for --profile release
+
 case help-details
 run build -h
 stderr contains typelisp build <file.tl> [-o <exe>] [--debug|-g|--backtrace] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|s>|-Os] [--stdlib-root <dir>...]

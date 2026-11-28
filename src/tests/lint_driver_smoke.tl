@@ -1288,6 +1288,7 @@
         "target/lint_unsafe_surface/direct_type_error.tl"
         (lint-driver-smoke-unsafe-surface-type-error-source)
         (lint_svec.new)
+        (& (lint_driver.SelfhostLintCheckContext.FileContext))
         (lint_driver.selfhost-lint-language-cfgs)
         true
         false)]
@@ -1299,6 +1300,7 @@
         "(define (main) : i64
   (unsafe (+ 1 2))"
         (lint_svec.new)
+        (& (lint_driver.SelfhostLintCheckContext.FileContext))
         (lint_driver.selfhost-lint-language-cfgs)
         true
         false)]
@@ -1334,6 +1336,7 @@
         (lint_driver.selfhost-lint-package-files
           smoke-paths
           (lint_svec.new)
+          (& (lint_driver.SelfhostLintCheckContext.FileContext))
           true
           false
           false
@@ -1363,6 +1366,7 @@
         (lint_driver.selfhost-lint-package-files
           smoke-paths
           (lint_svec.new)
+          (& (lint_driver.SelfhostLintCheckContext.FileContext))
           false
           false
           false

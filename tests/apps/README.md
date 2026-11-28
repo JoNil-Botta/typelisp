@@ -24,7 +24,7 @@ Linux and Windows.
 ## Running
 
 ```sh
-TYPELISP_BIN=target/release/typelisp scripts/verify-app-corpus.sh
+TYPELISP_BIN=target/dev/typelisp scripts/verify-app-corpus.sh
 ```
 
 The gate `stage2-app-workflow-corpus` runs the same command with the
@@ -50,7 +50,7 @@ A failing scenario keeps its work directory and prints the command that
 replays it. To replay one scenario by hand:
 
 ```sh
-TYPELISP_BIN=target/release/typelisp sh scripts/verify-codegen-cases.sh \
+TYPELISP_BIN=target/dev/typelisp sh scripts/verify-codegen-cases.sh \
     --only csvstat-build-run tests/apps/csvstat.cases
 ```
 

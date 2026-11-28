@@ -251,7 +251,7 @@ step offline-complete-hit
 exec env PATH="{{dir}}/bin:$PATH" TYPELISP_TEST_GIT_LOG="{{native-dir}}/git-offline.log" TYPELISP_TEST_GIT_FAIL=1 "{{compiler}}" build --manifest-path "{{project}}/typelisp.pkg" --target {{host-target}} --opt-level 0 --locked
 stderr empty
 test ! -f "{{dir}}/git-offline.log"
-exec "{{project}}/target/release/canonical_root{{exe}}"
+exec "{{project}}/target/dev/canonical_root{{exe}}"
 exit 42
 stdout empty
 stderr empty
@@ -362,7 +362,7 @@ step offline-complete-hit
 exec env PATH="{{dir}}/bin:$PATH" TYPELISP_TEST_GIT_LOG="{{native-dir}}/git-offline.log" TYPELISP_TEST_GIT_FAIL=1 "{{compiler}}" build --manifest-path "{{project}}/typelisp.pkg" --target {{host-target}} --opt-level 0 --locked
 stderr empty
 test ! -f "{{dir}}/git-offline.log"
-exec "{{project}}/target/release/canonical_root{{exe}}"
+exec "{{project}}/target/dev/canonical_root{{exe}}"
 exit 42
 stdout empty
 stderr empty
@@ -413,7 +413,7 @@ end-file
 exec env PATH="{{dir}}/bin:$PATH" TYPELISP_TEST_GIT_LOG="{{native-dir}}/git.log" TYPELISP_TEST_GIT_FAIL=1 "{{compiler}}" build --manifest-path "{{dir}}/r/typelisp.pkg" --target {{host-target}} --opt-level 0
 stderr empty
 test ! -f "{{dir}}/git.log"
-exec "{{dir}}/r/target/release/local_control{{exe}}"
+exec "{{dir}}/r/target/dev/local_control{{exe}}"
 exit 42
 stdout empty
 stderr empty
@@ -632,7 +632,7 @@ sh git -C "{{dir}}/r" rev-parse HEAD > "{{dir}}/after-commit" && git -C "{{dir}}
 same "{{dir}}/before-commit" "{{dir}}/after-commit"
 same "{{dir}}/before-status" "{{dir}}/after-status"
 sh if [ "{{reject}}" = yes ]; then test ! -f "{{dir}}/r/typelisp.lock"; else grep -F "(commit \"{{commit}}\")" "{{dir}}/r/typelisp.lock"; fi
-sh if [ "{{reject}}" = no ]; then CCV_result=0; "{{dir}}/r/target/release/root{{exe}}" || CCV_result=$?; test "$CCV_result" = 42; fi
+sh if [ "{{reject}}" = no ]; then CCV_result=0; "{{dir}}/r/target/dev/root{{exe}}" || CCV_result=$?; test "$CCV_result" = 42; fi
 
 
 # d: own .git directory; f: separate metadata gitfile; w: linked worktree.
@@ -681,7 +681,7 @@ stderr empty
 in file {{dir}}/r/typelisp.lock
 contains (commit "{{commit}}"))
 not-contains (commit "{{parent}}"))
-exec "{{dir}}/r/target/release/root{{exe}}"
+exec "{{dir}}/r/target/dev/root{{exe}}"
 exit 42
 stdout empty
 stderr empty

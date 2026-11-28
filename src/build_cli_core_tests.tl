@@ -1,3 +1,5 @@
+(import package_profile_core as pkg_profile)
+
 ;; build_cli_core_tests.tl - White-box tests for package builds: paths and
 ;; artifact status, direct objects, preflight routes, the package graph and
 ;; scheduler, TLCI callables, rollback and commit, and worker arguments.
@@ -48,9 +50,12 @@
   build-package-profile-opt-level-smoke
   (unless
     (and
-      (= (build.build-profile-default-opt-level (Release)) 2)
-      (= (build.build-profile-default-opt-level (Dev)) 0)
-      (= (build.build-package-default-opt-level) 2))
+      (= (pkg_profile.package-profile-opt-level (& (Release))) 2)
+      (= (pkg_profile.package-profile-opt-level (& (Dev))) 0)
+      (=
+        (pkg_profile.package-profile-opt-level
+          (& (pkg_profile.package-default-profile)))
+        0))
     (io.panic "build package profile opt-level smoke failed")))
 
 (test
@@ -495,7 +500,7 @@
 
 (define (build-package-graph-node-tlci-path
   [node : build.BuildPackageGraphNode]
-  [profile : build.BuildProfile]) : String
+  [profile : pkg_profile.PackageProfile]) : String
   (let
     [manifest-path : String node.manifest-path]
     [manifest : load.CompilerPkgManifest node.manifest]
@@ -504,7 +509,7 @@
 
 (define (build-package-graph-tlci-paths
   [nodes : build.BuildPackageGraphNodeVec]
-  [profile : build.BuildProfile]) : process.ProcessStringList
+  [profile : pkg_profile.PackageProfile]) : process.ProcessStringList
   (let
     [count : i64 (build.build-package-graph-node-vec-len nodes)]
     [paths : process.ProcessStringList (process.args-empty)]

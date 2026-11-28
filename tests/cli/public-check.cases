@@ -3819,7 +3819,7 @@ exit 42
 step package-build
 run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
 stderr empty
-exec "{{dir}}/target/release/nested_file_macro{{exe}}"
+exec "{{dir}}/target/dev/nested_file_macro{{exe}}"
 exit 42
 
 case check-package-nested-macro-scope
@@ -3856,7 +3856,7 @@ stderr contains 3 passed; 0 failed
 step package-build
 run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
 stderr empty
-exec "{{dir}}/target/release/nested_macro_scope{{exe}}"
+exec "{{dir}}/target/dev/nested_macro_scope{{exe}}"
 exit 42
 
 case check-package-nested-macro-import
@@ -3892,7 +3892,7 @@ stderr contains 2 passed; 0 failed
 step package-build
 run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
 stderr empty
-exec "{{dir}}/target/release/nested_macro_import{{exe}}"
+exec "{{dir}}/target/dev/nested_macro_import{{exe}}"
 exit 42
 
 case check-package-nested-duplicate-name

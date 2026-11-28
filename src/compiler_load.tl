@@ -1,3 +1,5 @@
+(import package_profile_core as pkg_profile)
+
 ;; compiler_load.tl - Shared selfhost compiler source/import loader.
 (import stdlib.clone as clone_gen)
 (import stdlib.iterator)
@@ -210,15 +212,6 @@
 (defenum ResultCompilerLoadPackageSpmdInterface
   (Ok CompilerLoadPackageSpmdInterface)
   (Err String))
-
-;; Package dependency artifacts use the build profile selected by the package
-;; driver. Other compiler entry points retain the release default and can still
-;; typecheck source dependencies when no artifact has been built yet.
-(define compiler-load-package-artifact-profile : String
-  "release")
-
-(define (compiler-load-set-package-artifact-profile! [profile : String]) : unit
-  (set! compiler-load-package-artifact-profile profile))
 
 (defenum CompilerLoadMaybeModuleId
   (CompilerLoadNoModuleId)
@@ -955,6 +948,7 @@
   ;; A process environment lookup must never become mutable route state shared
   ;; by interleaved compiler jobs.
   (dependency-tlci-force-source (__tl_dyn-array bool))
+  (package-release (__tl_dyn-array bool))
   ;; Intern table this session's floor bookkeeping is bound to once
   ;; `compiler-load-session-state-use-with-intern-state!` installs it; the
   ;; ready flag keeps legacy sessions on the compatibility-global floor path.
@@ -1063,9 +1057,23 @@
     CompilerLoadSourceProvider)
   (__tl_make-array (compiler-load-source-provider-inactive)))
 
+(define (compiler-load-session-package-profile
+  [state : (& CompilerLoadSessionState)]) : pkg_profile.PackageProfile
+  (if (array-ref state.package-release 0)
+    (pkg_profile.PackageProfile.Release)
+    (pkg_profile.PackageProfile.Dev)))
+
+(define (compiler-load-session-set-package-profile!
+  [state : CompilerLoadSessionState]
+  [profile : pkg_profile.PackageProfile]) : unit
+  (compiler-load-session-state-bool-cell-set!
+    state.package-release
+    (pkg_profile.package-profile-release? (& profile))))
+
 (define (compiler-load-session-state-new-with-reset-safety-and-catalog
   [standalone-reset-safe : bool]
-  [catalog : CompilerLoadDependencyCatalogRegistry]) : CompilerLoadSessionState
+  [catalog : CompilerLoadDependencyCatalogRegistry]
+  [profile : pkg_profile.PackageProfile]) : CompilerLoadSessionState
   (let
     [surface-summaries : (__tl_dyn-array CompilerLoadSurfaceSummaryList)
       (__tl_make-array (compiler-load-surface-summary-list-empty))]
@@ -1102,6 +1110,8 @@
         (compiler-load-embedded-stdlib-provenance-state-new)
         catalog
         (compiler-load-session-state-bool-cell false)
+        (compiler-load-session-state-bool-cell
+          (pkg_profile.package-profile-release? (& profile)))
         (__tl_make-array ci.InternCompatState 1)
         (compiler-load-session-state-bool-cell false)
         (compiler-load-session-state-bool-cell standalone-reset-safe)
@@ -1126,7 +1136,8 @@
   [standalone-reset-safe : bool]) : CompilerLoadSessionState
   (compiler-load-session-state-new-with-reset-safety-and-catalog
     standalone-reset-safe
-    (compiler-load-dependency-catalog-registry-new)))
+    (compiler-load-dependency-catalog-registry-new)
+    (pkg_profile.package-default-profile)))
 
 ;; A package child owns fresh parse caches and hydrated surfaces, but borrows the
 ;; enclosing package's admitted images. Its teardown must release only those
@@ -1137,11 +1148,14 @@
     ;; Read before the catalog moves out of `parent`.
     [force-source : bool
       (compiler-load-session-state-dependency-tlci-force-source? (& parent))]
+    [profile : pkg_profile.PackageProfile
+      (compiler-load-session-package-profile parent)]
     [state : CompilerLoadSessionState
       (compiler-load-session-state-new-with-reset-safety-and-catalog
         true
         (owned_view.compiler-owned-reference-shared-view
-          (& parent.dependency-catalog)))]
+          (& parent.dependency-catalog))
+        profile)]
     (compiler-load-session-state-set-dependency-tlci-force-source!
       (owned_view.compiler-owned-shared-view state)
       force-source)
@@ -13417,25 +13431,24 @@
         (ast.ast-type-list-push out (ast.ast-node-pool-reader-type-push (& ty)))])
     (compiler-load-param-type-list-into params (+ index 1) out)))
 
-(define (compiler-load-package-artifact-profile-name) : String
-  (string.copy (& compiler-load-package-artifact-profile)))
-
 (define (compiler-load-package-tlci-path
+  [profile : pkg_profile.PackageProfile]
   [manifest-dir : String]
   [package-name : String]) : String
   (compiler-load-join-root-path
     (compiler-load-join-root-path
       (compiler-load-join-root-path manifest-dir "target")
-      (string.copy (& compiler-load-package-artifact-profile)))
+      (pkg_profile.package-profile-name profile))
     (str_cat.str-cat package-name ".tlci")))
 
 (define (compiler-load-package-tli-path
+  [profile : pkg_profile.PackageProfile]
   [manifest-dir : String]
   [package-name : String]) : String
   (compiler-load-join-root-path
     (compiler-load-join-root-path
       (compiler-load-join-root-path manifest-dir "target")
-      (string.copy (& compiler-load-package-artifact-profile)))
+      (pkg_profile.package-profile-name profile))
     (str_cat.str-cat package-name ".tli")))
 
 (define (compiler-load-path-list-head-or
@@ -14910,8 +14923,9 @@
       deps
       cfgs)))
 
-(define (compiler-load-package-file-with-runtime-cfg-inner
+(define (compiler-load-package-entry-with-runtime-cfg
   [input-path : (& str)]
+  [source : CompilerLoadMaybeString]
   [stdlib-roots : (& svec.Vec)]
   [manifest-dir : (& str)]
   [deps : (& CompilerPkgDeps)]
@@ -14933,13 +14947,24 @@
           deps
           cfgs)
           [(Ok macro-decls macro-paths macro-modules prelude-seen)
-            (match (compiler-load-package-entry-file-with-paths-and-roots-cfg
-              (& (string.copy input-path))
-              prelude-seen
-              stdlib-roots
-              (& (string.copy manifest-dir))
-              deps
-              cfgs)
+            (match (match source
+              [(CompilerLoadNoString)
+                (compiler-load-package-entry-file-with-paths-and-roots-cfg
+                  input-path
+                  prelude-seen
+                  stdlib-roots
+                  manifest-dir
+                  deps
+                  cfgs)]
+              [(CompilerLoadSomeString text)
+                (compiler-load-package-stdlib-prelude-source-with-roots-cfg
+                  input-path
+                  (& text)
+                  prelude-seen
+                  stdlib-roots
+                  manifest-dir
+                  deps
+                  cfgs)])
               [(Ok entry-decls entry-paths entry-modules seen)
                 (Ok
                   (compiler-load-decl-list-append
@@ -14998,8 +15023,9 @@
   [deps : (& CompilerPkgDeps)]
   [emit-entry : bool]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
-  (compiler-load-package-file-with-runtime-cfg-inner
+  (compiler-load-package-entry-with-runtime-cfg
     input-path
+    CompilerLoadNoString
     stdlib-roots
     manifest-dir
     deps

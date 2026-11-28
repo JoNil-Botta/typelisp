@@ -775,7 +775,7 @@
               [_ false]))]
         [_capture : unit
           (driver.compiler-driver-package-runtime-capture-frontend!
-            (owned_view.compiler-owned-shared-view scope))]
+            (&mut scope))]
         (arena.destroy-safe! owner)
         (unsafe
           ;; unsafe: installs global intern state; replaced before this arena ends
@@ -1161,6 +1161,7 @@
         "combined_inline_check.tl"
         (string.copy (& source))
         (roots.new)
+        (& (lint_driver.SelfhostLintCheckContext.FileContext))
         cfgs
         true
         true)]
@@ -1170,6 +1171,7 @@
         "combined_inline_check.tl"
         source
         (roots.new)
+        (& (lint_driver.SelfhostLintCheckContext.FileContext))
         cfgs
         false
         true)]

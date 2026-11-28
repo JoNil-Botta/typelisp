@@ -401,8 +401,8 @@ run_serial() {
     set -e
 }
 
-ROOT_OUT="$WORK/pkg/target/release"
-DEP_OUT="$WORK/pkg/vendor/dep/target/release"
+ROOT_OUT="$WORK/pkg/target/dev"
+DEP_OUT="$WORK/pkg/vendor/dep/target/dev"
 ROOT_ASM="$ROOT_OUT/fresh_root.s"
 ROOT_OBJ="$ROOT_OUT/fresh_root$OBJ_SUFFIX"
 ROOT_RUNTIME="$ROOT_OUT/fresh_root$EXE_SUFFIX"
@@ -533,7 +533,7 @@ assert_artifact_role "$out" Built "fresh_root$EXE_SUFFIX"
 
 run_serial serial-initial
 [ "$code" -eq 0 ] || fail "serial worker build failed: $(cat "$err")"
-SERIAL_OUT="$WORK/serial/target/release"
+SERIAL_OUT="$WORK/serial/target/dev"
 SERIAL_TLI="$SERIAL_OUT/fresh_serial.tli"
 SERIAL_RUNTIME="$SERIAL_OUT/${LIB_PREFIX}fresh_serial$LIB_SUFFIX"
 [ -s "$SERIAL_TLI" ] || fail "serial worker build did not emit fresh_serial.tli"

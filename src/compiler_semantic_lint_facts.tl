@@ -2271,7 +2271,12 @@
       (match (owned_view.compiler-owned-shared-view request.input)
         [(or (check.CompilerSemanticCheckInput.Source path _)
              (check.CompilerSemanticCheckInput.PreparedSource path _ _)
-             (check.CompilerSemanticCheckInput.File path)
+             (check.CompilerSemanticCheckInput.PreparedPackageSource
+               path
+               _
+               _
+               _
+               _) (check.CompilerSemanticCheckInput.File path)
              (check.CompilerSemanticCheckInput.PackageEntry path _ _ _))
           path])]
     [recorder : CompilerSemanticFactRecorder

@@ -133,7 +133,7 @@ Options:
     -o <exe>                       Source build executable output path
     --deps-only                    Build package dependencies without building the root package
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward
-    --profile dev|release          Package build profile (default release)
+    --profile dev|release          Package build profile (default dev)
     --release                      Alias for --profile release
     --target <target>              linux-x86_64 or windows-x86_64
     --backend-mode <mode>          scalar, sse2, avx2, or avx512
@@ -175,7 +175,7 @@ Summary:
 
 Options:
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward for package runs
-    --profile dev|release          Package build profile (default release)
+    --profile dev|release          Package build profile (default dev)
     --release                      Alias for --profile release
     --locked                       Require matching typelisp.lock; do not rewrite
     --update-lock                  Refresh remote pins and rewrite typelisp.lock
@@ -193,7 +193,7 @@ Options:
 
 (define (cli-check-help-text) : String
   "Usage:
-    typelisp check [<file.tl>] [--manifest-path <typelisp.pkg>] [--target <target>] [--cfg <name>...] [--stdlib-root <dir>...]
+    typelisp check [<file.tl>] [--manifest-path <typelisp.pkg>] [--profile dev|release] [--release] [--target <target>] [--cfg <name>...] [--stdlib-root <dir>...]
     typelisp check --batch <inputs.txt> [--target <target>] [--cfg <name>...] [--stdlib-root <dir>...]
 
 Summary:
@@ -201,6 +201,8 @@ Summary:
 
 Options:
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward
+    --profile dev|release          Package dependency profile (default dev)
+    --release                      Alias for --profile release
     --batch <file>                 Read newline-separated input paths and emit framed per-entry results
     --target <target>              linux-x86_64 or windows-x86_64
     --cfg <name>                   Enable a compile-time cfg predicate name
@@ -227,7 +229,7 @@ Options:
 
 (define (cli-lint-help-text) : String
   "Usage:
-    typelisp lint [<file.tl>...] [--check] [--format <rich|flat>] [--deprecated-string-concat] [--redundant-function-name] [--redundant-begin] [--prefer-dotted-field] [--name-case] [--manifest-path <typelisp.pkg>] [--target <target>] [--cfg <name>...] [--stdlib-root <dir>...]
+    typelisp lint [<file.tl>...] [--check] [--format <rich|flat>] [--deprecated-string-concat] [--redundant-function-name] [--redundant-begin] [--prefer-dotted-field] [--name-case] [--manifest-path <typelisp.pkg>] [--profile dev|release] [--release] [--target <target>] [--cfg <name>...] [--stdlib-root <dir>...]
 
 Summary:
     Lint source files or every source in a package.
@@ -241,6 +243,8 @@ Options:
     --prefer-dotted-field          Deprecated compatibility flag; dotted fields are required
     --name-case                    Enable staged declaration/binder casing lints
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward
+    --profile dev|release          Package dependency profile (default dev)
+    --release                      Alias for --profile release
     --target <target>              linux-x86_64 or windows-x86_64
     --cfg <name>                   Enable a compile-time cfg predicate name
     --backend-mode <mode>          Validate scalar, sse2, avx2, or avx512; no code is emitted
@@ -251,9 +255,9 @@ Options:
 
 (define (cli-test-help-text) : String
   "Usage:
-    typelisp test [--check] [--filter <substring>|--exact <name>] [--include-ignored] [--include-slow] [--shuffle [--seed <u64>]] [<file.tl>] [--manifest-path <typelisp.pkg>] [--target <target>] [--cfg <name>...] [--backend-mode <mode>] [--opt-level <0|1|2|s>|-Os] [--stdlib-root <dir>...]
+    typelisp test [--check] [--filter <substring>|--exact <name>] [--include-ignored] [--include-slow] [--shuffle [--seed <u64>]] [<file.tl>] [--manifest-path <typelisp.pkg>] [--profile dev|release] [--release] [--target <target>] [--cfg <name>...] [--backend-mode <mode>] [--opt-level <0|1|2|s>|-Os] [--stdlib-root <dir>...]
     typelisp test [--check] [--filter <substring>|--exact <name>] [--include-ignored] [--include-slow] [--shuffle [--seed <u64>]] --batch <inputs.txt> [--combined] [--target <target>] [--cfg <name>...] [--backend-mode <mode>] [--opt-level <0|1|2|s>|-Os] [--stdlib-root <dir>...] [--prefix-cache-stats]
-    typelisp test --list [--filter <substring>|--exact <name>] [--include-ignored] [--include-slow] [--shuffle [--seed <u64>]] [<file.tl>] [--manifest-path <typelisp.pkg>] [--batch <inputs.txt>] [--cfg <name>...] [--stdlib-root <dir>...]
+    typelisp test --list [--filter <substring>|--exact <name>] [--include-ignored] [--include-slow] [--shuffle [--seed <u64>]] [<file.tl>] [--manifest-path <typelisp.pkg>] [--profile dev|release] [--release] [--batch <inputs.txt>] [--cfg <name>...] [--stdlib-root <dir>...]
 
 Summary:
     Run or typecheck inline `(test ...)` declarations.
@@ -271,6 +275,8 @@ Options:
     --combined                     Compile a --batch run into one dispatched harness and run each file in its own subprocess
     --prefix-cache-stats           Print typecheck prefix-cache stats for a batch
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward when no file is provided
+    --profile dev|release          Package profile (default dev)
+    --release                      Alias for --profile release
     --target <target>              linux-x86_64 or windows-x86_64
     --cfg <name>                   Enable a repeatable compile-time cfg predicate name
     --backend-mode <mode>          scalar, sse2, avx2, or avx512
@@ -283,9 +289,9 @@ Options:
 (define (cli-doc-help-text) : String
   "Usage:
     typelisp doc <file.tl> [<out.md>|-o <out.md>] [--stdlib-root <dir>...]
-    typelisp doc [--manifest-path <typelisp.pkg>] [--open] [--no-deps]
-    typelisp doc -o <out.md> [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
-    typelisp doc --test [<file.tl>...] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
+    typelisp doc [--manifest-path <typelisp.pkg>] [--profile dev|release] [--release] [--open] [--no-deps]
+    typelisp doc -o <out.md> [--manifest-path <typelisp.pkg>] [--profile dev|release] [--release] [--stdlib-root <dir>...]
+    typelisp doc --test [<file.tl>...] [--manifest-path <typelisp.pkg>] [--profile dev|release] [--release] [--stdlib-root <dir>...]
     typelisp doc --test --batch <inputs.txt> [--stdlib-root <dir>...] [--prefix-cache-stats]
     typelisp doc --html <file.tl> [<imported.tl>...] <out.html>
     typelisp doc --load <file.tl> <out.md> [--stdlib-root <dir>...]
@@ -301,6 +307,8 @@ Options:
     --batch <file>                 Read newline-separated doc-test input paths
     --prefix-cache-stats           Print typecheck prefix-cache stats for a batch
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward for package docs
+    --profile dev|release          Dependency profile for package doctests (default dev)
+    --release                      Alias for --profile release
     --stdlib-root <dir>            Search root for stdlib/... imports
 
 Output:

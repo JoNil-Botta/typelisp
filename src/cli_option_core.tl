@@ -1,3 +1,5 @@
+(import package_profile_core as pkg_profile)
+
 ;; cli_option_core.tl - The declarative option layer every command parses
 ;; its arguments with.
 ;;
@@ -133,7 +135,7 @@
 (define (cli-option-missing-value-message
   [command : (& command str)]
   [option : (& option str)]) : String
-  (if (cli-compile-option? option)
+  (if (or (cli-compile-option? option) (string.eq option "--profile"))
     (string.concat3-borrowed "" option " requires a value")
     (string.concat4-borrowed command ": " option " requires a value")))
 
@@ -171,7 +173,11 @@
           (set! args.name name)
           (set! args.next (+ index (+ arity 1)))
           (when
-            (> args.next args.count)
+            (or
+              (> args.next args.count)
+              (and
+                (string.eq args.name "--profile")
+                (cli-flag? (& (io.arg (+ index 1))))))
             (cli-args-fail!
               args
               (cli-option-missing-value-message (& args.command) (& arg))))])
@@ -221,7 +227,9 @@
   (stdlib-roots cli_svec.Vec)
   (cfgs cli_svec.Vec)
   (debug bool)
-  (has-debug bool))
+  (has-debug bool)
+  (profile pkg_profile.PackageProfile)
+  (has-profile bool))
 
 (define (cli-compile-options) : CliCompileOptions
   (CliCompileOptions
@@ -234,6 +242,8 @@
     (cli_svec.new)
     (cli_svec.new)
     false
+    false
+    (pkg_profile.package-default-profile)
     false))
 
 ;; Size-optimized builds default SPMD lowering to scalar (avoiding vector and
@@ -300,6 +310,47 @@
   (cli-args-fail!
     args
     (string.concat3-borrowed "" (& args.name) " was provided more than once")))
+
+(define (cli-package-profile-options) : String
+  " --profile <dev|release> --release ")
+
+(define cli-package-profile-mode-error : String
+  "--profile and --release are only valid in package mode")
+
+(define (cli-package-profile-option!
+  [options : (&mut options CliCompileOptions)]
+  [args : (&mut args CliArgs)]) : bool
+  (let
+    [release : bool (string.eq args.name "--release")]
+    (if (or release (string.eq args.name "--profile"))
+      (let
+        [name : String
+          (if release
+            "release"
+            (cli-args-value args))]
+        (cond
+          [options.has-profile
+            (cli-args-fail! args "profile was provided more than once")]
+          [(string.eq name "release")
+            (set! options.profile (pkg_profile.PackageProfile.Release))
+            (set! options.has-profile true)]
+          [(string.eq name "dev")
+            (set! options.profile (pkg_profile.PackageProfile.Dev))
+            (set! options.has-profile true)]
+          [else
+            (cli-args-fail!
+              args
+              (string.concat3-borrowed
+                "unknown profile '"
+                (& name)
+                "'; expected dev or release"))])
+        true)
+      false)))
+
+(define (cli-package-opt-level [options : (& CliCompileOptions)]) : i64
+  (if options.has-opt-level
+    options.opt-level
+    (pkg_profile.package-profile-opt-level (& options.profile))))
 
 ;; Repeatable roots/cfgs retain order; singleton aliases share one presence bit.
 ;; Parsing has no compiler-global side effects, including on rejected input.

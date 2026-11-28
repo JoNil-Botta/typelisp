@@ -4987,52 +4987,54 @@
         [(Err _) false])]
     [(Err _) false]))
 
+(define (compiler-backend-pack-word-shape-ok?
+  [assignments : regalloc.CompilerRegAssignmentTable]
+  [dst0 : String]
+  [sse? : bool]
+  [expected : String]) : bool
+  (match (be_scalar.compiler-backend-emit-pack-words
+    (ast.ast-node-pool-reader-type-segment-bases)
+    assignments
+    (& (Var 0))
+    (& (Var 1))
+    dst0
+    "-24(%rbp)"
+    sse?
+    sse?
+    (cdiag.compiler-diagnostic-at-start "" "")
+    (be_state.compiler-backend-state-new
+      (ci.intern-compat-state-capture-active)))
+    [(Ok asm) (string.eq asm expected)]
+    [(Err _) false]))
+
 (define (compiler-backend-pack-scavenged-word-shape-ok?) : bool
   (let
     [gp-assignments : regalloc.CompilerRegAssignmentTable
       (reg-homes "%0=%r12 %1=%r13")]
     [xmm-assignments : regalloc.CompilerRegAssignmentTable
       (reg-homes "%0=%xmm3 %1=%xmm4")]
-    (match (be_scalar.compiler-backend-emit-pack-words
-      (ast.ast-node-pool-reader-type-segment-bases)
-      gp-assignments
-      (& (Var 0))
-      (& (Var 1))
-      "-16(%rbp)"
-      "-24(%rbp)"
-      false
-      false
-      (cdiag.compiler-diagnostic-at-start "" "")
-      (be_state.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active)))
-      [(Ok gp-asm)
-        (match (be_scalar.compiler-backend-emit-pack-words
-          (ast.ast-node-pool-reader-type-segment-bases)
-          xmm-assignments
-          (& (Var 0))
-          (& (Var 1))
-          "-16(%rbp)"
-          "-24(%rbp)"
-          true
-          true
-          (cdiag.compiler-diagnostic-at-start "" "")
-          (be_state.compiler-backend-state-new
-            (ci.intern-compat-state-capture-active)))
-          [(Ok xmm-asm)
-            (and
-              (be_state.backend-and8
-                (asm-has? gp-asm "    movq %r12, %r8\n")
-                (asm-has? gp-asm "    movq %r13, %r9\n")
-                (asm-has? gp-asm "    movq %r8, -16(%rbp)\n")
-                (asm-has? gp-asm "    movq %r9, -24(%rbp)\n")
-                (asm-has? xmm-asm "    movsd %xmm3, %xmm2\n")
-                (asm-has? xmm-asm "    movsd %xmm4, %xmm3\n")
-                (asm-has? xmm-asm "    movsd %xmm2, -16(%rbp)\n")
-                (asm-has? xmm-asm "    movsd %xmm3, -24(%rbp)\n"))
-              (asm-lacks? gp-asm "%rax" "%rdx")
-              (asm-lacks? xmm-asm "%xmm0" "%xmm1"))]
-          [(Err _) false])]
-      [(Err _) false])))
+    (and
+      (compiler-backend-pack-word-shape-ok?
+        gp-assignments
+        "-16(%rbp)"
+        false
+        "    movq %r12, %r8\n    movq %r8, -16(%rbp)\n    movq %r13, -24(%rbp)\n")
+      (compiler-backend-pack-word-shape-ok?
+        xmm-assignments
+        "-16(%rbp)"
+        true
+        "    movsd %xmm3, %xmm2\n    movsd %xmm2, -16(%rbp)\n    movsd %xmm4, -24(%rbp)\n")
+      ;; Stage word one before word zero overwrites its source register.
+      (compiler-backend-pack-word-shape-ok?
+        gp-assignments
+        "%r13"
+        false
+        "    movq %r12, %r8\n    movq %r13, %r9\n    movq %r8, %r13\n    movq %r9, -24(%rbp)\n")
+      (compiler-backend-pack-word-shape-ok?
+        xmm-assignments
+        "%xmm4"
+        true
+        "    movsd %xmm3, %xmm2\n    movsd %xmm4, %xmm3\n    movsd %xmm2, %xmm4\n    movsd %xmm3, -24(%rbp)\n"))))
 
 ;; Backend-owned replacement for representative aggregate storage emit-shape
 ;; checks from the legacy backend suite.

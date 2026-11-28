@@ -6435,6 +6435,10 @@
   (cbi.compiler-builtin-refresh!)
   cbi.compiler-builtin-id-tl-array-zero)
 
+(define (lower-tl-mem-fill8-symbol) : i64
+  (cbi.compiler-builtin-refresh!)
+  cbi.compiler-builtin-id-tl-mem-fill8)
+
 (define (lower-tl-arena-make-symbol) : i64
   (cbi.compiler-builtin-refresh!)
   cbi.compiler-builtin-id-tl-arena-make)
@@ -28607,25 +28611,57 @@
         (lower-diagnostic "lower: init fixed array length must be non-negative")))
     (let
       [elem-size : i64 (lower-type-size ctx elem-ty)]
-      (match (lower-reserve-inline-storage
-        state
-        (lower-type-size ctx result-ty)
-        result-ty)
+      [bytes : i64 (lower-type-size ctx result-ty)]
+      (match (lower-reserve-inline-storage state bytes result-ty)
         [(Expr base-state base _)
-          (match (lower-init-array-store-elems-at
-            ctx
-            base-state
-            env
-            type-env
-            elem-ty
-            elem-size
-            count
-            (& base)
-            0
-            0
-            origin)
-            [(Ok final-state) (Ok (Expr final-state base result-ty))]
-            [(Err message) (Err message)])]))))
+          ;; Stack storage can be reused even in a virgin arena. Clear whole
+          ;; words with the unconditional runtime fill and leave any partial
+          ;; word to the ordinary element stores.
+          ;; The crypto scrub module uses audited stack spans and call
+          ;; sequences, so its fixed arrays must keep their inline stores.
+          (let
+            [bulk-words : i64
+              (if (and
+                (>= count 32)
+                (>= bytes 64)
+                (tc_core.tc-integer-type?
+                  (tc_core.tc-resolve-type ctx (ast.clone-ast-type (& elem-ty))))
+                (!=
+                  (lower-state-current-source-path-id state)
+                  (load.compiler-load-source-path-id
+                    "stdlib/crypto_stack_scrub.tl")))
+                (/ bytes 8)
+                0)]
+            [offset : i64 (* bulk-words 8)]
+            [cleared : LowerState
+              (if (> bulk-words 0)
+                (match (try
+                  (lower-runtime-call-values
+                    base-state
+                    (lower-tl-mem-fill8-symbol)
+                    (ir.compiler-ir-value-seq3
+                      (ir.compiler-ir-clone-value (& base))
+                      (I64 bulk-words)
+                      (I64 0))
+                    (Unit)))
+                  [(Expr done-state _ _) done-state])
+                base-state)]
+            (match (lower-init-array-store-elems-at
+              ctx
+              cleared
+              env
+              type-env
+              elem-ty
+              elem-size
+              count
+              (& base)
+              (if (> bulk-words 0)
+                (/ offset elem-size)
+                0)
+              offset
+              origin)
+              [(Ok final-state) (Ok (Expr final-state base result-ty))]
+              [(Err message) (Err message)]))]))))
 
 (define (lower-init-expr
   [ctx : tc_core.TcContext]

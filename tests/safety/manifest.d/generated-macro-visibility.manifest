@@ -1,0 +1,3 @@
+# Bare calls through a qualified-only import keep their physical source spans.
+generated_macro_visibility_bare_reject|check-fail|tests/safety/generated_macro_visibility_bare_reject.tl|tests/safety/generated_macro_visibility_bare_reject.tl:4:4|unbound name generated-seven
+generated_macro_visibility_non_entry_reject|check-fail|tests/safety/generated_macro_visibility_non_entry_reject.tl|tests/safety/generated_macro_visibility_consumer.tl:4:4|unbound name generated-seven

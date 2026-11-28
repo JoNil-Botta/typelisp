@@ -10129,18 +10129,24 @@
       retained?
       (tc_core.tc-macro-import-index-control-set! macro-state 3 0))
     (tc_core.macro-alias-cache-ensure! macro-state)
-    ;; Selected-item replay neither publishes an unbuilt alias index nor
+    ;; Import replay neither publishes an unbuilt alias index nor
     ;; changes a retained table's completeness and view metadata.
     (let
       [built : i64 (tc_core.tc-macro-import-index-control macro-state 4)]
       [complete : i64 (tc_core.tc-macro-import-index-control macro-state 6)]
-      (tc_core.macro-alias-cache-build-segmented! state true)
+      (tc_core.macro-alias-cache-build-segmented!
+        state
+        tc_core.BindImportedMacros)
       (set!
         ok
         (and
           (= (tc_core.tc-macro-import-index-control macro-state 4) built)
           (= (tc_core.tc-macro-import-index-control macro-state 6) complete))))
-    (unless retained? (tc_core.macro-alias-cache-build-segmented! state false))
+    (unless
+      retained?
+      (tc_core.macro-alias-cache-build-segmented!
+        state
+        tc_core.IndexModuleAliases))
     (while (< index count)
       (set!
         (array-ref segmented index)
@@ -10172,7 +10178,9 @@
     ;; Leave the oracle's caller in its original segmented mode.
     (tc_core.tc-macro-import-index-control-set! macro-state 3 0)
     (tc_core.macro-alias-cache-ensure! macro-state)
-    (tc_core.macro-alias-cache-build-segmented! state false)
+    (tc_core.macro-alias-cache-build-segmented!
+      state
+      tc_core.IndexModuleAliases)
     ok))
 
 ;; Moves `count` rows from the cursor into the emitted prefix, as the walk does.

@@ -101403,10 +101403,12 @@
         (macro-program-has-summary-macro-import? decls)))
     (when
       delta-has-defmacro
-      ;; Symbols and registries already contain the committed delta. Refresh
-      ;; selected aliases before publishing its next expansion context, using
-      ;; the existing module/import events rather than scanning declarations.
-      (macro-alias-cache-build-segmented! job-state true)
+      ;; A generated macro gets the same temporary bare alias as a direct
+      ;; declaration. Replay retained imports before exposing the new symbols
+      ;; to the next expansion, then publish the explicit wildcard and item
+      ;; bindings. Both passes visit only module/import events.
+      (macro-alias-cache-build-segmented! job-state RemoveBareMacroAliases)
+      (macro-alias-cache-build-segmented! job-state BindImportedMacros)
       (tc-macro-walk-set!
         state
         macro-live-prescan-expr-type-names
@@ -114085,15 +114087,19 @@
                 (+= steps 1))))))
       unit)))
 
-;; The alias index's step for one row that is, once unwrapped, a module
-;; marker or an import: returns the module the rows after it belong to.
-;; Selected-item replay shares the event traversal, but keeps symbol-map
-;; publication out of the ordinary module-alias indexing path.
-(define (macro-selected-item-alias-index-at!
+(defenum MacroAliasReplay
+  (IndexModuleAliases)
+  (RemoveBareMacroAliases)
+  (BindImportedMacros))
+
+;; Import replay shares the alias index's event traversal, with symbol-map
+;; publication confined to the generated-delta path.
+(define (macro-imported-macro-alias-replay-at!
   [state : TcMacroState]
   [decls : (& decls ast.AstDeclList)]
   [index : i64]
-  [cur-module-id : i64]) : i64
+  [cur-module-id : i64]
+  [remove-bare? : bool]) : i64
   (match (ast.ast-decl-list-ref-borrowed decls index)
     [(Module _) (ast.ast-decl-list-module-id-at decls index cur-module-id)]
     [(or (Import _ _) (Unsafe _))
@@ -114104,12 +114110,14 @@
         [(Module next-module) next-module]
         [(Import _ (Spec (ModuleItem item) _ (Some target) (Some alias) _))
           (when
-            (csym.compiler-symbols-handle-found?
-              (csym.compiler-symbols-lookup-macro-in-module-id-or
-                (& (tc-macro-walk-field state macro-live-symbols-value))
-                target
-                item
-                (csym.compiler-symbols-missing-handle)))
+            (and
+              (not remove-bare?)
+              (csym.compiler-symbols-handle-found?
+                (csym.compiler-symbols-lookup-macro-in-module-id-or
+                  (& (tc-macro-walk-field state macro-live-symbols-value))
+                  target
+                  item
+                  (csym.compiler-symbols-missing-handle))))
             (tc-macro-walk-set!
               state
               macro-live-symbols-value
@@ -114119,6 +114127,19 @@
                 item
                 cur-module-id
                 alias)))
+          cur-module-id]
+        [(Import _ (Spec _ _ (Some target) (Some alias) _))
+          (when
+            (or remove-bare? (= alias cbi.compiler-builtin-id-fix-empty))
+            (tc-macro-walk-set!
+              state
+              macro-live-symbols-value
+              (csym.compiler-symbols-replay-module-macro-import
+                (tc-macro-walk-field state macro-live-symbols-value)
+                (tc-macro-walk-field state macro-live-symbols-last-insert-index)
+                target
+                cur-module-id
+                remove-bare?)))
           cur-module-id]
         [_ cur-module-id])]
     [_ cur-module-id]))
@@ -114201,13 +114222,21 @@
 
 (define (macro-alias-cache-build-segmented!
   [job-state : TcJobState]
-  [refresh-selected? : bool]) : unit
+  [replay : MacroAliasReplay]) : unit
   (let
     [state : TcMacroState (tc-job-state-macro-state job-state)]
+    [index-module-aliases? : bool
+      (match replay
+        [(IndexModuleAliases) true]
+        [_ false])]
+    [remove-bare? : bool
+      (match replay
+        [(RemoveBareMacroAliases) true]
+        [_ false])]
     [stub-count : i64
-      (if refresh-selected?
-        -1
-        (tc-lazy-import-stub-count-for-state state))]
+      (if index-module-aliases?
+        (tc-lazy-import-stub-count-for-state state)
+        -1)]
     [count : i64 (macro-segmented-program-decl-count job-state)]
     [data : MacroSegmentedProgramViewData
       (macro-segmented-prefix-events-sync! job-state)]
@@ -114216,8 +114245,8 @@
     [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
     [node-address : i64 data.head]
     [start : i64 data.cursor]
-    (unless
-      refresh-selected?
+    (when
+      index-module-aliases?
       ;; Ensuring the stub owner may have invalidated an earlier source's
       ;; table. Initialize after that boundary, before publishing any rows.
       (macro-alias-cache-ensure! state)
@@ -114226,17 +114255,18 @@
     (for [event (iterator.range 0 data.prefix-event-count)]
       (set!
         cur-module-id
-        (if refresh-selected?
-          (macro-selected-item-alias-index-at!
-            state
-            (& prefix)
-            (- (- len 1) (array-ref data.prefix-events event))
-            cur-module-id)
+        (if index-module-aliases?
           (macro-alias-cache-index-at!
             state
             (& prefix)
             (- (- len 1) (array-ref data.prefix-events event))
-            cur-module-id))))
+            cur-module-id)
+          (macro-imported-macro-alias-replay-at!
+            state
+            (& prefix)
+            (- (- len 1) (array-ref data.prefix-events event))
+            cur-module-id
+            remove-bare?))))
     (while (> node-address 0)
       (let
         [node : MacroProgramSegmentNodeData
@@ -114251,22 +114281,23 @@
           (< (array-ref events next-event) end))
           (set!
             cur-module-id
-            (if refresh-selected?
-              (macro-selected-item-alias-index-at!
-                state
-                (& decls)
-                (- (array-ref events next-event) decls.offset)
-                cur-module-id)
+            (if index-module-aliases?
               (macro-alias-cache-index-at!
                 state
                 (& decls)
                 (- (array-ref events next-event) decls.offset)
-                cur-module-id)))
+                cur-module-id)
+              (macro-imported-macro-alias-replay-at!
+                state
+                (& decls)
+                (- (array-ref events next-event) decls.offset)
+                cur-module-id
+                remove-bare?)))
           (+= next-event 1))
         (set! node-address node.next)
         (set! start 0)))
-    (unless
-      refresh-selected?
+    (when
+      index-module-aliases?
       (tc-macro-import-index-control-set! state 10 cur-module-id)
       (tc-macro-import-index-control-set! state 4 1)
       (tc-macro-import-index-control-set! state 5 1)
@@ -114470,7 +114501,7 @@
           (= (tc-macro-import-index-control state 5) 1))
         (tc-macro-import-index-control-set! state 3 0)
         (macro-alias-cache-ensure! state)
-        (macro-alias-cache-build-segmented! job-state false)))
+        (macro-alias-cache-build-segmented! job-state IndexModuleAliases)))
     (macro-import-alias-target-cached-id
       state
       decls

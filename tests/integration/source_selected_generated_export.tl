@@ -64,7 +64,7 @@
       (= (renamed-nested) 42)
       (= (generated-answer) 42)
       (= (dep.generated-answer) 42)
-      (= (user.answer) 42))))
+      (= (user.check-imports) 42))))
 
 (test
   selected-generated-macro-aliases

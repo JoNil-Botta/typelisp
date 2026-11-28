@@ -341,10 +341,8 @@
                           "unsupported assembly directive: "
                           (string.copy dir))))])]
               (while (<= i n)
-                (try
-                  (asm.data-field!
-                    s
-                    (&mut image.table)
-                    (& (argument args (&mut i)))
-                    width)))
+                (let
+                  [end (op.delimiter-before args i n ',')]
+                  (try (asm.data-field! s (&mut image.table) args i end width))
+                  (set! i (+ end 1))))
               (Ok unit))]))]))

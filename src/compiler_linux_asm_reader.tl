@@ -43,15 +43,17 @@
   (let
     [depth : i64 1]
     (while (< (deref cursor) (string.string-length source))
-      (let
-        [start (deref cursor)]
-        [line : String (next-line source cursor)]
-        [name : String (op.range (& line) 0 (x64.word-end (& line)))]
-        (when (string.eq (& name) open) (+= depth 1))
-        (when
-          (string.eq (& name) close)
-          (-= depth 1)
-          (when (= depth 0) (return start)))))
+      (with-arena
+        scan-line
+        (let
+          [start (deref cursor)]
+          [line : String (next-line source cursor)]
+          [name : String (op.range (& line) 0 (x64.word-end (& line)))]
+          (when (string.eq (& name) open) (+= depth 1))
+          (when
+            (string.eq (& name) close)
+            (-= depth 1)
+            (when (= depth 0) (return start))))))
     -1))
 
 (defstruct Argument
@@ -64,20 +66,23 @@
   (Ok String)
   (Err String))
 
-(define (substitute [body : (& str)] [values : (& args bindings.Vec)]) : Text
+(define (substitute
+  [body : (& str)]
+  [start : i64]
+  [n : i64]
+  [values : (& args bindings.Vec)]) : Text
   (let
-    [out (buf.byte-buf-builder-with-capacity (string.string-length body))]
-    [i : i64 0]
-    [n (string.string-length body)]
+    [out (buf.byte-buf-builder-with-capacity (- n start))]
+    [i start]
     (while (< i n)
       (let
         [c (string.string-ref body i)]
         (if (= c '\\')
           (let
-            [start (+ i 1)]
+            [parameter-start (+ i 1)]
             [j : i64 0]
             [found false]
-            (set! i start)
+            (set! i parameter-start)
             (while (and
               (< i n)
               (let
@@ -89,10 +94,11 @@
                   (and (>= k '0') (<= k '9')))))
               (+= i 1))
             (when
-              (= start i)
+              (= parameter-start i)
               (return (Err "invalid assembler macro substitution")))
             (let
-              [parameter (string.substring body start (- i start))]
+              [parameter
+                (string.substring body parameter-start (- i parameter-start))]
               (while (< j values.len)
                 (let
                   [arg : (& args Argument) (& (array-ref values.slots j))]
@@ -110,7 +116,12 @@
             (+= i 1)))))
     (Ok (buf.byte-buf-builder-finish-string (& out)))))
 
-(define (expand [formals : (& str)] [actuals : (& str)] [body : (& str)]) : Text
+(define (expand
+  [formals : (& str)]
+  [actuals : (& str)]
+  [body : (& str)]
+  [start : i64]
+  [end : i64]) : Text
   (let
     [values (bindings.new)]
     [i : i64 0]
@@ -127,7 +138,7 @@
     (when
       (< j (string.string-length actuals))
       (return (Err "extra assembler macro argument")))
-    (substitute body (& values))))
+    (substitute body start end (& values))))
 
 (define (defined? [reader : (& Reader)] [name : (& str)]) : bool
   (let
@@ -138,169 +149,227 @@
         (>= (array-ref reader.image.table.entries.slots id).position.section 0)
         (> (array-ref reader.image.table.entries.slots id).common-align 0)))))
 
-(define (read-source!
-  [reader : (&mut r Reader)]
-  [source : (& src str)]
+(define (read-expansion!
+  [reader : (&mut Reader)]
+  [expanded : (& Text)]
   [depth : i64]
-  [scratch : arena.Arena]) : asm.Status
+  [encoder-scratch : arena.Arena]) : asm.Status
+  (match expanded
+    [(Ok text) (read-source! reader text (+ depth 1) encoder-scratch)]
+    [(Err reason) (Err (string.copy reason))]))
+
+(define (read-repeat!
+  [reader : (&mut Reader)]
+  [args : (& str)]
+  [source : (& str)]
+  [start : i64]
+  [end : i64]
+  [depth : i64]
+  [encoder-scratch : arena.Arena]) : asm.Status
+  (with
+    ([scratch (arena.make) arena.destroy-safe!])
+    (let
+      [i : i64 0]
+      [formal (in-arena scratch (dir.argument args (&mut i)))]
+      (while (< i (string.string-length args))
+        (let
+          [phase (arena.phase scratch)]
+          [expanded
+            (in-arena
+              scratch
+              (let
+                [actual (dir.argument args (&mut i))]
+                (expand (& formal) (& actual) source start end)))]
+          [status (read-expansion! reader (& expanded) depth encoder-scratch)]
+          (arena.rewind-safe! phase)
+          (try status)))
+      (Ok unit))))
+
+(defstruct SourceState
+  (cursor i64)
+  (conditions i64)
+  (skip i64))
+
+(define (read-line!
+  [reader : (&mut Reader)]
+  [source : (& str)]
+  [state : (&mut SourceState)]
+  [depth : i64]
+  [scratch : arena.Arena]
+  [encoder-scratch : arena.Arena]) : asm.Status
+  (let
+    [line (in-arena scratch (next-line source (&mut state.cursor)))]
+    [n (string.string-length (& line))]
+    [at : i64 0]
+    (while (< at n)
+      (let
+        [word-end (x64.word-end-at (& line) at)]
+        [colon (op.delimiter-before (& line) at word-end ':')]
+        [label? (< colon word-end)]
+        [directive? (= (string.string-ref (& line) at) '.')]
+        [word : String
+          (if directive?
+            (in-arena scratch (op.range (& line) at word-end))
+            "")]
+        [args : String
+          (if (and directive? (not label?))
+            (in-arena scratch (op.range (& line) word-end n))
+            "")]
+        (cond
+          [(or (string.eq (& word) ".ifdef") (string.eq (& word) ".ifndef"))
+            (+= state.conditions 1)
+            (when
+              (or
+                (> state.skip 0)
+                (= (string.eq (& word) ".ifndef") (defined? reader (& args))))
+              (+= state.skip 1))]
+          [(string.eq (& word) ".endif")
+            (when (= state.conditions 0) (return (Err "unexpected .endif")))
+            (-= state.conditions 1)
+            (when (> state.skip 0) (-= state.skip 1))]
+          [(or (string.eq (& word) ".macro") (string.eq (& word) ".irp"))
+            (let
+              [macro? (string.eq (& word) ".macro")]
+              [start state.cursor]
+              [end
+                (in-arena
+                  scratch
+                  (macro-block-end
+                    source
+                    (&mut state.cursor)
+                    (& word)
+                    (if macro?
+                      ".endm"
+                      ".endr")))]
+              (when
+                (< end 0)
+                (return (Err "unterminated assembler macro or .irp")))
+              (when
+                (= state.skip 0)
+                (if macro?
+                  (let
+                    [head (x64.word-end (& args))]
+                    (macros.push-ref!
+                      (&mut reader.definitions)
+                      (Macro
+                        (op.range (& args) 0 head)
+                        (op.range (& args) head (string.string-length (& args)))
+                        (string.substring source start (- end start)))))
+                  (try
+                    (read-repeat!
+                      reader
+                      (& args)
+                      source
+                      start
+                      end
+                      depth
+                      encoder-scratch)))))]
+          [(> state.skip 0) unit]
+          [label?
+            (try
+              (dir.label!
+                (&mut reader.image)
+                (& (in-arena scratch (op.range (& line) at colon)))))
+            (set! at (op.skip-whitespace (& line) (+ colon 1) n))
+            (continue)]
+          [(or
+              (string.eq (& word) ".loc")
+              (string.eq (& word) ".file")
+              (and
+                (>= (string.string-length (& word)) 5)
+                (string.is-string-prefix-at (& word) ".cfi_" 0)))
+            (try
+              (dbg.record!
+                (&mut reader.debug)
+                (& reader.image)
+                (& word)
+                (& args)))]
+          [(string.eq (& word) ".pushsection")
+            (ints.push-ref! (&mut reader.stack) reader.image.current)
+            (try (dir.section! (&mut reader.image) (& args)))]
+          [(string.eq (& word) ".popsection")
+            (when (= reader.stack.len 0) (return (Err "unmatched .popsection")))
+            (-= reader.stack.len 1)
+            (set!
+              reader.image.current
+              (array-ref reader.stack.slots reader.stack.len))]
+          [directive?
+            (let
+              [i : i64 0]
+              [found false]
+              (while (< i reader.definitions.len)
+                (when
+                  (string.eq
+                    (& (array-ref reader.definitions.slots i).name)
+                    (& word))
+                  (let
+                    [expanded
+                      (in-arena
+                        scratch
+                        (expand
+                          (& (array-ref reader.definitions.slots i).formals)
+                          (& args)
+                          (& (array-ref reader.definitions.slots i).body)
+                          0
+                          (string.string-length
+                            (& (array-ref reader.definitions.slots i).body))))]
+                    (try
+                      (read-expansion!
+                        reader
+                        (& expanded)
+                        depth
+                        encoder-scratch)))
+                  (set! found true)
+                  (set! i reader.definitions.len))
+                (+= i 1))
+              (unless
+                found
+                (try (dir.directive! (&mut reader.image) (& word) (& args)))))]
+          [else
+            (let
+              [tail : String
+                (if (= at 0)
+                  ""
+                  (in-arena scratch (op.range (& line) at n)))]
+              (try
+                (asm.instruction!
+                  (&mut
+                    (array-ref reader.image.items.slots reader.image.current))
+                  (&mut reader.image.table)
+                  (if (= at 0)
+                    (& line)
+                    (& tail))
+                  encoder-scratch)))])
+        (break)))
+    (Ok unit)))
+
+(define (read-source!
+  [reader : (&mut Reader)]
+  [source : (& str)]
+  [depth : i64]
+  [encoder-scratch : arena.Arena]) : asm.Status
   (when
     (> depth 64)
     (return (Err "assembler macro expansion nested too deeply")))
-  (let
-    [cursor : i64 0]
-    [conditions : i64 0]
-    [skip : i64 0]
-    (while (< cursor (string.string-length source))
-      (when (= depth 0) (set! reader.source-offset cursor))
-      (let
-        [line : String (next-line source (&mut cursor))]
-        [n (string.string-length (& line))]
-        [at : i64 0]
-        (while (< at n)
-          (let
-            [word-end (x64.word-end-at (& line) at)]
-            [colon (op.delimiter-before (& line) at word-end ':')]
-            [label? (< colon word-end)]
-            [directive? (= (string.string-ref (& line) at) '.')]
-            [word : String
-              (if directive?
-                (op.range (& line) at word-end)
-                "")]
-            [args : String
-              (if (and directive? (not label?))
-                (op.range (& line) word-end n)
-                "")]
-            (cond
-              [(or (string.eq (& word) ".ifdef") (string.eq (& word) ".ifndef"))
-                (+= conditions 1)
-                (when
-                  (or
-                    (> skip 0)
-                    (=
-                      (string.eq (& word) ".ifndef")
-                      (defined? reader (& args))))
-                  (+= skip 1))]
-              [(string.eq (& word) ".endif")
-                (when (= conditions 0) (return (Err "unexpected .endif")))
-                (-= conditions 1)
-                (when (> skip 0) (-= skip 1))]
-              [(or (string.eq (& word) ".macro") (string.eq (& word) ".irp"))
-                (let
-                  [macro? (string.eq (& word) ".macro")]
-                  [start cursor]
-                  [end
-                    (macro-block-end
-                      source
-                      (&mut cursor)
-                      (& word)
-                      (if macro?
-                        ".endm"
-                        ".endr"))]
-                  (when
-                    (< end 0)
-                    (return (Err "unterminated assembler macro or .irp")))
-                  (when
-                    (= skip 0)
-                    (let
-                      [body : String
-                        (string.substring source start (- end start))]
-                      (if macro?
-                        (let
-                          [head (x64.word-end (& args))]
-                          (macros.push-ref!
-                            (&mut reader.definitions)
-                            (Macro
-                              (op.range (& args) 0 head)
-                              (op.range
-                                (& args)
-                                head
-                                (string.string-length (& args)))
-                              body)))
-                        (let
-                          [i : i64 0]
-                          [formal : String (dir.argument (& args) (&mut i))]
-                          (while (< i (string.string-length (& args)))
-                            (let
-                              [actual : String (dir.argument (& args) (&mut i))]
-                              [text
-                                (try (expand (& formal) (& actual) (& body)))]
-                              (try
-                                (read-source!
-                                  reader
-                                  (& text)
-                                  (+ depth 1)
-                                  scratch)))))))))]
-              [(> skip 0) unit]
-              [label?
-                (try
-                  (dir.label!
-                    (&mut reader.image)
-                    (& (op.range (& line) at colon))))
-                (set! at (op.skip-whitespace (& line) (+ colon 1) n))
-                (continue)]
-              [(or
-                  (string.eq (& word) ".loc")
-                  (string.eq (& word) ".file")
-                  (and
-                    (>= (string.string-length (& word)) 5)
-                    (string.is-string-prefix-at (& word) ".cfi_" 0)))
-                (try
-                  (dbg.record!
-                    (&mut reader.debug)
-                    (& reader.image)
-                    (& word)
-                    (& args)))]
-              [(string.eq (& word) ".pushsection")
-                (ints.push-ref! (&mut reader.stack) reader.image.current)
-                (try (dir.section! (&mut reader.image) (& args)))]
-              [(string.eq (& word) ".popsection")
-                (when
-                  (= reader.stack.len 0)
-                  (return (Err "unmatched .popsection")))
-                (-= reader.stack.len 1)
-                (set!
-                  reader.image.current
-                  (array-ref reader.stack.slots reader.stack.len))]
-              [directive?
-                (let
-                  [i : i64 0]
-                  [found false]
-                  (while (< i reader.definitions.len)
-                    (when
-                      (string.eq
-                        (& (array-ref reader.definitions.slots i).name)
-                        (& word))
-                      (let
-                        [text
-                          (try
-                            (expand
-                              (& (array-ref reader.definitions.slots i).formals)
-                              (& args)
-                              (& (array-ref reader.definitions.slots i).body)))]
-                        (try (read-source! reader (& text) (+ depth 1) scratch)))
-                      (set! found true)
-                      (set! i reader.definitions.len))
-                    (+= i 1))
-                  (unless
-                    found
-                    (try (dir.directive! (&mut reader.image) (& word) (& args)))))]
-              [else
-                (let
-                  [tail : String
-                    (if (= at 0)
-                      ""
-                      (op.range (& line) at n))]
-                  (try
-                    (asm.instruction!
-                      (&mut
-                        (array-ref
-                          reader.image.items.slots
-                          reader.image.current))
-                      (&mut reader.image.table)
-                      (if (= at 0)
-                        (& line)
-                        (& tail))
-                      scratch)))])
-            (break)))))
-    (unless (= conditions 0) (return (Err "unclosed assembler conditional")))
-    (Ok unit)))
+  (with
+    ([scratch (arena.make) arena.destroy-safe!])
+    (let
+      [state (SourceState 0 0 0)]
+      (while (< state.cursor (string.string-length source))
+        (when (= depth 0) (set! reader.source-offset state.cursor))
+        (let
+          [phase (arena.phase scratch)]
+          [status
+            (read-line!
+              reader
+              source
+              (&mut state)
+              depth
+              scratch
+              encoder-scratch)]
+          (arena.rewind-safe! phase)
+          (try status)))
+      (unless
+        (= state.conditions 0)
+        (return (Err "unclosed assembler conditional")))
+      (Ok unit))))

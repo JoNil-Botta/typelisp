@@ -175,16 +175,19 @@
       (+= i 1))
     (buf.byte-buf-builder-finish-string (& out))))
 
-(define (parse-expression! [table : (&mut Table)] [source : (& src str)]) : ResultExpression
+(define (parse-expression-range!
+  [table : (&mut Table)]
+  [s : (& str)]
+  [start : i64]
+  [end : i64]) : ResultExpression
   (let
-    [s : String (string.trim source)]
-    [n (string.string-length (& s))]
-    [i : i64 0]
+    [i (op.skip-whitespace s start end)]
+    [n (op.trim-end s i end)]
     [expr (constant 0)]
-    (when (= n 0) (return (Err "missing assembly expression")))
+    (when (= i n) (return (Err "missing assembly expression")))
     (while (< i n)
       (let
-        [first (string.string-ref (& s) i)]
+        [first (string.string-ref s i)]
         [minus (= first '-')]
         (when (or minus (= first '+')) (+= i 1))
         (let
@@ -196,19 +199,18 @@
               (or
                 quoted
                 (and
-                  (!= (string.string-ref (& s) i) '+')
-                  (!= (string.string-ref (& s) i) '-'))))
-              (when
-                (= (string.string-ref (& s) i) '"')
-                (set! quoted (not quoted)))
+                  (!= (string.string-ref s i) '+')
+                  (!= (string.string-ref s i) '-'))))
+              (when (= (string.string-ref s i) '"') (set! quoted (not quoted)))
               (+= i 1))
             (when quoted (return (Err "unterminated quoted symbol"))))
           (let
-            [term : String (op.range (& s) start i)]
+            [first (op.skip-whitespace s start i)]
+            [last (op.trim-end s first i)]
             (when
-              (= 0 (string.string-length (& term)))
+              (= first last)
               (return (Err "empty assembly expression term")))
-            (match (op.integer-literal (& term))
+            (match (op.integer-literal-range s first last)
               [(Integer value)
                 (if minus
                   (-= expr.constant value)
@@ -216,6 +218,7 @@
               [(IntegerOverflow) (return (Err "assembly integer out of range"))]
               [(Symbolic)
                 (let
+                  [term (string.substring s first (- last first))]
                   [split (op.delimiter (& term) 0 '@')]
                   [at
                     (if (= split (string.string-length (& term)))
@@ -260,3 +263,6 @@
                       (set! expr.positive id)
                       (return (Err "multiple positive symbols")))))])))))
     (Ok expr)))
+
+(define (parse-expression! [table : (&mut Table)] [source : (& str)]) : ResultExpression
+  (parse-expression-range! table source 0 (string.string-length source)))

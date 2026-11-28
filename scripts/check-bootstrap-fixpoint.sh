@@ -475,9 +475,9 @@ check_stage1_compile_cli() {
         exit 1
     fi
 
-    run_stage1_cli_capture \
+    (cd "$WORKDIR" && run_stage1_cli_capture \
         stage1-compile-debug \
-        "$STAGE1_BIN" compile "$STAGE1_CLI_SRC" \
+        "$STAGE1_BIN" compile stage1_cli_smoke.tl \
         -o "$STAGE1_CLI_DEBUG_ASM" \
         --debug \
         --target "$BOOTSTRAP_TARGET" \
@@ -485,10 +485,10 @@ check_stage1_compile_cli() {
         --backend-mode scalar \
         --opt-level 2 \
         --stdlib-root "$BOOTSTRAP_STDLIB_ROOT" \
-        --stdlib-root "$BOOTSTRAP_COMPILER_ROOT"
-    run_stage1_cli_capture \
+        --stdlib-root "$BOOTSTRAP_COMPILER_ROOT")
+    (cd "$WORKDIR" && run_stage1_cli_capture \
         stage1-compile-debug-short \
-        "$STAGE1_BIN" compile "$STAGE1_CLI_SRC" \
+        "$STAGE1_BIN" compile stage1_cli_smoke.tl \
         -o "$STAGE1_CLI_DEBUG_SHORT_ASM" \
         -g \
         --target "$BOOTSTRAP_TARGET" \
@@ -496,7 +496,7 @@ check_stage1_compile_cli() {
         --backend-mode scalar \
         --opt-level 2 \
         --stdlib-root "$BOOTSTRAP_STDLIB_ROOT" \
-        --stdlib-root "$BOOTSTRAP_COMPILER_ROOT"
+        --stdlib-root "$BOOTSTRAP_COMPILER_ROOT")
     cmp "$STAGE1_CLI_DEBUG_ASM" "$STAGE1_CLI_DEBUG_SHORT_ASM"
     if [ "$HOST_OS" = windows ]; then
         assert_contains "$STAGE1_CLI_DEBUG_ASM" ".cv_file "
@@ -513,6 +513,8 @@ check_stage1_compile_cli() {
         assert_contains "$STAGE1_CLI_DEBUG_ASM" ".cfi_startproc"
         assert_contains "$STAGE1_CLI_DEBUG_ASM" ".cfi_endproc"
         "$STAGE1_BIN" assemble "$STAGE1_CLI_DEBUG_ASM" -o "$STAGE1_CLI_DEBUG_OBJ"
+        readelf --debug-dump=rawline "$STAGE1_CLI_DEBUG_OBJ" |
+            grep -qF "$STAGE1_CLI_SRC"
         readelf --debug-dump=decodedline "$STAGE1_CLI_DEBUG_OBJ" |
             grep -qF "stage1_cli_smoke.tl"
         readelf --debug-dump=frames "$STAGE1_CLI_DEBUG_OBJ" |

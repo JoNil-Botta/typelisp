@@ -712,6 +712,14 @@ file ordinary-call-abi.tl
 (define (main) : i64
   (seventh 1 2 3 4 5 6 42))
 end-file
+file binary-payload.tl
+(include-bin payload "payload.bin")
+(define (main) : i64
+  (if (and (= (array-length payload) 12582912)
+           (= (cast (array-ref payload 12582911) : i64) 255))
+    42
+    1))
+end-file
 sh chmod +x "{{work}}/no-assembler-bin/as" "{{work}}/no-assembler-bin/ld" "{{work}}/no-assembler-bin/ar"
 step semantic-probe
 exec env PATH="{{work}}/no-assembler-bin:$PATH" TL_TEST_OBJECT_ROUTE=assembly TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{work}}/semantic-fallback.tl" --target linux-x86_64 --backend-mode scalar --stdlib-root "{{root}}/stdlib" --no-prebuilt-stdlib -o "{{dir}}/semantic-fallback"
@@ -728,6 +736,17 @@ step abi
 exec env TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{dir}}/ordinary-call-abi.tl" --target linux-x86_64 --backend-mode scalar --stdlib-root "{{root}}/stdlib" --no-prebuilt-stdlib -o "{{dir}}/ordinary-call-abi"
 stderr empty
 exec "{{dir}}/ordinary-call-abi"
+exit 42
+
+step binary-payload
+sh LC_ALL=C awk 'BEGIN { for (i=0;i<256;i++) block=block sprintf("%c",i); for (i=0;i<49152;i++) printf "%s",block }' > "{{dir}}/payload.bin"
+exec "{{compiler}}" compile "{{dir}}/binary-payload.tl" --no-prebuilt-stdlib -o "{{dir}}/binary-payload.s"
+stderr empty
+exec "{{root}}/scripts/run-memory-bounded.sh" --limit-mib 512 --timeout-seconds 120 --report "{{dir}}/payload-assemble.memory" -- "{{compiler}}" assemble "{{dir}}/binary-payload.s" -o "{{dir}}/binary-payload.o"
+exec "{{root}}/scripts/run-memory-bounded.sh" --limit-mib 512 --timeout-seconds 120 --report "{{dir}}/payload-assemble-repeat.memory" -- "{{compiler}}" assemble "{{dir}}/binary-payload.s" -o "{{dir}}/binary-payload-repeat.o"
+sh cmp "{{dir}}/binary-payload.o" "{{dir}}/binary-payload-repeat.o"
+exec "{{root}}/scripts/run-memory-bounded.sh" --limit-mib 512 --timeout-seconds 120 --report "{{dir}}/payload-build.memory" -- env PATH="{{work}}/no-assembler-bin:$PATH" TL_TEST_OBJECT_ROUTE=assembly TYPELISP_LINUX_DIRECT_OBJECT=0 "{{compiler}}" build --direct "{{dir}}/binary-payload.tl" --no-prebuilt-stdlib -o "{{dir}}/binary-payload"
+exec "{{dir}}/binary-payload"
 exit 42
 
 case direct-object-package

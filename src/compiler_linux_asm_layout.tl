@@ -491,9 +491,11 @@
   [s : (&mut Section)]
   [table : (&mut sym.Table)]
   [text : (& str)]
+  [start : i64]
+  [end : i64]
   [width : i64]) : Status
   (let
-    [expr (try (sym.parse-expression! table text))]
+    [expr (try (sym.parse-expression-range! table text start end))]
     (if (and (= expr.positive -1) (= expr.negative -1))
       (if (= s.ty 8)
         (if (= expr.constant 0)

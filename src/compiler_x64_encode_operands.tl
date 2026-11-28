@@ -42,41 +42,42 @@
     [(and (>= c 'A') (<= c 'F')) (- (cast c : i64) 55)]
     [else -1]))
 
-(define (integer-literal [text : (& text str)]) : IntegerLiteral
+(define (integer-literal-range [text : (& str)] [start : i64] [n : i64]) : IntegerLiteral
+  (when (= start n) (return (Integer 0)))
   (let
-    [n (string.string-length text)]
-    (when (= n 0) (return (Integer 0)))
-    (let
-      [first (string.string-ref text 0)]
-      [negative (= first '-')]
-      [i : i64
-        (if (or negative (= first '+'))
-          1
-          0)]
-      [radix : u64 10]
-      [value : u64 0]
-      [overflow false]
-      (when
-        (and (< (+ i 1) n) (= (string.string-ref text i) '0'))
+    [first (string.string-ref text start)]
+    [negative (= first '-')]
+    [i : i64
+      (if (or negative (= first '+'))
+        (+ start 1)
+        start)]
+    [radix : u64 10]
+    [value : u64 0]
+    [overflow false]
+    (when
+      (and (< (+ i 1) n) (= (string.string-ref text i) '0'))
+      (let
+        [c (string.string-ref text (+ i 1))]
+        (when (or (= c 'x') (= c 'X')) (set! radix 16) (+= i 2))))
+    (when (= i n) (return (Symbolic)))
+    (while (< i n)
+      (let
+        [d (digit (string.string-ref text i))]
+        (unless (and (>= d 0) (< (cast d : u64) radix)) (return (Symbolic)))
         (let
-          [c (string.string-ref text (+ i 1))]
-          (when (or (= c 'x') (= c 'X')) (set! radix 16) (+= i 2))))
-      (when (= i n) (return (Symbolic)))
-      (while (< i n)
-        (let
-          [d (digit (string.string-ref text i))]
-          (unless (and (>= d 0) (< (cast d : u64) radix)) (return (Symbolic)))
-          (let
-            [part (cast d : u64)]
-            (if (> value (/ (- 0xffffffffffffffff part) radix))
-              (set! overflow true)
-              (set! value (+ (* value radix) part)))))
-        (+= i 1))
-      (cond
-        [(or overflow (and negative (> value 0x8000000000000000)))
-          (IntegerOverflow)]
-        [negative (Integer (cast (- (cast 0 : u64) value) : i64))]
-        [else (Integer (cast value : i64))]))))
+          [part (cast d : u64)]
+          (if (> value (/ (- 0xffffffffffffffff part) radix))
+            (set! overflow true)
+            (set! value (+ (* value radix) part)))))
+      (+= i 1))
+    (cond
+      [(or overflow (and negative (> value 0x8000000000000000)))
+        (IntegerOverflow)]
+      [negative (Integer (cast (- (cast 0 : u64) value) : i64))]
+      [else (Integer (cast value : i64))])))
+
+(define (integer-literal [text : (& str)]) : IntegerLiteral
+  (integer-literal-range text 0 (string.string-length text)))
 
 (define (missing-register) : RegisterInfo
   (RegisterInfo -1 0 false))
@@ -208,17 +209,21 @@
       (+= at 1))
     at))
 
-;; Copy only this token or line into the active arena. Substring views use
-;; process-lifetime descriptors, even when their source belongs to scratch.
+(define (trim-end [text : (& str)] [start : i64] [end : i64]) : i64
+  (let
+    [last end]
+    (while (and
+      (> last start)
+      (string.is-char-whitespace (string.string-ref text (- last 1))))
+      (-= last 1))
+    last))
+
+;; Substring views allocate process-lifetime descriptors, even when their
+;; source belongs to scratch.
 (define (range [text : (& str)] [start : i64] [end : i64]) : String
   (let
     [first (skip-whitespace text start end)]
-    [last end]
-    (while (and
-      (> last first)
-      (string.is-char-whitespace (string.string-ref text (- last 1))))
-      (-= last 1))
-    (string.substring text first (- last first))))
+    (string.substring text first (- (trim-end text first end) first))))
 
 (define (memory! [op : (&mut Operand)] [text : (& text str)]) : bool
   (let

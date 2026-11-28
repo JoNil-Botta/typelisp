@@ -1610,7 +1610,12 @@
                 (io.error-message error)))]
           [(OkIoBytes contents)
             (let
-              [asm : String (byte_buf.to-string contents)]
+              [bytes (byte_buf.as-bytes (& contents))]
+              [asm : String
+                (unsafe
+                  (string-from-bytes
+                    (byte_buf.bytes-data bytes)
+                    (byte_buf.bytes-length bytes)))]
               (source-tool-assemble-linux-text
                 (& asm-path)
                 (& obj-path)

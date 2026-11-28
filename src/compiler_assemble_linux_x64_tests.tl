@@ -172,3 +172,29 @@
     (test.assert-true
       (and line info frame)
       "line table, compilation unit and FDE")))
+
+(test
+  final-assembler-data-ranges-and-repeat-expansions
+  (let
+    [source
+      ".text\nstart: .byte 0, 0xA5 , -0x2, + 7 , 3+4\n.irp v, 8, 9\n.byte \\v\n.endr\n.long .-start\n.quad 0xffffffffffffffff\n"]
+    [object (assemble (& source))]
+    (test.assert-i64-eq
+      (layout.compiler-object-layout-u32-at (& object) 64)
+      0x07fea500
+      "decimal, hex and signed fields")
+    (test.assert-i64-eq
+      (layout.compiler-object-layout-u32-at (& object) 68)
+      0x07090807
+      "expression, repeat and label difference")
+    (test.assert-i64-eq
+      (layout.compiler-object-layout-u32-at (& object) 75)
+      0xffffffff
+      "unsigned literal maximum")
+    (test.assert-true (rejected? ".byte 1, \n") "missing field")
+    (test.assert-true
+      (rejected? ".quad 0x10000000000000000\n")
+      "out-of-range integer")
+    (test.assert-true
+      (rejected? ".irp v, 1\n.byte \\bad\n.endr\n")
+      "invalid repeat substitution")))

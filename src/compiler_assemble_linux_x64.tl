@@ -340,7 +340,8 @@
               symtab)]
           (elf.serialize (& plan) (Assembled (& contents))))))))
 
-(define (assemble-text [final-text : (& str)]) : elf.ResultCompilerObjectElf
+;; The caller owns a scratch scope covering assembly and the object write.
+(define (assemble-linux-x64 [final-text : (& str)]) : elf.ResultCompilerObjectElf
   (let
     [parser (reader.new-reader)]
     [scratch (arena.make)]
@@ -357,6 +358,3 @@
     (try
       (asm.select-section! (&mut parser.image) ".note.GNU-stack" 0 0 0 -1 ""))
     (assemble-image (&mut parser.image) (& parser.debug))))
-
-(define (assemble-linux-x64 [final-text : (& str)]) : elf.ResultCompilerObjectElf
-  (with-scratch (assemble-text final-text)))

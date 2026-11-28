@@ -1,0 +1,2 @@
+path	required	advisory	reason
+scripts/check-tl-lint.sh	typelisp-source-lint	-	Source lint driver and source batch configuration.

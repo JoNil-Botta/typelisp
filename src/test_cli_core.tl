@@ -1295,30 +1295,27 @@
             (& (ast.ast-expr-list-new))))))))
 
 (define (tltest-test-decls-onto
-  [tests : (__tl_dyn-array InlineTest)]
+  [tests : (& tests (__tl_dyn-array InlineTest))]
   [index : i64]
   [out : ast.AstDeclList]) : ast.AstDeclList
   (if (< index 0)
     out
-    (let
-      [test : InlineTest
-        (owned_view.compiler-owned-array-element-shared-view tests index)]
-      (match test
-        [(Case _ _ module-id _ _ body _ private-id _ _)
-          (tltest-test-decls-onto
-            tests
-            (- index 1)
+    (match (& (array-ref tests index))
+      [(Case _ _ module-id _ _ body _ private-id _ _)
+        (tltest-test-decls-onto
+          tests
+          (- index 1)
+          (ast.ast-decl-list-prepend-builder
+            (ast.ast-decl-module-id module-id)
             (ast.ast-decl-list-prepend-builder
-              (ast.ast-decl-module-id module-id)
-              (ast.ast-decl-list-prepend-builder
-                (ast.ast-decl-def-fn-id
-                  private-id
-                  (ast.ast-param-list-new)
-                  (Unit)
-                  body)
-                out)))]))))
+              (ast.ast-decl-def-fn-id
+                private-id
+                (ast.ast-param-list-new)
+                (Unit)
+                body)
+              out)))])))
 
-(define (tltest-main-decls [tests : (__tl_dyn-array InlineTest)]) : ast.AstDeclList
+(define (tltest-main-decls [tests : (& tests (__tl_dyn-array InlineTest))]) : ast.AstDeclList
   (ast.ast-decl-cons
     (& (ast.ast-decl-module-id (tltest-empty-name-id)))
     (&
@@ -1354,13 +1351,14 @@
 
 (define (tltest-generated-test-decls [tests : (__tl_dyn-array InlineTest)]) : ast.AstDeclList
   (tltest-test-decls-onto
-    (owned_view.compiler-owned-shared-view tests)
+    (& tests)
     (- (array-length tests) 1)
-    (tltest-main-decls tests)))
+    (tltest-main-decls (& tests))))
 
-(define (tltest-generated-typecheck-decls [tests : (__tl_dyn-array InlineTest)]) : ast.AstDeclList
+(define (tltest-generated-typecheck-decls
+  [tests : (& tests (__tl_dyn-array InlineTest))]) : ast.AstDeclList
   (tltest-test-decls-onto
-    (owned_view.compiler-owned-shared-view tests)
+    tests
     (- (array-length tests) 1)
     (ast.ast-decl-list-new)))
 
@@ -1368,46 +1366,44 @@
   [source : String]
   [tests : (__tl_dyn-array InlineTest)]) : ast.AstDeclPathList
   (tltest-test-paths-onto
-    (owned_view.compiler-owned-shared-view tests)
+    (& tests)
     (- (array-length tests) 1)
     (tltest-main-paths source)))
 
-(define (tltest-generated-typecheck-paths [tests : (__tl_dyn-array InlineTest)]) : ast.AstDeclPathList
+(define (tltest-generated-typecheck-paths
+  [tests : (& tests (__tl_dyn-array InlineTest))]) : ast.AstDeclPathList
   (tltest-test-paths-onto
-    (owned_view.compiler-owned-shared-view tests)
+    tests
     (- (array-length tests) 1)
     (ast.ast-decl-path-list-new)))
 
 (define (tltest-test-paths-onto
-  [tests : (__tl_dyn-array InlineTest)]
+  [tests : (& tests (__tl_dyn-array InlineTest))]
   [index : i64]
   [out : ast.AstDeclPathList]) : ast.AstDeclPathList
   (if (< index 0)
     out
-    (let
-      [test : InlineTest
-        (owned_view.compiler-owned-array-element-shared-view tests index)]
-      (match test
-        [(Case _ path module-id provenance-id _ _ _ _ _ _)
-          (tltest-test-paths-onto
-            tests
-            (- index 1)
+    (match (& (array-ref tests index))
+      [(Case _ path module-id provenance-id _ _ _ _ _ _)
+        (tltest-test-paths-onto
+          tests
+          (- index 1)
+          (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
+            (string.copy path)
+            module-id
+            provenance-id
             (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
-              (owned_view.compiler-owned-shared-view path)
+              (string.copy path)
               module-id
               provenance-id
-              (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
-                path
-                module-id
-                provenance-id
-                out)))]))))
+              out)))])))
 
-(define (tltest-main-decl [tests : (__tl_dyn-array InlineTest)]) : ast.AstDecl
+(define (tltest-main-decl [tests : (& tests (__tl_dyn-array InlineTest))]) : ast.AstDecl
   (ast.ast-decl-def-fn-id
     (tltest-main-id)
     (ast.ast-param-list-new)
     (I64)
-    (ast.ast-node-push (Begin (tltest-main-exprs (& tests))))))
+    (ast.ast-node-push (Begin (tltest-main-exprs tests)))))
 
 (define (tltest-reach-mark-name-id
   [names : tltest_name_map.Map]
@@ -2208,14 +2204,45 @@
   (ast.ast-program
     (compiler_load.compiler-load-decl-list-append
       (& decls)
-      (& (tltest-generated-typecheck-decls tests)))))
+      (& (tltest-generated-typecheck-decls (& tests))))))
 
 (define (tltest-inline-typecheck-paths
   [paths : ast.AstDeclPathList]
-  [tests : (__tl_dyn-array InlineTest)]) : ast.AstDeclPathList
+  [tests : (& tests (__tl_dyn-array InlineTest))]) : ast.AstDeclPathList
   (compiler_load.compiler-load-decl-path-list-append
     (& paths)
     (& (tltest-generated-typecheck-paths tests))))
+
+(define (tltest-prepare-check-program
+  [source : (& source str)]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]
+  [track-unsafe? : bool]) : compiler_check_core.CompilerCheckLoadedProgram
+  (match (tltest-collect source decls paths)
+    [(Collect runtime-decls runtime-paths tests)
+      (let
+        [checked-paths : ast.AstDeclPathList
+          (tltest-inline-typecheck-paths runtime-paths (& tests))]
+        [test-functions : tc_core.TcUnusedUnsafeExcludedFunctions
+          (if (and track-unsafe? (> (array-length tests) 0))
+            (let
+              [index-by-name : tltest_name_map.Map
+                (tltest_name_map.with-capacity (* 2 (array-length tests)))]
+              (for [index (iterator.range 0 (array-length tests))]
+                (match (& (array-ref tests index))
+                  [(Case _ _ _ _ _ _ _ private-id _ _)
+                    (tltest_name_map.insert-ref!
+                      (&mut index-by-name)
+                      private-id
+                      1)]))
+              (tc_core.TcUnusedUnsafeExcludedFunctions.Some index-by-name))
+            tc_core.TcUnusedUnsafeExcludedFunctions.None)]
+        (compiler_check_core.CompilerCheckLoadedProgram
+          (compiler_load.compiler-load-decl-list-append
+            (& runtime-decls)
+            (& (tltest-generated-typecheck-decls (& tests))))
+          checked-paths
+          test-functions))]))
 
 (defenum ResultTlTestInlineCheck
   (Ok)
@@ -2248,7 +2275,7 @@
                   (tltest-inline-typecheck-program
                     pruned-decls
                     (owned_view.compiler-owned-shared-view tests))
-                  (tltest-inline-typecheck-paths pruned-paths tests)
+                  (tltest-inline-typecheck-paths pruned-paths (& tests))
                   (owned_view.compiler-owned-shared-view legacy-roots)
                   cfgs
                   (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope

@@ -75,6 +75,56 @@ exit nonzero
 stdout empty
 stderr match ^profile was provided more than once$
 
+case package-profile-lint-must-use
+sh cp -R "{{work}}/profiles/." "{{dir}}/"
+cwd .
+file src/main.tl
+(import dep.src.lib as dep)
+
+(define (discard-marked) : unit
+  (unsafe (dep.from-profile (dep.make)) unit))
+
+(define (main) : i64
+  (discard-marked)
+  0)
+
+(test selected-profile
+  (unsafe (dep.from-profile unit))
+  (dep.make)
+  unit)
+end-file
+file vendor/dep/src/lib.tl
+(defstruct Marked (:must-use) (value i64))
+(defmacro (from-profile [expr : Expr]) : Expr expr)
+(define (make) : Marked (Marked 42))
+end-file
+step lint-must-use-dev
+sh mkdir -p "{{dir}}/vendor/dep/target/release"
+sh printf 'CORRUPT' > "{{dir}}/vendor/dep/target/release/profile_dep.tli"
+run lint --format flat
+exit 0
+stderr empty
+stdout contains main.tl:4:29: unused must-use value of type profile_dep.src.lib/Marked
+stdout contains main.tl:4:3: unused unsafe block
+stdout contains main.tl:12:3: unused must-use value of type profile_dep.src.lib/Marked
+stdout contains lint: 3 finding(s)
+test -s "{{dir}}/vendor/dep/target/dev/profile_dep.tli"
+test -s "{{dir}}/vendor/dep/target/dev/profile_dep.tlci"
+test "$(cat "{{dir}}/vendor/dep/target/release/profile_dep.tli")" = CORRUPT
+step lint-must-use-release
+sh rm -rf "{{dir}}/vendor/dep/target/release"
+sh printf 'CORRUPT' > "{{dir}}/vendor/dep/target/dev/profile_dep.tli"
+run lint --profile release --format flat
+exit 0
+stderr empty
+stdout contains main.tl:4:29: unused must-use value of type profile_dep.src.lib/Marked
+stdout contains main.tl:4:3: unused unsafe block
+stdout contains main.tl:12:3: unused must-use value of type profile_dep.src.lib/Marked
+stdout contains lint: 3 finding(s)
+test -s "{{dir}}/vendor/dep/target/release/profile_dep.tli"
+test -s "{{dir}}/vendor/dep/target/release/profile_dep.tlci"
+test "$(cat "{{dir}}/vendor/dep/target/dev/profile_dep.tli")" = CORRUPT
+
 case package-profile-doctest
 sh cp -R "{{work}}/profiles/." "{{dir}}/"
 cwd .

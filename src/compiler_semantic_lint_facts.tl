@@ -64,6 +64,18 @@
   (handle i64)
   (function i64))
 
+(defenum CompilerSemanticValueUse
+  (Consumed)
+  (Returned)
+  (Discarded)
+  (Unreliable))
+
+(defenum CompilerSemanticMustUse
+  (Unmarked)
+  (Marked)
+  (Result)
+  (Propagate))
+
 (defstruct CompilerSemanticFactType
   (text String)
   (nominal CompilerSemanticFactIdentity))
@@ -84,7 +96,13 @@
   (provenance CompilerSemanticFactProvenance)
   (reliability CompilerSemanticFactReliability)
   (early-exit-allowed bool)
-  (try-fact CompilerSemanticTryFact))
+  (try-fact CompilerSemanticTryFact)
+  (value-use CompilerSemanticValueUse)
+  ;; Look up this expression for the preferred report span and provenance.
+  (report-expression i64)
+  (sequence-tail i64)
+  (must-use CompilerSemanticMustUse)
+  (must-use-type String))
 
 (define (clone-compiler-semantic-try-fact [fact : (& CompilerSemanticTryFact)]) : CompilerSemanticTryFact
   (match fact
@@ -183,7 +201,20 @@
     (clone-compiler-semantic-fact-provenance (& fact.provenance))
     (clone-compiler-semantic-fact-reliability (& fact.reliability))
     fact.early-exit-allowed
-    (clone-compiler-semantic-try-fact (& fact.try-fact))))
+    (clone-compiler-semantic-try-fact (& fact.try-fact))
+    (match (& fact.value-use)
+      [(Consumed) CompilerSemanticValueUse.Consumed]
+      [(Returned) CompilerSemanticValueUse.Returned]
+      [(Discarded) CompilerSemanticValueUse.Discarded]
+      [(Unreliable) CompilerSemanticValueUse.Unreliable])
+    fact.report-expression
+    fact.sequence-tail
+    (match (& fact.must-use)
+      [(Unmarked) CompilerSemanticMustUse.Unmarked]
+      [(Marked) CompilerSemanticMustUse.Marked]
+      [(Result) CompilerSemanticMustUse.Result]
+      [(Propagate) CompilerSemanticMustUse.Propagate])
+    (string.copy (& fact.must-use-type))))
 
 ;; Only owned text, scalar identities and immutable source spans cross the
 ;; callback boundary. No AstType node ids, TcContext, TcTypeEnv or parser
@@ -203,25 +234,34 @@
   (scope i64)
   (forbidden bool)
   (provenance CompilerSemanticFactProvenance)
-  (path String)
+  (expansion-path i64)
   (member-handle i64)
   (reference-key i64)
   (global-reference bool)
   (reference-binding i64)
-  (binding-site ast.AstSourceSpan))
+  (binding-site ast.AstSourceSpan)
+  (report-expression i64)
+  (sequence-tail i64))
+
+(defstruct CompilerSemanticFactExpansion
+  (template-depth i64)
+  (provenance CompilerSemanticFactProvenance)
+  (path i64))
 
 (defstruct CompilerSemanticFactRecorderData
   (owner arena.Arena)
   (facts CompilerSemanticFactStorage)
   (request-path String)
+  (must-use-only bool)
   (source-provenance CompilerSemanticFactProvenance)
   (recording bool)
+  (initializer i64)
   (current-path String)
   (current-function i64)
   (current-scope i64)
   (frames (__tl_dyn-array CompilerSemanticFactFrame))
   (frame-count i64)
-  (expansions (__tl_dyn-array CompilerSemanticFactFrame))
+  (expansions (__tl_dyn-array CompilerSemanticFactExpansion))
   (expansion-depth i64)
   (function-parents (__tl_dyn-array i64))
   (function-depth i64)
@@ -274,7 +314,8 @@
 
 (define (compiler-semantic-fact-recorder-new
   [path : String]
-  [checked-generated-source : bool]) : CompilerSemanticFactRecorder
+  [checked-generated-source : bool]
+  [must-use-only : bool]) : CompilerSemanticFactRecorder
   (let
     [cell : (__tl_dyn-array CompilerSemanticFactRecorderData)
       (__tl_make-array CompilerSemanticFactRecorderData 1)]
@@ -284,16 +325,18 @@
         (arena.current)
         (compiler-semantic-facts-new)
         path
+        must-use-only
         (if checked-generated-source
           CompilerSemanticFactProvenance.CheckedGenerated
           CompilerSemanticFactProvenance.Source)
         false
+        -1
         ""
         -1
         -1
         (__tl_make-array CompilerSemanticFactFrame 0)
         0
-        (__tl_make-array CompilerSemanticFactFrame 0)
+        (__tl_make-array CompilerSemanticFactExpansion 0)
         0
         (__tl_make-array i64 0)
         0
@@ -489,11 +532,17 @@
               (set! ready.facts.expression-count (+ index 1))
               (compiler-semantic-fact-recorder-data-set! recorder ready))))))))
 
-(define (compiler-semantic-fact-direct-nominal-name [ty : ast.AstType]) : i64
+(define (compiler-semantic-fact-direct-nominal-name
+  [ctx : tc.TcContext]
+  [ty : (& ty ast.AstType)]) : i64
   (match ty
     [(or (ast.AstType.Struct name) (ast.AstType.StructArgs name _)
          (ast.AstType.Enum name) (ast.AstType.EnumArgs name _))
       name]
+    [(ast.AstType.Region _ inner)
+      (compiler-semantic-fact-direct-nominal-name
+        ctx
+        (& (tc.tc-context-type-get ctx inner)))]
     [_ -1]))
 
 (define (compiler-semantic-fact-handle-identity
@@ -591,12 +640,14 @@
         storage
         slot)]
     [_declaration-origin : unit
-      (compiler-semantic-fact-declaration-origins!
-        recorder
-        ctx
-        (owned_view.compiler-owned-shared-view decl)
-        (owned_view.compiler-owned-shared-view path)
-        run)]
+      (unless
+        (compiler-semantic-fact-recorder-data recorder).must-use-only
+        (compiler-semantic-fact-declaration-origins!
+          recorder
+          ctx
+          (owned_view.compiler-owned-shared-view decl)
+          (owned_view.compiler-owned-shared-view path)
+          run))]
     [data : CompilerSemanticFactRecorderData
       (compiler-semantic-fact-recorder-data recorder)]
     [_select : unit
@@ -615,6 +666,11 @@
           (compiler-semantic-fact-recorder-data-set! recorder data)
           (return unit)))
       (set! data.current-path (string.copy (& path)))
+      (set!
+        data.initializer
+        (match (ast.ast-decl-unwrapped (& decl))
+          [(ast.AstDecl.Def _ _ _ body) body]
+          [_ -1]))
       (set!
         data.generated
         (match (ast.ast-decl-generated-meta (& decl))
@@ -1136,6 +1192,24 @@
                       (tc.tc-try-incompatibility-message reason))])])])]
       [_ CompilerSemanticTryFact.NotTry])))
 
+(define (compiler-semantic-fact-grow-functions!
+  [facts : (&mut facts CompilerSemanticFactStorage)]) : unit
+  (let
+    [next : (__tl_dyn-array CompilerSemanticFactFunction)
+      (__tl_make-array
+        CompilerSemanticFactFunction
+        (* 2 (array-length facts.functions)))]
+    (for [index (iterator.range 0 facts.function-count)]
+      (set!
+        (array-ref next index)
+        (replace!
+          (array-ref facts.functions index)
+          (CompilerSemanticFactFunction
+            (compiler-semantic-fact-identity-empty)
+            -1
+            (compiler-semantic-fact-type-empty)))))
+    (set! facts.functions next)))
+
 (define (compiler-semantic-fact-recorder-function-enter!
   [recorder : CompilerSemanticFactRecorder]
   [ctx : tc.TcContext]
@@ -1178,7 +1252,7 @@
         [(ast.AstMaybeType.No) (compiler-semantic-fact-type-empty)])]
     [_binding-origins : unit
       (when
-        (and (>= existing 0) (> data.frame-count 0))
+        (and (not data.must-use-only) (>= existing 0) (> data.frame-count 0))
         (compiler-semantic-fact-reset-binding-origins!
           recorder
           ctx
@@ -1217,12 +1291,7 @@
         (< existing 0)
         (when
           (>= data.facts.function-count (array-length data.facts.functions))
-          (__tl_array-push!
-            data.facts.functions
-            (CompilerSemanticFactFunction
-              (compiler-semantic-fact-identity-empty)
-              -1
-              (compiler-semantic-fact-type-empty))))
+          (compiler-semantic-fact-grow-functions! (&mut data.facts)))
         (set!
           (array-ref data.facts.functions data.facts.function-count)
           (CompilerSemanticFactFunction
@@ -1238,23 +1307,75 @@
             data.current-function)))
       (compiler-semantic-fact-recorder-data-set! recorder data))))
 
+(define (compiler-semantic-fact-set-result-use!
+  [data : (&mut data CompilerSemanticFactRecorderData)]
+  [expression : i64]
+  [use : CompilerSemanticValueUse]) : unit
+  (let
+    [next : i64 expression]
+    (while (>= next 0)
+      (let
+        [index : i64 (compiler-semantic-facts-find-index (& data.facts) next)]
+        (when (< index 0) (return unit))
+        (let
+          [canonical : i64
+            (compiler-semantic-facts-find-index
+              (& data.facts)
+              (array-ref data.facts.expressions index).report-expression)]
+          [item
+            (&mut
+              (array-ref
+                data.facts.expressions
+                (if (>= canonical 0)
+                  canonical
+                  index)))]
+          (set!
+            item.value-use
+            (match (& item.reliability)
+              [(Reliable)
+                (match (& use)
+                  [(Consumed) CompilerSemanticValueUse.Consumed]
+                  [(Returned) CompilerSemanticValueUse.Returned]
+                  [(Discarded) CompilerSemanticValueUse.Discarded]
+                  [(Unreliable) CompilerSemanticValueUse.Unreliable])]
+              [_ CompilerSemanticValueUse.Unreliable]))
+          (set!
+            next
+            (match (& use)
+              [(or (Returned) (Unreliable))
+                (if (= item.sequence-tail next)
+                  -1
+                  item.sequence-tail)]
+              [_ -1])))))))
+
 (define (compiler-semantic-fact-recorder-function-leave!
   [recorder : CompilerSemanticFactRecorder]
   [ctx : tc.TcContext]
-  [result : tc.ResultTcType]) : unit
+  [return-compatible? : bool]
+  [inferred-return : ast.AstMaybeType]) : unit
   (let
     [data : CompilerSemanticFactRecorderData
       (compiler-semantic-fact-recorder-data recorder)]
     (when
       (and (>= data.current-function 0) (> data.function-depth 0))
       (begin
-        (match result
-          [(tc.ResultTcType.Ok (ast.AstType.Func _ return-box))
+        (let
+          [body : i64
+            (array-ref data.facts.functions data.current-function).body]
+          (compiler-semantic-fact-set-result-use!
+            (&mut data)
+            body
+            (cond
+              [(not return-compatible?) CompilerSemanticValueUse.Unreliable]
+              [(= body data.initializer) CompilerSemanticValueUse.Consumed]
+              [else CompilerSemanticValueUse.Returned])))
+        (match inferred-return
+          [(ast.AstMaybeType.Some ty)
             (let
               [ret : CompilerSemanticFactType
                 (compiler-semantic-fact-type
                   ctx
-                  (tc.tc-context-type-get ctx return-box)
+                  ty
                   (owned_view.compiler-owned-shared-view data.current-path))]
               (in-arena
                 data.owner
@@ -1273,24 +1394,106 @@
             -1))
         (compiler-semantic-fact-recorder-data-set! recorder data)))))
 
-(define (compiler-semantic-fact-source-provenance
+;; A named expansion enters a template. A caller marker steps back through
+;; one template, which can itself be synthetic when a macro calls a helper.
+(define (compiler-semantic-fact-expansion
   [ctx : tc.TcContext]
-  [expression : i64]
-  [fallback : CompilerSemanticFactProvenance]) : CompilerSemanticFactProvenance
-  (match (tc.tc-context-expr-get ctx expression)
-    [(ast.AstExpr.Spanned inner _)
-      (compiler-semantic-fact-source-provenance ctx inner fallback)]
-    [(ast.AstExpr.MacroExpansion inner provenance name)
-      (if (>= name 0)
+  [parent : CompilerSemanticFactExpansion]
+  [path : i64]
+  [name : i64]
+  [inner : i64]) : CompilerSemanticFactExpansion
+  (cond
+    [(>= name 0)
+      (CompilerSemanticFactExpansion
+        (+ parent.template-depth 1)
         CompilerSemanticFactProvenance.Synthetic
+        path)]
+    [(> parent.template-depth 1)
+      (CompilerSemanticFactExpansion
+        (- parent.template-depth 1)
+        CompilerSemanticFactProvenance.Synthetic
+        path)]
+    [else
+      (CompilerSemanticFactExpansion
+        0
         (if (and
-          (>= (tc.macro-expansion-origin-path-id provenance) 0)
-          (match (tc.tc-expr-id-maybe-span (tc.tc-context-expr-bases ctx) inner)
-            [(tc.TcMaybeAstSourceSpan.Some span) (> span.start-line 0)]
+          (>= path 0)
+          (match (tc.tc-context-expr-get ctx inner)
+            [(ast.AstExpr.Spanned _ span) (> span.start-line 0)]
             [_ false]))
           CompilerSemanticFactProvenance.MacroArgument
-          CompilerSemanticFactProvenance.Unknown))]
+          CompilerSemanticFactProvenance.Unknown)
+        path)]))
+
+(define (compiler-semantic-fact-current-expansion
+  [data : (& data CompilerSemanticFactRecorderData)]) : CompilerSemanticFactExpansion
+  (if (> data.expansion-depth 0)
+    (array-ref data.expansions (- data.expansion-depth 1))
+    (CompilerSemanticFactExpansion
+      0
+      (if data.generated
+        CompilerSemanticFactProvenance.Synthetic
+        data.source-provenance)
+      -1)))
+
+(define (compiler-semantic-fact-expression-expansion
+  [ctx : tc.TcContext]
+  [expression : i64]
+  [fallback : CompilerSemanticFactExpansion]) : CompilerSemanticFactExpansion
+  (match (tc.tc-context-expr-get ctx expression)
+    [(ast.AstExpr.Spanned inner _)
+      (compiler-semantic-fact-expression-expansion ctx inner fallback)]
+    [(ast.AstExpr.MacroExpansion inner provenance name)
+      (let
+        [expansion : CompilerSemanticFactExpansion
+          (compiler-semantic-fact-expansion
+            ctx
+            fallback
+            (tc.macro-expansion-origin-path-id provenance)
+            name
+            inner)]
+        ;; Named wrappers retain the invocation's synthetic provenance. A
+        ;; checked source operand below them can provide the report location.
+        (if (>= name 0)
+          expansion
+          (compiler-semantic-fact-expression-expansion ctx inner expansion)))]
     [_ fallback]))
+
+(define (compiler-semantic-fact-wrapper-inner
+  [ctx : tc.TcContext]
+  [expression : i64]) : i64
+  (match (tc.tc-context-expr-get ctx expression)
+    [(or (ast.AstExpr.Spanned inner _) (ast.AstExpr.Ann inner _)
+         (ast.AstExpr.MacroExpansion inner _ _))
+      inner]
+    [_ -1]))
+
+;; Selected inference can read through several transparent wrappers without
+;; opening an observation frame for each shell.
+(define (compiler-semantic-fact-wrapper-contains?
+  [ctx : tc.TcContext]
+  [outer : i64]
+  [expression : i64]
+  [source-owner : i64]) : bool
+  (let
+    [inner : i64 (compiler-semantic-fact-wrapper-inner ctx outer)]
+    (while (>= inner 0)
+      (when (or (= inner expression) (= inner source-owner)) (return true))
+      (set! inner (compiler-semantic-fact-wrapper-inner ctx inner)))
+    false))
+
+(define (compiler-semantic-fact-wrapper-result-index
+  [ctx : tc.TcContext]
+  [facts : (& facts CompilerSemanticFactStorage)]
+  [expression : i64]) : i64
+  (let
+    [inner : i64 (compiler-semantic-fact-wrapper-inner ctx expression)]
+    (while (>= inner 0)
+      (let
+        [index : i64 (compiler-semantic-facts-find-index facts inner)]
+        (when (>= index 0) (return index)))
+      (set! inner (compiler-semantic-fact-wrapper-inner ctx inner)))
+    -1))
 
 (define (compiler-semantic-fact-recorder-enter!
   [recorder : CompilerSemanticFactRecorder]
@@ -1306,6 +1509,19 @@
         (=
           (array-ref data.frames (- data.frame-count 1)).function
           data.current-function))]
+    [report-expression : i64
+      (if same-function
+        (let
+          [parent : i64
+            (array-ref data.frames (- data.frame-count 1)).expression]
+          (if (compiler-semantic-fact-wrapper-contains?
+            ctx
+            parent
+            expression
+            (ast.ast-node-pool-context-expr-source-owner (& pools) expression))
+            (array-ref data.frames (- data.frame-count 1)).report-expression
+            expression))
+        expression)]
     [forbidden : bool
       (or
         (and
@@ -1391,26 +1607,14 @@
           expression]
         [(ast.AstExpr.ForeachActive _ body) body]
         [_ data.current-scope])]
-    [fallback : CompilerSemanticFactProvenance
-      (if (> data.expansion-depth 0)
-        (array-ref data.expansions (- data.expansion-depth 1)).provenance
-        (if same-function
-          (array-ref data.frames (- data.frame-count 1)).provenance
-          (match (tc.tc-expr-id-maybe-span
-            (tc.tc-context-expr-bases ctx)
-            expression)
-            [(tc.TcMaybeAstSourceSpan.Some span)
-              (if (> span.start-line 0)
-                (if data.generated
-                  CompilerSemanticFactProvenance.Synthetic
-                  data.source-provenance)
-                CompilerSemanticFactProvenance.Unknown)]
-            [_ CompilerSemanticFactProvenance.Unknown])))]
-    [provenance : CompilerSemanticFactProvenance
-      (compiler-semantic-fact-source-provenance ctx expression fallback)]
+    [expansion : CompilerSemanticFactExpansion
+      (compiler-semantic-fact-expression-expansion
+        ctx
+        expression
+        (compiler-semantic-fact-current-expansion (& data)))]
     [_binding-origins : unit
       (when
-        (!= scope data.current-scope)
+        (and (not data.must-use-only) (!= scope data.current-scope))
         (compiler-semantic-fact-reset-binding-origins! recorder ctx expression))]
     (in-arena
       data.owner
@@ -1424,12 +1628,14 @@
             -1
             false
             CompilerSemanticFactProvenance.Unknown
-            ""
+            -1
             -1
             -1
             false
             -1
-            (ast.ast-decl-span-fallback))))
+            (ast.ast-decl-span-fallback)
+            -1
+            -1)))
       (set!
         (array-ref data.frames data.frame-count)
         (CompilerSemanticFactFrame
@@ -1437,16 +1643,15 @@
           data.current-function
           scope
           forbidden
-          provenance
-          (if (> data.expansion-depth 0)
-            (string.copy
-              (& (array-ref data.expansions (- data.expansion-depth 1)).path))
-            (string.copy (& data.current-path)))
+          expansion.provenance
+          expansion.path
           -1
           -1
           false
           -1
-          (ast.ast-decl-span-fallback)))
+          (ast.ast-decl-span-fallback)
+          report-expression
+          -1))
       (+= data.frame-count 1)
       (set! data.current-scope scope)
       (compiler-semantic-fact-recorder-data-set! recorder data))))
@@ -1461,6 +1666,16 @@
       (CompilerSemanticFactRecorder address)]
     [data : CompilerSemanticFactRecorderData
       (compiler-semantic-fact-recorder-data recorder)]
+    (when
+      (and
+        data.must-use-only
+        (match (& event)
+          [(or (Binding _ _ _ _ _ _) (BindingSite _)
+               (BindingMaterialized _ _ _ _ _) (BindingImported _ _ _ _ _)
+               (PersistentReference _ _) (Reference _ _) (ResolvedMember _))
+            true]
+          [_ false]))
+      (return unit))
     (match (owned_view.compiler-owned-shared-view event)
       [(tc.TcSemanticEvent.Declaration decls slot path decl)
         (compiler-semantic-fact-recorder-declaration!
@@ -1574,47 +1789,25 @@
                 (set!
                   (array-ref data.frames (- data.frame-count 1)).member-handle
                   handle))]
-            [(tc.TcSemanticEvent.ExpansionEnter path name span)
+            [(tc.TcSemanticEvent.ExpansionEnter path name inner)
               (in-arena
                 data.owner
-                (when
-                  (>= data.expansion-depth (array-length data.expansions))
-                  (__tl_array-push!
-                    data.expansions
-                    (CompilerSemanticFactFrame
-                      -1
-                      -1
-                      -1
-                      false
-                      CompilerSemanticFactProvenance.Unknown
-                      ""
-                      -1
-                      -1
-                      false
-                      -1
-                      (ast.ast-decl-span-fallback))))
-                (set!
-                  (array-ref data.expansions data.expansion-depth)
-                  (CompilerSemanticFactFrame
-                    -1
-                    -1
-                    -1
-                    false
-                    (if (>= name 0)
-                      CompilerSemanticFactProvenance.Synthetic
-                      (if (and (>= path 0) (> span.start-line 0))
-                        CompilerSemanticFactProvenance.MacroArgument
-                        CompilerSemanticFactProvenance.Unknown))
-                    (if (>= path 0)
-                      (string.copy (ci.intern-str path))
-                      (string.copy (& data.current-path)))
-                    -1
-                    -1
-                    false
-                    -1
-                    (ast.ast-decl-span-fallback)))
-                (+= data.expansion-depth 1)
-                (compiler-semantic-fact-recorder-data-set! recorder data))]
+                (let
+                  [expansion : CompilerSemanticFactExpansion
+                    (compiler-semantic-fact-expansion
+                      ctx
+                      (compiler-semantic-fact-current-expansion (& data))
+                      path
+                      name
+                      inner)]
+                  (when
+                    (>= data.expansion-depth (array-length data.expansions))
+                    (__tl_array-push! data.expansions expansion))
+                  (set!
+                    (array-ref data.expansions data.expansion-depth)
+                    expansion)
+                  (+= data.expansion-depth 1)
+                  (compiler-semantic-fact-recorder-data-set! recorder data)))]
             [(tc.TcSemanticEvent.ExpansionLeave)
               (when
                 (> data.expansion-depth 0)
@@ -1622,14 +1815,41 @@
                 (compiler-semantic-fact-recorder-data-set! recorder data))]
             [(tc.TcSemanticEvent.ExpressionEnter expression)
               (compiler-semantic-fact-recorder-enter! recorder ctx expression)]
+            [(tc.TcSemanticEvent.SequenceResult expression last? required-unit?)
+              (cond
+                [required-unit?
+                  (compiler-semantic-fact-set-result-use!
+                    (&mut data)
+                    expression
+                    CompilerSemanticValueUse.Unreliable)]
+                [(not last?)
+                  (compiler-semantic-fact-set-result-use!
+                    (&mut data)
+                    expression
+                    CompilerSemanticValueUse.Discarded)]
+                [(> data.frame-count 0)
+                  (set!
+                    (array-ref data.frames (- data.frame-count 1)).sequence-tail
+                    expression)]
+                [else unit])]
             [(tc.TcSemanticEvent.Expression expression result dependent)
-              (compiler-semantic-fact-recorder-expression!
-                recorder
-                ctx
-                env
-                expression
-                result
-                dependent)]
+              (if (or
+                (not data.must-use-only)
+                (and
+                  (not dependent)
+                  (compiler-semantic-fact-marked-type? ctx (& result))))
+                (compiler-semantic-fact-recorder-expression!
+                  recorder
+                  ctx
+                  env
+                  expression
+                  result
+                  dependent)
+                (compiler-semantic-fact-set-result-use!
+                  (&mut data)
+                  expression
+                  CompilerSemanticValueUse.Unreliable))
+              (compiler-semantic-fact-recorder-expression-leave! recorder)]
             [(tc.TcSemanticEvent.Declaration _ _ _ _) unit]
             [(tc.TcSemanticEvent.FunctionEnter name body _ ret)
               (compiler-semantic-fact-recorder-function-enter!
@@ -1638,11 +1858,12 @@
                 name
                 body
                 ret)]
-            [(tc.TcSemanticEvent.FunctionLeave result)
+            [(tc.TcSemanticEvent.FunctionLeave compatible? inferred-return)
               (compiler-semantic-fact-recorder-function-leave!
                 recorder
                 ctx
-                result)]
+                compatible?
+                inferred-return)]
             [(tc.TcSemanticEvent.Binding epoch slot generation name _ _)
               (compiler-semantic-fact-recorder-binding!
                 recorder
@@ -1659,16 +1880,27 @@
 
 (define (compiler-semantic-fact-recorder-observer
   [recorder : CompilerSemanticFactRecorder]) : tc.TcSemanticObserver
-  (tc.tc-semantic-observer-new
-    recorder.address
-    compiler-semantic-fact-recorder-observe!))
+  (let
+    [data (compiler-semantic-fact-recorder-data recorder)]
+    [observer
+      (tc.tc-semantic-observer-new
+        recorder.address
+        compiler-semantic-fact-recorder-observe!)]
+    (when
+      data.must-use-only
+      (tc.tc-semantic-observer-limit-to-source!
+        observer
+        (string.copy (& data.request-path))))
+    observer))
 
 (define (compiler-semantic-fact-recorder-finish!
   [recorder : CompilerSemanticFactRecorder]) : CompilerSemanticFacts
   (let
     [data : CompilerSemanticFactRecorderData
       (compiler-semantic-fact-recorder-data recorder)]
-    (compiler-semantic-fact-complete-identities! (&mut data))
+    (unless
+      data.must-use-only
+      (compiler-semantic-fact-complete-identities! (&mut data)))
     (set! data.sealed true)
     ;; Parser identities are only recording scratch. The published records
     ;; contain owned spellings and spans, never these generation-bound ids.
@@ -1743,9 +1975,7 @@
   [path : String]) : CompilerSemanticFactType
   (let
     [resolved : ast.AstType ty]
-    [name : i64
-      (compiler-semantic-fact-direct-nominal-name
-        (owned_view.compiler-owned-shared-view resolved))]
+    [name : i64 (compiler-semantic-fact-direct-nominal-name ctx (& resolved))]
     [identity : CompilerSemanticFactIdentity
       (if (>= name 0)
         (compiler-semantic-fact-handle-identity
@@ -1758,6 +1988,93 @@
         (compiler-semantic-fact-identity-empty))]
     (CompilerSemanticFactType (tc.tc-type-render resolved) identity)))
 
+(define (compiler-semantic-fact-must-use
+  [ctx : tc.TcContext]
+  [env : tc.TcTypeEnv]
+  [ty : ast.AstType]
+  [declaration : i64]
+  [early-exit-allowed? : bool]) : CompilerSemanticMustUse
+  (match (csym.compiler-symbols-decl-at-index
+    (tc.tc-context-symbols ctx)
+    declaration)
+    [(Ok decl)
+      (if (ast.ast-decl-must-use? (& decl))
+        (match (tc.tc-current-return-type env)
+          [(tc.ResultTcType.Ok ret)
+            (match (tc.tc-try-query
+              ctx
+              ty
+              ret
+              (if early-exit-allowed?
+                tc.TcTryEarlyExitContext.TcTryEarlyExitAllowed
+                tc.TcTryEarlyExitContext.TcTryEarlyExitForbiddenSpmd))
+              [(tc.TcTryQueryResult.TcTryQueryCompatible
+                  (tc.TcResultInfo.TcResultInfo
+                    (tc.TcTryKind.TcTryResult)
+                    _
+                    _
+                    _
+                    _
+                    _)
+                  _)
+                CompilerSemanticMustUse.Propagate]
+              [(tc.TcTryQueryResult.TcTryQueryIncompatible
+                  (tc.TcTryCarrierClassification.TcTryCarrier
+                    (tc.TcResultInfo.TcResultInfo
+                      (tc.TcTryKind.TcTryResult)
+                      _
+                      _
+                      _
+                      _
+                      _))
+                  _
+                  _)
+                CompilerSemanticMustUse.Result]
+              [_ CompilerSemanticMustUse.Marked])]
+          [_ CompilerSemanticMustUse.Marked])
+        CompilerSemanticMustUse.Unmarked)]
+    [(Err _) CompilerSemanticMustUse.Unmarked]))
+
+(define (compiler-semantic-fact-recorder-expression-leave!
+  [recorder : CompilerSemanticFactRecorder]) : unit
+  (let
+    [ready : CompilerSemanticFactRecorderData
+      (compiler-semantic-fact-recorder-data recorder)]
+    (when (> ready.frame-count 0) (-= ready.frame-count 1))
+    (set!
+      ready.current-scope
+      (if (> ready.frame-count 0)
+        (array-ref ready.frames (- ready.frame-count 1)).scope
+        (if (>= ready.current-function 0)
+          (array-ref ready.facts.functions ready.current-function).body
+          -1)))
+    (compiler-semantic-fact-recorder-data-set! recorder ready)))
+
+(define (compiler-semantic-fact-marked-type?
+  [ctx : tc.TcContext]
+  [result : (& result tc.ResultTcType)]) : bool
+  (match result
+    [(tc.ResultTcType.Ok ty)
+      (let
+        [name : i64 (compiler-semantic-fact-direct-nominal-name ctx ty)]
+        (if (< name 0)
+          false
+          (let
+            [symbols (tc.tc-context-symbols ctx)]
+            [handle : i64
+              (tc.tc-resolve-type-name-symbol-lookup-id
+                (tc.tc-job-state-nominal-cache (tc.tc-context-job-state ctx))
+                symbols
+                (ast.ast-nominal-name-id-key name))]
+            (if (csym.compiler-symbols-handle-found? handle)
+              (match (csym.compiler-symbols-decl-at-index
+                symbols
+                (csym.compiler-symbol-handle-index handle))
+                [(Ok decl) (ast.ast-decl-must-use? (& decl))]
+                [_ false])
+              false))))]
+    [_ false]))
+
 (define (compiler-semantic-fact-recorder-expression!
   [recorder : CompilerSemanticFactRecorder]
   [ctx : tc.TcContext]
@@ -1768,7 +2085,7 @@
   (let
     [data : CompilerSemanticFactRecorderData
       (compiler-semantic-fact-recorder-data recorder)]
-    [span : ast.AstSourceSpan
+    [diagnostic-span : ast.AstSourceSpan
       (match (tc.tc-expr-id-maybe-span
         (tc.tc-context-expr-bases ctx)
         expression)
@@ -1786,14 +2103,14 @@
               (owned_view.compiler-owned-shared-view data.current-path)))]
         [(tc.ResultTcType.Err _) (compiler-semantic-fact-type-empty)])]
     [reliability : CompilerSemanticFactReliability
-      (match result
+      (match (& result)
         [(tc.ResultTcType.Err _)
           (if dependent
             CompilerSemanticFactReliability.Dependent
             CompilerSemanticFactReliability.Unresolved)]
         [(tc.ResultTcType.Ok resolved)
           (cond
-            [(tc.tc-poison-type? resolved)
+            [(tc.tc-poison-type? (ast.clone-ast-type resolved))
               CompilerSemanticFactReliability.Poisoned]
             [dependent CompilerSemanticFactReliability.Dependent]
             [else CompilerSemanticFactReliability.Reliable])])]
@@ -1812,15 +2129,26 @@
           data.current-scope
           false
           CompilerSemanticFactProvenance.Unknown
-          ""
+          -1
           -1
           -1
           false
           -1
-          (ast.ast-decl-span-fallback)))]
+          (ast.ast-decl-span-fallback)
+          expression
+          -1))]
     [pools : ast.AstNodePoolContext (tc.tc-context-pools ctx)]
     [source-owner : i64
       (ast.ast-node-pool-context-expr-source-owner (& pools) expression)]
+    [span : ast.AstSourceSpan
+      (match (& frame.provenance)
+        [(MacroArgument)
+          ;; A descendant span used for diagnostics is not an editable
+          ;; location for the expression that actually produced the value.
+          (match (ast.ast-node-pool-context-expr-view-span (& pools) expression)
+            [(ast.AstMaybeSourceSpan.Some own) own]
+            [_ (ast.ast-decl-span-fallback)])]
+        [_ diagnostic-span])]
     [provenance : CompilerSemanticFactProvenance
       (if (> span.start-line 0)
         frame.provenance
@@ -1828,6 +2156,42 @@
           [(CompilerSemanticFactProvenance.Synthetic)
             CompilerSemanticFactProvenance.Synthetic]
           [_ CompilerSemanticFactProvenance.Unknown]))]
+    [argument : i64
+      (match (& provenance)
+        [(or (Synthetic) (Unknown))
+          (compiler-semantic-fact-wrapper-result-index
+            ctx
+            (& data.facts)
+            expression)]
+        [_ -1])]
+    [report-argument? : bool
+      (and
+        (>= argument 0)
+        (match (& (array-ref data.facts.expressions argument).provenance)
+          [(MacroArgument)
+            (> (array-ref data.facts.expressions argument).span.start-line 0)]
+          [_ false]))]
+    [must-use : CompilerSemanticMustUse
+      (if (< ty.nominal.declaration 0)
+        CompilerSemanticMustUse.Unmarked
+        (match (& result)
+          [(tc.ResultTcType.Ok resolved)
+            (compiler-semantic-fact-must-use
+              ctx
+              env
+              (ast.clone-ast-type resolved)
+              ty.nominal.declaration
+              (and (>= frame.function 0) (not frame.forbidden)))]
+          [_ CompilerSemanticMustUse.Unmarked]))]
+    [must-use-type : String
+      (match (& must-use)
+        [(Unmarked) ""]
+        [_
+          (match (& result)
+            [(tc.ResultTcType.Ok resolved)
+              (tc.tc-type-render
+                (tc.tc-type-strip-region (ast.clone-ast-type resolved)))]
+            [_ ""])])]
     [try-fact : CompilerSemanticTryFact
       (compiler-semantic-fact-try-query ctx env expression frame.forbidden)]
     (in-arena
@@ -1840,31 +2204,34 @@
             (clone-compiler-semantic-fact-identity (& value))
             frame.function
             frame.scope
-            (string.copy (& frame.path))
-            span
-            provenance
+            (if report-argument?
+              (string.copy (& (array-ref data.facts.expressions argument).path))
+              (if (>= frame.expansion-path 0)
+                (string.copy (ci.intern-str frame.expansion-path))
+                (string.copy (& data.current-path))))
+            (if report-argument?
+              (array-ref data.facts.expressions argument).span
+              span)
+            (if report-argument?
+              CompilerSemanticFactProvenance.MacroArgument
+              provenance)
             reliability
             (and (>= frame.function 0) (not frame.forbidden))
-            (clone-compiler-semantic-try-fact (& try-fact)))]
+            (clone-compiler-semantic-try-fact (& try-fact))
+            (match (& reliability)
+              [(Reliable) CompilerSemanticValueUse.Consumed]
+              [_ CompilerSemanticValueUse.Unreliable])
+            frame.report-expression
+            frame.sequence-tail
+            must-use
+            (string.copy (& must-use-type)))]
         (compiler-semantic-fact-recorder-store!
           recorder
           (owned_view.compiler-owned-shared-view fact))
         (when
           (and (>= source-owner 0) (!= source-owner expression))
           (set! fact.expression source-owner)
-          (compiler-semantic-fact-recorder-store! recorder fact)))
-      (let
-        [ready : CompilerSemanticFactRecorderData
-          (compiler-semantic-fact-recorder-data recorder)]
-        (when (> ready.frame-count 0) (-= ready.frame-count 1))
-        (set!
-          ready.current-scope
-          (if (> ready.frame-count 0)
-            (array-ref ready.frames (- ready.frame-count 1)).scope
-            (if (>= ready.current-function 0)
-              (array-ref ready.facts.functions ready.current-function).body
-              -1)))
-        (compiler-semantic-fact-recorder-data-set! recorder ready)))))
+          (compiler-semantic-fact-recorder-store! recorder fact))))))
 
 ;; The collector is opt-in at the import boundary as well as at runtime. The
 ;; ordinary CLI imports the checked pipeline without loading these records.
@@ -1875,6 +2242,7 @@
   (job-state tc.TcJobState)
   (facts-arena arena.Arena)
   (checked-generated-source bool)
+  (must-use-only bool)
   (consumer-context i64)
   (consumer (-> i64 (& facts CompilerSemanticFacts) unit)))
 
@@ -1904,7 +2272,13 @@
     [entry-path : String
       (match (owned_view.compiler-owned-shared-view request.input)
         [(or (check.CompilerSemanticCheckInput.Source path _)
-             (check.CompilerSemanticCheckInput.File path)
+             (check.CompilerSemanticCheckInput.PreparedSource path _ _)
+             (check.CompilerSemanticCheckInput.PreparedPackageSource
+               path
+               _
+               _
+               _
+               _) (check.CompilerSemanticCheckInput.File path)
              (check.CompilerSemanticCheckInput.PackageEntry path _ _ _))
           path])]
     [recorder : CompilerSemanticFactRecorder
@@ -1912,7 +2286,8 @@
         request.facts-arena
         (compiler-semantic-fact-recorder-new
           (string.copy (& entry-path))
-          request.checked-generated-source))]
+          request.checked-generated-source
+          request.must-use-only))]
     [observer : tc.TcSemanticObserver
       (in-arena
         request.facts-arena
@@ -1933,6 +2308,7 @@
         request.cfgs
         request.job-state
         observer
+        (not request.must-use-only)
         (unsafe
           (cast (ptr->int (__tl_array-data handoff)) : i64))
         compiler-semantic-consumer-handoff))))

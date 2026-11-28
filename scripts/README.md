@@ -517,8 +517,9 @@ instrument beside the phase-level `scripts/benchmark-compile-cli.sh`. It builds
 every `benchmarks/<name>/` pair that carries both `bench.tl` and `baseline.c`
 the way the benchmark harnesses do -- TypeLisp at `--opt-level 1` and `2`,
 clang at `-O0` and `-O2` -- records the fastest of `--runs` builds and its peak
-RSS per leg in `target/compile-vs-clang/results.tsv`, and prints the geomean
-TypeLisp/clang time and peak-memory ratios for `opt1:-O0` and `opt2:-O2`.
+RSS per leg in `target/compile-vs-clang/results.tsv`, counts exact user-space
+instructions per leg when Linux perf can, and prints the geomean TypeLisp/clang
+time, peak-memory and instruction ratios for `opt1:-O0` and `opt2:-O2`.
 
 `scripts/benchmark-size-vs-clang.sh` is the size lane's counterpart. It builds
 the same pairs at `--opt-level s` by default (`--opt-level LEVEL` accepts `0`,

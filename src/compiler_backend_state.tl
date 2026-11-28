@@ -2673,8 +2673,10 @@
   6)
 (define compiler-backend-scratch-bool-compact-switch : i64
   7)
-(define compiler-backend-scratch-bool-count : i64
+(define compiler-backend-scratch-bool-cold-size-opt : i64
   8)
+(define compiler-backend-scratch-bool-count : i64
+  9)
 (define compiler-backend-scratch-i64-array-emergency-regs : i64
   0)
 (define compiler-backend-scratch-i64-array-const-hoist-site-points : i64

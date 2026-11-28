@@ -7516,10 +7516,11 @@
   [a : (& a ir.CompilerIrFunction)]
   [b : (& b ir.CompilerIrFunction)]) : bool
   (match a
-    [(Function aname aparams aret aframe ablocks aabi _)
+    [(Function aname aparams aret aframe ablocks aabi acold?)
       (match b
-        [(Function bname bparams bret bframe bblocks babi _)
+        [(Function bname bparams bret bframe bblocks babi bcold?)
           (and
+            (= acold? bcold?)
             (ir.compiler-ir-symbol-eq? aname bname)
             (= aframe bframe)
             (return_storage.function-abi-equal?
@@ -100546,8 +100547,11 @@
             func)
           changed))
       (let
-        [_size : unit
-          (set! summaries.optimize-for-size (opt_level.opt-level-size? level))]
+        [func-cold? : bool
+          (match (& func)
+            [(Function _ _ _ _ _ _ cold?) cold?])]
+        [size-opt? : bool (or (opt_level.opt-level-size? level) func-cold?)]
+        [_size : unit (set! summaries.optimize-for-size size-opt?)]
         [s : OptPassState
           (match (optimize-function-fixed-pass-with-summaries
             pools
@@ -100590,7 +100594,7 @@
         ;; leaves it out so inlining prices what it always did.
         [s
           (if (or
-            (opt_level.opt-level-size? level)
+            size-opt?
             s.priced?
             (not (opt-licm-guard-function-shape? (& (opt-pass-blocks s)))))
             s
@@ -100604,7 +100608,7 @@
                 s)
               "licm_guard"))]
         [s
-          (if (opt_level.opt-level-size? level)
+          (if size-opt?
             s
             (opt-pass-observed
               (opt-pass-with-cfg-func
@@ -100644,7 +100648,7 @@
               (& (opt-pass-func s)))
             s)]
         [s
-          (if (opt_level.opt-level-size? level)
+          (if size-opt?
             s
             (opt-pass-with-result
               (opt-thread-const-branch-final-pass
@@ -100656,7 +100660,7 @@
         ;; longer does and costs a taken `jmp` on the path around it. Once more,
         ;; below it.
         [s
-          (if (opt_level.opt-level-size? level)
+          (if size-opt?
             s
             (opt-pass-with-result
               (opt-cfg-straighten-below-threader-pass
@@ -105382,6 +105386,221 @@
           (ast.clone-ast-type ret)))]
     [else (Phi dst inputs (ast.clone-ast-type ret))]))
 
+(define (opt-function-is-cold? [func : (& ir.CompilerIrFunction)]) : bool
+  (match func
+    [(Function _ _ _ _ _ _ cold?) cold?]))
+
+(define (opt-cold-callees-build
+  [functions : (& ir.CompilerIrFunctionSeq)]
+  [externs : (& ir.CompilerIrExternSeq)]) : opt_i64_i64_map.Map
+  (let
+    [fcount : i64 (ir.compiler-ir-function-seq-count functions)]
+    [ecount : i64 (ir.compiler-ir-extern-seq-count externs)]
+    [found : i64 0]
+    (for [i (iterator.range 0 fcount)]
+      (when
+        (opt-function-is-cold? (ir.compiler-ir-function-seq-borrow functions i))
+        (+= found 1)))
+    (for [i (iterator.range 0 ecount)]
+      (match (ir.compiler-ir-extern-seq-borrow externs i)
+        [(Extern _ _ _ _ _ _ _ _ _ _ _ cold?) (when cold? (+= found 1))]))
+    (if (= found 0)
+      (opt_i64_i64_map.with-capacity 0)
+      (let
+        [out : opt_i64_i64_map.Map
+          (opt_i64_i64_map.with-capacity (+ (* found 2) 1))]
+        (for [i (iterator.range 0 fcount)]
+          (match (ir.compiler-ir-function-seq-borrow functions i)
+            [(Function name _ _ _ _ _ cold?)
+              (when cold? (opt_i64_i64_map.insert-ref! (&mut out) name 1))]))
+        (for [i (iterator.range 0 ecount)]
+          (match (ir.compiler-ir-extern-seq-borrow externs i)
+            [(Extern name _ _ _ _ _ _ _ _ _ _ cold?)
+              (when cold? (opt_i64_i64_map.insert-ref! (&mut out) name 1))]))
+        out))))
+
+(define (opt-cold-callee-seed?
+  [cname : i64]
+  [cold-callees : (& opt_i64_i64_map.Map)]) : bool
+  (or
+    (opt-direct-call-noreturn? cname)
+    (opt_i64_i64_map.contains? cold-callees cname)
+    (opt-inline-abort-site-callee? cname)
+    (let
+      [text : String (ir.compiler-ir-symbol-text cname)]
+      (or
+        (string.eq (& text) "tl_oob_abort")
+        (string.eq (& text) "tl_div_abort")
+        (string.eq (& text) "tl_shift_abort")
+        (string.eq (& text) ".L_tl_abort")))))
+
+(define (opt-instr-cold-seed?
+  [instr : (& ir.CompilerIrInstr)]
+  [cold-callees : (& opt_i64_i64_map.Map)]) : bool
+  (match instr
+    [(Call _ cname _ _) (opt-cold-callee-seed? cname cold-callees)]
+    [(TailCall cname _ _) (opt-cold-callee-seed? cname cold-callees)]
+    [(CallCAbiStoreResult payload-box)
+      (opt-cold-callee-seed? (deref payload-box).name cold-callees)]
+    [_ false]))
+
+(define (opt-block-cold-seed?
+  [instrs : (& ir.CompilerIrInstrSeq)]
+  [cold-callees : (& opt_i64_i64_map.Map)]) : bool
+  (let
+    [m : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    (for [j (iterator.range 0 m)]
+      (when
+        (opt-instr-cold-seed?
+          (ir.compiler-ir-instr-seq-borrow instrs j)
+          cold-callees)
+        (return true)))
+    false))
+
+(define (opt-cold-target-is-cold?
+  [label : i64]
+  [label-idx : (& opt_i64_i64_map.Map)]
+  [cold : (& (__tl_dyn-array bool))]) : bool
+  (let
+    [idx : i64 (opt_i64_i64_map.get-value-or label-idx label -1)]
+    (and (>= idx 0) (array-ref cold idx))))
+
+(define (opt-cold-switch-cases-all-cold?
+  [cases : (& ir.CompilerIrSwitchCaseSeq)]
+  [label-idx : (& opt_i64_i64_map.Map)]
+  [cold : (& (__tl_dyn-array bool))]) : bool
+  (for [k (iterator.range 0 cases.len)]
+    (match (ir.compiler-ir-switch-case-seq-borrow cases k)
+      [(Case _ target)
+        (unless (opt-cold-target-is-cold? target label-idx cold) (return false))]))
+  true)
+
+(define (opt-block-all-succs-cold?
+  [instrs : (& ir.CompilerIrInstrSeq)]
+  [label-idx : (& opt_i64_i64_map.Map)]
+  [cold : (& (__tl_dyn-array bool))]) : bool
+  (let
+    [m : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    (if (= m 0)
+      false
+      (match (ir.compiler-ir-instr-seq-borrow instrs (- m 1))
+        [(Jump target) (opt-cold-target-is-cold? target label-idx cold)]
+        [(or (Branch _ t f) (TotalEnumBranch _ t f))
+          (and
+            (opt-cold-target-is-cold? t label-idx cold)
+            (opt-cold-target-is-cold? f label-idx cold))]
+        [(Switch _ _ cases default-label)
+          (and
+            (opt-cold-target-is-cold? default-label label-idx cold)
+            (opt-cold-switch-cases-all-cold? cases label-idx cold))]
+        [(TotalEnumSwitch _ _ cases default-label trap-label)
+          (and
+            (opt-cold-target-is-cold? default-label label-idx cold)
+            (opt-cold-switch-cases-all-cold? cases label-idx cold)
+            (if (ir.compiler-ir-label-some? trap-label)
+              (opt-cold-target-is-cold? trap-label label-idx cold)
+              true))]
+        [_ false]))))
+
+;; CFG coldness propagation (least fixed point): seed from resolved direct
+;; calls/tail calls to `is_cold` functions/externs plus proven terminal aborts,
+;; then propagate backward to predecessors whose every successor is cold.
+(define (opt-cold-block-labels
+  [blocks : (& ir.CompilerIrBlockList)]
+  [cold-callees : (& opt_i64_i64_map.Map)]) : opt_i64_i64_map.Map
+  (match blocks
+    [(Array seq)
+      (let
+        [n : i64 (ir.compiler-ir-block-seq-count seq)]
+        [any-seed? : bool false]
+        (for [i (iterator.range 0 n)]
+          (match (ir.compiler-ir-block-seq-borrow seq i)
+            [(Block _ instrs)
+              (when
+                (opt-block-cold-seed? instrs cold-callees)
+                (set! any-seed? true))]))
+        (if (not any-seed?)
+          (opt_i64_i64_map.with-capacity 0)
+          (let
+            [label-idx : opt_i64_i64_map.Map
+              (opt_i64_i64_map.with-capacity (+ (* n 2) 1))]
+            [cold : (__tl_dyn-array bool) (__tl_make-array bool n)]
+            [changed? : bool true]
+            [cold-count : i64 0]
+            (for [i (iterator.range 0 n)]
+              (match (ir.compiler-ir-block-seq-borrow seq i)
+                [(Block label instrs)
+                  (opt_i64_i64_map.insert-ref! (&mut label-idx) label i)
+                  (when
+                    (opt-block-cold-seed? instrs cold-callees)
+                    (set! (array-ref cold i) true)
+                    (+= cold-count 1))]))
+            (while changed?
+              (set! changed? false)
+              (let
+                [i : i64 (- n 1)]
+                (while (>= i 0)
+                  (when
+                    (not (array-ref cold i))
+                    (match (ir.compiler-ir-block-seq-borrow seq i)
+                      [(Block _ instrs)
+                        (when
+                          (opt-block-all-succs-cold?
+                            instrs
+                            (& label-idx)
+                            (& cold))
+                          (set! (array-ref cold i) true)
+                          (+= cold-count 1)
+                          (set! changed? true))]))
+                  (-= i 1))))
+            (let
+              [out : opt_i64_i64_map.Map
+                (opt_i64_i64_map.with-capacity (+ (* cold-count 2) 1))]
+              (for [i (iterator.range 0 n)]
+                (when
+                  (array-ref cold i)
+                  (match (ir.compiler-ir-block-seq-borrow seq i)
+                    [(Block label _)
+                      (opt_i64_i64_map.insert-ref! (&mut out) label 1)])))
+              out))))]))
+
+(define opt-inline-program-has-cold? : bool
+  false)
+(define opt-inline-program-cold-callees : (__tl_dyn-array opt_i64_i64_map.Map)
+  (__tl_make-array (opt_i64_i64_map.with-capacity 0)))
+(define opt-inline-caller-cold? : bool
+  false)
+(define opt-inline-caller-cold-blocks-ready? : bool
+  false)
+(define opt-inline-caller-cold-blocks : (__tl_dyn-array opt_i64_i64_map.Map)
+  (__tl_make-array (opt_i64_i64_map.with-capacity 0)))
+
+(define (opt-inline-caller-is-cold?
+  [index : (& OptFunctionIndex)]
+  [caller : i64]) : bool
+  (if (= caller opt-inline-caller-name)
+    opt-inline-caller-cold?
+    (match (opt-function-index-slot index caller)
+      [(Some slot) (opt-function-is-cold? (& (array-ref index.values slot)))]
+      [(None) false])))
+
+(define (opt-inline-current-site-cold?) : bool
+  (cond
+    [opt-inline-caller-cold? true]
+    [(not opt-inline-program-has-cold?) false]
+    [else
+      (unless
+        opt-inline-caller-cold-blocks-ready?
+        (set!
+          (array-ref opt-inline-caller-cold-blocks 0)
+          (opt-cold-block-labels
+            (& (array-ref opt-inline-caller-facts-blocks 0))
+            (& (array-ref opt-inline-program-cold-callees 0))))
+        (set! opt-inline-caller-cold-blocks-ready? true))
+      (opt_i64_i64_map.contains?
+        (& (array-ref opt-inline-caller-cold-blocks 0))
+        opt-inline-current-block-label)]))
+
 ;; The site's own location moved onto an instruction the rewrite mints in the
 ;; caller. Located in both build modes for the same reason the clone walk is:
 ;; a `stdlib.io/panic` call is an abort site, and an entry carrying path id 0
@@ -105395,9 +105614,13 @@
   [multiblock? : bool]) : option_i64.Option
   (match (opt-function-index-slot index cname)
     [(Some slot)
-      (if (and
-        (>= caller-scc 0)
-        (= (array-ref scc-result.scc-of slot) caller-scc))
+      (if (or
+        (and
+          (>= caller-scc 0)
+          (= (array-ref scc-result.scc-of slot) caller-scc))
+        (and
+          (opt-function-is-cold? (& (array-ref index.values slot)))
+          (not (opt-inline-caller-is-cold? index caller))))
         (None)
         (if (if multiblock?
           (opt-inline-multiblock-callee-ok-cached?
@@ -105560,7 +105783,8 @@
   [index : (& index OptFunctionIndex)]
   [census : (& census OptInlineCensus)]
   [name : i64]
-  [blocks : (& blocks ir.CompilerIrBlockList)]) : unit
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [cold? : bool]) : unit
   (set!
     (array-ref opt-inline-caller-facts-blocks 0)
     (owned_view.compiler-owned-reference-shared-view blocks))
@@ -105572,6 +105796,8 @@
   (set! (array-ref opt-inline-caller-loop-labels 0) (OptLabelSet.Nil))
   (set! opt-inline-caller-has-bounds? false)
   (set! opt-inline-caller-name name)
+  (set! opt-inline-caller-cold? cold?)
+  (set! opt-inline-caller-cold-blocks-ready? false)
   (set! opt-inline-caller-recursion-known? false)
   (set! opt-inline-caller-recursion? false)
   (set! opt-inline-caller-hot-loop-blocks 0)
@@ -105596,6 +105822,13 @@
     (ir.compiler-ir-block-list-empty))
   (set! (array-ref opt-inline-caller-loop-labels 0) (OptLabelSet.Nil))
   (set! opt-inline-caller-facts-ready? false)
+  (set! opt-inline-caller-cold? false)
+  (when
+    opt-inline-caller-cold-blocks-ready?
+    (set!
+      (array-ref opt-inline-caller-cold-blocks 0)
+      (opt_i64_i64_map.with-capacity 0))
+    (set! opt-inline-caller-cold-blocks-ready? false))
   (set! (array-ref opt-inline-pred-renames 0) (OptInlinePredRenameList.Nil)))
 
 (define (opt-inline-caller-facts-ensure!) : unit
@@ -110618,7 +110851,7 @@
   [caller-blocks : i64]
   [added-so-far : i64]) : bool
   (when
-    census.optimize-for-size
+    (or census.optimize-for-size (opt-inline-current-site-cold?))
     (return
       (or
         (opt-inline-census-absorbable? index census func-name callee-name)
@@ -111101,7 +111334,7 @@
               (+ (opt-inline-multiblock-cost-instrs cblocks) staging.count)]
             [_size : unit
               (when
-                census.optimize-for-size
+                (or census.optimize-for-size (opt-inline-current-site-cold?))
                 (if (opt-inline-size-sole-call-absorb-ok?
                   absorb-class
                   (& staging)
@@ -112233,7 +112466,7 @@
         [_reset-sites : unit
           (begin
             (set! opt-inline-caller-site-count 0)
-            (opt-inline-caller-facts-install! index census name blocks)
+            (opt-inline-caller-facts-install! index census name blocks cold?)
             (set!
               (array-ref opt-inline-pred-renames 0)
               (OptInlinePredRenameList.Nil)))]
@@ -112645,10 +112878,11 @@
 
 (define (opt-inline-tiny-leaf-callee-ok? [callee : (& ir.CompilerIrFunction)]) : bool
   (match callee
-    [(Function _ cparams _ cvars cblocks _ _)
+    [(Function _ cparams _ cvars cblocks _ cold?)
       (let
         [np : i64 (opt-inline-param-count cparams)]
         (and
+          (not cold?)
           (not (opt-inline-params-have-private-memory? (& cparams)))
           (opt-inline-params-sequential? (& cparams) 0)
           (>= cvars np)
@@ -113083,6 +113317,15 @@
             (& inline-functions)
             externs
             (&mut census)))]
+      [_cold-callees : unit
+        (let
+          [cold-map : opt_i64_i64_map.Map
+            (opt-cold-callees-build (& inline-functions) externs)]
+          (if (> (opt_i64_i64_map.len (& cold-map)) 0)
+            (begin
+              (set! opt-inline-program-has-cold? true)
+              (set! (array-ref opt-inline-program-cold-callees 0) cold-map))
+            (set! opt-inline-program-has-cold? false)))]
       [program : OptProgramIndex (OptProgramIndex index graph scc-result)]
       [_install-owned-state : unit
         (opt-inline-owned-state-install-with-program!
@@ -113115,6 +113358,12 @@
                 spans)]
             [out : OptInlineSpanProgram
               (Program (opt-function-index-to-seq index) next-spans)]
+            (when
+              opt-inline-program-has-cold?
+              (set! opt-inline-program-has-cold? false)
+              (set!
+                (array-ref opt-inline-program-cold-callees 0)
+                (opt_i64_i64_map.with-capacity 0)))
             (opt-inline-synth-reset!)
             (opt-inline-owned-state-reset! true)
             (opt-pure-call-inline-memory-reset!)

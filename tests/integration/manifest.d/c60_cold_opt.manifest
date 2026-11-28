@@ -1,0 +1,2 @@
+# Cold function and cold block optimization, placement, local size policy, and filtered outlining.
+c60_cold_opt|all|0,2|tests/integration/c60_cold_opt.tl|47|-|-|-|-

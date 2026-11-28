@@ -9415,7 +9415,11 @@
     [library-object? : bool
       (be_state.compiler-backend-state-library-object? backend-state)]
     [size-optimized? : bool
-      (be_state.compiler-backend-state-optimize-for-size? backend-state)]
+      (or
+        (be_state.compiler-backend-state-optimize-for-size? backend-state)
+        (be_state.compiler-backend-function-scratch-bool?
+          (be_state.compiler-backend-state-function-state backend-state)
+          be_state.compiler-backend-scratch-bool-cold-size-opt))]
     [inline-memory-name : String
       (if (and
         (be_state.compiler-backend-state-emission-target-policy backend-state).windows

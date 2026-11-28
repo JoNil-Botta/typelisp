@@ -1,0 +1,41 @@
+# Cold function and cold block optimization at -O2:
+# - warm callers do not inline (:cold) callees;
+# - cold blocks calling (:cold) callees sink behind hot fallthrough and
+#   returning-call continuations;
+# - (:cold) functions get -Os size gates (no unrolling/rotation), .L_tl_allocN
+#   calls, and compact .word switch tables at -O2.
+
+args --stdlib-root {{root}}/stdlib
+
+case cold-opt-warm-dispatch-sinks-cold-block
+source tests/integration/c60_cold_opt.tl
+target linux-x86_64 windows-x86_64
+opt 2
+in fn _tl_c60_cold_opt_warm_dispatch
+count = 1 ^[[:space:]]+call _tl_c60_cold_opt_cold_report$
+after ^[.]Lf[0-9]+_if_else[.]1:$
+next-line ^[[:space:]]+leaq 5\(
+after ^[[:space:]]+ret$
+next-line ^[.]Lf[0-9]+_if_then[.]0:$
+
+case cold-opt-alloc-helper-at-o2
+source tests/integration/c60_cold_opt.tl
+target linux-x86_64 windows-x86_64
+opt 2
+in fn _tl_c60_cold_opt_cold_alloc_box
+count = 1 ^[[:space:]]+call [.]L_tl_alloc8$
+
+case cold-opt-compact-word-switch-at-o2
+source tests/integration/c60_cold_opt.tl
+target linux-x86_64 windows-x86_64
+opt 2
+in asm
+count = 6 ^[[:space:]]+[.]word [.]Lf[0-9]+_match_
+
+case cold-opt-size-gates-skip-loop-unroll-at-o2
+source tests/integration/c60_cold_opt.tl
+target linux-x86_64 windows-x86_64
+opt 2
+in fn _tl_c60_cold_opt_cold_loop
+not-contains __unroll
+not-contains _rot

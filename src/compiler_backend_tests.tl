@@ -42323,7 +42323,12 @@ b_keep:
   [blocks : ir.CompilerIrBlockList]) : (__tl_dyn-array i64)
   (match blocks
     [(Array seq)
-      (match (backend.compiler-backend-placement-plan-for-seq seq true 0 true)
+      (match (backend.compiler-backend-placement-plan-for-seq
+        seq
+        true
+        0
+        true
+        (& (__tl_make-array i64 0)))
         [(Some st) st.order]
         [(No) (__tl_make-array i64 0)])]))
 
@@ -42476,7 +42481,8 @@ b_keep:
           seq
           false
           0
-          false)
+          false
+          (& (__tl_make-array i64 0)))
           [(Some _) false]
           [(No) true])])
     (match (compiler-backend-placement-guard-blocks "lt %0, 0")
@@ -42485,12 +42491,18 @@ b_keep:
           seq
           true
           2
-          false)
+          false
+          (& (__tl_make-array i64 0)))
           [(Some _) false]
           [(No) true])])
     (match (compiler-backend-placement-guard-blocks "lt %0, 0")
       [(Array seq)
-        (match (backend.compiler-backend-placement-plan-for-seq seq true 0 true)
+        (match (backend.compiler-backend-placement-plan-for-seq
+          seq
+          true
+          0
+          true
+          (& (__tl_make-array i64 0)))
           [(Some _) false]
           [(No) true])])))
 
@@ -43916,7 +43928,8 @@ b_keep:
           seq
           true
           0
-          false)
+          false
+          (& (__tl_make-array i64 0)))
           [(Some st) st.order]
           [(No) (__tl_make-array i64 0)])])))
 
@@ -50698,3 +50711,221 @@ user_fn:
         [(Eligible) true]
         [_ false])
       "non-archive-runtime TypeLisp extern call stays eligible for library extraction")))
+
+(test
+  c60-cold-placement-sinks-cold-blocks-stably
+  (let
+    [ir-text : String
+      "entry:
+         %1 = eq %0, 0 : i64
+         branch %1, cold_arm, hot_arm
+       cold_arm:
+         %2 = add %0, 1 : i64
+         jump cont
+       hot_arm:
+         %3 = add %0, 2 : i64
+         jump cont
+       cont:
+         %4 = phi [%2, cold_arm], [%3, hot_arm] : i64
+         return %4"]
+    [blocks1 : ir.CompilerIrBlockList (irt.blocks (string.copy (& ir-text)))]
+    [blocks2 : ir.CompilerIrBlockList (irt.blocks ir-text)]
+    [cold-labels : (__tl_dyn-array i64)
+      (__tl_make-array (ir.compiler-ir-label "cold_arm"))]
+    (match blocks1
+      [(Array seq)
+        (match (backend.compiler-backend-placement-plan-for-seq
+          seq
+          true
+          0
+          false
+          (& cold-labels))
+          [(Some st)
+            (test.assert-true
+              (compiler-backend-placement-test-order-eq?
+                st.order
+                (__tl_make-array 0 2 3 1))
+              "cold block sinks behind warm hot_arm and cont while preserving entry and phi order")]
+          [(No)
+            (test.assert-true
+              false
+              "expected placement plan for cold block sinking")])])
+    ;; Pinning prefix [0, 2) keeps cold_arm at index 1 untouched.
+    (match blocks2
+      [(Array seq)
+        (match (backend.compiler-backend-placement-plan-for-seq
+          seq
+          true
+          2
+          false
+          (& cold-labels))
+          [(No)
+            (test.assert-true true "pinned shrink-wrap prefix does not move")]
+          [(Some _)
+            (test.assert-true
+              false
+              "pinned cold block in shrink-wrap prefix must not move")])])))
+
+(test
+  c60-cold-compact-switch-and-direct-object-fallback
+  (let
+    [state-o2 : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [state-o1 : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 4 16)]
+    [switch-blocks : ir.CompilerIrBlockList
+      (irt.blocks
+        "entry:
+           switch %0 base 0 [0:c0, 1:c1, 2:c2, 3:c3] default c0
+         c0:
+           return 0
+         c1:
+           return 1
+         c2:
+           return 2
+         c3:
+           return 3")]
+    [cold-prog : ir.CompilerIrProgram
+      (irt.program
+        "function @cold_fn(x=%0:i64) -> i64 vars 1 cold {
+         entry:
+           return %0
+         }
+         function @main() -> i64 vars 1 {
+         entry:
+           %0 = call cold_fn(42) : i64
+           return %0
+         }")]
+    (be_state.compiler-backend-state-set-opt-level! state-o2 2)
+    (be_state.compiler-backend-state-set-opt-level! state-o1 1)
+    (match (& switch-blocks)
+      [(Array seq)
+        (test.assert-true
+          (be_facts.compiler-backend-compact-switch-blocks? state-o2 seq true)
+          "cold function gets compact .word switch table at -O2")
+        (test.assert-true
+          (not
+            (be_facts.compiler-backend-compact-switch-blocks?
+              state-o2
+              seq
+              false))
+          "warm function keeps standard switch table at -O2")
+        (test.assert-true
+          (not
+            (be_facts.compiler-backend-compact-switch-blocks? state-o1 seq true))
+          "cold function skips compact switch table at -O1")])
+    (test.assert-true
+      (match (backend.compiler-backend-object-program-eligibility-with-pools-and-profile-state
+        state-o2
+        pools
+        (ir.clone-compiler-ir-program (& cold-prog))
+        (be_state.CompilerBackendTarget.Linux)
+        (profile_state.compiler-profile-state-new))
+        [(Unsupported (UnsupportedSemantics)) true]
+        [_ false])
+      "eligible cold function at -O2 uses driver assembly fallback on direct-object route")
+    (test.assert-true
+      (match (backend.compiler-backend-object-program-eligibility-with-pools-and-profile-state
+        state-o1
+        pools
+        cold-prog
+        (be_state.CompilerBackendTarget.Linux)
+        (profile_state.compiler-profile-state-new))
+        [(Eligible) true]
+        [_ false])
+      "cold function at -O1 keeps direct-object route")))
+
+(test
+  c60-cold-filtered-machine-outline-ranges
+  (let
+    [warm-fn : String
+      "warm_f:
+    movq %rdi, 8(%rsp)
+    movq %rsi, 120(%rsp)
+    leaq 32(%rsp), %rdx
+    movabsq $1311768467463790320, %rcx
+    call wa
+    movl $7, %eax
+    addq $24, %rsp
+    popq %rbx
+    popq %r12
+    ret
+    .size warm_f, . - warm_f
+"]
+    [cold-a : String
+      "cold_a:
+    movq %rdi, 8(%rsp)
+    movq %rsi, 120(%rsp)
+    leaq 32(%rsp), %rdx
+    movabsq $1311768467463790320, %rcx
+    call ca
+    movl $7, %eax
+    addq $24, %rsp
+    popq %rbx
+    popq %r12
+    ret
+    .size cold_a, . - cold_a
+"]
+    [cold-b : String
+      "cold_b:
+    movq %rdi, 8(%rsp)
+    movq %rsi, 120(%rsp)
+    leaq 32(%rsp), %rdx
+    movabsq $1311768467463790320, %rcx
+    call cb
+    xorl %edx, %edx
+    movl $7, %eax
+    addq $24, %rsp
+    popq %rbx
+    popq %r12
+    ret
+    .size cold_b, . - cold_b
+"]
+    [cold-c : String
+      "cold_c:
+    movq %rdi, 8(%rsp)
+    movq %rsi, 120(%rsp)
+    leaq 32(%rsp), %rdx
+    movabsq $1311768467463790320, %rcx
+    call cc
+    ret
+    .size cold_c, . - cold_c
+"]
+    [elf-asm : String (str_cat.str-cat warm-fn cold-a cold-b cold-c)]
+    [wlen : i64 (string.string-length (& warm-fn))]
+    [alen : i64 (string.string-length (& cold-a))]
+    [blen : i64 (string.string-length (& cold-b))]
+    [clen : i64 (string.string-length (& cold-c))]
+    [starts : (__tl_dyn-array i64)
+      (__tl_make-array wlen (+ wlen alen) (+ (+ wlen alen) blen))]
+    [ends : (__tl_dyn-array i64)
+      (__tl_make-array
+        (+ wlen alen)
+        (+ (+ wlen alen) blen)
+        (+ (+ (+ wlen alen) blen) clen))]
+    [modes : (__tl_dyn-array i64) (__tl_make-array 2 2 2)]
+    [empty-labels : backend_i64_i64_map.Map
+      (backend_i64_i64_map.with-capacity 0)]
+    [elf-out : String
+      (be_peephole.compiler-backend-machine-outline-ranges
+        elf-asm
+        false
+        3
+        (& starts)
+        (& ends)
+        (& modes)
+        0
+        (& empty-labels))]
+    (test.assert-true
+      (string.contains (& elf-out) (& warm-fn))
+      "filtered ELF outliner leaves warm function completely untouched")
+    (test.assert-true
+      (string.contains (& elf-out) "cold_a:\n    call _tl_outline_1\n")
+      "filtered ELF outliner runs osC on cold functions")
+    (test.assert-true
+      (string.contains (& elf-out) "    jmp .L_tl_tail_1\n    .size cold_b")
+      "filtered ELF outliner runs osD on cold functions")))

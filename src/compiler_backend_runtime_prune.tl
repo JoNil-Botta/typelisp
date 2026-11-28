@@ -403,7 +403,9 @@
         (ptr-write! (ptr-offset out kept-length) 0)
         (string-from-bytes (ptr-cast out : (Ptr u8)) kept-length)))))
 
-(define (prune [asm : String]) : String
+(define (prune-with-prefix-shift [asm : String] [anchor : i64]) : (Tuple
+    String
+    i64)
   (let
     [data : (Ptr u8)
       (unsafe
@@ -413,7 +415,7 @@
     [closed : bool (find-ranges! data length (&mut ranges))]
     [count : i64 (fragment_vec.len (& ranges))]
     (if (or (not closed) (= count 0))
-      asm
+      (tuple asm 0)
       (let
         [live : (MutPtr u8) (runtime.runtime-alloc count)]
         (for [index (iterator.range 0 count)]
@@ -425,8 +427,27 @@
               scratch
               (reachable-fragments data length (& ranges) live))]
           (if (= kept count)
-            asm
-            (render-kept data length (& ranges) live)))))))
+            (tuple asm 0)
+            (let
+              [shift : i64 0]
+              (when
+                (> anchor 0)
+                (for [index (iterator.range 0 count)]
+                  (when
+                    (=
+                      (unsafe
+                        (ptr-read (ptr-offset live index)))
+                      0)
+                    (let
+                      [range : RuntimeFragment
+                        (array-ref (fragment_vec.slots (& ranges)) index)]
+                      (when
+                        (<= range.end anchor)
+                        (+= shift (- range.end range.start)))))))
+              (tuple (render-kept data length (& ranges) live) shift))))))))
+
+(define (prune [asm : String]) : String
+  (tuple-ref (prune-with-prefix-shift asm 0) 0))
 
 ;; -Os cross-function epilogue interning. A return tail is the run of
 ;; stack-releasing instructions (`addq $N, %rsp`, `popq %reg`, `leave`) that

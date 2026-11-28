@@ -119028,7 +119028,7 @@
   [top-env : TcTypeEnv]
   [decls : (& ast.AstDeclList)]
   [params : (& ast.AstMacroParamList)]
-  [body : ast.AstExpr]
+  [body-id : i64]
   [depth : i64]) : ResultMacroExpr
   (let
     [env : TcTypeEnv
@@ -119037,7 +119037,7 @@
     [saved : TcDefmacroTransformerScope
       (tc-defmacro-transformer-enter! state params)]
     [result : ResultMacroExpr
-      (macro-expand-node ctx env decls depth (ast.ast-node-push body))]
+      (macro-expand-firing-node ctx env decls depth body-id)]
     (tc-defmacro-transformer-leave! state saved)
     result))
 
@@ -119110,35 +119110,48 @@
             [module : String (macro-decl-module-display fallback-module-id)]
             [def-ctx : TcContext
               (tc-context-with-module-id ctx (& module) fallback-module-id)]
-            [def-env : TcTypeEnv
-              (match (tc-hygiene-definition-env-id-inner
-                def-ctx
-                module
-                fallback-module-id)
-                [(Ok env) env]
-                [(Err message)
-                  (return
-                    (Err
-                      (box
-                        (ctfe_support.ctfe-diagnostic-at-expr
-                          (MacroUse)
-                          (& source-body)
-                          message))))])]
-            [id : i64
-              (try
-                (match (tc-context-program ctx)
-                  [(Program decls)
-                    (macro-expand-transformer-body
-                      def-ctx
-                      def-env
-                      (& (deref decls))
-                      params
-                      source-body
-                      (+ depth 1))]))]
-            (tc-context-capture-active-pools! ctx)
-            (ctfe_support.ctfe-env-adopt-active-pools! (& literal-env))
-            (ctfe_support.ctfe-env-publish-owning-pools! (& literal-env))
-            (tc-context-expr-get ctx id))
+            ;; The name-set probe admits ordinary calls with colliding base
+            ;; names. Resolve candidates before building the transformer env.
+            (match (tc-context-program ctx)
+              [(Program decls)
+                (if (macro-expr-uses-macro?
+                  def-ctx
+                  (tc-context-expr-bases def-ctx)
+                  (deref decls)
+                  (& source-body)
+                  true)
+                  (let
+                    [def-env : TcTypeEnv
+                      (match (tc-hygiene-definition-env-id-inner
+                        def-ctx
+                        module
+                        fallback-module-id)
+                        [(Ok env) env]
+                        [(Err message)
+                          (return
+                            (Err
+                              (box
+                                (ctfe_support.ctfe-diagnostic-at-expr
+                                  (MacroUse)
+                                  (& source-body)
+                                  message))))])]
+                    [id : i64
+                      (try
+                        (match (tc-context-program def-ctx)
+                          [(Program definition-decls)
+                            (macro-expand-transformer-body
+                              def-ctx
+                              def-env
+                              (& (deref definition-decls))
+                              params
+                              (ast.ast-node-push source-body)
+                              (+ depth 1))]))]
+                    (tc-context-capture-active-pools! ctx)
+                    (ctfe_support.ctfe-env-adopt-active-pools! (& literal-env))
+                    (ctfe_support.ctfe-env-publish-owning-pools!
+                      (& literal-env))
+                    (tc-context-expr-get ctx id))
+                  source-body)]))
           source-body)]
       (ctfe_support.ctfe-begin-macro-expansion!
         (tc-context-ctfe-macro-state ctx)
@@ -123152,8 +123165,28 @@
       (Ok expr-id)
       (macro-expand-node-fire-expected ctx env decls depth expr-id expected))))
 
-;; Non-tail node entry: save and restore `scratch-without-expected-count` so
-;; scratch forms in non-tail positions never trigger retries in enclosing forms.
+;; The caller has already checked whether the tree can fire. Save and restore
+;; the scratch count so a non-tail form cannot trigger retries in enclosing forms.
+(define (macro-expand-firing-node
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : (& decls ast.AstDeclList)]
+  [depth : i64]
+  [expr-id : i64]) : ResultMacroExpr
+  (let
+    [state : TcMacroState (tc-context-macro-state ctx)]
+    [scratch-mark : i64 (tc-macro-scratch-without-expected-count state)]
+    [result : ResultMacroExpr
+      (macro-expand-node-fire-expected
+        ctx
+        env
+        decls
+        depth
+        expr-id
+        (ast.AstMaybeType.No))]
+    (tc-macro-scratch-without-expected-restore! state scratch-mark)
+    result))
+
 (define (macro-expand-node
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -123167,21 +123200,9 @@
         macro-state
         (tc-context-expr-bases ctx)
         (tc-context-expr-get ctx expr-id))]
-    (if (not fires)
-      (Ok expr-id)
-      (let
-        [scratch-mark : i64
-          (tc-macro-scratch-without-expected-count macro-state)]
-        [result : ResultMacroExpr
-          (macro-expand-node-fire-expected
-            ctx
-            env
-            decls
-            depth
-            expr-id
-            (ast.AstMaybeType.No))]
-        (tc-macro-scratch-without-expected-restore! macro-state scratch-mark)
-        result))))
+    (if fires
+      (macro-expand-firing-node ctx env decls depth expr-id)
+      (Ok expr-id))))
 
 ;; One subtree scan per visit: the caller's single `fires` answer both picks
 ;; the no-fire arm and gates this call.
@@ -124245,7 +124266,6 @@
             (ast.ast-decl-def-fn-metadata-id name params ret nbody (& metadata))))]
       [(DefMacro decl-meta name params ret body-id)
         (let
-          [body : ast.AstExpr (tc-context-expr-get ctx body-id)]
           [expanded : i64
             (try
               (macro-expand-transformer-body
@@ -124253,7 +124273,7 @@
                 top-env
                 (& decls)
                 (& params)
-                body
+                body-id
                 0))]
           (Ok (DefMacro decl-meta name params ret expanded)))]
       [(Test _ _ _ _) (Ok decl)]
@@ -126658,68 +126678,79 @@
     ctx
     expr-bases
     decls
-    (ast.ast-expr-segment-bases-get expr-bases id)))
+    (& (ast.ast-expr-segment-bases-get expr-bases id))
+    false))
 
 (define (macro-exprs-use-macro?
   [ctx : TcContext]
   [expr-bases : i64]
   [decls : ast.AstDeclList]
-  [exprs : ast.AstExprList]) : bool
-  (macro-exprs-use-macro-at? ctx expr-bases decls (& exprs) 0))
-
-(define (macro-exprs-use-macro-at?
-  [ctx : TcContext]
-  [expr-bases : i64]
-  [decls : ast.AstDeclList]
   [exprs : (& exprs ast.AstExprList)]
-  [index : i64]) : bool
-  (if (>= index exprs.len)
-    false
-    (or
-      (macro-node-uses-macro?
+  [transformer? : bool]) : bool
+  (for [index (iterator.range 0 exprs.len)]
+    (when
+      (macro-expr-uses-macro?
         ctx
         expr-bases
         (tc-global-shared-view decls)
-        (ast.ast-expr-list-get exprs index 0))
-      (macro-exprs-use-macro-at? ctx expr-bases decls exprs (+ index 1)))))
+        (&
+          (ast.ast-expr-segment-bases-get
+            expr-bases
+            (ast.ast-expr-list-get exprs index 0)))
+        transformer?)
+      (return true)))
+  false)
 
 (define (macro-expr-uses-macro?
   [ctx : TcContext]
   [expr-bases : i64]
   [decls : ast.AstDeclList]
-  [expr : ast.AstExpr]) : bool
-  (match (tc-global-shared-view expr)
-    [(Call func-box args)
-      (let
-        [func : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases func-box)]
-        (or
-          (macro-call-is-expandable?
-            ctx
-            (tc-global-shared-view decls)
-            (tc-global-shared-view func)
-            expr)
-          (macro-expr-uses-macro?
-            ctx
-            expr-bases
-            (tc-global-shared-view decls)
-            func)
-          (macro-exprs-use-macro? ctx expr-bases decls args)))]
-    ;; The index is a literal integer, not an expression.
-    [(TupleRef a _) (macro-node-uses-macro? ctx expr-bases decls a)]
-    ;; These forms are conservatively assumed to use a macro. A scratch form
-    ;; takes its clone-out step from expansion.
-    [(or (Break) (Continue) (SpmdReduce _) (SpmdScan _) (SpmdCompact _)
-         (SpmdBroadcast _ _) (SpmdShuffle _ _) (WithRegion _ _) (WithResource _)
-         (Quote _) (Quasiquote _) (Unquote _) (UnquoteSplicing _)
-         (ForOwnedState _) (ForOwnedStep _) (WithEscape _ _) (WithScratch _))
-      true]
-    [_
-      (macro-exprs-use-macro?
-        ctx
-        expr-bases
-        decls
-        (ast.ast-expr-child-ids expr))]))
+  [expr : (& ast.AstExpr)]
+  [transformer? : bool]) : bool
+  (let
+    [node : ast.AstExpr (owned_view.compiler-owned-reference-shared-view expr)]
+    (match expr
+      [(Call func-box args)
+        (let
+          [func : ast.AstExpr
+            (ast.ast-expr-segment-bases-get expr-bases func-box)]
+          (or
+            (macro-call-is-expandable?
+              ctx
+              (tc-global-shared-view decls)
+              (tc-global-shared-view func)
+              node)
+            (macro-expr-uses-macro?
+              ctx
+              expr-bases
+              (tc-global-shared-view decls)
+              (& func)
+              transformer?)
+            (macro-exprs-use-macro? ctx expr-bases decls args transformer?)))]
+      ;; The index is a literal integer, not an expression.
+      [(TupleRef a _)
+        (macro-expr-uses-macro?
+          ctx
+          expr-bases
+          decls
+          (& (ast.ast-expr-segment-bases-get expr-bases a))
+          transformer?)]
+      [(or (Quote _) (Quasiquote _) (Unquote _) (UnquoteSplicing _))
+        (not transformer?)]
+      ;; These forms are conservatively assumed to use a macro. A scratch form
+      ;; takes its clone-out step from expansion.
+      [(or (Break) (Continue) (SpmdReduce _) (SpmdScan _) (SpmdCompact _)
+           (SpmdBroadcast _ _) (SpmdShuffle _ _) (WithRegion _ _)
+           (WithResource _) (ForOwnedState _) (ForOwnedStep _) (WithEscape _ _)
+           (WithScratch _))
+        true]
+      [_
+        (macro-exprs-use-macro?
+          ctx
+          expr-bases
+          decls
+          (& (ast.ast-expr-child-ids node))
+          transformer?)])))
 
 (define (macro-decl-uses-macro?
   [ctx : TcContext]
@@ -126730,13 +126761,18 @@
     [(or (Def _ _ _ expr-box) (DefFn _ _ _ _ expr-box _))
       (macro-node-uses-macro? ctx expr-bases decls expr-box)]
     [(DefMacro _ _ _ _ expr-box)
-      ;; A quoted template alone must not trigger a transformer body rebuild.
+      ;; The transformer check treats quoted templates as leaves.
       (and
         (macro-expr-id-might-fire?
           (tc-context-macro-state ctx)
           expr-bases
           expr-box)
-        (macro-node-uses-macro? ctx expr-bases decls expr-box))]
+        (macro-expr-uses-macro?
+          ctx
+          expr-bases
+          decls
+          (& (ast.ast-expr-segment-bases-get expr-bases expr-box))
+          true))]
     [(Test _ _ _ _) true]
     [(Import decl-meta (Spec kind _ _ _ _))
       (match kind

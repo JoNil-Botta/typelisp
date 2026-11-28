@@ -61697,7 +61697,7 @@
               (tc-lifetime-coercible-for-variance? env variance to bound.to)
               (set! index bound.previous-bound))]
           [else unit])
-        (set! schedule? (and (>= index 0) (< bound.previous-bound 0)))))
+        (set! schedule? (or (>= index 0) (>= bound.previous-bound 0)))))
     (Ok (tc-lifetime-subst-push-bound subst from to code index schedule?))))
 
 (defenum TcCallLifetimeChoice
@@ -61739,19 +61739,22 @@
   [fits? : (&mut bool)]) : TcLifetimeSubst
   (match subst
     [(Dense _ _ _ pending)
-      ;; A formal enters this worklist only on acquiring a second independent
-      ;; bound. Later occurrences, including pins, are found in this snapshot.
+      ;; Visit only formals that acquired independent bounds, newest update
+      ;; first. A pin supersedes earlier work for its formal in this snapshot.
+      (when (< pending 0) (return subst))
       (let
         [out : TcLifetimeSubst subst]
+        [seen : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity 4)]
         [index : i64 pending]
         (while (>= index 0)
           (let
             [entry : TcLifetimeSubstNode
               (tc-lifetime-subst-bound-at subst index)]
-            [head : i64 (tc-lifetime-subst-find subst entry.from)]
             (when
-              (>= (tc-lifetime-subst-bound-at subst head).previous-bound 0)
-              (match (tc-call-lifetime-choice env subst head)
+              (and
+                (tc_i64_i64_map.insert-if-absent-ref! (&mut seen) entry.from 1)
+                (>= entry.previous-bound 0))
+              (match (tc-call-lifetime-choice env subst index)
                 [(Fits choice)
                   (set! out (tc-lifetime-subst-push out entry.from choice))]
                 [(Conflict diagnostic)

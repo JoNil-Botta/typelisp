@@ -266,3 +266,50 @@
             (tc-lifetime-subst-lookup-eq? restricted 10 lower))
           (io.panic "typecheck: substituted lifetime escaped its snapshot"))]
       [(Err message) (io.panic message)])))
+
+(define (tc-test-call-bound
+  [subst : tc_core.TcLifetimeSubst]
+  [name : i64]
+  [actual : i64]
+  [position : tc_core.TcVariance]) : tc_core.TcLifetimeSubst
+  (match (tc_core.tc-lifetime-subst-bind-for-variance
+    (tc_core.tc-empty-env)
+    subst
+    name
+    actual
+    position)
+    [(Ok next) next]
+    [(Err message) (io.panic message)]))
+
+(test
+  compiler-typecheck-interleaved-pending-bounds
+  (let
+    [short : i64 (tc_core.tc-call-temporary-lifetime-id)]
+    [long : i64 (tc_core.tc-unconstrained-lifetime-id)]
+    [a : tc_core.TcLifetimeSubst
+      (tc-test-call-bound Nil 10 short (TcVarianceContravariant))]
+    [both : tc_core.TcLifetimeSubst
+      (tc-test-call-bound a 20 short (TcVarianceContravariant))]
+    [mixed : tc_core.TcLifetimeSubst
+      (tc-test-call-bound both 10 long (TcVarianceCovariant))]
+    [root : tc_core.TcLifetimeSubst
+      (tc-test-call-bound mixed 20 long (TcVarianceCovariant))]
+    [fits? : bool true]
+    [left : tc_core.TcLifetimeSubst
+      (tc_core.tc-call-lifetime-resolve
+        (tc_core.tc-empty-env)
+        (tc-test-call-bound root 10 long (TcVarianceInvariant))
+        (&mut fits?))]
+    [right : tc_core.TcLifetimeSubst
+      (tc_core.tc-call-lifetime-resolve
+        (tc_core.tc-empty-env)
+        (tc-test-call-bound root 20 long (TcVarianceInvariant))
+        (&mut fits?))]
+    (unless
+      (and
+        fits?
+        (tc-lifetime-subst-lookup-eq? left 10 long)
+        (tc-lifetime-subst-lookup-eq? left 20 short)
+        (tc-lifetime-subst-lookup-eq? right 10 short)
+        (tc-lifetime-subst-lookup-eq? right 20 long))
+      (io.panic "typecheck: deferred choices crossed formals or retry branches"))))

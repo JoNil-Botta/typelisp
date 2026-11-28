@@ -20,7 +20,6 @@
 (import stdlib.crypto_sha256 as sha256)
 (import stdlib.env)
 (import stdlib.io)
-(import stdlib.io_core)
 (import stdlib.process)
 (import stdlib.string)
 (import stdlib.text_buf)
@@ -3934,24 +3933,21 @@
                 [(OkIoRead read)
                   (set! first (byte_buf.to-array (io.file-read-bytes read)))])
               (if (and ok (> size sample-size))
-                (if (<
-                  (unsafe
-                    (io.platform-lseek
-                      (io_core.io-file-i64-ref
-                        (io_core.io-file-fds-ptr)
-                        handle.id)
-                      (- size sample-size)
-                      0))
-                  0)
-                  (begin
+                ;; This branch keeps the handle from file-open live until file-close below.
+                (match (unsafe
+                  (io.file-seek handle (- size sample-size)))
+                  [(ErrIoUnit _)
                     (set! ok false)
-                    (set! error-message "seek failed"))
-                  (match (io.file-read-chunk handle sample-size)
-                    [(ErrIoRead error)
-                      (set! ok false)
-                      (set! error-message (io.error-message error))]
-                    [(OkIoRead read)
-                      (set! last (byte_buf.to-array (io.file-read-bytes read)))]))
+                    (set! error-message "seek failed")]
+                  [(OkIoUnit)
+                    (match (io.file-read-chunk handle sample-size)
+                      [(ErrIoRead error)
+                        (set! ok false)
+                        (set! error-message (io.error-message error))]
+                      [(OkIoRead read)
+                        (set!
+                          last
+                          (byte_buf.to-array (io.file-read-bytes read)))])])
                 unit)
               (io.file-close handle)
               (if ok

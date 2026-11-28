@@ -25757,23 +25757,23 @@
       (unsafe
         (arena.from-raw-handle (tc-job-state-field job-state owner-arena i64)))]
     [cell : (__tl_dyn-array TcAggLayoutCacheStateData)
-      (in-arena owner (__tl_make-array TcAggLayoutCacheStateData 1))]
+      (in-arena
+        owner
+        (__tl_make-array
+          (TcAggLayoutCacheStateData
+            (arena.raw-handle owner)
+            (unsafe
+              (arena.from-raw-handle 0))
+            (__tl_make-array TcAggLayoutCacheSlot 0)
+            (__tl_make-array i64 0)
+            -1
+            -1)))]
     [address : i64
       (cast
         (unsafe
           (ptr->int
             (ptr-cast (__tl_array-data cell) : (Ptr TcAggLayoutCacheStateData))))
         : i64)]
-    (set!
-      (array-ref cell 0)
-      (TcAggLayoutCacheStateData
-        (arena.raw-handle owner)
-        (unsafe
-          (arena.from-raw-handle 0))
-        (__tl_make-array TcAggLayoutCacheSlot 0)
-        (__tl_make-array i64 0)
-        -1
-        -1))
     (tc-job-state-set-agg-layout-cache-address! job-state address)
     (TcAggLayoutCacheState address)))
 
@@ -33433,52 +33433,6 @@
     import-unqualified
     name-id)
   (tc-bind-unsafe-id env (tc-module-name-id-by-id alias-id name-id) ty))
-
-;; Raw arena authority is a constructor effect of the canonical declaration,
-;; not a property inferred from the spelling of a call. All environment routes
-;; preserve the ordinary unsafe-callable marker, including import aliases and
-;; hygienic definition-site lookup. Inert integer reads remain ordinary values.
-(define (tc-struct-constructor-unsafe? [nominal-id : i64]) : bool
-  (tc-arena-nominal-name-id? nominal-id))
-
-(define (tc-bind-struct-constructor-id
-  [env : TcTypeEnv]
-  [binding-id : i64]
-  [nominal-id : i64]
-  [ty : ast.AstType]) : TcTypeEnv
-  (if (tc-struct-constructor-unsafe? nominal-id)
-    (tc-bind-unsafe-id env binding-id ty)
-    (tc-bind-id env binding-id ty)))
-
-(define (tc-bind-import-alias-struct-id
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [alias-id : i64]
-  [importer-module-id : i64]
-  [source-module-id : i64]
-  [import-unqualified : bool]
-  [name-id : i64]
-  [ty : ast.AstType]) : TcTypeEnv
-  (if (tc-struct-constructor-unsafe?
-    (tc-module-name-id-by-id source-module-id name-id))
-    (tc-bind-import-alias-value-unsafe-id
-      ctx
-      env
-      alias-id
-      importer-module-id
-      source-module-id
-      import-unqualified
-      name-id
-      ty)
-    (tc-bind-import-alias-value-id
-      ctx
-      env
-      alias-id
-      importer-module-id
-      source-module-id
-      import-unqualified
-      name-id
-      ty)))
 
 (define (tc-struct-cleanup-function-type [struct-ty : ast.AstType]) : ast.AstType
   (tc-fn1 struct-ty (Unit)))
@@ -55777,9 +55731,8 @@
           (& constructor-ty))
         (Ok
           (tc-bind-struct-cleanup-module-id
-            (tc-bind-struct-constructor-id
+            (tc-bind-id
               env
-              (tc-module-name-id-by-id module-id name)
               (tc-module-name-id-by-id module-id name)
               constructor-ty)
             module-id
@@ -55804,9 +55757,8 @@
           (& constructor-ty))
         (Ok
           (tc-bind-struct-cleanup-module-id
-            (tc-bind-struct-constructor-id
+            (tc-bind-id
               env
-              (tc-module-name-id-by-id module-id name)
               (tc-module-name-id-by-id module-id name)
               constructor-ty)
             module-id
@@ -56132,7 +56084,7 @@
         (Ok
           (tc-bind-struct-cleanup-import-alias
             ctx
-            (tc-bind-import-alias-struct-id
+            (tc-bind-import-alias-value-id
               ctx
               env
               alias
@@ -56158,7 +56110,7 @@
         (Ok
           (tc-bind-struct-cleanup-import-alias
             ctx
-            (tc-bind-import-alias-struct-id
+            (tc-bind-import-alias-value-id
               ctx
               env
               alias
@@ -56976,11 +56928,7 @@
                   (tc-module-view-note-type!
                     ctx
                     (tc-global-shared-view constructor-ty))]
-                (tc-bind-struct-constructor-id
-                  env
-                  name
-                  (tc-module-name-id-by-id (tc-context-module-id ctx) name)
-                  constructor-ty))
+                (tc-bind-id env name constructor-ty))
               env)
             seen
             cleanup
@@ -57002,11 +56950,7 @@
                   (tc-module-view-note-type!
                     ctx
                     (tc-global-shared-view constructor-ty))]
-                (tc-bind-struct-constructor-id
-                  env
-                  name
-                  (tc-module-name-id-by-id (tc-context-module-id ctx) name)
-                  constructor-ty))
+                (tc-bind-id env name constructor-ty))
               env)
             seen
             cleanup
@@ -90040,10 +89984,8 @@
           "typecheck: set! tuple element requires mutable tuple access"))]
     [_ (Err "typecheck: set! tuple element requires tuple")]))
 
-;; Writing raw representation or exposing an exclusive projection can create
-;; authority just as construction can: an Arena handle, or a sealed handle type
-;; outside its module family (#9783). Check the resolved receiver at the
-;; ordinary typed-place boundary; reads of the fields remain safe.
+;; Mutation or an exclusive projection of a cleanup-owning sealed handle
+;; outside its module family requires unsafe authority (#9783).
 (define (tc-struct-field-mutation-admission
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -90051,19 +89993,16 @@
   [field-id : i64]) : ResultTcUnit
   (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
     [(or (ast.AstType.Struct name) (ast.AstType.StructArgs name _))
-      (cond
-        [(tc-arena-nominal-name-id? name)
-          (tc-require-unsafe ctx env "mutation of Arena.handle")]
-        [(tc-sealed-handle-foreign? ctx env name)
-          (let
-            [_
-              (when
-                (tc-job-state-opaque-fields? (tc-context-job-state ctx))
-                (let
-                  [_ (try (tc-struct-field-type-id ctx name field-id))]
-                  unit))]
-            (tc-sealed-handle-require-unsafe ctx env name "field mutation"))]
-        [else ResultTcUnit.Ok])]
+      (if (tc-sealed-handle-foreign? ctx env name)
+        (let
+          [_
+            (when
+              (tc-job-state-opaque-fields? (tc-context-job-state ctx))
+              (let
+                [_ (try (tc-struct-field-type-id ctx name field-id))]
+                unit))]
+          (tc-sealed-handle-require-unsafe ctx env name "field mutation"))
+        ResultTcUnit.Ok)]
     [(ast.AstType.Ref _ referent)
       (tc-struct-field-mutation-admission
         ctx

@@ -373,7 +373,7 @@
           (tc.tc-serial-job-state)
           ;; The request borrows the facts arena destroyed after it.
           (unsafe
-            (arena.from-raw-handle owner.handle))
+            (arena.from-raw-handle (arena.raw-handle owner)))
           false
           false
           0
@@ -535,7 +535,7 @@
           (tc.tc-serial-job-state)
           ;; The request borrows the facts arena destroyed after it.
           (unsafe
-            (arena.from-raw-handle owner.handle))
+            (arena.from-raw-handle (arena.raw-handle owner)))
           false
           false
           0
@@ -556,7 +556,7 @@
           (tc.tc-serial-job-state)
           ;; The request borrows the facts arena destroyed after it.
           (unsafe
-            (arena.from-raw-handle package-owner.handle))
+            (arena.from-raw-handle (arena.raw-handle package-owner)))
           false
           false
           0
@@ -766,10 +766,10 @@
                   (driver.compiler-driver-state-typecheck (& scope.state))
                   ;; The request borrows the facts arena destroyed after it.
                   (unsafe
-                    (arena.from-raw-handle owner.handle))
+                    (arena.from-raw-handle (arena.raw-handle owner)))
                   generated
                   false
-                  home.handle
+                  (arena.raw-handle home)
                   semantic-facts-test-consumer-in-owner)))
               [(check.ResultCompilerCheck.Ok _ _) true]
               [_ false]))]

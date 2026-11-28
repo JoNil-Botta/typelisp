@@ -9946,16 +9946,15 @@ arena helper signatures, and an `arena.Arena` cannot be passed where an
 values do not switch the active arena, free arena chains, rewind allocation,
 or invalidate live safe handles.
 
-Constructing the canonical `arena.Arena` from an integer requires `unsafe`,
-including through import aliases and generated expressions. Its constructor
-has the ordinary unsafe-callable effect and cannot be erased into a plain
-function value. The caller must establish that the raw handle identifies a
-live arena for every use of the resulting wrapper. Zero identifies the
-runtime's default arena, so an `unsafe` construction from `0` names it.
-Reading `.handle` produces an inert integer and is safe. Writing that field,
-replacing it, or exposing an exclusive reference to it requires `unsafe` and
-the same live-handle obligation. The rule belongs to the canonical arena
-declaration, not an unrelated user type with the same short name.
+The representation fields of `arena.Arena` and `arena.ArenaMark` are opaque
+outside the arena module family (§3.5.4). For low-level interop,
+`arena.raw-handle` and `arena.mark-raw-handle` return raw integer identities.
+`arena.from-raw-handle` takes an integer and requires `unsafe`. Its caller
+must establish that the integer identifies a live arena for every use.
+Zero identifies the runtime's default arena. `arena.mark-from-raw-handle`
+also requires `unsafe`. Before rewinding to the resulting mark, the caller
+must restore the live arena that issued it and ensure the mark is still
+valid there.
 
 An `in-arena` target may also be a shared or exclusive reference to a branded
 `(arena.Arena storage)`. Allocation provenance is `storage`, independent of the

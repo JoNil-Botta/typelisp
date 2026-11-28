@@ -1,3 +1,5 @@
+(module stdlib.crypto_sha256.tests)
+
 (cfg test (import stdlib.byte_buf))
 (cfg test (import stdlib.crypto_sha256 as sha))
 (cfg test (import stdlib.test))

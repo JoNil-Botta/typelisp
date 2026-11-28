@@ -211,7 +211,9 @@
               (ptr-cast (__tl_array-data newpos) : (MutPtr i64))
               whence))]
         (if (= ok (cast 0 : i32))
-          -1
+          (begin
+            (set-error-code (cast (io-win-get-last-error) : i64))
+            -1)
           (array-ref newpos 0))))))
 
 ;: Windows `_open` replacement via CreateFileA, translating the POSIX-style
@@ -1998,7 +2000,7 @@
 ;: v1 handles must be closed explicitly with `file-close`; there is no implicit
 ;: drop until move-only/drop semantics land.
 (defstruct FileHandle
-  (id i64))
+  (id i64 (:opaque)))
 
 ;: Return the file-table token that the Formatter callback validates on use.
 ;; lint-allow: function-name-case -- exact nominal suffix is the writer key.
@@ -2248,6 +2250,31 @@
       (if (= status io-status-unsupported)
         (ErrIoUnit (IoUnsupported (file-handle-invalid-message)))
         (ErrIoUnit (error-from-label "file-close" status))))))
+
+;: Set an open file's position to an absolute byte offset.
+;:
+;: The caller must keep the original file opened by `file-open` live for the
+;: entire call. The slot check only checks current occupancy. A closed
+;: handle's slot may have been reused for another file.
+(unsafe
+  (define (file-seek [handle : FileHandle] [offset : i64]) : ResultIoUnit
+    (let
+      [raw : i64 handle.id]
+      (if (valid-handle? raw)
+        (unsafe
+          (let
+            [fd : i64 (io_core.io-file-i64-ref (io_core.io-file-fds-ptr) raw)]
+            [position : i64 (platform-lseek fd offset 0)]
+            (if (< position 0)
+              (ErrIoUnit (error-from-label "file-seek" (last-error-code)))
+              (begin
+                (io_core.io-file-bool-set! (io_core.io-file-eofs-ptr) raw false)
+                (io_core.io-file-bool-set!
+                  (io_core.io-file-last-ready-ptr)
+                  raw
+                  false)
+                OkIoUnit))))
+        (ErrIoUnit (IoUnsupported (file-handle-invalid-message)))))))
 
 ;: Return the owned buffer captured by a streaming file read.
 (define (file-read-bytes [read : FileRead]) : byte_buf.ByteBuf
@@ -2978,6 +3005,20 @@
           ""
           true
           "eof remains sticky")
+        (io-handle-test-assert-ok-unit
+          (unsafe
+            (file-seek read-handle 3))
+          "seek after eof: ")
+        (io-handle-test-assert-read-ok
+          (file-read-chunk read-handle 0)
+          ""
+          false
+          "seek clears eof")
+        (io-handle-test-assert-read-ok
+          (file-read-chunk read-handle 2)
+          "de"
+          false
+          "read from the requested offset")
         (io-handle-test-assert-ok-unit
           (file-close read-handle)
           "close read handle: ")

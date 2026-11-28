@@ -65,7 +65,9 @@
       (not (absorb (&mut state) (byte_buf.as-bytes (& hrr)) true))
       (return 4))
     (when (tag-valid? (& state) (transcript.ThroughServerHello)) (return 5))
-    (when (!= state.hash.byte-length (cast 74 : u64)) (return 6))
+    (when
+      (!= (sha.state-byte-length (& state.hash)) (cast 74 : u64))
+      (return 6))
     (when
       (not (absorb (&mut state) (byte_buf.as-bytes (& ch)) false))
       (return 7))

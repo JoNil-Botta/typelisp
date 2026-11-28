@@ -3,5 +3,7 @@
 
 (define (main) : i64
   (let
-    [owner : arena.Arena (arena.Arena 12345)]
-    owner.handle))
+    [owner : arena.Arena
+      (unsafe
+        (arena.Arena 0))]
+    (arena.raw-handle owner)))

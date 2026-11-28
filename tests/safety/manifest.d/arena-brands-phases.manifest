@@ -1,15 +1,15 @@
 # Safety corpus cases: arena brands, phases, activation, handles, raw constructors, and self-named carriers.
 # Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
 
-arena_raw_constructor_reject|check-fail|tests/safety/arena_raw_constructor_reject.tl|-|requires unsafe context
-arena_raw_constructor_helper_reject|check-fail|tests/safety/arena_raw_constructor_helper_reject.tl|-|requires unsafe context
-arena_raw_constructor_alias_reject|check-fail|tests/safety/arena_raw_constructor_alias_reject.tl|-|requires unsafe context
-arena_raw_constructor_value_reject|check-fail|tests/safety/arena_raw_constructor_value_reject.tl|-|requires unsafe context
-arena_raw_constructor_macro_reject|check-fail|tests/safety/arena_raw_constructor_macro_reject.tl|-|requires unsafe context
-arena_raw_field_write_reject|check-fail|tests/safety/arena_raw_field_write_reject.tl|-|mutation of Arena.handle requires unsafe context
-arena_raw_field_replace_reject|check-fail|tests/safety/arena_raw_field_replace_reject.tl|-|mutation of Arena.handle requires unsafe context
-arena_raw_field_borrow_reject|check-fail|tests/safety/arena_raw_field_borrow_reject.tl|-|mutation of Arena.handle requires unsafe context
-arena_raw_field_parameter_reject|check-fail|tests/safety/arena_raw_field_parameter_reject.tl|-|mutation of Arena.handle requires unsafe context
+arena_raw_constructor_reject|check-fail|tests/safety/arena_raw_constructor_reject.tl|-|E0221
+arena_raw_constructor_helper_reject|check-fail|tests/safety/arena_raw_constructor_helper_reject.tl|-|E0221
+arena_raw_constructor_alias_reject|check-fail|tests/safety/arena_raw_constructor_alias_reject.tl|-|E0221
+arena_raw_constructor_value_reject|check-fail|tests/safety/arena_raw_constructor_value_reject.tl|-|E0221
+arena_raw_constructor_macro_reject|check-fail|tests/safety/arena_raw_constructor_macro_reject.tl|-|E0221
+arena_raw_field_write_reject|check-fail|tests/safety/arena_raw_field_write_reject.tl|-|E0221
+arena_raw_field_replace_reject|check-fail|tests/safety/arena_raw_field_replace_reject.tl|-|E0221
+arena_raw_field_borrow_reject|check-fail|tests/safety/arena_raw_field_borrow_reject.tl|-|E0221
+arena_raw_field_parameter_reject|check-fail|tests/safety/arena_raw_field_parameter_reject.tl|-|E0221
 self_named_carrier_store_reject|check-fail|tests/safety/self_named_carrier_store_reject.tl|-|struct field assignment type mismatch: expected (& m i64), found (& p i64)
 self_named_carrier_alias_store_reject|check-fail|tests/safety/self_named_carrier_alias_store_reject.tl|-|struct field assignment type mismatch: expected (& m i64), found (& p i64)
 self_named_return_reject|check-fail|tests/safety/self_named_return_reject.tl|-|source lifetime `a` does not outlive required lifetime `q`

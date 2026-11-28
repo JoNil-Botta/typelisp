@@ -1680,65 +1680,63 @@
 (define (compiler-backend-stream-state-new) : CompilerBackendStreamState
   (let
     [cell : (__tl_dyn-array CompilerBackendStreamStateData)
-      (__tl_make-array CompilerBackendStreamStateData 1)]
-    (set!
-      (array-ref cell 0)
-      (CompilerBackendStreamStateData
-        false
-        (unsafe
-          (arena.from-raw-handle 0))
-        (unsafe
-          (arena.mark-from-raw-handle 0))
-        (unsafe
-          (arena.from-raw-handle 0))
-        (unsafe
-          (arena.mark-from-raw-handle 0))
-        (unsafe
-          (arena.from-raw-handle 0))
-        (text_buf.empty)
-        0
-        (text_buf.empty)
-        0
-        false
-        0
-        (__tl_make-array i64 0)
-        (__tl_make-array i64 0)
-        (__tl_make-array u8 0)
-        0
-        (__tl_make-array i64 0)
-        (__tl_make-array i64 0)
-        (__tl_make-array i64 0)
-        (__tl_make-array i64 0)
-        (__tl_make-array i64 0)
-        (__tl_make-array i64 0)
-        (__tl_make-array i64 0)
-        (__tl_make-array i64 0)
-        (__tl_make-array u8 0)
-        0
-        0
-        (__tl_make-array i64 0)
-        (__tl_make-array i64 0)
-        (__tl_make-array i64 0)
-        (__tl_make-array u8 0)
-        0
-        1
-        (__tl_make-array CompilerBackendPeepholeLineRecord 0)
-        (__tl_make-array i64 0)
-        0
-        (__tl_make-array i64 0)
-        (__tl_make-array i64 0)
-        (__tl_make-array i64 0)
-        (__tl_make-array i64 0)
-        0
-        0
-        false
-        (__tl_make-array i64 0)
-        0
-        0
-        (__tl_make-array i64 0)
-        (backend_string_i64_map.with-capacity 1)
-        0
-        0))
+      (__tl_make-array
+        (CompilerBackendStreamStateData
+          false
+          (unsafe
+            (arena.from-raw-handle 0))
+          (unsafe
+            (arena.mark-from-raw-handle 0))
+          (unsafe
+            (arena.from-raw-handle 0))
+          (unsafe
+            (arena.mark-from-raw-handle 0))
+          (unsafe
+            (arena.from-raw-handle 0))
+          (text_buf.empty)
+          0
+          (text_buf.empty)
+          0
+          false
+          0
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array u8 0)
+          0
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array u8 0)
+          0
+          0
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array u8 0)
+          0
+          1
+          (__tl_make-array CompilerBackendPeepholeLineRecord 0)
+          (__tl_make-array i64 0)
+          0
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
+          0
+          0
+          false
+          (__tl_make-array i64 0)
+          0
+          0
+          (__tl_make-array i64 0)
+          (backend_string_i64_map.with-capacity 1)
+          0
+          0))]
     (CompilerBackendStreamState
       (cast
         (unsafe

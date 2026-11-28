@@ -515,7 +515,7 @@
   (let
     [first-owner : arena.Arena (arena.make)]
     [_install-first : unit
-      (lsp.lsp-frame-memory-install! "old\nlast" first-owner.handle)]
+      (lsp.lsp-frame-memory-install! "old\nlast" (arena.raw-handle first-owner))]
     [line : io.StdinRead (lsp.lsp-frame-memory-read-line)]
     [tail : io.StdinRead (lsp.lsp-frame-memory-read-bytes 20)]
     [_write-first : unit
@@ -526,7 +526,7 @@
     [first-ok : bool
       (and
         first.active
-        (= first.owner.handle first-owner.handle)
+        (= (arena.raw-handle first.owner) (arena.raw-handle first-owner))
         (string.eq
           (byte_buf.to-string
             (io.stdin-read-buffer (owned_view.compiler-owned-shared-view line)))
@@ -546,7 +546,7 @@
     [reset-ok : bool
       (and
         (not cleared.active)
-        (= cleared.owner.handle 0)
+        (= (arena.raw-handle cleared.owner) 0)
         (string.eq cleared.input "")
         (= cleared.input-offset 0)
         (not cleared.eof)
@@ -554,14 +554,14 @@
         (string.eq cleared.stderr ""))]
     [second-owner : arena.Arena (arena.make)]
     [_install-second : unit
-      (lsp.lsp-frame-memory-install! "new\n" second-owner.handle)]
+      (lsp.lsp-frame-memory-install! "new\n" (arena.raw-handle second-owner))]
     [fresh : lsp.LspFrameMemoryState (lsp-memory-state)]
     [second-line : io.StdinRead (lsp.lsp-frame-memory-read-line)]
     [second : lsp.LspFrameMemoryState (lsp-memory-state)]
     [second-ok : bool
       (and
         fresh.active
-        (= fresh.owner.handle second-owner.handle)
+        (= (arena.raw-handle fresh.owner) (arena.raw-handle second-owner))
         (= fresh.input-offset 0)
         (not fresh.eof)
         (string.eq fresh.stdout "")

@@ -112,6 +112,17 @@
         unit)
       (OkIoString (byte_buf.to-string contents)))))
 
+(define (compiler-load-source-read-diagnostic [path : (& path str)]) : (Box
+    cdiag.CompilerDiagnostic)
+  (box
+    (cdiag.compiler-diagnostic-load
+      SourceRead
+      (cdiag.compiler-diagnostic-at-start
+        (string.copy path)
+        (str_cat.str-cat
+          "compiler-load: cannot read import "
+          (string.copy path))))))
+
 (define (compiler-load-lex-token-buffer-arena-handle) : i64
   (lexer.spanned-token-buffer-arena-handle-value))
 
@@ -7621,14 +7632,7 @@
             pools)]
         [(CompilerEmbeddedStdlibNoSource)
           (parser.ResultAstProgramDiagnostic.Err
-            (box
-              (cdiag.compiler-diagnostic-load
-                SourceRead
-                (cdiag.compiler-diagnostic-at-start
-                  (string.copy path)
-                  (str_cat.str-cat
-                    "compiler-load: cannot read import "
-                    (string.copy path))))))]))
+            (compiler-load-source-read-diagnostic (& path)))]))
       [(Ok program)
         (match (compiler-load-surface-summary-build
           (& (string.copy path))
@@ -12760,15 +12764,7 @@
                     path-dedup
                     path-key-id))]
               [(CompilerEmbeddedStdlibNoSource)
-                (Err
-                  (box
-                    (cdiag.compiler-diagnostic-load
-                      SourceRead
-                      (cdiag.compiler-diagnostic-at-start
-                        (string.copy path)
-                        (str_cat.str-cat
-                          "compiler-load: cannot read import "
-                          path)))))])))))))
+                (Err (compiler-load-source-read-diagnostic path))])))))))
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-with-pools
   [load-state : CompilerLoadSessionState]
@@ -12931,15 +12927,7 @@
                     path-dedup
                     path-key-id))]
               [(CompilerEmbeddedStdlibNoSource)
-                (Err
-                  (box
-                    (cdiag.compiler-diagnostic-load
-                      SourceRead
-                      (cdiag.compiler-diagnostic-at-start
-                        (string.copy path)
-                        (str_cat.str-cat
-                          "compiler-load: cannot read import "
-                          path)))))])))))))
+                (Err (compiler-load-source-read-diagnostic path))])))))))
 
 (define (compiler-load-source-fallback-with-pools
   [state : (& CompilerLoadSessionState)]
@@ -14738,13 +14726,7 @@
               (string.copy source-module-fallback)
               source-module-fallback-id))]
         [(CompilerEmbeddedStdlibNoSource)
-          (Err
-            (box
-              (cdiag.compiler-diagnostic-load
-                SourceRead
-                (cdiag.compiler-diagnostic-at-start
-                  (string.copy path)
-                  (str_cat.str-cat "compiler-load: cannot read import " path)))))]))))
+          (Err (compiler-load-source-read-diagnostic path))]))))
 
 (define (compiler-load-package-file-with-paths-and-roots-expect-cache-current
   [path : (& str)]

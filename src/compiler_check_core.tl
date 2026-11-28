@@ -393,11 +393,14 @@
   [path : String]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheck
-  (compiler-check-source-with-roots-and-cfg
-    (owned_view.compiler-owned-shared-view path)
-    (compiler_load.compiler-load-session-read-source-text path)
-    stdlib-roots
-    cfgs))
+  (match (compiler_load.compiler-load-try-read-file-text (& path))
+    [(OkIoString source)
+      (compiler-check-source-with-roots-and-cfg path source stdlib-roots cfgs)]
+    [(ErrIoString _)
+      (Err
+        (cdiag.compiler-diagnostic-list-box-single
+          (compiler_load.compiler-load-source-read-diagnostic (& path)))
+        (cdiag.compiler-advisory-list-empty))]))
 
 (define (compiler-check-package-source-with-prelude-recovery
   [path : String]

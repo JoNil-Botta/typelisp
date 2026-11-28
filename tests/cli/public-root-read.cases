@@ -1,0 +1,24 @@
+do none
+target -
+opt -
+
+case missing-root
+target linux-x86_64 windows-x86_64
+each check compile build run
+step missing-file
+run {{each}} "{{dir}}/missing.tl" --target {{target}}
+exit 1
+stdout empty
+stderr contains error[E0301]: compiler-load: cannot read import
+stderr contains missing.tl:1:1
+
+case unreadable-check-root
+target linux-x86_64 windows-x86_64
+file directory.tl/child.txt
+end-file
+step directory-as-file
+run check "{{dir}}/directory.tl" --target {{target}}
+exit 1
+stdout empty
+stderr contains error[E0301]: compiler-load: cannot read import
+stderr contains directory.tl:1:1

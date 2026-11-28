@@ -1,3 +1,5 @@
+(import package_profile_core as pkg_profile)
+
 ;; clean_cli_core.tl - Selfhost clean command logic.
 ;;
 ;; Removes deterministic TypeLisp build artifacts and the dedicated ad-hoc
@@ -272,14 +274,14 @@
       (build_cli_core.build-package-output-dir-profile
         (string.copy (& manifest-dir))
         name
-        (build_cli_core.BuildProfile.Release))]
+        (pkg_profile.PackageProfile.Release))]
     [release-prefix : String
       (str_cat.str-cat (string.copy (& release-dir)) "/")]
     [dev-dir : String
       (build_cli_core.build-package-output-dir-profile
         manifest-dir
         name
-        (build_cli_core.BuildProfile.Dev))]
+        (pkg_profile.PackageProfile.Dev))]
     [dev-prefix : String (str_cat.str-cat (string.copy (& dev-dir)) "/")]
     (and
       (not (clean-dangerous-path? path))
@@ -330,6 +332,141 @@
         (str_cat.str-cat "clean: refusing unsafe artifact path " path ""))
       1)))
 
+(define (clean-package-profile
+  [manifest-dir : String]
+  [name : String]
+  [dry-run : bool]
+  [profile : pkg_profile.PackageProfile]) : i64
+  (let
+    [status : i64 0]
+    (set!
+      status
+      (clean-merge-status
+        status
+        (clean-remove-package-file
+          (string.copy (& manifest-dir))
+          (string.copy (& name))
+          dry-run
+          (build_cli_core.build-package-asm-path-profile
+            (string.copy (& manifest-dir))
+            (string.copy (& name))
+            profile))))
+    (set!
+      status
+      (clean-merge-status
+        status
+        (clean-remove-package-file
+          (string.copy (& manifest-dir))
+          (string.copy (& name))
+          dry-run
+          (build_cli_core.build-package-obj-path-profile
+            (string.copy (& manifest-dir))
+            (string.copy (& name))
+            profile
+            (Linux)))))
+    (set!
+      status
+      (clean-merge-status
+        status
+        (clean-remove-package-file
+          (string.copy (& manifest-dir))
+          (string.copy (& name))
+          dry-run
+          (build_cli_core.build-package-obj-path-profile
+            (string.copy (& manifest-dir))
+            (string.copy (& name))
+            profile
+            (Windows)))))
+    (set!
+      status
+      (clean-merge-status
+        status
+        (clean-remove-package-runtime-artifact
+          (string.copy (& manifest-dir))
+          (string.copy (& name))
+          dry-run
+          (build_cli_core.build-package-bin-path-profile
+            (string.copy (& manifest-dir))
+            (string.copy (& name))
+            profile
+            (Linux)))))
+    (set!
+      status
+      (clean-merge-status
+        status
+        (clean-remove-package-runtime-artifact
+          (string.copy (& manifest-dir))
+          (string.copy (& name))
+          dry-run
+          (build_cli_core.build-package-bin-path-profile
+            (string.copy (& manifest-dir))
+            (string.copy (& name))
+            profile
+            (Windows)))))
+    (set!
+      status
+      (clean-merge-status
+        status
+        (clean-remove-package-runtime-artifact
+          (string.copy (& manifest-dir))
+          (string.copy (& name))
+          dry-run
+          (build_cli_core.build-package-lib-path-profile
+            (string.copy (& manifest-dir))
+            (string.copy (& name))
+            profile
+            (Linux)))))
+    (set!
+      status
+      (clean-merge-status
+        status
+        (clean-remove-package-runtime-artifact
+          (string.copy (& manifest-dir))
+          (string.copy (& name))
+          dry-run
+          (build_cli_core.build-package-lib-path-profile
+            (string.copy (& manifest-dir))
+            (string.copy (& name))
+            profile
+            (Windows)))))
+    (set!
+      status
+      (clean-merge-status
+        status
+        (clean-remove-package-file
+          (string.copy (& manifest-dir))
+          (string.copy (& name))
+          dry-run
+          (build_cli_core.build-package-tlci-path-profile
+            (string.copy (& manifest-dir))
+            (string.copy (& name))
+            profile))))
+    (set!
+      status
+      (clean-merge-status
+        status
+        (clean-remove-package-file
+          (string.copy (& manifest-dir))
+          (string.copy (& name))
+          dry-run
+          (build_cli_core.build-package-tli-path-profile
+            (string.copy (& manifest-dir))
+            (string.copy (& name))
+            profile))))
+    (set!
+      status
+      (clean-merge-status
+        status
+        (clean-remove-package-dir
+          (string.copy (& manifest-dir))
+          (string.copy (& name))
+          dry-run
+          (build_cli_core.build-package-output-dir-profile
+            manifest-dir
+            (& name)
+            profile))))
+    status))
+
 (define (clean-package-from-path [manifest-path : String] [dry-run : bool]) : i64
   (match (build_cli_core.build-load-manifest
     (owned_view.compiler-owned-shared-view manifest-path))
@@ -340,7 +477,6 @@
       (let
         [manifest-dir : String (load.compiler-load-dirname manifest-path)]
         [name : String manifest.name]
-        [status : i64 0]
         (if (not
           (clean-package-name-safe?
             (owned_view.compiler-owned-shared-view name)))
@@ -348,135 +484,17 @@
             (io.print-error
               (str_cat.str-cat "clean: refusing unsafe package name " name ""))
             1)
-          (begin
-            (set!
-              status
-              (clean-merge-status
-                status
-                (clean-remove-package-file
-                  (owned_view.compiler-owned-shared-view manifest-dir)
-                  name
-                  dry-run
-                  (build_cli_core.build-package-asm-path
-                    (owned_view.compiler-owned-shared-view manifest-dir)
-                    (owned_view.compiler-owned-shared-view name)))))
-            (set!
-              status
-              (clean-merge-status
-                status
-                (clean-remove-package-file
-                  (owned_view.compiler-owned-shared-view manifest-dir)
-                  name
-                  dry-run
-                  (build_cli_core.build-package-obj-path
-                    (owned_view.compiler-owned-shared-view manifest-dir)
-                    (owned_view.compiler-owned-shared-view name)
-                    (Linux)))))
-            (set!
-              status
-              (clean-merge-status
-                status
-                (clean-remove-package-file
-                  (owned_view.compiler-owned-shared-view manifest-dir)
-                  name
-                  dry-run
-                  (build_cli_core.build-package-obj-path
-                    (owned_view.compiler-owned-shared-view manifest-dir)
-                    (owned_view.compiler-owned-shared-view name)
-                    (Windows)))))
-            (set!
-              status
-              (clean-merge-status
-                status
-                (clean-remove-package-runtime-artifact
-                  (owned_view.compiler-owned-shared-view manifest-dir)
-                  name
-                  dry-run
-                  (build_cli_core.build-package-bin-path
-                    (owned_view.compiler-owned-shared-view manifest-dir)
-                    (owned_view.compiler-owned-shared-view name)
-                    (Linux)))))
-            (set!
-              status
-              (clean-merge-status
-                status
-                (clean-remove-package-runtime-artifact
-                  (owned_view.compiler-owned-shared-view manifest-dir)
-                  name
-                  dry-run
-                  (build_cli_core.build-package-bin-path
-                    (owned_view.compiler-owned-shared-view manifest-dir)
-                    (owned_view.compiler-owned-shared-view name)
-                    (Windows)))))
-            (set!
-              status
-              (clean-merge-status
-                status
-                (clean-remove-package-runtime-artifact
-                  (owned_view.compiler-owned-shared-view manifest-dir)
-                  name
-                  dry-run
-                  (build_cli_core.build-package-lib-path
-                    (owned_view.compiler-owned-shared-view manifest-dir)
-                    (owned_view.compiler-owned-shared-view name)
-                    (Linux)))))
-            (set!
-              status
-              (clean-merge-status
-                status
-                (clean-remove-package-runtime-artifact
-                  (owned_view.compiler-owned-shared-view manifest-dir)
-                  name
-                  dry-run
-                  (build_cli_core.build-package-lib-path
-                    (owned_view.compiler-owned-shared-view manifest-dir)
-                    (owned_view.compiler-owned-shared-view name)
-                    (Windows)))))
-            (set!
-              status
-              (clean-merge-status
-                status
-                (clean-remove-package-file
-                  (owned_view.compiler-owned-shared-view manifest-dir)
-                  name
-                  dry-run
-                  (build_cli_core.build-package-tlci-path
-                    (owned_view.compiler-owned-shared-view manifest-dir)
-                    (owned_view.compiler-owned-shared-view name)))))
-            (set!
-              status
-              (clean-merge-status
-                status
-                (clean-remove-package-file
-                  (owned_view.compiler-owned-shared-view manifest-dir)
-                  name
-                  dry-run
-                  (build_cli_core.build-package-tli-path-profile
-                    (owned_view.compiler-owned-shared-view manifest-dir)
-                    (owned_view.compiler-owned-shared-view name)
-                    (build_cli_core.BuildProfile.Dev)))))
-            (set!
-              status
-              (clean-merge-status
-                status
-                (clean-remove-package-file
-                  (owned_view.compiler-owned-shared-view manifest-dir)
-                  name
-                  dry-run
-                  (build_cli_core.build-package-tli-path-profile
-                    (owned_view.compiler-owned-shared-view manifest-dir)
-                    (owned_view.compiler-owned-shared-view name)
-                    (build_cli_core.BuildProfile.Release)))))
-            (set!
-              status
-              (clean-merge-status
-                status
-                (clean-remove-package-dir
-                  (owned_view.compiler-owned-shared-view manifest-dir)
-                  name
-                  dry-run
-                  (build_cli_core.build-package-output-dir manifest-dir name))))
-            status)))]))
+          (clean-merge-status
+            (clean-package-profile
+              (string.copy (& manifest-dir))
+              (string.copy (& name))
+              dry-run
+              (pkg_profile.PackageProfile.Dev))
+            (clean-package-profile
+              manifest-dir
+              name
+              dry-run
+              (pkg_profile.PackageProfile.Release)))))]))
 
 (define (clean-package
   [manifest-path : String]

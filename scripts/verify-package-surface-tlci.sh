@@ -167,7 +167,7 @@ run_failure_pair() {
     unset TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE || true
     rm -rf "$CONSUMER/target"
     set +e
-    "$COMPILER" build \
+    "$COMPILER" build --release \
         --manifest-path "$CONSUMER/typelisp.pkg" \
         --target "$NL_BOOTSTRAP_TARGET" \
         --backend-mode scalar \
@@ -188,7 +188,7 @@ run_failure_pair() {
     export TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE
     rm -rf "$CONSUMER/target"
     set +e
-    "$COMPILER" build \
+    "$COMPILER" build --release \
         --manifest-path "$CONSUMER/typelisp.pkg" \
         --target "$NL_BOOTSTRAP_TARGET" \
         --backend-mode scalar \
@@ -490,7 +490,7 @@ export TYPELISP_DEPENDENCY_TLCI_VERIFY
 unset TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE || true
 
 echo "[package-surface-tlci] trusted direct dependency set"
-if ! "$COMPILER" build \
+if ! "$COMPILER" build --release \
     --manifest-path "$CONSUMER/typelisp.pkg" \
     --target "$NL_BOOTSTRAP_TARGET" \
     --backend-mode scalar \
@@ -547,7 +547,7 @@ TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE=1
 export TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE
 
 echo "[package-surface-tlci] forced-source direct dependency set"
-if ! "$COMPILER" build \
+if ! "$COMPILER" build --release \
     --manifest-path "$CONSUMER/typelisp.pkg" \
     --target "$NL_BOOTSTRAP_TARGET" \
     --backend-mode scalar \
@@ -607,7 +607,7 @@ cat > "$CONSUMER/src/main.tl" <<'EOF'
 EOF
 unset TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE || true
 rm -rf "$CONSUMER/target"
-if ! "$COMPILER" build \
+if ! "$COMPILER" build --release \
     --manifest-path "$CONSUMER/typelisp.pkg" \
     --target "$NL_BOOTSTRAP_TARGET" \
     --backend-mode scalar \
@@ -622,7 +622,7 @@ run_consumer_90 interleaved
 rm -rf "$CONSUMER/target"
 TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE=1
 export TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE
-if ! "$COMPILER" build \
+if ! "$COMPILER" build --release \
     --manifest-path "$CONSUMER/typelisp.pkg" \
     --target "$NL_BOOTSTRAP_TARGET" \
     --backend-mode scalar \
@@ -728,11 +728,11 @@ for pair in "v7:$V7_NC" "v11:$V11_NC"; do
     "$COMPILER" check --manifest-path "$pkg/typelisp.pkg" --target "$NL_BOOTSTRAP_TARGET" \
         > "$WORKDIR/$tag-check.out" 2> "$WORKDIR/$tag-check.err" ||
         fail "#9755 $tag check failed"
-    "$COMPILER" build --manifest-path "$pkg/typelisp.pkg" --target "$NL_BOOTSTRAP_TARGET" --opt-level 0 \
+    "$COMPILER" build --release --manifest-path "$pkg/typelisp.pkg" --target "$NL_BOOTSTRAP_TARGET" --opt-level 0 \
         > "$WORKDIR/$tag-build.out" 2> "$WORKDIR/$tag-build.err" ||
         fail "#9755 $tag build failed"
     set +e
-    "$COMPILER" run --manifest-path "$pkg/typelisp.pkg" --target "$NL_BOOTSTRAP_TARGET" --opt-level 0 \
+    "$COMPILER" run --release --manifest-path "$pkg/typelisp.pkg" --target "$NL_BOOTSTRAP_TARGET" --opt-level 0 \
         > "$WORKDIR/$tag-run.out" 2> "$WORKDIR/$tag-run.err"
     run_status=$?
     set -e
@@ -822,7 +822,7 @@ EOF
         rm -rf "$CONSUMER/target"
         log="$WORKDIR/opacity-$opacity_case-$route"
         status=0
-        "$COMPILER" build --manifest-path "$CONSUMER/typelisp.pkg" \
+        "$COMPILER" build --release --manifest-path "$CONSUMER/typelisp.pkg" \
             --target "$NL_BOOTSTRAP_TARGET" --opt-level 0 \
             > "$log.out" 2> "$log.err" || status=$?
         if [ "$opacity_case" = public ]; then

@@ -78,7 +78,7 @@ stdout empty
 stderr contains Usage:
 stderr contains Synopsis:
 sh CCV_commands=$(awk '/^Commands:/ { c = 1; next } c && /^[[:space:]]*$/ { c = 0; next } c && /^[^[:space:]]/ { c = 0 } c && /^[[:space:]]+typelisp / { print $2 }' "{{stderr}}" | sort -u | tr '\n' ' ')
-test "{{commands}}" = "build check clean compile doc expand explain fmt init inspect lint lsp new repl run test "
+test "{{commands}}" = "assemble build check clean compile doc expand explain fmt init inspect lint lsp new repl run test "
 
 case selfhost-cli-surface-build
 run build "{{work}}/main.tl" -o "{{dir}}/build-surface{{exe}}"
@@ -191,11 +191,11 @@ end-file
 step selfhost-cli-surface-inspect-build-package
 run build --manifest-path "{{dir}}/inspect-package/typelisp.pkg"
 stderr empty
-test -f "{{dir}}/inspect-package/target/release/surface_inspect.tlci" -a -s "{{dir}}/inspect-package/target/release/surface_inspect.tlci"
+test -f "{{dir}}/inspect-package/target/dev/surface_inspect.tlci" -a -s "{{dir}}/inspect-package/target/dev/surface_inspect.tlci"
 run --producer-identity
 stdout capture producer ^([0-9a-f]{40})$
 step selfhost-cli-surface-inspect
-run inspect "{{dir}}/inspect-package/target/release/surface_inspect.tlci"
+run inspect "{{dir}}/inspect-package/target/dev/surface_inspect.tlci"
 stderr empty
 stdout contains tlci image
 stdout contains package-name: surface_inspect

@@ -1,4 +1,4 @@
 (import stdlib.arena as pool)
 
 (define (main) : i64
-  (pool.Arena 12345).handle)
+  (pool.raw-handle (pool.Arena 0)))

@@ -425,3 +425,42 @@ contains "include": "#bindings"
 contains "include": "#user-types"
 contains "include": "#function-call"
 contains "name": "string.quoted.single.typelisp"
+
+case cold-attribute-format-and-doc
+file cold_format.tl
+(define (report) (:export-symbol "c60_report") (:cold) : i64 42)
+(define (log-error) (:cold) unit)
+end-file
+step format-cold
+run fmt "{{dir}}/cold_format.tl"
+stderr empty
+in file {{dir}}/cold_format.tl
+contains   (:export-symbol "c60_report")
+contains   (:cold) : i64
+contains   (:cold)
+contains   unit)
+step format-cold-fixpoint
+run fmt --check "{{dir}}/cold_format.tl"
+stderr empty
+
+file cold_generator.tl
+(defmacro (make-cold) : Module
+  `(begin
+    (module generated.cold)
+    (define (report) (:cold) : i64 42)))
+end-file
+file cold_doc.tl
+;# Generated cold path.
+;# ```typelisp
+;# (import cold_generator)
+;# (import (cold_generator.make-cold) as cold)
+;# ```
+
+(import cold_generator)
+(import (cold_generator.make-cold) as cold)
+end-file
+step doc-generated-cold-signature
+run doc --load "{{dir}}/cold_doc.tl" "{{dir}}/cold_doc.md"
+stderr empty
+in file {{dir}}/cold_doc.md
+contains (define (report) (:cold) : i64 ...)

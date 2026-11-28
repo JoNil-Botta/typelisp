@@ -256,11 +256,17 @@ echo "Linting TypeLisp sources for $count file(s) in batches of $LINT_BATCH_SIZE
 LINT_CHUNK_DIR="$WORKDIR/chunks"
 rm -rf "$LINT_CHUNK_DIR"
 mkdir -p "$LINT_CHUNK_DIR"
-awk -v outdir="$LINT_CHUNK_DIR" -v size="$LINT_BATCH_SIZE" '
+awk -v outdir="$LINT_CHUNK_DIR" -v size="$LINT_BATCH_SIZE" -v test_files="$GATE_STDLIB_TEST_CFG_FILES" '
+    BEGIN {
+        n = split(test_files, paths, " ")
+        for (i = 1; i <= n; i++) test_cfg_files[paths[i]] = 1
+    }
     {
         source_rules = ($0 ~ /^src\//)
         compiler_tool = ($0 == "tools/embedded-stdlib-tli/roundtrip.tl" || $0 == "tools/build-stdlib-sysroot/main.tl")
-        if (count == 0 || count == size || source_rules != previous_rules || compiler_tool != previous_tool) {
+        test_cfg = ($0 in test_cfg_files)
+        if (count == 0 || count == size || source_rules != previous_rules ||
+            compiler_tool != previous_tool || test_cfg != previous_test_cfg) {
             if (count != 0) close(path)
             chunk++
             count = 0
@@ -270,6 +276,7 @@ awk -v outdir="$LINT_CHUNK_DIR" -v size="$LINT_BATCH_SIZE" '
         count++
         previous_rules = source_rules
         previous_tool = compiler_tool
+        previous_test_cfg = test_cfg
     }
 ' "$FILES"
 
@@ -334,6 +341,7 @@ bounded_pool_run_job() {
     set --
     _src_rules=0
     _compiler_tool=0
+    _test_cfg=0
     while IFS= read -r _lint_source; do
         [ -n "$_lint_source" ] || continue
         set -- "$@" "$_lint_source"
@@ -341,6 +349,9 @@ bounded_pool_run_job() {
             src/*) _src_rules=1 ;;
             tools/embedded-stdlib-tli/roundtrip.tl | tools/build-stdlib-sysroot/main.tl) _compiler_tool=1 ;;
         esac
+        if gate_stdlib_needs_test_cfg "$_lint_source"; then
+            _test_cfg=1
+        fi
     done < "$_lint_chunk"
     if [ "$_src_rules" -eq 1 ]; then
         set -- --deprecated-string-concat --redundant-begin --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" "$@"
@@ -349,6 +360,9 @@ bounded_pool_run_job() {
     fi
     if [ "$NAME_CASE_CURRENT" -eq 1 ]; then
         set -- --name-case "$@"
+    fi
+    if [ "$_test_cfg" -eq 1 ]; then
+        set -- --cfg test "$@"
     fi
     _chunk_status=0
     ci_timing_run "$_chunk_id" lint \

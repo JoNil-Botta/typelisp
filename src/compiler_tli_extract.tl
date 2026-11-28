@@ -832,7 +832,8 @@
   [ret : (& ast.AstType)]
   [comptime-only : bool]
   [unsafe-decl : bool]
-  [must-use : bool]) : tli.TliFnSummary
+  [must-use : bool]
+  [cold? : bool]) : tli.TliFnSummary
   (let
     [mask : i64 0]
     [extra : indices.Vec (indices.new)]
@@ -875,6 +876,7 @@
           (!= (array-ref facts.indirect index) 0)
           tli.tli-fn-has-indirect-effects)
         (tli-extract-flag must-use 128)
+        (tli-extract-flag cold? tli.tli-fn-cold)
         (tli-extract-flag
           (!= (array-ref facts.param-arena index) 0)
           tli.tli-fn-stores-ambient-arena-arg))
@@ -946,7 +948,8 @@
                 (& ret)
                 false
                 unsafe-decl
-                must-use)]
+                must-use
+                false)]
             (set! all-flags (bit-and all-flags row.effect-flags))
             (set!
               any-flags
@@ -1696,7 +1699,8 @@
         (& result)
         (tli-extract-comptime? ctx original)
         unsafe-decl
-        (ast.ast-decl-must-use? original))]
+        (ast.ast-decl-must-use? original)
+        (ast.ast-decl-meta-cold? (& (ast.ast-decl-meta original))))]
     [meta-kind : i64
       (match meta
         [(No) 0]
@@ -1832,7 +1836,9 @@
                           (& result)
                           comptime-only
                           unsafe-decl
-                          (ast.ast-decl-must-use? original)))))]
+                          (ast.ast-decl-must-use? original)
+                          (ast.ast-decl-meta-cold?
+                            (& (ast.ast-decl-meta original)))))))]
                 [_ (io.panic "TLI expected an extern function signature")])]
             [(Value)
               (values.push-ref!
@@ -2812,7 +2818,7 @@
 
 (define (tli-partition-function-has-syscall? [func : (& ir.CompilerIrFunction)]) : bool
   (match func
-    [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks _ _)
       (match blocks
         [(ir.CompilerIrBlockList.Array block-seq)
           (let
@@ -2833,7 +2839,7 @@
     [refs : i64_map.Map (i64_map.with-capacity 32)]
     [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
     (match func
-      [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
+      [(ir.CompilerIrFunction.Function _ _ _ _ blocks _ _)
         (match blocks
           [(ir.CompilerIrBlockList.Array block-seq)
             (for [bi (iterator.range 0 block-seq.len)]
@@ -2857,7 +2863,7 @@
     [changed : bool false]
     (for [i (iterator.range 0 fn-count)]
       (match (& (array-ref functions.slots i))
-        [(ir.CompilerIrFunction.Function fn-name _ _ _ _ _)
+        [(ir.CompilerIrFunction.Function fn-name _ _ _ _ _ _)
           (set! (array-ref fn-ids i) (ir.compiler-ir-symbol-id fn-name))])
       (set!
         (array-ref fn-refs i)
@@ -2897,7 +2903,7 @@
           (tli-partition-collect-value-refs! (&mut refs) (& value))]))
     (for [fi (iterator.range 0 functions.len)]
       (match (& (array-ref functions.slots fi))
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
+        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _ _)
           (match blocks
             [(ir.CompilerIrBlockList.Array block-seq)
               (for [bi (iterator.range 0 block-seq.len)]
@@ -3172,7 +3178,7 @@
             (__tl_make-array bool module-count)]
           (for [i (iterator.range 0 ex-count)]
             (match (& (array-ref whole-externs.slots i))
-              [(ir.CompilerIrExtern.Extern name-id _ _ _ _ _ _ provided _ _ _)
+              [(ir.CompilerIrExtern.Extern name-id _ _ _ _ _ _ provided _ _ _ _)
                 (when
                   provided
                   (i64_map.insert-ref!
@@ -3181,7 +3187,7 @@
                     i))]))
           (for [i (iterator.range 0 fn-count)]
             (match (& (array-ref whole-functions.slots i))
-              [(ir.CompilerIrFunction.Function fn-name _ _ _ _ _)
+              [(ir.CompilerIrFunction.Function fn-name _ _ _ _ _ _)
                 (let
                   [owner-id : i64
                     (lower.compiler-lower-state-function-owner-module-id
@@ -3283,7 +3289,14 @@
             [skipped-modules : i64 0]
             (for [i (iterator.range 0 fn-count)]
               (match (& (array-ref whole-functions.slots i))
-                [(ir.CompilerIrFunction.Function fn-name fn-params fn-ret _ _ _)
+                [(ir.CompilerIrFunction.Function
+                    fn-name
+                    fn-params
+                    fn-ret
+                    _
+                    _
+                    _
+                    cold?)
                   (let
                     [fn-name-str : String (ir.compiler-ir-symbol-text fn-name)]
                     [fn-sig : ast.AstType
@@ -3306,6 +3319,7 @@
                               _
                               prov-abi
                               prov-sym
+                              _
                               _
                               _
                               _
@@ -3347,7 +3361,8 @@
                         false
                         (ir.CompilerIrReturnStorage.None)
                         false
-                        (ir.CompilerIrGlobalStorage.Word))))]))
+                        (ir.CompilerIrGlobalStorage.Word)
+                        cold?)))]))
             (for [i (iterator.range 0 gl-count)]
               (when
                 (not (array-ref gl-private i))
@@ -3381,7 +3396,8 @@
                           false
                           ;; Another module reads this cell; an inline one is
                           ;; read by address.
-                          (ir.compiler-ir-global-storage-clone (& gl-storage)))))])))
+                          (ir.compiler-ir-global-storage-clone (& gl-storage))
+                          false)))])))
             ;; The stdlib sysroot attaches v3 compact_ir + packed optimizer
             ;; summaries, pins module digests, verifies, and writes its `.tli`
             ;; here. Package builders write their own `.tli` (no `compact_ir`).
@@ -3489,6 +3505,7 @@
                                   _
                                   _
                                   fn-blocks
+                                  _
                                   _)
                                 (when
                                   (and
@@ -3540,7 +3557,7 @@
                           (= (array-ref fn-owners i) m)
                           (not (array-ref fn-skip i)))
                         (match (& (array-ref whole-functions.slots i))
-                          [(ir.CompilerIrFunction.Function fn-name _ _ _ _ _)
+                          [(ir.CompilerIrFunction.Function fn-name _ _ _ _ _ _)
                             (let
                               [pidx : i64
                                 (i64_map.get-value-or
@@ -3570,6 +3587,7 @@
                             link-id
                             _
                             provided
+                            _
                             _
                             _
                             _)
@@ -3604,7 +3622,7 @@
                       (when
                         (!= (array-ref fn-owners i) m)
                         (match (& (array-ref whole-functions.slots i))
-                          [(ir.CompilerIrFunction.Function fn-name _ _ _ _ _)
+                          [(ir.CompilerIrFunction.Function fn-name _ _ _ _ _ _)
                             (let
                               [fid : i64 (ir.compiler-ir-symbol-id fn-name)]
                               (when
@@ -3633,7 +3651,8 @@
                                           eprov
                                           estor
                                           _
-                                          ecell)
+                                          ecell
+                                          cold?)
                                         (ir.compiler-ir-extern-builder-push!
                                           (&mut e-builder)
                                           (ir.CompilerIrExtern.Extern
@@ -3647,7 +3666,8 @@
                                             eprov
                                             estor
                                             true
-                                            ecell))])
+                                            ecell
+                                            cold?))])
                                     (ir.compiler-ir-extern-builder-push!
                                       (&mut e-builder)
                                       cloned-ext)))))])))

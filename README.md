@@ -53,9 +53,8 @@ implemented subset.
   reclaimed through program-lifetime, scoped, first-class, or atomic arenas.
   See the [memory model](docs/memory-model.md).
 
-The native assembler and linker are still required build inputs. “Zero
-third-party dependencies” does not mean that the operating-system toolchain is
-optional.
+On Linux, TypeLisp assembles its own output and uses the host linker and
+archiver. Windows builds use the Windows native toolchain.
 
 ## Quick start
 
@@ -106,6 +105,7 @@ Windows builds require `clang`, MSVC `link.exe`, and a Windows SDK.
 typelisp check <file.tl>       Type-check without linking
 typelisp compile <file.tl>     Generate assembly
 typelisp build <file.tl>       Compile, assemble, and link
+typelisp assemble <file.s> -o <file.o>   Assemble final TypeLisp Linux x86-64 output
 typelisp run <file.tl>         Build and run
 typelisp test <file.tl>        Run inline tests
 typelisp fmt --check <file.tl>

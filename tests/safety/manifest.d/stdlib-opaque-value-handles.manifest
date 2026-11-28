@@ -1,0 +1,7 @@
+# Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+arena_mark_ctor_opaque_reject|check-fail|tests/safety/arena_mark_ctor_opaque_reject.tl|-|E0221
+file_handle_offset_opaque_reject|check-fail|tests/safety/file_handle_offset_opaque_reject.tl|-|E0221
+file_handle_zero_init_opaque_reject|check-fail|tests/safety/file_handle_zero_init_opaque_reject.tl|-|E0221
+fs_lock_pattern_opaque_reject|check-fail|tests/safety/fs_lock_pattern_opaque_reject.tl|-|E0221
+sha256_state_field_opaque_reject|check-fail|tests/safety/sha256_state_field_opaque_reject.tl|-|E0221
+sync_channel_ctor_opaque_reject|check-fail|tests/safety/sync_channel_ctor_opaque_reject.tl|-|E0221

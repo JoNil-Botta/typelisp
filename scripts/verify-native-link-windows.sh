@@ -333,7 +333,7 @@ assert_empty "$WORKDIR/source-fallback.stdout"
 assert_empty "$WORKDIR/source-fallback.stderr"
 
 PACKAGE_DIR="$WORKDIR/direct-object-package"
-PACKAGE_OUTPUT_DIR="$PACKAGE_DIR/target/release"
+PACKAGE_OUTPUT_DIR="$PACKAGE_DIR/target/dev"
 PACKAGE_BIN="$PACKAGE_OUTPUT_DIR/windows_direct_object_pkg.exe"
 PACKAGE_BIN_DISPLAY=$PACKAGE_BIN
 if command -v cygpath >/dev/null 2>&1; then
@@ -398,7 +398,7 @@ assert_empty "$WORKDIR/package-direct-object.stdout"
 assert_empty "$WORKDIR/package-direct-object.stderr"
 
 FALLBACK_PACKAGE_DIR="$WORKDIR/semantic-fallback-package"
-FALLBACK_PACKAGE_BIN="$FALLBACK_PACKAGE_DIR/target/release/windows_semantic_fallback_pkg.exe"
+FALLBACK_PACKAGE_BIN="$FALLBACK_PACKAGE_DIR/target/dev/windows_semantic_fallback_pkg.exe"
 mkdir -p "$FALLBACK_PACKAGE_DIR/src"
 cat > "$FALLBACK_PACKAGE_DIR/typelisp.pkg" <<'EOF'
 (package
@@ -793,10 +793,10 @@ run_windows_archive_smoke() {
     ARCHIVE_WORKDIR="$ROOT/target/native-archive-windows-$ARCHIVE_SMOKE_NAME"
     ARCHIVE_LIB_PKG="$ARCHIVE_WORKDIR/archive-lib"
     ARCHIVE_APP_PKG="$ARCHIVE_WORKDIR/archive-app"
-    ARCHIVE_LIB="$ARCHIVE_LIB_PKG/target/release/archive_lib.lib"
-    ARCHIVE_TLI="$ARCHIVE_LIB_PKG/target/release/archive_lib.tli"
-    ARCHIVE_ASM="$ARCHIVE_LIB_PKG/target/release/archive_lib.s"
-    ARCHIVE_APP="$ARCHIVE_APP_PKG/target/release/archive_app.exe"
+    ARCHIVE_LIB="$ARCHIVE_LIB_PKG/target/dev/archive_lib.lib"
+    ARCHIVE_TLI="$ARCHIVE_LIB_PKG/target/dev/archive_lib.tli"
+    ARCHIVE_ASM="$ARCHIVE_LIB_PKG/target/dev/archive_lib.s"
+    ARCHIVE_APP="$ARCHIVE_APP_PKG/target/dev/archive_app.exe"
 
     rm -rf "$ARCHIVE_WORKDIR"
     mkdir -p "$ARCHIVE_LIB_PKG/src" "$ARCHIVE_APP_PKG/src"

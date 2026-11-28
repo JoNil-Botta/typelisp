@@ -330,6 +330,11 @@ BATCH_ERR="$WORKDIR/batch.stderr"
 checked=0
 for witness in stdlib/tests/*.tl; do
     checked=$((checked + 1))
+    if gate_stdlib_needs_test_cfg "$witness"; then
+        "$COMPILER" check "$witness" --target "$HOST_TARGET" \
+            --stdlib-root stdlib --no-prebuilt-stdlib --cfg test
+        continue
+    fi
     expect="$(reject_diag "$witness")"
     printf '%s\n' "$witness" >> "$BATCH_LIST"
     printf '%s\t%s\n' "$witness" "$expect" >> "$BATCH_META"

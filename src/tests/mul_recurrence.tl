@@ -147,7 +147,8 @@
         ty
         7
         blocks
-        (Ordinary))]
+        (Ordinary)
+        false)]
     [out : ir.CompilerIrFunction (opt.opt-mul-latency-function func)]
     [rewritten : bool (or (< mode 2) (= mode 5))]
     (when

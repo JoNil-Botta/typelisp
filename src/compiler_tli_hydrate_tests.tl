@@ -1162,7 +1162,8 @@
             (ast.AstType.I64))
           (ir.CompilerIrInstr.Return
             (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0))))))
-    (ir.CompilerIrFunctionAbi.Ordinary)))
+    (ir.CompilerIrFunctionAbi.Ordinary)
+    false))
 
 ;; A body calling itself would encode its own archive symbol with no extern-ref,
 ;; and hydration names the body by its source symbol, so the self-call would be

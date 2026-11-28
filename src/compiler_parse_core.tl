@@ -10133,47 +10133,43 @@
   [ret : ast.AstType]
   [body : i64]
   [export : ast.AstFnExport]
-  [spmd-callable : (& ast.AstSpmdCallable)]) : ResultAstDecl
-  (if (and
-    (match export
-      [(Export _) true]
-      [_ false])
-    (match spmd-callable
-      [(Callable _) true]
-      [_ false]))
-    (Err "parse: define :spmd-callable cannot be combined with :export-symbol")
-    (if (ast-param-list-has-comptime? params)
+  [spmd-callable : (& ast.AstSpmdCallable)]
+  [cold? : bool]) : ResultAstDecl
+  (let
+    [export?
       (match export
-        [(Export _)
-          (Err
-            "parse: define :export-symbol cannot be used on functions with comptime parameters")]
-        [(No)
-          (match spmd-callable
-            [(No)
-              (Ok
-                (ast.ast-decl-def-fn-metadata-id
-                  name
-                  (owned_view.compiler-owned-reference-shared-view params)
-                  ret
-                  body
-                  (&
-                    (ast.ast-fn-metadata-full
-                      export
-                      (owned_view.compiler-owned-reference-shared-view
-                        spmd-callable)))))]
-            [(Callable _)
-              (Err
-                "parse: define :spmd-callable cannot be used on functions with comptime parameters")])])
-      (Ok
-        (ast.ast-decl-def-fn-metadata-id
-          name
-          (owned_view.compiler-owned-reference-shared-view params)
-          ret
-          body
-          (&
-            (ast.ast-fn-metadata-full
-              export
-              (owned_view.compiler-owned-reference-shared-view spmd-callable))))))))
+        [(Export _) true]
+        [_ false])]
+    [callable?
+      (match spmd-callable
+        [(Callable _) true]
+        [_ false])]
+    [comptime? (ast-param-list-has-comptime? params)]
+    (cond
+      [(and export? callable?)
+        (Err
+          "parse: define :spmd-callable cannot be combined with :export-symbol")]
+      [(and comptime? export?)
+        (Err
+          "parse: define :export-symbol cannot be used on functions with comptime parameters")]
+      [(and comptime? callable?)
+        (Err
+          "parse: define :spmd-callable cannot be used on functions with comptime parameters")]
+      [else
+        (Ok
+          (ast.ast-decl-def-fn-metadata-id
+            (ast.ast-decl-meta-runtime-with-aggregate-markers
+              (if cold?
+                ast.ast-decl-cold-bit
+                0))
+            name
+            (owned_view.compiler-owned-reference-shared-view params)
+            ret
+            body
+            (&
+              (ast.ast-fn-metadata-full
+                export
+                (owned_view.compiler-owned-reference-shared-view spmd-callable)))))])))
 
 (define (parse-ast-define-fn-rest
   [dispatch : sym_i64_env.SymI64Env]
@@ -10184,6 +10180,7 @@
   [seen-export : bool]
   [spmd-callable : (& ast.AstSpmdCallable)]
   [seen-spmd-callable : bool]
+  [cold? : bool]
   [rest : reader.SpannedSexpr]) : ResultAstDecl
   (match (reader.spanned-sexpr-view rest)
     [(List (slice first & _) _)
@@ -10208,7 +10205,8 @@
                   parsed-ret
                   parsed-body
                   export
-                  spmd-callable))]
+                  spmd-callable
+                  cold?))]
             [_
               (Err
                 (parse-kind-message
@@ -10236,6 +10234,7 @@
                           true
                           spmd-callable
                           seen-spmd-callable
+                          cold?
                           tail)))]
                   [(=
                       (ci.intern-syntax-id-value key)
@@ -10258,7 +10257,27 @@
                           seen-export
                           (& parsed-callable)
                           true
+                          cold?
                           tail)))]
+                  [(string.eq
+                      (compiler-parse-dispatch-syntax-id-text dispatch key)
+                      ":cold")
+                    (cond
+                      [cold? (Err "parse: duplicate define :cold metadata")]
+                      [(!= (length after-key) 0)
+                        (Err "parse: define :cold expects no arguments")]
+                      [else
+                        (parse-ast-define-fn-rest
+                          dispatch
+                          pools
+                          name
+                          params
+                          export
+                          seen-export
+                          spmd-callable
+                          seen-spmd-callable
+                          true
+                          tail)])]
                   [(compiler-parse-metadata-key? dispatch key)
                     (Err
                       (str_cat.str-cat
@@ -10288,7 +10307,8 @@
                 (Unit)
                 parsed-body
                 export
-                spmd-callable)))))]
+                spmd-callable
+                cold?)))))]
     [_
       (Err
         (parse-kind-message
@@ -10312,6 +10332,7 @@
       No
       false
       (& (No))
+      false
       false
       rest)))
 

@@ -3,7 +3,7 @@
 (import stdlib.arena)
 (import stdlib.string)
 
-;; An unrelated nominal spelling does not acquire the builtin's effect.
+;; A separately declared Arena has ordinary public fields.
 (defstruct Arena
   (handle i64))
 
@@ -24,12 +24,10 @@
     [local : Arena (Arena 40)]
     [size : i64 (in-arena view (string.string-length (string.concat "a" "b")))]
     (begin
-      (unsafe
-        (begin
-          (set! view.handle raw)
-          (let
-            [_prior : i64 (replace! view.handle raw)]
-            (restore-handle (&mut view.handle) raw))))
+      (set! local.handle 39)
+      (let
+        [prior : i64 (replace! local.handle 0)]
+        (restore-handle (&mut local.handle) (+ prior 1)))
       (unsafe
         ;; lint-allow: raw-arena-op
         (arena.destroy owner))

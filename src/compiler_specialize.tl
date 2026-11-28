@@ -59,7 +59,7 @@
 ;; template is identified by its module and name, and its instances take its
 ;; place, in its module (#8597).
 (defenum SpecTemplate
-  (Item i64 i64 i64 ast.AstParamList ast.AstType ast.AstExpr))
+  (Item i64 i64 i64 ast.AstParamList ast.AstType ast.AstExpr bool))
 
 ;; Templates are collected once per program and then only counted and indexed,
 ;; so the collection is one contiguous buffer plus a live count.
@@ -949,7 +949,7 @@
 
 (define (spec-maybe-template-module [maybe : (& maybe SpecMaybeTemplate)]) : i64
   (match maybe
-    [(Some (Item _ module _ _ _ _)) module]
+    [(Some (Item _ module _ _ _ _ _)) module]
     [(None) -1]))
 
 ;; The slot of `module`'s template named `name-id`, or -1.
@@ -984,7 +984,7 @@
     (let
       [template : SpecTemplate (spec-array-shared-view templates.slots at)]
       (match (spec-place-shared-view template)
-        [(Item _ module name _ _ _)
+        [(Item _ module name _ _ _ _)
           (if (>= (spec-template-slot (& index) values next module name) 0)
             (spec-template-index-build
               templates
@@ -1214,7 +1214,8 @@
             name
             params
             ret
-            (ast.ast-node-pool-context-expr-get pools body-box)))
+            (ast.ast-node-pool-context-expr-get pools body-box)
+            (ast.ast-decl-meta-cold? (& decl-meta))))
         (None))]
     [(Unsafe inner-box)
       (spec-template-item pools order module (deref inner-box))]
@@ -2756,11 +2757,11 @@
                 (gen-maybe-type-eq? (& a-ty) (& b-ty))
                 (gen-expr-eq? (& a-value) (& b-value))))]
           [_ false]))]
-    [(DefFn decl-meta a-name a-params a-ret a-body-box a-metadata)
+    [(DefFn a-meta a-name a-params a-ret a-body-box a-metadata)
       (let
         [a-body : ast.AstExpr (ast.ast-node-get a-body-box)]
         (match (owned_view.compiler-owned-reference-shared-view b)
-          [(DefFn decl-meta b-name b-params b-ret b-body-box b-metadata)
+          [(DefFn b-meta b-name b-params b-ret b-body-box b-metadata)
             (let
               [b-body : ast.AstExpr (ast.ast-node-get b-body-box)]
               (and
@@ -2768,6 +2769,9 @@
                 (gen-param-list-eq? (& a-params) (& b-params))
                 (ctfe.ctfe-type-eq (& a-ret) (& b-ret))
                 (gen-expr-eq? (& a-body) (& b-body))
+                (=
+                  (ast.ast-decl-meta-cold? (& a-meta))
+                  (ast.ast-decl-meta-cold? (& b-meta)))
                 (gen-fn-metadata-eq? (& a-metadata) (& b-metadata))))]
           [_ false]))]
     [(DefEnum a-meta a-name a-cleanup a-variants)
@@ -3139,9 +3143,9 @@
                 (& a-value)
                 (& (spec-owner-expr-get owner b-value-box))))]
           [_ false]))]
-    [(DefFn _ a-name a-params a-ret a-body-box a-metadata)
+    [(DefFn a-meta a-name a-params a-ret a-body-box a-metadata)
       (match b
-        [(DefFn _ b-name b-params b-ret b-body-box b-metadata)
+        [(DefFn b-meta b-name b-params b-ret b-body-box b-metadata)
           (and
             (= a-name b-name)
             (gen-param-list-eq-with-owner owner env a-params b-params)
@@ -3151,6 +3155,9 @@
               env
               (& (spec-owner-expr-get owner a-body-box))
               (& (spec-owner-expr-get owner b-body-box)))
+            (=
+              (ast.ast-decl-meta-cold? a-meta)
+              (ast.ast-decl-meta-cold? b-meta))
             (gen-fn-metadata-eq-with-owner owner env a-metadata b-metadata))]
         [_ false])]
     [(DefEnum a-meta a-name a-cleanup a-variants)
@@ -4743,7 +4750,7 @@
   [state : (&mut state SpecState)]
   [origin : (& ast.AstExpr)]) : ResultSpecSubExpr
   (match template
-    [(Item _ _ name-id params _ _)
+    [(Item _ _ name-id params _ _ _)
       (let
         [name : String
           (spec_ci.intern-compat-state-str (spec-state-intern state) name-id)]
@@ -4950,7 +4957,7 @@
   [state : (&mut state SpecState)]
   [_origin : (& ast.AstExpr)]) : ResultSpecSubExpr
   (match (owned_view.compiler-owned-reference-shared-view template)
-    [(Item order module name-id params ret body)
+    [(Item order module name-id params ret body cold?)
       (let
         [name : String
           (spec_ci.intern-compat-state-str
@@ -5010,7 +5017,11 @@
                         (spec-decl-list-append-one
                           (& state.generated)
                           (&
-                            (ast.ast-decl-def-fn-id
+                            (ast.ast-decl-def-fn-metadata-id
+                              (ast.ast-decl-meta-runtime-with-aggregate-markers
+                                (if cold?
+                                  ast.ast-decl-cold-bit
+                                  0))
                               generated-name-id
                               (spec-substitute-param-types-with-owner
                                 (& state.pools)
@@ -5020,7 +5031,8 @@
                                 (& state.pools)
                                 ret
                                 type-subs)
-                              rewritten-body))))
+                              rewritten-body
+                              (& (ast.ast-fn-metadata No))))))
                       (Ok generated-name-id)))]
                 [(Err diag) (Err diag)]))]))]))
 
@@ -6099,6 +6111,7 @@
           (Ok
             (Some
               (ast.ast-decl-def-fn-metadata-id
+                decl-meta
                 name
                 params
                 ret

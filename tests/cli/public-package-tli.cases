@@ -59,13 +59,13 @@ stderr empty
 step s33-build-cold
 run build --manifest-path "{{dir}}/s33/typelisp.pkg" --target {{host-target}}
 stderr empty
-test -s "{{dir}}/vendor/libd/target/release/libd.tli"
-exec "{{dir}}/s33/target/release/app_s33{{exe}}"
+test -s "{{dir}}/vendor/libd/target/dev/libd.tli"
+exec "{{dir}}/s33/target/dev/app_s33{{exe}}"
 exit 42
 step s33-build-warm
 run build --manifest-path "{{dir}}/s33/typelisp.pkg" --target {{host-target}}
 stderr empty
-exec "{{dir}}/s33/target/release/app_s33{{exe}}"
+exec "{{dir}}/s33/target/dev/app_s33{{exe}}"
 exit 42
 step s28-check
 run check --manifest-path "{{dir}}/s28/typelisp.pkg"
@@ -73,7 +73,7 @@ stderr empty
 step s28-build
 run build --manifest-path "{{dir}}/s28/typelisp.pkg" --target {{host-target}}
 stderr empty
-exec "{{dir}}/s28/target/release/app_s28{{exe}}"
+exec "{{dir}}/s28/target/dev/app_s28{{exe}}"
 exit 42
 step rep-check
 run check --manifest-path "{{dir}}/rep/typelisp.pkg"
@@ -81,7 +81,7 @@ stderr empty
 step rep-build
 run build --manifest-path "{{dir}}/rep/typelisp.pkg" --target {{host-target}}
 stderr empty
-exec "{{dir}}/rep/target/release/app_rep{{exe}}"
+exec "{{dir}}/rep/target/dev/app_rep{{exe}}"
 exit 42
 step local-macro-check
 run check --manifest-path "{{dir}}/local_macro/typelisp.pkg"
@@ -89,7 +89,7 @@ stderr empty
 step local-macro-build
 run build --manifest-path "{{dir}}/local_macro/typelisp.pkg" --target {{host-target}}
 stderr empty
-exec "{{dir}}/local_macro/target/release/app_local{{exe}}"
+exec "{{dir}}/local_macro/target/dev/app_local{{exe}}"
 exit 42
 
 # #9750 addendum: a macro template's own helper in a moduleless dep with
@@ -131,7 +131,7 @@ stderr empty
 step named-build
 run build --manifest-path "{{dir}}/named/typelisp.pkg" --target {{host-target}}
 stderr empty
-exec "{{dir}}/named/target/release/app_named{{exe}}"
+exec "{{dir}}/named/target/dev/app_named{{exe}}"
 exit 7
 step body-check
 run check --manifest-path "{{dir}}/body/typelisp.pkg"
@@ -139,7 +139,7 @@ stderr empty
 step body-build
 run build --manifest-path "{{dir}}/body/typelisp.pkg" --target {{host-target}}
 stderr empty
-exec "{{dir}}/body/target/release/app_body{{exe}}"
+exec "{{dir}}/body/target/dev/app_body{{exe}}"
 exit 7
 
 # #9755: moduleless dependency holding macro-global identities (v7 template
@@ -193,7 +193,7 @@ stderr empty
 step v7-build
 run build --manifest-path "{{dir}}/v7/nc/typelisp.pkg" --target {{host-target}} --opt-level 0
 stderr empty
-exec "{{dir}}/v7/nc/target/release/nc{{exe}}"
+exec "{{dir}}/v7/nc/target/dev/nc{{exe}}"
 exit 9
 step v7-run
 run run --manifest-path "{{dir}}/v7/nc/typelisp.pkg" --target {{host-target}} --opt-level 0
@@ -204,7 +204,7 @@ stderr empty
 step v11-build
 run build --manifest-path "{{dir}}/v11/nc/typelisp.pkg" --target {{host-target}} --opt-level 0
 stderr empty
-exec "{{dir}}/v11/nc/target/release/nc11{{exe}}"
+exec "{{dir}}/v11/nc/target/dev/nc11{{exe}}"
 exit 9
 step v11-run
 run run --manifest-path "{{dir}}/v11/nc/typelisp.pkg" --target {{host-target}} --opt-level 0
@@ -244,9 +244,9 @@ stdout contains TypeLisp package tests passed
 step build-pure
 run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}}
 stderr empty
-test -s "{{dir}}/vendor/purelib/target/release/purelib.tli"
-test ! -e "{{dir}}/vendor/purelib/target/release/purelib.tlci"
-exec "{{dir}}/target/release/app_pure{{exe}}"
+test -s "{{dir}}/vendor/purelib/target/dev/purelib.tli"
+test ! -e "{{dir}}/vendor/purelib/target/dev/purelib.tlci"
+exec "{{dir}}/target/dev/app_pure{{exe}}"
 exit 42
 
 # `: Decls`-generated dependency macros reach the companion .tlci, and the
@@ -370,21 +370,21 @@ step body-build
 run build --manifest-path "{{dir}}/body/typelisp.pkg" --target {{host-target}}
 stderr empty
 step body-records
-run inspect "{{dir}}/body/target/release/bodylib.tli"
+run inspect "{{dir}}/body/target/dev/bodylib.tli"
 stdout contains bodyonly: flags=
 stdout not-contains bodylib.src.lib:
 step led-build
 run build --manifest-path "{{dir}}/led/typelisp.pkg" --target {{host-target}}
 stderr empty
 step led-records
-run inspect "{{dir}}/led/target/release/ledlib.tli"
+run inspect "{{dir}}/led/target/dev/ledlib.tli"
 stdout contains ledonly: flags=
 stdout not-contains ledlib.src.lib:
 step mixed-run
 run run --manifest-path "{{dir}}/mixedapp/typelisp.pkg" --target {{host-target}} --opt-level 0
 exit 5
 step mixed-records
-run inspect "{{dir}}/mixed/target/release/mixedlib.tli"
+run inspect "{{dir}}/mixed/target/dev/mixedlib.tli"
 stdout contains mixedlib.src.lib: flags=
 stdout contains mixedinner: flags=
 
@@ -456,5 +456,5 @@ step inline-global-run-o2
 run run --manifest-path "{{dir}}/app/typelisp.pkg" --target {{host-target}} --opt-level 2
 exit 42
 step inline-global-inspect
-run inspect "{{dir}}/lib/target/release/agglib.tli"
+run inspect "{{dir}}/lib/target/dev/agglib.tli"
 stdout contains agglib.src.lib: flags=

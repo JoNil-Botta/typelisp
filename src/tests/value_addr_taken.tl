@@ -76,7 +76,7 @@
 
 (define (div-run [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match func
-    [(Function name params ret frame blocks abi)
+    [(Function name params ret frame blocks abi cold?)
       (let
         [_addr-taken : unit
           (opt.opt-function-addr-taken-install! frame (& blocks))]
@@ -89,7 +89,7 @@
               (opt.opt-bool-branch-clone-blocks (& blocks)))
             (& params)
             blocks)]
-        (Function name params ret frame next abi))]))
+        (Function name params ret frame next abi cold?))]))
 
 (test
   value-gate-divrem
@@ -272,8 +272,15 @@
 ;; Gep splitting needs an unscaled counter as the variant Add operand.
 (define (gep-function [mode : i64] [synthesize? : bool]) : ir.CompilerIrFunction
   (match (loop-function mode synthesize?)
-    [(Function name params ret frame blocks abi)
-      (Function name params ret frame (opt.opt-blocks-map blocks gep-block) abi)]))
+    [(Function name params ret frame blocks abi cold?)
+      (Function
+        name
+        params
+        ret
+        frame
+        (opt.opt-blocks-map blocks gep-block)
+        abi
+        cold?)]))
 
 (define (gep-block [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
   (match block

@@ -44,7 +44,7 @@ esac
 
 . "$ROOT/scripts/lib-native-link.sh"
 native_link_detect_host
-configure_toolchain
+configure_toolchain linker-only
 . "$ROOT/scripts/lib-build-provenance.sh"
 
 WORKDIR="$ROOT/target/build-stage0"
@@ -131,7 +131,11 @@ while [ "$i" -le "$STAGES" ]; do
         echo "[build-stage0] stage$i emitted no assembly for src/main.tl" >&2
         exit 1
     }
-    assemble_and_link "stage$i" "$STAGE_ASM" "$STAGE_OBJ" "$STAGE_BIN"
+    if [ "$i" -eq 1 ]; then
+        assemble_seed_output_and_link "$PREV" "stage$i" "$STAGE_ASM" "$STAGE_OBJ" "$STAGE_BIN"
+    else
+        assemble_compiler_output_and_link "$PREV" "stage$i" "$STAGE_ASM" "$STAGE_OBJ" "$STAGE_BIN"
+    fi
     PREV="$STAGE_BIN"
     i=$((i + 1))
 done

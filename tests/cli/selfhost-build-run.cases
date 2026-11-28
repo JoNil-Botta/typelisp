@@ -312,7 +312,7 @@ sh cp "{{root}}/tests/integration/source_selected_generated_dep.tl" "{{root}}/te
 run build --manifest-path "{{dir}}/pkg/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
 stderr empty
 stdout match Built[ ]
-exec "{{dir}}/pkg/target/release/selected_generated_macro{{exe}}"
+exec "{{dir}}/pkg/target/dev/selected_generated_macro{{exe}}"
 exit 42
 stdout empty
 stderr empty
@@ -343,9 +343,9 @@ step selfhost-cli-package-build
 run build --target {{host-target}} --opt-level 0
 stderr empty
 stdout match Built[ ]
-test -f "{{dir}}/pkg/target/release/cli_pkg_smoke{{exe}}"
+test -f "{{dir}}/pkg/target/dev/cli_pkg_smoke{{exe}}"
 step package-program
-exec "{{dir}}/pkg/target/release/cli_pkg_smoke{{exe}}"
+exec "{{dir}}/pkg/target/dev/cli_pkg_smoke{{exe}}"
 exit 29
 stdout empty
 stderr empty
@@ -355,7 +355,7 @@ run run --target {{host-target}} --opt-level 0
 exit 29
 stdout empty
 stderr empty
-test -f "{{dir}}/pkg/target/release/cli_pkg_smoke{{exe}}"
+test -f "{{dir}}/pkg/target/dev/cli_pkg_smoke{{exe}}"
 sh rm -rf "{{dir}}/pkg/target"
 step selfhost-cli-package-build-dev
 run build --target {{host-target}} --profile dev
@@ -369,7 +369,7 @@ sh printf '%s' 0000000000000000000000000000000000000000 > "{{root}}/target/build
 sh printf '%s' 0000000000000000000000000000000000000000 > "{{root}}/target/build-stage0/tree-hash.txt"
 step selfhost-cli-root-package-build
 cwd {{root}}
-run build --target {{host-target}} --opt-level 0
+run build --release --target {{host-target}} --opt-level 0
 stderr empty
 stdout match Built[ ]
 test -f "{{root}}/target/release/typelisp{{exe}}"
@@ -487,10 +487,10 @@ file root/target/typelisp/git-deps/remote/src/lib.tl
 end-file
 run build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0
 stderr empty
-stdout contains Built {{native-dir}}/root/target/typelisp/git-deps/remote/target/release/{{lib-prefix}}github_prefetch_remote{{lib-suffix}}
-stdout contains Built {{native-dir}}/root/target/release/github_prefetch_root{{exe}}
+stdout contains Built {{native-dir}}/root/target/typelisp/git-deps/remote/target/dev/{{lib-prefix}}github_prefetch_remote{{lib-suffix}}
+stdout contains Built {{native-dir}}/root/target/dev/github_prefetch_root{{exe}}
 step package-graph-github-prefetch-program
-exec "{{dir}}/root/target/release/github_prefetch_root{{exe}}"
+exec "{{dir}}/root/target/dev/github_prefetch_root{{exe}}"
 exit 43
 stdout empty
 stderr empty
@@ -535,7 +535,7 @@ sh CCV_gitconfig=$(cc_native_path "{{dir}}/gitconfig")
 step selfhost-cli-package-graph-github-cache-first
 exec env GIT_CONFIG_GLOBAL="{{gitconfig}}" "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0
 stderr empty
-stdout contains Built {{native-dir}}/root/target/release/gc_root{{exe}}
+stdout contains Built {{native-dir}}/root/target/dev/gc_root{{exe}}
 sh CCV_entry=$(find "{{dir}}/root/target/typelisp/cache/packages/v1/git" -name typelisp.pkg -print | head -n 1)
 test -n "{{entry}}"
 sh CCV_entry=${CCV_entry%/typelisp.pkg}
@@ -554,7 +554,7 @@ sh mv "{{dir}}/remote" "{{dir}}/remote.offline"
 step selfhost-cli-package-graph-github-cache-hit
 exec env GIT_CONFIG_GLOBAL="{{gitconfig}}" "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0
 stderr empty
-stdout contains Fresh {{native-dir}}/root/target/release/gc_root{{exe}}
+stdout contains Fresh {{native-dir}}/root/target/dev/gc_root{{exe}}
 sh mv "{{entry}}" "{{entry}}.saved" && cp -R "{{entry}}.saved" "{{entry}}.manifest-outside"
 sh echo outside-manifest-sentinel-was-read > "{{entry}}.manifest-outside/typelisp.pkg"
 sh cc_dir_link "{{entry}}" "{{entry}}.manifest-outside"
@@ -580,12 +580,12 @@ sh printf 'typelisp-package-cache-v1\nurl=%s\ncommit=stale\n' https://github.com
 step selfhost-cli-package-graph-github-cache-refetch
 exec env GIT_CONFIG_GLOBAL="{{gitconfig}}" "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0
 stderr empty
-stdout contains Fresh {{native-dir}}/root/target/release/gc_root{{exe}}
+stdout contains Fresh {{native-dir}}/root/target/dev/gc_root{{exe}}
 test -d "{{entry}}.corrupt.1"
 in file {{entry}}/typelisp-cache-entry.txt
 contains commit={{rev}}
 step package-graph-github-cache-program
-exec "{{dir}}/root/target/release/gc_root{{exe}}"
+exec "{{dir}}/root/target/dev/gc_root{{exe}}"
 exit 47
 stdout empty
 stderr empty
@@ -639,7 +639,7 @@ in file {{dir}}/root/typelisp.lock
 contains (pin (branch "main"))
 contains (commit "{{rev1}}")
 step package-graph-github-lock-first-program
-exec "{{dir}}/root/target/release/gl_root{{exe}}"
+exec "{{dir}}/root/target/dev/gl_root{{exe}}"
 exit 51
 stdout empty
 stderr empty
@@ -658,7 +658,7 @@ contains (commit "{{rev1}}")
 test ! "{{dir}}/root/typelisp.lock" -nt "{{dir}}/lock-before-replay.mtime"
 test ! "{{dir}}/lock-before-replay.mtime" -nt "{{dir}}/root/typelisp.lock"
 step package-graph-github-lock-replay-program
-exec "{{dir}}/root/target/release/gl_root{{exe}}"
+exec "{{dir}}/root/target/dev/gl_root{{exe}}"
 exit 51
 stdout empty
 stderr empty
@@ -669,7 +669,7 @@ sh mv "{{dir}}/remote.offline" "{{dir}}/remote"
 stderr empty
 same "{{dir}}/lock-before-locked" "{{dir}}/root/typelisp.lock"
 step package-graph-github-lock-locked-program
-exec "{{dir}}/root/target/release/gl_root{{exe}}"
+exec "{{dir}}/root/target/dev/gl_root{{exe}}"
 exit 51
 stdout empty
 stderr empty
@@ -718,7 +718,7 @@ in file {{dir}}/root/typelisp.lock
 contains (pin (branch "next"))
 contains (commit "{{rev2}}")
 step package-graph-github-lock-update-program
-exec "{{dir}}/root/target/release/gl_root{{exe}}"
+exec "{{dir}}/root/target/dev/gl_root{{exe}}"
 exit 52
 stdout empty
 stderr empty
@@ -838,12 +838,12 @@ end-file
 run build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0
 stderr empty
 in stdout
-count-fixed = 1 Built {{native-dir}}/shared/target/release/{{lib-prefix}}shallow_shared{{lib-suffix}}
-contains Built {{native-dir}}/left/target/release/{{lib-prefix}}shallow_left{{lib-suffix}}
-contains Built {{native-dir}}/right/target/release/{{lib-prefix}}shallow_right{{lib-suffix}}
-contains Built {{native-dir}}/root/target/release/shallow_root{{exe}}
+count-fixed = 1 Built {{native-dir}}/shared/target/dev/{{lib-prefix}}shallow_shared{{lib-suffix}}
+contains Built {{native-dir}}/left/target/dev/{{lib-prefix}}shallow_left{{lib-suffix}}
+contains Built {{native-dir}}/right/target/dev/{{lib-prefix}}shallow_right{{lib-suffix}}
+contains Built {{native-dir}}/root/target/dev/shallow_root{{exe}}
 step package-graph-shallow-program
-exec "{{dir}}/root/target/release/shallow_root{{exe}}"
+exec "{{dir}}/root/target/dev/shallow_root{{exe}}"
 exit 42
 stdout empty
 stderr empty
@@ -986,13 +986,13 @@ cwd pkg
 run build --target {{host-target}}
 stderr empty
 stdout match Built[ ]
-test -s "{{dir}}/pkg/target/release/{{lib-prefix}}cli_staticlib_smoke{{lib-suffix}}"
+test -s "{{dir}}/pkg/target/dev/{{lib-prefix}}cli_staticlib_smoke{{lib-suffix}}"
 step selfhost-cli-staticlib-entry-override
 cwd override
 run build --target {{host-target}}
 stderr empty
 stdout match Built[ ]
-test -s "{{dir}}/override/target/release/{{lib-prefix}}cli_staticlib_override{{lib-suffix}}"
+test -s "{{dir}}/override/target/dev/{{lib-prefix}}cli_staticlib_override{{lib-suffix}}"
 
 case selfhost-cli-scaffold
 cwd .
@@ -1018,9 +1018,9 @@ cwd cli_new_bin
 run build --target {{host-target}} --opt-level 0
 stderr empty
 stdout match Built[ ]
-test -f "{{dir}}/cli_new_bin/target/release/cli_new_bin{{exe}}"
+test -f "{{dir}}/cli_new_bin/target/dev/cli_new_bin{{exe}}"
 step scaffold-new-bin-program
-exec "{{dir}}/cli_new_bin/target/release/cli_new_bin{{exe}}"
+exec "{{dir}}/cli_new_bin/target/dev/cli_new_bin{{exe}}"
 stdout contains Hello, TypeLisp!
 stderr empty
 step scaffold-new-bin-test
@@ -1053,7 +1053,7 @@ cwd cli_new_lib
 run build --target {{host-target}}
 stderr empty
 stdout match Built[ ]
-test -s "{{dir}}/cli_new_lib/target/release/{{lib-prefix}}cli_new_lib{{lib-suffix}}"
+test -s "{{dir}}/cli_new_lib/target/dev/{{lib-prefix}}cli_new_lib{{lib-suffix}}"
 step scaffold-new-lib-fmt
 run fmt --check
 stderr empty
@@ -1263,7 +1263,7 @@ file root/src/main.tl
 end-file
 run build --manifest-path "{{dir}}/root/typelisp.pkg" --cfg selected --cfg extra --opt-level 0
 stderr empty
-exec "{{dir}}/root/target/release/cfg_root{{exe}}"
+exec "{{dir}}/root/target/dev/cfg_root{{exe}}"
 exit 42
 run run --manifest-path "{{dir}}/root/typelisp.pkg" --cfg selected --opt-level 0
 exit 42

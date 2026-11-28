@@ -1289,6 +1289,7 @@
         "target/lint_unsafe_surface/direct_type_error.tl"
         (lint-driver-smoke-unsafe-surface-type-error-source)
         (lint_svec.new)
+        (& (lint_driver.SelfhostLintCheckContext.FileContext))
         (lint_driver.selfhost-lint-language-cfgs)
         true
         false)]
@@ -1300,6 +1301,7 @@
         "(define (main) : i64
   (unsafe (+ 1 2))"
         (lint_svec.new)
+        (& (lint_driver.SelfhostLintCheckContext.FileContext))
         (lint_driver.selfhost-lint-language-cfgs)
         true
         false)]
@@ -1335,6 +1337,7 @@
         (lint_driver.selfhost-lint-package-files
           smoke-paths
           (lint_svec.new)
+          (& (lint_driver.SelfhostLintCheckContext.FileContext))
           true
           false
           false
@@ -1364,6 +1367,7 @@
         (lint_driver.selfhost-lint-package-files
           smoke-paths
           (lint_svec.new)
+          (& (lint_driver.SelfhostLintCheckContext.FileContext))
           false
           false
           false
@@ -1442,20 +1446,20 @@
       [(not (= package-macro-status 1)) 185]
       [else 42])))
 
-;; Constructor effects follow the declaration identity through an import alias.
-;; A same-spelled struct in another module stays an ordinary safe constructor.
-(define (lint-driver-smoke-arena-constructor-effect-self-test) : i64
+;; Raw arena and mark interop require unsafe through import aliases.
+;; Same-spelled public constructors still trigger the unused-unsafe lint.
+(define (lint-driver-smoke-arena-interop-effect-self-test) : i64
   (load.compiler-load-test-mkdir "target/lint_unsafe_surface")
   (lint-driver-smoke-write-text
     "target/lint_unsafe_surface/arena_effect.tl"
     "(import stdlib.arena as pool)
 (define (main) : i64
-  (let [value (unsafe (pool.Arena 0))] (pool.raw-handle value)))")
+  (let [value (unsafe (pool.from-raw-handle 0))] (pool.raw-handle value)))")
   (lint-driver-smoke-write-text
     "target/lint_unsafe_surface/arena_effect_again.tl"
     "(import stdlib.arena as other)
 (define (main) : i64
-  (let [value (unsafe (other.Arena 0))] (other.raw-handle value)))")
+  (let [value (unsafe (other.mark-from-raw-handle 0))] (other.mark-raw-handle value)))")
   (lint-driver-smoke-write-text
     "target/lint_unsafe_surface/nominal_dep.tl"
     "(module nominal_dep)
@@ -2067,6 +2071,7 @@
                   (string.copy (& second-src))
                   program
                   (lint_svec.clone-vec (& roots))
+                  (& (lint_driver.SelfhostLintCheckContext.FileContext))
                   (lint_driver.selfhost-lint-language-cfgs)
                   false
                   false
@@ -2105,6 +2110,7 @@
                     (string.copy (& first-src))
                     program
                     (lint_svec.clone-vec (& roots))
+                    (& (lint_driver.SelfhostLintCheckContext.FileContext))
                     (lint_driver.selfhost-lint-language-cfgs)
                     false
                     false
@@ -2136,6 +2142,7 @@
                     (string.copy (& second-src))
                     program
                     (lint_svec.clone-vec (& roots))
+                    (& (lint_driver.SelfhostLintCheckContext.FileContext))
                     (lint_driver.selfhost-lint-language-cfgs)
                     false
                     false
@@ -2193,8 +2200,8 @@
     [unused-unsafe-result : i64 (lint-driver-smoke-unused-unsafe-self-test)]
     [raw-arena-result : i64 (lint-driver-smoke-raw-arena-op-self-test)]
     [unsafe-surface-result : i64 (lint-driver-smoke-unsafe-surface-self-test)]
-    [arena-constructor-effect-result : i64
-      (lint-driver-smoke-arena-constructor-effect-self-test)]
+    [arena-interop-effect-result : i64
+      (lint-driver-smoke-arena-interop-effect-self-test)]
     [copy-result : i64 (lint-driver-smoke-copy-on-update-struct-self-test)]
     [dotted-compat-result : i64
       (lint-driver-smoke-prefer-dotted-field-compat-self-test)]
@@ -2221,8 +2228,7 @@
       [(not (= unused-unsafe-result 42)) unused-unsafe-result]
       [(not (= raw-arena-result 42)) raw-arena-result]
       [(not (= unsafe-surface-result 42)) unsafe-surface-result]
-      [(not (= arena-constructor-effect-result 42))
-        arena-constructor-effect-result]
+      [(not (= arena-interop-effect-result 42)) arena-interop-effect-result]
       [(not (= copy-result 42)) copy-result]
       [(not (= dotted-compat-result 42)) dotted-compat-result]
       [(not (= name-case-result 42)) name-case-result]

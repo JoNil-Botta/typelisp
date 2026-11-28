@@ -31,6 +31,7 @@
 ;#
 ;# Usage: `(import stdlib.sync)`
 ;# Generated `max-capacity` and `raw-field-count` are zero-argument accessors.
+;# Generated `(empty-raw)` returns a zero-valued raw i64 channel sentinel.
 ;#
 ;# ```typelisp
 ;# (import stdlib.sync)
@@ -66,13 +67,7 @@
           (module ,module-name)
           (import stdlib.sync as sync)
           (defstruct Channel
-            (slots-addr i64)
-            (state-addr i64)
-            (capacity i64)
-            (slots-bytes i64)
-            (mutex-handle i64)
-            (items-handle i64)
-            (spaces-handle i64))
+            (raw sync.SyncI64Channel (:opaque)))
           (defenum CreateResult
             (CreateOk Channel)
             (CreateErr i64))
@@ -85,49 +80,26 @@
           (define (max-capacity) : i64
             1048576)
           (define (raw-field-count) : i64
-            7)
+            sync.i64-channel-raw-field-count)
           (define (empty-raw) : sync.SyncI64Channel
-            (sync.SyncI64Channel 0 0 0 0 0 0 0))
+            (sync.i64-channel-empty-raw))
           (unsafe
             (define (to-raw [channel : Channel]) : sync.SyncI64Channel
-              (sync.SyncI64Channel
-                channel.slots-addr
-                channel.state-addr
-                channel.capacity
-                channel.slots-bytes
-                channel.mutex-handle
-                channel.items-handle
-                channel.spaces-handle)))
+              channel.raw))
           (define (create-capacity-ok? [capacity : i64]) : bool
             (sync.i64-channel-create-capacity-ok? capacity))
           (define (create [capacity : i64]) : CreateResult
-            (if (not (create-capacity-ok? capacity))
-              (CreateErr 1)
-              (let
-                [raw : sync.SyncI64Channel
-                  (unsafe
-                    (sync.i64-channel-create-capacity-or capacity (empty-raw)))]
-                (if (= raw.spaces-handle 0)
-                  (CreateErr 1)
-                  (CreateOk
-                    (Channel
-                      raw.slots-addr
-                      raw.state-addr
-                      raw.capacity
-                      raw.slots-bytes
-                      raw.mutex-handle
-                      raw.items-handle
-                      raw.spaces-handle))))))
+            (match (unsafe
+              (sync.i64-channel-create capacity))
+              [(sync.SyncI64ChannelCreateOk raw) (CreateOk (Channel raw))]
+              [(sync.SyncI64ChannelCreateErr code) (CreateErr code)]))
           (define (create-capacity-or [capacity : i64] [fallback : Channel]) : Channel
             (match (create capacity)
               [(CreateOk channel) channel]
               [(CreateErr _) fallback]))
           (define (send [channel : Channel] [value : i64]) : SendResult
             (match (unsafe
-              (sync.i64-channel-send
-                (unsafe
-                  (to-raw channel))
-                value))
+              (sync.i64-channel-send channel.raw value))
               [(sync.SyncI64ChannelSendOk) (SendOk)]
               [(sync.SyncI64ChannelSendErr code) (SendErr code)]))
           (define (send-value-ok? [channel : Channel] [value : i64]) : bool
@@ -136,9 +108,7 @@
               [(SendErr _) false]))
           (define (recv [channel : Channel]) : RecvResult
             (match (unsafe
-              (sync.i64-channel-recv
-                (unsafe
-                  (to-raw channel))))
+              (sync.i64-channel-recv channel.raw))
               [(sync.SyncI64ChannelRecvOk value) (RecvOk value)]
               [(sync.SyncI64ChannelRecvErr code) (RecvErr code)]))
           (define (recv-or [channel : Channel] [fallback : i64]) : i64
@@ -147,33 +117,21 @@
               [(RecvErr _) fallback]))
           (define (close [channel : Channel]) : bool
             (unsafe
-              (sync.i64-channel-close
-                (unsafe
-                  (to-raw channel)))))
+              (sync.i64-channel-close channel.raw)))
           (unsafe
             (define (store-raw!
               [channel : Channel]
               [dst : (&mut dst (__tl_dyn-array i64))]
               [offset : i64]) : unit
-              (set! (array-ref dst offset) channel.slots-addr)
-              (set! (array-ref dst (+ offset 1)) channel.state-addr)
-              (set! (array-ref dst (+ offset 2)) channel.capacity)
-              (set! (array-ref dst (+ offset 3)) channel.slots-bytes)
-              (set! (array-ref dst (+ offset 4)) channel.mutex-handle)
-              (set! (array-ref dst (+ offset 5)) channel.items-handle)
-              (set! (array-ref dst (+ offset 6)) channel.spaces-handle)))
+              (unsafe
+                (sync.i64-channel-store-raw! channel.raw dst offset))))
           (unsafe
             (define (load-raw
               [src : (& src (__tl_dyn-array i64))]
               [offset : i64]) : Channel
               (Channel
-                (array-ref src offset)
-                (array-ref src (+ offset 1))
-                (array-ref src (+ offset 2))
-                (array-ref src (+ offset 3))
-                (array-ref src (+ offset 4))
-                (array-ref src (+ offset 5))
-                (array-ref src (+ offset 6))))))]
+                (unsafe
+                  (sync.i64-channel-load-raw src offset))))))]
       [_
         `(begin
           (module ,module-name))])))
@@ -330,13 +288,17 @@
 
 ;: Runtime-owned bounded channel handle for `i64` messages.
 (defstruct SyncI64Channel
-  (slots-addr i64)
-  (state-addr i64)
-  (capacity i64)
-  (slots-bytes i64)
-  (mutex-handle i64)
-  (items-handle i64)
-  (spaces-handle i64))
+  (slots-addr i64 (:opaque))
+  (state-addr i64 (:opaque))
+  (capacity i64 (:opaque))
+  (slots-bytes i64 (:opaque))
+  (mutex-handle i64 (:opaque))
+  (items-handle i64 (:opaque))
+  (spaces-handle i64 (:opaque)))
+
+;: Return the zero-valued raw i64 channel fallback sentinel.
+(define (i64-channel-empty-raw) : SyncI64Channel
+  (SyncI64Channel 0 0 0 0 0 0 0))
 
 ;: Move-transferred two-field aggregate message for `ChannelI64PairChannel`.
 (defstruct ChannelI64Pair

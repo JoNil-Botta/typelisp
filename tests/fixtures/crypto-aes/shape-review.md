@@ -162,9 +162,8 @@ disclosed adverse cost of the change.
     pushes. `sub-block!` also makes one store, a post-S-box SubWord plane
     value. `squeeze!` makes one, which holds only the public ciphertext when
     called from `cipher!`. Linux `sub-block!` and `squeeze!` make none.
-- opt2 is the default release profile: package builds default to `release`,
-  which uses optimizer level 2. This exposure therefore applies to default
-  builds.
+- This opt2 exposure applies to package builds that select `--profile release`
+  or explicitly set `--opt-level 2`.
 
 Before the final boundary reclaim, both callers of the circuit leave residue:
 

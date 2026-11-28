@@ -9753,6 +9753,9 @@
           (ast.ast-decl-list-new)
           (ast.ast-decl-path-list-new)
           (__tl_make-array i64 0)
+          0
+          0
+          0
           data.head))]
     (set! data.head empty-head)
     (tc_core.macro-segmented-program-view-data-set! address data)))
@@ -9857,7 +9860,7 @@
           (= (macro-segmented-program-module-id-at-or state 4 -1) c)
           (string.eq (macro-segmented-program-path-at state 0 "") "p0")
           (= (macro-segmented-program-owner-id-at state 4 -1) 22))]
-      (tc_core.macro-segmented-program-splice-current! state xy xy-paths)
+      (tc_core.macro-segmented-program-splice-current! state xy xy-paths false)
       ;; Nested compiler work resets derived file state while a splice is
       ;; active; that boundary must not cancel the walk-owned cursor.
       (tc_core.tc-job-state-reset-file-state! state)
@@ -9884,7 +9887,7 @@
           state
           out-rev
           out-paths-rev)
-        (tc_core.macro-segmented-program-splice-current! state zs z-paths)
+        (tc_core.macro-segmented-program-splice-current! state zs z-paths false)
         (let
           [flat : tc_core.MacroSegmentedProgramFlatView
             (tc_core.macro-segmented-program-flatten-raw state)]
@@ -10289,7 +10292,8 @@
         (tc_core.macro-segmented-program-splice-current!
           state
           (tc_core.tc-global-shared-view delta)
-          (tc_core.macro-paths-for-decls macro-state delta "delta"))]
+          (tc_core.macro-paths-for-decls macro-state delta "delta")
+          false)]
       [split-ok : bool (macro-segmented-events-match-flat? state)]
       [split-alias-ok : bool
         (macro-segmented-alias-index-matches-flat? state (& pairs))]
@@ -10300,7 +10304,8 @@
         (tc_core.macro-segmented-program-splice-current!
           state
           (tc_core.tc-global-shared-view plain)
-          (tc_core.macro-paths-for-decls macro-state plain "plain"))]
+          (tc_core.macro-paths-for-decls macro-state plain "plain")
+          false)]
       [boundary-ok : bool (macro-segmented-events-match-flat? state)]
       [boundary-alias-ok : bool
         (macro-segmented-alias-index-matches-flat? state (& pairs))]
@@ -10473,7 +10478,8 @@
           (tc_core.macro-segmented-program-splice-current!
             job
             (tc-test-copy-decl-list (& delta))
-            (ast.clone-ast-decl-path-list (& delta-paths)))
+            (ast.clone-ast-decl-path-list (& delta-paths))
+            true)
           (test.assert-true
             (tc_core.macro-live-symbols-insert-decls!
               state
@@ -12141,12 +12147,14 @@
         state-a
         0
         "tc-macro-state-isolation"
-        (ast.ast-decl-list-new))
+        (ast.ast-decl-list-new)
+        0)
       (tc_core.macro-generated-decls-memo-put!
         state-b
         0
         "tc-macro-state-isolation"
-        (ast.ast-decl-list-new))
+        (ast.ast-decl-list-new)
+        0)
       (tc_core.macro-generated-module-memo-put!
         state-a
         "tc-macro-state-isolation-module"
@@ -12195,13 +12203,13 @@
             state-a
             0
             "tc-macro-state-isolation")
-            [(Some decls) (= (ast.ast-decl-list-len (& decls)) 0)]
+            [(Some decls _) (= (ast.ast-decl-list-len (& decls)) 0)]
             [_ false])
           (match (tc_core.macro-generated-decls-memo-get
             state-b
             0
             "tc-macro-state-isolation")
-            [(Some decls) (= (ast.ast-decl-list-len (& decls)) 0)]
+            [(Some decls _) (= (ast.ast-decl-list-len (& decls)) 0)]
             [_ false])
           (match (tc_core.macro-generated-module-memo-get-catalog
             state-a
@@ -12435,7 +12443,7 @@
             state-b
             0
             "tc-macro-state-isolation")
-            [(Some decls) (= (ast.ast-decl-list-len (& decls)) 0)]
+            [(Some decls _) (= (ast.ast-decl-list-len (& decls)) 0)]
             [_ false])
           (match (tc_core.macro-generated-module-memo-get-catalog
             state-a
@@ -12847,7 +12855,7 @@
       state
       module-id
       (memo-test-identity index))
-      [(Some decls) (ast.ast-decl-list-len (& decls))]
+      [(Some decls _) (ast.ast-decl-list-len (& decls))]
       [(No) -1])))
 
 ;; An identity index past 0 whose bucket is identity 0's, so it probes past it.
@@ -12889,12 +12897,14 @@
         state
         module-id
         (memo-test-identity 0)
-        (memo-test-decls 1))
+        (memo-test-decls 1)
+        0)
       (tc_core.macro-generated-decls-memo-put!
         state
         module-id
         (memo-test-identity other)
-        (memo-test-decls 2))
+        (memo-test-decls 2)
+        0)
       (test.assert-i64-eq
         (memo-test-lookup state module-id 0)
         1
@@ -12926,7 +12936,8 @@
         state
         module-id
         (memo-test-identity other)
-        (memo-test-decls 3))
+        (memo-test-decls 3)
+        0)
       (test.assert-i64-eq
         (memo-test-lookup state module-id other)
         3
@@ -12939,7 +12950,8 @@
         state
         module-id
         (memo-test-identity 0)
-        (memo-test-decls 4))
+        (memo-test-decls 4)
+        0)
       (test.assert-i64-eq
         (memo-test-lookup state module-id 0)
         4
@@ -17748,7 +17760,8 @@
         state
         module-a
         "same-expansion"
-        (memo-test-decls 1))
+        (memo-test-decls 1)
+        0)
       (test.assert-true
         (match (tc_core.macro-generated-decls-memo-get
           state
@@ -17761,13 +17774,14 @@
         state
         module-b
         "same-expansion"
-        (memo-test-decls 2))
+        (memo-test-decls 2)
+        0)
       (test.assert-i64-eq
         (match (tc_core.macro-generated-decls-memo-get
           state
           module-a
           "same-expansion")
-          [(Some decls) (ast.ast-decl-list-len (& decls))]
+          [(Some decls _) (ast.ast-decl-list-len (& decls))]
           [_ -1])
         1
         "first scope retains its own output")
@@ -17776,7 +17790,7 @@
           state
           module-b
           "same-expansion")
-          [(Some decls) (ast.ast-decl-list-len (& decls))]
+          [(Some decls _) (ast.ast-decl-list-len (& decls))]
           [_ -1])
         2
         "second scope retains its own output")
@@ -17793,7 +17807,8 @@
         state
         (tc_core.macro-decls-segment-scope state module-a 0)
         "segment-expansion"
-        (memo-test-decls 1))
+        (memo-test-decls 1)
+        0)
       (test.assert-true
         (match (tc_core.macro-generated-decls-memo-get
           state

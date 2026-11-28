@@ -1119,7 +1119,8 @@
         unit))
     (ir.compiler-ir-param-builder-to-seq builder)))
 
-(define (ir-text-return-storage! [cur : (&mut cur IrTextCursor)]) : ir.CompilerIrFunctionAbi
+(define (ir-text-return-storage! [cur : (&mut cur IrTextCursor)]) : (Box
+    ir.CompilerIrReturnStorageAbi)
   (let
     [kind : String
       (begin
@@ -1160,17 +1161,16 @@
       (begin
         (ir-text-expect! cur "source")
         (ir-text-type! cur))]
-    (ir.CompilerIrFunctionAbi.ReturnStorage
-      (box
-        (ir.CompilerIrReturnStorageAbi
-          convention
-          index
-          bytes
-          alignment
-          output
-          result
-          params
-          source)))))
+    (box
+      (ir.CompilerIrReturnStorageAbi
+        convention
+        index
+        bytes
+        alignment
+        output
+        result
+        params
+        source))))
 
 (define (ir-text-function! [doc : (&mut doc IrTextLines)]) : ir.CompilerIrFunction
   (let
@@ -1193,8 +1193,10 @@
         (ir-text-int! (&mut cur)))]
     [abi : ir.CompilerIrFunctionAbi
       (if (ir-text-accept! (&mut cur) "abi")
-        (ir-text-return-storage! (&mut cur))
+        (ir.CompilerIrFunctionAbi.ReturnStorage
+          (ir-text-return-storage! (&mut cur)))
         (Ordinary))]
+    [cold? : bool (ir-text-accept! (&mut cur) "cold")]
     (ir-text-expect! (&mut cur) "{")
     (if (ir-text-at-end? (&mut cur))
       unit
@@ -1202,7 +1204,7 @@
     (let
       [blocks : ir.CompilerIrBlockList (ir-text-blocks! doc)]
       (if (string.eq (ir-text-lines-take! doc) "}")
-        (Function name params ret vars blocks abi)
+        (Function name params ret vars blocks abi cold?)
         (ir-text-fail cur.line "function without a closing `}`")))))
 
 (define (ir-text-global-line [line : String]) : ir.CompilerIrGlobal
@@ -1225,6 +1227,64 @@
             [size : i64 (ir-text-int! (&mut cur))]
             (ir.CompilerIrGlobalStorage.Inline size (ir-text-int! (&mut cur))))
           (ir.CompilerIrGlobalStorage.Word))))))
+
+(define (ir-text-extern-symbol! [cur : (&mut cur IrTextCursor)]) : String
+  (ir-text-expect! cur "symbol \"")
+  (let
+    [start : i64 cur.pos]
+    (while (and
+      (< cur.pos (string.string-length cur.line))
+      (!= (string.char-at cur.line cur.pos) '"'))
+      (+= cur.pos 1))
+    (let
+      [symbol : String (string.substring cur.line start (- cur.pos start))]
+      (ir-text-expect! cur "\"")
+      symbol)))
+
+(define (ir-text-extern-line [line : String]) : ir.CompilerIrExtern
+  (let
+    [cur : IrTextCursor (ir-text-cursor line)]
+    [name : i64
+      (begin
+        (ir-text-expect! (&mut cur) "extern @")
+        (ir-text-callee-symbol! (&mut cur)))]
+    [symbol : String (ir-text-extern-symbol! (&mut cur))]
+    [ty : ast.AstType (ir-text-typed! (&mut cur))]
+    [abi : ast.AstExternAbi
+      (begin
+        (ir-text-expect! (&mut cur) "abi")
+        (cond
+          [(ir-text-accept! (&mut cur) "c-varargs:")
+            (ast.AstExternAbi.CVarargsTyped (ir-text-type! (&mut cur)))]
+          [(ir-text-accept! (&mut cur) "c-varargs")
+            (ast.AstExternAbi.CVarargsOpen)]
+          [(ir-text-accept! (&mut cur) "c") (ast.AstExternAbi.C)]
+          [(ir-text-accept! (&mut cur) "typelisp") (ast.AstExternAbi.TypeLisp)]
+          [else (ir-text-error (& cur) "unknown extern ABI")]))]
+    [weak? : bool (ir-text-accept! (&mut cur) "weak")]
+    [storage : ir.CompilerIrReturnStorage
+      (begin
+        (ir-text-skip-blanks! (&mut cur))
+        (if (string.is-string-prefix-at cur.line "return-storage" cur.pos)
+          (ir.CompilerIrReturnStorage.Some (ir-text-return-storage! (&mut cur)))
+          (ir.CompilerIrReturnStorage.None)))]
+    [cold? : bool (ir-text-accept! (&mut cur) "cold")]
+    (unless
+      (ir-text-at-end? (&mut cur))
+      (ir-text-error (& cur) "unexpected extern metadata"))
+    (ir.CompilerIrExtern.Extern
+      name
+      name
+      (string.copy (& symbol))
+      ty
+      abi
+      (ci.intern symbol)
+      (ast.ast-extern-link-input-list-new)
+      weak?
+      storage
+      false
+      (ir.CompilerIrGlobalStorage.Word)
+      cold?)))
 
 ;; --- entry points -----------------------------------------------------------
 ;: Read one instruction line, such as `%3 = add %1, %2 : i64`.
@@ -1270,7 +1330,7 @@
     one))
 
 ;: Read a whole program: the optional `typelisp-ir v1` header, `global` lines
-;: and functions.
+;: extern declarations and functions.
 (define (program [text : String]) : ir.CompilerIrProgram
   (let
     [doc : IrTextLines (ir-text-lines text)]
@@ -1280,6 +1340,9 @@
     [functions : ir.CompilerIrFunctionBuilder
       (ir.compiler-ir-function-builder-with-capacity
         (ir-text-lines-count-prefix (& doc) "function @"))]
+    [externs : ir.CompilerIrExternBuilder
+      (ir.compiler-ir-extern-builder-with-capacity
+        (ir-text-lines-count-prefix (& doc) "extern @"))]
     (if (string.eq (ir-text-lines-peek (& doc)) "typelisp-ir v1")
       (begin
         (ir-text-lines-take! (&mut doc))
@@ -1292,6 +1355,13 @@
       (ir.compiler-ir-global-builder-push!
         (&mut globals)
         (ir-text-global-line (ir-text-lines-take! (&mut doc)))))
+    (while (string.is-string-prefix-at
+      (ir-text-lines-peek (& doc))
+      "extern @"
+      0)
+      (ir.compiler-ir-extern-builder-push!
+        (&mut externs)
+        (ir-text-extern-line (ir-text-lines-take! (&mut doc)))))
     (while (ir-text-lines-more? (& doc))
       (ir.compiler-ir-function-builder-push!
         (&mut functions)
@@ -1299,7 +1369,7 @@
     (Program
       (ir.compiler-ir-global-builder-to-seq globals)
       (ir.compiler-ir-function-builder-to-seq functions)
-      (ir.compiler-ir-extern-seq-empty)
+      (ir.compiler-ir-extern-builder-snapshot-seq (& externs))
       (ir.CompilerIrReturnStorageAuthority.None))))
 
 (define (ir-text-session) : cis.InternStructuralSessionHandle
@@ -1444,3 +1514,21 @@ entry:
   return %1
 ")
     "blank lines and indentation are not part of the IR"))
+
+(test
+  ir-text-cold-attribute-round-trip
+  (let
+    [text : String
+      "typelisp-ir v1
+extern @ir_text_cold_extern symbol \"cold external\" : (->  i64) abi typelisp cold
+extern @ir_text_warm_extern symbol \"warm_external\" : (->  i64) abi c
+
+function @ir_text_cold_fn() -> i64 vars 0 cold {
+entry:
+  return 42
+}
+"]
+    (test.assert-string-eq
+      (& (program-text (program (string.copy (& text)))))
+      (& text)
+      "cold function and extern markers survive a program round trip")))

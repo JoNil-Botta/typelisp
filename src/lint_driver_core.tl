@@ -1,3 +1,5 @@
+(import build_run_core)
+
 ;; lint_driver_core.tl - Driver logic for the selfhost `typelisp lint` tool:
 ;; load a TypeLisp source, run the lint_core rules over its program, and
 ;; render each finding through the shared source diagnostic renderer. Kept
@@ -41,7 +43,16 @@
 ;; whether staged migration rules are enabled.
 (defenum SelfhostLintConfig
   (File lint_svec.Vec lint_svec.Vec bool bool bool bool bool bool)
-  (Package String bool lint_svec.Vec bool bool bool bool bool bool))
+  (Package
+    String
+    bool
+    cli_option.CliCompileOptions
+    bool
+    bool
+    bool
+    bool
+    bool
+    bool))
 
 (defenum ResultSelfhostLintConfig
   (Ok SelfhostLintConfig)
@@ -95,10 +106,12 @@
         (selfhost-lint-language-config-reset!)
         (cli_option.cli-args
           "selfhost-lint"
-          "--check --deprecated-string-concat --redundant-function-name
+          (str_cat.str-cat
+            "--check --deprecated-string-concat --redundant-function-name
            --redundant-begin
            --prefer-dotted-field --name-case --format <rich|flat> --cfg <name>
            --target <target> --debug|-g|--backtrace --backend-mode <mode> --opt-level <0|1|2|s> -Os --stdlib-root <dir> --manifest-path <file>"
+            (cli_option.cli-package-profile-options))
           start
           count))]
     [input-paths : lint_svec.Vec (lint_svec.new)]
@@ -112,6 +125,8 @@
     [name-case : bool false]
     (while (cli_option.cli-args-next! (&mut args))
       (cond
+        [(cli_option.cli-package-profile-option! (&mut options) (&mut args))
+          unit]
         [(cli_option.cli-compile-option! (&mut options) (&mut args)) unit]
         [(string.eq args.name "--check") (set! enforcing true)]
         [(string.eq args.name "--deprecated-string-concat")
@@ -150,7 +165,9 @@
         [else
           (lint_svec.push-ref! (&mut input-paths) (string.copy (& args.arg)))]))
     (set! selfhost-lint-language-target options.target)
-    (set! selfhost-lint-language-cfg-names options.cfgs)
+    (set!
+      selfhost-lint-language-cfg-names
+      (lint_svec.clone-vec (& options.cfgs)))
     (cond
       [args.failed (Err args.error)]
       [(lint_svec.is-empty? (& input-paths))
@@ -158,13 +175,15 @@
           (Package
             manifest-path
             has-manifest
-            options.stdlib-roots
+            options
             enforcing
             deprecated-string-concat
             redundant-function-name
             redundant-begin
             prefer-dotted-field
             name-case))]
+      [options.has-profile
+        (Err (string.copy (& cli_option.cli-package-profile-mode-error)))]
       [has-manifest
         (Err "selfhost-lint: cannot combine input paths with --manifest-path")]
       [else
@@ -847,9 +866,7 @@
 
 (defstruct SelfhostLintUnsafeSurfaceName
   (name String)
-  (requires-unsafe bool)
-  (struct-constructor bool)
-  (declaration-module String))
+  (requires-unsafe bool))
 
 ;; Append-only and read front to back: contiguous slots with a doubling push.
 (defstruct SelfhostLintUnsafeSurfaceNames
@@ -1014,11 +1031,7 @@
             (selfhost-lint-unsafe-surface-names-add
               (SelfhostLintUnsafeSurfaceName
                 (string.copy (ci.intern-str decl.name))
-                decl.was-unsafe
-                (selfhost-lint-unsafe-surface-struct? decl.kind)
-                (if (= root-module 0)
-                  ""
-                  (string.copy (ci.intern-str root-module))))
+                decl.was-unsafe)
               result))
           unit)))
     result))
@@ -1130,42 +1143,27 @@
 
 (define (selfhost-lint-unsafe-surface-add-names!
   [alias : String]
-  [source-module : String]
   [names : SelfhostLintUnsafeSurfaceNames]) : unit
   (let
     [n : i64 names.len]
-    [source-module-id : i64 (ci.intern source-module)]
     (for [index (iterator.range 0 n)]
       (let
         [fact : SelfhostLintUnsafeSurfaceName
           (owned_view.compiler-owned-array-element-shared-view
             names.slots
             index)]
-        [canonical-module-id : i64
-          (if (string.eq fact.declaration-module "")
-            source-module-id
-            (ci.intern fact.declaration-module))]
-        [requires-unsafe : bool
-          (or
-            fact.requires-unsafe
-            (and
-              fact.struct-constructor
-              (tc.tc-struct-constructor-unsafe?
-                (tc.tc-module-name-id-by-id
-                  canonical-module-id
-                  (ci.intern (owned_view.compiler-owned-shared-view fact.name))))))]
         (lint_core.lint-unused-unsafe-classifier-add-exact-name!
           (str_cat.str-cat
             (owned_view.compiler-owned-shared-view alias)
             "."
             (owned_view.compiler-owned-shared-view fact.name))
-          requires-unsafe)
+          fact.requires-unsafe)
         (lint_core.lint-unused-unsafe-classifier-add-exact-name!
           (str_cat.str-cat
             (owned_view.compiler-owned-shared-view alias)
             "/"
             fact.name)
-          requires-unsafe)))))
+          fact.requires-unsafe)))))
 
 (define (selfhost-lint-unsafe-surface-add-local-decls!
   [decls : compiler_load.CompilerLoadSurfaceDeclList]
@@ -1190,12 +1188,7 @@
           (not (= root-module 0))))
         (lint_core.lint-unused-unsafe-classifier-add-exact-name!
           (string.copy (ci.intern-str decl.name))
-          (or
-            decl.was-unsafe
-            (and
-              (selfhost-lint-unsafe-surface-struct? decl.kind)
-              (tc.tc-struct-constructor-unsafe?
-                (tc.tc-module-name-id-by-id root-module decl.name)))))
+          decl.was-unsafe)
         unit)
       ;; A top-level declaration can shadow an import alias. Only qualified
       ;; references consult this root blocker, so unqualified local facts
@@ -1243,10 +1236,7 @@
               [(Miss) unit]
               [(Hit valid names)
                 (if valid
-                  (selfhost-lint-unsafe-surface-add-names!
-                    alias
-                    import-edge.import-path
-                    names)
+                  (selfhost-lint-unsafe-surface-add-names! alias names)
                   unit)])])))))
 
 (define (selfhost-lint-unsafe-surface-prepare!
@@ -1293,6 +1283,10 @@
             out)
           out)]
       (selfhost-lint-unused-unsafe-findings-from state path (+ index 1) next))))
+
+(defenum SelfhostLintCheckContext
+  (FileContext)
+  (PackageContext String compiler_load.CompilerPkgDeps))
 
 (defstruct SelfhostLintMustUseFinding
   (rule-id String)
@@ -1364,7 +1358,7 @@
         (ptr-read (ptr-cast batch : (Ptr SelfhostLintMustUseBatch))))]
     [owner : arena.Arena
       (unsafe
-        (arena.Arena state.owner.handle))]
+        (arena.from-raw-handle (arena.raw-handle state.owner)))]
     [findings : lint_core.LintFindings state.findings]
     (in-arena
       owner
@@ -1388,10 +1382,37 @@
     (unsafe
       (set! (deref batch).findings findings))))
 
+(define (selfhost-lint-check-source
+  [path : String]
+  [source : String]
+  [stdlib-roots : lint_svec.Vec]
+  [context : (& SelfhostLintCheckContext)]
+  [cfgs : sym_i64_env.SymI64Env]
+  [job-state : tc.TcJobState]) : compiler_check_core.ResultCompilerCheck
+  (match context
+    [(FileContext)
+      (compiler_check_core.compiler-check-source-with-roots-and-cfg-and-job-state
+        path
+        source
+        stdlib-roots
+        cfgs
+        job-state)]
+    [(PackageContext manifest-dir deps)
+      (compiler_check_core.compiler-check-package-source-prepared
+        path
+        source
+        stdlib-roots
+        (string.copy manifest-dir)
+        (compiler_load.clone-compiler-pkg-deps deps)
+        cfgs
+        job-state
+        compiler_check_core.CompilerCheckPreparation.Unchanged)]))
+
 (define (selfhost-lint-typed-findings
   [path : String]
   [source : String]
   [stdlib-roots : lint_svec.Vec]
+  [context : (& SelfhostLintCheckContext)]
   [cfgs : sym_i64_env.SymI64Env]
   [track-unsafe? : bool]
   [track-must-use? : bool]) : lint_core.LintFindings
@@ -1433,24 +1454,33 @@
         [checked : compiler_check_core.ResultCompilerCheck
           (if track-must-use?
             (let
+              [preparation : compiler_check_core.CompilerCheckPreparation
+                (if (parser.compiler-cfg-enabled? typed-cfgs (ci.intern "test"))
+                  (compiler_check_core.CompilerCheckPreparation.Prepare
+                    tltest.tltest-prepare-check-program)
+                  compiler_check_core.CompilerCheckPreparation.Unchanged)]
               [owner : arena.Arena (arena.make)]
               [result : compiler_check_core.ResultCompilerCheck
                 (semantic.compiler-check-semantic-request
                   (semantic.CompilerSemanticCheckRequest
-                    (compiler_check_core.CompilerSemanticCheckInput.PreparedSource
-                      (string.copy (& path))
-                      (string.copy (& source))
-                      (if (parser.compiler-cfg-enabled?
-                        typed-cfgs
-                        (ci.intern "test"))
-                        (compiler_check_core.CompilerCheckPreparation.Prepare
-                          tltest.tltest-prepare-check-program)
-                        compiler_check_core.CompilerCheckPreparation.Unchanged))
+                    (match context
+                      [(FileContext)
+                        (compiler_check_core.CompilerSemanticCheckInput.PreparedSource
+                          (string.copy (& path))
+                          (string.copy (& source))
+                          preparation)]
+                      [(PackageContext manifest-dir deps)
+                        (compiler_check_core.CompilerSemanticCheckInput.PreparedPackageSource
+                          (string.copy (& path))
+                          (string.copy (& source))
+                          (string.copy manifest-dir)
+                          (compiler_load.clone-compiler-pkg-deps deps)
+                          preparation)])
                     stdlib-roots
                     typed-cfgs
                     job-state
                     (unsafe
-                      (arena.Arena owner.handle))
+                      (arena.from-raw-handle (arena.raw-handle owner)))
                     false
                     true
                     (unsafe
@@ -1458,10 +1488,11 @@
                     selfhost-lint-collect-must-use!))]
               (arena.destroy-safe! owner)
               result)
-            (compiler_check_core.compiler-check-source-with-roots-and-cfg-and-job-state
+            (selfhost-lint-check-source
               (string.copy (& path))
               (string.copy (& source))
               stdlib-roots
+              context
               typed-cfgs
               job-state))]
         [must-use : lint_core.LintFindings
@@ -1516,7 +1547,14 @@
   (if (lint_core.lint-program-has-unused-unsafe-candidate? program)
     (begin
       (+= selfhost-lint-unused-unsafe-fallback-file-count 1)
-      (selfhost-lint-typed-findings path source stdlib-roots cfgs true false))
+      (selfhost-lint-typed-findings
+        path
+        source
+        stdlib-roots
+        (& (FileContext))
+        cfgs
+        true
+        false))
     (lint_core.lint-findings-empty)))
 
 (define (selfhost-lint-findings-without-unused-unsafe-from
@@ -1569,6 +1607,7 @@
   [source : String]
   [program : ast.AstProgram]
   [stdlib-roots : lint_svec.Vec]
+  [context : (& SelfhostLintCheckContext)]
   [cfgs : sym_i64_env.SymI64Env]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
@@ -1618,6 +1657,7 @@
           path
           source
           stdlib-roots
+          context
           typed-cfgs
           (> unknown-count 0)
           must-use?)
@@ -3678,6 +3718,7 @@
 (define (selfhost-lint-run-file-with-package-dead-in-scratch
   [input-path : String]
   [stdlib-roots : lint_svec.Vec]
+  [context : (& SelfhostLintCheckContext)]
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
@@ -3703,6 +3744,7 @@
               (selfhost-lint-file-with-package-dead
                 input-path
                 stdlib-roots
+                context
                 enforcing
                 deprecated-string-concat
                 redundant-function-name
@@ -3765,6 +3807,7 @@
               (owned_view.compiler-owned-shared-view source)
               program
               stdlib-roots
+              (& (FileContext))
               (selfhost-lint-language-cfgs)
               deprecated-string-concat
               redundant-function-name
@@ -3801,6 +3844,7 @@
 (define (selfhost-lint-file-with-package-dead
   [input-path : String]
   [stdlib-roots : lint_svec.Vec]
+  [context : (& SelfhostLintCheckContext)]
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
@@ -3832,6 +3876,7 @@
               (owned_view.compiler-owned-shared-view source)
               program
               stdlib-roots
+              context
               (selfhost-lint-language-cfgs)
               deprecated-string-concat
               redundant-function-name
@@ -3940,6 +3985,7 @@
 (define (selfhost-lint-package-files-from
   [input-paths : (& input-paths lint_svec.Vec)]
   [stdlib-roots : lint_svec.Vec]
+  [context : (& SelfhostLintCheckContext)]
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
@@ -3965,6 +4011,7 @@
           (selfhost-lint-run-file-with-package-dead-in-scratch
             input-path
             (owned_view.compiler-owned-shared-view stdlib-roots)
+            context
             enforcing
             deprecated-string-concat
             redundant-function-name
@@ -3982,6 +4029,7 @@
 (define (selfhost-lint-package-files
   [input-paths : (& input-paths lint_svec.Vec)]
   [stdlib-roots : lint_svec.Vec]
+  [context : (& SelfhostLintCheckContext)]
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
@@ -3998,6 +4046,7 @@
       (selfhost-lint-package-files-from
         input-paths
         stdlib-roots
+        context
         enforcing
         deprecated-string-concat
         redundant-function-name
@@ -4013,7 +4062,7 @@
 (define (selfhost-lint-package
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : lint_svec.Vec]
+  [options : cli_option.CliCompileOptions]
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
@@ -4028,7 +4077,32 @@
       (io.print-error (str_cat.str-cat message "\n"))
       1]
     [(Ok source-set)
+      (match (build_run_core.source-tool-build-package-deps-only!
+        (& source-set.manifest-path)
+        options.profile
+        (build_run_core.source-tool-backend-target options.target)
+        (& options.stdlib-roots)
+        (& options.cfgs)
+        (& source-set.manifest.deps))
+        [(Ok) unit]
+        [(Err message)
+          (io.print-error message)
+          (return 1)])
+      (compiler_load.compiler-load-session-set-package-profile!
+        (compiler_load.compiler-load-serial-test-session-state)
+        options.profile)
       (let
+        [stdlib-roots : lint_svec.Vec options.stdlib-roots]
+        [context : SelfhostLintCheckContext
+          (if (>
+            (compiler_load.compiler-pkg-dep-list-count
+              (& source-set.manifest.deps.ordered))
+            0)
+            (PackageContext
+              (string.copy (& source-set.manifest-dir))
+              (compiler_load.clone-compiler-pkg-deps
+                (& source-set.manifest.deps)))
+            (FileContext))]
         [sources : lint_svec.Vec
           (owned_view.compiler-owned-shared-view source-set.sources)]
         [manifest : compiler_load.CompilerPkgManifest
@@ -4050,6 +4124,7 @@
               (selfhost-lint-package-files
                 sources
                 package-roots
+                (& context)
                 enforcing
                 deprecated-string-concat
                 redundant-function-name
@@ -4091,7 +4166,7 @@
         [(Package
             manifest-path
             has-manifest
-            stdlib-roots
+            options
             enforcing
             deprecated-string-concat
             redundant-function-name
@@ -4101,7 +4176,7 @@
           (selfhost-lint-package
             manifest-path
             has-manifest
-            stdlib-roots
+            options
             enforcing
             deprecated-string-concat
             redundant-function-name

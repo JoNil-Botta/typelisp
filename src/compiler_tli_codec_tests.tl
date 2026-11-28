@@ -964,7 +964,8 @@
         0
         "_tl_helper"
         (tli.TliType.Func ext-params (box (tli.TliType.F64)))
-        (tli.TliCompactReturnStorage.None)))
+        (tli.TliCompactReturnStorage.None)
+        true))
     (set!
       (array-ref instrs 0)
       (tli.TliCompactInstr.BinOp
@@ -1242,7 +1243,10 @@
             (test.assert-i64-eq
               (array-length body.ir-body.extern-refs)
               1
-              "lazy decode 1 extern-ref")])])))
+              "lazy decode 1 extern-ref")
+            (test.assert-true
+              (array-ref body.ir-body.extern-refs 0).cold?
+              "lazy decode preserves the compact extern marker")])])))
 
 (test
   tli-compact-ir-fail-closed

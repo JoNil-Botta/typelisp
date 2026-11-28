@@ -108,16 +108,13 @@
 ;# moves it, so no copy outlives its safe destroy or rewind (SPEC 5.16). The
 ;# raw `tl_*` hooks remain exported for compiler/runtime internals and FFI-like
 ;# low-level code; ordinary user code should use the typed helpers below.
-;: First-class arena handle. Constructing this nominal wrapper from a raw `i64`
-;: requires `unsafe`: the handle must identify a live arena throughout every
-;: use. Zero is the runtime's default arena identity. Reading `.handle` is safe;
-;: mutating it or taking an exclusive field reference also requires `unsafe`.
+;: First-class arena handle with a private runtime identity.
 (defstruct Arena
-  (handle i64))
+  (handle i64 (:opaque)))
 
 ;: Rewind mark for the current active arena.
 (defstruct ArenaMark
-  (handle i64))
+  (handle i64 (:opaque)))
 
 ;: Safe ordinary-arena phase token.
 (defstruct ArenaPhase
@@ -159,20 +156,20 @@
 ;: destruction of the handle remains unsafe.
 (define (make) : Arena
   (unsafe
-    (Arena (tl_arena_make))))
+    (from-raw-handle (tl_arena_make))))
 
 ;: Create a fresh independent atomic arena without switching to it. An
 ;: unannotated canonical call receives a fresh move-only checker brand that
 ;: retains the atomic-owner proof through lifetime-parameterized aggregates.
 (define (make-atomic) : Arena
   (unsafe
-    (Arena (tl_arena_make_atomic))))
+    (from-raw-handle (tl_arena_make_atomic))))
 
 ;: Return the stable root handle for the current active arena, or `0` before the
 ;: first allocation. The value remains identical when the arena grows.
 (define (current) : Arena
   (unsafe
-    (Arena (tl_arena_current))))
+    (from-raw-handle (tl_arena_current))))
 
 ;: Return a rewind mark for the current active arena.
 ;:
@@ -185,6 +182,7 @@
 ;: arena. The returned handle carries no checker brand.
 (unsafe
   (define (from-raw-handle [handle : i64]) : Arena
+    ;; lint-allow: unused-unsafe -- the bootstrap seed requires this raw constructor effect.
     (unsafe
       (Arena handle))))
 

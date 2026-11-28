@@ -2901,7 +2901,7 @@
   [plan : be_state.CompilerBackendRuntimePlan]
   [program-index : be_state.CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
   (match func
-    [(Function name params ret-ty vars blocks function-abi)
+    [(Function name params ret-ty vars blocks function-abi cold?)
       (let
         [symbol : String
           (be_operand.compiler-backend-function-symbol-index program-index name)]
@@ -2916,7 +2916,8 @@
                 (be_state.compiler-backend-global-shared-view ret-ty)
                 vars
                 (be_state.compiler-backend-global-shared-view blocks)
-                (be_state.compiler-backend-global-shared-view function-abi)))
+                (be_state.compiler-backend-global-shared-view function-abi)
+                cold?))
             (be_state.compiler-backend-state-metrics
               program-index.backend-state))]
         [groups : compiler_liveness.CompilerLiveI64Set
@@ -2929,7 +2930,8 @@
                 ret-ty
                 vars
                 (be_state.compiler-backend-global-shared-view blocks)
-                function-abi))
+                function-abi
+                cold?))
             types)]
         [_group-enable : unit
           (begin
@@ -3001,7 +3003,7 @@
       (let
         [func (owned_view.compiler-owned-element-view functions.slots index)]
         (match (& func)
-          [(Function name _ _ _ _ _)
+          [(Function name _ _ _ _ _ _)
             (unless
               (and
                 closed
@@ -3042,7 +3044,7 @@
         (let
           [func (owned_view.compiler-owned-element-view functions.slots index)]
           (match (& func)
-            [(Function name _ _ _ _ _)
+            [(Function name _ _ _ _ _ _)
               (let
                 [source-name : String
                   (be_state.compiler-backend-symbol-text-index
@@ -3724,7 +3726,19 @@
   (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     parts
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs seq-index)
-      [(Extern name-id source-name-id _ ty abi link-symbol-id _ provided _ _ _)
+      [(Extern
+          name-id
+          source-name-id
+          _
+          ty
+          abi
+          link-symbol-id
+          _
+          provided
+          _
+          _
+          _
+          _)
         (let
           [link-symbol : String
             (be_operand.compiler-backend-link-symbol-id
@@ -4415,7 +4429,7 @@
   [functions : (& compiler_ir_types.CompilerIrFunctionSeq)]) : bool
   (for [index (iterator.range 0 functions.len)]
     (match (compiler_ir_types.compiler-ir-function-seq-borrow functions index)
-      [(Function name _ _ _ blocks function-abi)
+      [(Function name _ _ _ blocks function-abi _)
         (when
           (match (& function-abi)
             [(SpmdPrivate _) true]
@@ -4833,7 +4847,7 @@
   [global-types : be_state.CompilerBackendGlobalTypeTable]
   [func : compiler_ir_types.CompilerIrFunction]) : be_state.CompilerBackendObjectEligibility
   (match (be_state.compiler-backend-global-shared-view func)
-    [(Function name params ret-ty _ blocks _)
+    [(Function name params ret-ty _ blocks _ _)
       (if (be_operand.compiler-backend-stdlib-runtime-function-name?
         (be_state.compiler-backend-symbol-text-index program-index name))
         Eligible

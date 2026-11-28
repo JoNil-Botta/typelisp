@@ -401,8 +401,8 @@ run_serial() {
     set -e
 }
 
-ROOT_OUT="$WORK/pkg/target/release"
-DEP_OUT="$WORK/pkg/vendor/dep/target/release"
+ROOT_OUT="$WORK/pkg/target/dev"
+DEP_OUT="$WORK/pkg/vendor/dep/target/dev"
 ROOT_ASM="$ROOT_OUT/fresh_root.s"
 ROOT_OBJ="$ROOT_OUT/fresh_root$OBJ_SUFFIX"
 ROOT_RUNTIME="$ROOT_OUT/fresh_root$EXE_SUFFIX"
@@ -442,7 +442,7 @@ if [ "$HOST_OS" = linux ]; then
     mkdir -p "$WRAP"
     : > "$TOOL_LOG"
     export TOOL_LOG
-    for tool in as ar ld cc; do
+    for tool in ar ld cc; do
         real=$(PATH=$ORIGINAL_PATH command -v "$tool") || fail "missing $tool for wrapper coverage"
         {
             echo '#!/usr/bin/env sh'
@@ -451,13 +451,20 @@ if [ "$HOST_OS" = linux ]; then
         } > "$WRAP/$tool"
         chmod +x "$WRAP/$tool"
     done
+    cat > "$WRAP/as" <<'EOF'
+#!/usr/bin/env sh
+printf '%s\n' as >> "$TOOL_LOG"
+exit 97
+EOF
+    chmod +x "$WRAP/as"
     PATH="$WRAP:$ORIGINAL_PATH"
     export PATH
     MODE=avx2
     run_graph wrapper-seed
     [ "$code" -eq 0 ] || fail "tool-wrapper seed build failed: $(cat "$err")"
     [ ! -s "$err" ] || fail "tool-wrapper seed build wrote stderr: $(cat "$err")"
-    assert_contains "$TOOL_LOG" as
+    assert_contains "$ROOT_INPUTS" 'assembler 21:typelisp-linux-x86_64'
+    assert_contains "$DEP_INPUTS" 'assembler 21:typelisp-linux-x86_64'
     assert_contains "$TOOL_LOG" ar
     assert_contains "$TOOL_LOG" ld
     if grep -Fxq cc "$TOOL_LOG"; then
@@ -473,7 +480,18 @@ if [ "$HOST_OS" = linux ]; then
     after_calls=$(wc -l < "$TOOL_LOG" | tr -d ' ')
     [ "$after_calls" -eq "$wrapper_calls" ] || fail "no-op package build invoked native tools"
 
-    printf '\n# tool identity change\n' >> "$WRAP/as"
+    printf '\n# external assembler identity change\n' >> "$WRAP/as"
+    run_graph assembler-identity
+    [ "$code" -eq 0 ] || fail "external assembler identity check failed: $(cat "$err")"
+    assert_artifact_role "$out" Fresh "fresh_root$EXE_SUFFIX"
+    assert_artifact_role "$out" Fresh "${LIB_PREFIX}fresh_dep$LIB_SUFFIX"
+    [ "$(wc -l < "$TOOL_LOG" | tr -d ' ')" -eq "$after_calls" ] || fail "external assembler identity change invoked native tools"
+    if grep -Fxq as "$TOOL_LOG"; then
+        fail "package build invoked an external assembler"
+    fi
+
+    printf '\n# tool identity change\n' >> "$WRAP/ar"
+    printf '\n# tool identity change\n' >> "$WRAP/ld"
     run_graph tool-identity
     [ "$code" -eq 0 ] || fail "tool-identity rebuild failed: $(cat "$err")"
     assert_artifact_role "$out" Built "fresh_root$EXE_SUFFIX"
@@ -515,7 +533,7 @@ assert_artifact_role "$out" Built "fresh_root$EXE_SUFFIX"
 
 run_serial serial-initial
 [ "$code" -eq 0 ] || fail "serial worker build failed: $(cat "$err")"
-SERIAL_OUT="$WORK/serial/target/release"
+SERIAL_OUT="$WORK/serial/target/dev"
 SERIAL_TLI="$SERIAL_OUT/fresh_serial.tli"
 SERIAL_RUNTIME="$SERIAL_OUT/${LIB_PREFIX}fresh_serial$LIB_SUFFIX"
 [ -s "$SERIAL_TLI" ] || fail "serial worker build did not emit fresh_serial.tli"

@@ -1,0 +1,1 @@
+self_compile/compile_cli_opt1	+4146.503	Self-hosting now compiles the Win64 COFF object writer, SEH unwind encoder, CodeView encoder and assembler CLI integration.

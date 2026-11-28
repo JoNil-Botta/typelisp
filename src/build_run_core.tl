@@ -1554,6 +1554,24 @@
   (source-tool-try-remove-dir-if-exists temp-dir)
   unit)
 
+(define (source-tool-assemble-linux-text
+  [asm-path : (& asm-path str)]
+  [obj-path : (& obj-path str)]
+  [asm : (& asm str)]) : SourceToolCommandStatus
+  (match (linux_asm.assemble-linux-x64 asm)
+    [(Err message)
+      (Err
+        (str_cat.str-cat
+          "Error: Linux x86-64 assembler failed for "
+          (string.copy asm-path)
+          ": "
+          message))]
+    [(Ok object)
+      (source-tool-write-file
+        obj-path
+        (& object)
+        (str_cat.str-cat "Error: cannot write object " (string.copy obj-path)))]))
+
 (define (source-tool-assemble
   [role : String]
   [target : be_state.CompilerBackendTarget]
@@ -1573,21 +1591,7 @@
                 ": "
                 (io.error-message error)))]
           [(OkIoString asm)
-            (match (linux_asm.assemble-linux-x64 (& asm))
-              [(Err message)
-                (Err
-                  (str_cat.str-cat
-                    "Error: Linux x86-64 assembler failed for "
-                    asm-path
-                    ": "
-                    message))]
-              [(Ok object)
-                (source-tool-write-file
-                  (& obj-path)
-                  (& object)
-                  (str_cat.str-cat
-                    "Error: cannot write object "
-                    (string.copy (& obj-path))))])]))]
+            (source-tool-assemble-linux-text (& asm-path) (& obj-path) (& asm))]))]
     [(Windows)
       (source-tool-run-command
         role
@@ -1660,6 +1664,31 @@
           asm-path
           (owned_view.compiler-owned-shared-view obj-path)))]
     (source-tool-link target obj-path bin-path link-inputs)))
+
+(define (source-tool-assemble-text-and-link
+  [target : be_state.CompilerBackendTarget]
+  [asm-path : String]
+  [obj-path : String]
+  [bin-path : String]
+  [asm : (& asm str)]
+  [link-inputs : SourceToolLinkInputs]) : SourceToolCommandStatus
+  (match target
+    [(Linux)
+      ;; The emitter has already written the assembly artifact. Assemble its
+      ;; borrowed text without loading the file into memory again.
+      (let
+        [_
+          (try
+            (with-scratch
+              (source-tool-assemble-linux-text (& asm-path) (& obj-path) asm)))]
+        (source-tool-link target obj-path bin-path link-inputs))]
+    [(Windows)
+      (source-tool-assemble-and-link
+        target
+        asm-path
+        obj-path
+        bin-path
+        link-inputs)]))
 
 (define (source-tool-assemble-and-archive
   [target : be_state.CompilerBackendTarget]
@@ -1945,7 +1974,7 @@
             [(Ok asm)
               (match (source-tool-write-file
                 request.files.asm
-                asm
+                (& asm)
                 request.write-context)
                 [(Err message) (Err message)]
                 [(Ok)
@@ -1953,11 +1982,12 @@
                     [effective-link-inputs : SourceToolLinkInputs
                       (source-tool-link-inputs-with-hydrated-archives
                         request.link-inputs)]
-                    (source-tool-assemble-and-link
+                    (source-tool-assemble-text-and-link
                       request.target
                       request.files.asm
                       request.files.obj
                       request.files.bin
+                      (& asm)
                       effective-link-inputs))])])])]
     ;; Both direct output and every assembly fallback/error have finished
     ;; reading lowered IR before its exact owner can be retired.

@@ -3,6 +3,7 @@
 (import compiler_linux_asm_symbols as sym)
 (import compiler_x64_encode as x64)
 (import compiler_x64_encode_bytes as enc)
+(import stdlib.arena)
 (import stdlib.byte_buf_core as buf)
 (import stdlib.byte_le)
 (import stdlib.string)
@@ -139,12 +140,13 @@
 (define (instruction!
   [s : (&mut run Section)]
   [table : (&mut sym.Table)]
-  [line : (& str)]) : Status
+  [line : (& str)]
+  [scratch : arena.Arena]) : Status
   (when (= s.ty 8) (return (Err "instruction in NOBITS section")))
   (let
     [start s.raw.len]
     [instruction : enc.X64EncodedInstruction
-      (try (x64.x64-encode-instruction! (&mut s.raw) line (Near)))]
+      (try (x64.x64-encode-instruction! (&mut s.raw) line (Near) scratch))]
     [i : i64 0]
     (while (< i instruction.fixup-count)
       (let

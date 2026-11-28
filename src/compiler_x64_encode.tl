@@ -4,6 +4,7 @@
 (import compiler_x64_encode_operands as op)
 (import compiler_x64_encode_scalar as scalar)
 (import compiler_x64_encode_vector as vector)
+(import stdlib.arena)
 (import stdlib.byte_buf_core)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
@@ -144,14 +145,25 @@
 ;: relative to the start of that sink, and the width is in bytes. A diagnostic
 ;: leaves the sink untouched. Direct branches use the selected width, with
 ;: calls always using a 32-bit displacement.
+;; Reuse scratch for decoded operands and tokens. Only the encoding and
+;; symbolic fixups escape to the caller's arena.
 (define (x64-encode-instruction!
   [out : (&mut byte_buf_core.ByteBufBuilder)]
   [line : (& line str)]
-  [branch-width : enc.X64BranchWidth]) : enc.X64EncodeResult
+  [branch-width : enc.X64BranchWidth]
+  [scratch : arena.Arena]) : enc.X64EncodeResult
   (let
-    [encoder (enc.new-encoding)]
+    [encoder : enc.Encoding
+      (with-escape
+        scratch
+        (let
+          [parsed (enc.new-encoding)]
+          (unless
+            (encode-text! (&mut parsed) line branch-width)
+            (set! parsed.valid false))
+          parsed))]
     (unless
-      (and (encode-text! (&mut encoder) line branch-width) encoder.valid)
+      encoder.valid
       (return
         (Err
           (str_cat.str-cat

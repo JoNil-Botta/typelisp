@@ -4,6 +4,7 @@
 (import compiler_linux_asm_directives as dir)
 (import compiler_x64_encode as x64)
 (import compiler_x64_encode_operands as op)
+(import stdlib.arena)
 (import stdlib.byte_buf_core as buf)
 (import stdlib.string)
 (import stdlib.vector)
@@ -140,7 +141,8 @@
 (define (read-source!
   [reader : (&mut r Reader)]
   [source : (& src str)]
-  [depth : i64]) : asm.Status
+  [depth : i64]
+  [scratch : arena.Arena]) : asm.Status
   (when
     (> depth 64)
     (return (Err "assembler macro expansion nested too deeply")))
@@ -157,13 +159,17 @@
         (while (< at n)
           (let
             [word-end (x64.word-end-at (& line) at)]
-            [word : String (op.range (& line) at word-end)]
-            [colon (op.delimiter (& word) 0 ':')]
-            [label? (< colon (- word-end at))]
+            [colon (op.delimiter-before (& line) at word-end ':')]
+            [label? (< colon word-end)]
+            [directive? (= (string.string-ref (& line) at) '.')]
+            [word : String
+              (if directive?
+                (op.range (& line) at word-end)
+                "")]
             [args : String
-              (if label?
-                ""
-                (op.range (& line) word-end n))]
+              (if (and directive? (not label?))
+                (op.range (& line) word-end n)
+                "")]
             (cond
               [(or (string.eq (& word) ".ifdef") (string.eq (& word) ".ifndef"))
                 (+= conditions 1)
@@ -218,14 +224,19 @@
                               [actual : String (dir.argument (& args) (&mut i))]
                               [text
                                 (try (expand (& formal) (& actual) (& body)))]
-                              (try (read-source! reader (& text) (+ depth 1))))))))))]
+                              (try
+                                (read-source!
+                                  reader
+                                  (& text)
+                                  (+ depth 1)
+                                  scratch)))))))))]
               [(> skip 0) unit]
               [label?
                 (try
                   (dir.label!
                     (&mut reader.image)
-                    (& (op.range (& word) 0 colon))))
-                (set! at (op.skip-whitespace (& line) (+ at (+ colon 1)) n))
+                    (& (op.range (& line) at colon))))
+                (set! at (op.skip-whitespace (& line) (+ colon 1) n))
                 (continue)]
               [(or
                   (string.eq (& word) ".loc")
@@ -250,7 +261,7 @@
                 (set!
                   reader.image.current
                   (array-ref reader.stack.slots reader.stack.len))]
-              [(= (string.string-ref (& word) 0) '.')
+              [directive?
                 (let
                   [i : i64 0]
                   [found false]
@@ -266,7 +277,7 @@
                               (& (array-ref reader.definitions.slots i).formals)
                               (& args)
                               (& (array-ref reader.definitions.slots i).body)))]
-                        (try (read-source! reader (& text) (+ depth 1))))
+                        (try (read-source! reader (& text) (+ depth 1) scratch)))
                       (set! found true)
                       (set! i reader.definitions.len))
                     (+= i 1))
@@ -274,12 +285,22 @@
                     found
                     (try (dir.directive! (&mut reader.image) (& word) (& args)))))]
               [else
-                (try
-                  (asm.instruction!
-                    (&mut
-                      (array-ref reader.image.items.slots reader.image.current))
-                    (&mut reader.image.table)
-                    (& (op.range (& line) at n))))])
+                (let
+                  [tail : String
+                    (if (= at 0)
+                      ""
+                      (op.range (& line) at n))]
+                  (try
+                    (asm.instruction!
+                      (&mut
+                        (array-ref
+                          reader.image.items.slots
+                          reader.image.current))
+                      (&mut reader.image.table)
+                      (if (= at 0)
+                        (& line)
+                        (& tail))
+                      scratch)))])
             (break)))))
     (unless (= conditions 0) (return (Err "unclosed assembler conditional")))
     (Ok unit)))

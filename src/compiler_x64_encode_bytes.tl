@@ -1,6 +1,7 @@
 ;; Shared encoding machinery, independent of symbols and section layout.
 (import compiler_x64_encode_operands as operand)
 (import stdlib.byte_le)
+(import stdlib.clone as clone_gen)
 (import stdlib.string)
 
 (defenum X64BranchWidth
@@ -13,12 +14,16 @@
   (PcRelative)
   (BranchRelative))
 
+(clone_gen.gen-clone X64RelocationIntent)
+
 (defstruct X64Fixup
   (field-offset i64)
   (width i64)
   (intent X64RelocationIntent)
   (expression String)
   (instruction-end i64))
+
+(clone_gen.gen-clone X64Fixup)
 
 (defstruct X64EncodedInstruction
   (fixup-count i64)
@@ -34,6 +39,8 @@
   (fixup-count i64)
   (fixups (Array X64Fixup 2))
   (valid bool))
+
+(clone_gen.gen-clone Encoding)
 
 (define (new-encoding) : Encoding
   (Encoding

@@ -6,6 +6,7 @@
 (import compiler_linux_asm_resolve as resolve)
 (import compiler_object_elf as elf)
 (import compiler_object_layout as layout)
+(import stdlib.arena)
 (import stdlib.byte_buf_core as buf)
 (import stdlib.byte_le)
 (import stdlib.string)
@@ -342,7 +343,10 @@
 (define (assemble-text [final-text : (& str)]) : elf.ResultCompilerObjectElf
   (let
     [parser (reader.new-reader)]
-    (match (reader.read-source! (&mut parser) final-text 0)
+    [scratch (arena.make)]
+    [parsed (reader.read-source! (&mut parser) final-text 0 scratch)]
+    (arena.destroy-safe! scratch)
+    (match parsed
       [(Ok _) unit]
       [(Err reason)
         (let

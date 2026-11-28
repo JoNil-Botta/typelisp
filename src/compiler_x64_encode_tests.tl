@@ -2,6 +2,7 @@
 ;; The fixup tests leave symbol resolution to the caller.
 (import compiler_x64_encode as x64)
 (import compiler_x64_encode_bytes as enc)
+(import stdlib.arena)
 (import stdlib.byte_buf_core)
 (import stdlib.string)
 (import stdlib.test)
@@ -36,10 +37,20 @@
           (string.copy message)))
       (+= i 1))))
 
+(define (encode!
+  [out : (&mut byte_buf_core.ByteBufBuilder)]
+  [line : (& line str)]
+  [selection : enc.X64BranchWidth]) : enc.X64EncodeResult
+  (let
+    [scratch (arena.make)]
+    [result (x64.x64-encode-instruction! out line selection scratch)]
+    (arena.destroy-safe! scratch)
+    result))
+
 (define (golden! [line : String] [hex : String]) : unit
   (let
     [out (byte_buf_core.byte-buf-builder-new)]
-    (match (x64.x64-encode-instruction! (&mut out) (& line) (Near))
+    (match (encode! (&mut out) (& line) (Near))
       [(Err message) (test.assert-true false message)]
       [(Ok encoded)
         (test.assert-i64-eq encoded.fixup-count 0 (string.copy line))
@@ -143,10 +154,7 @@
   (let
     [out (byte_buf_core.byte-buf-builder-new)]
     (byte_buf_core.byte-buf-builder-push (&mut out) 0x90)
-    (match (x64.x64-encode-instruction!
-      (&mut out)
-      "movq $item-4, table+8(%rip)"
-      (Near))
+    (match (encode! (&mut out) "movq $item-4, table+8(%rip)" (Near))
       [(Err message) (test.assert-true false message)]
       [(Ok encoded)
         (test.assert-i64-eq
@@ -171,18 +179,12 @@
   x64-final-text-tls-displacement-and-full-width-absolute-fixups
   (let
     [out (byte_buf_core.byte-buf-builder-new)]
-    (match (x64.x64-encode-instruction!
-      (&mut out)
-      "movq %fs:slot@TPOFF, %r9"
-      (Near))
+    (match (encode! (&mut out) "movq %fs:slot@TPOFF, %r9" (Near))
       [(Err message) (test.assert-true false message)]
       [(Ok encoded)
         (test.assert-i64-eq encoded.fixup-count 1 "TLS displacement")
         (assert-fixup! (& (array-ref encoded.fixups 0)) 5 4 9 "slot@TPOFF")])
-    (match (x64.x64-encode-instruction!
-      (&mut out)
-      "movabsq $pointer, %r15"
-      (Near))
+    (match (encode! (&mut out) "movabsq $pointer, %r15" (Near))
       [(Err message) (test.assert-true false message)]
       [(Ok encoded)
         (test.assert-i64-eq encoded.fixup-count 1 "symbol address")
@@ -207,7 +209,7 @@
   [expression : String]) : unit
   (let
     [out (byte_buf_core.byte-buf-builder-new)]
-    (match (x64.x64-encode-instruction! (&mut out) (& line) selection)
+    (match (encode! (&mut out) (& line) selection)
       [(Err message) (test.assert-true false message)]
       [(Ok encoded)
         (assert-bytes! (& out) (& hex) line)
@@ -236,7 +238,7 @@
   (let
     [out (byte_buf_core.byte-buf-builder-new)]
     (byte_buf_core.byte-buf-builder-push (&mut out) 0x90)
-    (match (x64.x64-encode-instruction! (&mut out) (& line) (Near))
+    (match (encode! (&mut out) (& line) (Near))
       [(Ok _) (test.assert-true false line)]
       [(Err _) (assert-bytes! (& out) "90" line)])))
 

@@ -390,6 +390,11 @@
         "minimal Linux functions keep thread initialization")
       (test.assert-true
         (compiler-backend-runtime-test-contains?
+          (& linux-min-functions)
+          "tl_thread_init:\n    movq $4096, %rsi\n    xorq %rdi, %rdi\n    movq $3, %rdx\n    movq $0x22, %r10\n    movq $-1, %r8\n    xorq %r9, %r9\n    movq $9, %rax\n    syscall")
+        "Linux thread initialization mmap passes fd -1")
+      (test.assert-true
+        (compiler-backend-runtime-test-contains?
           (& windows-min-functions)
           ".globl tl_thread_entry_ptr")
         "minimal Windows functions keep the thread entry bridge")

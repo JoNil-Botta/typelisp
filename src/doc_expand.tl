@@ -84,10 +84,17 @@
 (define (doc-expand-context-from-pools-and-intern-state
   [pools : (& pools ast.AstNodePoolContext)]
   [intern-state : (& intern-state ci.InternCompatState)]) : DocExpandContext
+  (doc-expand-context-from-pools-and-source-names
+    pools
+    (ci.intern-source-name-session-handle-from-state intern-state)))
+
+(define (doc-expand-context-from-pools-and-source-names
+  [pools : (& pools ast.AstNodePoolContext)]
+  [source-names : ci.InternSourceNameSessionHandle]) : DocExpandContext
   (DocExpandContext
     (ast.ast-node-pool-context-expr-segment-bases pools)
     (ast.ast-node-pool-context-type-segment-bases pools)
-    (ci.intern-source-name-session-handle-from-state intern-state)))
+    source-names))
 
 (define (doc-expand-source-name [ctx : DocExpandContext] [id : i64]) : String
   (ci.intern-source-name-session-handle-str ctx.source-names id))
@@ -236,7 +243,7 @@
 
 (define (doc-ast-lifetime-list-source-from
   [ctx : DocExpandContext]
-  [lifetimes : ast.AstLifetimeList]
+  [lifetimes : (& lifetimes ast.AstLifetimeList)]
   [index : i64]
   [count : i64]) : String
   (if (>= index count)
@@ -247,10 +254,7 @@
         " ")
       (doc-symbol-text
         ctx
-        (ast.ast-lifetime-list-get
-          (& lifetimes)
-          index
-          (ast.ast-lifetime-fallback)))
+        (ast.ast-lifetime-list-get lifetimes index (ast.ast-lifetime-fallback)))
       (doc-ast-lifetime-list-source-from ctx lifetimes (+ index 1) count))))
 
 (define (doc-ast-lifetime-list-source
@@ -262,7 +266,7 @@
       ""
       (doc-cat3
         " (:lifetimes "
-        (doc-ast-lifetime-list-source-from ctx lifetimes 0 count)
+        (doc-ast-lifetime-list-source-from ctx (& lifetimes) 0 count)
         ")"))))
 
 (define (doc-ast-type-source [ctx : DocExpandContext] [ty : ast.AstType]) : String
@@ -341,9 +345,20 @@
         " "
         (doc-ast-type-id-source ctx elem)
         ")")]
-    [(or (Enum name) (EnumArgs name _) (Struct name) (StructArgs name _)
-         (Var name) (VarArgs name _))
-      (doc-symbol-text ctx name)]
+    [(or (Enum name) (Struct name) (Var name)) (doc-symbol-text ctx name)]
+    [(or (EnumArgs name args) (StructArgs name args) (VarArgs name args))
+      (let
+        [lifetimes : ast.AstLifetimeList (deref args)]
+        (doc-cat5
+          "("
+          (doc-symbol-text ctx name)
+          " "
+          (doc-ast-lifetime-list-source-from
+            ctx
+            (& lifetimes)
+            0
+            (ast.ast-lifetime-list-len (& lifetimes)))
+          ")"))]
     [(Ptr elem) (doc-cat3 "(Ptr " (doc-ast-type-id-source ctx elem) ")")]
     [(MutPtr elem) (doc-cat3 "(MutPtr " (doc-ast-type-id-source ctx elem) ")")]))
 
@@ -746,14 +761,19 @@
   [ctx : DocExpandContext]
   [field : ast.AstFieldDef]
   [align : i64]) : String
-  (match field
-    [(Def name ty _ _)
-      (doc-cat5
-        "\n  ("
-        (doc-expand-source-name ctx (ci.intern-syntax-id-value name))
-        " "
-        (doc-ast-type-source ctx ty)
-        (doc-cat2 (doc-ast-declared-align-source align) ")"))]))
+  (let
+    [opacity : String
+      (if (ast.ast-field-def-opaque? (& field))
+        " (:opaque)"
+        "")]
+    (match field
+      [(Def name ty _ _)
+        (doc-cat5
+          "\n  ("
+          (doc-expand-source-name ctx (ci.intern-syntax-id-value name))
+          " "
+          (doc-ast-type-source ctx ty)
+          (doc-cat3 (doc-ast-declared-align-source align) opacity ")"))])))
 
 ;; `(:repr c)` and the struct's declared alignment, in the canonical metadata
 ;; order after `:lifetimes`.
@@ -921,82 +941,87 @@
     ")"))
 
 (define (doc-ast-decl-item [ctx : DocExpandContext] [decl : ast.AstDecl]) : DocMaybeItem
-  (match decl
-    [(Def decl-meta name maybe-ty _)
-      (Some
-        (Item
-          (Define)
-          (doc-expand-source-name ctx name)
-          ""
-          (doc-ast-define-signature ctx name maybe-ty)
-          0))]
-    [(DefFn decl-meta name params ret _ _)
-      (Some
-        (Item
-          (Function)
-          (doc-expand-source-name ctx name)
-          ""
-          (doc-ast-function-signature ctx name params ret)
-          0))]
-    [(DefMacro decl-meta name params ret _)
-      (Some
-        (Item
-          (DefMacro)
-          (doc-expand-source-name ctx name)
-          ""
-          (doc-ast-macro-signature ctx name params ret)
-          0))]
-    [(Extern decl-meta name _ _ ty)
-      (Some
-        (Item
-          (Extern)
-          (doc-expand-source-name ctx name)
-          ""
-          (doc-ast-extern-signature ctx name ty)
-          0))]
-    [(DefEnum decl-meta name _ variants)
-      (Some
-        (Item
-          (DefEnum)
-          (doc-expand-source-name ctx name)
-          ""
-          (doc-ast-enum-signature ctx name "" variants)
-          0))]
-    [(DefEnumLifetimes decl-meta name lifetimes _ variants)
-      (Some
-        (Item
-          (DefEnum)
-          (doc-expand-source-name ctx name)
-          ""
-          (doc-ast-enum-signature
-            ctx
-            name
-            (doc-ast-lifetime-list-source ctx lifetimes)
-            variants)
-          0))]
-    [(DefStruct decl-meta name repr _ fields)
-      (Some
-        (Item
-          (DefStruct)
-          (doc-expand-source-name ctx name)
-          ""
-          (doc-ast-struct-signature ctx name "" repr fields)
-          0))]
-    [(DefStructLifetimes decl-meta name lifetimes repr _ fields)
-      (Some
-        (Item
-          (DefStruct)
-          (doc-expand-source-name ctx name)
-          ""
-          (doc-ast-struct-signature
-            ctx
-            name
-            (doc-ast-lifetime-list-source ctx lifetimes)
-            repr
-            fields)
-          0))]
-    [(Unsafe inner-box) (doc-ast-decl-item ctx (deref inner-box))]
-    [_ (No)]))
+  (let
+    [opacity : String
+      (if (ast.ast-decl-opaque? (& decl))
+        " (:opaque)"
+        "")]
+    (match decl
+      [(Def decl-meta name maybe-ty _)
+        (Some
+          (Item
+            (Define)
+            (doc-expand-source-name ctx name)
+            ""
+            (doc-ast-define-signature ctx name maybe-ty)
+            0))]
+      [(DefFn decl-meta name params ret _ _)
+        (Some
+          (Item
+            (Function)
+            (doc-expand-source-name ctx name)
+            ""
+            (doc-ast-function-signature ctx name params ret)
+            0))]
+      [(DefMacro decl-meta name params ret _)
+        (Some
+          (Item
+            (DefMacro)
+            (doc-expand-source-name ctx name)
+            ""
+            (doc-ast-macro-signature ctx name params ret)
+            0))]
+      [(Extern decl-meta name _ _ ty)
+        (Some
+          (Item
+            (Extern)
+            (doc-expand-source-name ctx name)
+            ""
+            (doc-ast-extern-signature ctx name ty)
+            0))]
+      [(DefEnum decl-meta name _ variants)
+        (Some
+          (Item
+            (DefEnum)
+            (doc-expand-source-name ctx name)
+            ""
+            (doc-ast-enum-signature ctx name opacity variants)
+            0))]
+      [(DefEnumLifetimes decl-meta name lifetimes _ variants)
+        (Some
+          (Item
+            (DefEnum)
+            (doc-expand-source-name ctx name)
+            ""
+            (doc-ast-enum-signature
+              ctx
+              name
+              (doc-cat2 (doc-ast-lifetime-list-source ctx lifetimes) opacity)
+              variants)
+            0))]
+      [(DefStruct decl-meta name repr _ fields)
+        (Some
+          (Item
+            (DefStruct)
+            (doc-expand-source-name ctx name)
+            ""
+            (doc-ast-struct-signature ctx name opacity repr fields)
+            0))]
+      [(DefStructLifetimes decl-meta name lifetimes repr _ fields)
+        (Some
+          (Item
+            (DefStruct)
+            (doc-expand-source-name ctx name)
+            ""
+            (doc-ast-struct-signature
+              ctx
+              name
+              (doc-cat2 (doc-ast-lifetime-list-source ctx lifetimes) opacity)
+              repr
+              fields)
+            0))]
+      [(Unsafe inner-box) (doc-ast-decl-item ctx (deref inner-box))]
+      [_ (No)])))
 
 (define (doc-ast-generated-decl-item
   [ctx : DocExpandContext]

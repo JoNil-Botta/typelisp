@@ -35,6 +35,9 @@
 (import compiler_semantic_index.CompilerSemanticRecord)
 
 ;; lint-allow: unused-import
+(import compiler_semantic_index.CompilerSemanticRepresentation)
+
+;; lint-allow: unused-import
 (import compiler_semantic_index.CompilerSemanticScopeEvent)
 
 ;; lint-allow: unused-import
@@ -198,6 +201,18 @@
           (*
             index.top-candidate-len
             (comptime (size-of (type CompilerSemanticVisibleBinding)))))))
+    (+=
+      bytes
+      (*
+        index.canonical-symbol-len
+        (comptime (size-of (type CompilerSemanticRepresentation)))))
+    (for [id (iterator.range 0 index.canonical-symbol-len)]
+      (+=
+        bytes
+        (string.string-length
+          (& (array-ref index.representations id).signature))))
+    (for [id (iterator.range 0 index.module-len)]
+      (+= bytes (string.string-length (& (array-ref index.modules id).name))))
     (for [path-index (iterator.range 0 index.path-len)]
       (+=
         bytes

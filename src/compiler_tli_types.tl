@@ -98,7 +98,8 @@
   (ty TliType)
   (cleanup TliCleanup)
   (byte-offset i64)
-  (explicit-align i64))
+  (explicit-align i64)
+  (opaque? bool))
 
 (defstruct TliPayload
   (ty TliType)

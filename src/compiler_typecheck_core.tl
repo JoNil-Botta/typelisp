@@ -20389,10 +20389,11 @@
       [result : ast.AstType
         (if (and constructor? (not lifetime?))
           (tc-constructor-target-type
+            ctx
             env
             (tc-global-shared-view params)
             (ast.clone-ast-type (& ret)))
-          (tc-tag-active-region env (ast.clone-ast-type (& ret))))]
+          (tc-tag-call-result-region ctx env (ast.clone-ast-type (& ret))))]
       [capture? : bool
         (match (& sink)
           [(TcSelectedSink.Query) false]
@@ -42948,13 +42949,34 @@
       (tc-name-id-list-head lifetimes)
       (tc-tag-reference-lifetimes (tc-name-id-list-rest lifetimes) ty))))
 
+;; A register-resident nominal returned by a call has no backing allocation.
+;; Its payload must also be plain scratch-copyable data. Keep any lifetime
+;; facts already on the result (including those joined from arguments).
+(define (tc-tag-call-result-region
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [ty : ast.AstType]) : ast.AstType
+  (match (tc-active-region env)
+    [(No) ty]
+    [(Some region)
+      (match (& ty)
+        [(or (Struct name) (Enum name))
+          (if (and
+            (tc-name-register-resident-id? ctx name)
+            (tc-clone-out-copy-value? ctx (ast.clone-ast-type (& ty))))
+            ty
+            (tc-tag-region region ty))]
+        [_ (tc-tag-region region ty)])]))
+
 ;; The reserved `program` lifetime confines no value (it outlives every
 ;; region), so a field's `program` reference tags nothing.
 (define (tc-constructor-target-type
+  [ctx : TcContext]
   [env : TcTypeEnv]
   [params : ast.AstTypeList]
   [ret : ast.AstType]) : ast.AstType
-  (tc-tag-active-region
+  (tc-tag-call-result-region
+    ctx
     env
     (tc-tag-reference-lifetimes
       (tc-name-id-list-without-program
@@ -61242,7 +61264,8 @@
                     handle))]
               (if (ast.ast-type-list-empty? (& fields))
                 (Ok
-                  (tc-tag-active-region
+                  (tc-tag-call-result-region
+                    ctx
                     env
                     (tc-nullary-variant-type ctx env ret)))
                 (Err
@@ -61256,7 +61279,10 @@
             (tc-context-structural-session ctx)
             enum-name-id)
             (Ok
-              (tc-tag-active-region env (tc-nullary-variant-type ctx env ret)))
+              (tc-tag-call-result-region
+                ctx
+                env
+                (tc-nullary-variant-type ctx env ret)))
             (Err "typecheck: call target is not a function"))))
       (Err "typecheck: call target is not a function"))))
 

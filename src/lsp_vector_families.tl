@@ -14,7 +14,8 @@
   (form-start-col i64)
   (form-end-line i64)
   (form-end-col i64)
-  (symbol-kind i64))
+  (symbol-kind i64)
+  (restricted-constructor? bool))
 
 (import (vector.vector LspDeclEntry core) as lsp_decl_vec)
 
@@ -36,7 +37,8 @@
         entry.form-start-col
         entry.form-end-line
         entry.form-end-col
-        entry.symbol-kind))
+        entry.symbol-kind
+        entry.restricted-constructor?))
     fallback))
 
 (defenum LspCheckCache

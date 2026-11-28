@@ -21,7 +21,7 @@
 (import stdlib.io)
 (import stdlib.arena)
 (defstruct Handle (:must-use) (:opaque) (:cleanup close-handle)
-  (code i8) (fd i64 (:cleanup close-fd)))
+  (code i8) (fd i64 (:cleanup close-fd) (:opaque)))
 (define (close-fd [fd : i64]) : unit unit)
 (defenum Event (Empty) (Ready i64))
 (defstruct Raw (:repr c) (code i8) (fd i32 (:align 8)))
@@ -164,8 +164,10 @@
         [_ (io.panic "expected type cleanup")])
       (match (& handle.body)
         [(Struct fields)
+          (test.assert-true (not (array-ref fields 0).opaque?) "public field")
           (let
             [fd (& (array-ref fields 1))]
+            (test.assert-true fd.opaque? "opaque field")
             (test.assert-i64-eq fd.byte-offset 8 "checked field offset")
             (match (& fd.cleanup)
               [(Fn name)

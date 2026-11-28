@@ -216,9 +216,7 @@
     (doc_extract.doc-kind-name
       (doc_extract.doc-item-kind (owned_view.compiler-owned-shared-view item)))
     "\n\n"
-    (doc-render-code-block
-      (doc_extract.doc-item-signature
-        (owned_view.compiler-owned-shared-view item)))
+    (doc-render-code-block (doc_extract.doc-item-public-signature (& item)))
     "\n"
     (doc-render-item-doc (doc_extract.doc-item-doc item))
     "\n"))
@@ -242,9 +240,7 @@
     (doc_extract.doc-kind-name
       (doc_extract.doc-item-kind (owned_view.compiler-owned-shared-view item)))
     "\n\n"
-    (doc-render-code-block
-      (doc_extract.doc-item-signature
-        (owned_view.compiler-owned-shared-view item)))
+    (doc-render-code-block (doc_extract.doc-item-public-signature (& item)))
     "\n"
     (doc-render-item-doc (doc_extract.doc-item-doc item))
     "\n"))

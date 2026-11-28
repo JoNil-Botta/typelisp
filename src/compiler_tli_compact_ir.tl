@@ -2701,7 +2701,7 @@
       [mod-init-len : (__tl_dyn-array i64) (__tl_make-array i64 mod-count)]
       [mod-name-to-idx : str_map.Map
         (str_map.with-capacity (* (+ multi.startup-order.len 1) 2))]
-      [sym-to-mod : str_map.Map (str_map.with-capacity 512)]
+      [sym-to-mod : i64_map.Map (i64_map.with-capacity 512)]
       [next-init : i64 0]
       (for [mi (iterator.range 0 mod-count)]
         (set! (array-ref mod-init-start mi) 0)
@@ -2716,10 +2716,6 @@
                   multi.bundles.slots
                   (array-ref multi.gid-bundle.slots mi)).records
                 (array-ref multi.gid-local.slots mi)))]
-          [mi-stdlib : bool
-            (array-ref
-              multi.bundles.slots
-              (array-ref multi.gid-bundle.slots mi)).is-stdlib]
           [ic : i64 (array-length rec.global-inits)]
           (str_map.insert-ref!
             (&mut mod-name-to-idx)
@@ -2737,35 +2733,27 @@
             [fn-count : i64 (array-length rec.functions)]
             [val-count : i64 (array-length rec.values)]
             (for [fi (iterator.range 0 fn-count)]
-              (unless
-                (array-ref rec.functions fi).is-extern
-                (let
-                  [asym : String
-                    (hydrate.tli-hydrate-archive-fn-symbol-with-mode
-                      mi-stdlib
-                      (& rec.source-path)
-                      (& (array-ref rec.functions fi)))]
-                  (str_map.insert-ref! (&mut sym-to-mod) asym mi))))
+              (let
+                [id : i64
+                  (array-ref (array-ref facts.archive-symbols.slots pos) fi)]
+                (when (>= id 0) (i64_map.insert-ref! (&mut sym-to-mod) id mi))))
             (for [vi (iterator.range 0 val-count)]
               (unless
                 (array-ref rec.values vi).is-extern
-                (let
-                  [asym : String
-                    (hydrate.tli-hydrate-archive-value-symbol-with-mode
-                      mi-stdlib
-                      (& rec.source-path)
-                      (& (array-ref rec.values vi)))]
-                  (str_map.insert-ref! (&mut sym-to-mod) asym mi))))
-            ;; A dispatch call reaches one of its module's variants, so it
-            ;; needs that module's inits like a direct function call.
+                (i64_map.insert-ref!
+                  (&mut sym-to-mod)
+                  (array-ref
+                    (array-ref facts.archive-symbols.slots pos)
+                    (+ fn-count vi))
+                  mi)))
+            ;; Dispatches need their module's inits like direct calls.
             (for [di (iterator.range 0 (array-length rec.dispatches))]
-              (let
-                [asym : String
-                  (hydrate.tli-hydrate-archive-dispatch-symbol-with-mode
-                    mi-stdlib
-                    (& rec.source-path)
-                    (& (array-ref rec.dispatches di)))]
-                (str_map.insert-ref! (&mut sym-to-mod) asym mi))))))
+              (i64_map.insert-ref!
+                (&mut sym-to-mod)
+                (array-ref
+                  (array-ref facts.archive-symbols.slots pos)
+                  (+ fn-count val-count di))
+                mi)))))
       ;; Precompute transitive module-import init reachability.
       ;; `multi.startup-order` is already topological (imports before importers).
       (let
@@ -2832,9 +2820,9 @@
                           (string.copy
                             (intern.intern-compat-state-str (& interns) lid)))]
                       (when
-                        (str_map.contains?
+                        (i64_map.contains?
                           (& sym-to-mod)
-                          (string.copy (& arch)))
+                          (hydrate.tli-hydrate-name (& arch)))
                         (i64_map.insert-ref! (&mut cand-seen) sid 1)
                         (i64_vec.push-ref! (&mut cand-sids) sid)
                         (str_vec.push-ref! (&mut cand-strs) arch))))))]))
@@ -2850,24 +2838,16 @@
                     multi.bundles.slots
                     (array-ref multi.gid-bundle.slots mi)).records
                   (array-ref multi.gid-local.slots mi)))]
-            [mi-stdlib : bool
-              (array-ref
-                multi.bundles.slots
-                (array-ref multi.gid-bundle.slots mi)).is-stdlib]
             (when
               (> (array-ref mod-init-len mi) 0)
               (let
                 [val-count : i64 (array-length rec.values)]
                 (for [vi (iterator.range 0 val-count)]
                   (let
-                    [asym : String
-                      (hydrate.tli-hydrate-archive-value-symbol-with-mode
-                        mi-stdlib
-                        (& rec.source-path)
-                        (& (array-ref rec.values vi)))]
                     [sid : i64
-                      (ir.compiler-ir-symbol-id
-                        (tli-compact-dec-symbol (& asym)))]
+                      (array-ref
+                        (array-ref facts.archive-symbols.slots pos)
+                        (+ (array-length rec.functions) vi))]
                     (when
                       (and
                         (i64_map.contains? (& ref-syms) sid)
@@ -2875,7 +2855,10 @@
                         (not (i64_map.contains? (& cand-seen) sid)))
                       (i64_map.insert-ref! (&mut cand-seen) sid 1)
                       (i64_vec.push-ref! (&mut cand-sids) sid)
-                      (str_vec.push-ref! (&mut cand-strs) asym))))))))
+                      (str_vec.push-ref!
+                        (&mut cand-strs)
+                        (string.copy
+                          (intern.intern-compat-state-str (& interns) sid))))))))))
         (let
           [cand-count : i64 (i64_vec.len (& cand-sids))]
           [deps-tmp : (__tl_dyn-array TliStartupInitDep)
@@ -2898,11 +2881,11 @@
               (while (< cursor (str_vec.len (& bfs)))
                 (let
                   [cur : String (string.copy (& (array-ref bfs.slots cursor)))]
+                  [cur-lid : i64 (hydrate.tli-hydrate-name (& cur))]
                   (+= cursor 1)
-                  (match (str_map.get (& sym-to-mod) (string.copy (& cur)))
+                  (match (i64_map.get (& sym-to-mod) cur-lid)
                     [(LookupFound mi)
                       (let
-                        [cur-lid : i64 (intern.intern (string.copy (& cur)))]
                         [slot : i64
                           (tli-compact-ir-slot-by-link multi facts cur-lid)]
                         [no-inits? : bool
@@ -2981,9 +2964,10 @@
                                                     ri).abi
                                                   0)
                                                 (not
-                                                  (str_map.contains?
+                                                  (i64_map.contains?
                                                     (& sym-to-mod)
-                                                    (string.copy (& next-s)))))
+                                                    (hydrate.tli-hydrate-name
+                                                      (& next-s)))))
                                               (set! expanded? false))
                                             (unless
                                               (str_map.contains?

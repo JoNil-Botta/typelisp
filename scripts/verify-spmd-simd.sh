@@ -159,13 +159,6 @@ spmd_mode_expected_compile_diagnostic() {
         tests/spmd/private_helper_uniform_stack_f64_wide.tl:avx512:[012])
             printf '%s\n' "backend: private AVX-512 SPMD call supports at most 8 varying value arguments"
             ;;
-        # #8307 owns the transition of these AVX rejections to runtime rows.
-        tests/spmd/foreach_active_simd_reject.tl:avx2:[012])
-            printf '%s\n' "lower: foreach-active is not yet lowered for AVX2"
-            ;;
-        tests/spmd/foreach_active_simd_reject.tl:avx512:[012])
-            printf '%s\n' "lower: foreach-active is not yet lowered for AVX-512"
-            ;;
         tests/spmd/fixed_array_whole_use_keeps_array.tl:avx2:[012] | tests/spmd/fixed_array_whole_use_keeps_array.tl:avx512:[012])
             printf '%s\n' "lower: SPMD foreach does not match a SIMD lowering pattern for this backend mode; use scalar or a contiguous map/zip body with supported array and uniform operands"
             ;;

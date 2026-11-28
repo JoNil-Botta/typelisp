@@ -1309,30 +1309,32 @@
   [archive-path : String]
   [catalog : tli_hydrate.TliCatalog]
   [cfgs : sym_i64_env.SymI64Env]) : unit
-  (compiler-load-session-state-tli-release! state)
-  (match (compiler-load-session-state-tli-attach-bundle!
-    state
-    tli-arena
-    true
-    ""
-    ""
-    ""
-    archive-path
-    (tlci.tlci-spmd-callables-empty)
-    catalog.directory
-    (& catalog.cfg-digest)
-    cfgs)
-    [(Ok _) unit]
-    [(Err _)
-      (compiler-load-session-state-tli-release! state)
-      (when
-        (> tli-arena 0)
-        (unsafe
-          (arena.tl_arena_destroy tli-arena)))]))
+  (let
+    [storage-arena : arena.Arena
+      (unsafe
+        (arena.from-raw-handle tli-arena))]
+    [decoded : (__tl_dyn-array bool)
+      (in-arena
+        storage-arena
+        (tli_hydrate.tli-catalog-decoded-flags (& catalog)))]
+    [owned-cell : (__tl_dyn-array i64)
+      (in-arena storage-arena (__tl_make-array catalog.owned-bytes))]
+    (compiler-load-session-state-tli-attach-stdlib!
+      state
+      tli-arena
+      true
+      archive-path
+      catalog.directory
+      (& catalog.cfg-digest)
+      cfgs
+      catalog.records
+      decoded
+      owned-cell)))
 
-(define (compiler-load-session-state-tli-attach-borrowed-stdlib!
+(define (compiler-load-session-state-tli-attach-stdlib!
   [state : (& CompilerLoadSessionState)]
   [tli-arena : i64]
+  [owns-arena : bool]
   [archive-path : String]
   [directory : tli_codec.TliDirectory]
   [cfg-digest : (& (Array u8 32))]
@@ -1354,9 +1356,10 @@
           [(CompilerLoadTliCatalogBox multi-v facts-v needed-v hits-v)
             (let
               [res : tli_hydrate.TliMultiAttachResult
-                (tli_hydrate.tli-multi-catalog-attach-borrowed-stdlib-bundle!
+                (tli_hydrate.tli-multi-catalog-attach-stdlib-bundle!
                   (&mut multi-v)
                   tli-arena
+                  owns-arena
                   archive-path
                   directory
                   cfg-digest
@@ -1369,7 +1372,11 @@
                 (CompilerLoadTliCatalogBox multi-v facts-v needed-v hits-v))
               (match res
                 [(Ok _) unit]
-                [(Err _) (compiler-load-session-state-tli-release! state)]))])))))
+                [(Err _)
+                  (compiler-load-session-state-tli-release! state)
+                  (when
+                    (and owns-arena (> tli-arena 0))
+                    (arena.tl_arena_destroy tli-arena))]))])))))
 
 (define (compiler-load-session-state-tli-attach-borrowed-bundle!
   [state : (& CompilerLoadSessionState)]

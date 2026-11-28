@@ -22,12 +22,11 @@
   (define (array-i64-from-raw [data : i64] [len : i64]) : (__tl_dyn-array i64)
     (let
       [descriptor : i64 (cast (tl_alloc (cast 16 : u64)) : i64)]
-      [handle : i64 (cast (tl_alloc (cast 8 : u64)) : i64)]
       (write-i64! descriptor data)
       (write-i64! (+ descriptor 8) len)
-      (write-i64! handle descriptor)
       (unsafe
-        (ptr-read (int->ptr (cast handle : u64) : (Ptr (__tl_dyn-array i64))))))))
+        (ptr-read
+          (int->ptr (cast descriptor : u64) : (Ptr (__tl_dyn-array i64))))))))
 
 (cfg
   linux

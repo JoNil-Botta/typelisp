@@ -30,9 +30,10 @@
           (__tl_array-data
             (unsafe
               (ptr-read
-                (ptr-cast
-                  (__tl_array-data (array items))
-                  : (Ptr (__tl_dyn-array i32))))))
+                (ptr-read
+                  (ptr-cast
+                    (__tl_array-data (array items))
+                    : (Ptr (Ptr (__tl_dyn-array i32))))))))
           : (Ptr u8)))
       : i64)))
 
@@ -44,9 +45,10 @@
           (__tl_array-data
             (unsafe
               (ptr-read
-                (ptr-cast
-                  (__tl_array-data (array items))
-                  : (Ptr (__tl_dyn-array i64))))))
+                (ptr-read
+                  (ptr-cast
+                    (__tl_array-data (array items))
+                    : (Ptr (Ptr (__tl_dyn-array i64))))))))
           : (Ptr u8)))
       : i64)))
 
@@ -58,9 +60,10 @@
           (__tl_array-data
             (unsafe
               (ptr-read
-                (ptr-cast
-                  (__tl_array-data (array items))
-                  : (Ptr (__tl_dyn-array u8))))))
+                (ptr-read
+                  (ptr-cast
+                    (__tl_array-data (array items))
+                    : (Ptr (Ptr (__tl_dyn-array u8))))))))
           : (Ptr u8)))
       : i64)))
 

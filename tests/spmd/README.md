@@ -66,5 +66,5 @@ three levels against the ordinary gate's O1 scalar receipts.
 Add same-exit programs in a new `corpus.d/<feature>.manifest`, with one
 repository-relative source path per line. Put gang-width-dependent exit checks
 in `gang-width.cases` and assembly or trap checks in a `simd.d` fragment.
-The `foreach_active_simd_reject.tl` AVX diagnostics in the comparison script
-belong to the transition to native `foreach-active` execution in #8307.
+The `foreach-active` corpus runs in all four modes. Its `simd.d` cases also
+check lane visitation order, effects before the first fault, and native code shape.

@@ -600,7 +600,8 @@
 (define (doc-html-item
   [path : String]
   [source-url : (& source-url str)]
-  [item : doc_extract.DocItem]) : String
+  [item : doc_extract.DocItem]
+  [show-representation? : bool]) : String
   (let
     [name : String
       (doc_extract.doc-item-name (owned_view.compiler-owned-shared-view item))]
@@ -629,8 +630,10 @@
           (owned_view.compiler-owned-shared-view item)))
       "</dl>\n"
       (doc-html-code-block
-        (doc_extract.doc-item-signature
-          (owned_view.compiler-owned-shared-view item)))
+        (if show-representation?
+          (doc_extract.doc-item-signature
+            (owned_view.compiler-owned-shared-view item))
+          (doc_extract.doc-item-public-signature (& item))))
       (doc-html-doc-block
         "tl-doc-item-text"
         (doc_extract.doc-item-doc item)
@@ -641,6 +644,7 @@
   [path : String]
   [source-url : (& source-url str)]
   [items : doc_item_vec.Vec]
+  [show-representation? : bool]
   [index : i64]
   [count : i64]) : String
   (if (>= index count)
@@ -649,27 +653,37 @@
       (doc-html-item
         (owned_view.compiler-owned-shared-view path)
         source-url
-        (doc_extract.doc-item-list-ref items index))
-      (doc-html-item-list-from path source-url items (+ index 1) count))))
+        (doc_extract.doc-item-list-ref items index)
+        show-representation?)
+      (doc-html-item-list-from
+        path
+        source-url
+        items
+        show-representation?
+        (+ index 1)
+        count))))
 
 (define (doc-html-item-list
   [path : String]
   [source-url : String]
-  [items : doc_item_vec.Vec]) : String
+  [items : doc_item_vec.Vec]
+  [show-representation? : bool]) : String
   (doc-html-item-list-from
     path
     source-url
     (owned_view.compiler-owned-shared-view items)
+    show-representation?
     0
     (doc_extract.doc-item-list-count items)))
 
 (define (doc-html-items
   [path : String]
   [source-url : String]
-  [items : doc_item_vec.Vec]) : String
+  [items : doc_item_vec.Vec]
+  [show-representation? : bool]) : String
   (if (= (doc_extract.doc-item-list-count items) 0)
     "<p class=\"tl-doc-empty\">No documented declarations.</p>\n"
-    (doc-html-item-list path source-url items)))
+    (doc-html-item-list path source-url items show-representation?)))
 
 (define (doc-html-json-escape-one [text : (& text str)] [idx : i64]) : String
   (let
@@ -751,8 +765,7 @@
       (doc_extract.doc-item-name (owned_view.compiler-owned-shared-view item))
       path
       (str_cat.str-cat page "#" identity)
-      (doc_extract.doc-item-signature
-        (owned_view.compiler-owned-shared-view item))
+      (doc_extract.doc-item-public-signature (& item))
       (doc_extract.doc-item-doc (owned_view.compiler-owned-shared-view item))
       (doc_extract.doc-item-source-line item))))
 
@@ -846,6 +859,12 @@
 (define (doc-html-module-section-with-source-url
   [module : doc_render.DocModule]
   [source-url : String]) : String
+  (doc-html-module-section-render module source-url true))
+
+(define (doc-html-module-section-render
+  [module : doc_render.DocModule]
+  [source-url : String]
+  [show-representation? : bool]) : String
   (let
     [path : String
       (doc_render.doc-module-path
@@ -883,7 +902,11 @@
         (owned_view.compiler-owned-shared-view path)
         (doc_extract.doc-extraction-items
           (owned_view.compiler-owned-shared-view docs)))
-      (doc-html-items path source-url (doc_extract.doc-extraction-items docs))
+      (doc-html-items
+        path
+        source-url
+        (doc_extract.doc-extraction-items docs)
+        show-representation?)
       "</section>\n")))
 
 (define (doc-html-module-section [module : doc_render.DocModule]) : String
@@ -896,8 +919,10 @@
   (if (>= index count)
     ""
     (str_cat.str-cat
-      (doc-html-module-section
-        (doc_render.doc-module-list-ref (& modules) index))
+      (doc-html-module-section-render
+        (doc_render.doc-module-list-ref (& modules) index)
+        ""
+        false)
       (doc-html-module-sections-from modules (+ index 1) count))))
 
 (define (doc-html-module-sections [modules : doc_module_vec.Vec]) : String

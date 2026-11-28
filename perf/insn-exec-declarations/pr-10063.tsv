@@ -1,0 +1,5 @@
+benchmark/typelisp/callgraph_scc	+10238347	inline 16B DynArray (#7963): 2-word by-value descriptor passing/spills in graph/SCC passes before #8090 (+10,238,347 Ir, +2.27%, 451,500,547 -> 461,738,894 vs ref 2289e84ea)
+benchmark/typelisp/regalloc_greedy	+9109858	inline 16B DynArray (#7963): 2-word by-value descriptor passing/spills in interval/worklist helpers before #8090 (+9,109,858 Ir, +1.65%, 553,513,176 -> 562,623,034 vs ref 2289e84ea)
+benchmark/typelisp/ssa_construct	+1362344	inline 16B DynArray (#7963): 2-word by-value descriptor passing/spills in CFG/SSA tables before #8090 (+1,362,344 Ir, +0.22%, 611,664,957 -> 613,027,301 vs ref 2289e84ea)
+benchmark/typelisp/intern_table	+1154769	inline 16B DynArray (#7963): 2-word by-value descriptor passing/spills in bucket/table helpers before #8090 (+1,154,769 Ir, +0.32%, 360,856,880 -> 362,011,649 vs ref 2289e84ea)
+benchmark/typelisp/hashmap_get	+4914829	inline 16B DynArray (#7963): inline descriptor field offset after folding zero-GEP into dce_late to cut -3,190 ppm self-compile; stays 0.65x clang (+4,914,829 Ir, +3.74%, 131,357,123 -> 136,271,952 vs ref acf5a655b, CI run 46084426031)

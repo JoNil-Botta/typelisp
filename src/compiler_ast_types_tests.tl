@@ -838,7 +838,7 @@
         (= (intern_tests.intern-syntax-id-size) 8)
         (= (comptime (size-of (type AstExprBindingClause))) 88)
         (= (comptime (size-of (type AstImportedSpmdSpecialization))) 40)
-        (= (comptime (size-of (type AstImportedSpmdCallable))) 24))
+        (= (comptime (size-of (type AstImportedSpmdCallable))) 32))
       (io.panic
         (str_cat.str-cat
           "compiler AST name layout changed: InternId="

@@ -31,7 +31,7 @@ spmd_inline_helper_call_by_value|all|0,1,2|tests/integration/spmd_inline_helper_
 spmd_foreach_active_histogram|all|-|tests/integration/spmd_foreach_active.tl|0|1 2 4 1\n|1|-|stage-stdlib
 spmd_foreach_active_accumulate|all|-|tests/integration/spmd_foreach_active.tl|0|55 15\n|2|-|stage-stdlib
 spmd_foreach_active_masked|all|-|tests/integration/spmd_foreach_active.tl|0|25 579\n|3|-|stage-stdlib
-spmd_foreach_active_calls|all|-|tests/integration/spmd_foreach_active.tl|0|0 0 0 1\n1 0 0 1\n2 0 0 1\n3 0 0 1\n|4|-|stage-stdlib
+spmd_foreach_active_calls|all|-|tests/integration/spmd_foreach_active.tl|0|0 0 0 1\n1 0 0 1\n2 0 0 1\n3 0 0 1\n|4|-|backend-mode:scalar
 spmd_foreach_active_lane_types|all|-|tests/integration/spmd_foreach_active.tl|0|-2 8 2\n|5|-|stage-stdlib
 spmd_foreach_active_atomics|all|-|tests/integration/spmd_foreach_active.tl|0|9 5 7\n|6|-|stage-stdlib
 spmd_foreach_active_first_fault|all|-|tests/integration/spmd_foreach_active.tl|134|0\n1\n2\n3\n|7|-|stage-stdlib+expected-stderr:tl: $SRC:140:32: array index out of bounds: index=9 length=8\n

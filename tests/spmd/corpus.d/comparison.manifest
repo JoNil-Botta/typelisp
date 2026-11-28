@@ -63,7 +63,6 @@ tests/spmd/varying_while_nested_i64.tl
 tests/spmd/varying_match_i64.tl
 tests/spmd/varying_match_enum_payload.tl
 tests/spmd/varying_match_enum_helper_reject.tl
-tests/spmd/foreach_active_simd_reject.tl
 tests/spmd/bool_lanes.tl
 tests/spmd/map_compare_surface.tl
 tests/spmd/map_fused_reduce_i64.tl

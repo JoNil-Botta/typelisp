@@ -23,11 +23,11 @@
     (roots.push-ref! (&mut search) (io.arg 6))
     (match (build.source-tool-emit-object
       (io.arg 2)
-      (build.SourceToolProgram.Source search (cfg.sym-i64-empty))
+      (build.SourceToolProgram.Source search (cfg.sym-i64-empty) "")
       target
       (string.>int (io.arg 3))
       (be_state.CompilerBackendMode.Scalar)
-      (& link-inputs))
+      (&mut link-inputs))
       [(Ok bytes)
         (io.write-file (io.arg 4) (byte_buf.str-as-bytes (& bytes)))
         0]

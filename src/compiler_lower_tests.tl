@@ -1823,9 +1823,9 @@
                 (and
                   (lower-test-stable-mask ctx (& program) "Two" 1)
                   (lower-test-stable-mask ctx (& program) "Inner" 3)
-                  (lower-test-stable-mask ctx (& program) "Outer" 7)
-                  (lower-test-stable-mask ctx (& program) "Holder" 1)
-                  (lower-test-stable-mask ctx (& program) "One" 3)
+                  (lower-test-stable-mask ctx (& program) "Outer" 15)
+                  (lower-test-stable-mask ctx (& program) "Holder" 3)
+                  (lower-test-stable-mask ctx (& program) "One" 7)
                   (lower-test-stable-mask ctx (& program) "W8" 255)
                   (lower-test-stable-mask ctx (& program) "Wide" 0)
                   (lower-test-layout-group ctx (& program) "Group0" 0)
@@ -3741,7 +3741,7 @@
   (begin
     (set! h.wide (Wide 1 2 3))
     0))
-(define (direct-dyn-array [items : (__tl_dyn-array Wide)] [i : i64]) : unit
+(define (direct-dyn-array [items : (&mut items (__tl_dyn-array Wide))] [i : i64]) : unit
   (set! (array-ref items i) (Wide 4 5 6)))
 (define (direct-fixed-array [items : (Array Wide 2)] [i : i64]) : unit
   (set! (array-ref items i) (Wide 7 8 9)))
@@ -6859,11 +6859,11 @@
   (outer-float-box-use (OuterFloatBox (InnerFloatBox 1.5))))")
 
 (define (compiler-lower-c-abi-windows-unsupported-aggregate-source) : String
-  "(defstruct InnerText (value (__tl_dyn-array u8)))
+  "(defstruct InnerText (value (Box u8)))
 (defstruct OuterText (inner InnerText))
 (extern (outer-text-use [arg0 : OuterText]) : i64 (:symbol \"tl_cabi_outer_text_use\"))
 (define (main) : i64
-  (outer-text-use (OuterText (InnerText (__tl_make-array u8 0)))))")
+  (outer-text-use (OuterText (InnerText (box (cast 0 : u8))))))")
 
 (define (compiler-lower-c-abi-windows-small-float-aggregate-source) : String
   "(defstruct FloatPair
@@ -8106,7 +8106,7 @@
       (compiler-lower-mut-ref-array-field-access-source)))
     [(Some functions)
       (and
-        (> (lower-test-count functions "array-bag-handle" (Load)) 0)
+        (> (lower-test-count functions "array-bag-handle" (GepOffset 0)) 0)
         (> (lower-test-count functions "len" (Load)) 0)
         (> (lower-test-count functions "get" (Bounds)) 0)
         (> (lower-test-count functions "put" (Bounds)) 0))]
@@ -8164,7 +8164,7 @@
   (match (lower-test-functions (lower.lower-compiler-source src))
     [(Some functions)
       (and
-        (> (lower-test-functions-call-count functions "tl_alloc") 1)
+        (= (lower-test-functions-call-count functions "tl_alloc") 1)
         (> (lower-test-functions-call-count functions "tl_oob_abort") 0)
         (>= (lower-test-function-i64-binop-op-count functions "main" (Le)) 2)
         (=
@@ -8443,7 +8443,7 @@
     (lower.lower-compiler-source (compiler-lower-dyn-array-literal-source)))
     [(Some functions)
       (and
-        (= (lower-test-function-call-count functions "main" "tl_alloc") 2)
+        (= (lower-test-function-call-count functions "main" "tl_alloc") 1)
         (= (lower-test-function-call-count functions "main" "tl_array_zero") 0)
         (>= (lower-test-count functions "main" (StorePtr)) 3))]
     [_ false]))
@@ -17645,7 +17645,7 @@
   (test.assert-owned-string-eq
     (compiler-lower-debug-type-graph-text
       (compiler-lower-debug-type-graph-source))
-    "debug-types v1 nodes=30\nt0 scalar i8 size=1 align=1\nt1 scalar i16 size=2 align=2\nt2 scalar i32 size=4 align=4\nt3 scalar i64 size=8 align=8\nt4 scalar u8 size=1 align=1\nt5 scalar u16 size=2 align=2\nt6 scalar u32 size=4 align=4\nt7 scalar u64 size=8 align=8\nt8 scalar f32 size=4 align=4\nt9 scalar f64 size=8 align=8\nt10 scalar bool size=1 align=1\nt11 scalar char size=1 align=1\nt12 scalar unit size=0 align=1\nt13 pointer (& Point) size=8 align=8 target=t14\nt14 struct Point size=16 align=8 regs=2\n  .x t3 @0\n  .y t3 @8\nt15 handle (& str) size=8 align=8 target=t4\nt16 view (& (Slice i64)) size=16 align=8 target=t3\nt17 handle String size=8 align=8 target=t4\nt18 handle (__tl_dyn-array i64) size=8 align=8 target=t3\nt19 struct Line size=40 align=8\n  .a t14 @0\n  .b t14 @16\n  .tag t4 @32\nt20 tuple (Tuple u8 i64 bool) size=24 align=8\n  .0 t4 @0\n  .1 t3 @8\n  .2 t10 @16\nt21 enum Shape size=40 align=8 target=t3 count=3\n  variant Circle =0\n    .0 t9 @8\n  variant Rect =1\n    .0 t14 @8\n    .1 t14 @24\n  variant Empty =2\nt22 array (Array Point 3) size=48 align=8 target=t14 count=3\nt23 enum Tree size=24 align=8 target=t3 count=2\n  variant Leaf =0\n    .0 t3 @8\n  variant Branch =1\n    .0 t24 @8\n    .1 t24 @16\nt24 pointer (Box Tree) size=8 align=8 target=t25\nt25 forward Tree size=24 align=8 target=t23\nt26 pointer (Box i64) size=8 align=8 target=t3\nt27 enum stdlib.option.generated.i64/Option size=16 align=8 target=t3 count=2 regs=2\n  variant None =0\n  variant Some =1\n    .0 t3 @8\nt28 enum stdlib.option.generated.bool/Option size=16 align=8 target=t3 count=2 regs=2\n  variant None =0\n  variant Some =1\n    .0 t10 @8\nt29 array (Array i64 2) size=16 align=8 target=t3 count=2\n"
+    "debug-types v1 nodes=30\nt0 scalar i8 size=1 align=1\nt1 scalar i16 size=2 align=2\nt2 scalar i32 size=4 align=4\nt3 scalar i64 size=8 align=8\nt4 scalar u8 size=1 align=1\nt5 scalar u16 size=2 align=2\nt6 scalar u32 size=4 align=4\nt7 scalar u64 size=8 align=8\nt8 scalar f32 size=4 align=4\nt9 scalar f64 size=8 align=8\nt10 scalar bool size=1 align=1\nt11 scalar char size=1 align=1\nt12 scalar unit size=0 align=1\nt13 pointer (& Point) size=8 align=8 target=t14\nt14 struct Point size=16 align=8 regs=2\n  .x t3 @0\n  .y t3 @8\nt15 handle (& str) size=8 align=8 target=t4\nt16 view (& (Slice i64)) size=16 align=8 target=t3\nt17 handle String size=8 align=8 target=t4\nt18 view (__tl_dyn-array i64) size=16 align=8 target=t3\nt19 struct Line size=40 align=8\n  .a t14 @0\n  .b t14 @16\n  .tag t4 @32\nt20 tuple (Tuple u8 i64 bool) size=24 align=8\n  .0 t4 @0\n  .1 t3 @8\n  .2 t10 @16\nt21 enum Shape size=40 align=8 target=t3 count=3\n  variant Circle =0\n    .0 t9 @8\n  variant Rect =1\n    .0 t14 @8\n    .1 t14 @24\n  variant Empty =2\nt22 array (Array Point 3) size=48 align=8 target=t14 count=3\nt23 enum Tree size=24 align=8 target=t3 count=2\n  variant Leaf =0\n    .0 t3 @8\n  variant Branch =1\n    .0 t24 @8\n    .1 t24 @16\nt24 pointer (Box Tree) size=8 align=8 target=t25\nt25 forward Tree size=24 align=8 target=t23\nt26 pointer (Box i64) size=8 align=8 target=t3\nt27 enum stdlib.option.generated.i64/Option size=16 align=8 target=t3 count=2 regs=2\n  variant None =0\n  variant Some =1\n    .0 t3 @8\nt28 enum stdlib.option.generated.bool/Option size=16 align=8 target=t3 count=2 regs=2\n  variant None =0\n  variant Some =1\n    .0 t10 @8\nt29 array (Array i64 2) size=16 align=8 target=t3 count=2\n"
     "the debug type graph has every layout the typechecker computes"))
 
 (test

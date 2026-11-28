@@ -53,6 +53,8 @@
       (spmd-reduce sum ([i : i64 0 8]) 0 (array-ref out i))
       (spmd-reduce sum ([n : i64 0 8]) 0 (array-ref grid n)))))
 
+;; Correct shadowing stores each index when its lane matches its gang position.
+;; The outer n supplies the reduction seed once the lane binder leaves scope.
 (define (lane-forms [comptime n : i64]) : i64
   (let
     [out : (Array i64 4) (make-array i64 4)]
@@ -62,7 +64,11 @@
         [n : i64]
         (let
           [k : i64 (lane-value i)]
-          (set! (array-ref out k) (+ k n)))))
+          (set!
+            (array-ref out k)
+            (if (= n (% k (program-count)))
+              k
+              -1)))))
     (+ (spmd-reduce sum ([i : i64 0 4]) n (array-ref out i)) 0)))
 
 (define (scan-forms [comptime T : type] [comptime n : i64]) : i64

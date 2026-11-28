@@ -570,72 +570,48 @@
                   archive-path
                   "\n")))
             (return Inactive)))
-        (match (tli-inspect-read-file (& bundle-path))
-          [(Err error)
+        (match (tli-sysroot-directory (& bundle-path) (& triple) false)
+          [(Err message)
             (if explicit?
-              (Error (str_cat.str-cat "sysroot: " bundle-path ": " error "\n"))
+              (Error
+                (str_cat.str-cat "sysroot: " bundle-path ": " message "\n"))
               Inactive)]
-          [(Ok bytes)
-            (let
-              [build : String (identity.compiler-build-producer-identity)]
-              (match (hydrate.tli-catalog-open-lazy
-                (& bytes)
-                (& build)
-                (& triple)
-                cfg-digest)
-                [(Err error)
-                  (if explicit?
-                    (Error
-                      (str_cat.str-cat
-                        "sysroot: "
-                        bundle-path
-                        ": "
-                        error.message
-                        " at byte "
-                        (string.int->string error.offset)
-                        "\n"))
-                    Inactive)]
-                [(Ok catalog)
-                  (cond
-                    [(=
-                        (bit-and
-                          catalog.directory.flags
-                          tli.tli-is-stdlib-bundle)
-                        0)
-                      (if explicit?
-                        (Error
-                          (str_cat.str-cat
-                            "sysroot: "
-                            bundle-path
-                            ": expected a stdlib TLI bundle\n"))
-                        Inactive)]
-                    [(=
-                        (bit-and
-                          catalog.directory.flags
-                          tli.tli-has-tlci-companion)
-                        0)
-                      Inactive]
-                    [else
-                      ;; Probe stdlib.core_macros to verify cfg fingerprint match
-                      ;; before committing to the prebuilt sysroot (every command
-                      ;; loads core_macros as part of its prelude).
-                      (match (hydrate.tli-catalog-hydrate!
-                        (&mut catalog)
-                        "stdlib.core_macros")
-                        [(Ok _) (Active catalog dir archive-path)]
-                        [(Err failure)
-                          (match failure.kind
-                            [(CfgFingerprintMismatch) Inactive]
-                            [_
-                              (if explicit?
-                                (Error
-                                  (str_cat.str-cat
-                                    "sysroot: "
-                                    bundle-path
-                                    ": "
-                                    failure.message
-                                    "\n"))
-                                Inactive)])])])]))]))]))
+          [(Ok directory)
+            (when
+              (= (bit-and directory.flags tli.tli-has-tlci-companion) 0)
+              (return Inactive))
+            (match (hydrate.tli-catalog-open-from-directory
+              (tli_codec.TliDirectoryResult.Ok directory)
+              cfg-digest)
+              [(Err error)
+                (if explicit?
+                  (Error
+                    (str_cat.str-cat
+                      "sysroot: "
+                      bundle-path
+                      ": "
+                      (tli-sysroot-decode-message (& error))
+                      "\n"))
+                  Inactive)]
+              [(Ok catalog)
+                ;; Every command loads core_macros as part of its prelude.
+                (match (hydrate.tli-catalog-hydrate!
+                  (&mut catalog)
+                  "stdlib.core_macros")
+                  [(Ok _) (Active catalog dir archive-path)]
+                  [(Err failure)
+                    (match failure.kind
+                      [(CfgFingerprintMismatch) Inactive]
+                      [_
+                        (if explicit?
+                          (Error
+                            (str_cat.str-cat
+                              "sysroot: "
+                              bundle-path
+                              ": "
+                              failure.message
+                              "\n"))
+                          Inactive)])])])]))]))
 
 ;; Open a job-scoped TliCatalog in the caller's current arena when prebuilt
 ;; stdlib is eligible for this invocation. Returns Active(catalog, sysroot-dir,
@@ -769,14 +745,10 @@
             [(Error message) (TliBatchCatalogOutcome.Error message)]
             [(Active catalog sysroot-dir archive-path)
               (let
-                [count : i64 (array-length catalog.states)]
-                [decoded : (__tl_dyn-array bool) (__tl_make-array bool count)]
+                [decoded : (__tl_dyn-array bool)
+                  (hydrate.tli-catalog-decoded-flags (& catalog))]
                 [owned-cell : (__tl_dyn-array i64)
                   (__tl_make-array catalog.owned-bytes)]
-                (for [i (iterator.range 0 count)]
-                  (when
-                    (= (array-ref catalog.states i) 2)
-                    (set! (array-ref decoded i) true)))
                 (TliBatchCatalogOutcome.Active
                   catalog.directory
                   catalog.cfg-digest
@@ -884,10 +856,11 @@
                   error
                   "\n"))]
             [(Ok bytes)
-              (match (hydrate.tli-catalog-open-directory
-                (& bytes)
+              (match (tli_codec.tli-decode-directory-for-snapshot
+                bytes
                 (& build)
-                (& triple))
+                (& triple)
+                true)
                 [(Err failure)
                   (TliBatchExtraOutcome.Error
                     (str_cat.str-cat
@@ -1141,10 +1114,11 @@
                   error
                   "\n"))]
             [(Ok bytes)
-              (match (hydrate.tli-catalog-open-directory
-                (& bytes)
+              (match (tli_codec.tli-decode-directory-for-snapshot
+                bytes
                 (& build)
-                (& triple))
+                (& triple)
+                true)
                 [(Err failure)
                   (ResultTliCatalogOpen.Err
                     (str_cat.str-cat
@@ -1272,9 +1246,10 @@
                     records
                     decoded
                     owned-cell)
-                    (compiler_load.compiler-load-session-state-tli-attach-borrowed-stdlib!
+                    (compiler_load.compiler-load-session-state-tli-attach-stdlib!
                       load-state
                       tli-batch-cache-arena
+                      false
                       (string.copy (& archive-path))
                       directory
                       (& digest)
@@ -1525,10 +1500,11 @@
                     (tli-dep-cfgs-without-test cfgs)]
                   [cfg-digest : (Array u8 32)
                     (hydrate.tli-hydrate-cfg-digest dep-cfgs)]
-                  (match (hydrate.tli-catalog-open-directory
-                    (& bytes)
+                  (match (tli_codec.tli-decode-directory-for-snapshot
+                    bytes
                     (& build)
-                    (& triple))
+                    (& triple)
+                    true)
                     [(Err failure)
                       (ResultTliCatalogOpen.Err
                         (str_cat.str-cat
@@ -1895,38 +1871,80 @@
   (Ok (__tl_dyn-array u8))
   (Err String))
 
-(define (tli-inspect-read-handle [handle : io.FileHandle]) : TliInspectBytes
+(define (tli-inspect-read-handle [handle : io.FileHandle] [size-hint : i64]) : TliInspectBytes
   (let
-    [out : buf.ByteBufBuilder (buf.byte-buf-builder-new)]
+    [out : buf.ByteBufBuilder
+      (buf.byte-buf-builder-with-capacity
+        (if (and (>= size-hint 0) (<= size-hint tli_codec.tli-max-file-bytes))
+          size-hint
+          0))]
     [eof : bool false]
     (while (not eof)
       (let
         [remaining : i64 (+ 1 (- tli_codec.tli-max-file-bytes out.len))]
-        [size : i64
-          (if (< remaining 65536)
+        [space : i64 (- (array-length out.slots) out.len)]
+        [capacity : i64
+          (if (= space 0)
+            1
+            space)]
+        [available : i64
+          (if (< remaining capacity)
             remaining
+            capacity)]
+        [size : i64
+          (if (< available 65536)
+            available
             65536)]
-        (match (io.file-read-chunk handle size)
-          [(ErrIoRead error) (return (Err (io.error-message error)))]
-          [(OkIoRead chunk)
-            (set! eof chunk.eof)
-            (let
-              [bytes : (__tl_dyn-array u8) (byte_buf.to-array chunk.bytes)]
-              (when
-                (>= (array-length bytes) remaining)
-                (return (Err "TLI file limit exceeded")))
-              (when
-                (and (not eof) (= (array-length bytes) 0))
-                (return (Err "TLI file read returned no data")))
-              (buf.byte-buf-builder-append-array (&mut out) (& bytes)))])))
-    (Ok (buf.byte-buf-builder-finish-array (& out)))))
+        [overflow-byte : i64 -1]
+        [error : String
+          (with-scratch
+            (match (io.file-read-chunk handle size)
+              [(ErrIoRead error) (io.error-message error)]
+              [(OkIoRead chunk)
+                (set! eof chunk.eof)
+                (cond
+                  [(>= chunk.bytes.len remaining) "TLI file limit exceeded"]
+                  [(= chunk.bytes.len 0)
+                    (if eof
+                      ""
+                      "TLI file read returned no data")]
+                  [(= space 0)
+                    (set!
+                      overflow-byte
+                      (cast (array-ref chunk.bytes.slots 0) : i64))
+                    ""]
+                  [else
+                    ;; The read fits the remaining capacity. Only the
+                    ;; temporary chunk belongs to the scratch arena.
+                    (unsafe
+                      (string.string-runtime-copy-bytes!
+                        (ptr-offset (__tl_array-data out.slots) out.len)
+                        (ptr-cast
+                          (__tl_array-data chunk.bytes.slots)
+                          : (Ptr u8))
+                        chunk.bytes.len))
+                    (+= out.len chunk.bytes.len)
+                    ""])]))]
+        (when (> (string.string-length (& error)) 0) (return (Err error)))
+        ;; A consumed hint (or a stream with no size) grows only after a
+        ;; successful read, so EOF never forces a copy of an exact snapshot.
+        (when
+          (>= overflow-byte 0)
+          (buf.byte-buf-builder-push (&mut out) (cast overflow-byte : u8)))))
+    (Ok
+      (if (= out.len (array-length out.slots))
+        out.slots
+        (buf.byte-buf-builder-finish-array (& out))))))
 
 (define (tli-inspect-read-file [path : (& str)]) : TliInspectBytes
   (match (io.file-open path (io.OpenMode.OpenRead))
     [(ErrIoFile error) (Err (io.error-message error))]
     [(OkIoFile handle)
       (let
-        [result : TliInspectBytes (tli-inspect-read-handle handle)]
+        ;; The path's size is only a capacity hint. The stream itself is
+        ;; bounded and read to EOF even if the path changes after open.
+        [result : TliInspectBytes
+          (tli-inspect-read-handle handle (fs.file-size path))]
         (io.file-close handle)
         result)]))
 
@@ -1974,7 +1992,7 @@
       "\ntarget-triple: "
       (string.copy (& directory.target-triple))
       "\nbyte-length: "
-      (string.int->string (array-length directory.bytes))
+      (string.int->string (array-length (array-ref directory.snapshot 0)))
       "\ncontent-sha256: "
       (sha256.to-hex (& (sha256.Sha256Digest directory.content-sha256)))
       "\nmodules: "
@@ -1995,21 +2013,27 @@
   (Ok tli_codec.TliDirectory)
   (Err String))
 
-;; Inspect and build preflight share the same bounded read and compatibility
-;; checks. Build integration can hydrate roots using its actual cfg fingerprint.
-(define (tli-sysroot-directory [path : (& path str)] [triple : (& triple str)]) : TliSysrootDirectory
+(define (tli-sysroot-decode-message [error : (& tli.TliDecodeFailure)]) : String
+  (string.concat3-borrowed
+    (& error.message)
+    " at byte "
+    (& (string.int->string error.offset))))
+
+(define (tli-sysroot-directory
+  [path : (& path str)]
+  [triple : (& triple str)]
+  [verify-content? : bool]) : TliSysrootDirectory
   (match (tli-inspect-read-file path)
     [(Err error) (Err error)]
     [(Ok bytes)
       (let
         [build : String (identity.compiler-build-producer-identity)]
-        (match (hydrate.tli-catalog-open-directory (& bytes) (& build) triple)
-          [(Err error)
-            (Err
-              (string.concat3-borrowed
-                (& error.message)
-                " at byte "
-                (& (string.int->string error.offset))))]
+        (match (tli_codec.tli-decode-directory-for-snapshot
+          bytes
+          (& build)
+          triple
+          verify-content?)
+          [(Err error) (Err (tli-sysroot-decode-message (& error)))]
           [(Ok directory)
             (if (= (bit-and directory.flags tli.tli-is-stdlib-bundle) 0)
               (Err "expected a stdlib TLI bundle")
@@ -2023,9 +2047,24 @@
       (let
         [path : String (tli-sysroot-bundle-path (& dir))]
         [triple : String (tli-sysroot-target-triple target)]
-        (match (tli-sysroot-directory (& path) (& triple))
-          [(Ok _) ""]
-          [(Err message) (str_cat.str-cat "build: " path ": " message "\n")]))]
+        [message : String
+          (match (tli-sysroot-directory (& path) (& triple) false)
+            [(Err error) error]
+            [(Ok directory)
+              (let
+                [cfg-digest : (Array u8 32) (make-array u8 32)]
+                (match (hydrate.tli-catalog-open-from-directory
+                  (tli_codec.TliDirectoryResult.Ok directory)
+                  (& cfg-digest))
+                  [(Err error) (tli-sysroot-decode-message (& error))]
+                  [(Ok catalog)
+                    ;; The compile job checks cfgs using its effective options.
+                    (match (hydrate.tli-catalog-check-prelude catalog)
+                      [(Ok _) ""]
+                      [(Err error) (tli-sysroot-decode-message (& error))])]))])]
+        (if (= (string.string-length (& message)) 0)
+          ""
+          (str_cat.str-cat "build: " path ": " message "\n")))]
     [_ ""]))
 
 (define (tli-build-sysroot-error
@@ -2039,7 +2078,7 @@
       (io.print-error (str_cat.str-cat message "\n"))
       1]
     [(Path path triple)
-      (match (tli-sysroot-directory (& path) (& triple))
+      (match (tli-sysroot-directory (& path) (& triple) true)
         [(Err error)
           (io.print-error (str_cat.str-cat "inspect: " path ": " error "\n"))
           1]

@@ -2808,7 +2808,7 @@
               (compiler_ir_types.compiler-ir-block-list-empty)
               (compiler_ir_types.compiler-ir-function-abi-private
                 (pabi-with-params 11))
-              _)
+              false)
             (pabi-base-payload 0 0)
             "the call's descriptor differs from the helper's"))
         49]

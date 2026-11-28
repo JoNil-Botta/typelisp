@@ -5607,6 +5607,7 @@
   [float-idx : i64]
   [abi-position : i64]
   [pins-ok? : bool]
+  [scalar-pins-ok? : bool]
   [call-points : (& live.CompilerLiveI64Set)]
   [div-points : (& live.CompilerLiveI64Set)]
   [shift-points : (& live.CompilerLiveI64Set)]) : CompilerRegParamAssignPlan
@@ -5752,6 +5753,7 @@
                 next-float
                 next-abi-pos
                 pins-ok?
+                false
                 call-points
                 div-points
                 shift-points))
@@ -5771,8 +5773,10 @@
               ;; bank slots. Fail closed for transports and every pin past one
               ;; so stale bank indices stay inert.
               [tail-pins-ok? : bool (and pins-ok? (not is-transport?))]
+              [tail-scalar-pins-ok? : bool
+                (and scalar-pins-ok? (not is-transport?))]
               [reg : CompilerRegMaybeId
-                (if (and pins-ok? (not is-transport?))
+                (if (and scalar-pins-ok? (not is-transport?))
                   (if is-float
                     (compiler-reg-param-float-reg
                       target-abi
@@ -5822,6 +5826,7 @@
                       next-float
                       next-abi-pos
                       tail-pins-ok?
+                      tail-scalar-pins-ok?
                       call-points
                       div-points
                       shift-points)
@@ -5840,6 +5845,7 @@
                       next-float
                       next-abi-pos
                       tail-pins-ok?
+                      tail-scalar-pins-ok?
                       call-points
                       div-points
                       shift-points))]
@@ -5863,6 +5869,7 @@
                       next-float
                       next-abi-pos
                       tail-pins-ok?
+                      tail-scalar-pins-ok?
                       call-points
                       div-points
                       shift-points)
@@ -5881,9 +5888,213 @@
                       next-float
                       next-abi-pos
                       tail-pins-ok?
+                      tail-scalar-pins-ok?
                       call-points
                       div-points
                       shift-points))]))))])))
+
+(define (compiler-reg-group-pin-loop-excluded
+  [blocks : (& ir.CompilerIrBlockList)]
+  [params : (& ir.CompilerIrParamSeq)]
+  [group-param-vars : (& live.CompilerLiveI64Set)]
+  [interval-index : (& CompilerRegIntervalIndex)]
+  [set : live.CompilerLiveI64Set]) : live.CompilerLiveI64Set
+  (let
+    [nest : CompilerRegLoopNest (compiler-reg-loop-nest-build blocks)]
+    (if (= nest.header-count 0)
+      set
+      (let
+        [count : i64 nest.count]
+        [depths : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        [_d : unit (compiler-reg-loop-nest-depths! nest (&mut depths))]
+        [points : (__tl_dyn-array i64) (compiler-reg-block-start-points blocks)]
+        [loop-used : live.CompilerLiveI64Set (live.compiler-live-set-empty)]
+        [uses : ir.CompilerIrIdList (ir.compiler-ir-id-list-new)]
+        [out : live.CompilerLiveI64Set set]
+        (match blocks
+          [(Array seq)
+            (for [bi (iterator.range 0 count)]
+              (when
+                (> (array-ref depths bi) 0)
+                (match (ir.compiler-ir-block-seq-borrow seq bi)
+                  [(Block _ instrs)
+                    (for [ii
+                      (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+                      (set! uses.len 0)
+                      (ir.compiler-ir-instr-use-var-ids-into!
+                        (ir.compiler-ir-instr-seq-borrow instrs ii)
+                        (&mut uses))
+                      (for [u (& uses)]
+                        (let
+                          [vid : i64 (deref u)]
+                          (when
+                            (live.compiler-live-set-contains?
+                              group-param-vars
+                              vid)
+                            (set!
+                              loop-used
+                              (live.compiler-live-set-insert loop-used vid))))))])))])
+        (for [pi (iterator.range 0 params.len)]
+          (match (ir.compiler-ir-param-seq-borrow params pi)
+            [(Param _ _ pvar)
+              (when
+                (and
+                  (live.compiler-live-set-contains? group-param-vars pvar)
+                  (not (live.compiler-live-set-contains? loop-used pvar)))
+                (let
+                  [spanned? : bool false]
+                  (for [bi (iterator.range 0 count)]
+                    (when
+                      (and
+                        (not spanned?)
+                        (> (array-ref depths bi) 0)
+                        (< (array-ref points bi) (array-ref points (+ bi 1)))
+                        (compiler-reg-var-live-over-range?
+                          (& interval-index.starts)
+                          (& interval-index.ends)
+                          pvar
+                          (array-ref points bi)
+                          (- (array-ref points (+ bi 1)) 1)))
+                      (set! spanned? true)))
+                  (when
+                    spanned?
+                    (set! out (live.compiler-live-set-insert out pvar)))))]))
+        out))))
+
+(define (compiler-reg-entry-projection? [instr : (& ir.CompilerIrInstr)]) : bool
+  (match instr
+    [(Word _ (Var _) index ty)
+      (and
+        (or (= index 0) (= index 1))
+        (match ty
+          [(or (U64) (I64) (Ptr _) (MutPtr _)) true]
+          [_ false]))]
+    [_ false]))
+
+(define (compiler-reg-entry-projection-count
+  [seq : (& seq ir.CompilerIrBlockSeq)]) : i64
+  (when
+    (> seq.len 0)
+    (match (& (array-ref seq.slots 0))
+      [(Block _ instrs)
+        (for [i (iterator.range 0 instrs.len)]
+          (unless
+            (compiler-reg-entry-projection?
+              (ir.compiler-ir-instr-seq-borrow instrs i))
+            (return i)))
+        (return instrs.len)]))
+  0)
+
+;; Count the IR uses and definitions, including AddrOf's storage use. Subtract
+;; just the reads performed by the entry prefix. A candidate whose count falls
+;; to zero has neither an observable group home nor a later word use.
+(define (compiler-reg-entry-word-uses!
+  [seq : (& seq ir.CompilerIrBlockSeq)]
+  [prefix : i64]
+  [words : (&mut words (__tl_dyn-array i64))]) : unit
+  (let
+    [refs : (__tl_dyn-array i64) (__tl_make-array i64 (array-length words))]
+    (for [b (iterator.range 0 seq.len)]
+      (match (& (array-ref seq.slots b))
+        [(Block _ instrs)
+          (compiler-reg-ref-counts-seq-weighted! (&mut refs) instrs 1)]))
+    (match (& (array-ref seq.slots 0))
+      [(Block _ instrs)
+        (for [i (iterator.range 0 prefix)]
+          (match (ir.compiler-ir-instr-seq-borrow instrs i)
+            [(Word _ (Var src) _ _)
+              (-= (array-ref refs src) 1)
+              (when
+                (and (= (array-ref refs src) 0) (= (array-ref words src) 1))
+                (set! (array-ref words src) 2))]
+            [_ unit]))])))
+
+(define (compiler-reg-entry-word-block
+  [words : (& (__tl_dyn-array i64))]
+  [prefix : i64]
+  [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
+  (match block
+    [(Block label instrs)
+      (let
+        [out : ir.CompilerIrInstrBuilder
+          (ir.compiler-ir-instr-builder-with-capacity instrs.len)]
+        (for [i (iterator.range 0 prefix)]
+          (let
+            [instr (ir.compiler-ir-instr-seq-ref (& instrs) i)]
+            (ir.compiler-ir-instr-builder-push!
+              (&mut out)
+              (match (& instr)
+                [(Word dst (Var src) index ty)
+                  (if (> (array-ref words src) 0)
+                    (Mov
+                      dst
+                      (Var
+                        (if (= index 0)
+                          src
+                          (array-ref words src)))
+                      (ast.clone-ast-type ty))
+                    instr)]
+                [_ instr]))))
+        (ir.compiler-ir-instr-builder-append-seq-range!
+          (&mut out)
+          (& instrs)
+          prefix
+          instrs.len)
+        (Block label (ir.compiler-ir-instr-builder-to-seq out)))]))
+
+(define (compiler-reg-project-entry-words
+  [func : ir.CompilerIrFunction]
+  [prefix : i64]
+  [words : (__tl_dyn-array i64)]) : ir.CompilerIrFunction
+  (match (& func)
+    [(Function _ params _ vars (Array seq) _ _)
+      (compiler-reg-entry-word-uses! seq prefix (&mut words))
+      (let
+        [next-var : i64 vars]
+        [new-params : ir.CompilerIrParamBuilder
+          (ir.compiler-ir-param-builder-with-capacity params.len)]
+        (for [i (iterator.range 0 params.len)]
+          (match (ir.compiler-ir-param-seq-ref params i)
+            [(Param name ty var)
+              (if (= (array-ref words var) 2)
+                (begin
+                  (ir.compiler-ir-param-builder-push!
+                    (&mut new-params)
+                    (Param name (U64) var))
+                  (ir.compiler-ir-param-builder-push!
+                    (&mut new-params)
+                    (Param "$word1" (U64) next-var))
+                  (set! (array-ref words var) next-var)
+                  (+= next-var 1))
+                (begin
+                  (set! (array-ref words var) 0)
+                  (ir.compiler-ir-param-builder-push!
+                    (&mut new-params)
+                    (Param name ty var))))]))
+        (when (= next-var vars) (return func))
+        (let
+          [out : ir.CompilerIrBlockBuilder
+            (ir.compiler-ir-block-builder-with-capacity seq.len)]
+          (for [b (iterator.range 0 seq.len)]
+            (ir.compiler-ir-block-builder-push!
+              (&mut out)
+              (if (= b 0)
+                (compiler-reg-entry-word-block
+                  (& words)
+                  prefix
+                  (ir.compiler-ir-block-seq-ref seq b))
+                (ir.compiler-ir-block-seq-ref seq b))))
+          (match func
+            [(Function name _ ret _ _ abi cold?)
+              (Function
+                name
+                (ir.compiler-ir-param-builder-to-seq new-params)
+                ret
+                next-var
+                (ir.compiler-ir-block-builder-to-list out)
+                abi
+                cold?)])))]
+    [_ func]))
 
 (define (compiler-reg-param-assign-plan
   [type-segment-bases : i64]
@@ -5914,14 +6125,19 @@
             out)]
         [group-pin-excluded : live.CompilerLiveI64Set
           (if (> (live.compiler-live-set-count group-param-vars) 0)
-            (compiler-reg-ineligible-memory
+            (compiler-reg-group-pin-loop-excluded
               (& blocks)
-              (compiler-reg-group-pair-caller-unsafe-blocks
-                (compiler-reg-group-pair-excluded-blocks
-                  (live.compiler-live-set-empty)
-                  (& blocks)
-                  (& group-param-vars))
-                (& blocks)))
+              (& params)
+              (& group-param-vars)
+              interval-index
+              (compiler-reg-ineligible-memory
+                (& blocks)
+                (compiler-reg-group-pair-caller-unsafe-blocks
+                  (compiler-reg-group-pair-excluded-blocks
+                    (live.compiler-live-set-empty)
+                    (& blocks)
+                    (& group-param-vars))
+                  (& blocks))))
             (live.compiler-live-set-empty))]
         ;; M-A (RC1): the walk always runs -- non-pinned greedy-eligible
         ;; params stay out of ineligible/blocked in ALL functions and compete
@@ -5941,6 +6157,7 @@
           0
           0
           0
+          true
           true
           (&
             (if ignore-single-cold-call?
@@ -26191,6 +26408,20 @@
               unit))
           assignments)])))
 
+(define (compiler-reg-group-pair-reg-already-used?
+  [assignments : CompilerRegAssignmentTable]
+  [vars : i64]
+  [reg : i64]) : bool
+  (for [v (iterator.range 0 vars)]
+    (match (compiler-reg-assignment-table-lookup assignments v)
+      [(Some location)
+        (match location
+          [(Register held) (when (= held reg) (return true))]
+          [(RegisterPair r0 r1) (when (or (= r0 reg) (= r1 reg)) (return true))]
+          [_ unit])]
+      [(No) unit]))
+  false)
+
 ;; Place ONE component (root r): collect members, prove every member sound
 ;; (the single-def Mov-edge relation guarantees the component carries ONE
 ;; value, so members may overlap freely -- same-value semantics), then choose
@@ -26283,7 +26514,11 @@
         [best1 : i64 (- 0 1)]
         [best-cost : i64 (- 0 1)]
         ;; Search all pairs so an already-free pair always beats eviction,
-        ;; and otherwise the coldest displaced scalar set wins.
+        ;; and otherwise the coldest displaced scalar set wins. For parameter
+        ;; group components (`has-param?`), require the COMBINED displaced
+        ;; spill weight across both registers to stay strictly below
+        ;; `component-weight` so a pass-through group parameter cannot evict
+        ;; two hot loop scalars whose combined weight exceeds its own.
         (for [i0 (iterator.range 0 candidate-count)]
           (let
             [reg0 : i64
@@ -26293,19 +26528,31 @@
                 has-param?
                 i0)]
             [cost0 : i64
-              (compiler-reg-group-pair-component-register-cost
-                assignments
-                interval-index
-                members
-                count
-                conflicts
-                conflict-count
-                weights
-                component-weight
-                (< i0 caller-count)
-                split
-                reg0)]
-            (if (>= cost0 0)
+              (if (and
+                has-param?
+                (>= i0 caller-count)
+                (< component-weight (* 16 1024))
+                (not
+                  (compiler-reg-group-pair-reg-already-used?
+                    assignments
+                    vars
+                    reg0)))
+                (- 0 1)
+                (compiler-reg-group-pair-component-register-cost
+                  assignments
+                  interval-index
+                  members
+                  count
+                  conflicts
+                  conflict-count
+                  weights
+                  component-weight
+                  (< i0 caller-count)
+                  split
+                  reg0))]
+            (if (and
+              (>= cost0 0)
+              (or (not has-param?) (< cost0 component-weight)))
               (for [i1 (iterator.range (+ i0 1) candidate-count)]
                 (let
                   [reg1 : i64
@@ -26315,21 +26562,32 @@
                       has-param?
                       i1)]
                   [cost1 : i64
-                    (compiler-reg-group-pair-component-register-cost
-                      assignments
-                      interval-index
-                      members
-                      count
-                      conflicts
-                      conflict-count
-                      weights
-                      component-weight
-                      (< i1 caller-count)
-                      split
-                      reg1)]
+                    (if (and
+                      has-param?
+                      (>= i1 caller-count)
+                      (< component-weight (* 16 1024))
+                      (not
+                        (compiler-reg-group-pair-reg-already-used?
+                          assignments
+                          vars
+                          reg1)))
+                      (- 0 1)
+                      (compiler-reg-group-pair-component-register-cost
+                        assignments
+                        interval-index
+                        members
+                        count
+                        conflicts
+                        conflict-count
+                        weights
+                        component-weight
+                        (< i1 caller-count)
+                        split
+                        reg1))]
                   (when
                     (and
                       (>= cost1 0)
+                      (or (not has-param?) (< (+ cost0 cost1) component-weight))
                       (or (< best-cost 0) (< (+ cost0 cost1) best-cost)))
                     (set! best0 i0)
                     (set! best1 i1)
@@ -30135,7 +30393,9 @@
 ;; coloring; non-addressable spilled group parameters get two dedicated spill
 ;; slots (word0/word1) in `group-slot0`/`group-slot1`; RegisterPair, const-pack,
 ;; direct-stack, and addressable group parameters are skipped here (addressable
-;; group parameters receive contiguous 16-byte pairs below).
+;; group parameters receive contiguous 16-byte pairs below). When the prologue
+;; consumes expanded, caller-frame, or group parameters, its remap reserves
+;; dense private slots; a fresh word id need not extend the frame.
 (define (compiler-reg-color-param-pins
   [params : (& ir.CompilerIrParamSeq)]
   [group-vars : (& live.CompilerLiveI64Set)]
@@ -30149,13 +30409,9 @@
   [group-slot0 : (&mut group-slot0 (__tl_dyn-array i64))]
   [group-slot1 : (&mut group-slot1 (__tl_dyn-array i64))]
   [ref-counts : (&mut ref-counts (__tl_dyn-array i64))]
-  [highest : i64]) : i64
+  [compact? : bool]) : i64
   (let
-    [compact? : bool
-      (or
-        (> (array-length direct-stack-params) 0)
-        (> (live.compiler-live-set-word-count group-vars) 0))]
-    [out : i64 highest]
+    [out : i64 0]
     (for [position (iterator.range 0 params.len)]
       (match (ir.compiler-ir-param-seq-borrow params position)
         [(Param name _ var-id)
@@ -30267,13 +30523,10 @@
           unit)))))
 
 (define (compiler-reg-color-group-mov-alias-instr!
-  [type-segment-bases : i64]
   [instr : (& ir.CompilerIrInstr)]
   [alias : (&mut alias (__tl_dyn-array i64))]
   [group-vars : (& group-vars live.CompilerLiveI64Set)]
-  [ineligible : (& ineligible live.CompilerLiveI64Set)]
   [assignment-index : CompilerRegAssignmentTable]
-  [var-tys : (& (__tl_dyn-array ast.AstType))]
   [remap : (& (__tl_dyn-array i64))]
   [hull-starts : (& (__tl_dyn-array i64))]
   [hull-ends : (& (__tl_dyn-array i64))]) : unit
@@ -30287,30 +30540,27 @@
             (>= src-var 0)
             (< src-var (array-length alias))
             (not (= dst src-var))
+            (< (array-ref alias dst) 0)
             (live.compiler-live-set-contains? group-vars dst)
             (live.compiler-live-set-contains? group-vars src-var)
-            (not (live.compiler-live-set-contains? ineligible dst))
-            (not (live.compiler-live-set-contains? ineligible src-var))
             (< (array-ref remap dst) 0)
             (< (array-ref remap src-var) 0)
             (>= (array-ref hull-starts dst) 0)
             (>= (array-ref hull-starts src-var) 0)
             (= (array-ref hull-ends src-var) (array-ref hull-starts dst))
-            (ast.ast-type-eq-with-seg-bases?
-              type-segment-bases
-              (compiler-reg-global-array-element-shared-view
-                (owned_view.compiler-owned-reference-shared-view var-tys)
-                dst)
-              (compiler-reg-global-array-element-shared-view
-                (owned_view.compiler-owned-reference-shared-view var-tys)
-                src-var))
             (match (compiler-reg-assignment-table-lookup assignment-index dst)
-              [(Some _) false]
+              [(Some location)
+                (match location
+                  [(or (Spill _) (SpillPair _ _)) true]
+                  [_ false])]
               [(No) true])
             (match (compiler-reg-assignment-table-lookup
               assignment-index
               src-var)
-              [(Some _) false]
+              [(Some location)
+                (match location
+                  [(or (Spill _) (SpillPair _ _)) true]
+                  [_ false])]
               [(No) true]))
             (set! (array-ref alias dst) src-var)
             unit)]
@@ -30318,13 +30568,10 @@
     [_ unit]))
 
 (define (compiler-reg-color-group-mov-alias-seq!
-  [type-segment-bases : i64]
   [instrs : (& ir.CompilerIrInstrSeq)]
   [alias : (&mut alias (__tl_dyn-array i64))]
   [group-vars : (& group-vars live.CompilerLiveI64Set)]
-  [ineligible : (& ineligible live.CompilerLiveI64Set)]
   [assignment-index : CompilerRegAssignmentTable]
-  [var-tys : (& (__tl_dyn-array ast.AstType))]
   [remap : (& (__tl_dyn-array i64))]
   [hull-starts : (& (__tl_dyn-array i64))]
   [hull-ends : (& (__tl_dyn-array i64))]) : unit
@@ -30334,25 +30581,19 @@
     [len : i64 (ir.compiler-ir-instr-seq-count instrs)]
     (for [i (iterator.range 0 len)]
       (compiler-reg-color-group-mov-alias-instr!
-        type-segment-bases
         (& (array-ref slots i))
         alias
         group-vars
-        ineligible
         assignment-index
-        var-tys
         remap
         hull-starts
         hull-ends))))
 
 (define (compiler-reg-color-group-mov-alias-blocks!
-  [type-segment-bases : i64]
   [blocks : (& ir.CompilerIrBlockList)]
   [alias : (&mut alias (__tl_dyn-array i64))]
   [group-vars : (& live.CompilerLiveI64Set)]
-  [ineligible : (& live.CompilerLiveI64Set)]
   [assignment-index : CompilerRegAssignmentTable]
-  [var-tys : (& (__tl_dyn-array ast.AstType))]
   [remap : (& (__tl_dyn-array i64))]
   [hull-starts : (& (__tl_dyn-array i64))]
   [hull-ends : (& (__tl_dyn-array i64))]) : unit
@@ -30362,13 +30603,10 @@
         (match (ir.compiler-ir-block-seq-borrow seq i)
           [(Block _ instrs)
             (compiler-reg-color-group-mov-alias-seq!
-              type-segment-bases
               (& instrs)
               alias
               group-vars
-              ineligible
               assignment-index
-              var-tys
               remap
               hull-starts
               hull-ends)]))]))
@@ -31608,6 +31846,7 @@
   [slot-candidate-vars : i64]
   [identity-pinned : (& live.CompilerLiveI64Set)]
   [direct-stack-params : (& (__tl_dyn-array i64))]
+  [expanded-params? : bool]
   [stack-only? : bool]) : CompilerRegColoring
   (compiler-reg-with-analysis-scratch
     vars
@@ -31624,6 +31863,7 @@
         slot-candidate-vars
         identity-pinned
         direct-stack-params
+        expanded-params?
         stack-only?))))
 
 ;; Allocate contiguous 16-byte pairs ONLY for addressable group vars, extending
@@ -31739,6 +31979,7 @@
   [slot-candidate-vars : i64]
   [identity-pinned : (& live.CompilerLiveI64Set)]
   [direct-stack-params : (& (__tl_dyn-array i64))]
+  [expanded-params? : bool]
   [stack-only? : bool]) : CompilerRegColoring
   (let
     [intervals : CompilerRegIntervalSeq
@@ -31923,7 +32164,14 @@
             (&mut group-slot0)
             (&mut group-slot1)
             (&mut ref-counts)
-            0)]
+            (or
+              expanded-params?
+              (> (array-length direct-stack-params) 0)
+              (> (live.compiler-live-set-word-count group-vars) 0)))]
+        ;; The scalar walk's per-variable admission test, decided once here --
+        ;; after the parameter pins are in `remap`, which is the last write
+        ;; before the walk itself starts filling it -- and read by the web
+        ;; builder and by the interval filter below.
         [slot-eligible : (__tl_dyn-array bool) (__tl_make-array bool vars)]
         [_slot-eligible : unit
           (compiler-reg-color-slot-eligible!
@@ -31984,13 +32232,10 @@
             (when
               has-group-vars?
               (compiler-reg-color-group-mov-alias-blocks!
-                type-segment-bases
                 blocks
                 (&mut alias)
                 group-vars
-                (& ineligible)
                 assignment-index
-                (& var-tys)
                 (& remap)
                 (& hull-starts)
                 (& hull-ends))
@@ -32003,7 +32248,8 @@
                       (or
                         (not (array-ref group-eligible i))
                         (not (array-ref group-eligible a))
-                        (not (= (array-ref var-phi-dst-block i) (- 0 1)))))
+                        (not (= (array-ref var-phi-dst-block i) (- 0 1)))
+                        (not (= (array-ref var-phi-in-block a) (- 0 1)))))
                     (set! (array-ref alias i) (- 0 1))))))
             alias)]
         [scalar-alias : (__tl_dyn-array i64)

@@ -13230,6 +13230,7 @@
       3
       (& (live.compiler-live-set-empty))
       (& (__tl_make-array i64 0))
+      false
       false)
       [(Remap remap slots group-off0 group-off1)
         (let
@@ -13294,6 +13295,7 @@
         vars
         (& (live.compiler-live-set-empty))
         (& (__tl_make-array i64 0))
+        false
         stack-only?)]))
 
 (define (compiler-reg-empty-private-param-homes-ok?) : bool
@@ -14458,6 +14460,7 @@
           vars
           (& (live.compiler-live-set-empty))
           (& (__tl_make-array i64 0))
+          false
           true)
           [(Remap remap slots _ _)
             (let
@@ -17328,6 +17331,7 @@
     slot-candidate-vars
     (& identity-pinned)
     (& (__tl_make-array i64 0))
+    false
     false))
 
 (define (compiler-reg-move-list-contains?
@@ -17826,6 +17830,7 @@
           vars
           (& (live.compiler-live-set-empty))
           (& direct)
+          false
           false)
           [(Remap remap slots _ _)
             (let
@@ -17899,6 +17904,7 @@
           vars
           (& (live.compiler-live-set-empty))
           (& direct)
+          false
           false)
           [(Remap remap slots _ _)
             (let
@@ -17968,6 +17974,7 @@
         2
         (& (live.compiler-live-set-empty))
         (& (__tl_make-array i64 0))
+        false
         false)]
     [overlap-coloring : reg.CompilerRegColoring
       (reg.compiler-reg-color-stack-slots-with-stack-only
@@ -17986,6 +17993,7 @@
         2
         (& (live.compiler-live-set-empty))
         (& (__tl_make-array i64 0))
+        false
         false)]
     [regpair-coloring : reg.CompilerRegColoring
       (reg.compiler-reg-color-stack-slots-with-stack-only
@@ -18016,6 +18024,7 @@
         1
         (& (live.compiler-live-set-empty))
         (& (__tl_make-array i64 0))
+        false
         false)]
     [ib : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity 2)]
@@ -18107,6 +18116,7 @@
           vars
           (& (live.compiler-live-set-empty))
           (& (__tl_make-array i64 0))
+          false
           false)
           [(Remap _ slots off0 off1)
             (test.assert-true
@@ -18212,6 +18222,7 @@
           vars
           (& (live.compiler-live-set-empty))
           (& (__tl_make-array i64 0))
+          false
           false)
           [(Remap _ _ off0 off1)
             (let
@@ -18343,6 +18354,7 @@
         3
         (& (live.compiler-live-set-empty))
         (& (__tl_make-array i64 0))
+        false
         false)
         [(Remap _ _ off0 off1)
           (test.assert-true
@@ -18457,3 +18469,181 @@
             (not (= r1 cabi.compiler-reg-id-rax)))]
         [_ false])
       "Win64 String live across a call must receive a GP RegisterPair")))
+
+(test
+  reg-entry-projects-only-unobserved-parameter-storage
+  ;; All three pairs are initially eligible from their ABI positions. Only
+  ;; %0 is completely consumed in the prefix. AddrOf observes %1's home and
+  ;; %2's two projections straddle the branch.
+  (let
+    [func
+      (irt.func
+        "function @entry_words(a=%0:String, b=%1:String, c=%2:String) -> i64 vars 10 cold {
+       entry:
+         %3 = word %0, 1 : i64
+         %4 = word %1, 0 : u64
+         %5 = word %2, 0 : u64
+         %6 = addr_of %1 storage 2
+         %7 = eq %4, %5 : u64
+         branch %7, late, done
+       late:
+         %8 = word %2, 1 : i64
+         return %8
+       done:
+         return %3
+       }")]
+    [words : (__tl_dyn-array i64) (__tl_make-array i64 10)]
+    (for [i (iterator.range 0 3)]
+      (set! (array-ref words i) 1))
+    (match (reg.compiler-reg-project-entry-words func 3 words)
+      [(Function _ params _ vars (Array blocks) _ cold?)
+        (test.assert-true cold? "entry projection preserves the cold attribute")
+        (test.assert-true
+          (and
+            (= vars 11)
+            (= params.len 4)
+            (match (ir.compiler-ir-block-seq-borrow blocks 0)
+              [(Block _ instrs)
+                (and
+                  (match (ir.compiler-ir-instr-seq-borrow instrs 0)
+                    [(Mov 3 (Var 10) _) true]
+                    [_ false])
+                  (match (ir.compiler-ir-instr-seq-borrow instrs 1)
+                    [(Word 4 (Var 1) 0 _) true]
+                    [_ false])
+                  (match (ir.compiler-ir-instr-seq-borrow instrs 2)
+                    [(Word 5 (Var 2) 0 _) true]
+                    [_ false]))]))
+          "the sole unobserved pair reads its second scalar parameter")]
+      [_ (test.assert-true false "expected function blocks")])))
+
+(test
+  regalloc-group-pair-combined-evict-budget
+  ;; A 2-register group pair must compare its component weight against the
+  ;; COMBINED eviction cost across both registers, not each register alone.
+  ;; When every CSR holds a scalar with weight 6 (< 10 individually, but
+  ;; 6 + 6 >= 10 combined), a pair of weight 10 must not evict two scalars.
+  (let
+    [vars : i64 6]
+    [interval-index : reg.CompilerRegIntervalIndex
+      (reg.compiler-reg-interval-index-build
+        (&
+          (reg.compiler-reg-interval-seq-prepend
+            (reg.CompilerRegInterval 0 0 10)
+            (&
+              (reg.compiler-reg-interval-seq-prepend
+                (reg.CompilerRegInterval 1 0 10)
+                (&
+                  (reg.compiler-reg-interval-seq-prepend
+                    (reg.CompilerRegInterval 2 0 10)
+                    (&
+                      (reg.compiler-reg-interval-seq-prepend
+                        (reg.CompilerRegInterval 3 0 10)
+                        (&
+                          (reg.compiler-reg-interval-seq-prepend
+                            (reg.CompilerRegInterval 4 0 10)
+                            (&
+                              (reg.compiler-reg-interval-seq-prepend
+                                (reg.CompilerRegInterval 5 0 10)
+                                (& (reg.compiler-reg-interval-seq-empty))))))))))))))
+        vars)]
+    [members : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+    [parents : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+    [poisoned : (__tl_dyn-array bool) (__tl_make-array bool vars)]
+    [weights : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+    [assignments : reg.CompilerRegAssignmentTable
+      (reg.compiler-reg-assignment-table-make vars)]
+    [empty-split : reg.CompilerRegCallSplit (reg.compiler-reg-call-split-empty)]
+    [span : i64 (reg.compiler-reg-priority-band-span)]
+    (set! (array-ref weights 0) (* 10 span))
+    (for [v (iterator.range 1 vars)]
+      (set! (array-ref weights v) (* 6 span)))
+    (for [v (iterator.range 0 vars)]
+      (set! (array-ref parents v) v)
+      (set! (array-ref poisoned v) false))
+    (let
+      [_a1 : reg.CompilerRegAssignmentTable
+        (reg.compiler-reg-assignment-table-insert
+          assignments
+          1
+          (Register cabi.compiler-reg-id-r12))]
+      [_a2 : reg.CompilerRegAssignmentTable
+        (reg.compiler-reg-assignment-table-insert
+          assignments
+          2
+          (Register cabi.compiler-reg-id-r13))]
+      [_a3 : reg.CompilerRegAssignmentTable
+        (reg.compiler-reg-assignment-table-insert
+          assignments
+          3
+          (Register cabi.compiler-reg-id-r14))]
+      [_a4 : reg.CompilerRegAssignmentTable
+        (reg.compiler-reg-assignment-table-insert
+          assignments
+          4
+          (Register cabi.compiler-reg-id-r15))]
+      [_a5 : reg.CompilerRegAssignmentTable
+        (reg.compiler-reg-assignment-table-insert
+          assignments
+          5
+          (Register cabi.compiler-reg-id-rbx))]
+      [group-set : live.CompilerLiveI64Set (live.compiler-live-set1 0)]
+      [empty-set : live.CompilerLiveI64Set (live.compiler-live-set-empty)]
+      [call-set : live.CompilerLiveI64Set (live.compiler-live-set1 5)]
+      [type-info : reg.CompilerRegVarTypes
+        (compiler-reg-coalesce-test-i64-types vars)]
+      (reg.compiler-reg-assign-group-pair-component
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (cabi.CompilerRegTargetAbi.Linux)
+        0
+        vars
+        type-info
+        (& group-set)
+        (& group-set)
+        (& empty-set)
+        (& empty-set)
+        (& interval-index.starts)
+        (& interval-index.ends)
+        (& poisoned)
+        (&mut parents)
+        (&mut members)
+        (& interval-index)
+        assignments
+        (& weights)
+        (& call-set)
+        (& empty-split))
+      (test.assert-true
+        (match (reg.compiler-reg-assignment-table-lookup assignments 0)
+          [(No) true]
+          [_ false])
+        "pair of weight 10 must not evict two scalars of weight 6 each")
+      (set! (array-ref weights 4) (* 3 span))
+      (set! (array-ref weights 5) (* 3 span))
+      (reg.compiler-reg-assign-group-pair-component
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (cabi.CompilerRegTargetAbi.Linux)
+        0
+        vars
+        type-info
+        (& group-set)
+        (& group-set)
+        (& empty-set)
+        (& empty-set)
+        (& interval-index.starts)
+        (& interval-index.ends)
+        (& poisoned)
+        (&mut parents)
+        (&mut members)
+        (& interval-index)
+        assignments
+        (& weights)
+        (& call-set)
+        (& empty-split))
+      (test.assert-true
+        (match (reg.compiler-reg-assignment-table-lookup assignments 0)
+          [(Some (RegisterPair r0 r1))
+            (and
+              (= r0 cabi.compiler-reg-id-r15)
+              (= r1 cabi.compiler-reg-id-rbx))]
+          [_ false])
+        "pair of weight 10 must still evict two scalars of weight 3 each"))))

@@ -23888,6 +23888,52 @@
                 (Array
                   (compiler_ir_types.CompilerIrBlockSeq rebuilt block-count)))))))]))
 
+;; Use the caller's aggregate bank walk. A parameter that advances the GP
+;; bank by two and takes no stack space has exactly the same transport as
+;; two scalar GP arguments, even following a mixed or rolled-back group.
+(define (compiler-backend-project-entry-words
+  [type-segment-bases : i64]
+  [target : be_state.CompilerBackendTarget]
+  [program-index : be_state.CompilerBackendProgramIndex]
+  [func : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunction
+  (match (& func)
+    [(Function _ params _ vars (Array seq) _ _)
+      (let
+        [prefix (compiler_regalloc.compiler-reg-entry-projection-count seq)]
+        (when (= prefix 0) (return func))
+        (let
+          [banks : (Array i64 4) (make-array i64 4)]
+          [words : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+          (for [i (iterator.range 0 params.len)]
+            (match (compiler_ir_types.compiler-ir-param-seq-borrow params i)
+              [(Param _ ty var)
+                (let
+                  [gp (array-ref banks 0)]
+                  [stack (array-ref banks 3)]
+                  [_slot
+                    (be_calls.compiler-backend-abi-bank-step!
+                      type-segment-bases
+                      target
+                      (Internal)
+                      program-index
+                      ty
+                      (&mut banks))]
+                  (when
+                    (and
+                      (= (array-ref banks 0) (+ gp 2))
+                      (= stack (array-ref banks 3)))
+                    (when
+                      (= (array-length words) 0)
+                      (set! words (__tl_make-array i64 vars)))
+                    (set! (array-ref words var) 1)))]))
+          (if (= (array-length words) 0)
+            func
+            (compiler_regalloc.compiler-reg-project-entry-words
+              func
+              prefix
+              words))))]
+    [_ func]))
+
 (define (compiler-backend-emit-function
   [type-segment-bases : i64]
   [target : be_state.CompilerBackendTarget]
@@ -24008,15 +24054,34 @@
                 factored-blocks
                 (be_state.compiler-backend-global-shared-view function-abi)
                 cold?)]
+            [entry-func : compiler_ir_types.CompilerIrFunction
+              (if (and
+                scalar-pipeline?
+                scalar-registers-enabled
+                (not (compiler_ir_types.compiler-debug-info-enabled?))
+                (compiler_ir_types.compiler-ir-function-abi-ordinary?
+                  (& function-abi))
+                (not
+                  (compiler-backend-spmd-private-function? backend-state name))
+                (not
+                  (be_operand.compiler-backend-index-c-export?
+                    program-index
+                    name)))
+                (compiler-backend-project-entry-words
+                  type-segment-bases
+                  target
+                  program-index
+                  folded-func)
+                folded-func)]
             (if (and
               shrinkwrap-enabled
               scalar-pipeline?
               scalar-registers-enabled)
               (compiler_regalloc.compiler-reg-early-exit-shrinkwrap-function
-                folded-func)
+                entry-func)
               (begin
                 (compiler_regalloc.compiler-reg-early-exit-state-reset!)
-                folded-func)))]
+                entry-func)))]
         ;; Cycle 20: protect GP values only on one admitted cold call edge.  The
         ;; rewrite follows the early-exit split and still precedes regalloc, so
         ;; liveness sees both transformations.
@@ -24036,8 +24101,12 @@
           (match (be_state.compiler-backend-global-shared-view cold-call-func)
             [(Function _ _ _ _ out-blocks _ _) out-blocks])]
         [walk-vars : i64
-          (match cold-call-func
+          (match (& cold-call-func)
             [(Function _ _ _ out-vars _ _ _) out-vars])]
+        [source-param-count : i64 params.len]
+        [params : compiler_ir_types.CompilerIrParamSeq
+          (match cold-call-func
+            [(Function _ p _ _ _ _ _) p])]
         [cold-call-temp-start : i64
           (compiler_regalloc.compiler-reg-cold-call-rewrite-temp-start
             (& cold-call-rewrite))]
@@ -24403,6 +24472,7 @@
               rewritten-vars
               (& coloring-pinned-vars)
               (& direct-stack-offsets)
+              (> params.len source-param-count)
               (and scalar-pipeline? (not scalar-registers-enabled))))]
         [slot-vars : i64
           (match (be_state.compiler-backend-global-shared-view coloring)

@@ -84,8 +84,7 @@
     [has-position : bool false]
     [max-bytes : i64 expand.compiler-expand-default-max-bytes]
     [has-max-bytes : bool false]
-    [options : cli_option.CliCompileOptions
-      (cli_option.cli-compile-options (Linux) 1)]
+    [options : cli_option.CliCompileOptions (cli_option.cli-compile-options)]
     (while (cli_option.cli-args-next! (&mut args))
       (cond
         [(cli_option.cli-compile-option! (&mut options) (&mut args)) unit]

@@ -918,6 +918,7 @@ build_view_app() {
 }
 
 for opt in 0 1 2; do
+    rm -rf "$VIEWS/target"
     for route in native native-cached source; do
         if [ "$route" = source ]; then
             export TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE=1
@@ -939,7 +940,10 @@ for opt in 0 1 2; do
             assert_catalog_state "$route" "$log.err" 0 1 1
             assert_tli_route "$route" "$log.err" 1 1 1 1 0 1
             assert_profile_eq dependency_tlci_native_dispatches 1 "$log.err"
-            if [ "$route" = native-cached ]; then
+            if [ "$route" = native ]; then
+                grep -F 'Built ' "$log.out" | grep -F 'views.tlci' >/dev/null ||
+                    fail "#9083 opt$opt cold build did not create the dependency TLCI"
+            else
                 grep -F 'Fresh ' "$log.out" | grep -F 'views.tlci' >/dev/null ||
                     fail "#9083 opt$opt cached build did not reuse the dependency TLCI"
             fi

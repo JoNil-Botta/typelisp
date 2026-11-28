@@ -224,7 +224,11 @@
     (test.assert-i64-eq (replace-status source destination) 2 "missing source")
     (write-text source "stage")
     (let
-      [nul-path : String (str_cat.str-cat destination "\0suffix")]
+      [prefix : ByteBuf
+        (byte_buf.from-bytes (byte_buf.str-as-bytes destination))]
+      [with-nul : ByteBuf (byte_buf.push prefix (cast 0 : u8))]
+      [nul-path : String
+        (byte_buf.to-string (byte_buf.append-string with-nul "suffix"))]
       (test.assert-i64-eq
         (replace-status source (& nul-path))
         87

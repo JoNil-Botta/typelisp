@@ -18,6 +18,8 @@
 (import compiler_check_core)
 (import compiler_semantic_lint_facts as semantic)
 (import compiler_ast_types as ast)
+(import compiler_builtin_ids as cbi)
+(import compiler_cfg_core as cfg_core)
 (import compiler_target_cfg_core as target_cfg)
 (import compiler_load)
 (import compiler_diagnostic as cdiag)
@@ -1405,6 +1407,10 @@
       [lint-pool-active? : bool (ast.ast-node-pool-compat-context-active?)]
       [lint-pools : ast.AstNodePoolContext
         (ast.ast-node-pool-compat-context-current)]
+      [cfg-snapshot : cfg_core.CompilerCfgSnapshot
+        (cfg_core.compiler-cfg-snapshot-from-env cfgs)]
+      [verified-stdlib-roots : lint_svec.Vec
+        (compiler_load.compiler-load-session-stdlib-roots-snapshot)]
       [batch : (__tl_dyn-array SelfhostLintMustUseBatch)
         (__tl_make-array
           (SelfhostLintMustUseBatch
@@ -1412,7 +1418,18 @@
             (string.copy (& path))
             (lint_core.lint-findings-empty)))]
       (when lint-pool-active? (ast.ast-node-pool-compat-context-clear!))
+      ;; Phase-1 parsing and `selfhost-lint-unsafe-surface-prepare!` intern
+      ;; symbols that vary with cross-file cache hits/misses. Reset the interner
+      ;; to the session floor before typed checking so each file checks against
+      ;; a clean, order-independent intern table while keeping batch caches warm
+      ;; and preserving stdlib roots verified for this file during import resolution.
+      (compiler_check_core.compiler-check-reset-interns!)
+      (cbi.compiler-builtin-initialize-for-parse!)
+      (compiler_load.compiler-load-session-restore-stdlib-roots!
+        (& verified-stdlib-roots))
       (let
+        [typed-cfgs : sym_i64_env.SymI64Env
+          (cfg_core.compiler-cfg-snapshot-to-env (& cfg-snapshot))]
         [checked : compiler_check_core.ResultCompilerCheck
           (if track-must-use?
             (let
@@ -1423,12 +1440,14 @@
                     (compiler_check_core.CompilerSemanticCheckInput.PreparedSource
                       (string.copy (& path))
                       (string.copy (& source))
-                      (if (parser.compiler-cfg-enabled? cfgs (ci.intern "test"))
+                      (if (parser.compiler-cfg-enabled?
+                        typed-cfgs
+                        (ci.intern "test"))
                         (compiler_check_core.CompilerCheckPreparation.Prepare
                           tltest.tltest-prepare-check-program)
                         compiler_check_core.CompilerCheckPreparation.Unchanged))
                     stdlib-roots
-                    cfgs
+                    typed-cfgs
                     job-state
                     (unsafe
                       (arena.Arena owner.handle))
@@ -1443,7 +1462,7 @@
               (string.copy (& path))
               (string.copy (& source))
               stdlib-roots
-              cfgs
+              typed-cfgs
               job-state))]
         [must-use : lint_core.LintFindings
           (selfhost-lint-filter-derived-origins

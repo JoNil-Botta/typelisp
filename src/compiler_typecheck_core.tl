@@ -95703,6 +95703,38 @@
           (tc-arena-store-wild-node count))))
     graph))
 
+(define (tc-arena-store-name-part-hash [id : i64]) : i64
+  (if (ci.intern-renderable-id? id)
+    (hash.string-key (& (ci.intern-str id)))
+    (hash.i64 id)))
+
+;; Content hash of a canonical nominal type key (`ast.ast-nominal-name-id-key`),
+;; independent of parse-order intern IDs and with zero heap allocation.
+(define (tc-arena-store-nominal-hash [name : i64]) : i64
+  (let
+    [key : i64 (csym.compiler-symbol-name-id-key name)]
+    (cond
+      [(ci.intern-composite-pair-id? key)
+        (hash.combine-normalized
+          (hash.combine-normalized
+            17
+            (tc-arena-store-name-part-hash
+              (ci.intern-composite-left-id-unchecked key)))
+          (tc-arena-store-name-part-hash
+            (ci.intern-composite-right-id-unchecked key)))]
+      [(ci.intern-composite-triple-id? key)
+        (hash.combine-normalized
+          (hash.combine-normalized
+            (hash.combine-normalized
+              19
+              (tc-arena-store-name-part-hash
+                (ci.intern-composite-left-id-unchecked key)))
+            (tc-arena-store-name-part-hash
+              (ci.intern-composite-middle-id-unchecked key)))
+          (tc-arena-store-name-part-hash
+            (ci.intern-composite-right-id-unchecked key)))]
+      [else (tc-arena-store-name-part-hash key)])))
+
 ;; A structural hash of a resolved type that ignores regions and lifetimes,
 ;; or -1 when the type is not known well enough to place.
 (define (tc-arena-store-type-hash [ty : ast.AstType]) : i64
@@ -95718,12 +95750,20 @@
     [(MutPtr inner) (tc-arena-store-wrapped-hash 47 inner)]
     [(Array inner _) (tc-arena-store-wrapped-hash 48 inner)]
     [(or (Struct name) (Enum name) (StructArgs name _) (EnumArgs name _))
-      (hash.combine 7 (csym.compiler-symbol-name-id-key name))]
+      (hash.combine-normalized 7 (tc-arena-store-nominal-hash name))]
     [(Tuple elems)
       (tc-arena-store-types-hash
         (& (ast.ast-type-list-box-shared-view elems))
         11)]
     [(Func args _) (hash.combine 13 (ast.ast-type-list-len (& (deref args))))]
+    [(CFunc signature mode)
+      (let
+        [sig : i64 (tc-arena-store-type-hash (ast.ty-node-get signature))]
+        (if (< sig 0)
+          -1
+          (hash.combine
+            (hash.combine-normalized 49 sig)
+            (ast.ast-c-function-mode-key mode))))]
     [(or (Var _) (VarArgs _ _)) -1]
     [_ (ast.ty-node-hash-value (& ty))]))
 

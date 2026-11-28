@@ -18715,3 +18715,113 @@
                   "undeclared arena owner call must stay unrepresented")])]
           [(tc_core.TcSelectedResult.Err message _)
             (test.assert-true false message)])))))
+
+(cfg
+  test
+  (test
+    tc-arena-store-type-hash-intern-order-invariant
+    (let
+      [pools-a : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-new-with-capacities 16 16)]
+      [_use-a : unit (ast.ast-node-pool-compat-context-use! pools-a)]
+      (ci.intern-reset!)
+      (cbi.compiler-builtin-initialize-for-parse!)
+      (let
+        [mod-a : i64 (ci.intern "hash_mod")]
+        [key-a : i64 (ci.intern "HashKey")]
+        [qual-a : i64 (ci.intern "hash_mod/HashKey")]
+        [pair-a : i64 (ci.intern-composite-pair-id mod-a key-a)]
+        [bool-ty-a : ast.AstType ast.AstType.Bool]
+        [empty-types-a : ast.AstTypeList (ast.ast-type-list-new)]
+        [i64-id-a : i64
+          (ast.ast-node-pool-context-type-push pools-a ast.AstType.I64)]
+        [fn-sig-a : i64
+          (ast.ast-node-pool-context-type-push
+            pools-a
+            (ast.ast-ty-func-with-pools
+              pools-a
+              (ast.ast-type-list-cons-id i64-id-a (& empty-types-a))
+              (& bool-ty-a)))]
+        [h-struct-a : i64
+          (tc_core.tc-arena-store-type-hash (ast.AstType.Struct key-a))]
+        [h-enum-a : i64
+          (tc_core.tc-arena-store-type-hash (ast.AstType.Enum qual-a))]
+        [h-pair-a : i64
+          (tc_core.tc-arena-store-type-hash (ast.AstType.Enum pair-a))]
+        [h-cfunc-a : i64
+          (tc_core.tc-arena-store-type-hash
+            (ast.AstType.CFunc fn-sig-a ast.AstCFunctionMode.NonNull))]
+        (ast.ast-node-pool-compat-context-clear!)
+        (ast.ast-node-pool-context-destroy-storage! pools-a)
+        (test.assert-true
+          (>= h-struct-a 0)
+          "struct arena-store hash is non-negative")
+        (test.assert-i64-eq
+          h-enum-a
+          h-pair-a
+          "qualified string and composite pair nominal keys share arena-store hash")
+        (let
+          [pools-b : ast.AstNodePoolContext
+            (ast.ast-node-pool-context-new-with-capacities 16 16)]
+          [_use-b : unit (ast.ast-node-pool-compat-context-use! pools-b)]
+          [i : i64 0]
+          (ci.intern-reset!)
+          (cbi.compiler-builtin-initialize-for-parse!)
+          (while (< i 37)
+            (let
+              [_shift : i64
+                (ci.intern
+                  (str_cat.str-cat "arena_hash_shift_" (string.int->string i)))]
+              (+= i 1)))
+          ;; Also shift type-node IDs before pushing `CFunc`'s signature.
+          (let
+            [_pad-ty : i64
+              (ast.ast-node-pool-context-type-push pools-b ast.AstType.F32)]
+            [mod-b : i64 (ci.intern "hash_mod")]
+            [key-b : i64 (ci.intern "HashKey")]
+            [qual-b : i64 (ci.intern "hash_mod/HashKey")]
+            [pair-b : i64 (ci.intern-composite-pair-id mod-b key-b)]
+            [bool-ty-b : ast.AstType ast.AstType.Bool]
+            [empty-types-b : ast.AstTypeList (ast.ast-type-list-new)]
+            [i64-id-b : i64
+              (ast.ast-node-pool-context-type-push pools-b ast.AstType.I64)]
+            [fn-sig-b : i64
+              (ast.ast-node-pool-context-type-push
+                pools-b
+                (ast.ast-ty-func-with-pools
+                  pools-b
+                  (ast.ast-type-list-cons-id i64-id-b (& empty-types-b))
+                  (& bool-ty-b)))]
+            [h-struct-b : i64
+              (tc_core.tc-arena-store-type-hash (ast.AstType.Struct key-b))]
+            [h-enum-b : i64
+              (tc_core.tc-arena-store-type-hash (ast.AstType.Enum qual-b))]
+            [h-pair-b : i64
+              (tc_core.tc-arena-store-type-hash (ast.AstType.Enum pair-b))]
+            [h-cfunc-b : i64
+              (tc_core.tc-arena-store-type-hash
+                (ast.AstType.CFunc fn-sig-b ast.AstCFunctionMode.NonNull))]
+            (ast.ast-node-pool-compat-context-clear!)
+            (ast.ast-node-pool-context-destroy-storage! pools-b)
+            (test.assert-true
+              (!= key-a key-b)
+              "shift actually moved sequential intern IDs")
+            (test.assert-true
+              (!= fn-sig-a fn-sig-b)
+              "shift actually moved sequential type-node IDs")
+            (test.assert-i64-eq
+              h-struct-a
+              h-struct-b
+              "unqualified struct arena-store hash is invariant to intern order")
+            (test.assert-i64-eq
+              h-enum-a
+              h-enum-b
+              "qualified enum arena-store hash is invariant to intern order")
+            (test.assert-i64-eq
+              h-pair-a
+              h-pair-b
+              "composite-pair arena-store hash is invariant to intern order")
+            (test.assert-i64-eq
+              h-cfunc-a
+              h-cfunc-b
+              "CFunc arena-store hash is invariant to type-node IDs")))))))

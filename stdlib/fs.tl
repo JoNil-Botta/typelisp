@@ -363,6 +363,39 @@
       [arg1 : (Ptr u8)]
       [arg2 : i32]) : i32 (:symbol "MoveFileExA"))))
 
+(cfg
+  windows
+  (extern (fs-win-are-file-apis-ansi) : i32 (:symbol "AreFileApisANSI")))
+
+(cfg
+  windows
+  (unsafe
+    (extern (fs-win-multi-byte-to-wide-char
+      [codepage : u32]
+      [flags : u32]
+      [path : (Ptr u8)]
+      [path-length : i32]
+      [wide : (MutPtr u16)]
+      [capacity : i32]) : i32 (:symbol "MultiByteToWideChar"))))
+
+(cfg
+  windows
+  (unsafe
+    (extern (fs-win-get-full-path-name
+      [path : (Ptr u16)]
+      [capacity : u32]
+      [full-path : (MutPtr u16)]
+      [file-part : (MutPtr (Ptr u16))]) : u32 (:symbol "GetFullPathNameW"))))
+
+(cfg
+  windows
+  (unsafe
+    (extern (fs-win-set-file-information
+      [handle : i64]
+      [info-class : i32]
+      [info : (Ptr u8)]
+      [size : u32]) : i32 (:symbol "SetFileInformationByHandle"))))
+
 ;: Windows kernel32 bindings for a crash-released advisory byte-range lock.
 (cfg
   windows
@@ -665,26 +698,214 @@
               (set! done true))))
         result))))
 
-;: Windows atomic replacement through MoveFileExA. WRITE_THROUGH requests that
-;: the move complete before returning; directory-entry durability is still not
-;: promised by the public transaction contract.
+;; Win64 FILE_RENAME_INFO. The variable-length UTF-16 name begins at
+;; first-unit, not after the padded struct.
+(cfg
+  windows
+  (defstruct FsWindowsRenameInfo
+    (flags u32)
+    (root-directory i64)
+    (name-bytes u32)
+    (first-unit u16)))
+
+(cfg
+  windows
+  (define fs-windows-rename-max-units : i64
+    32767))
+
+(cfg
+  windows
+  (define (fs-windows-atomic-path-status [path : (& str)]) : i64
+    (cond
+      [(or
+          (io.empty-path? path)
+          (>= (string.index-of-byte path 0 (cast 0 : u8)) 0))
+        io.io-status-invalid]
+      ;; A native codepage uses at most four bytes per UTF-16 unit.
+      [(>= (string.string-length path) (* 4 fs-windows-rename-max-units))
+        io.io-status-name-too-long]
+      [else 0])))
+
+(cfg
+  windows
+  (unsafe
+    (define (fs-windows-legacy-atomic-replace
+      [source : (Ptr u8)]
+      [destination : (Ptr u8)]) : i64
+      (unsafe
+        (if (= (fs-win-move-file-ex source destination (cast 9 : i32)) 0)
+          (fs-windows-nonzero-status (fs-windows-last-error-status))
+          0)))))
+
+;; Both native statuses are captured at their calls. A primary rename error
+;; survives cleanup. A negative status reports a close failure after commit.
+(cfg
+  windows
+  (unsafe
+    (define (fs-windows-finish-atomic-replace
+      [rename-error : i64]
+      [close-error : i64]
+      [source : (Ptr u8)]
+      [destination : (Ptr u8)]) : i64
+      (unsafe
+        (cond
+          [(= rename-error 0) (- 0 close-error)]
+          ;; An older host or filesystem can reject a validated request with
+          ;; ERROR_INVALID_PARAMETER. Its fallback cannot replace open files.
+          [(and (= rename-error 87) (= close-error 0))
+            (fs-windows-legacy-atomic-replace source destination)]
+          [else (fs-windows-error-status rename-error)])))))
+
+(cfg
+  windows
+  (unsafe
+    (define (fs-windows-replace-with-info
+      [source : (Ptr u8)]
+      [destination : (Ptr u8)]
+      [info : (MutPtr FsWindowsRenameInfo)]
+      [size : i64]) : i64
+      (unsafe
+        (let
+          [handle : i64 (fs-win-create-file source 0x10000 7 0 3 0x80 0)]
+          (when
+            (= handle -1)
+            (return (fs-windows-nonzero-status (fs-windows-last-error-status))))
+          (let
+            [rename-error : i64
+              (if (=
+                (fs-win-set-file-information
+                  handle
+                  (cast 22 : i32)
+                  (ptr-cast info : (Ptr u8))
+                  (cast size : u32))
+                0)
+                (cast (cast (fs-win-get-last-error) : u32) : i64)
+                0)]
+            [close-error : i64
+              (if (= (fs-win-close-handle handle) 0)
+                (cast (cast (fs-win-get-last-error) : u32) : i64)
+                0)]
+            (fs-windows-finish-atomic-replace
+              rename-error
+              close-error
+              source
+              destination)))))))
+
+(cfg
+  windows
+  (unsafe
+    (define (fs-windows-rename-path-units [codepage : u32] [path : (Ptr u8)]) : i64
+      (let
+        [units : i64
+          (unsafe
+            (cast
+              (fs-win-multi-byte-to-wide-char
+                codepage
+                (cast 8 : u32)
+                path
+                -1
+                (int->ptr (cast 0 : u64) : (MutPtr u16))
+                0)
+              : i64))]
+        (cond
+          [(= units 0)
+            (- 0 (fs-windows-nonzero-status (fs-windows-last-error-status)))]
+          [(> units fs-windows-rename-max-units)
+            (- 0 io.io-status-name-too-long)]
+          [else units])))))
+
+(cfg
+  windows
+  (unsafe
+    (define (fs-windows-replace-full-path
+      [source : (Ptr u8)]
+      [destination : (Ptr u8)]
+      [path : (Ptr u16)]) : i64
+      (unsafe
+        (let
+          [no-path : (MutPtr u16) (int->ptr (cast 0 : u64) : (MutPtr u16))]
+          [no-part : (MutPtr (Ptr u16))
+            (int->ptr (cast 0 : u64) : (MutPtr (Ptr u16)))]
+          [capacity : i64
+            (cast (fs-win-get-full-path-name path 0 no-path no-part) : i64)]
+          (when
+            (= capacity 0)
+            (return (fs-windows-nonzero-status (fs-windows-last-error-status))))
+          (when
+            (> capacity fs-windows-rename-max-units)
+            (return io.io-status-name-too-long))
+          (let
+            [name-offset : i64
+              (comptime (offset-of (type FsWindowsRenameInfo) first-unit))]
+            [size : i64 (+ name-offset (* 2 capacity))]
+            [storage : (__tl_dyn-array u64)
+              (__tl_make-array u64 (/ (+ size 7) 8))]
+            [info : (MutPtr FsWindowsRenameInfo)
+              (ptr-cast
+                (__tl_array-data storage)
+                : (MutPtr FsWindowsRenameInfo))]
+            [name : (MutPtr u16)
+              (ptr-cast
+                (ptr-offset (ptr-cast info : (MutPtr u8)) name-offset)
+                : (MutPtr u16))]
+            [full-units : i64
+              (cast
+                (fs-win-get-full-path-name
+                  path
+                  (cast capacity : u32)
+                  name
+                  no-part)
+                : i64)]
+            (when
+              (= full-units 0)
+              (return
+                (fs-windows-nonzero-status (fs-windows-last-error-status))))
+            ;; The process cwd can change between the sizing and resolving calls.
+            (when (>= full-units capacity) (return io.io-status-name-too-long))
+            ;; FILE_RENAME_FLAG_REPLACE_IF_EXISTS | FILE_RENAME_FLAG_POSIX_SEMANTICS
+            (set! (deref info).flags (cast 3 : u32))
+            (set! (deref info).root-directory 0)
+            (set! (deref info).name-bytes (cast (* 2 full-units) : u32))
+            (fs-windows-replace-with-info source destination info size)))))))
+
 (cfg
   windows
   (unsafe
     (define (fs-windows-atomic-replace
       [source : (Ptr u8)]
-      [destination : (Ptr u8)]) : i32
-      (if (=
-        (unsafe
-          (fs-win-move-file-ex source destination (cast 9 : i32)))
-        (cast 0 : i32))
-        (begin
+      [destination : (Ptr u8)]) : i64
+      (unsafe
+        (let
+          ;; Match the A APIs' ANSI/OEM mode. MB_ERR_INVALID_CHARS rejects
+          ;; malformed input, and -1 includes the terminator in sizing.
+          [codepage : u32
+            (cast
+              (if (= (fs-win-are-file-apis-ansi) 0)
+                1
+                0)
+              : u32)]
+          [source-units : i64 (fs-windows-rename-path-units codepage source)]
+          (when (< source-units 0) (return (- 0 source-units)))
           (let
-            [code : i64 (cast (fs-win-get-last-error) : i64)]
-            (io.set-error-code
-              (fs-windows-nonzero-status (fs-windows-error-status code))))
-          (cast -1 : i32))
-        (cast 0 : i32)))))
+            [units : i64 (fs-windows-rename-path-units codepage destination)]
+            (when (< units 0) (return (- 0 units)))
+            (let
+              [wide : (__tl_dyn-array u16) (__tl_make-array u16 units)]
+              [wide-ptr : (MutPtr u16) (__tl_array-data wide)]
+              [converted : i32
+                (fs-win-multi-byte-to-wide-char
+                  codepage
+                  (cast 8 : u32)
+                  destination
+                  -1
+                  wide-ptr
+                  (cast units : i32))]
+              (if (= converted 0)
+                (fs-windows-nonzero-status (fs-windows-last-error-status))
+                (fs-windows-replace-full-path
+                  source
+                  destination
+                  (ptr-cast wide-ptr : (Ptr u16)))))))))))
 
 ;: Convert a zero-success C result into the current host error code.
 (define (status-from-result [result : i64]) : i64
@@ -784,19 +1005,32 @@
     (rename-status-owned source-text destination-text)))
 
 ;: Atomically replace an owned destination path with an owned sibling source.
+;: A negative Windows status means the rename committed and closing the
+;: source handle failed.
 (define (atomic-replace-status-owned [source : String] [destination : String]) : i64
-  (let
-    [source-bytes : (__tl_dyn-array u8) (io.c-string source)]
-    [destination-bytes : (__tl_dyn-array u8) (io.c-string destination)]
-    (status-from-result
-      (cfg
-        windows
-        (cast
-          (unsafe
-            (fs-windows-atomic-replace
-              (io.array-const-ptr source-bytes)
-              (io.array-const-ptr destination-bytes)))
-          : i64)
+  (cfg
+    windows
+    (let
+      [source-status : i64 (fs-windows-atomic-path-status (& source))]
+      [destination-status : i64 (fs-windows-atomic-path-status (& destination))]
+      (cond
+        [(not (= source-status 0)) source-status]
+        [(not (= destination-status 0)) destination-status]
+        [else
+          (with-arena
+            scratch
+            (let
+              [source-bytes : (__tl_dyn-array u8) (io.c-string (& source))]
+              [destination-bytes : (__tl_dyn-array u8)
+                (io.c-string (& destination))]
+              (unsafe
+                (fs-windows-atomic-replace
+                  (io.array-const-ptr source-bytes)
+                  (io.array-const-ptr destination-bytes)))))]))
+    (let
+      [source-bytes : (__tl_dyn-array u8) (io.c-string source)]
+      [destination-bytes : (__tl_dyn-array u8) (io.c-string destination)]
+      (status-from-result
         (unsafe
           (linux-syscall-rename
             (io.array-const-ptr source-bytes)
@@ -2176,11 +2410,13 @@
 
 ;: Atomically replace `destination` with the sibling file at `source`.
 ;:
-;: Linux uses `rename(2)`. Windows uses MoveFileExA with
-;: MOVEFILE_REPLACE_EXISTING and MOVEFILE_WRITE_THROUGH; it never falls back to
-;: deleting the destination. The replacement is atomically visible to readers.
-;: This API does not flush the containing directory and therefore does not
-;: promise that the chosen directory entry survives sudden power loss.
+;: Linux uses `rename(2)`. Windows uses FileRenameInfoEx with POSIX semantics
+;: so readers sharing delete keep their old bytes and new opens see the
+;: replacement. Paths use the active Windows file-API codepage, with temporary
+;: wide paths in a scoped arena. An unsupported information class (error 87)
+;: falls back to MoveFileExA, which can fail if the destination is open.
+;: Callers are responsible for flushing file data. Atomic visibility does not
+;: imply power-loss durability of the directory entry.
 (define (try-atomic-replace
   [source : (& source str)]
   [destination : (& destination str)]) : io.ResultIoUnit
@@ -2196,9 +2432,18 @@
         [path : String (str_cat.str-cat source-arrow destination)]
         [status : i64
           (stdlib.fs.atomic-replace-status-owned source-text destination-text)]
-        (if (= status io.io-status-ok)
-          OkIoUnit
-          (ErrIoUnit (io.error-from-owned-status path status)))))))
+        (cond
+          [(= status io.io-status-ok) OkIoUnit]
+          [(< status 0)
+            (ErrIoUnit
+              (IoSystemCode
+                io.io-status-io-error
+                (str_cat.str-cat
+                  "close after atomic replacement (Windows error "
+                  (string.int->string (- 0 status))
+                  "): "
+                  path)))]
+          [else (ErrIoUnit (io.error-from-owned-status path status))])))))
 
 ;: Acquire a blocking cross-process advisory lock on `path`.
 ;:

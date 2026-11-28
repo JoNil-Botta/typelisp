@@ -711,6 +711,35 @@ stdout empty
 stderr contains package-lock transaction before-replace failed
 same "{{dir}}/lock-before-stale" "{{dir}}/root/typelisp.lock"
 test -z "$(find "{{dir}}/root" -maxdepth 1 -type f -name 'typelisp.lock.stage.*' -print -quit)"
+if-host windows
+step build-package-lock-held-reader
+run build "{{root}}/tests/integration/windows_atomic_replace.tl" --stdlib-root "{{root}}/stdlib" --opt-level 0 -o "{{dir}}/lock-reader{{exe}}"
+stderr empty
+sh CCV_lock_path=$(cc_native_path "{{dir}}/root/typelisp.lock") CCV_ready=$(cc_native_path "{{dir}}/held.ready") CCV_reader_release=$(cc_native_path "{{dir}}/held.release")
+sh "{{dir}}/lock-reader{{exe}}" --hold-reader "{{lock_path}}" "{{ready}}" "{{reader_release}}" > "{{dir}}/package-lock-held-reader.out" 2> "{{dir}}/package-lock-held-reader.err" & CCV_reader=$!
+sh WORKDIR="{{dir}}" wait_for_package_lock_text "{{dir}}/held.ready" ready "{{reader}}" package-lock-held-reader
+step package-lock-sharing-retries-exhausted
+exec env GIT_CONFIG_GLOBAL="{{gitconfig}}" "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0 --update-lock
+sh : > "{{dir}}/held.release" && wait "{{reader}}"
+exit 1
+stdout empty
+stderr contains package-lock transaction replace failed
+stderr contains io: system error 32:
+same "{{dir}}/lock-before-stale" "{{dir}}/root/typelisp.lock"
+test -z "$(find "{{dir}}/root" -maxdepth 1 -type f -name 'typelisp.lock.stage.*' -print -quit)"
+in file {{dir}}/package-lock-held-reader.err
+empty
+sh attrib.exe +R "{{lock_path}}"
+step package-lock-readonly-destination
+exec env GIT_CONFIG_GLOBAL="{{gitconfig}}" "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0 --update-lock
+sh attrib.exe -R "{{lock_path}}"
+exit 1
+stdout empty
+stderr contains package-lock transaction replace failed
+stderr contains io: permission denied:
+same "{{dir}}/lock-before-stale" "{{dir}}/root/typelisp.lock"
+test -z "$(find "{{dir}}/root" -maxdepth 1 -type f -name 'typelisp.lock.stage.*' -print -quit)"
+end-if
 step selfhost-cli-package-graph-github-lock-update
 exec env GIT_CONFIG_GLOBAL="{{gitconfig}}" "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0 --update-lock
 stderr empty

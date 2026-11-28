@@ -15,6 +15,7 @@
 ;; options retain their own validation. Optional or irregular value lists use
 ;; a flag entry and advance the cursor explicitly.
 (import stdlib.io)
+(import stdlib.clone as clone_gen)
 (import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector String) as cli_svec)
@@ -210,6 +211,8 @@
   (Sse2)
   (Avx2)
   (Avx512))
+
+(clone_gen.gen-clone CliBackendMode)
 
 (defenum ResultCliBackendMode
   (Ok CliBackendMode)

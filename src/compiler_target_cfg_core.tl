@@ -3,6 +3,7 @@
 ;; Keep target predicate aliases in one place so compiler emission and
 ;; non-emitting tooling parse exactly the same source configuration.
 (import stdlib.vector)
+(import stdlib.clone as clone_gen)
 (import (vector.vector String) as target_cfg_svec)
 (import compiler_builtin_ids as cbi)
 (import compiler_cfg_core as cfg_core)
@@ -12,6 +13,8 @@
 (defenum CompilerTargetCfg
   (Linux)
   (Windows))
+
+(clone_gen.gen-clone CompilerTargetCfg)
 
 (defenum ResultCompilerTargetCfg
   (Ok CompilerTargetCfg)

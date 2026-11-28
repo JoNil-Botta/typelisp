@@ -10,6 +10,8 @@
 build	--direct	internal: bypasses the manifest path when the driver re-enters itself
 build	--package-worker	internal: subprocess protocol for building one dependency package
 build	--package-doctest-worker	internal: subprocess protocol for one package's doctests
+build	--graph-cfg	internal: passes graph-wide cfgs to the doctest worker
+build	--graph-stdlib-root	internal: passes graph-wide stdlib roots to the doctest worker
 build	--resolved-dep	internal: passes an already-resolved dependency path to a worker
 build	--version	handled by the root CLI, not a build option
 run	--direct	internal: bypasses the manifest path when the driver re-enters itself

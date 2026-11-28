@@ -384,7 +384,7 @@
 (define (selfhost-check-package
   [manifest-path : String]
   [has-manifest : bool]
-  [options : cli_option.CliCompileOptions]) : i64
+  [cli-options : cli_option.CliCompileOptions]) : i64
   (match (package_source_core.package-source-resolve-manifest
     "check"
     manifest-path
@@ -401,12 +401,20 @@
             (owned_view.compiler-owned-shared-view manifest-dir)
             (owned_view.compiler-owned-shared-view manifest))]
         [emit-entry : bool (selfhost-check-package-kind-entry? manifest.kind)]
+        [target : target_cfg.CompilerTargetCfg
+          (compiler_load.compiler-pkg-graph-target
+            (& manifest.settings)
+            (& cli-options))]
+        [options : cli_option.CliCompileOptions
+          (compiler_load.compiler-pkg-resolve-compile-options
+            (& manifest.settings)
+            (& manifest-dir)
+            target
+            (& cli-options))]
         (match (build_run_core.source-tool-build-package-deps-only!
           (& source-set.manifest-path)
-          options.profile
-          (build_run_core.source-tool-backend-target options.target)
-          (& options.stdlib-roots)
-          (& options.cfgs)
+          (target_cfg.clone-compiler-target-cfg (& options.target))
+          (& cli-options)
           (& manifest.deps))
           [(Ok) unit]
           [(Err message)
@@ -417,9 +425,15 @@
             (compiler_driver_core.compiler-driver-reset-file-state!)]
           [job : tc.TcJobState (tc.tc-serial-job-state)]
           [cfgs : sym_i64_env.SymI64Env
-            (target_cfg.compiler-target-cfgs-with-names
+            (compiler_load.compiler-pkg-graph-cfgs
               options.target
-              (svec.clone-vec (& options.cfgs)))]
+              (& options.cfgs)
+              options.debug)]
+          [graph-cfgs : sym_i64_env.SymI64Env
+            (compiler_load.compiler-pkg-graph-cfgs
+              (target_cfg.clone-compiler-target-cfg (& options.target))
+              (& cli-options.cfgs)
+              cli-options.debug)]
           [_profile : unit
             (compiler_load.compiler-load-session-set-package-profile!
               (compiler_load.compiler-load-serial-test-session-state)
@@ -432,7 +446,9 @@
             (& options.stdlib-roots)
             (& manifest-dir)
             (& manifest.deps)
-            cfgs)
+            cfgs
+            graph-cfgs
+            (& cli-options.stdlib-roots))
             [(Err tli-msg)
               (compiler_check_core.compiler-check-package-finish-tli-and-deps!)
               (io.print-error tli-msg)
@@ -475,6 +491,8 @@
                         (compiler_load.clone-compiler-pkg-deps
                           (& manifest.deps))
                         cfgs
+                        graph-cfgs
+                        (& cli-options.stdlib-roots)
                         "typecheck-prefix-inline-check-package")]
                     (when (not (= status 0)) (return status))
                     ;; Inline preflight resets the loader pools and interned cfg ids.
@@ -484,9 +502,16 @@
                       (string.copy (& manifest-dir))
                       (compiler_load.clone-compiler-pkg-deps (& manifest.deps))
                       emit-entry
-                      (target_cfg.compiler-target-cfgs-with-names
+                      (compiler_load.compiler-pkg-graph-cfgs
                         options.target
-                        (svec.clone-vec (& options.cfgs)))
+                        (& options.cfgs)
+                        options.debug)
+                      (compiler_load.compiler-pkg-graph-cfgs
+                        (target_cfg.clone-compiler-target-cfg
+                          (& options.target))
+                        (& cli-options.cfgs)
+                        cli-options.debug)
+                      (& cli-options.stdlib-roots)
                       job)))
                 (let
                   [r : compiler_check_core.ResultCompilerCheckWithPaths
@@ -514,9 +539,18 @@
                         options.stdlib-roots
                         manifest-dir
                         manifest.deps
-                        (target_cfg.compiler-target-cfgs-with-names
-                          options.target
-                          options.cfgs)))]
+                        (&
+                          (compiler_check_core.compiler-check-package-config
+                            (compiler_load.compiler-pkg-graph-cfgs
+                              (target_cfg.clone-compiler-target-cfg
+                                (& options.target))
+                              (& options.cfgs)
+                              options.debug)
+                            (compiler_load.compiler-pkg-graph-cfgs
+                              options.target
+                              (& cli-options.cfgs)
+                              cli-options.debug)
+                            cli-options.stdlib-roots))))]
                   (if (= doctest-status 0)
                     (selfhost-check-print-passed)
                     doctest-status))]

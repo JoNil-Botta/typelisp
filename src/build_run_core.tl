@@ -2355,10 +2355,8 @@
 
 (define (source-tool-build-package-deps-only!
   [manifest-path : (& str)]
-  [profile : pkg_profile.PackageProfile]
-  [target : be_state.CompilerBackendTarget]
-  [stdlib-roots : (& cli_svec.Vec)]
-  [cfg-names : (& cli_svec.Vec)]
+  [target : target_cfg.CompilerTargetCfg]
+  [options : (& cli_option.CliCompileOptions)]
   [deps : (& load.CompilerPkgDeps)]) : SourceToolCommandStatus
   (when
     (or
@@ -2378,7 +2376,8 @@
         (source-tool-args-append
           (source-tool-args-append a0 "--deps-only")
           "--profile")
-        (pkg_profile.package-profile-name profile))]
+        (pkg_profile.package-profile-name
+          (pkg_profile.clone-package-profile (& options.profile))))]
     [a2 : process.ProcessStringList
       (source-tool-args-append
         (source-tool-args-append a1 "--manifest-path")
@@ -2386,7 +2385,7 @@
     [a3 : process.ProcessStringList
       (source-tool-args-append
         (source-tool-args-append a2 "--target")
-        (source-tool-target-name target))]
+        (cli_option.cli-option-target-name target))]
     [sysroot : tli_cli.TliSysrootOptions (tli_cli.tli-active-sysroot-options)]
     [a5 : process.ProcessStringList
       (if (> (string.string-length (& sysroot.explicit-root)) 0)
@@ -2398,25 +2397,48 @@
       (if sysroot.disabled
         (source-tool-args-append a5 "--no-prebuilt-stdlib")
         a5)]
-    [a7 : process.ProcessStringList
-      (source-tool-append-opt-values a6 "--stdlib-root" stdlib-roots)]
-    [args : process.ProcessStringList
-      (source-tool-append-opt-values a7 "--cfg" cfg-names)]
-    (match (process.output (process.command exe args))
-      [(ErrProcessOutput error)
-        (Err
-          (str_cat.str-cat
-            "failed to build package dependencies: "
-            (process.error-message error)))]
-      [(OkProcessOutput output)
-        (if (= (process.output-status output) 0)
-          Ok
-          (let
-            [stderr-text : String (process.output-stderr output)]
-            [stdout-text : String (process.output-stdout output)]
-            (Err
-              (if (> (string.string-length (& stderr-text)) 0)
-                stderr-text
-                (if (> (string.string-length (& stdout-text)) 0)
-                  stdout-text
-                  "failed to build package dependencies")))))])))
+    [opts : process.ProcessStringList a6]
+    (when
+      options.has-opt-level
+      (set!
+        opts
+        (source-tool-args-append
+          (source-tool-args-append opts "--opt-level")
+          (cli_option.cli-option-opt-level-name options.opt-level))))
+    (when
+      options.has-backend-mode
+      (set!
+        opts
+        (source-tool-args-append
+          (source-tool-args-append opts "--backend-mode")
+          (cli_option.cli-option-backend-mode-name
+            (cli_option.clone-cli-backend-mode (& options.backend-mode))))))
+    (when
+      options.has-debug
+      (set! opts (source-tool-args-append opts "--debug")))
+    (let
+      [a7 : process.ProcessStringList
+        (source-tool-append-opt-values
+          opts
+          "--stdlib-root"
+          (& options.stdlib-roots))]
+      [args : process.ProcessStringList
+        (source-tool-append-opt-values a7 "--cfg" (& options.cfgs))]
+      (match (process.output (process.command exe args))
+        [(ErrProcessOutput error)
+          (Err
+            (str_cat.str-cat
+              "failed to build package dependencies: "
+              (process.error-message error)))]
+        [(OkProcessOutput output)
+          (if (= (process.output-status output) 0)
+            Ok
+            (let
+              [stderr-text : String (process.output-stderr output)]
+              [stdout-text : String (process.output-stdout output)]
+              (Err
+                (if (> (string.string-length (& stderr-text)) 0)
+                  stderr-text
+                  (if (> (string.string-length (& stdout-text)) 0)
+                    stdout-text
+                    "failed to build package dependencies")))))]))))

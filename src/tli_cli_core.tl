@@ -1496,10 +1496,8 @@
               [(Ok bytes)
                 (let
                   [build : String (identity.compiler-build-producer-identity)]
-                  [dep-cfgs : sym_i64_env.SymI64Env
-                    (tli-dep-cfgs-without-test cfgs)]
                   [cfg-digest : (Array u8 32)
-                    (hydrate.tli-hydrate-cfg-digest dep-cfgs)]
+                    (hydrate.tli-hydrate-cfg-digest cfgs)]
                   (match (tli_codec.tli-decode-directory-for-snapshot
                     bytes
                     (& build)
@@ -1562,7 +1560,7 @@
                                 spmd-callables
                                 directory
                                 (& cfg-digest)
-                                dep-cfgs)
+                                cfgs)
                                 [(Ok _) ResultTliCatalogOpen.Ok]
                                 [(Err msg)
                                   (ResultTliCatalogOpen.Err
@@ -1621,49 +1619,38 @@
               (compiler_load.compiler-load-join-root-path
                 (string.copy (& dep-dir))
                 "typelisp.pkg")]
-            (match (compiler_load.compiler-load-session-try-read-input-text
-              (& mpath))
-              [(ErrIoString error)
+            (match (compiler_load.compiler-load-read-manifest (& mpath))
+              [(Err diag)
                 (return
                   (ResultTliCatalogOpen.Err
-                    (str_cat.str-cat
-                      "package tli: cannot read manifest '"
-                      mpath
-                      "': "
-                      (io.error-message error)
-                      "\n")))]
-              [(OkIoString text)
-                (match (compiler_load.compiler-load-parse-manifest-diagnostic-infer-kind
-                  (string.copy (& mpath))
-                  (& text))
-                  [(Err _)
-                    (return
-                      (ResultTliCatalogOpen.Err
-                        (str_cat.str-cat
-                          "package tli: invalid manifest '"
-                          mpath
-                          "'\n")))]
-                  [(Ok manifest)
-                    (match (tli-open-transitive-deps-walk!
+                    (compiler_load.compiler-load-render-manifest-diagnostic
+                      (deref diag))))]
+              [(Ok manifest)
+                (match (tli-open-transitive-deps-walk!
+                  load-state
+                  (& dep-dir)
+                  (& manifest.deps)
+                  target
+                  cfgs
+                  require-archive
+                  visited)
+                  [(Err msg) (return (ResultTliCatalogOpen.Err msg))]
+                  [(Ok)
+                    (match (tli-open-package-bundle-for-session!
                       load-state
                       (& dep-dir)
-                      (& manifest.deps)
+                      (& manifest.name)
+                      (& manifest.version)
                       target
-                      cfgs
-                      require-archive
-                      visited)
+                      (compiler_load.compiler-pkg-dependency-cfgs
+                        (& manifest.settings)
+                        target
+                        (compiler_load.compiler-load-session-package-profile
+                          load-state)
+                        cfgs)
+                      require-archive)
                       [(Err msg) (return (ResultTliCatalogOpen.Err msg))]
-                      [(Ok)
-                        (match (tli-open-package-bundle-for-session!
-                          load-state
-                          (& dep-dir)
-                          (& manifest.name)
-                          (& manifest.version)
-                          target
-                          cfgs
-                          require-archive)
-                          [(Err msg) (return (ResultTliCatalogOpen.Err msg))]
-                          [(Ok) unit])])])])))))
+                      [(Ok) unit])])])))))
     ResultTliCatalogOpen.Ok))
 
 (define (tli-open-transitive-package-deps-for-session!
@@ -1672,21 +1659,32 @@
   [deps : (& compiler_load.CompilerPkgDeps)]
   [target : target_cfg.CompilerTargetCfg]
   [cfgs : sym_i64_env.SymI64Env]
+  [roots : (& svec.Vec)]
   [require-archive : bool]) : ResultTliCatalogOpen
   (when
-    (compiler_load.compiler-load-session-state-dependency-tlci-force-source?
-      load-state)
+    (= (compiler_load.compiler-pkg-deps-count deps) 0)
     (return ResultTliCatalogOpen.Ok))
   (let
-    [visited : svec.Vec (svec.new)]
-    (tli-open-transitive-deps-walk!
+    [base-cfgs : sym_i64_env.SymI64Env (tli-dep-cfgs-without-test cfgs)]
+    (compiler_load.compiler-load-session-state-set-package-graph-inputs!
       load-state
-      manifest-dir
-      deps
       target
-      cfgs
-      require-archive
-      (&mut visited))))
+      base-cfgs
+      roots)
+    (when
+      (compiler_load.compiler-load-session-state-dependency-tlci-force-source?
+        load-state)
+      (return ResultTliCatalogOpen.Ok))
+    (let
+      [visited : svec.Vec (svec.new)]
+      (tli-open-transitive-deps-walk!
+        load-state
+        manifest-dir
+        deps
+        target
+        base-cfgs
+        require-archive
+        (&mut visited)))))
 
 (define (tli-check-overlay-dep-tlci-walk!
   [profile : pkg_profile.PackageProfile]
@@ -1716,52 +1714,50 @@
               (compiler_load.compiler-load-join-root-path
                 (string.copy (& dep-dir))
                 "typelisp.pkg")]
-            (match (compiler_load.compiler-load-session-try-read-input-text
-              (& mpath))
-              [(ErrIoString _) unit]
-              [(OkIoString text)
-                (match (compiler_load.compiler-load-parse-manifest-diagnostic-infer-kind
-                  (string.copy (& mpath))
-                  (& text))
-                  [(Err _) unit]
-                  [(Ok manifest)
-                    (match (tli-check-overlay-dep-tlci-walk!
-                      profile
-                      (& dep-dir)
-                      (& manifest.deps)
-                      visited)
-                      [(Err msg) (return (ResultTliCatalogOpen.Err msg))]
-                      [(Ok)
-                        (let
-                          [tlci-path : String
-                            (compiler_load.compiler-load-package-tlci-path
-                              profile
-                              (string.copy (& dep-dir))
-                              (string.copy (& manifest.name)))]
-                          (when
-                            (io.file-exists? (string.copy (& tlci-path)))
-                            (match (compiler_load.compiler-load-session-try-read-input-text
-                              (& tlci-path))
-                              [(ErrIoString error)
+            (match (compiler_load.compiler-load-read-manifest (& mpath))
+              [(Err diag)
+                (return
+                  (ResultTliCatalogOpen.Err
+                    (compiler_load.compiler-load-render-manifest-diagnostic
+                      (deref diag))))]
+              [(Ok manifest)
+                (match (tli-check-overlay-dep-tlci-walk!
+                  profile
+                  (& dep-dir)
+                  (& manifest.deps)
+                  visited)
+                  [(Err msg) (return (ResultTliCatalogOpen.Err msg))]
+                  [(Ok)
+                    (let
+                      [tlci-path : String
+                        (compiler_load.compiler-load-package-tlci-path
+                          profile
+                          (string.copy (& dep-dir))
+                          (string.copy (& manifest.name)))]
+                      (when
+                        (io.file-exists? (string.copy (& tlci-path)))
+                        (match (compiler_load.compiler-load-session-try-read-input-text
+                          (& tlci-path))
+                          [(ErrIoString error)
+                            (return
+                              (ResultTliCatalogOpen.Err
+                                (str_cat.str-cat
+                                  "compiler-load: cannot read dependency tlci '"
+                                  tlci-path
+                                  "': "
+                                  (io.error-message error))))]
+                          [(OkIoString contents)
+                            (match (tlci.tlci-parse-image
+                              (& (tlci.tlci-string->bytes (& contents))))
+                              [(Err message)
                                 (return
                                   (ResultTliCatalogOpen.Err
                                     (str_cat.str-cat
-                                      "compiler-load: cannot read dependency tlci '"
+                                      "compiler-load: invalid dependency tlci '"
                                       tlci-path
                                       "': "
-                                      (io.error-message error))))]
-                              [(OkIoString contents)
-                                (match (tlci.tlci-parse-image
-                                  (& (tlci.tlci-string->bytes (& contents))))
-                                  [(Err message)
-                                    (return
-                                      (ResultTliCatalogOpen.Err
-                                        (str_cat.str-cat
-                                          "compiler-load: invalid dependency tlci '"
-                                          tlci-path
-                                          "': "
-                                          message)))]
-                                  [(Ok _) unit])])))])])])))))
+                                      message)))]
+                              [(Ok _) unit])])))])])))))
     ResultTliCatalogOpen.Ok))
 
 (define (tli-check-overlay-package-dep-tlci!

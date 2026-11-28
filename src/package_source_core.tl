@@ -16,7 +16,6 @@
 (import compiler_ast_types as ast)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
-(import compiler_diagnostic)
 (import compiler_load)
 (import tlci_core as tlci)
 (import package_lock_core)
@@ -146,43 +145,20 @@
       "."
       dir)))
 
-(define (package-source-discover-manifest-up [prefix : String] [fuel : i64]) : compiler_load.CompilerLoadMaybePath
-  (if (<= fuel 0)
-    (CompilerLoadNoPath)
-    (let
-      [candidate : String
-        (str_cat.str-cat
-          (owned_view.compiler-owned-shared-view prefix)
-          "typelisp.pkg")]
-      (if (io.file-exists? (owned_view.compiler-owned-shared-view candidate))
-        (CompilerLoadSomePath candidate)
-        (package-source-discover-manifest-up
-          (str_cat.str-cat prefix "../")
-          (- fuel 1))))))
-
 (define (package-source-load-manifest [path : String]) : ResultPackageSourceSet
-  (if (io.file-exists? (owned_view.compiler-owned-shared-view path))
-    (match (compiler_load.compiler-load-parse-manifest-diagnostic-infer-kind
-      (owned_view.compiler-owned-shared-view path)
-      (&
-        (byte_buf.to-string
-          (io.read-file (owned_view.compiler-owned-shared-view path)))))
-      [(Err diag)
-        (Err
-          (str_cat.str-cat
-            "invalid package manifest '"
-            (compiler_diagnostic.compiler-diagnostic-path (__tl-box-place diag))
-            "': "
-            (compiler_diagnostic.compiler-diagnostic-message
-              (__tl-box-place diag))))]
-      [(Ok manifest)
-        (Ok
-          (PackageSourceSet
-            (owned_view.compiler-owned-shared-view path)
-            (package-source-manifest-dir path)
-            manifest
-            (svec.new)))])
-    (Err (str_cat.str-cat "cannot read package manifest '" path "'"))))
+  (match (compiler_load.compiler-load-read-manifest (& path))
+    [(Err diag)
+      (Err
+        (str_cat.str-cat
+          "invalid package manifest: "
+          (compiler_load.compiler-load-render-manifest-diagnostic (deref diag))))]
+    [(Ok manifest)
+      (Ok
+        (PackageSourceSet
+          (string.copy (& path))
+          (package-source-manifest-dir path)
+          manifest
+          (svec.new)))]))
 
 (define (package-source-resolve-manifest
   [command : String]
@@ -190,9 +166,9 @@
   [has-manifest : bool]) : ResultPackageSourceSet
   (let
     [resolved : compiler_load.CompilerLoadMaybePath
-      (if has-manifest
-        (CompilerLoadSomePath manifest-path)
-        (package-source-discover-manifest-up "" 256))]
+      (compiler_load.compiler-load-select-manifest-path
+        manifest-path
+        has-manifest)]
     (match resolved
       [(CompilerLoadNoPath)
         (Err

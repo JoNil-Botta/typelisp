@@ -3491,6 +3491,48 @@
           (string.eq (cdiag.compiler-diagnostic-message diagnostic) expected)))]
     [(Ok _) false]))
 
+(define (compiler-load-manifest-settings-diagnostics-ok?) : bool
+  (and
+    (match (load.compiler-load-parse-manifest-diagnostic
+      "pkg/typelisp.pkg"
+      "(package (name \"pkg\") (version \"1\")\n  (profile dev (opt-levle 1)))")
+      [(Ok _) false]
+      [(Err diag)
+        (let
+          [span : cdiag.CompilerDiagnosticSpan
+            (cdiag.compiler-diagnostic-primary-span (__tl-box-place diag))]
+          (and
+            (= (cdiag.compiler-diagnostic-span-start-line (& span)) 2)
+            (= (cdiag.compiler-diagnostic-span-start-col (& span)) 16)
+            (match (cdiag.compiler-diagnostic-help (__tl-box-place diag))
+              [(CompilerDiagnosticSomeString help)
+                (string.eq help "did you mean `opt-level`?")]
+              [_ false])))])
+    (compiler-load-manifest-diagnostic-rejects?
+      "pkg/typelisp.pkg"
+      "(package (name \"pkg\") (version \"1\")\n  (profile dev (debug 1)))"
+      "manifest debug must be true or false"
+      2
+      23)
+    (compiler-load-manifest-diagnostic-rejects?
+      "pkg/typelisp.pkg"
+      "(package (name \"pkg\") (version \"1\")\n  (profile dev (debug true) (debug false)))"
+      "duplicate manifest field `debug`"
+      2
+      29)
+    (compiler-load-manifest-diagnostic-rejects?
+      "pkg/typelisp.pkg"
+      "(package (name \"pkg\") (version \"1\")\n  (target-settings linx-x86_64 (cfg \"extra\")))"
+      "unknown manifest target `linx-x86_64`"
+      2
+      20)
+    (compiler-load-manifest-diagnostic-rejects?
+      "pkg/typelisp.pkg"
+      "(package (name \"pkg\") (version \"1\")\n  (target-settings linux-x86_64 (cfg \"windows\")))"
+      "manifest cfg `windows` conflicts with target selection"
+      2
+      38)))
+
 (define (compiler-load-pkg-manifest-diagnostic-ok?) : bool
   (and
     (compiler-load-manifest-diagnostic-rejects?
@@ -3509,8 +3551,8 @@
       "pkg/typelisp.pkg"
       "(package\n  (name \"wrapped\")\n  (version \"1\")\n  (kind \"staticlib\")\n  (dependencies\n    (runtime \"../runtime\")))"
       "library package `wrapped` cannot declare normal dependency `runtime`; declare `runtime` directly in the consuming application, remove or combine the library dependency, or use `link` for native libraries"
-      6
-      6)))
+      4
+      3)))
 
 (define (compiler-load-manifest-test-mkdir [path : String]) : bool
   (match (fs.try-mkdir-if-missing (& path))
@@ -3911,7 +3953,8 @@
     (compiler-load-pkg-manifest-validation-ok?)
     (compiler-load-manifest-github-deps-ok?)
     (compiler-load-pkg-manifest-github-validation-ok?)
-    (compiler-load-pkg-manifest-diagnostic-ok?)))
+    (compiler-load-pkg-manifest-diagnostic-ok?)
+    (compiler-load-manifest-settings-diagnostics-ok?)))
 
 ;: Self-test fixture: local deps plus one GitHub dep that needs fetch support.
 (define (compiler-load-pkg-resolve-deps) : load.CompilerPkgDeps
@@ -3978,14 +4021,17 @@
     [(CompilerLoadNoPath) true]
     [(CompilerLoadSomePath _) false]))
 
-;: The manifest-discovery walk-up steps one directory at a time, descending to
-;: the cwd (``) before stopping.
+;: Relative paths reach the current directory. Absolute paths stop at their
+;: filesystem root.
 (define (compiler-load-pkg-parent-dir-ok?) : bool
   (and
     (compiler-load-pkg-parent-dir-is? "a/b/" "a/")
     (compiler-load-pkg-parent-dir-is? "a/b/c/" "a/b/")
     (compiler-load-pkg-parent-dir-is? "a/" "")
-    (compiler-load-pkg-parent-dir-none? "")))
+    (compiler-load-pkg-parent-dir-is? "C:/project/" "C:/")
+    (compiler-load-pkg-parent-dir-none? "")
+    (compiler-load-pkg-parent-dir-none? "/")
+    (compiler-load-pkg-parent-dir-none? "C:/")))
 
 (define (compiler-load-string-vec-roots-ok?) : bool
   (compiler-load-write-file-text

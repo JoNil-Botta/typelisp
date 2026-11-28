@@ -2276,6 +2276,7 @@
                _
                _
                _
+               _
                _) (check.CompilerSemanticCheckInput.File path)
              (check.CompilerSemanticCheckInput.PackageEntry path _ _ _))
           path])]

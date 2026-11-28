@@ -28,7 +28,8 @@
     (CompilerPkgKindLib)
     (string.copy "src/macros.tl")
     (load.compiler-pkg-deps-empty)
-    (load.compiler-pkg-link-empty)))
+    (load.compiler-pkg-link-empty)
+    (load.compiler-pkg-settings-empty)))
 
 (define (export-test-sources [manifest : load.CompilerPkgManifest]) : source_set.PackageSourceSet
   (let

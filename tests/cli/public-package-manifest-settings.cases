@@ -1,0 +1,265 @@
+do none
+target -
+opt -
+
+file fixture/typelisp.pkg
+(package
+  (name "manifest_app")
+  (version "1")
+  (dependencies (dep "vendor/dep"))
+  (target linux-x86_64)
+  (cfg "app-base" "app-base")
+  (stdlib-root "roots/base" "./roots/base")
+  (profile dev (opt-level 1) (debug true) (backend-mode scalar))
+  (profile release (opt-level 0) (backend-mode sse2))
+  (target-settings linux-x86_64
+    (cfg "app-linux")
+    (stdlib-root "roots/linux"))
+  (target-settings windows-x86_64
+    (cfg "app-windows")
+    (stdlib-root "roots/windows")))
+end-file
+file fixture/src/main.tl
+;# ```typelisp
+;# (import dep.src.lib as dep)
+;# (import stdlib.manifest_choice as choice)
+;# (cfg (all app-base (not dep-base) (any app-linux app-windows))
+;#   (define answer : i64 (+ choice.value (unsafe (dep.answer)))))
+;# (define (doctest-answer) : i64 answer)
+;# ```
+(import dep.src.lib as dep)
+(cfg test (import stdlib.test))
+(import stdlib.manifest_base as base)
+(import stdlib.manifest_choice as choice)
+(cfg app-base (define root-marker : i64 1))
+(cfg dep-base (define root-marker : i64 100))
+(cfg (all linux app-linux) (define target-marker : i64 10))
+(cfg (all windows app-windows) (define target-marker : i64 20))
+(cfg (any (all linux app-windows) (all windows app-linux))
+  (define target-marker : i64 100))
+
+(define (configuration-result) : i64
+  (let [from-dep : i64 (unsafe (dep.answer))]
+    (- (+ root-marker (+ base.value (+ choice.value from-dep))) target-marker)))
+
+(define (main) : i64 (configuration-result))
+
+(test manifest-configuration
+  (test.assert-i64-eq (configuration-result) 0 "manifest settings"))
+
+(cfg (all app-base lint-manifest-probe (any app-linux app-windows))
+  (define (lint-manifest-settings) : unit
+    (unsafe (dep.from-settings (dep.make-marked choice.lint-override-marker)) unit)))
+end-file
+file fixture/roots/base/manifest_base.tl
+(define value : i64 2)
+end-file
+file fixture/roots/base/manifest_choice.tl
+(define value : i64 100)
+end-file
+file fixture/roots/linux/manifest_choice.tl
+(define value : i64 3)
+end-file
+file fixture/roots/windows/manifest_choice.tl
+(define value : i64 6)
+end-file
+file fixture/cli-root/manifest_choice.tl
+(define value : i64 100)
+(define lint-override-marker : i64 101)
+end-file
+file fixture/vendor/dep/typelisp.pkg
+(package
+  (name "manifest_dep")
+  (version "1")
+  (target windows-x86_64)
+  (cfg "dep-base")
+  (stdlib-root "roots")
+  (profile dev (opt-level 0) (debug false) (backend-mode sse2))
+  (profile release (opt-level 1) (debug true) (backend-mode scalar))
+  (target-settings linux-x86_64 (cfg "dep-linux"))
+  (target-settings windows-x86_64 (cfg "dep-windows")))
+end-file
+file fixture/vendor/dep/src/lib.tl
+(import stdlib.manifest_dep_root as dep-root)
+(cfg dep-base (define dep-marker : i64 dep-root.value))
+(cfg app-base (define dep-marker : i64 100))
+(cfg (all linux dep-linux) (define platform-marker : i64 1))
+(cfg (all windows dep-windows) (define platform-marker : i64 8))
+(cfg (any (all linux dep-windows) (all windows dep-linux))
+  (define platform-marker : i64 100))
+(define (answer) : i64 (+ dep-marker platform-marker))
+(cfg (all dep-base (not app-base) lint-manifest-probe)
+  (defstruct Marked (:must-use) (value i64)))
+(cfg (all dep-base (not app-base) lint-manifest-probe)
+  (define (make-marked [value : i64]) : Marked (Marked value)))
+(cfg (all dep-base (not app-base) lint-manifest-probe)
+  (defmacro (from-settings [expr : Expr]) : Expr expr))
+end-file
+file fixture/vendor/dep/roots/manifest_dep_root.tl
+(define value : i64 3)
+end-file
+
+case package-manifest-settings-target
+each linux windows
+sh cp -R "{{work}}/fixture/." "{{dir}}/"
+cwd .
+step root
+run check --target {{each}}-x86_64 --no-prebuilt-stdlib
+stderr empty
+step subdirectory
+cwd src
+run check --target {{each}}-x86_64 --no-prebuilt-stdlib
+stderr empty
+step manifest-target
+run check --no-prebuilt-stdlib
+stderr empty
+
+case package-manifest-settings-runtime
+sh cp -R "{{work}}/fixture/." "{{dir}}/"
+cwd .
+step run-root
+if-host linux
+run run
+stderr empty
+end-if
+if-host windows
+run run --target windows-x86_64
+stderr empty
+end-if
+test "$(grep -c '^stdlib-root ' "{{dir}}/target/dev/manifest_app{{exe}}.runtime-inputs")" -eq 2
+in file {{dir}}/target/dev/manifest_app{{exe}}.runtime-inputs
+contains opt-level 1:1
+contains debug 4:true
+contains backend 6:scalar
+in file {{dir}}/vendor/dep/target/dev/{{lib-prefix}}manifest_dep{{lib-suffix}}.runtime-inputs
+contains opt-level 1:0
+contains debug 5:false
+contains backend 4:sse2
+step run-release-from-subdirectory
+cwd src
+if-host linux
+run run --release
+stderr empty
+end-if
+if-host windows
+run run --target windows-x86_64 --release
+stderr empty
+end-if
+in file {{dir}}/target/release/manifest_app{{exe}}.runtime-inputs
+contains opt-level 1:0
+contains debug 5:false
+contains backend 4:sse2
+in file {{dir}}/vendor/dep/target/release/{{lib-prefix}}manifest_dep{{lib-suffix}}.runtime-inputs
+contains opt-level 1:1
+contains debug 4:true
+contains backend 6:scalar
+in file {{dir}}/vendor/dep/target/release/manifest_dep.s
+contains tl_backtrace_map_data_begin:
+not-contains .globl tl_backtrace_map_data_begin
+step command-line-profile-overrides
+cwd .
+if-host linux
+run build --release --opt-level 2 --debug --backend-mode avx2 --stdlib-root cli-root
+stderr empty
+end-if
+if-host windows
+run build --target windows-x86_64 --release --opt-level 2 --debug --backend-mode avx2 --stdlib-root cli-root
+stderr empty
+end-if
+in file {{dir}}/target/release/manifest_app{{exe}}.runtime-inputs
+contains opt-level 1:2
+contains debug 4:true
+contains backend 4:avx2
+contains cli-root
+in file {{dir}}/vendor/dep/target/release/{{lib-prefix}}manifest_dep{{lib-suffix}}.runtime-inputs
+contains opt-level 1:2
+contains debug 4:true
+contains backend 4:avx2
+contains cli-root
+
+step command-line-root-search-order
+if-host linux
+run run --stdlib-root cli-root
+exit 97
+stderr empty
+end-if
+if-host windows
+run run --target windows-x86_64 --stdlib-root cli-root
+exit 94
+stderr empty
+end-if
+step package-test
+run test --target {{host-target}}
+stderr contains TypeLisp tests: 1 passed
+stdout contains TypeLisp package tests passed: 1 test(s)
+step package-doctest
+run doc --test
+stderr empty
+stdout contains Doc tests passed: 1 example(s)
+step package-lint-overrides
+sh rm -rf "{{dir}}/vendor/dep/target/release"
+sh printf 'CORRUPT' > "{{dir}}/vendor/dep/target/dev/manifest_dep.tli"
+run lint --target {{host-target}} --profile release --cfg lint-manifest-probe --stdlib-root cli-root --format flat
+stderr empty
+stdout contains unused must-use value of type manifest_dep.src.lib/Marked
+stdout contains main.tl:30:5: unused unsafe block
+test -s "{{dir}}/vendor/dep/target/release/manifest_dep.tli"
+test -s "{{dir}}/vendor/dep/target/release/manifest_dep.tlci"
+test "$(cat "{{dir}}/vendor/dep/target/dev/manifest_dep.tli")" = CORRUPT
+
+case package-manifest-settings-diagnostics
+file unknown.pkg
+(package
+  (name "bad")
+  (version "1")
+  (profile dev (opt-levle 1)))
+end-file
+file wrong-type.pkg
+(package
+  (name "bad")
+  (version "1")
+  (profile dev (debug 1)))
+end-file
+file duplicate.pkg
+(package
+  (name "bad")
+  (version "1")
+  (profile dev (debug true) (debug false)))
+end-file
+file bad-target.pkg
+(package
+  (name "bad")
+  (version "1")
+  (target-settings linx-x86_64 (cfg "extra")))
+end-file
+file conflict.pkg
+(package
+  (name "bad")
+  (version "1")
+  (target-settings linux-x86_64 (cfg "windows")))
+end-file
+step unknown
+run check --manifest-path "{{dir}}/unknown.pkg"
+exit nonzero
+stderr contains unknown.pkg:4:16
+stderr contains did you mean `opt-level`?
+step wrong-type
+run build --manifest-path "{{dir}}/wrong-type.pkg"
+exit nonzero
+stderr contains wrong-type.pkg:4:23
+stderr contains manifest debug must be true or false
+step duplicate
+run run --manifest-path "{{dir}}/duplicate.pkg"
+exit nonzero
+stderr contains duplicate.pkg:4:29
+stderr contains duplicate manifest field `debug`
+step bad-target
+run doc --test --manifest-path "{{dir}}/bad-target.pkg"
+exit nonzero
+stderr contains bad-target.pkg:4:20
+stderr contains did you mean `linux-x86_64`?
+step conflict
+run lint --manifest-path "{{dir}}/conflict.pkg"
+exit nonzero
+stderr contains conflict.pkg:4:38
+stderr contains conflicts with target selection

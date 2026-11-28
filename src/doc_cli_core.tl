@@ -1,6 +1,6 @@
 (import build_run_core)
 (import build_cli_core)
-(import compiler_cfg_core as cfg_core)
+(import compiler_ir_types as ir)
 (import compiler_backend_state as be_state)
 (import package_profile_core as pkg_profile)
 
@@ -26,6 +26,7 @@
 (import (vector.vector String) as doc_svec)
 (import cli_option_core as cli_option)
 (import compiler_check_core)
+(import compiler_target_cfg_core as target_cfg)
 (import doc_render)
 (import doc_extract)
 (import (vector.vector doc_render.DocModule core) as doc_module_vec)
@@ -417,11 +418,11 @@
       [(EnvSomeString value) value]
       [(EnvNoString) (cfg windows "explorer.exe" "xdg-open")])))
 
-(define (doc-open-generated-index [index-path : String]) : unit
+(define (doc-open-generated-index [index-path : String] [display-path : String]) : unit
   (if (not (doc-graphical-session?))
     (io.print-format
       "{}"
-      (str_cat.str-cat "Open skipped; generated index: " index-path "\n"))
+      (str_cat.str-cat "Open skipped; generated index: " display-path "\n"))
     (let
       [result : process.ResultProcessOutput
         (process.run
@@ -430,13 +431,39 @@
             (process.args-single
               (owned_view.compiler-owned-shared-view index-path))))]
       (if (process.result-success? result)
-        (io.print-format "{}" (str_cat.str-cat "Opened " index-path "\n"))
+        (io.print-format "{}" (str_cat.str-cat "Opened " display-path "\n"))
         (io.print-format
           "{}"
-          (str_cat.str-cat "Open failed; generated index: " index-path "\n"))))))
+          (str_cat.str-cat "Open failed; generated index: " display-path "\n"))))))
+
+;: Implicit discovery can return an absolute ancestor path. Spell the index
+;: relative to the current directory in status messages.
+(define (doc-package-index-display-path
+  [index-path : (& str)]
+  [relative-index-path : (& str)]
+  [manifest-dir : (& str)]
+  [has-manifest : bool]) : String
+  (if (or has-manifest (not (fs.path-absolute? index-path)))
+    (string.copy index-path)
+    (let
+      [root : String (fs.path-normalize manifest-dir)]
+      [cwd : String (fs.current-dir)]
+      [suffix : String
+        (compiler_load.compiler-load-root-relative-path (& root) (& cwd))]
+      [prefix : String "."]
+      (unless
+        (string.eq suffix root)
+        (when (fs.path-absolute? (& suffix)) (return (string.copy index-path)))
+        (set! prefix "../")
+        (for [i (iterator.range 0 (string.string-length (& suffix)))]
+          (when
+            (= (string.string-ref (& suffix) i) '/')
+            (set! prefix (str_cat.str-cat prefix "../")))))
+      (fs.path-join (& prefix) relative-index-path))))
 
 (define (doc-generate-package-local-site
   [source-set : package_source_core.PackageSourceSet]
+  [has-manifest : bool]
   [open? : bool]
   [_no-deps? : bool]) : i64
   (match (package_source_core.package-source-set-digest
@@ -454,10 +481,16 @@
           (fs.path-join-owned-pair
             (owned_view.compiler-owned-shared-view target-dir)
             "doc")]
+        [relative-index-path : String
+          (fs.path-join-many "target" "doc" "index.html")]
         [index-path : String
-          (fs.path-join-owned-pair
-            (owned_view.compiler-owned-shared-view output-dir)
-            "index.html")]
+          (fs.path-join (& source-set.manifest-dir) (& relative-index-path))]
+        [display-path : String
+          (doc-package-index-display-path
+            (& index-path)
+            (& relative-index-path)
+            (& source-set.manifest-dir)
+            has-manifest)]
         [css-path : String
           (fs.path-join-owned-pair
             (owned_view.compiler-owned-shared-view output-dir)
@@ -506,10 +539,9 @@
                   source-identity
                   package-identity
                   modules))
-              (doc-print-wrote
-                (owned_view.compiler-owned-shared-view index-path))
+              (doc-print-wrote (string.copy (& display-path)))
               (if open?
-                (doc-open-generated-index index-path)
+                (doc-open-generated-index index-path display-path)
                 unit)
               0))))]))
 
@@ -535,7 +567,12 @@
               (doc-modules-from-package-sources source-set.sources)))
           (doc-print-wrote out)
           0]
-        [(No) (doc-generate-package-local-site source-set open? no-deps?)])]))
+        [(No)
+          (doc-generate-package-local-site
+            source-set
+            has-manifest
+            open?
+            no-deps?)])]))
 
 (define (doc-generate-html-file [input-path : String] [output-path : String]) : i64
   (let
@@ -824,7 +861,7 @@
 (define (doc-test-package
   [manifest-path : String]
   [has-manifest : bool]
-  [options : cli_option.CliCompileOptions]) : i64
+  [cli-options : cli_option.CliCompileOptions]) : i64
   (match (package_source_core.package-source-discover-for
     "doc"
     manifest-path
@@ -833,48 +870,80 @@
       (io.print-error (str_cat.str-cat message "\n"))
       1]
     [(Ok source-set)
-      (match (build_run_core.source-tool-build-package-deps-only!
-        (& source-set.manifest-path)
-        options.profile
-        (build_run_core.source-tool-backend-target options.target)
-        (& options.stdlib-roots)
-        (& options.cfgs)
-        (& source-set.manifest.deps))
-        [(Err message)
-          (io.print-error message)
-          1]
-        [(Ok)
-          (compiler_load.compiler-load-session-set-package-profile!
-            (compiler_load.compiler-load-serial-test-session-state)
-            options.profile)
-          (let
-            [name : String (string.copy (& source-set.manifest.name))]
-            [deps : compiler_load.CompilerPkgDeps
-              (compiler_load.clone-compiler-pkg-deps
-                (& source-set.manifest.deps))]
-            (match (doc-test-package-link-inputs
-              (& source-set.manifest-path)
-              source-set.manifest
-              options.profile
-              (build_run_core.source-tool-backend-target options.target))
-              [(Err message)
-                (io.print-error message)
-                1]
-              [(Ok link-inputs)
-                (doc-test-package-files-from
-                  source-set.sources
-                  options.stdlib-roots
-                  (&
-                    (doc_test.DocTestExecution.Package
-                      (doc_test.DocTestPackageRun
-                        name
-                        source-set.manifest-dir
-                        deps
-                        options.profile
-                        (cfg_core.compiler-cfg-snapshot-from-env
-                          (compiler_check_core.compiler-check-language-cfgs))
-                        link-inputs)))
-                  0)]))])]))
+      (let
+        [target : target_cfg.CompilerTargetCfg
+          (compiler_load.compiler-pkg-graph-target
+            (& source-set.manifest.settings)
+            (& cli-options))]
+        [options : cli_option.CliCompileOptions
+          (compiler_load.compiler-pkg-resolve-compile-options
+            (& source-set.manifest.settings)
+            (& source-set.manifest-dir)
+            (target_cfg.clone-compiler-target-cfg (& target))
+            (& cli-options))]
+        (match (build_run_core.source-tool-build-package-deps-only!
+          (& source-set.manifest-path)
+          (target_cfg.clone-compiler-target-cfg (& target))
+          (& cli-options)
+          (& source-set.manifest.deps))
+          [(Err message)
+            (io.print-error message)
+            1]
+          [(Ok)
+            (compiler_load.compiler-load-session-set-package-profile!
+              (compiler_load.compiler-load-serial-test-session-state)
+              (pkg_profile.clone-package-profile (& options.profile)))
+            (let
+              [name : String (string.copy (& source-set.manifest.name))]
+              [deps : compiler_load.CompilerPkgDeps
+                (compiler_load.clone-compiler-pkg-deps
+                  (& source-set.manifest.deps))]
+              [backend-target : be_state.CompilerBackendTarget
+                (build_run_core.source-tool-backend-target
+                  (target_cfg.clone-compiler-target-cfg (& target)))]
+              (match (doc-test-package-link-inputs
+                (& source-set.manifest-path)
+                source-set.manifest
+                (pkg_profile.clone-package-profile (& options.profile))
+                (be_state.clone-compiler-backend-target (& backend-target)))
+                [(Err message)
+                  (io.print-error message)
+                  1]
+                [(Ok link-inputs)
+                  (let
+                    [saved-debug : bool (ir.compiler-debug-info-enabled?)]
+                    (ir.compiler-debug-info-set-enabled! options.debug)
+                    (let
+                      [status : i64
+                        (doc-test-package-files-from
+                          source-set.sources
+                          options.stdlib-roots
+                          (&
+                            (doc_test.DocTestExecution.Package
+                              (doc_test.DocTestPackageRun
+                                name
+                                source-set.manifest-dir
+                                deps
+                                options.profile
+                                backend-target
+                                options.opt-level
+                                (build_run_core.source-tool-backend-mode
+                                  options.backend-mode)
+                                (compiler_check_core.compiler-check-package-config
+                                  (compiler_load.compiler-pkg-graph-cfgs
+                                    (target_cfg.clone-compiler-target-cfg
+                                      (& target))
+                                    (& options.cfgs)
+                                    options.debug)
+                                  (compiler_load.compiler-pkg-graph-cfgs
+                                    target
+                                    (& cli-options.cfgs)
+                                    cli-options.debug)
+                                  cli-options.stdlib-roots)
+                                link-inputs)))
+                          0)]
+                      (ir.compiler-debug-info-set-enabled! saved-debug)
+                      status))]))]))]))
 
 (define (doc-default-config-finish
   [input-paths : doc_svec.Vec]

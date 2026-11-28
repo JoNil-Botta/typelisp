@@ -3427,25 +3427,42 @@
     "    .section .rdata$TLBS,\"dr\"\n"
     "    .section .rodata.typelisp_backtrace,\"a\",@progbits\n"))
 
+;; Archive members carry their own debug rows and string bounds. The
+;; executable's runtime anchors belong to the executable object.
 (define (compiler-backend-backtrace-map-prefix
-  [target : be_state.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget]
+  [library-object : bool]) : String
   (if (not (compiler_ir_types.compiler-debug-info-enabled?))
     ""
     (str_cat.str-cat
       (compiler-backend-backtrace-string-section target)
-      "    .globl tl_backtrace_string_data_begin\ntl_backtrace_string_data_begin:\n"
+      (if library-object
+        ""
+        "    .globl tl_backtrace_string_data_begin\n")
+      "tl_backtrace_string_data_begin:\n"
       (compiler-backend-backtrace-map-section target)
-      "    .balign 8\n    .globl tl_backtrace_map_data_begin\ntl_backtrace_map_data_begin:\n    .text\n")))
+      "    .balign 8\n"
+      (if library-object
+        ""
+        "    .globl tl_backtrace_map_data_begin\n")
+      "tl_backtrace_map_data_begin:\n    .text\n")))
 
 (define (compiler-backend-backtrace-map-trailer
-  [target : be_state.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget]
+  [library-object : bool]) : String
   (if (not (compiler_ir_types.compiler-debug-info-enabled?))
     ""
     (str_cat.str-cat
       (compiler-backend-backtrace-map-section target)
-      "    .globl tl_backtrace_map_data_end\ntl_backtrace_map_data_end:\n"
+      (if library-object
+        ""
+        "    .globl tl_backtrace_map_data_end\n")
+      "tl_backtrace_map_data_end:\n"
       (compiler-backend-backtrace-string-section target)
-      "    .globl tl_backtrace_string_data_end\ntl_backtrace_string_data_end:\n    .text\n")))
+      (if library-object
+        ""
+        "    .globl tl_backtrace_string_data_end\n")
+      "tl_backtrace_string_data_end:\n    .text\n")))
 
 ;; ABI bridges own unwind frames but no source frame. A validated map row with
 ;; an empty name marks that distinction without inventing a source location.

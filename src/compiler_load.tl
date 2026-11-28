@@ -1,4 +1,6 @@
 (import package_profile_core as pkg_profile)
+(import compiler_target_cfg_core as target_cfg)
+(import cli_option_core as cli_option)
 
 ;; compiler_load.tl - Shared selfhost compiler source/import loader.
 (import stdlib.clone as clone_gen)
@@ -199,7 +201,8 @@
   (entry-path String)
   (manifest-dir String)
   (owner String)
-  (version String))
+  (version String)
+  (settings CompilerPkgSettings))
 
 (defenum ResultCompilerLoadPackageEntry
   (Ok CompilerLoadPackageEntry)
@@ -919,6 +922,16 @@
 ;; no-argument compatibility helpers below are serial/test-only adapters over
 ;; the active state pointer. State-owned driver reset paths use the explicit
 ;; APIs so resetting one job cannot mutate another job's storage.
+;; These graph-wide inputs are copied into the existing TLI catalog arena.
+;; Keep spellings rather than intern IDs across package parsing boundaries.
+(defenum CompilerLoadPackageGraphInputs
+  (Absent)
+  (Present target_cfg.CompilerTargetCfg cfg_core.CompilerCfgSnapshot svec.Vec))
+
+(defstruct CompilerLoadPackageSourceOptions
+  (cfgs sym_i64_env.SymI64Env)
+  (stdlib-roots svec.Vec))
+
 (defstruct CompilerLoadSessionState
   (cache-enabled (__tl_dyn-array bool))
   (program-cache-enabled (__tl_dyn-array bool))
@@ -970,7 +983,8 @@
   (dotted-path-cache-owner-arena (__tl_dyn-array i64))
   (embedded-provenance-owner-arena (__tl_dyn-array i64))
   (source-provider (__tl_dyn-array CompilerLoadSourceProvider))
-  (tli-catalog-ptr (__tl_dyn-array i64)))
+  (tli-catalog-ptr (__tl_dyn-array i64))
+  (package-graph-inputs (__tl_dyn-array CompilerLoadPackageGraphInputs)))
 
 ;; Per-source traversal data stays explicit without widening the hot recursive
 ;; declaration-loader call for each independently owned field.
@@ -1121,7 +1135,8 @@
         (compiler-load-session-state-i64-cell 0)
         (compiler-load-session-state-i64-cell 0)
         (compiler-load-source-provider-cell)
-        (compiler-load-tli-ptr-cell))]
+        (compiler-load-tli-ptr-cell)
+        (__tl_make-array CompilerLoadPackageGraphInputs.Absent))]
     [cell : (__tl_dyn-array CompilerLoadSessionState) (__tl_make-array initial)]
     [address : u64
       (unsafe
@@ -1196,6 +1211,10 @@
     state.embedded-stdlib-provenance.tli-stdlib-provenance-ids
     0
     (sym_i64_env.sym-i64-empty))
+  (owned_view.compiler-owned-cell-set!
+    state.package-graph-inputs
+    0
+    CompilerLoadPackageGraphInputs.Absent)
   (let
     [addr : i64 (array-ref state.tli-catalog-ptr 0)]
     (when
@@ -1270,6 +1289,23 @@
                 (ptr-write! (ptr-offset base 4) 0)
                 (ptr-write! (ptr-offset base 5) 0)))
             addr))))))
+
+(define (compiler-load-session-state-set-package-graph-inputs!
+  [state : (& CompilerLoadSessionState)]
+  [target : target_cfg.CompilerTargetCfg]
+  [cfgs : sym_i64_env.SymI64Env]
+  [roots : (& svec.Vec)]) : unit
+  (compiler-load-session-state-tli-ensure-box! state)
+  (in-arena
+    (unsafe
+      (arena.from-raw-handle (compiler-load-session-state-tli-arena state)))
+    (owned_view.compiler-owned-cell-set!
+      state.package-graph-inputs
+      0
+      (CompilerLoadPackageGraphInputs.Present
+        target
+        (cfg_core.compiler-cfg-snapshot-from-env cfgs)
+        (svec.clone-vec roots)))))
 
 (define (compiler-load-session-state-tli-attach-bundle!
   [state : (& CompilerLoadSessionState)]
@@ -4930,15 +4966,9 @@
             module-path
             stdlib-roots)]
         [(CompilerLoadSomePath manifest-path)
-          (match (compiler-load-parse-manifest-diagnostic
-            (string.copy manifest-path)
-            (& (compiler-load-session-read-source-text manifest-path)))
-            [(Err _)
-              (compiler-load-resolve-module-path-with-roots
-                importer-path
-                import-root
-                module-path
-                stdlib-roots)]
+          (match (compiler-load-read-manifest (& manifest-path))
+            [(Err diag)
+              (Err (compiler-load-render-manifest-diagnostic (deref diag)))]
             [(Ok manifest)
               (match (compiler-load-pkg-dep-lookup
                 (& manifest.deps)
@@ -13573,16 +13603,14 @@
           "compiler-load: dependency package manifest not found for "
           source-path))]
     [(CompilerLoadSomePath manifest-path)
-      (match (compiler-load-parse-manifest-diagnostic-infer-kind
-        (string.copy manifest-path)
-        (& (compiler-load-session-read-source-text manifest-path)))
+      (match (compiler-load-read-manifest (& manifest-path))
         [(Err diag)
           (Err
             (str_cat.str-cat
               "compiler-load: invalid dependency package manifest '"
               manifest-path
               "': "
-              (cdiag.compiler-diagnostic-message (__tl-box-place diag))))]
+              (compiler-load-render-manifest-diagnostic (deref diag))))]
         [(Ok manifest)
           (let
             [manifest-dir : String (compiler-load-dirname manifest-path)]
@@ -13594,7 +13622,8 @@
                     manifest.entry))
                 manifest-dir
                 manifest.name
-                manifest.version)))])]))
+                manifest.version
+                manifest.settings)))])]))
 
 (define (compiler-load-path-in-package-dependency?
   [path : (& str)]
@@ -13685,6 +13714,30 @@
         [_ unit]))
     false))
 
+(define (compiler-load-package-dependency-source-options
+  [state : (& CompilerLoadSessionState)]
+  [settings : (& CompilerPkgSettings)]
+  [directory : (& str)]
+  [fallback-roots : (& svec.Vec)]
+  [fallback-cfgs : sym_i64_env.SymI64Env]) : CompilerLoadPackageSourceOptions
+  (match (& (array-ref state.package-graph-inputs 0))
+    [(Absent)
+      (CompilerLoadPackageSourceOptions
+        fallback-cfgs
+        (svec.clone-vec fallback-roots))]
+    [(Present target base roots)
+      (CompilerLoadPackageSourceOptions
+        (compiler-pkg-dependency-cfgs
+          settings
+          (target_cfg.clone-compiler-target-cfg target)
+          (compiler-load-session-package-profile state)
+          (cfg_core.compiler-cfg-snapshot-to-env base))
+        (compiler-pkg-merge-stdlib-roots
+          settings
+          directory
+          (target_cfg.clone-compiler-target-cfg target)
+          roots))]))
+
 (define (compiler-load-package-force-source-import
   [resolved : String]
   [resolved-id : i64]
@@ -13703,22 +13756,27 @@
             (string.copy (& resolved)))]
         (Err (box (cdiag.compiler-diagnostic-at-start resolved msg))))]
     [(CompilerLoadSomePath manifest-path)
-      (match (compiler-load-parse-manifest-diagnostic-infer-kind
-        (string.copy manifest-path)
-        (& (compiler-load-session-read-source-text manifest-path)))
+      (match (compiler-load-read-manifest (& manifest-path))
         [(Err diag) (Err diag)]
         [(Ok manifest)
           (let
             [dep-dir : String (compiler-load-dirname manifest-path)]
+            [effective : CompilerLoadPackageSourceOptions
+              (compiler-load-package-dependency-source-options
+                (& compiler-load-active-session-state)
+                (& manifest.settings)
+                (& dep-dir)
+                stdlib-roots
+                cfgs)]
             (match (compiler-load-package-file-with-paths-and-roots-expect-cache-current-fallback
               resolved
               resolved-id
               seen
-              stdlib-roots
+              (& effective.stdlib-roots)
               expected-module
               (& dep-dir)
               (& manifest.deps)
-              cfgs
+              effective.cfgs
               true
               module-id-fallback
               (string.copy source-module-fallback)
@@ -13770,9 +13828,9 @@
             [owned-path : String
               (compiler-load-package-owned-path
                 (string.copy entry.owner)
-                (& entry.manifest-dir)
+                (& canonical-root)
                 stdlib-roots
-                (string.copy resolved))]
+                (compiler-load-canonical-path (& resolved)))]
             (match (compiler-load-session-state-tli-hydrate-package-file!
               (& compiler-load-active-session-state)
               (& canonical-root)
@@ -13813,42 +13871,50 @@
                   imported-modules
                   import-seen
                   primary-mod-id)
-                (match (compiler-load-tli-complete-source-stdlib!
-                  (& (compiler-load-serial-test-session-state))
-                  (& resolved)
-                  stdlib-roots
-                  cfgs
-                  pools
-                  imported-decls
-                  imported-paths
-                  imported-modules
-                  import-seen)
-                  [(Err diag) (Err diag)]
-                  [(Ok out-decls out-paths out-modules out-seen)
-                    (match (compiler-load-session-state-surface-summary-find-source
+                (let
+                  [effective : CompilerLoadPackageSourceOptions
+                    (compiler-load-package-dependency-source-options
                       (& compiler-load-active-session-state)
-                      resolved-id)
-                      [(CompilerLoadSomeSurfaceSummary _) unit]
-                      [(CompilerLoadNoSurfaceSummary)
-                        (compiler-load-record-surface-summary!
-                          (&
-                            (compiler-load-surface-summary-from-decls
-                              (& resolved)
-                              resolved-id
-                              (& entry.manifest-dir)
-                              primary-mod-id
-                              primary-mod-id
-                              true
-                              (not
-                                (compiler-load-no-expected-module?
-                                  expected-module))
-                              (& out-decls))))])
-                    (ResultCompilerLoadPackageDepImport.Ok
-                      out-decls
-                      out-paths
-                      out-modules
-                      out-seen
-                      primary-mod-id)])]))]))))
+                      (& entry.settings)
+                      (& entry.manifest-dir)
+                      stdlib-roots
+                      cfgs)]
+                  (match (compiler-load-tli-complete-source-stdlib!
+                    (& (compiler-load-serial-test-session-state))
+                    (& resolved)
+                    (& effective.stdlib-roots)
+                    effective.cfgs
+                    pools
+                    imported-decls
+                    imported-paths
+                    imported-modules
+                    import-seen)
+                    [(Err diag) (Err diag)]
+                    [(Ok out-decls out-paths out-modules out-seen)
+                      (match (compiler-load-session-state-surface-summary-find-source
+                        (& compiler-load-active-session-state)
+                        resolved-id)
+                        [(CompilerLoadSomeSurfaceSummary _) unit]
+                        [(CompilerLoadNoSurfaceSummary)
+                          (compiler-load-record-surface-summary!
+                            (&
+                              (compiler-load-surface-summary-from-decls
+                                (& resolved)
+                                resolved-id
+                                (& entry.manifest-dir)
+                                primary-mod-id
+                                primary-mod-id
+                                true
+                                (not
+                                  (compiler-load-no-expected-module?
+                                    expected-module))
+                                (& out-decls))))])
+                      (ResultCompilerLoadPackageDepImport.Ok
+                        out-decls
+                        out-paths
+                        out-modules
+                        out-seen
+                        primary-mod-id)]))]))]))))
 
 (define (compiler-load-package-expand-include
   [kind : CompilerLoadIncludeKind]
@@ -15099,13 +15165,48 @@
   (Ok fs.FsStringVector)
   (Err String))
 
+(defstruct CompilerPkgOverrides
+  (cfgs svec.Vec)
+  (stdlib-roots svec.Vec)
+  (opt-level i64)
+  (debug bool)
+  (has-debug bool)
+  (backend-mode cli_option.CliBackendMode)
+  (has-backend-mode bool))
+
+(defstruct CompilerPkgSettings
+  (target target_cfg.CompilerTargetCfg)
+  (has-target bool)
+  (project CompilerPkgOverrides)
+  (dev CompilerPkgOverrides)
+  (release CompilerPkgOverrides)
+  (linux CompilerPkgOverrides)
+  (windows CompilerPkgOverrides))
+
+(defenum ResultCompilerPkgField
+  (Ok)
+  (Err (Box cdiag.CompilerDiagnostic)))
+
+(defenum ResultCompilerPkgOverrides
+  (Ok CompilerPkgOverrides)
+  (Err (Box cdiag.CompilerDiagnostic)))
+
+(defenum ResultCompilerPkgTarget
+  (Ok target_cfg.CompilerTargetCfg)
+  (Err (Box cdiag.CompilerDiagnostic)))
+
+(defenum ResultCompilerPkgStringList
+  (Ok svec.Vec)
+  (Err (Box cdiag.CompilerDiagnostic)))
+
 (defstruct CompilerPkgManifest
   (name String)
   (version String)
   (kind CompilerPkgKind)
   (entry String)
   (deps CompilerPkgDeps)
-  (link CompilerPkgLink))
+  (link CompilerPkgLink)
+  (settings CompilerPkgSettings))
 
 ;: Parse result: the manifest or a legacy string diagnostic.
 (defenum ResultCompilerPkgManifest
@@ -15130,7 +15231,7 @@
 ;: Internal: parsed dependencies, or a diagnostic.
 (defenum ResultCompilerPkgDeps
   (Ok CompilerPkgDeps)
-  (Err String))
+  (Err (Box cdiag.CompilerDiagnostic)))
 
 ;: First normal package dependency carried by a manifest, when present.
 ;: The dedicated result keeps package-edge policy separate from native
@@ -15515,48 +15616,73 @@
     [(slice _ & _) (Err "manifest field `kind` takes a single value")]
     [_ (Err "manifest field `kind` must have a string or symbol value")]))
 
-(define (compiler-load-manifest-cons-dep
-  [alias : String]
-  [path : String]
-  [rest : (& program (Slice reader.SpannedSexpr))]) : ResultCompilerPkgDeps
-  (cond
-    [(string.eq alias "") (Err "dependency alias must not be empty")]
-    [(not (compiler-load-package-token-valid? (& (string.copy alias))))
-      (Err
-        "dependency alias may only contain ASCII letters, digits, '-' and '_'")]
-    [(string.eq path "")
-      (Err
-        (str_cat.str-cat
-          "manifest dependency `"
-          alias
-          "` path must not be empty"))]
-    [else
-      (let
-        [tail-deps (try (compiler-load-manifest-parse-deps rest))]
-        (if (compiler-pkg-deps-alias-seen? (& tail-deps) (string.copy alias))
-          (Err (str_cat.str-cat "duplicate dependency alias `" alias "`"))
-          (Ok (compiler-pkg-deps-cons alias path (& tail-deps)))))]))
-
-;: Parse the `(alias "path") ...` entries of a `(dependencies ...)` field.
 (define (compiler-load-manifest-parse-deps
+  [path : (& str)]
   [entries : (& program (Slice reader.SpannedSexpr))]) : ResultCompilerPkgDeps
-  (match entries
-    [(slice) (Ok (compiler-pkg-deps-empty))]
-    [(slice entry & rest)
-      (match (reader.sexpr-view entry)
-        [(List (slice (Sym alias _) & etail))
-          (let
-            [alias-text : String
-              (compiler-load-manifest-owned-syntax-text alias)]
-            [path
-              (try
-                (compiler-load-manifest-dependency-value
-                  etail
-                  (string.copy alias-text)))]
-            (compiler-load-manifest-cons-dep alias-text path rest))]
-        [(List (slice _ & _))
-          (Err "dependency entries must start with an alias name")]
-        [_ (Err "dependency entries must be lists like `(alias \"path\")`")])]))
+  (let
+    [out : CompilerPkgDeps (compiler-pkg-deps-empty)]
+    (for [index (iterator.range 0 (length entries))]
+      (let
+        [entry : reader.SpannedSexpr (array-ref entries index)]
+        (match (reader.spanned-sexpr-view entry)
+          [(List (slice (Sym alias _) & values) _)
+            (let
+              [name : String (compiler-load-manifest-owned-syntax-text alias)]
+              [dep-path : String
+                (match (compiler-load-manifest-dependency-value
+                  values
+                  (string.copy (& name)))
+                  [(Ok value) value]
+                  [(Err message)
+                    (return
+                      (Err
+                        (compiler-load-manifest-setting-error
+                          path
+                          entry
+                          message)))])]
+              [message : String
+                (cond
+                  [(string.eq name "") "dependency alias must not be empty"]
+                  [(not (compiler-load-package-token-valid? (& name)))
+                    "dependency alias may only contain ASCII letters, digits, '-' and '_'"]
+                  [(string.eq dep-path "")
+                    (str_cat.str-cat
+                      "manifest dependency `"
+                      (string.copy (& name))
+                      "` path must not be empty")]
+                  [(compiler-pkg-deps-alias-seen?
+                      (& out)
+                      (string.copy (& name)))
+                    (str_cat.str-cat
+                      "duplicate dependency alias `"
+                      (string.copy (& name))
+                      "`")]
+                  [else ""])]
+              (unless
+                (string.eq message "")
+                (return
+                  (Err
+                    (compiler-load-manifest-setting-error path entry message))))
+              (set!
+                out.ordered
+                (compiler-pkg-dep-list-push
+                  (& out.ordered)
+                  (CompilerPkgDep name dep-path))))]
+          [(List (slice _ & _) _)
+            (return
+              (Err
+                (compiler-load-manifest-setting-error
+                  path
+                  entry
+                  "dependency entries must start with an alias name")))]
+          [_
+            (return
+              (Err
+                (compiler-load-manifest-setting-error
+                  path
+                  entry
+                  "dependency entries must be lists like `(alias \"path\")`")))])))
+    (Ok out)))
 
 ;: An empty link scope (no libraries, search paths, or args).
 (define (compiler-pkg-link-set-empty) : CompilerPkgLinkSet
@@ -15746,285 +15872,1021 @@
           (Err (str_cat.str-cat "duplicate `link` field `" fname "`"))
           (Ok (compiler-pkg-link-set-vec acc scope cat values)))))))
 
-;: Walk the `(field "...")` entries of a `(link ...)` section.
-(define (compiler-load-manifest-parse-link-into
-  [entries : (& program (Slice reader.SpannedSexpr))]
-  [acc : CompilerPkgLink]) : ResultCompilerPkgLink
-  (match entries
-    [(slice) (Ok acc)]
-    [(slice entry & rest)
-      (match (reader.sexpr-view entry)
-        [(List (slice (Sym fname _) & etail))
-          (let
-            [values
-              (try
-                (compiler-load-manifest-link-values
-                  etail
-                  (compiler-load-symbol-text fname)
-                  (fs.string-vector-new)))]
-            [acc2
-              (try
-                (compiler-load-manifest-link-store
-                  (& acc)
-                  (compiler-load-symbol-text fname)
-                  (& values)))]
-            (compiler-load-manifest-parse-link-into rest acc2))]
-        [(List (slice _ & _))
-          (Err "`link` entries must start with a field name")]
-        [_ (Err "`link` entries must be lists like `(libraries \"...\")`")])]))
+(defenum ResultCompilerPkgSpannedLink
+  (Ok CompilerPkgLink)
+  (Err (Box cdiag.CompilerDiagnostic)))
 
-;: Parse a `(link ...)` manifest section into a CompilerPkgLink.
 (define (compiler-load-manifest-parse-link
-  [entries : (& program (Slice reader.SpannedSexpr))]) : ResultCompilerPkgLink
-  (compiler-load-manifest-parse-link-into entries (compiler-pkg-link-empty)))
+  [path : (& str)]
+  [entries : (& program (Slice reader.SpannedSexpr))]) : ResultCompilerPkgSpannedLink
+  (let
+    [out : CompilerPkgLink (compiler-pkg-link-empty)]
+    (for [index (iterator.range 0 (length entries))]
+      (let
+        [entry : reader.SpannedSexpr (array-ref entries index)]
+        (match (reader.spanned-sexpr-view entry)
+          [(List (slice (Sym id _) & values) _)
+            (let
+              [key : String (compiler-load-symbol-text id)]
+              [parsed : fs.FsStringVector
+                (match (compiler-load-manifest-link-values
+                  values
+                  (string.copy (& key))
+                  (fs.string-vector-new))
+                  [(Ok list) list]
+                  [(Err message)
+                    (return
+                      (Err
+                        (compiler-load-manifest-setting-error
+                          path
+                          entry
+                          message)))])]
+              (match (compiler-load-manifest-link-store
+                (& out)
+                (string.copy (& key))
+                (& parsed))
+                [(Ok next) (set! out next)]
+                [(Err message)
+                  (return
+                    (Err
+                      (compiler-load-manifest-setting-expected
+                        path
+                        entry
+                        message
+                        (compiler-load-manifest-key-help
+                          (& key)
+                          "libraries search-paths args linux-libraries linux-search-paths linux-args windows-libraries windows-search-paths windows-args"))))]))]
+          [(List (slice _ & _) _)
+            (return
+              (Err
+                (compiler-load-manifest-setting-error
+                  path
+                  entry
+                  "`link` entries must start with a field name")))]
+          [_
+            (return
+              (Err
+                (compiler-load-manifest-setting-error
+                  path
+                  entry
+                  "`link` entries must be lists like `(libraries \"...\")`")))])))
+    (Ok out)))
 
 (define (compiler-load-manifest-default-entry [kind : CompilerPkgKind]) : String
   (match kind
     [(CompilerPkgKindBin) "src/main.tl"]
     [(CompilerPkgKindLib) "src/lib.tl"]))
 
+(define (compiler-pkg-overrides-empty) : CompilerPkgOverrides
+  (CompilerPkgOverrides (svec.new) (svec.new) -1 false false Sse2 false))
+
+(define (compiler-pkg-settings-empty) : CompilerPkgSettings
+  (CompilerPkgSettings
+    (target_cfg.compiler-target-cfg-host)
+    false
+    (compiler-pkg-overrides-empty)
+    (compiler-pkg-overrides-empty)
+    (compiler-pkg-overrides-empty)
+    (compiler-pkg-overrides-empty)
+    (compiler-pkg-overrides-empty)))
+
+(define (compiler-pkg-graph-target
+  [settings : (& CompilerPkgSettings)]
+  [options : (& cli_option.CliCompileOptions)]) : target_cfg.CompilerTargetCfg
+  (if (and settings.has-target (not options.has-target))
+    (target_cfg.clone-compiler-target-cfg (& settings.target))
+    (target_cfg.clone-compiler-target-cfg (& options.target))))
+
+(define (compiler-pkg-add-setting-list!
+  [out : (&mut svec.Vec)]
+  [seen : (&mut load_path_map.Map)]
+  [values : (& svec.Vec)]
+  [directory : (& str)]
+  [paths : bool]) : unit
+  ;; Keep the CLI spelling for diagnostics while deduplicating physical roots.
+  (for [index (iterator.range 0 (svec.len values))]
+    (let
+      [value : String (svec.get values index "")]
+      [manifest-path : bool (and paths (> (string.string-length directory) 0))]
+      [key : String
+        (if paths
+          (compiler-load-canonical-path
+            (&
+              (if (and manifest-path (not (fs.path-absolute? (& value))))
+                (compiler-load-join-root-path
+                  (string.copy directory)
+                  (string.copy (& value)))
+                (string.copy (& value)))))
+          (string.copy (& value)))]
+      (unless
+        (load_path_map.contains-borrowed? seen (& key))
+        (svec.push-ref!
+          out
+          (if manifest-path
+            (string.copy (& key))
+            value))
+        (load_path_map.insert-ref! seen key 1)))))
+
+(define (compiler-pkg-merge-setting-lists
+  [cli : (& svec.Vec)]
+  [specific : (& svec.Vec)]
+  [project : (& svec.Vec)]
+  [directory : (& str)]
+  [paths : bool]) : svec.Vec
+  (let
+    [out : svec.Vec (svec.new)]
+    [seen : load_path_map.Map (load_path_map.with-capacity 8)]
+    (compiler-pkg-add-setting-list! (&mut out) (&mut seen) cli "" paths)
+    (compiler-pkg-add-setting-list!
+      (&mut out)
+      (&mut seen)
+      specific
+      directory
+      paths)
+    (compiler-pkg-add-setting-list!
+      (&mut out)
+      (&mut seen)
+      project
+      directory
+      paths)
+    out))
+
+(define (compiler-pkg-enable-cfg-list
+  [base : sym_i64_env.SymI64Env]
+  [names : (& svec.Vec)]) : sym_i64_env.SymI64Env
+  (let
+    [out : sym_i64_env.SymI64Env base]
+    (for [index (iterator.range 0 (svec.len names))]
+      (set!
+        out
+        (cfg_core.compiler-cfg-enable out (& (svec.get names index "")))))
+    out))
+
+(define (compiler-pkg-enable-manifest-cfgs
+  [settings : (& CompilerPkgSettings)]
+  [target : target_cfg.CompilerTargetCfg]
+  [base : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
+  (let
+    [project : sym_i64_env.SymI64Env
+      (compiler-pkg-enable-cfg-list base (& settings.project.cfgs))]
+    (match target
+      [(Linux) (compiler-pkg-enable-cfg-list project (& settings.linux.cfgs))]
+      [(Windows)
+        (compiler-pkg-enable-cfg-list project (& settings.windows.cfgs))])))
+
+(define (compiler-pkg-graph-cfgs
+  [target : target_cfg.CompilerTargetCfg]
+  [names : (& svec.Vec)]
+  [debug : bool]) : sym_i64_env.SymI64Env
+  (let
+    [cfgs : sym_i64_env.SymI64Env
+      (target_cfg.compiler-target-cfgs
+        target
+        (target_cfg.compiler-target-user-cfgs names))]
+    [public : sym_i64_env.SymI64Env
+      (cfg_core.compiler-cfg-remove-id cfgs (ci.intern "compiler-backtrace"))]
+    (if debug
+      (cfg_core.compiler-cfg-enable public "compiler-backtrace")
+      public)))
+
+(define (compiler-pkg-dependency-cfgs
+  [settings : (& CompilerPkgSettings)]
+  [target : target_cfg.CompilerTargetCfg]
+  [profile : pkg_profile.PackageProfile]
+  [base : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
+  (let
+    [cfgs : sym_i64_env.SymI64Env
+      (compiler-pkg-enable-manifest-cfgs settings target base)]
+    [debug : bool
+      (match profile
+        [(Dev) settings.dev.debug]
+        [(Release) settings.release.debug])]
+    (if debug
+      (cfg_core.compiler-cfg-enable cfgs "compiler-backtrace")
+      cfgs)))
+
+(define (compiler-pkg-merge-stdlib-roots
+  [settings : (& CompilerPkgSettings)]
+  [directory : (& str)]
+  [target : target_cfg.CompilerTargetCfg]
+  [cli : (& svec.Vec)]) : svec.Vec
+  (match target
+    [(Linux)
+      (compiler-pkg-merge-setting-lists
+        cli
+        (& settings.linux.stdlib-roots)
+        (& settings.project.stdlib-roots)
+        directory
+        true)]
+    [(Windows)
+      (compiler-pkg-merge-setting-lists
+        cli
+        (& settings.windows.stdlib-roots)
+        (& settings.project.stdlib-roots)
+        directory
+        true)]))
+
+(define (compiler-pkg-apply-profile!
+  [out : (&mut cli_option.CliCompileOptions)]
+  [profile : (& CompilerPkgOverrides)]) : unit
+  (unless
+    out.has-opt-level
+    (set!
+      out.opt-level
+      (if (>= profile.opt-level 0)
+        profile.opt-level
+        (pkg_profile.package-profile-opt-level (& out.profile)))))
+  (unless out.has-debug (set! out.debug profile.debug))
+  (unless
+    out.has-backend-mode
+    (set!
+      out.backend-mode
+      (if profile.has-backend-mode
+        (cli_option.clone-cli-backend-mode (& profile.backend-mode))
+        (cli_option.cli-compile-options-backend-mode Sse2 false out.opt-level)))))
+
+(define (compiler-pkg-apply-project!
+  [out : (&mut cli_option.CliCompileOptions)]
+  [directory : (& str)]
+  [specific : (& CompilerPkgOverrides)]
+  [project : (& CompilerPkgOverrides)]) : unit
+  (let
+    [roots : svec.Vec
+      (compiler-pkg-merge-setting-lists
+        (& out.stdlib-roots)
+        (& specific.stdlib-roots)
+        (& project.stdlib-roots)
+        directory
+        true)]
+    [cfgs : svec.Vec
+      (compiler-pkg-merge-setting-lists
+        (& out.cfgs)
+        (& specific.cfgs)
+        (& project.cfgs)
+        directory
+        false)]
+    (set! out.stdlib-roots roots)
+    (set! out.cfgs cfgs)))
+
+(define (compiler-pkg-resolve-compile-options
+  [settings : (& CompilerPkgSettings)]
+  [directory : (& str)]
+  [target : target_cfg.CompilerTargetCfg]
+  [options : (& cli_option.CliCompileOptions)]) : cli_option.CliCompileOptions
+  (let
+    [out : cli_option.CliCompileOptions
+      (cli_option.CliCompileOptions
+        target
+        options.has-target
+        (cli_option.clone-cli-backend-mode (& options.backend-mode))
+        options.has-backend-mode
+        options.opt-level
+        options.has-opt-level
+        (svec.clone-vec (& options.stdlib-roots))
+        (svec.clone-vec (& options.cfgs))
+        options.debug
+        options.has-debug
+        (pkg_profile.clone-package-profile (& options.profile))
+        options.has-profile)]
+    (match options.profile
+      [(Dev) (compiler-pkg-apply-profile! (&mut out) (& settings.dev))]
+      [(Release) (compiler-pkg-apply-profile! (&mut out) (& settings.release))])
+    (match target
+      [(Linux)
+        (compiler-pkg-apply-project!
+          (&mut out)
+          directory
+          (& settings.linux)
+          (& settings.project))]
+      [(Windows)
+        (compiler-pkg-apply-project!
+          (&mut out)
+          directory
+          (& settings.windows)
+          (& settings.project))])
+    out))
+
+(define (compiler-load-manifest-setting-error
+  [path : (& str)]
+  [field : reader.SpannedSexpr]
+  [message : String]) : (Box cdiag.CompilerDiagnostic)
+  (box
+    (cdiag.compiler-diagnostic-from-span
+      (string.copy path)
+      (reader.spanned-sexpr-span field)
+      message)))
+
+(define (compiler-load-manifest-setting-expected
+  [path : (& str)]
+  [field : reader.SpannedSexpr]
+  [message : String]
+  [help : String]) : (Box cdiag.CompilerDiagnostic)
+  (let
+    [diag : cdiag.CompilerDiagnostic
+      (cdiag.compiler-diagnostic-from-span
+        (string.copy path)
+        (reader.spanned-sexpr-span field)
+        message)]
+    (box (cdiag.compiler-diagnostic-with-help (& diag) help))))
+
+(define (compiler-load-manifest-setting-duplicate
+  [path : (& str)]
+  [field : reader.SpannedSexpr]
+  [key : String]) : (Box cdiag.CompilerDiagnostic)
+  (compiler-load-manifest-setting-error
+    path
+    field
+    (str_cat.str-cat "duplicate manifest field `" key "`")))
+
+;; A single insertion, deletion, substitution, or adjacent transposition.
+(define (compiler-load-manifest-near-key? [left : (& str)] [right : (& str)]) : bool
+  (let
+    [n : i64 (string.string-length left)]
+    [m : i64 (string.string-length right)]
+    (when (> n m) (return (compiler-load-manifest-near-key? right left)))
+    (when (> (- m n) 1) (return false))
+    (let
+      [first : i64 0]
+      (while (and
+        (< first n)
+        (= (string.string-ref left first) (string.string-ref right first)))
+        (+= first 1))
+      (cond
+        [(= first n) (= (- m n) 1)]
+        [(= m (+ n 1))
+          (string.is-string-prefix-at
+            right
+            (& (string.substring left first (- n first)))
+            (+ first 1))]
+        [(string.is-string-prefix-at
+            right
+            (& (string.substring left (+ first 1) (- n (+ first 1))))
+            (+ first 1))
+          true]
+        [else
+          (and
+            (< (+ first 1) n)
+            (=
+              (string.string-ref left first)
+              (string.string-ref right (+ first 1)))
+            (=
+              (string.string-ref left (+ first 1))
+              (string.string-ref right first))
+            (string.is-string-prefix-at
+              right
+              (& (string.substring left (+ first 2) (- n (+ first 2))))
+              (+ first 2)))]))))
+
+(define (compiler-load-manifest-key-help [key : (& str)] [allowed : (& str)]) : String
+  (let
+    [index : i64 0]
+    [count : i64 (string.string-length allowed)]
+    (while (< index count)
+      (let
+        [space : i64 (string.index-of-byte allowed index (cast ' ' : u8))]
+        [end : i64
+          (if (< space 0)
+            count
+            space)]
+        [candidate : String (string.substring allowed index (- end index))]
+        (when
+          (compiler-load-manifest-near-key? key (& candidate))
+          (return (str_cat.str-cat "did you mean `" candidate "`?")))
+        (set! index (+ end 1))))
+    (str_cat.str-cat "expected one of: " (string.copy allowed))))
+
+(define (compiler-load-manifest-unknown-field
+  [path : (& str)]
+  [field : reader.SpannedSexpr]
+  [key : String]
+  [allowed : String]) : (Box cdiag.CompilerDiagnostic)
+  (let
+    [help : String (compiler-load-manifest-key-help (& key) (& allowed))]
+    (compiler-load-manifest-setting-expected
+      path
+      field
+      (str_cat.str-cat "unknown manifest field `" key "`")
+      help)))
+
+(define (compiler-load-manifest-target-value
+  [value : reader.SpannedSexpr]
+  [path : (& str)]) : ResultCompilerPkgTarget
+  (match (reader.spanned-sexpr-view value)
+    [(Sym id _)
+      (let
+        [name : String (compiler-load-symbol-text id)]
+        (cond
+          [(string.eq name "linux-x86_64") (Ok Linux)]
+          [(string.eq name "windows-x86_64") (Ok Windows)]
+          [else
+            (Err
+              (compiler-load-manifest-setting-expected
+                path
+                value
+                (str_cat.str-cat
+                  "unknown manifest target `"
+                  (string.copy (& name))
+                  "`")
+                (compiler-load-manifest-key-help
+                  (& name)
+                  "linux-x86_64 windows-x86_64")))]))]
+    [_
+      (Err
+        (compiler-load-manifest-setting-error
+          path
+          value
+          "manifest target must be a symbol"))]))
+
+(define (compiler-load-manifest-reserved-cfg? [name : (& str)]) : bool
+  (or
+    (string.eq name "compiler-backtrace")
+    (string.eq name "linux")
+    (string.eq name "os-linux")
+    (string.eq name "target-linux")
+    (string.eq name "windows")
+    (string.eq name "os-windows")
+    (string.eq name "target-windows")))
+
+(define (compiler-load-manifest-setting-list
+  [path : (& str)]
+  [field : reader.SpannedSexpr]
+  [values : (& program (Slice reader.SpannedSexpr))]
+  [key : (& str)]) : ResultCompilerPkgStringList
+  (let
+    [is-cfg : bool (string.eq key "cfg")]
+    [out : svec.Vec (svec.new)]
+    (when
+      (= (length values) 0)
+      (return
+        (Err
+          (compiler-load-manifest-setting-error
+            path
+            field
+            (str_cat.str-cat
+              "manifest field `"
+              (string.copy key)
+              "` requires a value")))))
+    (for [index (iterator.range 0 (length values))]
+      (let
+        [value : reader.SpannedSexpr (array-ref values index)]
+        (match (reader.spanned-sexpr-view value)
+          [(Str id _)
+            (let
+              [text : String (compiler-load-manifest-owned-intern-text id)]
+              (when
+                (string.eq text "")
+                (return
+                  (Err
+                    (compiler-load-manifest-setting-error
+                      path
+                      value
+                      (str_cat.str-cat
+                        "manifest field `"
+                        (string.copy key)
+                        "` values must not be empty")))))
+              (when
+                (and is-cfg (compiler-load-manifest-reserved-cfg? (& text)))
+                (return
+                  (Err
+                    (compiler-load-manifest-setting-expected
+                      path
+                      value
+                      (str_cat.str-cat
+                        "manifest cfg `"
+                        text
+                        "` conflicts with target selection")
+                      "select a target with the target field or --target"))))
+              (svec.push-ref! (&mut out) text))]
+          [_
+            (return
+              (Err
+                (compiler-load-manifest-setting-error
+                  path
+                  value
+                  (str_cat.str-cat
+                    "manifest field `"
+                    (string.copy key)
+                    "` values must be strings"))))])))
+    (Ok out)))
+
+(define (compiler-load-manifest-project-option!
+  [path : (& str)]
+  [field : reader.SpannedSexpr]
+  [values : (& program (Slice reader.SpannedSexpr))]
+  [key : (& str)]
+  [out : (&mut CompilerPkgOverrides)]) : ResultCompilerPkgField
+  (let
+    [is-cfg : bool (string.eq key "cfg")]
+    (when
+      (>
+        (if is-cfg
+          (svec.len (& out.cfgs))
+          (svec.len (& out.stdlib-roots)))
+        0)
+      (return
+        (Err
+          (compiler-load-manifest-setting-duplicate
+            path
+            field
+            (string.copy key)))))
+    (let
+      [items (try (compiler-load-manifest-setting-list path field values key))]
+      (if is-cfg
+        (set! out.cfgs items)
+        (set! out.stdlib-roots items)))
+    (Ok)))
+
+(define (compiler-load-manifest-opt-level [value : reader.SpannedSexpr]) : i64
+  (match (reader.spanned-sexpr-view value)
+    [(Int level _ _)
+      (if (and (>= level 0) (<= level 2))
+        level
+        -1)]
+    [(Sym id _)
+      (if (string.eq (compiler-load-symbol-text id) "s")
+        3
+        -1)]
+    [_ -1]))
+
+(define (compiler-load-manifest-profile-option!
+  [path : (& str)]
+  [field : reader.SpannedSexpr]
+  [values : (& program (Slice reader.SpannedSexpr))]
+  [key : (& str)]
+  [out : (&mut CompilerPkgOverrides)]) : ResultCompilerPkgField
+  (let
+    [present : bool
+      (cond
+        [(string.eq key "opt-level") (>= out.opt-level 0)]
+        [(string.eq key "debug") out.has-debug]
+        [else out.has-backend-mode])]
+    (when
+      present
+      (return
+        (Err
+          (compiler-load-manifest-setting-duplicate
+            path
+            field
+            (string.copy key)))))
+    (match values
+      [(slice value)
+        (cond
+          [(string.eq key "opt-level")
+            (let
+              [level : i64 (compiler-load-manifest-opt-level value)]
+              (when
+                (< level 0)
+                (return
+                  (Err
+                    (compiler-load-manifest-setting-error
+                      path
+                      value
+                      "manifest opt-level must be 0, 1, 2, or s"))))
+              (set! out.opt-level level))]
+          [(string.eq key "debug")
+            (match (reader.spanned-sexpr-view value)
+              [(Sym id _)
+                (let
+                  [name : String (compiler-load-symbol-text id)]
+                  (unless
+                    (or (string.eq name "true") (string.eq name "false"))
+                    (return
+                      (Err
+                        (compiler-load-manifest-setting-error
+                          path
+                          value
+                          "manifest debug must be true or false"))))
+                  (set! out.debug (string.eq name "true"))
+                  (set! out.has-debug true))]
+              [_
+                (return
+                  (Err
+                    (compiler-load-manifest-setting-error
+                      path
+                      value
+                      "manifest debug must be true or false")))])]
+          [else
+            (let
+              [mode : String
+                (match (reader.spanned-sexpr-view value)
+                  [(Sym id _) (compiler-load-symbol-text id)]
+                  [_ ""])]
+              (match (cli_option.cli-option-backend-mode mode)
+                [(Ok backend)
+                  (set! out.backend-mode backend)
+                  (set! out.has-backend-mode true)]
+                [(Err _)
+                  (return
+                    (Err
+                      (compiler-load-manifest-setting-error
+                        path
+                        value
+                        "manifest backend-mode must be scalar, sse2, avx2, or avx512")))]))])
+        (Ok)]
+      [_
+        (Err
+          (compiler-load-manifest-setting-error
+            path
+            field
+            (str_cat.str-cat
+              "manifest field `"
+              (string.copy key)
+              "` takes a single value")))])))
+
+(define (compiler-load-manifest-scoped-overrides
+  [path : (& str)]
+  [fields : (& program (Slice reader.SpannedSexpr))]
+  [profile : bool]) : ResultCompilerPkgOverrides
+  (let
+    [out : CompilerPkgOverrides (compiler-pkg-overrides-empty)]
+    (for [index (iterator.range 0 (length fields))]
+      (let
+        [field : reader.SpannedSexpr (array-ref fields index)]
+        (match (reader.spanned-sexpr-view field)
+          [(List (slice (Sym id _) & values) _)
+            (let
+              [key : String (compiler-load-symbol-text id)]
+              (cond
+                [(and
+                    profile
+                    (or
+                      (string.eq key "opt-level")
+                      (string.eq key "debug")
+                      (string.eq key "backend-mode")))
+                  (try
+                    (compiler-load-manifest-profile-option!
+                      path
+                      field
+                      values
+                      (& key)
+                      (&mut out)))]
+                [(and
+                    (not profile)
+                    (or (string.eq key "cfg") (string.eq key "stdlib-root")))
+                  (try
+                    (compiler-load-manifest-project-option!
+                      path
+                      field
+                      values
+                      (& key)
+                      (&mut out)))]
+                [else
+                  (return
+                    (Err
+                      (compiler-load-manifest-unknown-field
+                        path
+                        field
+                        key
+                        (if profile
+                          "opt-level debug backend-mode"
+                          "cfg stdlib-root"))))]))]
+          [_
+            (return
+              (Err
+                (compiler-load-manifest-setting-error
+                  path
+                  field
+                  "manifest section fields must be named lists")))])))
+    (Ok out)))
+
+(defenum ResultCompilerPkgSettings
+  (Ok CompilerPkgSettings)
+  (Err (Box cdiag.CompilerDiagnostic)))
+
+(define (compiler-load-manifest-section
+  [path : (& str)]
+  [field : reader.SpannedSexpr]
+  [values : (& program (Slice reader.SpannedSexpr))]
+  [profile : bool]
+  [seen : (&mut (Array bool 4))]
+  [settings : CompilerPkgSettings]) : ResultCompilerPkgSettings
+  (match values
+    [(slice selector & fields)
+      (let
+        [scope : i64
+          (if profile
+            (match (reader.spanned-sexpr-view selector)
+              [(Sym id _)
+                (let
+                  [name : String (compiler-load-symbol-text id)]
+                  (cond
+                    [(string.eq name "dev") 0]
+                    [(string.eq name "release") 1]
+                    [else -1]))]
+              [_ -1])
+            (match (try (compiler-load-manifest-target-value selector path))
+              [(Linux) 2]
+              [(Windows) 3]))]
+        (when
+          (< scope 0)
+          (return
+            (Err
+              (compiler-load-manifest-setting-expected
+                path
+                selector
+                "invalid manifest profile"
+                "use dev or release"))))
+        (when
+          (array-ref seen scope)
+          (return
+            (Err
+              (compiler-load-manifest-setting-error
+                path
+                field
+                (if profile
+                  "duplicate manifest profile section"
+                  "duplicate manifest target-settings section")))))
+        (let
+          [overrides
+            (try (compiler-load-manifest-scoped-overrides path fields profile))]
+          [out : CompilerPkgSettings settings]
+          (set! (array-ref seen scope) true)
+          (cond
+            [(= scope 0) (set! out.dev overrides)]
+            [(= scope 1) (set! out.release overrides)]
+            [(= scope 2) (set! out.linux overrides)]
+            [else (set! out.windows overrides)])
+          (Ok out)))]
+    [_
+      (Err
+        (compiler-load-manifest-setting-error
+          path
+          field
+          "manifest section requires a selector"))]))
+
 (define (compiler-load-manifest-with-kind
   [manifest : CompilerPkgManifest]
   [kind : CompilerPkgKind]) : CompilerPkgManifest
-  (CompilerPkgManifest
-    manifest.name
-    manifest.version
-    kind
-    (compiler-load-manifest-default-entry kind)
-    manifest.deps
-    manifest.link))
+  (let
+    [out : CompilerPkgManifest manifest]
+    (set! out.kind kind)
+    (set! out.entry (compiler-load-manifest-default-entry kind))
+    out))
 
-;: Walk the package fields, accumulating name/version/kind/entry/deps, then
-;: check required fields and synthesize convention defaults for omitted kind
-;: and entry.
-(define (compiler-load-manifest-fields
-  [fields : (& program (Slice reader.SpannedSexpr))]
-  [name : String]
-  [has-name : bool]
-  [version : String]
-  [has-version : bool]
-  [kind : CompilerPkgKind]
-  [has-kind : bool]
-  [entry : String]
-  [has-entry : bool]
-  [has-deps : bool]
-  [deps : CompilerPkgDeps]
-  [has-link : bool]
-  [link : CompilerPkgLink]) : ResultCompilerPkgManifest
-  (match fields
-    [(slice)
-      (let
-        [final-entry : String
-          (if has-entry
-            entry
-            (compiler-load-manifest-default-entry kind))]
-        (cond
-          [(not has-name) (Err "manifest missing required field `name`")]
-          [(string.eq name "") (Err "manifest field `name` must not be empty")]
-          [(not (compiler-load-package-token-valid? (& (string.copy name))))
-            (Err
-              "manifest field `name` may only contain ASCII letters, digits, '-' and '_'")]
-          [(not has-version) (Err "manifest missing required field `version`")]
-          [(string.eq version "")
-            (Err "manifest field `version` must not be empty")]
-          [(string.eq final-entry "")
-            (Err "manifest field `entry` must not be empty")]
-          [(not
-              (compiler-load-normal-relative-entry?
-                (& (string.copy final-entry))))
-            (Err
-              "manifest field `entry` must be a normal relative path below the manifest directory")]
-          [else
-            (Ok (CompilerPkgManifest name version kind final-entry deps link))]))]
-    [(slice field & rest)
-      (match (reader.sexpr-view field)
-        [(List (slice (Sym fname _) & ftail))
-          (cond
-            [(string.eq (compiler-load-symbol-text fname) "dependencies")
-              (if has-deps
-                (Err "duplicate manifest field `dependencies`")
-                (let
-                  [parsed-deps (try (compiler-load-manifest-parse-deps ftail))]
-                  (compiler-load-manifest-fields
-                    rest
-                    name
-                    has-name
-                    version
-                    has-version
-                    kind
-                    has-kind
-                    entry
-                    has-entry
-                    true
-                    parsed-deps
-                    has-link
-                    link)))]
-            [(string.eq (compiler-load-symbol-text fname) "link")
-              (if has-link
-                (Err "duplicate manifest field `link`")
-                (let
-                  [parsed-link (try (compiler-load-manifest-parse-link ftail))]
-                  (compiler-load-manifest-fields
-                    rest
-                    name
-                    has-name
-                    version
-                    has-version
-                    kind
-                    has-kind
-                    entry
-                    has-entry
-                    has-deps
-                    deps
-                    true
-                    parsed-link)))]
-            [(string.eq (compiler-load-symbol-text fname) "name")
-              (if has-name
-                (Err "duplicate manifest field `name`")
-                (let
-                  [val
-                    (try
-                      (compiler-load-manifest-string-value
-                        ftail
-                        (compiler-load-symbol-text fname)))]
-                  (compiler-load-manifest-fields
-                    rest
-                    val
-                    true
-                    version
-                    has-version
-                    kind
-                    has-kind
-                    entry
-                    has-entry
-                    has-deps
-                    deps
-                    has-link
-                    link)))]
-            [(string.eq (compiler-load-symbol-text fname) "version")
-              (if has-version
-                (Err "duplicate manifest field `version`")
-                (let
-                  [val
-                    (try
-                      (compiler-load-manifest-string-value
-                        ftail
-                        (compiler-load-symbol-text fname)))]
-                  (compiler-load-manifest-fields
-                    rest
-                    name
-                    has-name
-                    val
-                    true
-                    kind
-                    has-kind
-                    entry
-                    has-entry
-                    has-deps
-                    deps
-                    has-link
-                    link)))]
-            [(string.eq (compiler-load-symbol-text fname) "kind")
-              (if has-kind
-                (Err "duplicate manifest field `kind`")
-                (let
-                  [val (try (compiler-load-manifest-kind-value ftail))]
-                  (compiler-load-manifest-fields
-                    rest
-                    name
-                    has-name
-                    version
-                    has-version
-                    val
-                    true
-                    entry
-                    has-entry
-                    has-deps
-                    deps
-                    has-link
-                    link)))]
-            [(string.eq (compiler-load-symbol-text fname) "entry")
-              (if has-entry
-                (Err "duplicate manifest field `entry`")
-                (let
-                  [val
-                    (try
-                      (compiler-load-manifest-string-value
-                        ftail
-                        (compiler-load-symbol-text fname)))]
-                  (compiler-load-manifest-fields
-                    rest
-                    name
-                    has-name
-                    version
-                    has-version
-                    kind
-                    has-kind
-                    val
-                    true
-                    has-deps
-                    deps
-                    has-link
-                    link)))]
-            [else
+(define (compiler-load-manifest-basic-field
+  [path : (& str)]
+  [field : reader.SpannedSexpr]
+  [values : (& program (Slice reader.SpannedSexpr))]
+  [key : (& str)]
+  [manifest : CompilerPkgManifest]) : ResultCompilerPkgManifestDiagnostic
+  (let
+    [out : CompilerPkgManifest manifest]
+    (cond
+      [(string.eq key "dependencies")
+        (set! out.deps (try (compiler-load-manifest-parse-deps path values)))]
+      [(string.eq key "link")
+        (set! out.link (try (compiler-load-manifest-parse-link path values)))]
+      [(string.eq key "kind")
+        (match (compiler-load-manifest-kind-value values)
+          [(Ok kind) (set! out.kind kind)]
+          [(Err message)
+            (return
+              (Err (compiler-load-manifest-setting-error path field message)))])]
+      [else
+        (let
+          [value : String
+            (match (compiler-load-manifest-string-value
+              values
+              (string.copy key))
+              [(Ok text) text]
+              [(Err message)
+                (return
+                  (Err
+                    (compiler-load-manifest-setting-error path field message)))])]
+          (when
+            (string.eq value "")
+            (return
               (Err
-                (str_cat.str-cat
-                  "unknown manifest field `"
-                  (compiler-load-symbol-text fname)
-                  "`"))])]
-        [(List (slice _ & _))
-          (Err "package fields must start with a field name")]
-        [_ (Err "package fields must be lists like `(name \"...\")`")])]))
+                (compiler-load-manifest-setting-error
+                  path
+                  field
+                  (str_cat.str-cat
+                    "manifest field `"
+                    (string.copy key)
+                    "` must not be empty")))))
+          (cond
+            [(string.eq key "name")
+              (unless
+                (compiler-load-package-token-valid? (& value))
+                (return
+                  (Err
+                    (compiler-load-manifest-setting-error
+                      path
+                      field
+                      "manifest field `name` may only contain ASCII letters, digits, '-' and '_'"))))
+              (set! out.name value)]
+            [(string.eq key "version") (set! out.version value)]
+            [else
+              (unless
+                (compiler-load-normal-relative-entry? (& value))
+                (return
+                  (Err
+                    (compiler-load-manifest-setting-error
+                      path
+                      field
+                      "manifest field `entry` must be a normal relative path below the manifest directory"))))
+              (set! out.entry value)]))])
+    (Ok out)))
 
-;: Parse the top-level `(package ...)` form.
-(define (compiler-load-manifest-from-form [form : reader.SpannedSexpr]) : ResultCompilerPkgManifest
-  (match (reader.sexpr-view form)
-    [(List (slice (Sym s _) & rest))
-      (if (string.eq (compiler-load-symbol-text s) "package")
-        (compiler-load-manifest-fields
-          rest
-          ""
-          false
-          ""
-          false
-          (CompilerPkgKindBin)
-          false
-          ""
-          false
-          false
-          (compiler-pkg-deps-empty)
-          false
-          (compiler-pkg-link-empty))
-        (Err
-          (str_cat.str-cat
-            "expected `package` form, got `"
-            (compiler-load-symbol-text s)
-            "`")))]
-    [(List (slice _ & _)) (Err "manifest must start with `package`")]
-    [_ (Err "manifest must be a `(package ...)` form")]))
-
-(define (compiler-load-manifest-fields-have?
-  [fields : (& program (Slice reader.SpannedSexpr))]
-  [target : (& target str)]) : bool
-  (match fields
-    [(slice) false]
-    [(slice field & rest)
+(define (compiler-load-manifest-fields
+  [path : (& str)]
+  [form : reader.SpannedSexpr]
+  [fields : (& program (Slice reader.SpannedSexpr))]) : ResultCompilerPkgManifestDiagnostic
+  (let
+    [out : CompilerPkgManifest
+      (CompilerPkgManifest
+        ""
+        ""
+        (CompilerPkgKindBin)
+        ""
+        (compiler-pkg-deps-empty)
+        (compiler-pkg-link-empty)
+        (compiler-pkg-settings-empty))]
+    [seen : (Array bool 6) (make-array bool 6)]
+    [scopes : (Array bool 4) (make-array bool 4)]
+    (for [index (iterator.range 0 (length fields))]
       (let
-        [tail-has : bool (compiler-load-manifest-fields-have? rest target)]
-        (match (reader.sexpr-view field)
-          [(List (slice (Sym name _) & _))
-            (or (string.eq (compiler-load-symbol-text name) target) tail-has)]
-          [_ tail-has]))]))
+        [field : reader.SpannedSexpr (array-ref fields index)]
+        (match (reader.spanned-sexpr-view field)
+          [(List (slice (Sym id _) & values) _)
+            (let
+              [key : String (compiler-load-symbol-text id)]
+              (cond
+                [(or
+                    (string.eq key "profile")
+                    (string.eq key "target-settings"))
+                  (set!
+                    out.settings
+                    (try
+                      (compiler-load-manifest-section
+                        path
+                        field
+                        values
+                        (string.eq key "profile")
+                        (&mut scopes)
+                        out.settings)))]
+                [(string.eq key "target")
+                  (when
+                    out.settings.has-target
+                    (return
+                      (Err
+                        (compiler-load-manifest-setting-duplicate
+                          path
+                          field
+                          key))))
+                  (match values
+                    [(slice value)
+                      (set!
+                        out.settings.target
+                        (try (compiler-load-manifest-target-value value path)))
+                      (set! out.settings.has-target true)]
+                    [_
+                      (return
+                        (Err
+                          (compiler-load-manifest-setting-error
+                            path
+                            field
+                            "manifest field `target` takes a single value")))])]
+                [(or (string.eq key "cfg") (string.eq key "stdlib-root"))
+                  (try
+                    (compiler-load-manifest-project-option!
+                      path
+                      field
+                      values
+                      (& key)
+                      (&mut out.settings.project)))]
+                [else
+                  (let
+                    [slot : i64
+                      (cond
+                        [(string.eq key "name") 0]
+                        [(string.eq key "version") 1]
+                        [(string.eq key "kind") 2]
+                        [(string.eq key "entry") 3]
+                        [(string.eq key "dependencies") 4]
+                        [(string.eq key "link") 5]
+                        [else -1])]
+                    (when
+                      (< slot 0)
+                      (return
+                        (Err
+                          (compiler-load-manifest-unknown-field
+                            path
+                            field
+                            key
+                            "name version kind entry dependencies link target cfg stdlib-root profile target-settings"))))
+                    (when
+                      (array-ref seen slot)
+                      (return
+                        (Err
+                          (compiler-load-manifest-setting-duplicate
+                            path
+                            field
+                            key))))
+                    (set!
+                      out
+                      (try
+                        (compiler-load-manifest-basic-field
+                          path
+                          field
+                          values
+                          (& key)
+                          out)))
+                    (set! (array-ref seen slot) true))]))]
+          [(List (slice _ & _) _)
+            (return
+              (Err
+                (compiler-load-manifest-setting-error
+                  path
+                  field
+                  "package fields must start with a field name")))]
+          [_
+            (return
+              (Err
+                (compiler-load-manifest-setting-error
+                  path
+                  field
+                  "package fields must be lists like `(name \"...\")`")))])))
+    (cond
+      [(not (array-ref seen 0))
+        (Err
+          (compiler-load-manifest-setting-error
+            path
+            form
+            "manifest missing required field `name`"))]
+      [(not (array-ref seen 1))
+        (Err
+          (compiler-load-manifest-setting-error
+            path
+            form
+            "manifest missing required field `version`"))]
+      [else
+        (unless
+          (array-ref seen 3)
+          (set! out.entry (compiler-load-manifest-default-entry out.kind)))
+        (Ok out)])))
+
+(define (compiler-load-manifest-from-form
+  [path : (& str)]
+  [form : reader.SpannedSexpr]) : ResultCompilerPkgManifestDiagnostic
+  (match (reader.spanned-sexpr-view form)
+    [(List (slice (Sym id _) & fields) _)
+      (let
+        [name : String (compiler-load-symbol-text id)]
+        (if (string.eq name "package")
+          (compiler-load-manifest-fields path form fields)
+          (Err
+            (compiler-load-manifest-setting-error
+              path
+              form
+              (str_cat.str-cat "expected `package` form, got `" name "`")))))]
+    [(List (slice _ & _) _)
+      (Err
+        (compiler-load-manifest-setting-error
+          path
+          form
+          "manifest must start with `package`"))]
+    [_
+      (Err
+        (compiler-load-manifest-setting-error
+          path
+          form
+          "manifest must be a `(package ...)` form"))]))
+
+(defenum CompilerLoadMaybeManifestField
+  (NoField)
+  (Field reader.SpannedSexpr))
+
+(define (compiler-load-manifest-find-field-in
+  [fields : (& program (Slice reader.SpannedSexpr))]
+  [target : (& str)]) : CompilerLoadMaybeManifestField
+  (for [index (iterator.range 0 (length fields))]
+    (let
+      [field : reader.SpannedSexpr (array-ref fields index)]
+      (match (reader.spanned-sexpr-view field)
+        [(List (slice (Sym name _) & _) _)
+          (when
+            (string.eq (compiler-load-symbol-text name) target)
+            (return (Field field)))]
+        [_ unit])))
+  (NoField))
+
+(define (compiler-load-manifest-find-field
+  [form : reader.SpannedSexpr]
+  [target : (& str)]) : CompilerLoadMaybeManifestField
+  (match (reader.spanned-sexpr-view form)
+    [(List (slice (Sym name _) & fields) _)
+      (if (string.eq (compiler-load-symbol-text name) "package")
+        (compiler-load-manifest-find-field-in fields target)
+        (NoField))]
+    [_ (NoField)]))
 
 (define (compiler-load-manifest-form-has-field?
   [form : reader.SpannedSexpr]
   [target : (& target str)]) : bool
-  (match (reader.sexpr-view form)
-    [(List (slice (Sym s _) & rest))
-      (if (string.eq (compiler-load-symbol-text s) "package")
-        (compiler-load-manifest-fields-have? rest target)
-        false)]
-    [_ false]))
+  (match (compiler-load-manifest-find-field form target)
+    [(Field _) true]
+    [(NoField) false]))
 
 (define (compiler-load-manifest-needs-kind-inference?
   [form : reader.SpannedSexpr]) : bool
@@ -16078,53 +16940,11 @@
     (reader.spanned-sexpr-span form)
     message))
 
-;: Return the first dependency alias span from a well-formed
-;: `(dependencies ...)` field. The whole manifest span is a fail-closed
-;: fallback for callers validating a structurally constructed form.
-(define (compiler-load-manifest-first-dependency-entry-span
-  [entries : (& program (Slice reader.SpannedSexpr))]
-  [fallback : token.SourceSpan]) : token.SourceSpan
-  (match entries
-    [(slice entry & _)
-      (match (reader.spanned-sexpr-view entry)
-        [(List (slice alias & _) _) (reader.spanned-sexpr-span alias)]
-        [_ fallback])]
-    [_ fallback]))
-
-(define (compiler-load-manifest-first-dependency-field-span
-  [fields : reader.SpannedSexpr]
-  [fallback : token.SourceSpan]) : token.SourceSpan
-  (match (reader.spanned-sexpr-view fields)
-    [(List (slice field & _) _)
-      (match (reader.spanned-sexpr-view field)
-        [(List (slice (Sym name _) & entries) _)
-          (let
-            [rest (reader.spanned-sexpr-drop fields 1)]
-            (if (string.eq (compiler-load-symbol-text name) "dependencies")
-              (compiler-load-manifest-first-dependency-entry-span
-                entries
-                fallback)
-              (compiler-load-manifest-first-dependency-field-span rest fallback)))]
-        [(List (slice _ & _) _)
-          (let
-            [rest (reader.spanned-sexpr-drop fields 1)]
-            (compiler-load-manifest-first-dependency-field-span rest fallback))]
-        [_
-          (let
-            [rest (reader.spanned-sexpr-drop fields 1)]
-            (compiler-load-manifest-first-dependency-field-span rest fallback))])]
-    [_ fallback]))
-
-(define (compiler-load-manifest-first-dependency-span
-  [form : reader.SpannedSexpr]) : token.SourceSpan
-  (let
-    [fallback : token.SourceSpan (reader.spanned-sexpr-span form)]
-    (match (reader.spanned-sexpr-view form)
-      [(List (slice _ & _) _)
-        (let
-          [fields (reader.spanned-sexpr-drop form 1)]
-          (compiler-load-manifest-first-dependency-field-span fields fallback))]
-      [_ fallback])))
+(define (compiler-load-manifest-kind-span [form : reader.SpannedSexpr]) : token.SourceSpan
+  (match (compiler-load-manifest-find-field form "kind")
+    [(Field field) (reader.spanned-sexpr-span field)]
+    ;; An inferred kind applies to the package as a whole.
+    [(NoField) (reader.spanned-sexpr-span form)]))
 
 (define (compiler-load-manifest-rev-error
   [path : String]
@@ -16214,7 +17034,7 @@
     [_ (Ok manifest)]))
 
 ;: Enforce dependency-free library artifacts after kind inference and attach
-;: the diagnostic to the forbidden alias rather than the whole manifest.
+;: the diagnostic to the field that selects the library kind.
 (define (compiler-load-manifest-validate-library-dependencies
   [path : String]
   [form : reader.SpannedSexpr]
@@ -16230,59 +17050,32 @@
         (box
           (cdiag.compiler-diagnostic-from-span
             path
-            (compiler-load-manifest-first-dependency-span form)
+            (compiler-load-manifest-kind-span form)
             (compiler-pkg-library-dependency-message manifest.name dep.alias))))]))
 
-(define (compiler-load-manifest-apply-kind-inference
+(define (compiler-load-parse-manifest-form
   [path : String]
   [form : reader.SpannedSexpr]
-  [manifest : (& CompilerPkgManifest)]) : ResultCompilerPkgManifestDiagnostic
+  [infer-kind : bool]) : ResultCompilerPkgManifestDiagnostic
   (let
-    [raw-form : reader.SpannedSexpr form]
-    (if (compiler-load-manifest-needs-kind-inference? raw-form)
-      (match (compiler-load-manifest-infer-kind-from-files
-        (& (string.copy path)))
+    [manifest (try (compiler-load-manifest-from-form (& path) form))]
+    (if (and infer-kind (compiler-load-manifest-needs-kind-inference? form))
+      (match (compiler-load-manifest-infer-kind-from-files (& path))
         [(Ok kind)
           (compiler-load-manifest-validate-library-dependencies
             path
             form
-            (compiler-load-manifest-with-kind
-              (owned_view.compiler-owned-reference-shared-view manifest)
-              kind))]
+            (compiler-load-manifest-with-kind manifest kind))]
         [(Err message)
           (Err
             (box
               (compiler-load-manifest-validation-diagnostic path form message)))])
-      (compiler-load-manifest-validate-library-dependencies
-        path
-        form
-        (owned_view.compiler-owned-reference-shared-view manifest)))))
+      (compiler-load-manifest-validate-library-dependencies path form manifest))))
 
-(define (compiler-load-parse-manifest-form-diagnostic
+(define (compiler-load-parse-manifest-source
   [path : String]
-  [form : reader.SpannedSexpr]) : ResultCompilerPkgManifestDiagnostic
-  (match (compiler-load-manifest-from-form form)
-    [(Ok manifest)
-      (compiler-load-manifest-validate-library-dependencies path form manifest)]
-    [(Err message)
-      (Err
-        (box (compiler-load-manifest-validation-diagnostic path form message)))]))
-
-(define (compiler-load-parse-manifest-form-diagnostic-infer-kind
-  [path : String]
-  [form : reader.SpannedSexpr]) : ResultCompilerPkgManifestDiagnostic
-  (match (compiler-load-manifest-from-form form)
-    [(Ok manifest)
-      (compiler-load-manifest-apply-kind-inference path form (& manifest))]
-    [(Err message)
-      (Err
-        (box (compiler-load-manifest-validation-diagnostic path form message)))]))
-
-;: Parse a `typelisp.pkg` manifest source string into a structured manifest,
-;: preserving manifest path/span identity for source-facing errors.
-(define (compiler-load-parse-manifest-diagnostic
-  [path : String]
-  [source : (& str)]) : ResultCompilerPkgManifestDiagnostic
+  [source : (& str)]
+  [infer-kind : bool]) : ResultCompilerPkgManifestDiagnostic
   (let
     [mark : i64 (reader.sp-node-pool-len)]
     [result : ResultCompilerPkgManifestDiagnostic
@@ -16296,32 +17089,63 @@
               (Err
                 (box
                   (compiler-load-manifest-source-error-diagnostic path (& err))))]
-            [(Ok form) (compiler-load-parse-manifest-form-diagnostic path form)])])]
+            [(Ok form) (compiler-load-parse-manifest-form path form infer-kind)])])]
     (reader.sp-node-pool-truncate! mark)
     result))
+
+(define (compiler-load-parse-manifest-diagnostic
+  [path : String]
+  [source : (& str)]) : ResultCompilerPkgManifestDiagnostic
+  (compiler-load-parse-manifest-source path source false))
 
 (define (compiler-load-parse-manifest-diagnostic-infer-kind
   [path : String]
   [source : (& str)]) : ResultCompilerPkgManifestDiagnostic
+  (compiler-load-parse-manifest-source path source true))
+
+;; Manifests are session inputs, including admitted source overlays.
+(define (compiler-load-read-manifest [path : (& str)]) : ResultCompilerPkgManifestDiagnostic
   (let
-    [mark : i64 (reader.sp-node-pool-len)]
-    [result : ResultCompilerPkgManifestDiagnostic
-      (match (lexer.spanned-result source)
-        [(Err err)
-          (Err
-            (box (compiler-load-manifest-source-error-diagnostic path (& err))))]
-        [(Ok toks)
-          (match (reader.spanned-result (& toks))
-            [(Err err)
-              (Err
-                (box
-                  (compiler-load-manifest-source-error-diagnostic path (& err))))]
-            [(Ok form)
-              (compiler-load-parse-manifest-form-diagnostic-infer-kind
-                path
-                form)])])]
-    (reader.sp-node-pool-truncate! mark)
-    result))
+    [provider : CompilerLoadSourceProvider
+      (compiler-load-session-state-source-provider
+        (& compiler-load-active-session-state))]
+    (when
+      (and
+        provider.active
+        (>=
+          (source_overlay.compiler-source-overlay-find
+            (& provider.overlay)
+            (& (compiler-load-source-provider-canonical-path (& provider) path)))
+          0))
+      (return
+        (compiler-load-parse-manifest-diagnostic-infer-kind
+          (string.copy path)
+          (& (compiler-load-session-read-source-text path)))))
+    (match (compiler-load-session-try-read-input-text path)
+      [(OkIoString source)
+        (compiler-load-parse-manifest-diagnostic-infer-kind
+          (string.copy path)
+          (& source))]
+      [(ErrIoString error)
+        (Err
+          (box
+            (cdiag.compiler-diagnostic-at-start
+              (string.copy path)
+              (str_cat.str-cat
+                "cannot read package manifest '"
+                (string.copy path)
+                "': "
+                (io.error-message error)))))])))
+
+(define (compiler-load-render-manifest-diagnostic
+  [diag : cdiag.CompilerDiagnostic]) : String
+  (let
+    [path : String (cdiag.compiler-diagnostic-path (& diag))]
+    (if (io.file-exists? (string.copy (& path)))
+      (cdiag.compiler-diagnostic-render-source
+        diag
+        (compiler-load-session-read-source-text (& path)))
+      (cdiag.compiler-diagnostic-render (& diag)))))
 
 ;: --- pkg:<alias>/... import resolution ---------------------------------------
 ;: Resolve a `pkg:<alias>/<rest>` import against a parsed manifest's dependency
@@ -16428,29 +17252,55 @@
         [trimmed : String
           (if (compiler-load-path-separator? (string.string-ref dir (- n 1)))
             (string.substring dir 0 (- n 1))
-            (owned_view.compiler-owned-shared-view dir))]
+            (string.copy (& dir)))]
         [parent : String (compiler-load-dirname trimmed)]
-        (if (string.eq parent dir)
+        (if (or
+          (string.eq parent dir)
+          (and (string.eq parent "") (fs.path-absolute? (& dir))))
           (CompilerLoadNoPath)
           (CompilerLoadSomePath parent))))))
 
-;: Walk up from `dir` looking for a `typelisp.pkg` manifest, mirroring the Rust
-;: `discover_manifest` (src/package.rs). `fuel` bounds the climb.
+;: Walk up from `dir` looking for `typelisp.pkg`. A relative climb keeps
+;: relative paths as it continues from the current directory toward the root.
 (define (compiler-load-discover-manifest-up [dir : String] [fuel : i64]) : CompilerLoadMaybePath
   (if (<= fuel 0)
     (CompilerLoadNoPath)
     (let
       [candidate : String (str_cat.str-cat (string.copy dir) "typelisp.pkg")]
-      (if (io.file-exists? (string.copy candidate))
-        (CompilerLoadSomePath candidate)
-        (match (compiler-load-parent-dir dir)
-          [(CompilerLoadNoPath) (CompilerLoadNoPath)]
-          [(CompilerLoadSomePath parent)
-            (compiler-load-discover-manifest-up parent (- fuel 1))])))))
+      (cond
+        [(io.file-exists? (string.copy (& candidate)))
+          (CompilerLoadSomePath candidate)]
+        [(or (string.eq dir "") (fs.path-normalized-escapes? (& dir)))
+          (match (compiler-load-parent-dir
+            (compiler-load-dirname
+              (& (compiler-load-canonical-path (& candidate)))))
+            [(CompilerLoadNoPath) (CompilerLoadNoPath)]
+            [(CompilerLoadSomePath _)
+              (compiler-load-discover-manifest-up
+                (str_cat.str-cat dir "../")
+                (- fuel 1))])]
+        [else
+          (match (compiler-load-parent-dir dir)
+            [(CompilerLoadNoPath) (CompilerLoadNoPath)]
+            [(CompilerLoadSomePath parent)
+              (compiler-load-discover-manifest-up parent (- fuel 1))])]))))
+
+(define (compiler-load-select-manifest-path
+  [manifest-path : String]
+  [has-manifest : bool]) : CompilerLoadMaybePath
+  (if has-manifest
+    (CompilerLoadSomePath manifest-path)
+    (compiler-load-discover-manifest-up "" 256)))
 
 ;: Discover the nearest `typelisp.pkg` at or above the importer's directory.
 (define (compiler-load-discover-manifest [start-path : (& str)]) : CompilerLoadMaybePath
-  (compiler-load-discover-manifest-up (compiler-load-dirname start-path) 256))
+  (let
+    [dir : String (compiler-load-dirname start-path)]
+    (if (fs.path-normalized-escapes? (& (compiler-load-normalize-path (& dir))))
+      (compiler-load-discover-manifest-up
+        (compiler-load-dirname (& (compiler-load-canonical-path start-path)))
+        256)
+      (compiler-load-discover-manifest-up dir 256))))
 
 ;: The provider of a source no physical path names: a synthetic `<...>` path,
 ;: a `tli:` catalog name, or none. It is the provider of no other source, not
@@ -16674,19 +17524,17 @@
 
 ;: Resolve a `pkg:<alias>/...` import by discovering and parsing the nearest
 ;: `typelisp.pkg` relative to the importer, then resolving against its deps.
-;: Missing manifests and parse errors fall back to the raw import path so the
-;: loader reports a normal "cannot read import" error. Syntactically valid
-;: manifests preserve pkg-resolution diagnostics into the caller.
+;: Missing manifests fall back to the raw import path. A manifest that
+;: cannot be read or parsed reports its diagnostic at the declaring file.
 (define (compiler-load-resolve-pkg-import-from-disk
   [importer-path : (& str)]
   [import-path : String]) : ResultPkgResolve
   (match (compiler-load-discover-manifest importer-path)
     [(CompilerLoadNoPath) (Ok import-path)]
     [(CompilerLoadSomePath manifest-path)
-      (match (compiler-load-parse-manifest-diagnostic
-        (string.copy manifest-path)
-        (& (compiler-load-session-read-source-text manifest-path)))
-        [(Err _) (Ok import-path)]
+      (match (compiler-load-read-manifest (& manifest-path))
+        [(Err diag)
+          (Err (compiler-load-render-manifest-diagnostic (deref diag)))]
         [(Ok manifest)
           (compiler-load-resolve-pkg-import
             import-path

@@ -590,6 +590,9 @@ file wrap/typelisp.pkg
   (name "wrap")
   (version "0.1.0")
   (kind staticlib)
+  (target windows-x86_64)
+  (profile release (debug true))
+  (target-settings linux-x86_64 (cfg "wrap-linux"))
   (link
     (search-paths "vendor")
     (linux-libraries "ffi_add7")
@@ -597,13 +600,22 @@ file wrap/typelisp.pkg
 end-file
 file wrap/src/lib.tl
 (extern (ffi_add7 [x : i64]) : i64)
-(define (wrap-add [x : i64]) : i64 (ffi_add7 x))
+(cfg (all wrap-linux (not wrap-app-linux))
+  (define (wrap-add [x : i64]) : i64 (ffi_add7 x)))
+(define (wrap-profile-debug) : i64 (cfg compiler-backtrace 1 0))
 end-file
 file app/typelisp.pkg
 (package
   (name "wrap_app")
   (version "0.1.0")
   (kind bin)
+  (target linux-x86_64)
+  (stdlib-root "base")
+  (profile dev (opt-level 0) (debug false) (backend-mode scalar))
+  (profile release (opt-level 1) (debug true) (backend-mode sse2))
+  (target-settings linux-x86_64
+    (cfg "wrap-app-linux")
+    (stdlib-root "linux"))
   (dependencies
     (wrap "../wrap")))
 end-file
@@ -611,10 +623,20 @@ file app/src/main.tl
 ;# ```tl run
 ;# ;; doctest-exit: 42
 ;# (import wrap.src.lib as w)
-;# (define (main) : i64 (w.wrap-add 35))
+;# (import stdlib.wrap_doctest as settings)
+;# (cfg (all wrap-app-linux (not wrap-linux))
+;#   (define (main) : i64
+;#     (+ (w.wrap-add settings.input)
+;#       (- (cfg compiler-backtrace 1 0) (w.wrap-profile-debug)))))
 ;# ```
 (import wrap.src.lib as w)
 (define (main) : i64 (w.wrap-add 35))
+end-file
+file app/base/wrap_doctest.tl
+(define input : i64 1)
+end-file
+file app/linux/wrap_doctest.tl
+(define input : i64 35)
 end-file
 sh mkdir -p "{{dir}}/wrap/vendor"
 exec as "{{dir}}/ffi_add7.s" -o "{{dir}}/ffi_add7.o"

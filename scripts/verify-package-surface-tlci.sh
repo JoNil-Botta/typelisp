@@ -93,9 +93,11 @@ verification_field() {
     phase=$1
     field=$2
     file=$3
-    awk -F '|' -v wanted_phase="phase=$phase" -v wanted_field="$field" '
+    package_count=${4:-3}
+    awk -F '|' -v wanted_phase="phase=$phase" -v wanted_field="$field" \
+        -v requests="requests=$package_count" -v entries="entries=$package_count" '
         $1 == "dependency-tlci-verification" && $2 == wanted_phase &&
-            $3 == "requests=3" && $4 == "entries=3" {
+            $3 == requests && $4 == entries {
             for (i = 3; i <= NF; i++) {
                 split($i, pair, "=")
                 if (pair[1] == wanted_field) {
@@ -112,11 +114,12 @@ assert_catalog_state() {
     file=$2
     unavailable=$3
     code=$4
-    grep -F "dependency-tlci-verification|phase=prepared|requests=3|entries=3" \
+    package_count=${5:-3}
+    grep -F "dependency-tlci-verification|phase=prepared|requests=$package_count|entries=$package_count|" \
         "$file" |
         grep -F "|unavailable=$unavailable|metadata=0|code=$code|" >/dev/null ||
         fail "$label dependency catalog census mismatch"
-    code_bytes=$(verification_field prepared code-bytes "$file")
+    code_bytes=$(verification_field prepared code-bytes "$file" "$package_count")
     [ -n "$code_bytes" ] || fail "$label omitted dependency code bytes"
     if [ "$code" -eq 0 ]; then
         [ "$code_bytes" -eq 0 ] || fail "$label retained mapped dependency code"
@@ -286,30 +289,24 @@ assert_tli_route() {
     hydrated_bundles=$5
     hits=$6
     force_source=$7
-    [ "$(grep -Fc 'dependency-tlci-verification|phase=runtime-finished|requests=-1|entries=3|' "$file")" -eq 1 ] ||
+    package_count=${8:-3}
+    runtime="dependency-tlci-verification|phase=runtime-finished|requests=-1|entries=$package_count|"
+    [ "$(grep -Fc "$runtime" "$file")" -eq 1 ] ||
         fail "$label dependency runtime observation is missing or duplicated"
     if [ "$force_source" = "1" ]; then
-        if ! grep -F \
-            "dependency-tlci-verification|phase=runtime-finished|requests=-1|entries=3" \
-            "$file" |
+        if ! grep -F "$runtime" "$file" |
             grep -F "|tli-package-bundles=$bundles|tli-hydrated-package-bundles=$hydrated_bundles|" |
             grep -F "|tli-package-hits=$hits|tli-force-source=$force_source" \
                 >/dev/null; then
-            grep -F \
-                "dependency-tlci-verification|phase=runtime-finished|requests=-1|entries=3" \
-                "$file" >&2 || true
+            grep -F "$runtime" "$file" >&2 || true
             fail "$label dependency TLI route mismatch"
         fi
     else
-        if ! grep -F \
-            "dependency-tlci-verification|phase=runtime-finished|requests=-1|entries=3" \
-            "$file" |
+        if ! grep -F "$runtime" "$file" |
             grep -F "|tli-active=$active|tli-package-bundles=$bundles|tli-hydrated-package-bundles=$hydrated_bundles|" |
             grep -F "|tli-package-hits=$hits|tli-force-source=$force_source" \
                 >/dev/null; then
-            grep -F \
-                "dependency-tlci-verification|phase=runtime-finished|requests=-1|entries=3" \
-                "$file" >&2 || true
+            grep -F "$runtime" "$file" >&2 || true
             fail "$label dependency TLI route mismatch"
         fi
     fi
@@ -867,4 +864,134 @@ EOF
 done
 unset TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE || true
 
-echo "[package-surface-tlci] direct TLI hydration, opacity parity, and #9755 passed"
+echo "[package-surface-tlci] #9083 lifetime-bearing public package exports"
+VIEWS="$WORKDIR/views"
+VIEW_APP="$WORKDIR/view-app"
+VIEW_APP_BIN="$VIEW_APP/target/release/view_app$NL_BIN_EXT"
+mkdir -p "$VIEWS/src" "$VIEW_APP/src"
+
+cat > "$VIEWS/typelisp.pkg" <<'EOF'
+(package
+  (name "views")
+  (version "1.0.0")
+  (kind "lib"))
+EOF
+cat > "$VIEWS/src/lib.tl" <<'EOF'
+(defstruct View (:lifetimes a) (value (& a i64)))
+(defstruct Nested (:lifetimes item) (view (View item)))
+(defstruct Plain (value i64))
+
+(define (make-view [x : (& a i64)]) : (View a) (View x))
+(define (read-view [view : (View a)]) : i64 (deref view.value))
+(define (make-nested [x : (& a i64)]) : (Nested a) (Nested (make-view x)))
+(define (make-plain [value : i64]) : Plain (Plain value))
+
+(defmacro (through-interface [value : Expr]) : Expr value)
+EOF
+
+cat > "$VIEW_APP/typelisp.pkg" <<'EOF'
+(package
+  (name "view_app")
+  (version "1.0.0")
+  (kind "bin")
+  (dependencies (views "../views")))
+EOF
+cat > "$WORKDIR/view-app.tl" <<'EOF'
+(import views.src.lib as dep)
+
+(define (consume [x : (& caller i64)]) : i64
+  (let
+    [view : (dep.View caller) (dep.make-view x)]
+    [nested : (dep.Nested caller) (dep.make-nested x)]
+    [plain : dep.Plain (dep.make-plain (dep.read-view view))]
+    (if (= plain.value (dep.read-view nested.view)) plain.value 1)))
+
+(define (main) : i64
+  (let [x : i64 (dep.through-interface 42)] (consume (& x))))
+EOF
+
+build_view_app() {
+    rm -rf "$VIEW_APP/target"
+    "$COMPILER" build --release --manifest-path "$VIEW_APP/typelisp.pkg" \
+        --target "$NL_BOOTSTRAP_TARGET" --backend-mode scalar --opt-level "$1" \
+        > "$2.out" 2> "$2.err"
+}
+
+for opt in 0 1 2; do
+    for route in native native-cached source; do
+        if [ "$route" = source ]; then
+            export TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE=1
+        else
+            unset TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE || true
+        fi
+        cp "$WORKDIR/view-app.tl" "$VIEW_APP/src/main.tl"
+        log="$WORKDIR/view-app-opt$opt-$route"
+        if ! build_view_app "$opt" "$log"; then
+            cat "$log.out" "$log.err" >&2
+            fail "#9083 opt$opt $route build failed"
+        fi
+        if [ "$route" = source ]; then
+            assert_catalog_state "$route" "$log.err" 1 0 1
+            assert_tli_route "$route" "$log.err" 0 0 0 0 1 1
+            assert_profile_eq dependency_tlci_interpreted_fallbacks 1 "$log.err"
+            assert_profile_eq dependency_tlci_native_dispatches 0 "$log.err"
+        else
+            assert_catalog_state "$route" "$log.err" 0 1 1
+            assert_tli_route "$route" "$log.err" 1 1 1 1 0 1
+            assert_profile_eq dependency_tlci_native_dispatches 1 "$log.err"
+            if [ "$route" = native-cached ]; then
+                grep -F 'Fresh ' "$log.out" | grep -F 'views.tlci' >/dev/null ||
+                    fail "#9083 opt$opt cached build did not reuse the dependency TLCI"
+            fi
+        fi
+        status=0
+        "$VIEW_APP_BIN" > "$log.program.out" 2> "$log.program.err" || status=$?
+        [ "$status" -eq 42 ] || fail "#9083 opt$opt $route exited $status, expected 42"
+    done
+done
+
+for route in native source; do
+    if [ "$route" = source ]; then
+        export TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE=1
+    else
+        unset TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE || true
+    fi
+    for lifetime_case in arity plain-arity unknown escape; do
+        case "$lifetime_case" in
+            arity)
+                invalid='(define (invalid [x : (& a i64)] [y : (& b i64)]) : (dep.View a b)
+  (dep.make-view x))'
+                expected='error[E0202]: typecheck: nominal lifetime argument arity mismatch' ;;
+            plain-arity)
+                invalid='(define (invalid [x : (& a i64)]) : (dep.Plain a)
+  (dep.make-plain (deref x)))'
+                expected='error[E0202]: typecheck: nominal lifetime argument arity mismatch' ;;
+            unknown)
+                invalid='(define (invalid [x : (& a i64)]) : i64
+  (let [view : (dep.View missing) (dep.make-view x)] (dep.read-view view)))'
+                expected='source lifetime `a` does not outlive required lifetime `missing`' ;;
+            escape)
+                invalid='(define (invalid [x : (& a i64)]) : (dep.View a)
+  (let [local : i64 (deref x)] (dep.make-view (& local))))'
+                expected='error[E0205]: typecheck: reference value would escape lexical scope' ;;
+        esac
+        cp "$WORKDIR/view-app.tl" "$VIEW_APP/src/main.tl"
+        printf '\n%s\n' "$invalid" >> "$VIEW_APP/src/main.tl"
+        log="$WORKDIR/view-app-$lifetime_case-$route"
+        if build_view_app 0 "$log"; then
+            fail "#9083 $route $lifetime_case unexpectedly built"
+        fi
+        grep -F "$expected" "$log.err" >/dev/null || {
+            cat "$log.err" >&2
+            fail "#9083 $route $lifetime_case omitted the expected diagnostic"
+        }
+        if [ "$route" = source ]; then
+            assert_tli_route "$route" "$log.err" 0 0 0 0 1 1
+        else
+            assert_tli_route "$route" "$log.err" 1 1 1 1 0 1
+        fi
+    done
+done
+unset TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE || true
+
+echo "[package-surface-tlci] direct TLI hydration, lifetime and opacity parity, and #9755 passed"

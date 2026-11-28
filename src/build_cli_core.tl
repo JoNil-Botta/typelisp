@@ -4219,17 +4219,6 @@
             (process.args-ref origins.declared-by index)))))
     out))
 
-(define (build-package-assembler-command-for
-  [target : be_state.CompilerBackendTarget]
-  [asm-path : String]
-  [obj-path : String]) : build_run_core.ResultSourceToolCommand
-  (match target
-    [(Linux)
-      (Ok (build_run_core.source-tool-assembler-command asm-path obj-path))]
-    [(Windows)
-      (Ok
-        (build_run_core.source-tool-windows-assembler-command asm-path obj-path))]))
-
 (define (build-package-artifact-command-for
   [kind : load.CompilerPkgKind]
   [target : be_state.CompilerBackendTarget]
@@ -4515,30 +4504,25 @@
             "true"
             "false"))
         extra-v3)]
-    (if direct-object
-      (build-package-runtime-input-transcript-after-assembler
-        base
-        kind
-        target
-        obj-path
-        artifact-path
-        link-inputs)
-      (let
-        [assembler
+    [assembler-text : String
+      (cond
+        [direct-object ""]
+        [(be_facts.compiler-backend-target-linux? target)
+          (build-package-transcript-field "assembler" "typelisp-linux-x86_64")]
+        [else
           (try
-            (build-package-assembler-command-for
-              target
-              asm-path
-              (owned_view.compiler-owned-shared-view obj-path)))]
-        [assembler-text
-          (try (build-package-command-transcript "assembler" assembler))]
-        (build-package-runtime-input-transcript-after-assembler
-          (str_cat.str-cat base assembler-text)
-          kind
-          target
-          obj-path
-          artifact-path
-          link-inputs)))))
+            (build-package-command-transcript
+              "assembler"
+              (build_run_core.source-tool-windows-assembler-command
+                asm-path
+                (string.copy (& obj-path)))))])]
+    (build-package-runtime-input-transcript-after-assembler
+      (str_cat.str-cat base assembler-text)
+      kind
+      target
+      obj-path
+      artifact-path
+      link-inputs)))
 
 (define (build-package-lib-input-transcript
   [target : be_state.CompilerBackendTarget]
@@ -6176,18 +6160,12 @@
               (& stub-asm)
               (& stub-text)
               "build: failed to write empty library stub assembly"))
-          (let
-            [asm-cmd : process.ProcessCommand
-              (try
-                (build-package-assembler-command-for
-                  target
-                  (string.copy (& stub-asm))
-                  (string.copy (& stub-obj))))]
-            (try
-              (build_run_core.source-tool-run-command
-                "build: assembler failed"
-                target
-                asm-cmd)))
+          (try
+            (build_run_core.source-tool-assemble
+              "build: assembler failed"
+              target
+              stub-asm
+              (string.copy (& stub-obj))))
           (set!
             obj-paths
             (build_run_core.source-tool-args-append obj-paths stub-obj)))
@@ -6201,18 +6179,12 @@
                 (& (build-package-lib-obj-name (& fname) target)))]
             (unless
               (array-ref (deref direct-objects) i)
-              (let
-                [asm-cmd : process.ProcessCommand
-                  (try
-                    (build-package-assembler-command-for
-                      target
-                      (string.copy (& asm-p))
-                      (string.copy (& obj-p))))]
-                (try
-                  (build_run_core.source-tool-run-command
-                    "build: assembler failed"
-                    target
-                    asm-cmd))))
+              (try
+                (build_run_core.source-tool-assemble
+                  "build: assembler failed"
+                  target
+                  asm-p
+                  (string.copy (& obj-p)))))
             (set!
               obj-paths
               (build_run_core.source-tool-args-append obj-paths obj-p)))))

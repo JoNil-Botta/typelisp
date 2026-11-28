@@ -55,7 +55,6 @@ for limit in "$SPMD_STEP_SECONDS" "$SPMD_BATCH_SECONDS"; do
 done
 if [ "$HOST_OS" = linux ]; then
     command -v timeout >/dev/null 2>&1 || fail "missing coreutils timeout"
-    command -v as >/dev/null 2>&1 || fail "missing assembler: as"
     command -v ld >/dev/null 2>&1 || fail "missing linker: ld"
     TRIPLE=x86_64-unknown-linux-gnu
     BIN_EXT=
@@ -221,7 +220,7 @@ spmd_assemble_link_linux() {
     _obj=$1.o
     _bin=$1$BIN_EXT
     _link_base=$1
-    if ! spmd_invoke "$SPMD_STEP_SECONDS" "$1.assemble" as "$_asm" -o "$_obj" ||
+    if ! spmd_invoke "$SPMD_STEP_SECONDS" "$1.assemble" "$COMPILER" assemble "$_asm" -o "$_obj" ||
         [ "$spmd_status" -ne 0 ] || [ -s "$1.assemble.err" ]; then
         return 1
     fi

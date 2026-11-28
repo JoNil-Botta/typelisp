@@ -9788,21 +9788,23 @@
 (define (compiler-debug-path-remap-enabled?) : bool
   (> (string.string-length compiler-debug-path-remap-from) 0))
 
+(define (compiler-debug-path-remap-matches? [path : (& str)]) : bool
+  (and
+    (compiler-debug-path-remap-enabled?)
+    (string.is-string-prefix-at path (& compiler-debug-path-remap-from) 0)))
+
 (define (compiler-debug-path-remap [path : String]) : String
-  (let
-    [from-length : i64 (string.string-length compiler-debug-path-remap-from)]
-    [path-length : i64 (string.string-length path)]
-    (if (and
-      (> from-length 0)
-      (>= path-length from-length)
-      (string.eq
-        (string.substring path 0 from-length)
-        compiler-debug-path-remap-from))
+  (if (compiler-debug-path-remap-matches? (& path))
+    (let
+      [from-length (string.string-length compiler-debug-path-remap-from)]
       (str_cat.str-cat
         (string.copy (& compiler-debug-path-remap-to))
-        (string.substring path from-length (- path-length from-length))
-        "")
-      path)))
+        (string.substring
+          (& path)
+          from-length
+          (- (string.string-length (& path)) from-length))
+        ""))
+    path))
 
 (defstruct CompilerSourceLocation
   (path-id i64)

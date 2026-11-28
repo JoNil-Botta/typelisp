@@ -17573,12 +17573,20 @@ f:
     [mapped : String
       (ir.compiler-debug-path-remap "/private/build/src/main.tl")]
     [unchanged : String (ir.compiler-debug-path-remap "/other/src/main.tl")]
+    [from-relative
+      (be_scalar.compiler-backend-elf-debug-path "src/main.tl" "/private/build")]
+    [relative-map (ir.compiler-debug-path-remap-set! "src=REMAPPED")]
+    [already-mapped
+      (be_scalar.compiler-backend-elf-debug-path "src/main.tl" "/private/build")]
     [_restore : unit (ir.compiler-debug-path-remap-clear!)]
     (and
       invalid-ok
       configured
       (string.eq mapped "WORKSPACE/src/main.tl")
       (string.eq unchanged "/other/src/main.tl")
+      (string.eq from-relative "WORKSPACE/src/main.tl")
+      relative-map
+      (string.eq already-mapped "REMAPPED/main.tl")
       (not (ir.compiler-debug-path-remap-enabled?)))))
 
 (define (compiler-backend-backtrace-metadata-shape-ok?) : bool

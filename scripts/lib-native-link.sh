@@ -184,7 +184,9 @@ configure_windows_clang_env() {
 
 configure_toolchain() {
     if [ "$NL_HOST_OS" = linux ]; then
-        command -v as >/dev/null 2>&1 || fail "native link requires 'as'"
+        if [ "${1:-}" != linker-only ]; then
+            command -v as >/dev/null 2>&1 || fail "native link requires 'as'"
+        fi
         command -v ld >/dev/null 2>&1 || fail "native link requires 'ld'"
     else
         configure_windows_clang_env || return $?
@@ -373,5 +375,36 @@ assemble_and_link() {
         as "$asm" -o "$obj" || return $?
         _entry=$(linux_entry_symbol_for_asm "$asm") || return $?
         link_native_object "$label" "$obj" "$bin" "$_entry" "$_stdlib_archive"
+    fi
+}
+
+# Link the object assembled by the compiler from its final Linux assembly.
+# Windows keeps the existing COFF assembly and link path.
+assemble_compiler_output_and_link() {
+    _compiler=$1
+    label=$2
+    asm=$3
+    obj=$4
+    bin=$5
+    if [ "$NL_HOST_OS" = windows ]; then
+        assemble_and_link "$label" "$asm" "$obj" "$bin"
+    else
+        echo "[native-link] assemble $label with TypeLisp" || return $?
+        "$_compiler" assemble "$asm" -o "$obj" || return $?
+        _entry=$(linux_entry_symbol_for_asm "$asm") || return $?
+        _stdlib_archive=$(native_link_find_stdlib_archive "$asm")
+        link_native_object "$label" "$obj" "$bin" "$_entry" "$_stdlib_archive"
+    fi
+}
+
+# Only the published bootstrap seed may predate the TypeLisp assembler.
+assemble_seed_output_and_link() {
+    _seed=$1
+    shift
+    if [ "$NL_HOST_OS" = linux ] && ! "$_seed" assemble --help >/dev/null 2>&1; then
+        command -v as >/dev/null 2>&1 || fail "the published bootstrap seed requires 'as'"
+        assemble_and_link "$@"
+    else
+        assemble_compiler_output_and_link "$_seed" "$@"
     fi
 }

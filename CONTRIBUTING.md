@@ -11,8 +11,10 @@ Thanks for your interest! This is a learning project — all contributions welco
    (Windows). The minimum supported seed is a stage0 published on or after
    2026-08-30; refetch if yours is older. The bootstrap has no compatibility
    bridges for older seeds.
-3. You also need a native toolchain: `as` + `ld` on Linux, or `clang` + MSVC
-   `link.exe` + a Windows SDK on Windows, for build/run.
+3. Linux builds use TypeLisp's assembler, GNU `ld` for linking, and `ar` for
+   static libraries. A bootstrap seed published before the assembler needs
+   GNU `as` for the first stage. Windows builds use `clang`, MSVC `link.exe`,
+   and a Windows SDK.
 4. The verification gate also runs these host tools; none is a build input:
    - Linux: the rest of GNU binutils (`readelf`, `objdump`), a C compiler
      (`cc`) and `clang` for the C fixtures and baselines, `valgrind` for the
@@ -38,8 +40,9 @@ and [Self-hosting and bootstrap](docs/testing-and-bootstrap.md#self-hosting-and-
 
 ## Zero Dependencies Rule
 
-**TypeLisp has no third-party dependencies.** The only build inputs are the
-native assembler/linker toolchain. This keeps the project simple, auditable, and
+**TypeLisp has no third-party dependencies.** Builds use the operating system's
+native toolchain for linking and archiving, and for Windows assembly.
+This keeps the project simple, auditable, and
 free from supply-chain risk. If you need functionality that isn't available,
 implement it in TypeLisp.
 

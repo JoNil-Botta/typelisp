@@ -15,6 +15,8 @@
   (Ok String)
   (Err String))
 
+(clone.gen-clone ResultCompilerObjectElf)
+
 (define compiler-object-elf-header-size : i64
   64)
 (define compiler-object-elf-section-header-size : i64
@@ -257,6 +259,64 @@
   (align i64)
   (entry-size i64))
 
+(defenum ResultElfSectionHeader
+  (Ok ElfSectionHeader)
+  (Err String))
+
+;; Project logical input-section descriptors from either producer. Link and
+;; entry size apply to SHF_LINK_ORDER and SHF_MERGE respectively. SHT_GROUP
+;; membership is encoded by a separate group payload in the physical plan.
+(define (project-input-section
+  [spec : (& cobj.CompilerObjectSectionSpec)]
+  [name-index : i64]
+  [offset : i64]
+  [size : i64]
+  [link : i64]
+  [entry-size : i64]) : ResultElfSectionHeader
+  (match spec.format
+    [(Elf ty flags)
+      (let
+        [nobits
+          (match spec.storage
+            [(ZeroFill _) true]
+            [(Initialized) false])]
+        (unless
+          (and
+            (>= spec.id.value 0)
+            (layout.compiler-object-layout-name-valid? spec.name)
+            (layout.compiler-object-layout-valid-align? spec.align)
+            (<= spec.align layout.compiler-object-max-file-size)
+            (>= size 0)
+            (<= size layout.compiler-object-max-file-size)
+            (=
+              ty
+              (if nobits
+                8
+                1))
+            (= (bit-and flags 0x6b7) flags)
+            (= (!= (bit-and flags 128) 0) (> link 0))
+            (= (!= (bit-and flags 16) 0) (> entry-size 0))
+            (or (= (bit-and flags 32) 0) (> entry-size 0))
+            (or (= entry-size 0) (= (% size entry-size) 0))
+            (or (not nobits) (= (bit-and flags 4) 0)))
+          (return
+            (Err
+              (str_cat.str-cat
+                "elf: invalid section descriptor for "
+                (string.copy spec.name)))))
+        (Ok
+          (ElfSectionHeader
+            name-index
+            ty
+            flags
+            offset
+            size
+            link
+            0
+            spec.align
+            entry-size)))]
+    [_ (Err "elf: expected ELF section format")]))
+
 (defstruct ElfProjection
   (rows (__tl_dyn-array ElfSectionHeader))
   (names String)
@@ -303,22 +363,18 @@
                 (& (array-ref image.sections.slots i)))]
             [at : i64
               (layout.compiler-object-layout-align-offset offset spec.align)]
-            (match spec.format
-              [(Elf ty flags)
-                (set!
-                  (array-ref rows (+ i 1))
-                  (ElfSectionHeader 0 ty flags at size 0 0 spec.align 0))
-                (when
-                  (!= ty compiler-object-elf-sht-nobits)
-                  (when
-                    (> size (- layout.compiler-object-max-file-size at))
-                    (return
-                      (Err
-                        (str_cat.str-cat
-                          "elf: section exceeds size limit: "
-                          (string.copy spec.name)))))
-                  (set! offset (+ at size)))]
-              [_ (return (Err "elf: invalid section descriptor"))]))]))
+            [row (try (project-input-section spec 0 at size 0 0))]
+            (set! (array-ref rows (+ i 1)) row)
+            (when
+              (!= row.ty compiler-object-elf-sht-nobits)
+              (when
+                (> size (- layout.compiler-object-max-file-size at))
+                (return
+                  (Err
+                    (str_cat.str-cat
+                      "elf: section exceeds size limit: "
+                      (string.copy spec.name)))))
+              (set! offset (+ at size))))]))
     (set! offset (layout.compiler-object-layout-align-offset offset 8))
     (for [i (iterator.range 0 count)]
       (let
@@ -446,24 +502,6 @@
   (layout.compiler-object-layout-push-u16! out (array-length plan.rows))
   (layout.compiler-object-layout-push-u16! out (+ plan.symtab 2)))
 
-(define (compiler-object-elf-render-loadable-sections!
-  [out : (&mut byte_buf_core.ByteBufBuilder)]
-  [image : (& cobj.CompilerObjectImage)]
-  [plan : (& ElfProjection)]) : unit
-  (for [index (iterator.range 0 image.sections.len)]
-    (let
-      [id (layout.compiler-object-layout-section-at image index)]
-      (when
-        (and
-          (> (array-ref plan.rows (+ 1 index)).size 0)
-          (!=
-            (array-ref plan.rows (+ 1 index)).ty
-            compiler-object-elf-sht-nobits))
-        (layout.compiler-object-layout-render-padding-to!
-          out
-          (array-ref plan.rows (+ index 1)).offset)
-        (layout.compiler-object-layout-render-section! out image id)))))
-
 (define (compiler-object-elf-relocation-type
   [kind : cobj.CompilerObjectRelocationKind]) : i64
   (match kind
@@ -485,15 +523,22 @@
   [offset : i64]
   [kind : cobj.CompilerObjectRelocationKind]
   [target : (& str)]) : unit
-  (layout.compiler-object-layout-push-u64! out offset)
-  (layout.compiler-object-layout-push-u64!
+  (push-rela!
     out
-    (bit-or
-      (shl (compiler-object-elf-symbol-index image (& target)) 32)
-      (compiler-object-elf-relocation-type kind)))
-  (layout.compiler-object-layout-push-u64!
-    out
+    offset
+    (compiler-object-elf-symbol-index image (& target))
+    (compiler-object-elf-relocation-type kind)
     (compiler-object-elf-relocation-addend kind)))
+
+(define (push-rela!
+  [out : (&mut byte_buf_core.ByteBufBuilder)]
+  [offset : i64]
+  [target : i64]
+  [kind : i64]
+  [addend : i64]) : unit
+  (layout.compiler-object-layout-push-u64! out offset)
+  (layout.compiler-object-layout-push-u64! out (bit-or (shl target 32) kind))
+  (layout.compiler-object-layout-push-u64! out addend))
 
 (define (compiler-object-elf-render-relocation!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
@@ -563,20 +608,6 @@
             (& (array-ref image.relocations.slots (- entry 1))))
           (set! entry (array-ref groups.next (- entry 1))))))))
 
-(define (compiler-object-elf-render-relocation-sections!
-  [out : (&mut byte_buf_core.ByteBufBuilder)]
-  [image : (& cobj.CompilerObjectImage)]
-  [projected : (& ElfImageProjection)]) : unit
-  (for [index (iterator.range 0 image.sections.len)]
-    (layout.compiler-object-layout-render-padding-to!
-      out
-      (array-ref projected.plan.rows (+ image.sections.len (+ index 1))).offset)
-    (compiler-object-elf-render-relocations-for-section!
-      out
-      image
-      (& projected.groups)
-      index)))
-
 (define (compiler-object-elf-symbol-string-offset-from
   [symbols : (& symbols cobj.CompilerObjectSymbolList)]
   [name : (& name str)]
@@ -644,20 +675,29 @@
   [symbol : (& cobj.CompilerObjectSymbol)]) : unit
   (match symbol
     [(Symbol name binding kind section)
-      (layout.compiler-object-layout-push-u32!
+      (push-symbol!
         out
-        (compiler-object-elf-symbol-string-offset image name))
-      (layout.compiler-object-layout-push-u8!
-        out
-        (compiler-object-elf-symbol-info binding kind))
-      (layout.compiler-object-layout-push-u8! out 0)
-      (layout.compiler-object-layout-push-u16!
-        out
-        (compiler-object-elf-symbol-section-index image section))
-      (layout.compiler-object-layout-push-u64!
-        out
-        (layout.compiler-object-layout-symbol-value image name section))
-      (layout.compiler-object-layout-push-u64! out 0)]))
+        (compiler-object-elf-symbol-string-offset image name)
+        (compiler-object-elf-symbol-info binding kind)
+        0
+        (compiler-object-elf-symbol-section-index image section)
+        (layout.compiler-object-layout-symbol-value image name section)
+        0)]))
+
+(define (push-symbol!
+  [out : (&mut byte_buf_core.ByteBufBuilder)]
+  [name : i64]
+  [info : i64]
+  [other : i64]
+  [section : i64]
+  [value : i64]
+  [size : i64]) : unit
+  (layout.compiler-object-layout-push-u32! out name)
+  (layout.compiler-object-layout-push-u8! out info)
+  (layout.compiler-object-layout-push-u8! out other)
+  (layout.compiler-object-layout-push-u16! out section)
+  (layout.compiler-object-layout-push-u64! out value)
+  (layout.compiler-object-layout-push-u64! out size))
 
 (define (compiler-object-elf-render-symbols-by-locality!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
@@ -742,29 +782,74 @@
 (define (compiler-object-elf-render [image : (& cobj.CompilerObjectImage)]) : ResultCompilerObjectElf
   (let
     [projected (try (compiler-object-elf-project image))]
-    [plan (& projected.plan)]
+    (serialize (& projected.plan) (ObjectImage image (& projected.groups)))))
+
+(defenum ElfPayloads
+  (:lifetimes source relocs)
+  (ObjectImage
+    (& source cobj.CompilerObjectImage)
+    (& relocs layout.SectionRelocations))
+  (Assembled (& source (__tl_dyn-array byte_buf_core.ByteBufBuilder))))
+
+(define (write-image-payload!
+  [out : (&mut byte_buf_core.ByteBufBuilder)]
+  [image : (& cobj.CompilerObjectImage)]
+  [groups : (& layout.SectionRelocations)]
+  [i : i64]
+  [symtab : i64]) : unit
+  (cond
+    [(<= i image.sections.len)
+      (layout.compiler-object-layout-render-section!
+        out
+        image
+        (layout.compiler-object-layout-section-at image (- i 1)))]
+    [(< i symtab)
+      (compiler-object-elf-render-relocations-for-section!
+        out
+        image
+        groups
+        (- (- i 1) image.sections.len))]
+    [(= i symtab) (compiler-object-elf-render-symbol-table! out image)]
+    [else
+      (layout.compiler-object-layout-push-u8! out 0)
+      (compiler-object-elf-render-string-table-symbols! out image.symbols)]))
+
+(define (serialize
+  [plan : (& p ElfProjection)]
+  [payloads : (ElfPayloads source relocs)]) : ResultCompilerObjectElf
+  (let
     [out
       (byte_buf_core.byte-buf-builder-with-capacity
         (+
           plan.headers
           (* (array-length plan.rows) compiler-object-elf-section-header-size)))]
     (compiler-object-elf-push-header! (&mut out) plan)
-    (compiler-object-elf-render-loadable-sections! (&mut out) image plan)
-    (compiler-object-elf-render-relocation-sections!
-      (&mut out)
-      image
-      (& projected))
-    (layout.compiler-object-layout-render-padding-to!
-      (&mut out)
-      (array-ref plan.rows plan.symtab).offset)
-    (compiler-object-elf-render-symbol-table! (&mut out) image)
-    (layout.compiler-object-layout-push-u8! (&mut out) 0)
-    (compiler-object-elf-render-string-table-symbols! (&mut out) image.symbols)
-    (layout.compiler-object-layout-push-string-bytes! (&mut out) plan.names)
+    (for [i (iterator.range 1 (array-length plan.rows))]
+      (let
+        [h : (& p ElfSectionHeader) (& (array-ref plan.rows i))]
+        (when
+          (and (!= h.ty compiler-object-elf-sht-nobits) (> h.size 0))
+          (layout.compiler-object-layout-render-padding-to! (&mut out) h.offset)
+          (if (= i (+ plan.symtab 2))
+            (layout.compiler-object-layout-push-string-bytes!
+              (&mut out)
+              (string.copy (& plan.names)))
+            (match payloads
+              [(ObjectImage image groups)
+                (write-image-payload! (&mut out) image groups i plan.symtab)]
+              [(Assembled contents)
+                (byte_buf_core.byte-buf-builder-append-array-range
+                  (&mut out)
+                  (& (array-ref contents i).slots)
+                  0
+                  (array-ref contents i).len)]))
+          (unless
+            (= out.len (+ h.offset h.size))
+            (return (Err "elf: section size differs from projection"))))))
     (layout.compiler-object-layout-render-padding-to! (&mut out) plan.headers)
     (for [i (iterator.range 0 (array-length plan.rows))]
       (let
-        [h (array-ref plan.rows i)]
+        [h : (& p ElfSectionHeader) (& (array-ref plan.rows i))]
         (compiler-object-elf-push-section-header!
           (&mut out)
           h.name

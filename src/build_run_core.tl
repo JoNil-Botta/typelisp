@@ -13,6 +13,7 @@
 (import tli_cli_core as tli_cli)
 (import compiler_lower)
 (import compiler_backend as backend)
+(import compiler_assemble_linux_x64 as linux_asm)
 (import compiler_backend_object as be_object)
 (import compiler_ast_types as ast)
 (import compiler_ir_types as ir)
@@ -35,6 +36,8 @@
 (defenum SourceToolCommandStatus
   (Ok)
   (Err String))
+
+(clone_gen.gen-clone SourceToolCommandStatus)
 
 (defenum ResultSourceToolCommand
   (Ok process.ProcessCommand)
@@ -1179,13 +1182,6 @@
   [command : process.ProcessCommand]) : process.ProcessCommand
   command)
 
-(define (source-tool-assembler-command [asm-path : String] [obj-path : String]) : process.ProcessCommand
-  (process.command
-    (source-tool-resolve-command "as")
-    (process.args-cons
-      asm-path
-      (process.args-cons "-o" (process.args-cons obj-path (process.args-empty))))))
-
 (define (source-tool-windows-assembler-command
   [asm-path : String]
   [obj-path : String]) : process.ProcessCommand
@@ -1576,19 +1572,57 @@
   (source-tool-try-remove-dir-if-exists temp-dir)
   unit)
 
+(define (source-tool-assemble-linux-text
+  [asm-path : (& asm-path str)]
+  [obj-path : (& obj-path str)]
+  [asm : (& asm str)]) : SourceToolCommandStatus
+  (match (linux_asm.assemble-linux-x64 asm)
+    [(Err message)
+      (Err
+        (str_cat.str-cat
+          "Error: Linux x86-64 assembler failed for "
+          (string.copy asm-path)
+          ": "
+          message))]
+    [(Ok object)
+      (source-tool-write-file
+        obj-path
+        (& object)
+        (str_cat.str-cat "Error: cannot write object " (string.copy obj-path)))]))
+
 (define (source-tool-assemble
+  [role : String]
   [target : be_state.CompilerBackendTarget]
   [asm-path : String]
   [obj-path : String]) : SourceToolCommandStatus
   (match target
     [(Linux)
-      (source-tool-run-command
-        "assembler"
-        target
-        (source-tool-assembler-command asm-path obj-path))]
+      ;; Assembly input and serialized object belong to this write, including
+      ;; when a caller links many programs in one compiler process.
+      (with-scratch
+        (match (io.try-read-file (& asm-path))
+          [(ErrIoBytes error)
+            (Err
+              (str_cat.str-cat
+                "Error: cannot read assembly "
+                asm-path
+                ": "
+                (io.error-message error)))]
+          [(OkIoBytes contents)
+            (let
+              [bytes (byte_buf.as-bytes (& contents))]
+              [asm : String
+                (unsafe
+                  (string-from-bytes
+                    (byte_buf.bytes-data bytes)
+                    (byte_buf.bytes-length bytes)))]
+              (source-tool-assemble-linux-text
+                (& asm-path)
+                (& obj-path)
+                (& asm)))]))]
     [(Windows)
       (source-tool-run-command
-        "assembler"
+        role
         target
         (source-tool-windows-assembler-command asm-path obj-path))]))
 
@@ -1653,10 +1687,36 @@
     [_
       (try
         (source-tool-assemble
+          "assembler"
           target
           asm-path
           (owned_view.compiler-owned-shared-view obj-path)))]
     (source-tool-link target obj-path bin-path link-inputs)))
+
+(define (source-tool-assemble-text-and-link
+  [target : be_state.CompilerBackendTarget]
+  [asm-path : String]
+  [obj-path : String]
+  [bin-path : String]
+  [asm : (& asm str)]
+  [link-inputs : SourceToolLinkInputs]) : SourceToolCommandStatus
+  (match target
+    [(Linux)
+      ;; The emitter has already written the assembly artifact. Assemble its
+      ;; borrowed text without loading the file into memory again.
+      (let
+        [_
+          (try
+            (with-scratch
+              (source-tool-assemble-linux-text (& asm-path) (& obj-path) asm)))]
+        (source-tool-link target obj-path bin-path link-inputs))]
+    [(Windows)
+      (source-tool-assemble-and-link
+        target
+        asm-path
+        obj-path
+        bin-path
+        link-inputs)]))
 
 (define (source-tool-assemble-and-archive
   [target : be_state.CompilerBackendTarget]
@@ -1667,6 +1727,7 @@
     [_
       (try
         (source-tool-assemble
+          "assembler"
           target
           asm-path
           (owned_view.compiler-owned-shared-view obj-path)))]
@@ -1884,7 +1945,7 @@
         [(Err message) (Unavailable message)])
       (Unavailable "direct object disabled"))))
 
-;; Emit a program as assembly for the external assembler.
+;; Emit the final assembly for the target assembler.
 (define (source-tool-emit-program-assembly
   [source : String]
   [program : SourceToolProgram]
@@ -1925,7 +1986,7 @@
 
 ;; Compile `request`'s program and link it into `request.files.bin`: through a
 ;; direct object when that route is enabled and the object is linkable, else
-;; through assembly and the external assembler.
+;; through the target's assembly route.
 (define (source-tool-link-program [request : SourceToolLinkRequest]) : SourceToolCommandStatus
   (let
     [lower-owner : i64
@@ -1951,7 +2012,7 @@
               [(Ok asm)
                 (match (source-tool-write-file
                   request.files.asm
-                  asm
+                  (& asm)
                   request.write-context)
                   [(Err message) (Err message)]
                   [(Ok)
@@ -1959,11 +2020,12 @@
                       [effective-link-inputs : SourceToolLinkInputs
                         (source-tool-link-inputs-with-hydrated-archives
                           link-inputs)]
-                      (source-tool-assemble-and-link
+                      (source-tool-assemble-text-and-link
                         request.target
                         request.files.asm
                         request.files.obj
                         request.files.bin
+                        (& asm)
                         effective-link-inputs))])]))])]
     ;; Both direct output and every assembly fallback/error have finished
     ;; reading lowered IR before its exact owner can be retired.

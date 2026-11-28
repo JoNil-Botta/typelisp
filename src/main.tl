@@ -7,7 +7,7 @@
 ;;
 ;;   typelisp <command> <args...>
 ;;
-;; Recognized commands: build, run, check, fmt, lint, test, doc, compile, clean,
+;; Recognized commands: assemble, build, run, check, fmt, lint, test, doc, compile, clean,
 ;; expand, explain, inspect, repl, lsp, new, and init. The command name is `(io.arg 1)`;
 ;; each `*-run-from` entry parses its own arguments starting at index 2.
 ;;
@@ -28,6 +28,7 @@
 (import stdlib.io)
 (import compiler_build_identity as build_identity)
 (import build_cli_core)
+(import build_run_core)
 (import run_cli_core)
 (import check_cli_core)
 (import format_cli_core)
@@ -80,6 +81,7 @@ Usage:
     typelisp <command> --help
 
 Commands:
+    typelisp assemble       Assemble compiler output into an ELF object
     typelisp build          Build a source file or package artifact
     typelisp check          Type check a source file or package
     typelisp clean          Remove build artifacts
@@ -341,6 +343,30 @@ Options:
 (define (cli-inspect-help-text) : String
   (inspect_cli_core.tlci-inspect-help-text))
 
+(define (cli-assemble-help-text) : String
+  "Usage:
+    typelisp assemble <file.s> -o <file.o>
+
+Summary:
+    Assemble final TypeLisp Linux x86-64 assembly into a relocatable ELF object.
+")
+
+(define (cli-assemble [count : i64]) : i64
+  (if (and (= count 5) (cli-eq? (cli-arg 3) "-o"))
+    (match (build_run_core.source-tool-assemble
+      "assembler"
+      (Linux)
+      (cli-arg 2)
+      (cli-arg 4))
+      [(Ok) 0]
+      [(Err message)
+        (cli-err (& message))
+        1])
+    (let
+      [usage : String (cli-assemble-help-text)]
+      (cli-err (& usage))
+      1)))
+
 (define (cli-expand-help-text) : String
   "Usage:
     typelisp expand <file.tl> --at <line>:<column> [--max-bytes <n>] [--target <target>] [--cfg <name>...] [--stdlib-root <dir>...]
@@ -461,6 +487,10 @@ Options:
       (cli-print-help 0)]
     [(cli-eq? command "--version") (cli-print-version)]
     [(cli-eq? command "--producer-identity") (cli-print-producer-identity)]
+    [(cli-eq? command "assemble")
+      (if (cli-subcommand-help-request? count)
+        (cli-print-help-text (cli-assemble-help-text) 0)
+        (cli-assemble count))]
     [(cli-eq? command "build")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-build-help-text) 0)

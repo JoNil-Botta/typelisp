@@ -1,0 +1,1 @@
+format_region_nominal_reject|check-fail|tests/safety/format_region_nominal_reject.tl|-|error[E0505]: format: unsupported nominal type struct_NoFormatter from canonical owner module

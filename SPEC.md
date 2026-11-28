@@ -2044,12 +2044,10 @@ type to a *scalar* of type `(in r T)` when it is an operand of `+` or `-` whose
 left operand is plain. This is a checker gap that programs must not rely on.
 Tracked in #9768.
 
-**Implementation note (non-normative).** Three shapes are not yet accepted.
-Inside `with-arena`, `io.print-format` is rejected for every operand (#8475).
-Outside one, a direct call returning a tagged scalar is rejected as an
-`io.print-format` operand (#9766), and field access, `tuple-ref` or `array-ref`
-applied directly to a call returning `(in r T)` is rejected (#9767). Binding the
-call's result to a name first is accepted outside an arena.
+**Implementation note (non-normative).** Inside `with-arena`, `io.print-format`
+is rejected for every operand (#8475). Outside one, field access, `tuple-ref`
+or `array-ref` applied directly to a call returning `(in r T)` is rejected
+(#9767). Binding the call's result to a name first is accepted outside an arena.
 
 **Views read through a reference.** Reading a region-taggable field through a
 reference, such as `r.items` for `r : (& r S)`, produces a value tagged with the

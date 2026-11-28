@@ -243,7 +243,7 @@
 
 (define (doc-ast-lifetime-list-source-from
   [ctx : DocExpandContext]
-  [lifetimes : ast.AstLifetimeList]
+  [lifetimes : (& lifetimes ast.AstLifetimeList)]
   [index : i64]
   [count : i64]) : String
   (if (>= index count)
@@ -254,10 +254,7 @@
         " ")
       (doc-symbol-text
         ctx
-        (ast.ast-lifetime-list-get
-          (& lifetimes)
-          index
-          (ast.ast-lifetime-fallback)))
+        (ast.ast-lifetime-list-get lifetimes index (ast.ast-lifetime-fallback)))
       (doc-ast-lifetime-list-source-from ctx lifetimes (+ index 1) count))))
 
 (define (doc-ast-lifetime-list-source
@@ -269,7 +266,7 @@
       ""
       (doc-cat3
         " (:lifetimes "
-        (doc-ast-lifetime-list-source-from ctx lifetimes 0 count)
+        (doc-ast-lifetime-list-source-from ctx (& lifetimes) 0 count)
         ")"))))
 
 (define (doc-ast-type-source [ctx : DocExpandContext] [ty : ast.AstType]) : String
@@ -348,9 +345,20 @@
         " "
         (doc-ast-type-id-source ctx elem)
         ")")]
-    [(or (Enum name) (EnumArgs name _) (Struct name) (StructArgs name _)
-         (Var name) (VarArgs name _))
-      (doc-symbol-text ctx name)]
+    [(or (Enum name) (Struct name) (Var name)) (doc-symbol-text ctx name)]
+    [(or (EnumArgs name args) (StructArgs name args) (VarArgs name args))
+      (let
+        [lifetimes : ast.AstLifetimeList (deref args)]
+        (doc-cat5
+          "("
+          (doc-symbol-text ctx name)
+          " "
+          (doc-ast-lifetime-list-source-from
+            ctx
+            (& lifetimes)
+            0
+            (ast.ast-lifetime-list-len (& lifetimes)))
+          ")"))]
     [(Ptr elem) (doc-cat3 "(Ptr " (doc-ast-type-id-source ctx elem) ")")]
     [(MutPtr elem) (doc-cat3 "(MutPtr " (doc-ast-type-id-source ctx elem) ")")]))
 

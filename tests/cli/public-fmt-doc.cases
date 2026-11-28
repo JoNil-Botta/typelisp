@@ -310,6 +310,47 @@ in file {{dir}}/doc_anchor_twins.html
 contains .define-function.ready_3f"
 contains .define-function.ready-63"
 
+file doc_opaque_fields.tl
+;: An aggregate with public and opaque fields.
+(defstruct Mixed
+  [visible i64]
+  ; private-field-leading-comment
+  (hidden i64 (:opaque)) ; private-field-inline-comment
+  [bracket-hidden [Array i64 2] (:opaque)]
+  [also-visible (Array i64 2)])
+
+;: An opaque aggregate with a bracketed field.
+(defstruct Whole (:opaque) [whole-hidden i64])
+
+(define (main) : i64
+  (let [mixed (Mixed 11 31 (array 1 2) (array 3 4))]
+    mixed.visible))
+end-file
+step doc-generate-opaque-fields-check
+run check "{{dir}}/doc_opaque_fields.tl"
+stderr empty
+step doc-generate-opaque-fields
+run doc "{{dir}}/doc_opaque_fields.tl" -o "{{dir}}/doc_opaque_fields.md"
+stderr empty
+in file {{dir}}/doc_opaque_fields.md
+contains [visible i64]
+contains [also-visible (Array i64 2)]
+contains (defstruct Whole (:opaque))
+not-contains (hidden i64
+not-contains bracket-hidden
+not-contains whole-hidden
+not-contains private-field-leading-comment
+not-contains private-field-inline-comment
+step doc-generate-html-local-opaque-fields
+run doc --html "{{dir}}/doc_opaque_fields.tl" "{{dir}}/doc_opaque_fields.html"
+stderr empty
+in file {{dir}}/doc_opaque_fields.html
+contains >visible</span>
+contains >also-visible</span>
+contains >hidden</span>
+contains bracket-hidden
+contains whole-hidden
+
 # Module docs follow the loader's source order, each module once.
 case doc-generate-module-graph
 file local.tl

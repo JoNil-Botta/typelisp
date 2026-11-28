@@ -7,13 +7,16 @@
     {"jsonpath_id": 4, "raw_contains": "\"label\":\"hidden\""},
     {"jsonpath_id": 5, "raw_contains": "\"label\":\"Mixed\""},
     {"jsonpath_id": 6, "raw_contains": "\"label\":\"Hidden\""},
+    {"jsonpath_id": 16, "raw_contains": "(inner (Borrowed a))"},
     {"jsonpath_id": 7, "raw_contains": "(:opaque)", "raw_not_contains": "(inner i64)"},
     {"jsonpath_id": 8, "raw_contains": "(:opaque)", "raw_not_contains": "(Hidden i64)"},
     {"jsonpath_id": 9, "raw_contains": "(visible i64)", "raw_not_contains": "(hidden i64)"},
     {"jsonpath_id": 10, "raw_contains": "\"label\":\"visible\"", "raw_not_contains": "\"label\":\"hidden\""},
     {"jsonpath_id": 11, "raw_contains": "\"label\":\"make-mixed\"", "raw_not_contains": "\"label\":\"Mixed\""},
+    {"jsonpath_id": 11, "raw_contains": "\"label\":\"Plain\""},
     {"jsonpath_id": 11, "raw_not_contains": "\"label\":\"Whole\""},
     {"jsonpath_id": 12, "raw_contains": "\"label\":\"Whole\""},
+    {"jsonpath_id": 17, "raw_contains": "(defstruct Generic (:opaque))", "raw_not_contains": "(inner"},
     {"jsonpath_id": 13, "raw_contains": "\"result\":null"},
     {"jsonpath_id": 14, "raw_not_contains": "\"label\":\"Hidden\""}
   ]

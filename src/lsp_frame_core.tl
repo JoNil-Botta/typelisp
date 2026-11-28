@@ -7600,17 +7600,10 @@
                     [restricted-constructor? : bool
                       (and
                         (= symbol-kind 23)
-                        (let
-                          [form : String
-                            (string.substring (& text) i (- form-end i))]
-                          (not
-                            (string.eq
-                              (& form)
-                              (doc_extract.doc-public-aggregate-signature
-                                (string.copy (& form))
-                                "defstruct"
-                                (string.copy (& name))
-                                true)))))]
+                        (doc_extract.doc-struct-constructor-restricted?
+                          (& text)
+                          (+ name-off (string.string-length (& name)))
+                          form-end))]
                     (lsp_decl_vec.push-ref!
                       (&mut result)
                       (lsp_vector_families.LspDeclEntry

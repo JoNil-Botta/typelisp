@@ -176,6 +176,27 @@
 (define (compiler-reg-plan-function-avx2 [func : ir.CompilerIrFunction]) : reg.CompilerRegPlan
   (compiler-reg-plan-function-avx2-for-abi Linux func))
 
+(test
+  reg-indirect-result-group-without-projection
+  ;; Forward the whole result. No Pack or Word can seed its second frame
+  ;; slot; the type of the call instruction itself must do so.
+  (let
+    [func
+      (irt.func
+        "function @forward(p=%0:(-> String String), s=%1:String) -> String vars 3 {
+       entry:
+         %2 = call* %0(%1) : String
+         return %2
+       }")]
+    [groups
+      (reg.compiler-reg-function-group-vars
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& func)
+        (reg.compiler-reg-function-var-types (& func)))]
+    (test.assert-true
+      (live.compiler-live-set-contains? groups 2)
+      "a forwarded indirect String result has storage for both words")))
+
 (cfg
   test
   (define (compiler-reg-early-exit-general-test-function) : ir.CompilerIrFunction
@@ -17805,24 +17826,3 @@
             (test.assert-true
               false
               "expected coloring remap for >16-slot direct stack param test")])])))
-
-(test
-  reg-indirect-result-group-without-projection
-  ;; Forward the whole result. No Pack or Word can seed its second frame
-  ;; slot; the type of the call instruction itself must do so.
-  (let
-    [func
-      (irt.func
-        "function @forward(p=%0:(-> String String), s=%1:String) -> String vars 3 {
-       entry:
-         %2 = call* %0(%1) : String
-         return %2
-       }")]
-    [groups
-      (reg.compiler-reg-function-group-vars
-        (ast.ast-node-pool-reader-type-segment-bases)
-        (& func)
-        (reg.compiler-reg-function-var-types (& func)))]
-    (test.assert-true
-      (live.compiler-live-set-contains? groups 2)
-      "a forwarded indirect String result has storage for both words")))

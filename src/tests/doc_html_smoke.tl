@@ -5,6 +5,7 @@
 (import doc_extract)
 (import (vector.vector doc_render.DocModule core) as doc_module_vec)
 (import stdlib.str_cat_runtime as str_cat)
+(import stdlib.string)
 
 (define (doc-html-smoke-modules
   [docs : doc_extract.DocExtraction]
@@ -32,6 +33,50 @@
 ;: Function docs with `tick` and [arg].
 (define (add-one [x : i64]) : i64 (+ x 1))"))
 
+(define (doc-html-opacity-smoke-ok?) : bool
+  (let
+    [source : String
+      ";: Opaque storage.
+(defstruct Whole (:repr c) (:opaque) (private-word i64))
+;: Opaque state.
+(defenum State (:opaque) (PrivateVariant i64))
+;: Mixed storage.
+(defstruct Mixed (public-word i64) (private-tag (Ptr i64) (:opaque)))
+;: Mixed record with a field comment.
+(defstruct Commented
+  (public-slot i64)
+  (private-slot i64 (:opaque)) ; private detail
+  (internal-slot i64 (:opaque))
+  (final-slot i64))"]
+    [docs : doc_extract.DocExtraction
+      (doc_extract.doc-extract-source (string.copy (& source)))]
+    [page : String (doc_html.doc-html-render-module-page "vault.tl" docs)]
+    [public-doc : String
+      (doc_render.doc-render-markdown
+        (doc_extract.doc-extract-source (string.copy (& source))))]
+    [search : String
+      (doc_html.doc-html-search-records-for-module
+        "vault.html"
+        (Module "vault.tl" (doc_extract.doc-extract-source source)))]
+    (and
+      (string.contains page "private-word")
+      (string.contains page "PrivateVariant")
+      (string.contains page "private-tag")
+      (string.contains page "private detail")
+      (string.contains public-doc "(defstruct Whole (:opaque))")
+      (string.contains public-doc "(defenum State (:opaque))")
+      (string.contains public-doc "(defstruct Mixed (public-word i64))")
+      (not (string.contains public-doc "private-word"))
+      (not (string.contains public-doc "PrivateVariant"))
+      (not (string.contains public-doc "private-tag"))
+      (not (string.contains public-doc "private detail"))
+      (string.contains public-doc "(final-slot i64)")
+      (string.contains search "(defstruct Mixed (public-word i64))")
+      (not (string.contains search "private-word"))
+      (not (string.contains search "PrivateVariant"))
+      (not (string.contains search "private-tag"))
+      (not (string.contains search "private detail")))))
+
 (define (doc-html-smoke) : i64
   (let
     [docs : doc_extract.DocExtraction (doc-html-smoke-docs)]
@@ -50,6 +95,7 @@
         "smoke.html"
         (Module "smoke<&>.tl" docs))]
     (if (and
+      (doc-html-opacity-smoke-ok?)
       (doc_html.doc-html-require-contains
         page
         "<!doctype html>"

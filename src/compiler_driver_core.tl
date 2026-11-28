@@ -4455,6 +4455,110 @@
         backend-state)]
     [_ unit]))
 
+(define (compiler-driver-load-escaping-with-opt-level
+  [input-path : (& str)]
+  [target : be_state.CompilerBackendTarget]
+  [stdlib-roots : (& svec.Vec)]
+  [cfgs : sym_i64_env.SymI64Env]
+  [opt-level : i64]) : compiler_load.ResultCompilerLoadWithPaths
+  (match (compiler-driver-open-tli-catalog-for-session!
+    (& (compiler_load.compiler-load-serial-test-session-state))
+    input-path
+    (compiler-driver-target-cfg-from-backend target)
+    stdlib-roots
+    cfgs
+    opt-level
+    true)
+    [(Err tli-msg)
+      (Err
+        (box
+          (compiler_diagnostic.compiler-diagnostic-at-start
+            (string.copy input-path)
+            tli-msg)))]
+    [(Ok)
+      (compiler-driver-load-file-with-runtime
+        (string.copy input-path)
+        (svec.clone-vec stdlib-roots)
+        cfgs)]))
+
+(define (compiler-driver-lower-loaded-escaping-with-opt-level-and-profile-state
+  [input-path : String]
+  [target : be_state.CompilerBackendTarget]
+  [stdlib-roots : svec.Vec]
+  [mode : be_state.CompilerBackendMode]
+  [cfgs : sym_i64_env.SymI64Env]
+  [opt-level : i64]
+  [profile-state : profile_state.CompilerProfileState]
+  [loaded : compiler_load.ResultCompilerLoadWithPaths]) : ResultCompilerDriverLowered
+  (match loaded
+    [(Ok decls paths modules _)
+      (begin
+        (cfg
+          compile-profile
+          (compiler-driver-profile-finish-phase profile-state "load"))
+        (cfg
+          compile-profile
+          (compiler-driver-profile-start-phase profile-state))
+        (match (compiler_lower.lower-compiler-program-with-decl-paths-mode-cache
+          (owned_view.compiler-owned-shared-view input-path)
+          (compiler_ast_types.ast-program decls)
+          (compiler_ast_types.ast-decl-path-list-with-modules paths (& modules))
+          (compiler-driver-lower-mode-for-target target mode)
+          (owned_view.compiler-owned-shared-view stdlib-roots)
+          cfgs
+          (compiler_load.compiler-load-prelude-cache-key
+            "typecheck-prefix-lower"
+            (& stdlib-roots)
+            cfgs))
+          [(Ok program spans lower-state)
+            (begin
+              (cfg
+                compile-profile
+                (compiler-driver-profile-finish-phase profile-state "lower"))
+              (if (compiler_ast_types.ast-node-pool-reader-type-exhausted?)
+                (begin
+                  (compiler_load.compiler-load-tli-release!)
+                  (compiler-driver-release-lower-arenas-after-emit! lower-state)
+                  (Err
+                    (box
+                      (compiler-driver-ty-node-pool-exhausted-diagnostic
+                        input-path))
+                    (compiler-driver-serial-advisories)))
+                (let
+                  [active-load : compiler_load.CompilerLoadSessionState
+                    (compiler_load.compiler-load-serial-test-session-state)]
+                  [hydrated-program : compiler_ir_types.CompilerIrProgram
+                    (compiler-driver-hydrate-tli-compact-ir!
+                      (& active-load)
+                      (compiler_ast_types.ast-node-pool-reader-context-current)
+                      program
+                      opt-level)]
+                  [lowered-res : ResultCompilerDriverLowered
+                    (compiler-driver-lowered-from-active-pools-and-profile-state
+                      hydrated-program
+                      spans
+                      profile-state
+                      lower-state)]
+                  (compiler-driver-apply-tli-hydrated-lowered-result!
+                    (& active-load)
+                    (& lowered-res))
+                  (compiler_load.compiler-load-tli-release!)
+                  lowered-res)))]
+          [(Err diag)
+            (begin
+              (compiler_load.compiler-load-tli-release!)
+              (cfg
+                compile-profile
+                (compiler-driver-profile-finish-phase profile-state "lower"))
+              (Err diag (compiler-driver-serial-advisories)))]))]
+    [(Err diag)
+      (begin
+        (compiler_load.compiler-load-tli-release!)
+        (cfg
+          compile-profile
+          (compiler-driver-profile-finish-phase profile-state "load"))
+        (Err diag (compiler-driver-serial-advisories)))]))
+
 (define (compiler-driver-load-and-lower-escaping-with-opt-level-and-profile-state
   [input-path : String]
   [target : be_state.CompilerBackendTarget]
@@ -4463,94 +4567,23 @@
   [cfgs : sym_i64_env.SymI64Env]
   [opt-level : i64]
   [profile-state : profile_state.CompilerProfileState]) : ResultCompilerDriverLowered
-  (match (compiler-driver-open-tli-catalog-for-session!
-    (& (compiler_load.compiler-load-serial-test-session-state))
-    (& input-path)
-    (compiler-driver-target-cfg-from-backend target)
-    (& stdlib-roots)
-    cfgs
-    opt-level
-    true)
-    [(Err tli-msg)
-      (Err
-        (box
-          (compiler_diagnostic.compiler-diagnostic-at-start input-path tli-msg))
-        (compiler-driver-serial-advisories))]
-    [(Ok)
-      (match (compiler-driver-load-file-with-runtime
-        (owned_view.compiler-owned-shared-view input-path)
-        (owned_view.compiler-owned-shared-view stdlib-roots)
-        cfgs)
-        [(Ok decls paths modules _)
-          (begin
-            (cfg
-              compile-profile
-              (compiler-driver-profile-finish-phase profile-state "load"))
-            (cfg
-              compile-profile
-              (compiler-driver-profile-start-phase profile-state))
-            (match (compiler_lower.lower-compiler-program-with-decl-paths-mode-cache
-              (owned_view.compiler-owned-shared-view input-path)
-              (compiler_ast_types.ast-program decls)
-              (compiler_ast_types.ast-decl-path-list-with-modules
-                paths
-                (& modules))
-              (compiler-driver-lower-mode-for-target target mode)
-              (owned_view.compiler-owned-shared-view stdlib-roots)
-              cfgs
-              (compiler_load.compiler-load-prelude-cache-key
-                "typecheck-prefix-lower"
-                (& stdlib-roots)
-                cfgs))
-              [(Ok program spans lower-state)
-                (begin
-                  (cfg
-                    compile-profile
-                    (compiler-driver-profile-finish-phase profile-state "lower"))
-                  (if (compiler_ast_types.ast-node-pool-reader-type-exhausted?)
-                    (begin
-                      (compiler_load.compiler-load-tli-release!)
-                      (compiler-driver-release-lower-arenas-after-emit!
-                        lower-state)
-                      (Err
-                        (box
-                          (compiler-driver-ty-node-pool-exhausted-diagnostic
-                            input-path))
-                        (compiler-driver-serial-advisories)))
-                    (let
-                      [active-load : compiler_load.CompilerLoadSessionState
-                        (compiler_load.compiler-load-serial-test-session-state)]
-                      [hydrated-program : compiler_ir_types.CompilerIrProgram
-                        (compiler-driver-hydrate-tli-compact-ir!
-                          (& active-load)
-                          (compiler_ast_types.ast-node-pool-reader-context-current)
-                          program
-                          opt-level)]
-                      [lowered-res : ResultCompilerDriverLowered
-                        (compiler-driver-lowered-from-active-pools-and-profile-state
-                          hydrated-program
-                          spans
-                          profile-state
-                          lower-state)]
-                      (compiler-driver-apply-tli-hydrated-lowered-result!
-                        (& active-load)
-                        (& lowered-res))
-                      (compiler_load.compiler-load-tli-release!)
-                      lowered-res)))]
-              [(Err diag)
-                (begin
-                  (compiler_load.compiler-load-tli-release!)
-                  (cfg
-                    compile-profile
-                    (compiler-driver-profile-finish-phase profile-state "lower"))
-                  (Err diag (compiler-driver-serial-advisories)))]))]
-        [(Err diag)
-          (begin
-            (compiler_load.compiler-load-tli-release!)
-            (cfg
-              compile-profile
-              (compiler-driver-profile-finish-phase profile-state "load"))
-            (Err diag (compiler-driver-serial-advisories)))])]))
+  (let
+    [loaded : compiler_load.ResultCompilerLoadWithPaths
+      (compiler-driver-load-escaping-with-opt-level
+        (& input-path)
+        target
+        (& stdlib-roots)
+        cfgs
+        opt-level)]
+    (compiler-driver-lower-loaded-escaping-with-opt-level-and-profile-state
+      input-path
+      target
+      stdlib-roots
+      mode
+      cfgs
+      opt-level
+      profile-state
+      loaded)))
 
 (define (compiler-driver-load-and-lower-escaping-and-profile-state
   [input-path : String]
@@ -5394,39 +5427,6 @@
       ;; optimization so backend diagnostics report surviving instruction
       ;; locations when a rewrite can preserve them.
       (compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
-        (owned_view.compiler-owned-shared-view input-path)
-        (compiler-driver-load-and-lower-escaping-with-opt-level-and-profile-state
-          input-path
-          target
-          stdlib-roots
-          mode
-          (compiler-driver-target-cfgs target cfgs)
-          opt-level
-          profile-state)
-        target
-        has-target
-        mode
-        opt-level
-        true
-        crt-entry
-        closed-executable))))
-
-(define (compiler-driver-emit-file-object-image-with-target-roots-level-mode-cfg-and-crt
-  [input-path : String]
-  [target : be_state.CompilerBackendTarget]
-  [has-target : bool]
-  [stdlib-roots : svec.Vec]
-  [opt-level : i64]
-  [mode : be_state.CompilerBackendMode]
-  [cfgs : sym_i64_env.SymI64Env]
-  [crt-entry : bool]
-  [closed-executable : bool]) : ResultCompilerDriverObject
-  (let
-    [profile-state : profile_state.CompilerProfileState
-      (profile_state.compiler-profile-state-new)]
-    (begin
-      (cfg compile-profile (compiler-driver-profile-start-total profile-state))
-      (compiler-driver-emit-lowered-result-object-image-with-level-mode-entry-and-crt
         (owned_view.compiler-owned-shared-view input-path)
         (compiler-driver-load-and-lower-escaping-with-opt-level-and-profile-state
           input-path

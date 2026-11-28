@@ -83,7 +83,7 @@
       (__tl_make-array tli.TliVariant 1)]
     (set!
       (array-ref fields 0)
-      (tli.TliField "high" (tli.TliType.I64) (tli.TliCleanup.Owned) 0 16))
+      (tli.TliField "high" (tli.TliType.I64) (tli.TliCleanup.Owned) 0 16 true))
     (set!
       (array-ref fields 1)
       (tli.TliField
@@ -91,7 +91,8 @@
         (tli.TliType.Ref "z-life" (box (tli.TliType.Str)))
         (tli.TliCleanup.Fn "cleanup.field")
         16
-        0))
+        0
+        false))
     (set!
       (array-ref payloads 0)
       (tli.TliPayload (tli.TliType.I32) (tli.TliCleanup.Owned)))
@@ -484,6 +485,8 @@
         "dispatch tie-break")
       (match (& (array-ref module.types 1).body)
         [(tli.TliTypeBody.Struct fields)
+          (test.assert-true (array-ref fields 0).opaque? "opaque field")
+          (test.assert-true (not (array-ref fields 1).opaque?) "public field")
           (test.assert-i64-eq
             (array-ref fields 0).explicit-align
             16
@@ -742,7 +745,7 @@
     (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.UnknownTag))))
 
 (test
-  tli-v3-wire-tags-and-digests
+  tli-v5-wire-tags-and-digests
   (let
     [wire : (__tl_dyn-array u8) (tli-test-encode-plain (tli.TliType.I64))]
     [bundle : tli.TliBundle (tli-test-bundle false)]
@@ -751,11 +754,11 @@
       (codec.tli-write-context-new
         (codec.tli-collect-pool (& bundle))
         (__tl_make-array codec.TliCompactBodyMeta 0))]
-    (test.assert-i64-eq (array-length wire) 411 "v3 exemplar length")
+    (test.assert-i64-eq (array-length wire) 411 "v5 exemplar length")
     (test.assert-i64-eq
       (tli-test-record (& wire))
       284
-      "v3 exemplar record offset")
+      "v5 exemplar record offset")
     (match (codec.tli-decode-directory (& wire))
       [(codec.TliDirectoryResult.Err error)
         (test.assert-true false error.message)]
@@ -801,8 +804,12 @@
     [first-type : i64 (+ first-import (* 6 45) 12 4)]
     [repr : i64 (+ first-type 29)]
     [cleanup : i64 (+ first-type 38)]
-    ;; Enum (63 bytes), struct (112 bytes), then the function count.
-    [first-fn : i64 (+ first-type 63 112 4)]
+    ;; Enum (63 bytes), struct (114 bytes), then the function count.
+    [first-struct : i64 (+ first-type 63)]
+    [first-fn : i64 (+ first-struct 114 4)]
+    ;; Struct metadata and field count (59 bytes), then the first field's
+    ;; 22 bytes before its boolean opacity tag.
+    [field-opacity : i64 (+ first-struct 59 22)]
     [first-name : i64 (le.read-u32 (& bytes) dir)]
     [second-name : i64 (le.read-u32 (& bytes) (+ dir 56))]
     (le.set-u32! (&mut bytes) dir second-name)
@@ -823,6 +830,10 @@
     (tli-test-refresh-module! (&mut bytes) 0)
     (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.UnknownTag))
     (set! (array-ref bytes cleanup) (cast 0 : u8))
+    (set! (array-ref bytes field-opacity) (cast 2 : u8))
+    (tli-test-refresh-module! (&mut bytes) 0)
+    (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.UnknownTag))
+    (set! (array-ref bytes field-opacity) (cast 1 : u8))
     (set! (array-ref bytes (+ first-fn 12)) (cast 4 : u8))
     (tli-test-refresh-module! (&mut bytes) 0)
     (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.UnknownTag))

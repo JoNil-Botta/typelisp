@@ -19,6 +19,9 @@
 (import compiler_parse_core as parse_core)
 (import compiler_diagnostic as cdiag)
 (import compiler_typecheck_core as tc)
+(import compiler_ctfe as ctfe_support)
+(import doc_extract)
+(import doc_expand)
 (import compiler_ast_types as ast)
 (import compiler_symbols as csym)
 (import compiler_intern as ci)
@@ -142,6 +145,7 @@
 
 (defstruct CompilerSemanticSourcePathInfo
   (path String)
+  (provider-id i64)
   (source-len i64)
   (default-module-index i64)
   (module-event-offset i64)
@@ -151,6 +155,7 @@
 
 (defstruct CompilerSemanticModuleInfo
   (module-id i64)
+  (name String)
   (candidate-offset i64)
   (candidate-len i64))
 
@@ -237,6 +242,11 @@
   (live (__tl_dyn-array bool))
   (len i64))
 
+(defstruct CompilerSemanticRepresentation
+  (provider-id i64)
+  ;; Only restricted aggregate definitions have a representation signature.
+  (signature String))
+
 (defstruct CompilerSemanticSourceIndex
   (owner-arena i64)
   (records (__tl_dyn-array CompilerSemanticRecord))
@@ -245,6 +255,9 @@
   ;; only `canonical-index`, avoiding repeated module/path/name strings.
   (canonical-symbols (__tl_dyn-array String))
   (canonical-symbol-len i64)
+  ;; Per canonical symbol. A restricted representation retains its provider;
+  ;; public symbols have the dedicated sentinel.
+  (representations (__tl_dyn-array CompilerSemanticRepresentation))
   ;; False identifies current-buffer records established by recovery. It never
   ;; denotes a caller-owned last-good snapshot.
   (complete bool)
@@ -493,6 +506,7 @@
     0
     (__tl_make-array String 0)
     0
+    (__tl_make-array CompilerSemanticRepresentation 0)
     false
     (__tl_make-array CompilerSemanticSourcePathInfo 0)
     0
@@ -523,6 +537,7 @@
         0
         (__tl_make-array String 0)
         0
+        (__tl_make-array CompilerSemanticRepresentation 0)
         false
         (__tl_make-array CompilerSemanticSourcePathInfo 0)
         0
@@ -689,7 +704,13 @@
               (__tl-box-place state.visibility-storage)
               modules)
             module-len
-            (CompilerSemanticModuleInfo module-id 0 0))
+            (CompilerSemanticModuleInfo
+              module-id
+              (if (csym.compiler-symbol-root-module-id? module-id)
+                ""
+                (string.copy (ci.intern-syntax-name-text-or module-id "")))
+              0
+              0))
           (owned_view.compiler-owned-box-cell-set!
             (__tl-project-field
               (__tl-box-place state.visibility-storage)
@@ -813,6 +834,7 @@
               path-len
               (CompilerSemanticSourcePathInfo
                 (string.copy (& normalized))
+                (cload.compiler-load-provider-id-for-path path)
                 source-len
                 module-index
                 0
@@ -1243,6 +1265,76 @@
     (>= query.scope-head -1)
     (< query.scope-head index.binding-len)))
 
+(define compiler-semantic-public-representation : i64
+  -4)
+
+(define (compiler-semantic-family-visible?
+  [index : (& index CompilerSemanticSourceIndex)]
+  [query : CompilerSemanticVisibleBindingQuery]
+  [owner-module : i64]
+  [provider : i64]) : bool
+  (and
+    (compiler-semantic-visible-binding-query-valid? index query)
+    (>= owner-module 0)
+    (< owner-module index.module-len)
+    (tc.tc-provider-same?
+      (array-ref index.paths query.path-index).provider-id
+      provider)
+    (or
+      (= query.module-index owner-module)
+      (ctfe_support.ctfe-module-name-descendant?
+        (& (array-ref index.modules query.module-index).name)
+        (& (array-ref index.modules owner-module).name)))))
+
+(define (compiler-semantic-path-family-visible?
+  [index : (& index CompilerSemanticSourceIndex)]
+  [query : CompilerSemanticVisibleBindingQuery]
+  [owner-path : (& owner-path str)]) : bool
+  (let
+    [path : i64
+      (compiler-semantic-path-index-find
+        (& index.paths)
+        index.path-len
+        (cload.compiler-load-normalize-path owner-path))]
+    (and
+      (>= path 0)
+      (compiler-semantic-family-visible?
+        index
+        query
+        (array-ref index.paths path).default-module-index
+        (array-ref index.paths path).provider-id))))
+
+;; The index can outlive the compiler's intern session. Check family names
+;; copied into the snapshot and compare provider ids from that same build.
+(define (compiler-semantic-representation-visible?
+  [index : (& index CompilerSemanticSourceIndex)]
+  [query : CompilerSemanticVisibleBindingQuery]
+  [record : (& record CompilerSemanticRecord)]) : bool
+  (let
+    [id : i64 record.canonical-index]
+    (if (or (< id 0) (>= id index.canonical-symbol-len))
+      true
+      (let
+        [provider : i64 (array-ref index.representations id).provider-id]
+        (or
+          (= provider compiler-semantic-public-representation)
+          (let
+            [owner : i64
+              (compiler-semantic-module-index-find
+                (& index.modules)
+                index.module-len
+                record.module-id)]
+            (compiler-semantic-family-visible? index query owner provider)))))))
+
+(define (compiler-semantic-representation-signature
+  [index : (& index CompilerSemanticSourceIndex)]
+  [record : (& record CompilerSemanticRecord)]) : String
+  (let
+    [id : i64 record.canonical-index]
+    (if (or (< id 0) (>= id index.canonical-symbol-len))
+      ""
+      (string.copy (& (array-ref index.representations id).signature)))))
+
 (define (compiler-semantic-visible-binding-cursor
   [index : (& index CompilerSemanticSourceIndex)]
   [query : CompilerSemanticVisibleBindingQuery]
@@ -1274,8 +1366,8 @@
           cursor.binding-cursor
           cursor.top-cursor
           cursor.stage)]
-      [module-info : CompilerSemanticModuleInfo
-        (array-ref index.modules cursor.query.module-index)]
+      [module-info : (& index CompilerSemanticModuleInfo)
+        (& (array-ref index.modules cursor.query.module-index))]
       [top-end : i64 (+ module-info.candidate-offset module-info.candidate-len)]
       (cond
         [(or
@@ -1330,6 +1422,14 @@
                 (compiler-semantic-binding-namespace-selected?
                   next.namespace-mask
                   candidate.namespace-tag)
+                (or
+                  (!=
+                    candidate.namespace-tag
+                    (compiler-semantic-binding-namespace-value-mask))
+                  (compiler-semantic-representation-visible?
+                    index
+                    next.query
+                    (& (array-ref index.records candidate.record-index))))
                 (not
                   (and
                     (=
@@ -2113,6 +2213,95 @@
     (csym.compiler-symbol-kind-defstruct)
     (csym.compiler-registry-handle-owner-index handle)))
 
+(define (compiler-semantic-representation-restricted?
+  [decl : (& decl ast.AstDecl)]
+  [child-index : i64]) : bool
+  (or
+    (ast.ast-decl-opaque? decl)
+    (if (< child-index 0)
+      (ast.ast-decl-has-opaque-field? decl)
+      (ast.ast-decl-opaque-field? (& (ast.ast-decl-unwrapped decl)) child-index))))
+
+(define (compiler-semantic-member-visible?
+  [ctx : tc.TcContext]
+  [owner-handle : i64]
+  [child-index : i64]) : bool
+  (or
+    (not
+      (compiler-semantic-representation-restricted?
+        (& (compiler-semantic-handle-decl ctx owner-handle))
+        child-index))
+    (not
+      (tc.tc-opaque-foreign-index?
+        ctx
+        (csym.compiler-symbol-handle-index owner-handle)))))
+
+(define (compiler-semantic-representations
+  [ctx : tc.TcContext]
+  [records : (& records (__tl_dyn-array CompilerSemanticRecord))]
+  [record-count : i64]
+  [symbol-count : i64]) : (__tl_dyn-array CompilerSemanticRepresentation)
+  (let
+    [representations : (__tl_dyn-array CompilerSemanticRepresentation)
+      (__tl_make-array CompilerSemanticRepresentation symbol-count)]
+    [symbols : (& ctx csym.CompilerSymbols) (tc.tc-context-symbols (& ctx))]
+    [doc-context : doc_expand.DocExpandContext
+      (doc_expand.doc-expand-context-from-pools-and-source-names
+        (tc.tc-context-pools-ref (& ctx))
+        (tc.tc-context-source-names ctx))]
+    (for [id (iterator.range 0 symbol-count)]
+      (set!
+        (array-ref representations id)
+        (CompilerSemanticRepresentation
+          compiler-semantic-public-representation
+          "")))
+    (for [i (iterator.range 0 record-count)]
+      (let
+        [record : (& records CompilerSemanticRecord) (& (array-ref records i))]
+        [owner-index : i64
+          (match record.kind
+            [(or (Struct) (Enum)) record.symbol.declaration-ordinal]
+            [(or (Field) (EnumMember))
+              (csym.compiler-registry-handle-owner-index
+                record.symbol.declaration-ordinal)]
+            [_ -1])]
+        (when
+          (and
+            (>= owner-index 0)
+            (match record.role
+              [(Definition) true]
+              [_ false]))
+          (match (csym.compiler-symbols-decl-at-index symbols owner-index)
+            [(Ok decl)
+              (when
+                (compiler-semantic-representation-restricted?
+                  (& decl)
+                  (match record.kind
+                    [(Field)
+                      (csym.compiler-registry-handle-child-index
+                        record.symbol.declaration-ordinal)]
+                    [_ -1]))
+                (let
+                  [signature : String
+                    (match record.kind
+                      [(or (Struct) (Enum))
+                        (match (doc_expand.doc-ast-decl-item doc-context decl)
+                          [(Some item) (doc_extract.doc-item-signature item)]
+                          [(No) ""])]
+                      [_ ""])]
+                  (set!
+                    (array-ref representations record.canonical-index)
+                    (CompilerSemanticRepresentation
+                      (tc.tc-provider-id-for-provenance
+                        ctx
+                        (csym.compiler-symbols-provenance-id-at-index-or
+                          symbols
+                          owner-index
+                          -1))
+                      signature))))]
+            [(Err _) unit]))))
+    representations))
+
 (define (compiler-semantic-canonical-kind-tag
   [kind : CompilerSemanticSymbolKind]) : i64
   (match kind
@@ -2430,6 +2619,9 @@
         [(Err _) ""])]
     [symbol : CompilerSemanticSymbolId
       (compiler-semantic-member-symbol ctx owner-handle handle)]
+    (when
+      (not (compiler-semantic-member-visible? ctx owner-handle -1))
+      (return unit))
     (compiler-semantic-record-vec-push!
       (&mut (__tl-box-place state.records))
       (CompilerSemanticRecord
@@ -2479,6 +2671,11 @@
                     (= handle-kind (csym.compiler-symbol-kind-defstruct))
                     (= handle-kind (csym.compiler-symbol-kind-defenum))
                     (= handle-kind (csym.compiler-symbol-kind-enum-variant))))]
+              (when
+                (and
+                  (= handle-kind (csym.compiler-symbol-kind-defstruct))
+                  (not (compiler-semantic-member-visible? ctx handle -1)))
+                (return unit))
               (if (= handle-kind (csym.compiler-symbol-kind-enum-variant))
                 (compiler-semantic-record-variant-use!
                   (owned_view.compiler-owned-shared-view state)
@@ -3814,6 +4011,13 @@
     field-name-id)
     [(None) unit]
     [(Some handle)
+      (when
+        (not
+          (compiler-semantic-member-visible?
+            state.ctx
+            (compiler-semantic-field-owner-handle handle)
+            (csym.compiler-registry-handle-child-index handle)))
+        (return unit))
       (let
         [owner-handle : i64 (compiler-semantic-field-owner-handle handle)]
         [symbol : CompilerSemanticSymbolId
@@ -3858,13 +4062,20 @@
   [struct-name-id : i64]
   [field-name-id : i64]
   [span : CompilerSemanticSpan]
-  [access : CompilerSemanticAccess]) : unit
+  [access : CompilerSemanticAccess]) : bool
   (match (csym.compiler-registries-lookup-struct-field-id
     (tc.tc-context-registries state.ctx)
     struct-name-id
     field-name-id)
-    [(None) unit]
+    [(None) false]
     [(Some handle)
+      (when
+        (not
+          (compiler-semantic-member-visible?
+            state.ctx
+            (compiler-semantic-field-owner-handle handle)
+            (csym.compiler-registry-handle-child-index handle)))
+        (return false))
       (let
         [owner-handle : i64 (compiler-semantic-field-owner-handle handle)]
         [symbol : CompilerSemanticSymbolId
@@ -3896,7 +4107,8 @@
             symbol.module-id
             (owned_view.compiler-owned-shared-view span)
             (and (not state.generated) (>= span.start-byte 0))
-            (owned_view.compiler-owned-shared-view state.provenance))))]))
+            (owned_view.compiler-owned-shared-view state.provenance)))
+        true)]))
 
 (define (compiler-semantic-record-struct-field-use!
   [state : CompilerSemanticWalkState]
@@ -3944,7 +4156,13 @@
                     enum-name-id
                     variant-name-id
                     (csym.compiler-symbols-missing-handle))]
-                (if (not (csym.compiler-symbols-handle-found? handle))
+                (if (or
+                  (not (csym.compiler-symbols-handle-found? handle))
+                  (not
+                    (compiler-semantic-member-visible?
+                      state.ctx
+                      (csym.compiler-registry-variant-owner-handle handle)
+                      -1)))
                   unit
                   (let
                     [owner-handle : i64
@@ -4759,22 +4977,27 @@
                               (if (< struct-name-id 0)
                                 (set! stop true)
                                 (begin
-                                  (compiler-semantic-record-field-use-with-span!
-                                    (owned_view.compiler-owned-shared-view
-                                      state)
-                                    struct-name-id
-                                    field-id
-                                    (compiler-semantic-dotted-component-span
-                                      (owned_view.compiler-owned-shared-view
-                                        state)
-                                      origin
-                                      field-start
-                                      field-end
-                                      (- field-start start))
-                                    (if (= field-index (- depth 1))
-                                      last-access
-                                      Read))
-                                  (if (< field-index (- depth 1))
+                                  (when
+                                    (not
+                                      (compiler-semantic-record-field-use-with-span!
+                                        (owned_view.compiler-owned-shared-view
+                                          state)
+                                        struct-name-id
+                                        field-id
+                                        (compiler-semantic-dotted-component-span
+                                          (owned_view.compiler-owned-shared-view
+                                            state)
+                                          origin
+                                          field-start
+                                          field-end
+                                          (- field-start start))
+                                        (if (= field-index (- depth 1))
+                                          last-access
+                                          Read)))
+                                    (set! stop true))
+                                  (if (and
+                                    (not stop)
+                                    (< field-index (- depth 1)))
                                     (match (tc.tc-struct-field-type-id
                                       state.ctx
                                       struct-name-id
@@ -6048,7 +6271,8 @@
   [out : (& out (__tl_dyn-array CompilerSemanticTopCandidateRef))]
   [labels : (& labels (__tl_dyn-array String))]) : i64
   (let
-    [info : CompilerSemanticModuleInfo (array-ref modules module-index)]
+    [info : (& modules CompilerSemanticModuleInfo)
+      (& (array-ref modules module-index))]
     [out-index : i64 (array-ref cursors module-index)]
     [segment-end : i64 (+ info.candidate-offset info.candidate-len)]
     (if (or
@@ -6302,16 +6526,13 @@
           true)
         (for [module-index (iterator.range 0 module-len)]
           (let
-            [info : CompilerSemanticModuleInfo (array-ref modules module-index)]
-            (if (>
-              (array-ref counts module-index)
-              (- 9223372036854775807 cursor))
+            [count : i64 (array-ref counts module-index)]
+            (if (> count (- 9223372036854775807 cursor))
               (io.panic "semantic index: top candidate total overflow")
               unit)
-            (set! info.candidate-offset cursor)
-            (set! info.candidate-len (array-ref counts module-index))
-            (set! (array-ref modules module-index) info)
-            (+= cursor info.candidate-len)))
+            (set! (array-ref modules module-index).candidate-offset cursor)
+            (set! (array-ref modules module-index).candidate-len count)
+            (+= cursor count)))
         cursor)]))
 
 (define (compiler-semantic-fill-top-candidates!
@@ -6339,7 +6560,8 @@
           unit)
         (for [module-index (iterator.range 0 module-len)]
           (let
-            [info : CompilerSemanticModuleInfo (array-ref modules module-index)]
+            [info : (& modules CompilerSemanticModuleInfo)
+              (& (array-ref modules module-index))]
             (if (or
               (< info.candidate-len 0)
               (!= info.candidate-offset expected-offset)
@@ -6401,7 +6623,8 @@
           false)
         (for [module-index (iterator.range 0 module-len)]
           (let
-            [info : CompilerSemanticModuleInfo (array-ref modules module-index)]
+            [info : (& modules CompilerSemanticModuleInfo)
+              (& (array-ref modules module-index))]
             (if (!=
               (array-ref cursors module-index)
               (+ info.candidate-offset info.candidate-len))
@@ -6424,6 +6647,8 @@
   [complete : bool]) : CompilerSemanticSourceIndex
   (let
     [owner : i64 (arena.tl_arena_make)]
+    [previous-provider : i64 (tc.tc-context-provider-id ctx)]
+    [previous-provenance : i64 (tc.tc-context-provider-provenance-id ctx)]
     (+= compiler-semantic-source-index-live-owners 1)
     (in-arena
       (unsafe
@@ -6547,6 +6772,9 @@
               (set! walk-state.path (string.copy (& path)))
               (set! walk-state.source (string.copy (& cached-source))))
             (set! walk-state.ctx decl-ctx)
+            (tc.tc-context-set-provenance-id!
+              decl-ctx
+              (ast.ast-decl-path-list-provenance-id (& paths) index -1))
             (set! walk-state.top-env env)
             (set! walk-state.form-start -1)
             (set! walk-state.module-id module-id)
@@ -6802,6 +7030,10 @@
             (compiler-semantic-walk-decl!
               (owned_view.compiler-owned-shared-view walk-state)
               decl)))
+        (tc.tc-context-restore-provider!
+          ctx
+          previous-provider
+          previous-provenance)
         (compiler-semantic-record-macro-call-sites!
           (owned_view.compiler-owned-shared-view walk-state)
           entry-path
@@ -6886,6 +7118,12 @@
                 (&mut top-visible-bindings))
               unit)
             (let
+              [representations : (__tl_dyn-array CompilerSemanticRepresentation)
+                (compiler-semantic-representations
+                  ctx
+                  (& record-items)
+                  record-count
+                  canonical-build.len)]
               [result : CompilerSemanticSourceIndex
                 (CompilerSemanticSourceIndex
                   owner
@@ -6893,6 +7131,7 @@
                   record-count
                   canonical-build.symbols
                   canonical-build.len
+                  representations
                   (and
                     complete
                     (not (deref walk-state.checked-let-fact-mismatch)))
@@ -7077,6 +7316,7 @@
               source-index.len
               source-index.canonical-symbols
               source-index.canonical-symbol-len
+              source-index.representations
               false
               source-index.paths
               source-index.path-len

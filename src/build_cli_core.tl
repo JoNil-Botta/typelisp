@@ -7199,7 +7199,7 @@
               (let
                 [metadata-link-inputs : build_run_core.SourceToolLinkInputs
                   (build_run_core.source-tool-link-inputs-from-decls
-                    (owned_view.compiler-owned-shared-view decls)
+                    (& decls)
                     (build_run_core.source-tool-link-inputs-empty))]
                 ;; The dependency section keeps each package's raw arguments.
                 [effective-link-inputs : build_run_core.SourceToolLinkInputs

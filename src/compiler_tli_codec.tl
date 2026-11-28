@@ -430,7 +430,8 @@
   (tli-write-type! ctx (& row.ty))
   (tli-write-cleanup! ctx (& row.cleanup))
   (tli-write-u64! ctx row.byte-offset)
-  (tli-write-u64! ctx row.explicit-align))
+  (tli-write-u64! ctx row.explicit-align)
+  (tli-write-bool! ctx row.opaque?))
 
 (define (tli-write-payload!
   [ctx : (&mut ctx TliWriteContext)]
@@ -2155,7 +2156,8 @@
     (tli-read-type! rd pool comptime? 1)
     (tli-read-cleanup! rd pool true)
     (cursor.read-u64! (&mut rd.cursor))
-    (cursor.read-u64! (&mut rd.cursor))))
+    (cursor.read-u64! (&mut rd.cursor))
+    (tli-read-bool! rd)))
 
 (define (tli-read-fields!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
@@ -2163,7 +2165,7 @@
   [comptime? : bool]) : (__tl_dyn-array tli.TliField)
   (let
     [count : i64
-      (tli-read-count! rd 22 (comptime (size-of (type tli.TliField))))]
+      (tli-read-count! rd 23 (comptime (size-of (type tli.TliField))))]
     [items : (__tl_dyn-array tli.TliField) (__tl_make-array tli.TliField count)]
     [index : i64 0]
     (while (and rd.cursor.ok? (< index count))

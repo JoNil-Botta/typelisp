@@ -118112,15 +118112,13 @@
               tc-dependency-tlci-interpreted-fallbacks)
             No)
           (begin
-            (embedded_tlci.compiler-comptime-host-session-open-with-macro-state!
+            (embedded_tlci.compiler-comptime-host-session-open-with-env!
               host-pools
               (& operands)
               count
               (ctfe_support.ctfe-fuel-limit)
               (macro-stdlib-tlci-native-cookie)
-              (ctfe_support.ctfe-env-reflections env)
-              (ctfe_support.ctfe-env-source-names env)
-              (ctfe_support.ctfe-env-macro-state env))
+              env)
             (cfg
               compile-profile
               (if (macro-tlci-resolved-catalog-dependency? catalog)
@@ -118148,6 +118146,16 @@
                       tc-profile-stdlib-entry-invoke-start-ns
                       tc-profile-stdlib-entry-invoke-ns
                       tc-profile-stdlib-entry-invoke-calls)))
+                ;; A native callback declined a protected representation.
+                ;; Let the interpreter produce E0221 at the exact operand.
+                (when
+                  embedded_tlci.compiler-comptime-host-reflection-denied?
+                  (embedded_tlci.compiler-comptime-host-session-close!)
+                  (macro-dependency-tlci-note-if!
+                    route-state
+                    catalog
+                    tc-dependency-tlci-interpreted-fallbacks)
+                  (return No))
                 (match dispatch-result
                   [(Err message)
                     (begin
@@ -127901,6 +127909,44 @@
     [(Some _ _ _ _ _ _) true]
     [(No) false]))
 
+;; A generated body can hit reflection before source policy has checked its
+;; storage declarations. If both reject opaque access, report the source
+;; declaration error from the materialized program.
+(define (macro-generated-opacity-diagnostic
+  [ctx : TcContext]
+  [decl : (& ast.AstDecl)]
+  [diag : (Box cdiag.CompilerDiagnostic)]) : (Box cdiag.CompilerDiagnostic)
+  (match (ast.ast-decl-generated-meta decl)
+    [(No) diag]
+    [(Some _ _ _ _)
+      (let
+        [opaque-code : String
+          (cdiag.compiler-diagnostic-code-typecheck-opaque-representation)]
+        (if (string.eq
+          (cdiag.compiler-diagnostic-code-or-empty (& (deref diag)))
+          opaque-code)
+          (let
+            [job : TcJobState (tc-context-job-state ctx)]
+            [saved-opacity : i64 (tc-job-state-field job opaque-program i64)]
+            [flat : MacroSegmentedProgramFlatView
+              (macro-segmented-program-flatten-raw job)]
+            [source-policy : ResultTcSourcePolicyDiagnostic
+              (tc-program-source-types-policy-ok
+                ctx
+                (ast.ast-program flat.decls)
+                flat.paths)]
+            (tc-job-state-set-opaque-program! job saved-opacity)
+            (match source-policy
+              [(Ok) diag]
+              [(Err source-diag)
+                (if (string.eq
+                  (cdiag.compiler-diagnostic-code-or-empty
+                    (& (deref source-diag)))
+                  opaque-code)
+                  source-diag
+                  diag)]))
+          diag))]))
+
 ;; The single demand-driven expansion walk. Every macro placeholder is expanded
 ;; and its splice forced inline: the walk rebuilds the whole-program
 ;; symbols/env over the spliced view (macro-expand-rebuild-context-for-splice)
@@ -128641,7 +128687,15 @@
                               (tc-global-shared-view out-rev)
                               (tc-global-shared-view out-paths-rev))]
                           [(Err diag)
-                            (set! result (Err diag))
+                            (set!
+                              result
+                              (Err
+                                (macro-generated-opacity-diagnostic
+                                  cur-ctx
+                                  (&
+                                    (macro-segmented-program-current-decl
+                                      walk-state))
+                                  diag)))
                             (set! done true)]))])]))])))
     (macro-segmented-program-end! walk-state)
     (tc-context-restore-provider! ctx prev-provider prev-prov-id)

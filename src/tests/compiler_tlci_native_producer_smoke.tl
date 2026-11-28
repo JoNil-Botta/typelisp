@@ -4201,15 +4201,15 @@
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
-    (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open-with-macro-state!
+    (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open-with-env!
       pools
       (& operands)
       0
       64
       producer-test-cookie
-      (compiler_ctfe.ctfe-reflect-info-list-empty)
-      source-names
-      (compiler_ctfe.compiler-ctfe-serial-macro-state))
+      (compiler_ctfe.ctfe-env-empty-with-pools-and-source-names
+        pools
+        source-names))
     (let
       [push-status : i64
         (compiler_embedded_stdlib_tlci.compiler-comptime-host-push!
@@ -4272,15 +4272,15 @@
     (set!
       (array-ref operands 0)
       (compiler_ctfe.CompilerCtfeValue.CapturedExpr node (Expr) pools))
-    (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open-with-macro-state!
+    (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open-with-env!
       pools
       (& operands)
       1
       64
       producer-test-cookie
-      (compiler_ctfe.ctfe-reflect-info-list-empty)
-      source-names
-      (compiler_ctfe.compiler-ctfe-serial-macro-state))
+      (compiler_ctfe.ctfe-env-empty-with-pools-and-source-names
+        pools
+        source-names))
     (let
       [push-status : i64
         (compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-push-operand

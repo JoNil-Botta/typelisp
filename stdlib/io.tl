@@ -2252,24 +2252,29 @@
         (ErrIoUnit (error-from-label "file-close" status))))))
 
 ;: Set an open file's position to an absolute byte offset.
-(define (file-seek [handle : FileHandle] [offset : i64]) : ResultIoUnit
-  (let
-    [raw : i64 handle.id]
-    (if (valid-handle? raw)
-      (unsafe
-        (let
-          [fd : i64 (io_core.io-file-i64-ref (io_core.io-file-fds-ptr) raw)]
-          [position : i64 (platform-lseek fd offset 0)]
-          (if (< position 0)
-            (ErrIoUnit (error-from-label "file-seek" (last-error-code)))
-            (begin
-              (io_core.io-file-bool-set! (io_core.io-file-eofs-ptr) raw false)
-              (io_core.io-file-bool-set!
-                (io_core.io-file-last-ready-ptr)
-                raw
-                false)
-              OkIoUnit))))
-      (ErrIoUnit (IoUnsupported (file-handle-invalid-message))))))
+;:
+;: The caller must keep the original file opened by `file-open` live for the
+;: entire call. The slot check only checks current occupancy. A closed
+;: handle's slot may have been reused for another file.
+(unsafe
+  (define (file-seek [handle : FileHandle] [offset : i64]) : ResultIoUnit
+    (let
+      [raw : i64 handle.id]
+      (if (valid-handle? raw)
+        (unsafe
+          (let
+            [fd : i64 (io_core.io-file-i64-ref (io_core.io-file-fds-ptr) raw)]
+            [position : i64 (platform-lseek fd offset 0)]
+            (if (< position 0)
+              (ErrIoUnit (error-from-label "file-seek" (last-error-code)))
+              (begin
+                (io_core.io-file-bool-set! (io_core.io-file-eofs-ptr) raw false)
+                (io_core.io-file-bool-set!
+                  (io_core.io-file-last-ready-ptr)
+                  raw
+                  false)
+                OkIoUnit))))
+        (ErrIoUnit (IoUnsupported (file-handle-invalid-message)))))))
 
 ;: Return the owned buffer captured by a streaming file read.
 (define (file-read-bytes [read : FileRead]) : byte_buf.ByteBuf
@@ -3001,7 +3006,8 @@
           true
           "eof remains sticky")
         (io-handle-test-assert-ok-unit
-          (file-seek read-handle 3)
+          (unsafe
+            (file-seek read-handle 3))
           "seek after eof: ")
         (io-handle-test-assert-read-ok
           (file-read-chunk read-handle 0)
@@ -3016,10 +3022,6 @@
         (io-handle-test-assert-ok-unit
           (file-close read-handle)
           "close read handle: ")
-        (io-handle-test-assert-unit-unsupported
-          (file-seek read-handle 0)
-          "seek"
-          "seek after close returns unsupported")
         (io-handle-test-assert-read-unsupported
           (file-read-chunk read-handle 1)
           "read after close returns unsupported")

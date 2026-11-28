@@ -3933,7 +3933,9 @@
                 [(OkIoRead read)
                   (set! first (byte_buf.to-array (io.file-read-bytes read)))])
               (if (and ok (> size sample-size))
-                (match (io.file-seek handle (- size sample-size))
+                ;; This branch keeps the handle from file-open live until file-close below.
+                (match (unsafe
+                  (io.file-seek handle (- size sample-size)))
                   [(ErrIoUnit _)
                     (set! ok false)
                     (set! error-message "seek failed")]

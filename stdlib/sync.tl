@@ -31,6 +31,7 @@
 ;#
 ;# Usage: `(import stdlib.sync)`
 ;# Generated `max-capacity` and `raw-field-count` are zero-argument accessors.
+;# Generated `(empty-raw)` returns a zero-valued raw i64 channel sentinel.
 ;#
 ;# ```typelisp
 ;# (import stdlib.sync)
@@ -80,6 +81,8 @@
             1048576)
           (define (raw-field-count) : i64
             sync.i64-channel-raw-field-count)
+          (define (empty-raw) : sync.SyncI64Channel
+            (sync.i64-channel-empty-raw))
           (unsafe
             (define (to-raw [channel : Channel]) : sync.SyncI64Channel
               channel.raw))
@@ -292,6 +295,10 @@
   (mutex-handle i64 (:opaque))
   (items-handle i64 (:opaque))
   (spaces-handle i64 (:opaque)))
+
+;: Return the zero-valued raw i64 channel fallback sentinel.
+(define (i64-channel-empty-raw) : SyncI64Channel
+  (SyncI64Channel 0 0 0 0 0 0 0))
 
 ;: Move-transferred two-field aggregate message for `ChannelI64PairChannel`.
 (defstruct ChannelI64Pair

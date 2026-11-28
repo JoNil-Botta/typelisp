@@ -48279,13 +48279,12 @@
   (match expr
     [(or (Spanned inner-box _) (Ann inner-box _) (Cast inner-box _)
          (Borrow _ _ inner-box) (Unary _ inner-box) (FixedMakeArray _ inner-box)
-         (MakeArray _ inner-box) (StructGet inner-box _) (Box inner-box)
-         (BoxGet inner-box) (BoxTake inner-box))
+         (MakeArray _ inner-box) (StructGet inner-box _) (TupleRef inner-box _)
+         (Box inner-box) (BoxGet inner-box) (BoxTake inner-box))
       (lower-spmd-reduce-node-writes-id? ctx name inner-box)]
-    [(or (Binary _ left-box right-box) (TupleRef left-box right-box)
-         (ArrayRef left-box right-box) (ArrayPush left-box right-box)
-         (StringRef left-box right-box) (StructSet left-box _ right-box)
-         (BoxSet left-box right-box))
+    [(or (Binary _ left-box right-box) (ArrayRef left-box right-box)
+         (ArrayPush left-box right-box) (StringRef left-box right-box)
+         (StructSet left-box _ right-box) (BoxSet left-box right-box))
       (or
         (lower-spmd-reduce-node-writes-id? ctx name left-box)
         (lower-spmd-reduce-node-writes-id? ctx name right-box))]
@@ -74297,18 +74296,12 @@
 (define (lower-rvo-node-has-early-return? [ctx : tc_core.TcContext] [id : i64]) : bool
   ;; `return` exits early. A `try` does not count: its error exit builds the
   ;; Err in the forwarded sret slot (`lower-return-result-err`). The arms
-  ;; below also answer for quoted syntax (no), for the forms this scan does not
-  ;; descend into (yes, to stay conservative) and for TupleRef, whose index it
-  ;; reads as a node; every other variant asks its expression children through
-  ;; the AstExpr child list.
+  ;; below also answer for quoted syntax (no) and for the forms this scan
+  ;; treats conservatively (yes). Other variants use the AstExpr child list.
   (match (lower-context-expr-get ctx id)
     [(or (Return _) (ArrayTake _ _ _) (Replace _ _) (Break) (Continue)
          (ForOwnedState _) (ForOwnedStep _) (MacroExpansion _ _ _))
       true]
-    [(TupleRef tuple-box index-box)
-      (or
-        (lower-rvo-node-has-early-return? ctx tuple-box)
-        (lower-rvo-node-has-early-return? ctx index-box))]
     [(or (Comptime _) (Quote _) (Quasiquote _) (Unquote _) (UnquoteSplicing _))
       false]
     [_
@@ -82429,10 +82422,8 @@
 (define (lower-source-node-has-import-call?
   [pools : (& pools ast.AstNodePoolContext)]
   [id : i64]) : bool
-  ;; The arms below check call heads, keep this scan's own operands for
-  ;; TupleRef (its index read as a node) and SpmdScan, and skip the forms it
-  ;; does not descend into; every other variant asks its expression children
-  ;; through the AstExpr child list.
+  ;; Check call heads, visit this scan's operands for SpmdScan, and skip
+  ;; forms outside the scan. Other variants use the AstExpr child list.
   (match (ast.ast-node-pool-context-expr-get pools id)
     [(Call func-box args)
       (or
@@ -82444,10 +82435,6 @@
           false
           lower-source-node-has-import-call?
           pools))]
-    [(TupleRef tuple-box index-box)
-      (or
-        (lower-source-node-has-import-call? pools tuple-box)
-        (lower-source-node-has-import-call? pools index-box))]
     [(SpmdScan scan-box)
       (match (__tl-box-place scan-box)
         [(Scan _ _ _ start-box end-box init-box _ value-box body-box _)

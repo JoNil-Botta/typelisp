@@ -1,0 +1,2 @@
+arena_dynarray_borrow_return_reject|check-fail|tests/safety/arena_dynarray_borrow_return_reject.tl|-|error[E0205]: typecheck: `xs` does not live long enough
+arena_dynarray_borrow_inner_escape_reject|check-fail|tests/safety/arena_dynarray_borrow_inner_escape_reject.tl|-|error[E0205]: typecheck: `xs` does not live long enough

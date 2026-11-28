@@ -654,7 +654,7 @@
               (spec-template-env-shadow-state wide)).slots)
           8)
         (= (comptime (size-of (type SpecTemplateShadowState))) 8)
-        (= (comptime (size-of (type SpecTemplateShadowStateData))) 56)))
+        (= (comptime (size-of (type SpecTemplateShadowStateData))) 96)))
     ;; Revisit the root after the deepest snapshot to catch leaked counts.
     (and
       ok

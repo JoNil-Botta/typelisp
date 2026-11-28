@@ -6,7 +6,7 @@
 (define tli-magic : i64
   0x00494c54)
 (define tli-schema-version : i64
-  4)
+  5)
 (define tli-header-size : i64
   144)
 

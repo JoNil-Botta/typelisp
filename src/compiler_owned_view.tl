@@ -31,11 +31,18 @@
           (comptime.reference-element-type reference-ty)]
         (match (comptime.type-info value-ty)
           [(comptime.TypeInfo.DynArray _)
-            `(unsafe
-              (ptr-read
-                (ptr-cast
-                  (__tl_array-data (array ,reference))
-                  : (Ptr ,value-ty))))]
+            (if (= (size-of (type (__tl_dyn-array u8))) 16)
+              `(unsafe
+                (ptr-read
+                  (ptr-read
+                    (ptr-cast
+                      (__tl_array-data (array ,reference))
+                      : (Ptr (Ptr ,value-ty))))))
+              `(unsafe
+                (ptr-read
+                  (ptr-cast
+                    (__tl_array-data (array ,reference))
+                    : (Ptr ,value-ty)))))]
           [(comptime.TypeInfo.Builtin kind)
             (if (if (string.eq kind "string")
               (= (size-of (type String)) 8)

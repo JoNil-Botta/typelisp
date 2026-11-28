@@ -1025,11 +1025,13 @@ cfg driver-state smoke guard this boundary.
 
 `Decls` splice admission is keyed by the owning module, output segment and
 expansion identity in the job-owned structural intern session. A compatible
-repeat in one module remains empty; another module still receives its imports
-and local declarations. Explicit module switches split the output into
-segments, each admitted under its actual owner and its marker count; all marker
-rows and the original declaration interleaving are preserved. A consuming
-module that is also an explicit target therefore keeps its local segment apart
+repeat deduplicates rows in that scope. While the original splice is an
+ancestor of the current call, the memo retains pending `Decls` calls in the
+walk so recursive expansions reach the depth limit. Another module still
+receives its imports and local declarations. Explicit module switches split
+the output into segments, each admitted under its actual owner and its marker
+count. All marker rows and the original declaration interleaving are preserved.
+A consuming module that is also an explicit target keeps its local segment apart
 from the target segment. Incompatible output under one owner/segment/identity
 still diagnoses. `decls_module_scopes` and `serialize_module_scopes` exercise
 independent generated modules and shared enum payload serializers, and
@@ -1037,11 +1039,14 @@ independent generated modules and shared enum payload serializers, and
 tests cover owner and segment isolation, collision probing and invalidation.
 
 The expansion walk splices each macro's output into a segmented program view
-and continues over it. A splice costs work in its delta and the module it
-expands in, never a rescan of the whole program (#8120). Segment nodes and the
-emitted prefix index their module-marker and import rows, so a module's local
-environment and the import-alias index read those rows plus the target
-module's own rows. Each cached top-env layer records the resolution generation
+and continues over it. Each generated segment inherits its caller's expansion
+depth plus one. The suspended suffix retains its depth, and separately loaded
+source starts at depth zero. A `Decls` call beyond the expression-macro depth
+limit reports E0504 at the invocation span. A splice costs work in its delta
+and the module it expands in, never a rescan of the whole program (#8120).
+Segment nodes and the emitted prefix index their module-marker and import
+rows, so a module's local environment and the import-alias index read those rows
+plus the target module's own rows. Each cached top-env layer records the resolution generation
 at which it last re-resolved its unresolved signatures. Only a new walk, a
 splice with a nominal type, import or module row, an import marker, or a lazy
 import stub advances the generation, so function-only splices skip the pass. A

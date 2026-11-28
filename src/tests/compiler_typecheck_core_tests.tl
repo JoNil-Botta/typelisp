@@ -2582,6 +2582,63 @@
       typed?
       "the CTFE type-literal predicate reads the node from its owning pool, not the installed decoy")))
 
+(test
+  tuple-ref-visitors-follow-only-the-receiver
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [first : i64
+      (ast.ast-node-pool-context-expr-push pools (Literal (Int 7 "7")))]
+    [decoy : i64 (ast.ast-node-pool-context-expr-push pools (TypeLiteral 0))]
+    [second : i64
+      (ast.ast-node-pool-context-expr-push pools (Literal (Int 42 "42")))]
+    [items : ast.AstExprList (ast.ast-expr-list-new)]
+    [_ (ast.ast-expr-list-push (&mut items) first)]
+    [_ (ast.ast-expr-list-push (&mut items) second)]
+    [receiver : i64 (ast.ast-node-pool-context-expr-push pools (Tuple items))]
+    [bases : i64 (ast.ast-node-pool-context-expr-segment-bases (& pools))]
+    [macro-state : tc_core.TcMacroState
+      (tc_core.tc-job-state-macro-state (tc_core.tc-job-state-new))]
+    (test.assert-i64-eq
+      decoy
+      1
+      "the field index coincides with an occupied node slot")
+    (test.assert-true
+      (not
+        (tc_core.ctfe-expr-has-type-literal?
+          bases
+          macro-state
+          (TupleRef receiver 1)))
+      "CTFE skips the unrelated type literal at node 1")
+    (ast.ast-node-pool-context-expr-set! pools second (& (TypeLiteral 0)))
+    (test.assert-true
+      (tc_core.ctfe-expr-has-type-literal?
+        bases
+        macro-state
+        (TupleRef receiver 1))
+      "CTFE visits the tuple receiver")
+    (ast.ast-node-pool-context-expr-set!
+      pools
+      second
+      (& (Literal (Int 42 "42"))))
+    (ast.ast-node-pool-context-expr-set! pools decoy (& (SpmdProgramIndex)))
+    (test.assert-true
+      (match (tc_core.tc-spmd-scan-body-no-nested-spmd
+        bases
+        (TupleRef receiver 1))
+        [(Ok) true]
+        [(Err _) false])
+      "the SPMD scan skips the unrelated program-index at node 1")
+    (ast.ast-node-pool-context-expr-set! pools decoy (& (Literal (Int 0 "0"))))
+    (ast.ast-node-pool-context-expr-set! pools second (& (SpmdProgramIndex)))
+    (test.assert-true
+      (match (tc_core.tc-spmd-scan-body-no-nested-spmd
+        bases
+        (TupleRef receiver 1))
+        [(Ok) false]
+        [(Err _) true])
+      "the SPMD scan visits the tuple receiver")))
+
 ;; --- #7918: expression forms in Decls/Module macro output -------------------
 ;;
 ;; A Decls or Module macro's output reaches the declaration parser through

@@ -73886,23 +73886,10 @@
               (ast.ast-expr-list-get exprs index 0))))]
       (tc-spmd-scan-body-no-nested-list-at expr-bases exprs (+ index 1)))))
 
-(define (tc-spmd-scan-body-no-nested-pair
-  [expr-bases : i64]
-  [left : ast.AstExpr]
-  [right : ast.AstExpr]) : ResultTcUnit
-  (let
-    [_ (try (tc-spmd-scan-body-no-nested-spmd expr-bases left))]
-    (tc-spmd-scan-body-no-nested-spmd expr-bases right)))
-
 (define (tc-spmd-scan-body-no-nested-spmd
   [expr-bases : i64]
   [expr : ast.AstExpr]) : ResultTcUnit
   (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
-    [(TupleRef tuple-box index-box)
-      (tc-spmd-scan-body-no-nested-pair
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases tuple-box)
-        (ast.ast-expr-segment-bases-get expr-bases index-box))]
     [(Foreach _)
       (Err
         (tc-kind-message
@@ -127460,11 +127447,11 @@
     [(or (PtrAddrOf place) (Spanned place _) (MacroExpansion place _ _)
          (Unary _ place) (FixedMakeArray _ place) (MakeArray _ place)
          (Set _ place) (Ann place _) (Cast place _) (Borrow _ _ place)
-         (StructGet place _) (Box place) (BoxGet place) (BoxTake place)
-         (Comptime place) (Quote place) (Quasiquote place) (Unquote place)
-         (UnquoteSplicing place) (Try place) (Return place) (PtrNullCheck place)
-         (PtrRead place) (PtrCast place _) (PtrToInt place) (IntToPtr place _)
-         (StringData place) (ArrayData place) (Xgetbv place)
+         (StructGet place _) (TupleRef place _) (Box place) (BoxGet place)
+         (BoxTake place) (Comptime place) (Quote place) (Quasiquote place)
+         (Unquote place) (UnquoteSplicing place) (Try place) (Return place)
+         (PtrNullCheck place) (PtrRead place) (PtrCast place _) (PtrToInt place)
+         (IntToPtr place _) (StringData place) (ArrayData place) (Xgetbv place)
          (ForeachActive _ place) (LaneValue place))
       (ctfe-node-has-type-literal? expr-bases state place)]
     [(Call func-box args)
@@ -127480,10 +127467,10 @@
          (Begin items) (Unsafe items) (WithRegion _ items) (WithScratch items)
          (Syscall items))
       (ctfe-exprs-have-type-literal? expr-bases state items)]
-    [(or (Binary _ l r) (TupleRef l r) (ArrayRef l r) (Replace l r)
-         (ArrayPush l r) (StringRef l r) (StructSet l _ r) (BoxSet l r)
-         (PtrWrite l r) (PtrOffset l r) (StringFromBytes l r) (CpuIdEax l r)
-         (CpuIdEbx l r) (CpuIdEcx l r) (CpuIdEdx l r))
+    [(or (Binary _ l r) (ArrayRef l r) (Replace l r) (ArrayPush l r)
+         (StringRef l r) (StructSet l _ r) (BoxSet l r) (PtrWrite l r)
+         (PtrOffset l r) (StringFromBytes l r) (CpuIdEax l r) (CpuIdEbx l r)
+         (CpuIdEcx l r) (CpuIdEdx l r))
       (ctfe-reflection-prescan-or
         (ctfe-node-has-type-literal? expr-bases state l)
         (ctfe-node-has-type-literal? expr-bases state r))]

@@ -1,4 +1,4 @@
-;; Raw array-slot fill alignment and writable-range obligations are not safe defaults.
+;; The former array-slot fill helper has been removed.
 (import stdlib.runtime)
 
 (define (main) : i64

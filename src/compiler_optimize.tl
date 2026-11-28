@@ -115002,7 +115002,6 @@
 ;;                     tl_region_reset / tl_arena_set is deliberately NOT
 ;;                     summarized, so any reuse of freed storage still wipes.)
 ;;   - tl_array_zero : writes only through its first parameter.
-;;   - tl_array_fill8: writes only through its first parameter.
 ;;   - tl_mem_fill8  : writes only through its first parameter (hand-asm
 ;;                     `rep stosq`; reads nothing but its own arguments).
 ;;
@@ -115025,7 +115024,6 @@
   (cbi.compiler-builtin-refresh!)
   (opt-call-memory-seed-builtin! out cbi.compiler-builtin-id-tl-alloc 0)
   (opt-call-memory-seed-builtin! out cbi.compiler-builtin-id-tl-array-zero 1)
-  (opt-call-memory-seed-builtin! out cbi.compiler-builtin-id-tl-array-fill8 1)
   (opt-call-memory-seed-builtin! out cbi.compiler-builtin-id-tl-mem-fill8 1))
 
 ;; --- the fixed point: one call-graph component at a time ---------------------

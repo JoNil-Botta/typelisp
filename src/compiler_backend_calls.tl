@@ -490,16 +490,6 @@
 
 (define (compiler-backend-runtime-param-types-id [name-id : i64]) : compiler_ast_types.AstTypeList
   (cond
-    [(cbi.compiler-builtin-backend-tl-array-fill8-id? name-id)
-      (compiler_ast_types.ast-type-cons
-        (& (compiler_ast_types.ast-ty-mut-ptr (& (U8))))
-        (&
-          (compiler_ast_types.ast-type-cons
-            (& (I64))
-            (&
-              (compiler_ast_types.ast-type-cons
-                (& (U64))
-                (& (compiler_ast_types.ast-type-list-new)))))))]
     [(cbi.compiler-builtin-backend-tl-array-zero-id? name-id)
       (compiler_ast_types.ast-type-cons
         (& (compiler_ast_types.ast-ty-mut-ptr (& (U8))))

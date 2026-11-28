@@ -965,9 +965,9 @@
       (lower_tests.compiler-lower-make-array-source))
     (io.panic "lower: __tl_make-array smoke mismatch"))
   (unless
-    (lower_tests.compiler-lower-make-array-init-shape-ok?
-      (lower_tests.compiler-lower-make-array-init-source))
-    (io.panic "lower: __tl_make-array init smoke mismatch"))
+    (lower_tests.compiler-lower-make-array-string-shape-ok?
+      (lower_tests.compiler-lower-make-array-string-source))
+    (io.panic "lower: __tl_make-array String zero-fill smoke mismatch"))
   (unless
     (lower_tests.compiler-lower-make-array-zero-shape-ok?)
     (io.panic "lower: make-array zero aggregate smoke mismatch"))
@@ -976,7 +976,7 @@
     (io.panic "lower: dynamic array literal smoke mismatch"))
   (unless
     (lower_tests.compiler-lower-make-array-register-resident-zero-fill-shape-ok?)
-    (io.panic "lower: __tl_make-array fill8 smoke mismatch"))
+    (io.panic "lower: __tl_make-array one-word zero-fill smoke mismatch"))
   (unless
     (lower_tests.compiler-lower-make-array-nullable-cfunc-zero-fill-shape-ok?)
     (io.panic "lower: __tl_make-array nullable CFunc zero-fill smoke mismatch"))

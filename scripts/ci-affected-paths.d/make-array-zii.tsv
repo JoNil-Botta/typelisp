@@ -1,0 +1,2 @@
+path	required	advisory	reason
+tests/integration/make_array_allocation_profile.tl	stage2-compile-profile-verifier	@corpus	Direct allocation-count fixture in verify-compile-profile.sh.

@@ -1175,8 +1175,8 @@
       -1)))
 
 ;; Lower template nodes carrying a spliceable `AstExprList` (`Begin`, `Tuple`,
-;; `Array`, `BracketClause`, `Unsafe`, `Call`, `While`); returns -2 when `expr`
-;; is not one.
+;; `Array`, `DynArray`, `BracketClause`, `Unsafe`, `Call`, `While`).
+;; Returns -2 when `expr` is not one.
 (define (embedded-native-template-list-ops
   [context : (& context TlciNativeSourceContext)]
   [params : (& params compiler_ast_types.AstMacroParamList)]
@@ -1190,7 +1190,8 @@
         [(While _ _) (tlci_core.tlci-host-callback-name expr-while)]
         [(Begin _) (tlci_core.tlci-host-callback-name expr-begin)]
         [(Tuple _) (tlci_core.tlci-host-callback-name expr-tuple)]
-        [(Array _) (tlci_core.tlci-host-callback-name expr-array)]
+        [(or (Array _) (DynArray _))
+          (tlci_core.tlci-host-callback-name expr-array)]
         [(BracketClause _)
           (tlci_core.tlci-host-callback-name expr-bracket-clause)]
         [(Unsafe _) (tlci_core.tlci-host-callback-name expr-unsafe)]
@@ -1212,7 +1213,8 @@
             [items-opened : i64
               (match expr
                 [(or (Call _ items) (While _ items) (Begin items) (Tuple items)
-                     (Array items) (BracketClause items) (Unsafe items))
+                     (Array items) (DynArray items) (BracketClause items)
+                     (Unsafe items))
                   (embedded-native-template-args-ops
                     context
                     params
@@ -1228,7 +1230,7 @@
                   ops-count
                   op
                   (match expr
-                    [(While _ _) "1"]
+                    [(or (While _ _) (DynArray _)) "1"]
                     [_ "0"])
                   "0"
                   "0")

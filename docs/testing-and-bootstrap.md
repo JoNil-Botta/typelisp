@@ -194,9 +194,9 @@ self-compile ledger uses it to reproduce (in-place measure) an old base whose
 identity differs from the runner's, since `stage0-latest` may have been
 republished from a newer commit whose stricter compiler rejects that base.
 
-The minimum supported seed is a stage0 published on or after 2026-08-30. There
-are no compatibility bridges: the seed compiles the current sources directly,
-with the same flags as every later stage. A compiler change that the current
+The seed must be built from `4d8ae5fc4` or later, as in the releases published
+from 2026-11-28 onward. Bootstrap uses the seed's inline `String` and
+dynamic-buffer layouts directly with the same flags as every later stage. A compiler change that the current
 `stage0-latest` cannot compile therefore lands in two steps: first the compiler
 support, then, once `stage0-latest` has been republished with it, the sources
 that use it.

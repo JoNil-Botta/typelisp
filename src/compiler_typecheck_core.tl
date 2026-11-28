@@ -1222,8 +1222,7 @@
           (unsafe
             (arena.from-raw-handle owner))
           (let
-            [cell : (__tl_dyn-array ,_payload) (__tl_make-array ,_payload 1)]
-            [_init : unit (set! (array-ref cell 0) ,initial)]
+            [cell : (__tl_dyn-array ,_payload) (__tl_make-array ,initial)]
             [next : i64
               (cast
                 (unsafe
@@ -78033,14 +78032,6 @@
         max-align)]
     (tc-inline-aggregate-layout-info (tc-align-up cursor align) align)))
 
-(define (tc-inline-aggregate-array-size
-  [elem-size : i64]
-  [elem-align : i64]
-  [count : i64]) : i64
-  (if (<= count 0)
-    0
-    (* (tc-align-up elem-size elem-align) count)))
-
 (define (tc-inline-aggregate-field-defs-layout
   [ctx : TcContext]
   [repr : (& repr ast.AstStructRepr)]
@@ -78754,13 +78745,21 @@
               ctx
               (tc-context-type-get ctx elem)
               stack))]
-        (Ok
-          (TcLayoutInfo
-            (tc-inline-aggregate-array-size
-              (tc-layout-info-size elem-info)
-              (tc-layout-info-align elem-info)
-              count)
-            (tc-layout-info-align elem-info))))]
+        [align : i64 (tc-layout-info-align elem-info)]
+        [stride : i64 (tc-align-up (tc-layout-info-size elem-info) align)]
+        (if (and (> stride 0) (> count (/ 9223372036854775800 stride)))
+          (Err
+            (tc-kind-message
+              (ComptimeConstraint)
+              "typecheck: fixed array byte size exceeds the supported layout range"))
+          (Ok
+            (TcLayoutInfo
+              (*
+                stride
+                (if (> count 0)
+                  count
+                  0))
+              align))))]
     [(or (Struct name) (StructArgs name _) (Enum name) (EnumArgs name _))
       (let
         [layout : TcInlineAggregateLayout
@@ -87929,38 +87928,7 @@
       (tc-not-zii-reason-text reason)
       "); construct the elements explicitly")))
 
-(define (tc-init-aggregate-layout-ok [ctx : TcContext] [ty : ast.AstType]) : ResultTcUnit
-  (let
-    [_ (try (tc-inline-aggregate-type-layout ctx ty))]
-    Ok))
-
-(define (tc-init-type-list-supported
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [construct? : bool]
-  [types : ast.AstTypeList]) : ResultTcUnit
-  (tc-init-type-list-supported-at ctx env construct? (& types) 0))
-
-(define (tc-init-type-list-supported-at
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [construct? : bool]
-  [types : (& types ast.AstTypeList)]
-  [index : i64]) : ResultTcUnit
-  (if (>= index (ast.ast-type-list-len types))
-    Ok
-    (let
-      [_
-        (try
-          (tc-init-type-supported
-            ctx
-            env
-            construct?
-            (ast.ty-node-get
-              (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))))]
-      (tc-init-type-list-supported-at ctx env construct? types (+ index 1)))))
-
-(define (tc-init-struct-field-types-for-result
+(define (tc-zii-struct-field-types-for-result
   [ctx : TcContext]
   [struct-name-id : i64]
   [struct-ty : ast.AstType]
@@ -87978,7 +87946,7 @@
           [(Err _) field-types])]
       [_ field-types])))
 
-(define (tc-init-enum-fields-for-result
+(define (tc-zii-enum-fields-for-result
   [ctx : TcContext]
   [enum-name-id : i64]
   [enum-ty : ast.AstType]
@@ -88033,7 +88001,7 @@
       (tc-context-with-module-id ctx (tc-env-key-name-text module-id) module-id)
       (tc-context-with-module-id ctx "" cbi.compiler-builtin-id-fix-empty))))
 
-(define (tc-init-nominal-field-context-id
+(define (tc-zii-nominal-field-context-id
   [ctx : TcContext]
   [nominal-name-id : i64]) : TcContext
   (let
@@ -88046,168 +88014,24 @@
       (tc-context-with-nominal-owner-handle-module ctx handle)
       (tc-context-with-nominal-owner-module-id ctx nominal-name-id))))
 
-(define (tc-init-struct-supported
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [construct? : bool]
-  [struct-name-id : i64]
-  [struct-ty : ast.AstType]) : ResultTcUnit
-  (let
-    [decl (try (tc-struct-decl-id ctx struct-name-id))]
-    (when
-      (and construct? (tc-foreign-field-construction? ctx struct-name-id))
-      (return
-        (Err (tc-field-opacity-message struct-name-id "cannot initialize"))))
-    (match decl
-      [(TcStructDecl repr cleanup fields)
-        (let
-          [field-ctx : TcContext
-            (tc-init-nominal-field-context-id ctx struct-name-id)]
-          (if (ast.ast-struct-repr-c? repr)
-            (Err (tc-make-array-not-zii-message ctx struct-ty (ReprC)))
-            (if (ast.ast-struct-cleanup? cleanup)
-              (Err (tc-make-array-not-zii-message ctx struct-ty (CleanupOwner)))
-              (let
-                [_
-                  (try
-                    (tc-init-aggregate-layout-ok
-                      field-ctx
-                      (tc-global-shared-view struct-ty)))]
-                (tc-init-type-list-supported
-                  ctx
-                  env
-                  construct?
-                  (tc-init-struct-field-types-for-result
-                    field-ctx
-                    struct-name-id
-                    struct-ty
-                    fields))))))])))
-
-(define (tc-init-enum-supported
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [construct? : bool]
-  [enum-name-id : i64]
-  [enum-ty : ast.AstType]) : ResultTcUnit
-  (let
-    [field-ctx : TcContext (tc-init-nominal-field-context-id ctx enum-name-id)]
-    [decl (try (tc-enum-decl-id ctx enum-name-id))]
-    (match decl
-      [(TcEnumDecl cleanup variants)
-        (if (ast.ast-enum-cleanup? cleanup)
-          (Err (tc-make-array-not-zii-message ctx enum-ty (CleanupOwner)))
-          (let
-            [_
-              (try
-                (tc-init-aggregate-layout-ok
-                  field-ctx
-                  (tc-global-shared-view enum-ty)))]
-            (if (ast.ast-variant-def-list-empty? (& variants))
-              (Err (tc-make-array-not-zii-message ctx enum-ty (Unsupported)))
-              (match (ast.ast-variant-def-list-get
-                (& variants)
-                0
-                (ast.ast-variant-def-fallback))
-                [(Def _ fields _)
-                  (tc-init-type-list-supported
-                    ctx
-                    env
-                    construct?
-                    (tc-init-enum-fields-for-result
-                      field-ctx
-                      enum-name-id
-                      enum-ty
-                      fields))]))))])))
-
-(define (tc-init-type-supported
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [construct? : bool]
-  [ty : ast.AstType]) : ResultTcUnit
-  (let
-    [resolved : ast.AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
-    (if (tc-integer-type? (tc-global-shared-view resolved))
-      Ok
-      (match (tc-global-shared-view resolved)
-        [(or (F64) (F32) (Bool) (Char) (Unit) (String) (Ptr _) (MutPtr _)) Ok]
-        [(CFunc _ mode)
-          (if (ast.ast-c-function-mode-nullable? mode)
-            Ok
-            (Err (tc-make-array-not-zii-message ctx resolved (NonNullCFunc))))]
-        [(DynArray elem)
-          (let
-            [elem-ty : ast.AstType
-              (tc-type-without-regions
-                (tc-resolve-type ctx (ast.ty-node-get elem)))]
-            (if (tc-dyn-array-elem-supported? env elem-ty)
-              Ok
-              (Err
-                (tc-kind-message
-                  (TypeMismatch)
-                  (str_cat.str-cat
-                    "typecheck: make-array element type "
-                    (tc-type-render
-                      (tc-type-without-regions (tc-resolve-type ctx resolved)))
-                    " holds an unsupported dynamic array element type")))))]
-        [(Box elem)
-          (tc-init-type-supported ctx env construct? (ast.ty-node-get elem))]
-        [(Tuple elems)
-          (let
-            [_ (try (tc-init-aggregate-layout-ok ctx resolved))]
-            (tc-init-type-list-supported
-              ctx
-              env
-              construct?
-              (ast.ast-type-list-box-shared-view elems)))]
-        [(Array elem count)
-          (if (< count 0)
-            (Err (tc-make-array-not-zii-message ctx resolved (Unsupported)))
-            (let
-              [_ (try (tc-init-aggregate-layout-ok ctx resolved))]
-              (tc-init-type-supported
-                ctx
-                env
-                (and construct? (> count 0))
-                (ast.ty-node-get elem))))]
-        [(or (Struct name) (StructArgs name _))
-          (tc-init-struct-supported ctx env construct? name resolved)]
-        [(or (Enum name) (EnumArgs name _))
-          (tc-init-enum-supported ctx env construct? name resolved)]
-        [_ (Err (tc-make-array-not-zii-message ctx resolved (Unsupported)))]))))
-
-(define (tc-init-expr [ctx : TcContext] [env : TcTypeEnv] [ty : ast.AstType]) : ResultTcType
-  (let
-    [resolved : ast.AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
-    [_
-      (try
-        (tc-opaque-representation-ok ctx (& resolved) "cannot initialize the"))]
-    [_
-      (try
-        (tc-init-type-supported ctx env true (tc-global-shared-view resolved)))]
-    (Ok (tc-tag-active-region env resolved))))
-
 ;; Zero Is Initialization classifier (SPEC 5.12.1, "Zero value of each type"):
 ;; whether the all-zero bytes of a runtime storage shape are a valid value of
-;; its type. It is the one rule `make-array` / `__tl_make-array` typechecking and
-;; lowering's zero-fill and shared-fill strategies ask.
+;; its type. Typechecking uses it for both fixed arrays and private buffers.
 (defenum TcZiiClass
   (Zii)
   (NotZii TcNotZiiReason))
 
-;; An aggregate reports its highest-ranked reason. 1: its value fill allocates
-;; (a box); 2: make-array cannot initialize it.
+;; Preserve diagnostic priority for an aggregate with a box and another
+;; non-ZII part.
 (define (tc-not-zii-reason-rank [reason : TcNotZiiReason]) : i64
   (match reason
     [(Box) 1]
     [_ 2]))
 
-(define (tc-not-zii-reason-rejects? [reason : TcNotZiiReason]) : bool
-  (= (tc-not-zii-reason-rank reason) 2))
-
-(define (tc-zii-class-rejects? [class : TcZiiClass]) : bool
+(define (tc-zii-class-has-final-reason? [class : TcZiiClass]) : bool
   (match class
     [(Zii) false]
-    [(NotZii reason) (tc-not-zii-reason-rejects? reason)]))
+    [(NotZii reason) (= (tc-not-zii-reason-rank reason) 2)]))
 
 (define (tc-zii-class-join [left : TcZiiClass] [right : TcZiiClass]) : TcZiiClass
   (match right
@@ -88291,7 +88115,7 @@
               ctx
               (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
             (+ depth 1))))
-      (when (tc-zii-class-rejects? class) (return class)))
+      (when (tc-zii-class-has-final-reason? class) (return class)))
     class))
 
 ;; A default-layout struct without cleanup is ZII when every field is.
@@ -88310,9 +88134,9 @@
             [else
               (let
                 [field-ctx : TcContext
-                  (tc-init-nominal-field-context-id ctx struct-name-id)]
+                  (tc-zii-nominal-field-context-id ctx struct-name-id)]
                 [field-types : ast.AstTypeList
-                  (tc-init-struct-field-types-for-result
+                  (tc-zii-struct-field-types-for-result
                     field-ctx
                     struct-name-id
                     struct-ty
@@ -88344,9 +88168,9 @@
                 [(Def _ fields _)
                   (let
                     [field-ctx : TcContext
-                      (tc-init-nominal-field-context-id ctx enum-name-id)]
+                      (tc-zii-nominal-field-context-id ctx enum-name-id)]
                     [field-types : ast.AstTypeList
-                      (tc-init-enum-fields-for-result
+                      (tc-zii-enum-fields-for-result
                         field-ctx
                         enum-name-id
                         enum-ty
@@ -88354,13 +88178,78 @@
                     (tc-type-list-zii-class field-ctx (& field-types) depth))])])])]
     [(Err _) (NotZii (Unsupported))]))
 
-;; `make-array` / `__tl_make-array` element check. A foreign opaque element is
-;; a representation error, not a zero-initialization reason, and zeroed
-;; storage for a foreign sealed handle constructs one, so it needs `unsafe`
-;; (#9783). A type the classifier rejects is reported with its reason; every
-;; other type keeps the init rules, which still validate the value-fill
-;; element types (String, dynamic buffers, boxes), so the classifier never
-;; admits a type those rules reject.
+;; Zeroing a nonempty array constructs each live struct representation. Keep
+;; the field visibility check for those representations, including nested
+;; ones. Layout and ZII have already been checked before this walk.
+;; Field types resolve in the declaring module. Visibility uses the caller.
+(define (tc-make-array-field-construction-ok
+  [ctx : TcContext]
+  [ty : ast.AstType]) : ResultTcUnit
+  (let
+    [resolved : ast.AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
+    (match (& resolved)
+      [(or (Struct name) (StructArgs name _))
+        (if (tc-foreign-field-construction? ctx name)
+          (Err (tc-field-opacity-message name "cannot initialize"))
+          (match (try (tc-struct-decl-id ctx name))
+            [(TcStructDecl _ _ fields)
+              (let
+                [owner-ctx : TcContext
+                  (tc-zii-nominal-field-context-id ctx name)]
+                (tc-make-array-field-list-construction-ok
+                  ctx
+                  (&
+                    (tc-zii-struct-field-types-for-result
+                      owner-ctx
+                      name
+                      resolved
+                      fields))))]))]
+      [(or (Enum name) (EnumArgs name _))
+        (match (try (tc-enum-decl-id ctx name))
+          [(TcEnumDecl _ variants)
+            (match (ast.ast-variant-def-list-get
+              (& variants)
+              0
+              (ast.ast-variant-def-fallback))
+              [(Def _ fields _)
+                (let
+                  [owner-ctx : TcContext
+                    (tc-zii-nominal-field-context-id ctx name)]
+                  (tc-make-array-field-list-construction-ok
+                    ctx
+                    (&
+                      (tc-zii-enum-fields-for-result
+                        owner-ctx
+                        name
+                        resolved
+                        fields))))])])]
+      [(Tuple types)
+        (tc-make-array-field-list-construction-ok ctx (& (deref types)))]
+      [(Array elem count)
+        (if (> count 0)
+          (tc-make-array-field-construction-ok
+            ctx
+            (tc-context-type-get ctx elem))
+          Ok)]
+      [_ Ok])))
+
+(define (tc-make-array-field-list-construction-ok
+  [ctx : TcContext]
+  [types : (& types ast.AstTypeList)]) : ResultTcUnit
+  (for [index (iterator.range 0 (ast.ast-type-list-len types))]
+    (let
+      [elem : i64
+        (ast.ast-type-list-get types index (ast.ast-type-id-fallback))]
+      [_
+        (try
+          (tc-make-array-field-construction-ok
+            ctx
+            (tc-context-type-get ctx elem)))]
+      unit))
+  Ok)
+
+;; Keep the representation and foreign construction checks before the ZII
+;; diagnostic.
 (define (tc-make-array-element-ok
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -88383,21 +88272,25 @@
         (if (>= sealed 0)
           (tc-sealed-handle-require-unsafe ctx env sealed "construction")
           ResultTcUnit.Ok))]
-    (match (tc-type-zii-class ctx (tc-global-shared-view elem))
-      [(NotZii reason)
-        (if (tc-not-zii-reason-rejects? reason)
-          (Err
-            (tc-make-array-not-zii-message
-              ctx
-              (tc-global-shared-view elem)
-              reason))
-          (tc-init-type-supported ctx env construct? elem))]
-      [(Zii) (tc-init-type-supported ctx env construct? elem)])))
+    (match (tc-type-zii-class ctx (ast.clone-ast-type (& elem)))
+      [(NotZii reason) (Err (tc-make-array-not-zii-message ctx elem reason))]
+      [(Zii)
+        (let
+          [_
+            (try
+              (tc-inline-aggregate-type-layout
+                ctx
+                (ast.clone-ast-type (& elem))))]
+          (if (and
+            construct?
+            (tc-job-state-opaque-fields? (tc-context-job-state ctx)))
+            (tc-make-array-field-construction-ok ctx elem)
+            Ok))])))
 
 (define (tc-make-array-zero-literal-length?
   [expr-bases : i64]
-  [len : ast.AstExpr]) : bool
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& len))
+  [len : (& ast.AstExpr)]) : bool
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases len)
     [(Literal (Int value _)) (= value 0)]
     [_ false]))
 
@@ -88440,39 +88333,33 @@
                   env
                   (> count 0)
                   (ast.clone-ast-type (& elem))))]
-            (tc-init-expr ctx env (ast.ast-ty-array (& elem) count)))
+            [array-ty : ast.AstType (ast.ast-ty-array (& elem) count)]
+            [_
+              (try
+                (tc-inline-aggregate-type-layout
+                  ctx
+                  (ast.clone-ast-type (& array-ty))))]
+            (Ok (tc-tag-active-region env array-ty)))
           (Err
             (tc-kind-message
               (ComptimeConstraint)
               "typecheck: make-array length must be a non-negative compile-time integer"))))
       (let
         [len-ty (try (tc-expr-with-expected-or-actual-id ctx env len-id (I64)))]
-        (cond
-          [(not (tc-integer-type? len-ty))
-            (Err "typecheck: __tl_make-array length must be integer")]
-          [(not
-              (tc-dyn-array-elem-supported? env (ast.clone-ast-type (& elem))))
-            (Err
-              (tc-kind-message
-                (TypeMismatch)
-                "typecheck: __tl_make-array element type is not supported"))]
-          [else
-            (let
-              [construct? : bool
-                (not
-                  (tc-make-array-zero-literal-length?
-                    (tc-context-expr-segment-bases ctx)
-                    len))]
-              [_
-                (try
-                  (if (or construct? (tc-type-contains-reference? (& elem)))
-                    (tc-make-array-element-ok
-                      ctx
-                      env
-                      construct?
-                      (ast.clone-ast-type (& elem)))
-                    ResultTcUnit.Ok))]
-              (Ok (tc-tag-active-region env (ast.ast-ty-dyn-array (& elem)))))])))))
+        (if (not (tc-integer-type? len-ty))
+          (Err "typecheck: __tl_make-array length must be integer")
+          (let
+            [_
+              (try
+                (tc-make-array-element-ok
+                  ctx
+                  env
+                  (not
+                    (tc-make-array-zero-literal-length?
+                      (tc-context-expr-segment-bases ctx)
+                      (& len)))
+                  (ast.clone-ast-type (& elem))))]
+            (Ok (tc-tag-active-region env (ast.ast-ty-dyn-array (& elem))))))))))
 
 ;; An unquote recursively enters ordinary typechecking, which may install a
 ;; different node-pool context during macro expansion. Re-project every child

@@ -155,8 +155,6 @@
   -1)
 (define compiler-builtin-id-tl-flush-stdout-label : i64
   -1)
-(define compiler-builtin-id-tl-array-fill8 : i64
-  -1)
 (define compiler-builtin-id-tl-array-zero : i64
   -1)
 (define compiler-builtin-id-tl-mem-fill8 : i64
@@ -978,7 +976,6 @@
             compiler-builtin-id-tl-flush-stdout-label
             309
             ".L_tl_flush_stdout")
-          (id compiler-builtin-id-tl-array-fill8 40 "tl_array_fill8")
           (id compiler-builtin-id-tl-array-zero 41 "tl_array_zero")
           (id compiler-builtin-id-c-fn-check 321 "c-fn-check")
           (id compiler-builtin-id-tl-c-fn-null-abort 322 "tl_c_fn_null_abort")
@@ -2782,19 +2779,14 @@
       compiler-builtin-id-tl-oob-abort
       compiler-builtin-id-tl-div-abort
       compiler-builtin-id-tl-shift-abort)
-    (compiler-builtin-id-any3?
+    (compiler-builtin-id-any2?
       name-id
-      compiler-builtin-id-tl-array-fill8
       compiler-builtin-id-tl-array-zero
       compiler-builtin-id-tl-mem-fill8)
     (compiler-builtin-id-any2?
       name-id
       compiler-builtin-id-tl-mem-copy-fwd
       compiler-builtin-id-tl-mem-copy8-fwd)))
-
-(define (compiler-builtin-backend-tl-array-fill8-id? [name-id : i64]) : bool
-  (compiler-builtin-refresh!)
-  (= name-id compiler-builtin-id-tl-array-fill8))
 
 (define (compiler-builtin-backend-tl-array-zero-id? [name-id : i64]) : bool
   (compiler-builtin-refresh!)

@@ -1002,6 +1002,11 @@ run_logged "$PEAK_RESET_STDOUT" "$PEAK_RESET_STDERR" "compile-wide nested peak r
     "$PROFILE_BIN" run tests/integration/compile_profile_nested_peak_reset.tl \
     --cfg compile-profile --stdlib-root . --stdlib-root stdlib
 
+echo "[compile-profile] verify zeroed array allocation counts"
+run_logged "$WORKDIR/make-array.stdout" "$WORKDIR/make-array.stderr" "zeroed array allocation count fixture failed" \
+    "$PROFILE_BIN" run tests/integration/make_array_allocation_profile.tl \
+    --cfg compile-profile --stdlib-root . --stdlib-root stdlib
+
 echo "[compile-profile] verify per-entry batch memory boundaries"
 printf '%s|%s\n%s|%s\n' \
     "$(batch_path "$ROOT/tests/integration/arithmetic.tl")" "$(batch_path "$BATCH_ARITH")" \

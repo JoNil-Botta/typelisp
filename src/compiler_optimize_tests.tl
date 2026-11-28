@@ -80620,11 +80620,10 @@ done:
   (cbi.compiler-builtin-initialize-for-parse!)
   (let
     [callees
-      (ir.compiler-ir-value-seq3
+      (ir.compiler-ir-value-seq2
         (Global cbi.compiler-builtin-id-tl-array-zero)
-        (Global cbi.compiler-builtin-id-tl-array-fill8)
         (Global cbi.compiler-builtin-id-tl-mem-fill8))]
-    (for [at (iterator.range 0 3)]
+    (for [at (iterator.range 0 2)]
       (match (ir.compiler-ir-value-seq-borrow (& callees) at)
         [(Global callee)
           (for [mode (iterator.range 0 8)]

@@ -1595,9 +1595,8 @@
     [(Zii) "zii"]
     [(NotZii reason) (tc_core.tc-not-zii-reason-text reason)]))
 
-;; `ty` classifies as `want`, and make-array's element check accepts it exactly
-;; when the init rules do: the classifier neither admits a type those rules
-;; reject nor rejects one they admit.
+;; Each storage shape gets its classifier result and the matching decision
+;; from make-array's element check.
 (define (compiler-typecheck-zii-probe-ok?
   [ctx : tc_core.TcContext]
   [ty : ast.AstType]
@@ -1606,14 +1605,6 @@
     [class : String
       (compiler-typecheck-zii-class-name
         (tc_core.tc-type-zii-class ctx (ast.clone-ast-type (& ty))))]
-    [init-ok : bool
-      (match (tc_core.tc-init-type-supported
-        ctx
-        (tc_core.tc-empty-type-env)
-        true
-        (tc_core.tc-global-shared-view ty))
-        [(Ok) true]
-        [(Err _) false])]
     [element-ok : bool
       (match (tc_core.tc-make-array-element-ok
         ctx
@@ -1622,7 +1613,8 @@
         ty)
         [(Ok) true]
         [(Err _) false])]
-    (if (and (string.eq class want) (= init-ok element-ok))
+    [admission-matches? : bool (= (string.eq class "zii") element-ok)]
+    (if (and (string.eq class want) admission-matches?)
       true
       (io.panic
         (str_cat.str-cat
@@ -1630,9 +1622,9 @@
           want
           ", got "
           class
-          (if (= init-ok element-ok)
+          (if admission-matches?
             ""
-            "; make-array and init acceptance differ"))))))
+            "; make-array and the classifier disagree"))))))
 
 (define (compiler-typecheck-zii-struct-probe-ok?
   [ctx : tc_core.TcContext]
@@ -1800,10 +1792,6 @@
   (let [items : (Array (-> i64) 2) (make-array (-> i64) 2)] 0))"
       "typecheck: make-array element type (->  i64) is not zero-initializable (reason: function); construct the elements explicitly")))
 
-;; Every element type the removed `(init)` forms used to build a value for is
-;; now built through `make-array`: a ZII element zero-fills, and a String,
-;; dynamic-buffer or box element gets its shared value fill. A value fill whose
-;; contents have no zero value is rejected with the contents' reason.
 (define (compiler-typecheck-make-array-zero-tests-ok?) : bool
   (and
     (compiler-typecheck-ok?
@@ -1820,7 +1808,8 @@
     [tuples : (Array (Tuple i64 String) 2) (make-array (Tuple i64 String) 2)]
     [fixed : (Array (Array i64 2) 2) (make-array (Array i64 2) 2)]
     [points : (Array Point 2) (make-array Point 2)]
-    [boxes : (Array (Box Point) 3) (make-array (Box Point) 3)]
+    [boxes : (Array (Box Point) 3)
+      (array (box (Point 0 false)) (box (Point 0 false)) (box (Point 0 false)))]
     [maybes : (Array Maybe 2) (make-array Maybe 2)]
     (+ (array-ref ints 0)
       (+ (match (array-ref maybes 0) [(Some v) v] [(None) 0])
@@ -1828,16 +1817,16 @@
     (compiler-typecheck-error-ok?
       "(define (main) : i64
   (let [items : (Array (Box (-> i64 i64)) 2) (make-array (Box (-> i64 i64)) 2)] 0))"
-      "typecheck: make-array element type (-> i64 i64) is not zero-initializable (reason: unsupported); construct the elements explicitly")
+      "typecheck: make-array element type (Box (-> i64 i64)) is not zero-initializable (reason: box); construct the elements explicitly")
     (compiler-typecheck-error-ok?
       "(defstruct Raw (:repr c) (x i64))
 (define (main) : i64
   (let [items : (Array (Box Raw) 2) (make-array (Box Raw) 2)] 0))"
-      "typecheck: make-array element type Raw is not zero-initializable (reason: repr-c); construct the elements explicitly")
+      "typecheck: make-array element type (Box Raw) is not zero-initializable (reason: box); construct the elements explicitly")
     (compiler-typecheck-error-ok?
       "(define (main) : i64
   (let [items : (Array (Box (CFunc non-null (-> i64 i64))) 2) (make-array (Box (CFunc non-null (-> i64 i64))) 2)] 0))"
-      "typecheck: make-array element type (CFunc non-null (-> i64 i64)) is not zero-initializable (reason: non-null-cfunc); construct the elements explicitly")))
+      "typecheck: make-array element type (Box (CFunc non-null (-> i64 i64))) is not zero-initializable (reason: box); construct the elements explicitly")))
 
 (define (compiler-typecheck-repr-c-tests-ok?) : bool
   (and

@@ -1422,24 +1422,6 @@
       (unsafe
         (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))
 
-;: Fill `len` pointer-sized array slots with `value`. A positive `len` requires
-;: `buf` to be aligned for u64 and live and writable for `len * 8` bytes; that
-;: byte count and every slot address must fit without overflow. A non-positive
-;: `len` writes nothing.
-(unsafe
-  (define (array-fill8 [buf : (MutPtr u8)] [len : i64] [value : u64])
-    (:export-symbol "tl_array_fill8") : unit
-    (let
-      [slots : (MutPtr u64)
-        (unsafe
-          (ptr-cast buf : (MutPtr u64)))]
-      [i : i64 0]
-      (while (< i len)
-        (unsafe
-          (ptr-write! (ptr-offset slots i) value))
-        (set! i (+ i 1)))
-      unit)))
-
 ;: Fill `count` pointer-sized slots at `buf` with `value`. A positive `count`
 ;: requires u64-aligned live writable storage for `count * 8` bytes, with the
 ;: byte count and last slot address representable without overflow. The backend provides

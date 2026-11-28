@@ -293,11 +293,8 @@
   `(owned_view.compiler-owned-shared-view ,place))
 
 (define (compiler-backend-string-shared-view [value : (& value str)]) : String
-  (if (= (comptime (size-of (type String))) 16)
-    (unsafe
-      (string-from-bytes (string-data value) (__tl_string_length value)))
-    (unsafe
-      (ptr-read (ptr-cast (__tl_array-data (array value)) : (Ptr String))))))
+  (unsafe
+    (string-from-bytes (string-data value) (__tl_string_length value))))
 
 (defmacro (compiler-backend-global-array-element-shared-view
   [items : Expr]

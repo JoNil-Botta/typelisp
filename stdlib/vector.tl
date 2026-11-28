@@ -395,7 +395,7 @@
                         (ptr-write!
                           state-ptr
                           (IntoIterState
-                            (__tl_make-array ,T 0)
+                            (__tl_make-array)
                             (__tl_make-array bool 0)
                             len
                             len))))))))
@@ -444,7 +444,7 @@
                   ;; The raw state cell now owns the live elements. Empty the
                   ;; moved Vec's cleanup map before consuming its shell so it
                   ;; cannot drain the transferred storage.
-                  (set! v.state.slots (__tl_make-array ,T 0))
+                  (set! v.state.slots (__tl_make-array))
                   (set! v.state.live (__tl_make-array bool 0))
                   (cleanup-vec v)
                   (IntoIter state-ptr))))
@@ -534,10 +534,7 @@
                 (if (< capacity 1)
                   1
                   capacity)]
-              (Vec
-                (SlotState (__tl_make-array ,T 0) (__tl_make-array bool 0))
-                0
-                cap)))
+              (Vec (SlotState (__tl_make-array) (__tl_make-array bool 0)) 0 cap)))
           (define (new) : Vec
             (with-capacity 4))
           (define (set-ref! [v : (&mut v Vec)] [index : i64] [value : ,T]) : unit

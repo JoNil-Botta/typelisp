@@ -61,7 +61,6 @@
   [bytes : i64]) : unit
   (unsafe
     (begin
-      (runtime.array-fill8 dst slots (cast 0 : u64))
       (runtime.mem-fill8 dst slots (cast 0 : u64))
       (runtime.mem-copy-fwd dst src bytes)
       (runtime.array-zero dst bytes))))

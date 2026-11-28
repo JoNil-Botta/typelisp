@@ -531,8 +531,7 @@
   [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstSpmdSpecializationList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
-    [slots : (__tl_dyn-array ast.AstSpmdSpecialization)
-      (__tl_make-array ast.AstSpmdSpecialization 0)]
+    [slots : (__tl_dyn-array ast.AstSpmdSpecialization) (__tl_make-array)]
     (for [_index (iterator.range 0 count)]
       (__tl_array-push!
         slots

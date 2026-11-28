@@ -408,11 +408,10 @@ buffers behind the vector/slice surface, FFI/runtime buffers, and
 compiler-internal pools. Its storage is an inline 16-byte, 8-byte-aligned
 memory-class descriptor `(data_ptr : u64, length : i64)` updated in place by
 `__tl_array-push!`; all-zero `{null, 0}` is the valid empty buffer (ZII,
-section 5.12.1), the stored length is always non-negative, allocation rejects
-negative lengths, traps if `length * sizeof(type)` would overflow an `i64` byte
-count, and initializes every live element with the zero value of its type
-(section 5.12.1). Public APIs must not expose it as a growable collection
-type. `__tl_dyn-array` is accepted only as the private transitional spelling;
+section 5.12.1). The stored length is always non-negative. The typed
+`(__tl_make-array T n)` form requires a ZII element type and supplies zeroed
+storage (§5.12.1, §6.1). Dynamic-buffer literals supply the actual values.
+Public APIs must not expose the type as a growable collection. `__tl_dyn-array` is accepted only as the private transitional spelling;
 there is no public unsized `Array` alias.
 
 **Borrowed Slice referent:** `(Slice T)`
@@ -5858,21 +5857,18 @@ to a plain type drops the tag (§3.9). Aggregates cannot be cast.
 
 ### 5.12.1 Zero value of each type
 
-TypeLisp follows Zero Is Initialization (ZII) as a representation fact: the
-all-zero bit pattern of a storage shape either is a valid value of its type or
-it is not. There is no source form that constructs a value of an arbitrary
-type; write the value out. `(T ...)` builds an aggregate, `(make-array T n)`
-or private `(__tl_make-array)` hands out zeroed element storage, and a generic
-`T` takes the caller's value. `(init)` and `(init : T)` are E0100; `(init arg
-...)` is an ordinary call, so a zero-argument function named `init` cannot be
-called.
+A type is Zero Is Initialization (ZII) when its all-zero storage represents a
+valid value that can be read, overwritten, and discarded. The typed forms
+`(make-array T N)` and `(__tl_make-array T n)` require a ZII element type at
+every length, including zero. They supply zeroed storage without invoking
+constructors or allocating for individual elements. A single compiler
+classifier supplies the ZII decision and rejection reason for both forms.
 
-A type is ZII (Zero Is Initialization) when the all-zero bit pattern of its
-storage is a valid value of the type. This is a representation fact, not a
-constructor: `make-array` and private `__tl_make-array` hand out zeroed
-storage for a ZII element type without running code per element. One compiler
-classifier decides it for every storage shape. It answers ZII or not ZII with
-a stable reason, and make-array typechecking and lowering share it.
+To initialize explicit values, use constructors, fixed-array literals
+`(array value ...)`, private dynamic-buffer literals, or a loop that
+constructs each element. The former `(init)` and `(init : T)` forms are
+E0100. `(init arg ...)` is an ordinary call, so a zero-argument function
+named `init` cannot be called.
 
 | Type shape | All-zero value | ZII |
 |------------|----------------|-----|
@@ -5899,15 +5895,10 @@ a stable reason, and make-array typechecking and lowering share it.
 | cleanup-owning structs and enums | none | no: `cleanup-owner` |
 | any other shape, including opaque aggregates outside their module family and layouts that fail finite-layout analysis | none | no: `unsupported` |
 
-An aggregate that is not ZII reports the reason of one of its parts. A part
-make-array rejects (any reason but `box`) takes precedence over `box`.
-`make-array` and `__tl_make-array` reject an element type with any other
-reason, and the diagnostic names it:
-`make-array element type T is not zero-initializable (reason: function)`.
-Until #7961, element types whose only reason is `box` are still accepted: in
-each element, a box part starts as its own allocation holding contents
-initialized the same way, and every other part (including `String` and
-`(__tl_dyn-array T)`, which are ZII as `{null, 0}`) as zero.
+An aggregate that is not ZII reports the reason of one of its parts. A
+non-ZII part with another reason takes precedence over a `box` part. For
+example, the diagnostic reads `make-array element type T is not
+zero-initializable (reason: function)`.
 
 ### 5.13 `(match scrutinee [pattern body...] ...)` — pattern matching
 
@@ -8588,7 +8579,7 @@ borrowed Slice reference forms described in section 3.2:
 
 | Builtin | Signature | Description |
 |---------|-----------|-------------|
-| `make-array` | `type comptime-i64 → (Array T N)` | Construct a fixed array whose non-negative compile-time length is `N` as zeroed storage of the ZII element type `T` (§5.12.1, "Zero value of each type"); an element type that is not ZII is rejected with the classifier's reason, except the `dynamic-buffer` and `box` cases that §5.12.1 still admits |
+| `make-array` | `type comptime-i64 → (Array T N)` | Construct a fixed array whose non-negative compile-time length is `N` as zeroed storage of the ZII element type `T` (§5.12.1, "Zero value of each type"). A non-ZII element type is rejected with the classifier's reason, including at length zero |
 | `length` | `(Array T N) → i64` / `(& r (Array T N)) → i64` / `(&mut r (Array T N)) → i64` / `(__tl_dyn-array T) → i64` (private) / `(& r (Slice T)) → i64` / `(&mut r (Slice T)) → i64` / `String → i64` | Evaluate the receiver once; fixed arrays return constant `N`, while private dynamic buffers, borrowed Slices, and strings use their respective length representations |
 | `array-length` | `(Array T N) → i64` / `(& r (Array T N)) → i64` / `(&mut r (Array T N)) → i64` / `(__tl_dyn-array T) → i64` (private) / `(& r (Slice T)) → i64` / `(&mut r (Slice T)) → i64` | Array-only alias for `length`; fixed arrays return constant `N` |
 | `array-ref` | `(Array T N) i64 → T` / `(& r (Array T N)) i64 → T` / `(&mut r (Array T N)) i64 → T` / `(& r (Slice T)) i64 → T` / `(&mut r (Slice T)) i64 → T` | Bounds-checked read/place projection through an owned fixed array, a supported reference, or a borrowed Slice receiver |
@@ -8966,12 +8957,18 @@ the import-free `(make-array T N)`, `length` / `array-length`, `array-ref`, and
 `(set! (array-ref items index) value)` core forms. The private forms keep their
 runtime contracts:
 
-- `__tl_make-array` checks the runtime length before allocation: a negative
-  length or `length * sizeof(type)` overflow calls the same `tl_oob_abort`
-  trap used by bounds checks. For positive lengths every live element is
-  initialized with the zero value of its type (section 5.12.1); bulk
-  zero/fill helpers are implementation details, and safe code observes
-  initialized source values.
+- `(__tl_make-array T n)` evaluates the length once and checks it before
+  allocating. A negative length or an overflow in `n * sizeof(T)` traps
+  through `tl_oob_abort`. A zero length yields a valid empty buffer with
+  zero payload bytes. A literal zero length uses the all-zero descriptor
+  directly. For a positive length the buffer contains `n` elements of ZII
+  type `T` in bulk-zeroed storage.
+- `(__tl_make-array value ...)` is the explicit-value form. It evaluates
+  each operand once in source order and stores one element per operand using
+  the ordinary array literal ownership rules. The two-operand form selects
+  typed zeroed allocation when its first operand parses as a type. An empty
+  literal `(__tl_make-array)` uses its expected buffer type and allocates
+  no element storage.
 - `__tl_array-data` returns a raw
   `(MutPtr T)` to element storage, require an enclosing `(unsafe ...)`
   expression, and exist only for runtime, FFI, and internal code
@@ -9013,7 +9010,7 @@ allocation-free, import-free TypeLisp with equivalent codegen:
 | `tl_setup_argv`, `_tl_start` | Windows freestanding entry bootstrap: build argv from `GetCommandLineA`, clear the current-arena TEB slot, reserve a 1 GiB fiber stack with a 64 KiB initial commit and exception-stack guarantee, switch once to its `main` callback, and exit through `ExitProcess`. Fiber conversion/reservation failure and `STATUS_STACK_OVERFLOW` report without allocation and exit 134. |
 | `tl_profile_alloc_total`, `tl_profile_alloc_live`, `tl_profile_alloc_peak`, `tl_profile_alloc_reset_peak` | Stdlib profile accessors backed by counters maintained inside the allocator core. |
 | `tl_substring`, `tl_str_view`, `tl_string_concat`, `tl_string_concat3`, `tl_string_concat4`, `tl_string_concat5`, `tl_int_to_string` | Runtime-plan compatibility names; implementations are TypeLisp exports. `tl_int_to_string` is safe. The raw-pointer substring/concat entries and the unchecked borrowed-view ABI carrier are unsafe callables; compiler-generated and safe stdlib call paths establish their range, overflow, initialization, lifetime, and fresh-destination obligations. |
-| `tl_array_fill8`, `tl_mem_fill8`, `tl_mem_copy_fwd`, `tl_array_zero` | Unsafe raw-memory compatibility names. Positive fills require aligned live writable qword storage; copy requires complete live initialized source and writable destination byte ranges and deliberately preserves forward-copy overlap behavior. Fill/copy non-positive counts access no memory. `tl_array_zero` requires a non-negative byte count and is only for fresh allocator backing storage because its virgin-arena path may skip physical writes; it is not a general clearing primitive. |
+| `tl_mem_fill8`, `tl_mem_copy_fwd`, `tl_array_zero` | Unsafe raw-memory compatibility names. Positive fills require aligned live writable qword storage; copy requires complete live initialized source and writable destination byte ranges and deliberately preserves forward-copy overlap behavior. Fill/copy non-positive counts access no memory. `tl_array_zero` requires a non-negative byte count and is only for fresh allocator backing storage because its virgin-arena path may skip physical writes; it is not a general clearing primitive. |
 | `tl_atomic_i64_load_ptr`, `tl_atomic_i64_store_ptr`, `tl_atomic_i64_add_ptr`, `tl_atomic_i64_fetch_add_ptr`, `tl_atomic_i64_cas_ptr`, `tl_atomic_i32_load_ptr`, `tl_atomic_i32_store_ptr`, `tl_atomic_i32_add_ptr`, `tl_atomic_i32_fetch_add_ptr`, `tl_atomic_i32_cas_ptr` | Unsafe compatibility names; implementations are TypeLisp exports over the atomic memory-operation intrinsics. Callers must prove live, correctly aligned and initialized storage of the named width, a sufficient lifetime, and permitted concurrent access. The safe owning atomic-buffer API establishes those obligations internally. |
 | `tl_oob_abort`, `tl_div_abort`, `tl_shift_abort`, general panic/OOM aborts, file/IO/process/fs helpers, env lookup, random seed, profile time, and CPU feature helpers | Not backend-owned; these are TypeLisp runtime-prelude exports, stdlib implementations, or direct platform bindings. Source-located abort entries that accept a compiler-emitted descriptor pointer are unsafe callables: the backend supplies a live aligned four-word descriptor and initialized path range. |
 

@@ -69,9 +69,6 @@
       cbi.compiler-builtin-id-tl-region-reset
       MemoryWrite)
     (compiler-ir-smoke-call-effect-id-is?
-      cbi.compiler-builtin-id-tl-array-fill8
-      MemoryWrite)
-    (compiler-ir-smoke-call-effect-id-is?
       cbi.compiler-builtin-id-tl-array-zero
       MemoryWrite)
     (compiler-ir-smoke-call-effect-id-is?

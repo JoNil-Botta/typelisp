@@ -1516,7 +1516,7 @@
           (let
             [bcount : i64 (ast.ast-let-binding-list-len bindings)]
             [out-bindings : (__tl_dyn-array tli.TliSpmdLetBinding)
-              (__tl_make-array tli.TliSpmdLetBinding 0)]
+              (__tl_make-array)]
             [cur-locals : sym_i64_env.SymI64Env locals]
             (for [i (iterator.range 0 bcount)]
               (match (ast.ast-let-binding-list-get

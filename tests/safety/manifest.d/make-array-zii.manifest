@@ -1,0 +1,6 @@
+make_array_box_reject|check-fail|tests/safety/make_array_box_reject.tl|-|is not zero-initializable (reason: box); construct the elements explicitly
+make_array_function_reject|check-fail|tests/safety/make_array_function_reject.tl|-|is not zero-initializable (reason: function); construct the elements explicitly
+make_array_reference_reject|check-fail|tests/safety/make_array_reference_reject.tl|-|is not zero-initializable (reason: reference); construct the elements explicitly
+make_array_cleanup_owner_reject|check-fail|tests/safety/make_array_cleanup_owner_reject.tl|-|is not zero-initializable (reason: cleanup-owner); construct the elements explicitly
+make_array_enum_payload_reject|check-fail|tests/safety/make_array_enum_payload_reject.tl|-|Item is not zero-initializable (reason: box); construct the elements explicitly
+make_array_size_overflow_reject|check-fail|tests/safety/make_array_size_overflow_reject.tl|-|fixed array byte size exceeds the supported layout range

@@ -1561,24 +1561,19 @@ annotation would name, not the spelling: `(type other.Point)` through an import
 alias reaches the layout of its defining module's `Point` (#8112).
 
 
-A private array allocation (`__tl_make-array`) whose element type is ZII
-lowers to `tl_array_zero`. That runtime fill skips memory the arena has never
-handed out. One classifier, `tc-type-zii-class` in
-`src/compiler_typecheck_core.tl`, decides ZII for every storage shape (SPEC
-5.12.1, "Zero value of each type") and is shared by make-array typechecking and
-lowering. It returns `Zii` or `NotZii` with a stable reason:
-- ZII: scalars, raw pointers, nullable `CFunc`, and tuples, fixed arrays,
-  default-layout structs without cleanup and enums without cleanup whose
-  tag-0 variant's payload fields are all ZII, including a fieldless tag-0
-  variant (#8520).
-- `string-handle`: the element keeps the shared fill (`fill8` or a store loop
-  of one empty-string value; `lower-make-array-shared-fill?`).
-- `box`, `dynamic-buffer`: a live allocation per element, so the per-element
-  init loop.
-- every other reason: typechecking rejects the element type and names the
-  reason.
+Both typed array forms require a ZII element from `tc-type-zii-class` in
+`src/compiler_typecheck_core.tl`. The classifier supplies the reason when
+the all-zero representation is invalid. Inline strings and dynamic-buffer
+headers are ZII, as are enums whose tag-zero variant has all-ZII fields
+(see SPEC §5.12.1).
 
-Fixed `make-array` keeps its array-literal lowering of zero-valued elements.
+Fixed `make-array` clears its reserved frame slots. Large fills use
+`tl_mem_fill8`, which always writes the slots. Private `__tl_make-array`
+checks the runtime length before allocation. Literal zero lengths use the
+all-zero descriptor directly. The runtime path uses `tl_array_zero` on the
+allocated backing bytes, and the fill may elide writes to virgin pages.
+The explicit dynamic-array literal has its own element evaluation and
+store path.
 
 A field store into a packed (register-resident) struct local writes through
 the local's frame address and then reloads the packed value

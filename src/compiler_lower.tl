@@ -28614,13 +28614,19 @@
           ;; Stack storage can be reused even in a virgin arena. Clear whole
           ;; words with the unconditional runtime fill and leave any partial
           ;; word to the ordinary element stores.
+          ;; The crypto scrub module uses audited stack spans and call
+          ;; sequences, so its fixed arrays must keep their inline stores.
           (let
             [bulk-words : i64
               (if (and
                 (>= count 32)
                 (>= bytes 64)
                 (tc_core.tc-integer-type?
-                  (tc_core.tc-resolve-type ctx (ast.clone-ast-type (& elem-ty)))))
+                  (tc_core.tc-resolve-type ctx (ast.clone-ast-type (& elem-ty))))
+                (!=
+                  (lower-state-current-source-path-id state)
+                  (load.compiler-load-source-path-id
+                    "stdlib/crypto_stack_scrub.tl")))
                 (/ bytes 8)
                 0)]
             [offset : i64 (* bulk-words 8)]

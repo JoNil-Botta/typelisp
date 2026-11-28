@@ -91341,45 +91341,72 @@
     [(Block _ instrs)
       (ir.compiler-ir-instr-seq-ref instrs (array-ref st.mv-index k))]))
 
+;; The region proof stops at the target entry. Keep the late placement only
+;; across a prefix that cannot change the read, using the same memory facts
+;; that justified the inter-block move. Original uses still bound producer
+;; motion this round, so operands remain available at the selected slot.
 (define (opt-guard-sink-moved-slot
   [blocks : (& ir.CompilerIrBlockList)]
-  [st : (&mut st (OptGuardSinkState cells cfg))]
-  [k : i64]
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [phi-end : i64]
-  [stop : i64]) : i64
-  (match (let
-    [instr (opt-guard-sink-moved-instr blocks st k)]
-    (opt-instr-def-var (& instr)))
-    [(None) phi-end]
-    [(Some var)
-      (if (or (< var 0) (>= var st.frame))
-        phi-end
-        (opt-guard-sink-first-reader var instrs phi-end stop))]))
+  [st : (& st (OptGuardSinkState cells cfg))]
+  [k : i64]) : i64
+  (match (opt-cfg-index-block-at blocks (& st.index) (array-ref st.mv-dst k))
+    [(Block _ instrs)
+      (let
+        [phi-end : i64 (opt-rotate-ssa-leading-phi-end instrs 0)]
+        [total : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        [stop : i64
+          (if (> total phi-end)
+            (- total 1)
+            phi-end)]
+        [instr (opt-guard-sink-moved-instr blocks st k)]
+        [reader : i64
+          (match (opt-instr-def-var (& instr))
+            [(Some var) (opt-guard-sink-first-reader var instrs phi-end stop)]
+            [(None) phi-end])]
+        (match (opt-guard-sink-candidate
+          st.frame
+          (& st.ptr-kind)
+          (& st.ptr-name)
+          (& st.ptr-root)
+          (& instr))
+          [(Yes (None)) reader]
+          [(Yes mem)
+            (for [at (iterator.range phi-end reader)]
+              (let
+                [crossed (ir.compiler-ir-instr-seq-ref instrs at)]
+                (unless
+                  (opt-guard-sink-mem-clear?
+                    (& st.cells)
+                    mem
+                    (opt-guard-sink-instr-cell-mask (& st.cells) (& crossed))
+                    (opt-guard-sink-instr-obj-mask (& st.cells) (& crossed))
+                    (if (opt-guard-sink-instr-opaque? (& crossed))
+                      1
+                      0))
+                  (return at))))
+            reader]
+          [(No) phi-end]))]))
 
 (define (opt-guard-sink-push-moved-in!
   [blocks : (& ir.CompilerIrBlockList)]
-  [st : (&mut st (OptGuardSinkState cells cfg))]
-  [moves : i64]
+  [st : (& st (OptGuardSinkState cells cfg))]
+  [moved-slots : (& moved-slots (__tl_dyn-array i64))]
   [target : i64]
   [slot : i64]
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [phi-end : i64]
-  [stop : i64]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
-  (for [k (iterator.range 0 moves)]
+  (for [k (iterator.range 0 (array-length moved-slots))]
     (when
       (and
         (= (array-ref st.mv-dst k) target)
-        (= (opt-guard-sink-moved-slot blocks st k instrs phi-end stop) slot))
+        (= (array-ref moved-slots k) slot))
       (ir.compiler-ir-instr-builder-push!
         builder
         (opt-guard-sink-moved-instr blocks st k)))))
 
 (define (opt-guard-sink-rebuild-block
   [blocks : (& ir.CompilerIrBlockList)]
-  [st : (&mut st (OptGuardSinkState cells cfg))]
-  [moves : i64]
+  [st : (& st (OptGuardSinkState cells cfg))]
+  [moved-slots : (& moved-slots (__tl_dyn-array i64))]
   [id : i64]) : ir.CompilerIrBlock
   (match (opt-cfg-index-block-at blocks (& st.index) id)
     [(Block label instrs)
@@ -91388,10 +91415,6 @@
         [builder : ir.CompilerIrInstrBuilder
           (ir.compiler-ir-instr-builder-with-capacity (+ total 4))]
         [phi-end : i64 (opt-rotate-ssa-leading-phi-end instrs 0)]
-        [stop : i64
-          (if (> total phi-end)
-            (- total 1)
-            phi-end)]
         [slot : i64 0]
         (while (< slot phi-end)
           (ir.compiler-ir-instr-builder-push!
@@ -91402,15 +91425,12 @@
           (opt-guard-sink-push-moved-in!
             blocks
             st
-            moves
+            moved-slots
             id
             slot
-            instrs
-            phi-end
-            stop
             (&mut builder))
           (unless
-            (opt-guard-sink-moved-out? st moves id slot)
+            (opt-guard-sink-moved-out? st (array-length moved-slots) id slot)
             (ir.compiler-ir-instr-builder-push!
               (&mut builder)
               (ir.compiler-ir-instr-seq-ref instrs slot)))
@@ -91419,15 +91439,18 @@
 
 (define (opt-guard-sink-rebuild
   [blocks : (& ir.CompilerIrBlockList)]
-  [st : (&mut st (OptGuardSinkState cells cfg))]
+  [st : (& st (OptGuardSinkState cells cfg))]
   [moves : i64]) : ir.CompilerIrBlockList
   (let
     [slots : (__tl_dyn-array ir.CompilerIrBlock)
       (__tl_make-array ir.CompilerIrBlock st.count)]
+    [moved-slots : (__tl_dyn-array i64) (__tl_make-array i64 moves)]
+    (for [k (iterator.range 0 moves)]
+      (set! (array-ref moved-slots k) (opt-guard-sink-moved-slot blocks st k)))
     (for [id (iterator.range 0 st.count)]
       (set!
         (array-ref slots id)
-        (opt-guard-sink-rebuild-block blocks st moves id)))
+        (opt-guard-sink-rebuild-block blocks st (& moved-slots) id)))
     (Array (ir.CompilerIrBlockSeq slots st.count))))
 
 (define (opt-guard-sink-state
@@ -91525,7 +91548,7 @@
         (if (= (array-ref mv-count 0) 0)
           (Result blocks false)
           (Result
-            (opt-guard-sink-rebuild (& blocks) (&mut st) (array-ref mv-count 0))
+            (opt-guard-sink-rebuild (& blocks) (& st) (array-ref mv-count 0))
             true))))))
 
 ;; How many guard-first clones one function may take. The shape is a property of

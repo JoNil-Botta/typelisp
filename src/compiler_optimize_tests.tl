@@ -82337,6 +82337,90 @@ done:
     42
     "Guard-first sinking moves global-rooted reads below an early-exit guard, refuses them without a landing block, across a writing call, without the mod-ref tables and at a merge, and the uniform-phi substitution unlocks the rotation only when the preheader feeds the loop"))
 
+(define (opt-guard-sink-destination-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "entry:
+       %2 = mov @gs_g : i64
+       %6 = mov @gs_g : i64
+       branch %0, use, done
+     use:
+       %4 = phi [%1, entry] : i64
+       %5 = call gs_writer() : i64
+       %7 = add %2, %5 : i64
+       %8 = add %6, %7 : i64
+       %9 = add %4, %8 : i64
+       return %9
+     done:
+       return 0"))
+
+(test
+  guard-sink-reads-precede-destination-writes
+  (let
+    [global (opt-test-symbol "gs_g")]
+    [writer (opt-test-symbol "gs_writer")]
+    [writes (opt-guard-sink-test-summary global writer 1)]
+    [blocks
+      (opt-guard-sink-run
+        "guard_sink_destination_write"
+        writes
+        (opt-guard-sink-destination-blocks))]
+    [clean (opt-guard-sink-test-summary global writer 0)]
+    [late
+      (opt-guard-sink-run
+        "guard_sink_clean_destination"
+        clean
+        (opt-guard-sink-destination-blocks))]
+    [chain
+      (opt-guard-sink-run
+        "guard_sink_destination_chain"
+        writes
+        (opt-guard-sink-loop-blocks global))]
+    (test.assert-true
+      (match (ir.compiler-ir-block-list-view blocks)
+        [(slice _ use & _)
+          (and
+            (match (opt-block-instr-at use 0)
+              [(Phi 4 _ _) true]
+              [_ false])
+            (match (opt-block-instr-at use 1)
+              [(Mov 2 (Global _) _) true]
+              [_ false])
+            (match (opt-block-instr-at use 2)
+              [(Mov 6 (Global _) _) true]
+              [_ false])
+            (match (opt-block-instr-at use 3)
+              [(Call 5 _ _ _) true]
+              [_ false]))]
+        [_ false])
+      "Both snapshots move below the phi and stay before the writing call")
+    (test.assert-true
+      (match (ir.compiler-ir-block-list-view late)
+        [(slice _ use & _)
+          (and
+            (match (opt-block-instr-at use 1)
+              [(Call 5 _ _ _) true]
+              [_ false])
+            (match (opt-block-instr-at use 2)
+              [(Mov 2 (Global _) _) true]
+              [_ false])
+            (match (opt-block-instr-at use 4)
+              [(Mov 6 (Global _) _) true]
+              [_ false]))]
+        [_ false])
+      "A proven read-only call keeps safe late placement available")
+    (test.assert-true
+      (match (ir.compiler-ir-block-list-view chain)
+        [(slice _ pre & _)
+          (and
+            (match (opt-block-instr-at pre 0)
+              [(Gep 2 _ _ _) true]
+              [_ false])
+            (match (opt-block-instr-at pre 1)
+              [(Load 3 (Var 2) _) true]
+              [_ false]))]
+        [_ false])
+      "A moved load stays below its address computation")))
+
 ;; --- IT-2: below-the-fixpoint guard dedup ------------------------------------
 ;;
 ;; Three params: a branch condition, an array handle (so the descriptor words

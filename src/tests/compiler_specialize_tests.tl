@@ -1687,6 +1687,7 @@
       (spec.gen-decl-eq?
         (&
           (ast.ast-decl-def-fn-metadata-id
+            (ast.ast-decl-meta-runtime-with-aggregate-markers 0)
             generated-id
             (ast.ast-param-list-new)
             (I64)
@@ -1694,6 +1695,7 @@
             (& (ast.ast-fn-metadata-full No (Callable a-items)))))
         (&
           (ast.ast-decl-def-fn-metadata-id
+            (ast.ast-decl-meta-runtime-with-aggregate-markers 0)
             generated-id
             (ast.ast-param-list-new)
             (I64)

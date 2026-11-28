@@ -1003,22 +1003,28 @@
             (codec.surface-ast-read-name! reader)))))
     (ast.AstDispatchVariantList slots count)))
 
+;; The surface keeps public aggregate and function markers. The parser's
+;; qualified-type-literal and opaque-field bits are local to their declarations.
+(define surface-ast-decl-marker-mask : i64
+  (bit-or 3 ast.ast-decl-cold-bit))
+
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-decl-meta!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [_context : (&mut context codec.SurfaceAstWriteContext)]
     [meta : ast.AstDeclMeta]) : unit
-    ;; Only the aggregate bits (must-use 1, opaque 2) are surface data. The
-    ;; parser's qualified-type-literal bit on a `defmacro` (#9633) stays local:
-    ;; a hydrated macro reads as unmarked, and schema 19 remains valid.
     (match (deref meta.value)
       [(Runtime markers)
         (codec.surface-ast-write-i64! out 0)
-        (codec.surface-ast-write-i64! out (bit-and markers 3))]
+        (codec.surface-ast-write-i64!
+          out
+          (bit-and markers surface-ast-decl-marker-mask))]
       [(Comptime generated markers)
         (codec.surface-ast-write-i64! out 1)
-        (codec.surface-ast-write-i64! out (bit-and markers 3))
+        (codec.surface-ast-write-i64!
+          out
+          (bit-and markers surface-ast-decl-marker-mask))
         (match generated
           [(No) (codec.surface-ast-write-i64! out 0)]
           [(Some generator item args key)
@@ -1035,14 +1041,14 @@
     (if (or (= tag 0) (= tag 1))
       (let
         [markers : i64 (codec.surface-ast-read-i64! reader)]
-        (if (and (>= markers 0) (<= markers 3))
+        (if (= (bit-and markers surface-ast-decl-marker-mask) markers)
           (if (= tag 0)
             (ast.ast-decl-meta-runtime-with-aggregate-markers markers)
             (surface-ast-read-comptime-decl-meta! reader markers))
           (begin
             (codec.surface-ast-reader-fail!
               reader
-              "surface ast: invalid aggregate marker flags")
+              "surface ast: invalid declaration marker flags")
             (ast.ast-decl-meta-runtime-shared-view))))
       (begin
         (codec.surface-ast-reader-fail!

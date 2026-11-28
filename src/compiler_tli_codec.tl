@@ -1204,7 +1204,13 @@
   [ctx : (&mut ctx TliWriteContext)]
   [row : (& row tli.TliCompactExternRef)]) : unit
   (tli-write-name! ctx (& row.symbol))
-  (tli-write-u8! ctx row.abi)
+  (tli-write-u8!
+    ctx
+    (bit-or
+      row.abi
+      (if row.cold?
+        tli.tli-compact-extern-cold-bit
+        0)))
   (tli-write-name! ctx (& row.link-symbol))
   (tli-write-type! ctx (& row.ty))
   (tli-write-compact-return-storage! ctx (& row.return-storage)))
@@ -3752,12 +3758,19 @@
     (while (and rd.cursor.ok? (< i count))
       (let
         [sym : String (tli-read-name! rd pool)]
-        [abi : i64 (tli-read-tag! rd 2)]
+        [tag : i64 (tli-read-tag! rd 6)]
+        [abi : i64 (bit-and tag 3)]
+        [cold? : bool (!= (bit-and tag tli.tli-compact-extern-cold-bit) 0)]
         [link : String (tli-read-name! rd pool)]
         [ty : tli.TliType (tli-read-type! rd pool false 1)]
         [rs : tli.TliCompactReturnStorage
           (tli-read-compact-return-storage! rd pool)]
-        (set! (array-ref items i) (tli.TliCompactExternRef sym abi link ty rs))
+        (when
+          (= abi 3)
+          (tli-fail! rd tli-error-tag "invalid compact extern ABI"))
+        (set!
+          (array-ref items i)
+          (tli.TliCompactExternRef sym abi link ty rs cold?))
         (when
           (> i 0)
           (let

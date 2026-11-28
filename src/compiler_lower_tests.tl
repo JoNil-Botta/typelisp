@@ -299,6 +299,7 @@
           parent
           (lower.lower-type-cache-from-env owner parent)
           (ci.intern-generated-canonical-name "function-env-ok")
+          false
           params
           (I64)
           (if (= count 0)
@@ -338,6 +339,7 @@
       parent
       types
       (ci.intern-generated-canonical-name "function-env-error")
+      false
       (ast.ast-param-list-new)
       (I64)
       (Var missing)
@@ -965,7 +967,7 @@
               (match (lower-test-function-seq-find functions name)
                 [(Some func)
                   (match func
-                    [(Function _ _ _ _ blocks _)
+                    [(Function _ _ _ _ blocks _ _)
                       (lower-test-product-shape-blocks
                         (ir.compiler-ir-block-list-view blocks)
                         0
@@ -2317,7 +2319,7 @@
     [(No) -1]
     [(Some func)
       (match func
-        [(Function _ _ _ vars (Array blocks) _)
+        [(Function _ _ _ vars (Array blocks) _ _)
           (for [block-index
             (iterator.range 0 (ir.compiler-ir-block-seq-count blocks))]
             (match (ir.compiler-ir-block-seq-borrow blocks block-index)
@@ -3476,7 +3478,7 @@
   [functions : (& functions ir.CompilerIrFunctionSeq)]
   [name : String]) : i64
   (match (lower-test-function-seq-find functions name)
-    [(Some (Function _ _ _ _ blocks _))
+    [(Some (Function _ _ _ _ blocks _ _))
       (optimize.opt-blocks-fold
         blocks
         (cast 0 : i64)
@@ -4012,7 +4014,7 @@
     [(LowerTestMaybeFunction.No) false]
     [(LowerTestMaybeFunction.Some func)
       (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
+        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _ _)
           (let
             [dense : ir.CompilerIrBlockSeq
               (ir.compiler-ir-block-list-seq blocks)]
@@ -4856,7 +4858,7 @@
     [result : i64 (- 0 1)]
     (while (and (< index count) (< result 0))
       (match (ir.compiler-ir-array-shared-view slots index)
-        [(Function fname _ _ _ blocks _)
+        [(Function fname _ _ _ blocks _ _)
           (if (string.eq (ir.compiler-ir-symbol-text fname) name)
             (set! result (lower-test-blocks-spmd-call-count blocks))
             unit)])
@@ -5223,7 +5225,7 @@
     [(No) (- 0 1)]
     [(Some func)
       (match func
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (lower-test-blocks-count (ir.compiler-ir-block-list-view blocks) kind)])]))
 
 (define (lower-test-instr-seq-pack-shape-count
@@ -5643,7 +5645,7 @@
       [func : ir.CompilerIrFunction
         (ir.compiler-ir-array-shared-view funcs.slots index)]
       (match (ir.compiler-ir-global-shared-view func)
-        [(Function fname _ _ _ _ _)
+        [(Function fname _ _ _ _ _ _)
           (when
             (string.eq (ir.compiler-ir-symbol-text fname) name)
             (return (Some func)))])))
@@ -5668,7 +5670,7 @@
     [(No) (- 0 1)]
     [(Some func)
       (match func
-        [(Function _ params _ _ _ _) (ir.compiler-ir-param-seq-count params)])]))
+        [(Function _ params _ _ _ _ _) (ir.compiler-ir-param-seq-count params)])]))
 
 (define (lower-test-param-name-at
   [params : ir.CompilerIrParamSeq]
@@ -5686,7 +5688,7 @@
     [(No) ""]
     [(Some func)
       (match func
-        [(Function _ params _ _ _ _) (lower-test-param-name-at params index)])]))
+        [(Function _ params _ _ _ _ _) (lower-test-param-name-at params index)])]))
 
 (define (lower-test-function-phi-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
@@ -5695,7 +5697,7 @@
     [(No) (- 0 1)]
     [(Some func)
       (match func
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (lower-test-blocks-phi-count (ir.compiler-ir-block-list-view blocks))])]))
 
 (define (lower-test-function-splat-shape-count
@@ -5707,7 +5709,7 @@
     [(No) (- 0 1)]
     [(Some func)
       (match func
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (lower-test-blocks-splat-shape-count
             (ir.compiler-ir-block-list-view blocks)
             lanes
@@ -5721,7 +5723,7 @@
     [(No) (- 0 1)]
     [(Some func)
       (match func
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (lower-test-blocks-label-load-count
             (ir.compiler-ir-block-list-view blocks)
             want-label)])]))
@@ -5734,7 +5736,7 @@
     [(No) (- 0 1)]
     [(Some func)
       (match func
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (lower-test-blocks-pack-shape-count
             (ir.compiler-ir-block-list-view blocks)
             pools)])]))
@@ -5746,7 +5748,7 @@
     [count : i64 0]
     (for [index (iterator.range 0 funcs.len)]
       (match (ir.compiler-ir-array-shared-view funcs.slots index)
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (+=
             count
             (lower-test-blocks-call-count
@@ -5760,7 +5762,7 @@
     [count : i64 0]
     (for [index (iterator.range 0 funcs.len)]
       (match (ir.compiler-ir-array-shared-view funcs.slots index)
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (+=
             count
             (lower-test-blocks-count
@@ -5774,7 +5776,7 @@
     [count : i64 0]
     (for [index (iterator.range 0 funcs.len)]
       (match (ir.compiler-ir-array-shared-view funcs.slots index)
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (+=
             count
             (lower-test-blocks-count
@@ -5789,7 +5791,7 @@
     [count : i64 0]
     (for [index (iterator.range 0 funcs.len)]
       (match (ir.compiler-ir-array-shared-view funcs.slots index)
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (+=
             count
             (lower-test-blocks-tail-call-count
@@ -5812,7 +5814,7 @@
     [count : i64 0]
     (for [index (iterator.range 0 funcs.len)]
       (match (ir.compiler-ir-array-shared-view funcs.slots index)
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (+=
             count
             (lower-test-blocks-count
@@ -5826,7 +5828,7 @@
     [count : i64 0]
     (for [index (iterator.range 0 funcs.len)]
       (match (ir.compiler-ir-array-shared-view funcs.slots index)
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (+=
             count
             (lower-test-blocks-count
@@ -5842,7 +5844,7 @@
     [(No) (- 0 1)]
     [(Some func)
       (match func
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (lower-test-blocks-call-count
             (ir.compiler-ir-block-list-view blocks)
             call-name)])]))
@@ -5856,7 +5858,7 @@
     [(No) false]
     [(Some func)
       (match func
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (lower-test-blocks-call-before?
             (ir.compiler-ir-block-list-view blocks)
             first
@@ -5870,7 +5872,7 @@
     [(No) (- 0 1)]
     [(Some func)
       (match func
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (lower-test-blocks-return-function-count
             (ir.compiler-ir-block-list-view blocks)
             function-name)])]))
@@ -5883,7 +5885,7 @@
     [(No) (- 0 1)]
     [(Some func)
       (match func
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (lower-test-blocks-indirect-callee-function-count
             (ir.compiler-ir-block-list-view blocks)
             function-name)])]))
@@ -5897,7 +5899,7 @@
     [(No) (- 0 1)]
     [(Some func)
       (match func
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (lower-test-blocks-call-arg-function-count
             (ir.compiler-ir-block-list-view blocks)
             call-name
@@ -5911,7 +5913,7 @@
     [(No) (- 0 1)]
     [(Some func)
       (match func
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (lower-test-blocks-tail-call-count
             (ir.compiler-ir-block-list-view blocks)
             call-name)])]))
@@ -5994,7 +5996,7 @@
     [(No) (- 0 1)]
     [(Some func)
       (match func
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (lower-test-blocks-distinct-arg-call-count
             (ir.compiler-ir-block-list-view blocks)
             call-name)])]))
@@ -6007,7 +6009,7 @@
     [(No) (- 0 1)]
     [(Some func)
       (match func
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (lower-test-blocks-vector-binop-op-count
             (ir.compiler-ir-block-list-view blocks)
             want)])]))
@@ -6021,7 +6023,7 @@
     [(No) (- 0 1)]
     [(Some func)
       (match func
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (lower-test-blocks-vector-shape-count
             (ir.compiler-ir-block-list-view blocks)
             lanes
@@ -6035,7 +6037,7 @@
     [(No) (- 0 1)]
     [(Some func)
       (match func
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (lower-test-blocks-binop-op-count
             (ir.compiler-ir-block-list-view blocks)
             op)])]))
@@ -6048,7 +6050,7 @@
     [(No) (- 0 1)]
     [(Some func)
       (match func
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (lower-test-blocks-i64-binop-op-count
             (ir.compiler-ir-block-list-view blocks)
             op)])]))
@@ -6059,7 +6061,7 @@
     [count : i64 0]
     (for [index (iterator.range 0 funcs.len)]
       (match (ir.compiler-ir-array-shared-view funcs.slots index)
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (+=
             count
             (lower-test-blocks-count
@@ -6075,7 +6077,7 @@
     [(No) (- 0 1)]
     [(Some func)
       (match func
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (lower-test-blocks-store-global-count
             (ir.compiler-ir-block-list-view blocks)
             global-name)])]))
@@ -7050,6 +7052,7 @@
                       _
                       _
                       _
+                      _
                       _)
                     (and
                       (string.eq (ci.intern-str name-id) "ffi-add")
@@ -7775,7 +7778,7 @@
     [(No) 0]
     [(Some func)
       (match func
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (lower-test-blocks-count
             (ir.compiler-ir-block-list-view blocks)
             (I64Mov want))])]))
@@ -7788,7 +7791,7 @@
     [(No) 0]
     [(Some func)
       (match func
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (lower-test-blocks-count
             (ir.compiler-ir-block-list-view blocks)
             (F64Mov want))])]))
@@ -8363,7 +8366,7 @@
     [count : i64 0]
     (for [index (iterator.range 0 (ir.compiler-ir-function-seq-count funcs))]
       (match (ir.compiler-ir-function-seq-borrow funcs index)
-        [(Function _ _ _ _ blocks _)
+        [(Function _ _ _ _ blocks _ _)
           (match blocks
             [(Array seq)
               (+=
@@ -8696,7 +8699,7 @@
     [(LowerTestFunctions.Some functions)
       (match (lower-test-function-seq-find functions "probe")
         [(LowerTestMaybeFunction.Some
-            (ir.CompilerIrFunction.Function _ _ _ _ blocks _))
+            (ir.CompilerIrFunction.Function _ _ _ _ blocks _ _))
           (compiler-lower-c-callee-snapshot-blocks-ok? blocks)]
         [_ false])]
     [_ false]))
@@ -11902,7 +11905,7 @@
     [ordinary : bool false]
     (for [index (iterator.range 0 functions.len)]
       (match (ir.compiler-ir-array-shared-view functions.slots index)
-        [(Function fname _ _ _ _ function-abi)
+        [(Function fname _ _ _ _ function-abi _)
           (if (string.eq (ir.compiler-ir-symbol-text fname) name)
             (begin
               (set! found true)
@@ -16218,7 +16221,7 @@
     [(No) false]
     [(Some func)
       (match func
-        [(Function _ _ ret _ _ _)
+        [(Function _ _ ret _ _ _ _)
           (match ret
             [(ast.AstType.U64) true]
             [_ false])])]))
@@ -18425,7 +18428,7 @@
       (let
         [valid : bool
           (match (lower-test-function-seq-find functions name)
-            [(Some (Function _ _ _ _ blocks _))
+            [(Some (Function _ _ _ _ blocks _ _))
               (lower-test-block-exits? (ir.compiler-ir-block-list-view blocks))]
             [_ false])]
         (lower.compiler-lower-arena-state-release!
@@ -18445,7 +18448,7 @@
     (match (lower-test-functions (lower.lower-compiler-source source))
       [(Some functions)
         (match (lower-test-function-seq-find functions "main")
-          [(Some (Function _ _ _ _ blocks _))
+          [(Some (Function _ _ _ _ blocks _ _))
             (let
               [view (ir.compiler-ir-block-list-view blocks)]
               (test.assert-true
@@ -18539,7 +18542,7 @@
             (array-ref modes mode))
             [(Ok (Program _ functions _ _authority) _ owner)
               (match (lower-test-function-seq-find functions "main")
-                [(Some (Function _ _ _ _ blocks _))
+                [(Some (Function _ _ _ _ blocks _ _))
                   (test.assert-i64-eq
                     (optimize.opt-blocks-fold
                       blocks
@@ -18921,7 +18924,7 @@
   (match (lower-test-function-seq-find funcs name)
     [(Some func)
       (match func
-        [(Function _ _ ret-ty _ _ _)
+        [(Function _ _ ret-ty _ _ _ _)
           (match (& ret-ty)
             [(ast.AstType.U64) true]
             [_ false])])]

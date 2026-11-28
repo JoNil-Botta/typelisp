@@ -3062,7 +3062,7 @@
   (if (>= index functions.len)
     ""
     (match (owned_view.compiler-owned-element-view functions.slots index)
-      [(Function name _ _ _ _ _)
+      [(Function name _ _ _ _ _ _)
         (match (be_operand.compiler-backend-index-function-slot
           program-index
           name)

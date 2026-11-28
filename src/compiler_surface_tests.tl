@@ -973,6 +973,10 @@
         (ast.AstDeclMeta (box (ast.AstDeclMetaValue.Comptime No 3)))
         true
         3)
+      (surface-ast-decl-meta-roundtrip-ok?
+        (ast.ast-decl-meta-runtime-with-aggregate-markers ast.ast-decl-cold-bit)
+        false
+        ast.ast-decl-cold-bit)
       (surface-ast-decl-meta-invalid-flags-ok?)
       (surface-ast-extern-abi-roundtrip-ok? C)
       (surface-ast-extern-abi-roundtrip-ok? CVarargsOpen)

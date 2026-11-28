@@ -124319,7 +124319,13 @@
               scratch-mark)]
           [nbody : i64 (try nbody-result)]
           (Ok
-            (ast.ast-decl-def-fn-metadata-id name params ret nbody (& metadata))))]
+            (ast.ast-decl-def-fn-metadata-id
+              decl-meta
+              name
+              params
+              ret
+              nbody
+              (& metadata))))]
       [(Test _ _ _ _) (Ok decl)]
       [(Import decl-meta (Spec kind _ _ _ _))
         (match kind

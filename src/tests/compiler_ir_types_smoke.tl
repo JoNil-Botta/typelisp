@@ -144,7 +144,7 @@
   (if (= functions.len 0)
     false
     (match (compiler_ir_types.compiler-ir-function-seq-borrow functions 0)
-      [(Function name _ _ _ _ _) (string.eq (ci.intern-str name) want)])))
+      [(Function name _ _ _ _ _ _) (string.eq (ci.intern-str name) want)])))
 
 (define (compiler-ir-smoke-function-seq-name-at?
   [functions : (& functions compiler_ir_types.CompilerIrFunctionSeq)]
@@ -153,7 +153,7 @@
   (if (or (< index 0) (>= index functions.len))
     false
     (match (compiler_ir_types.compiler-ir-function-seq-borrow functions index)
-      [(Function name _ _ _ _ _) (string.eq (ci.intern-str name) want)])))
+      [(Function name _ _ _ _ _ _) (string.eq (ci.intern-str name) want)])))
 
 (define (compiler-ir-smoke-block-list-label-at?
   [blocks : (& blocks compiler_ir_types.CompilerIrBlockList)]
@@ -218,14 +218,15 @@
         (Unit)
         6
         (compiler_ir_types.compiler-ir-block-list-empty)
-        Ordinary)]
+        Ordinary
+        false)]
     [cloned : compiler_ir_types.CompilerIrFunction
       (compiler_ir_types.compiler-ir-clone-function
         (ast.ast-node-pool-reader-context-current)
         (& func))]
     (and
       (match func
-        [(Function _ stored _ _ _ _)
+        [(Function _ stored _ _ _ _ _)
           (and
             (= (compiler_ir_types.compiler-ir-param-seq-count stored) 2)
             (compiler-ir-smoke-param-seq-entry-i64?
@@ -235,7 +236,7 @@
               2)
             (compiler-ir-smoke-param-seq-entry-bool? stored 1 "flag" 5))])
       (match cloned
-        [(Function _ stored _ _ _ _)
+        [(Function _ stored _ _ _ _ _)
           (and
             (= (compiler_ir_types.compiler-ir-param-seq-count stored) 2)
             (compiler-ir-smoke-param-seq-entry-i64?
@@ -285,7 +286,7 @@
   (if (or (< index 0) (>= index externs.len))
     false
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs index)
-      [(Extern _ _ name _ _ _ _ _ _ _ _) (string.eq name want)])))
+      [(Extern _ _ name _ _ _ _ _ _ _ _ _) (string.eq name want)])))
 
 (define (compiler-ir-smoke-global-extern-seq-roundtrip-ok?) : bool
   (let
@@ -389,7 +390,8 @@
         (I64)
         2
         (compiler_ir_types.compiler-ir-global-shared-view blocks)
-        Ordinary)]
+        Ordinary
+        false)]
     [second : compiler_ir_types.CompilerIrFunction
       (Function
         (compiler-ir-smoke-symbol-id "second")
@@ -397,7 +399,8 @@
         (I64)
         2
         blocks
-        Ordinary)]
+        Ordinary
+        false)]
     [functions : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_ir_types.compiler-ir-function-seq-prepend
         (& first)
@@ -459,7 +462,8 @@
         (Unit)
         0
         (compiler_ir_types.compiler-ir-global-shared-view compact-blocks)
-        Ordinary)]
+        Ordinary
+        false)]
     [second-func : compiler_ir_types.CompilerIrFunction
       (Function
         (compiler-ir-smoke-symbol-id "second-func")
@@ -467,7 +471,8 @@
         (Unit)
         0
         (compiler_ir_types.compiler-ir-global-shared-view compact-blocks)
-        Ordinary)]
+        Ordinary
+        false)]
     [third-func : compiler_ir_types.CompilerIrFunction
       (Function
         (compiler-ir-smoke-symbol-id "third-func")
@@ -475,7 +480,8 @@
         (Unit)
         0
         (compiler_ir_types.compiler-ir-global-shared-view compact-blocks)
-        Ordinary)]
+        Ordinary
+        false)]
     [reversed-functions : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_ir_types.compiler-ir-function-seq-prepend
         (& third-func)
@@ -2018,7 +2024,8 @@
                 (compiler_ir_types.CompilerIrBlock.Block
                   (compiler_ir_types.compiler-ir-label "entry")
                   instrs))
-              Ordinary))
+              Ordinary
+              false))
           (& (compiler_ir_types.compiler-ir-function-seq-empty)))
         (compiler_ir_types.compiler-ir-extern-seq1
           (Extern
@@ -2035,7 +2042,8 @@
             false
             (compiler_ir_types.CompilerIrReturnStorage.None)
             false
-            (compiler_ir_types.CompilerIrGlobalStorage.Word)))
+            (compiler_ir_types.CompilerIrGlobalStorage.Word)
+            false))
         (compiler_ir_types.CompilerIrReturnStorageAuthority.None))]
     [bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
     [index : compiler_ir_types.CompilerIrRepresentationIndex
@@ -2363,7 +2371,8 @@
       (compiler_ir_types.CompilerIrBlock.Block
         (compiler_ir_types.compiler-ir-label "entry")
         (compiler_ir_types.compiler-ir-instr-seq1 (Return (Some (Var 1))))))
-    function-abi))
+    function-abi
+    false))
 
 (define (pabi-caller-function
   [payload : compiler_ir_types.CompilerIrInstrSpmdCallPayload]) : compiler_ir_types.CompilerIrFunction
@@ -2378,7 +2387,8 @@
         (compiler_ir_types.compiler-ir-instr-seq2
           (SpmdCall (box payload))
           (Return No))))
-    Ordinary))
+    Ordinary
+    false))
 
 (define (pabi-program-error
   [helper : compiler_ir_types.CompilerIrFunction]
@@ -2797,7 +2807,8 @@
               4
               (compiler_ir_types.compiler-ir-block-list-empty)
               (compiler_ir_types.compiler-ir-function-abi-private
-                (pabi-with-params 11)))
+                (pabi-with-params 11))
+              _)
             (pabi-base-payload 0 0)
             "the call's descriptor differs from the helper's"))
         49]
@@ -3415,7 +3426,7 @@
 
 (define (compiler-ir-function-abi [func : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionAbi
   (match func
-    [(Function _ _ _ _ _ function-abi)
+    [(Function _ _ _ _ _ function-abi _)
       (compiler_ir_types.clone-compiler-ir-function-abi (& function-abi))]))
 
 (defenum CompilerIrMaybeDescriptorPairKind
@@ -4233,7 +4244,7 @@
   (if (or (< index 0) (>= index functions.len))
     false
     (match (array-ref functions.slots index)
-      [(Function name _ _ _ _ _)
+      [(Function name _ _ _ _ _ _)
         (string.eq (compiler_ir_types.compiler-ir-symbol-text name) want)])))
 
 (define (compiler-ir-test-function [name : String]) : compiler_ir_types.CompilerIrFunction
@@ -4243,7 +4254,8 @@
     (I64)
     1
     (compiler_ir_types.compiler-ir-block-list-empty)
-    Ordinary))
+    Ordinary
+    false))
 
 (define (compiler-ir-dense-builders-order-ok?) : bool
   (let
@@ -4371,7 +4383,8 @@
         (Unit)
         8
         (compiler_ir_types.compiler-ir-block-list-empty)
-        Ordinary)]
+        Ordinary
+        false)]
     [cloned-func : compiler_ir_types.CompilerIrFunction func]
     (compiler_ir_types.compiler-ir-param-builder-push!
       (&mut builder)
@@ -4394,7 +4407,8 @@
         (Unit)
         8
         (compiler_ir_types.compiler-ir-block-list-empty)
-        Ordinary))
+        Ordinary
+        false))
     (set!
       cloned-func
       (compiler_ir_types.compiler-ir-clone-function pools (& func)))
@@ -4408,7 +4422,7 @@
       (compiler-ir-param-seq-entry-i64? cloned 0 "value" 3)
       (compiler-ir-param-seq-entry-bool? cloned 1 "flag" 7)
       (match cloned-func
-        [(Function _ cloned-params _ _ _ _)
+        [(Function _ cloned-params _ _ _ _ _)
           (and
             (= (compiler_ir_types.compiler-ir-param-seq-count cloned-params) 2)
             (compiler-ir-param-seq-entry-i64? cloned-params 0 "value" 3)

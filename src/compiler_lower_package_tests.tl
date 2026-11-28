@@ -32,7 +32,7 @@
     [count : i64 0]
     (for [index (iterator.range 0 functions.len)]
       (match (ir.compiler-ir-function-seq-borrow functions index)
-        [(Function name _ _ _ _ _)
+        [(Function name _ _ _ _ _ _)
           (let
             [name-text : String (ir.compiler-ir-symbol-text name)]
             (if (or
@@ -106,7 +106,7 @@
     (let
       [function (ir.compiler-ir-function-seq-borrow functions index)]
       (match (ir.compiler-ir-global-shared-view function)
-        [(Function name _ _ _ _ _)
+        [(Function name _ _ _ _ _ _)
           (when
             (lower.lower-string-prefix-at?
               (ir.compiler-ir-symbol-text name)

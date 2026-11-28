@@ -22,7 +22,7 @@
      entry:
        return %0
      }")
-    [(ir.CompilerIrFunction.Function name _ _ _ _ abi)
+    [(ir.CompilerIrFunction.Function name _ _ _ _ abi _)
       (match abi
         [(ir.CompilerIrFunctionAbi.ReturnStorage boxed)
           (let
@@ -39,7 +39,8 @@
               false
               (ir.CompilerIrReturnStorage.Some boxed)
               false
-              (ir.CompilerIrGlobalStorage.Word)))]
+              (ir.CompilerIrGlobalStorage.Word)
+              false))]
         [_
           (ir.CompilerIrExtern.Extern
             name
@@ -52,7 +53,8 @@
             false
             (ir.CompilerIrReturnStorage.None)
             false
-            (ir.CompilerIrGlobalStorage.Word))])]))
+            (ir.CompilerIrGlobalStorage.Word)
+            false)])]))
 
 (define (caller [params : String] [body : String]) : ir.CompilerIrFunction
   (irt.func
@@ -76,7 +78,8 @@
         provided
         storage
         body-available
-        _)
+        _
+        cold?)
       (ir.CompilerIrExtern.Extern
         name
         source
@@ -94,7 +97,8 @@
         provided
         storage
         body-available
-        (ir.CompilerIrGlobalStorage.Word))]))
+        (ir.CompilerIrGlobalStorage.Word)
+        cold?)]))
 
 (define (private-body [tail : String]) : String
   (str_cat.str-cat
@@ -182,7 +186,7 @@
     [context : ir.CompilerIrReturnStorageIndex (catalog declaration)]
     [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
     (match source
-      [(ir.CompilerIrFunction.Function _ params _ vars blocks abi)
+      [(ir.CompilerIrFunction.Function _ params _ vars blocks abi _)
         (let
           [facts : storage.StorageFacts
             (storage.facts bases params abi blocks vars)]
@@ -310,7 +314,7 @@
         0
         canonical)]
     (match (ir.compiler-ir-function-seq-ref functions 0)
-      [(ir.CompilerIrFunction.Function _ _ _ _ _ abi)
+      [(ir.CompilerIrFunction.Function _ _ _ _ _ abi _)
         (match abi
           [(ir.CompilerIrFunctionAbi.ReturnStorage boxed)
             (let
@@ -439,7 +443,7 @@
     [context : ir.CompilerIrReturnStorageIndex (catalog 2)]
     [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
     (match source
-      [(ir.CompilerIrFunction.Function _ _ _ vars blocks abi)
+      [(ir.CompilerIrFunction.Function _ _ _ vars blocks abi _)
         (let
           [params : ir.CompilerIrParamSeq
             (ir.compiler-ir-param-seq-append-one
@@ -680,7 +684,7 @@
       "function @identity(output=%0:u64, other=%1:u64) -> u64 vars 8 abi return-storage internal-leading arg 0 bytes 24 output SretValue result u64 params (u64 u64) source (-> u64 SretValue) {\nentry:\n"
       body
       "\nreturn %0\n}"))
-    [(ir.CompilerIrFunction.Function _ params _ vars blocks abi)
+    [(ir.CompilerIrFunction.Function _ params _ vars blocks abi _)
       (let
         [facts : storage.StorageFacts
           (storage.facts
@@ -758,7 +762,7 @@
             authority)]
         [cells : storage.GlobalCells (storage.global-cells-build (& globals))]
         (match (ir.compiler-ir-function-seq-ref functions caller-index)
-          [(ir.CompilerIrFunction.Function _ params _ vars blocks abi)
+          [(ir.CompilerIrFunction.Function _ params _ vars blocks abi _)
             (let
               [facts : storage.StorageFacts
                 (storage.facts bases params abi blocks vars)]

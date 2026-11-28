@@ -731,3 +731,123 @@ stdout contains lint_marked_cfg_test_unsafe.tl:5:3: unused unsafe block
 stdout contains lint_marked_cfg_test_unsafe.tl:13:5: unused must-use value of type Marked
 stdout not-contains lint_marked_cfg_test_unsafe.tl:12:
 stdout contains lint: 2 finding(s)
+
+case lint-multi-file-shared-import-arena-state-isolation
+file shared_dep.tl
+(define (dep-ok) : i64
+  (let
+    [d0 : i64 0]
+    [d1 : i64 1]
+    [d2 : i64 2]
+    (+ d0 (+ d1 d2))))
+end-file
+file mid_dep.tl
+(import leaf_dep)
+(define (mid-run) : bool (leaf_dep.leaf-run))
+(define (mid-write) : unit (leaf_dep.write-global 1))
+end-file
+file leaf_dep.tl
+(define g-slot : (Box i64) (box 0))
+(define (write-global [n : i64]) : unit (set! g-slot (box n)))
+(defstruct Key (v i64))
+(define (apply-key [cmp : (-> Key Key bool)] [a : Key] [b : Key]) : bool (cmp a b))
+(define (key-eq [a : Key] [b : Key]) : bool (= a.v b.v))
+(define (leaf-run) : bool (apply-key key-eq (Key 1) (Key 2)))
+(defstruct Other0 (v i64))
+(defstruct Other1 (v i64))
+(defstruct Other2 (v i64))
+(defstruct Other3 (v i64))
+(defstruct Other4 (v i64))
+(defstruct Other5 (v i64))
+(defstruct Other6 (v i64))
+(defstruct Other7 (v i64))
+(defstruct Other8 (v i64))
+(defstruct Other9 (v i64))
+(defstruct Other10 (v i64))
+(defstruct Other11 (v i64))
+(defstruct Other12 (v i64))
+(defstruct Other13 (v i64))
+(defstruct Other14 (v i64))
+(defstruct Other15 (v i64))
+(defstruct Other16 (v i64))
+(defstruct Other17 (v i64))
+(defstruct Other18 (v i64))
+(defstruct Other19 (v i64))
+(defstruct Other20 (v i64))
+(defstruct Other21 (v i64))
+(defstruct Other22 (v i64))
+(defstruct Other23 (v i64))
+(defstruct Other24 (v i64))
+(defstruct Other25 (v i64))
+(defstruct Other26 (v i64))
+(defstruct Other27 (v i64))
+(defstruct Other28 (v i64))
+(defstruct Other29 (v i64))
+(defstruct Other30 (v i64))
+(defstruct Other31 (v i64))
+(defstruct Other32 (v i64))
+(defstruct Other33 (v i64))
+(defstruct Other34 (v i64))
+(defstruct Other35 (v i64))
+(defstruct Other36 (v i64))
+(defstruct Other37 (v i64))
+(defstruct Other38 (v i64))
+(defstruct Other39 (v i64))
+(defstruct Other40 (v i64))
+(defstruct Other41 (v i64))
+(defstruct Other42 (v i64))
+(defstruct Other43 (v i64))
+(defstruct Other44 (v i64))
+(defstruct Other45 (v i64))
+(defstruct Other46 (v i64))
+(defstruct Other47 (v i64))
+(defstruct Other48 (v i64))
+(defstruct Other49 (v i64))
+(defstruct Other50 (v i64))
+(defstruct Other51 (v i64))
+(defstruct Other52 (v i64))
+(defstruct Other53 (v i64))
+(defstruct Other54 (v i64))
+(defstruct Other55 (v i64))
+(defstruct Other56 (v i64))
+(defstruct Other57 (v i64))
+(defstruct Other58 (v i64))
+(defstruct Other59 (v i64))
+(defstruct Other60 (v i64))
+(define (uncalled42 [x : Other42]) : i64
+  (let
+    [f (lambda ([y : Other42]) : i64 (begin (write-global y.v) y.v))]
+    (f x)))
+(define (uncalled60 [x : Other60]) : i64
+  (let
+    [f (lambda ([y : Other60]) : i64 (begin (write-global y.v) y.v))]
+    (f x)))
+end-file
+file first.tl
+(import shared_dep)
+(define (use-first) : i64 (shared_dep.dep-ok))
+end-file
+file second.tl
+(import shared_dep)
+(import mid_dep)
+(define (run-in-arena) : bool
+  (with-arena a (mid_dep.mid-run)))
+(define (use-dep) : i64
+  (with-arena b (unsafe (mid_dep.mid-write)))
+  (shared_dep.dep-ok))
+end-file
+step lint-multi-file-shared-import-linux
+run lint "{{dir}}/first.tl" "{{dir}}/second.tl" --target linux-x86_64 --format flat --check --stdlib-root "{{root}}/stdlib" --stdlib-root "{{dir}}"
+exit 0
+stderr empty
+stdout not-contains region value would escape
+step lint-multi-file-shared-import-windows
+run lint "{{dir}}/first.tl" "{{dir}}/second.tl" --target windows-x86_64 --format flat --check --stdlib-root "{{root}}/stdlib" --stdlib-root "{{dir}}"
+exit 0
+stderr empty
+stdout not-contains region value would escape
+step lint-multi-file-shared-import-windows-reverse
+run lint "{{dir}}/second.tl" "{{dir}}/first.tl" --target windows-x86_64 --format flat --check --stdlib-root "{{root}}/stdlib" --stdlib-root "{{dir}}"
+exit 0
+stderr empty
+stdout not-contains region value would escape

@@ -1,0 +1,31 @@
+after tailrec @optimizer_tailrec.tl::sum-down
+function @optimizer_tailrec.tl::sum-down(n=%0:i64, acc=%1:i64) -> i64 vars 9 {
+entry__ssa_entry:
+  jump entry
+
+entry:
+  %2 = mov 0 : i64
+  %3 = eq %0, %2 : i64
+  branch %3, if_then.0, if_else.1
+
+if_then.0:
+  return %1
+
+if_else.1:
+  %4 = mov 1 : i64
+  %5 = sub %0, %4 : i64
+  %6 = add %1, %0 : i64
+  %7 = mov %5 : i64
+  %8 = mov %6 : i64
+  %0 = mov %7 : i64
+  %1 = mov %8 : i64
+  jump entry
+}
+
+after tailrec @main
+function @main() -> i64 vars 2 {
+entry:
+  %0 = mov 9 : i64
+  %1 = mov 0 : i64
+  tailcall optimizer_tailrec.tl::sum-down(%0, %1) : i64
+}

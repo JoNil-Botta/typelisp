@@ -73886,23 +73886,10 @@
               (ast.ast-expr-list-get exprs index 0))))]
       (tc-spmd-scan-body-no-nested-list-at expr-bases exprs (+ index 1)))))
 
-(define (tc-spmd-scan-body-no-nested-pair
-  [expr-bases : i64]
-  [left : ast.AstExpr]
-  [right : ast.AstExpr]) : ResultTcUnit
-  (let
-    [_ (try (tc-spmd-scan-body-no-nested-spmd expr-bases left))]
-    (tc-spmd-scan-body-no-nested-spmd expr-bases right)))
-
 (define (tc-spmd-scan-body-no-nested-spmd
   [expr-bases : i64]
   [expr : ast.AstExpr]) : ResultTcUnit
   (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
-    [(TupleRef tuple-box index-box)
-      (tc-spmd-scan-body-no-nested-pair
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases tuple-box)
-        (ast.ast-expr-segment-bases-get expr-bases index-box))]
     [(Foreach _)
       (Err
         (tc-kind-message
@@ -95642,6 +95629,38 @@
           (tc-arena-store-wild-node count))))
     graph))
 
+(define (tc-arena-store-name-part-hash [id : i64]) : i64
+  (if (ci.intern-renderable-id? id)
+    (hash.string-key (& (ci.intern-str id)))
+    (hash.i64 id)))
+
+;; Content hash of a canonical nominal type key (`ast.ast-nominal-name-id-key`),
+;; independent of parse-order intern IDs and with zero heap allocation.
+(define (tc-arena-store-nominal-hash [name : i64]) : i64
+  (let
+    [key : i64 (csym.compiler-symbol-name-id-key name)]
+    (cond
+      [(ci.intern-composite-pair-id? key)
+        (hash.combine-normalized
+          (hash.combine-normalized
+            17
+            (tc-arena-store-name-part-hash
+              (ci.intern-composite-left-id-unchecked key)))
+          (tc-arena-store-name-part-hash
+            (ci.intern-composite-right-id-unchecked key)))]
+      [(ci.intern-composite-triple-id? key)
+        (hash.combine-normalized
+          (hash.combine-normalized
+            (hash.combine-normalized
+              19
+              (tc-arena-store-name-part-hash
+                (ci.intern-composite-left-id-unchecked key)))
+            (tc-arena-store-name-part-hash
+              (ci.intern-composite-middle-id-unchecked key)))
+          (tc-arena-store-name-part-hash
+            (ci.intern-composite-right-id-unchecked key)))]
+      [else (tc-arena-store-name-part-hash key)])))
+
 ;; A structural hash of a resolved type that ignores regions and lifetimes,
 ;; or -1 when the type is not known well enough to place.
 (define (tc-arena-store-type-hash [ty : ast.AstType]) : i64
@@ -95657,12 +95676,20 @@
     [(MutPtr inner) (tc-arena-store-wrapped-hash 47 inner)]
     [(Array inner _) (tc-arena-store-wrapped-hash 48 inner)]
     [(or (Struct name) (Enum name) (StructArgs name _) (EnumArgs name _))
-      (hash.combine 7 (csym.compiler-symbol-name-id-key name))]
+      (hash.combine-normalized 7 (tc-arena-store-nominal-hash name))]
     [(Tuple elems)
       (tc-arena-store-types-hash
         (& (ast.ast-type-list-box-shared-view elems))
         11)]
     [(Func args _) (hash.combine 13 (ast.ast-type-list-len (& (deref args))))]
+    [(CFunc signature mode)
+      (let
+        [sig : i64 (tc-arena-store-type-hash (ast.ty-node-get signature))]
+        (if (< sig 0)
+          -1
+          (hash.combine
+            (hash.combine-normalized 49 sig)
+            (ast.ast-c-function-mode-key mode))))]
     [(or (Var _) (VarArgs _ _)) -1]
     [_ (ast.ty-node-hash-value (& ty))]))
 
@@ -101376,10 +101403,12 @@
         (macro-program-has-summary-macro-import? decls)))
     (when
       delta-has-defmacro
-      ;; Symbols and registries already contain the committed delta. Refresh
-      ;; selected aliases before publishing its next expansion context, using
-      ;; the existing module/import events rather than scanning declarations.
-      (macro-alias-cache-build-segmented! job-state true)
+      ;; A generated macro gets the same temporary bare alias as a direct
+      ;; declaration. Replay retained imports before exposing the new symbols
+      ;; to the next expansion, then publish the explicit wildcard and item
+      ;; bindings. Both passes visit only module/import events.
+      (macro-alias-cache-build-segmented! job-state RemoveBareMacroAliases)
+      (macro-alias-cache-build-segmented! job-state BindImportedMacros)
       (tc-macro-walk-set!
         state
         macro-live-prescan-expr-type-names
@@ -114058,15 +114087,19 @@
                 (+= steps 1))))))
       unit)))
 
-;; The alias index's step for one row that is, once unwrapped, a module
-;; marker or an import: returns the module the rows after it belong to.
-;; Selected-item replay shares the event traversal, but keeps symbol-map
-;; publication out of the ordinary module-alias indexing path.
-(define (macro-selected-item-alias-index-at!
+(defenum MacroAliasReplay
+  (IndexModuleAliases)
+  (RemoveBareMacroAliases)
+  (BindImportedMacros))
+
+;; Import replay shares the alias index's event traversal, with symbol-map
+;; publication confined to the generated-delta path.
+(define (macro-imported-macro-alias-replay-at!
   [state : TcMacroState]
   [decls : (& decls ast.AstDeclList)]
   [index : i64]
-  [cur-module-id : i64]) : i64
+  [cur-module-id : i64]
+  [remove-bare? : bool]) : i64
   (match (ast.ast-decl-list-ref-borrowed decls index)
     [(Module _) (ast.ast-decl-list-module-id-at decls index cur-module-id)]
     [(or (Import _ _) (Unsafe _))
@@ -114077,12 +114110,14 @@
         [(Module next-module) next-module]
         [(Import _ (Spec (ModuleItem item) _ (Some target) (Some alias) _))
           (when
-            (csym.compiler-symbols-handle-found?
-              (csym.compiler-symbols-lookup-macro-in-module-id-or
-                (& (tc-macro-walk-field state macro-live-symbols-value))
-                target
-                item
-                (csym.compiler-symbols-missing-handle)))
+            (and
+              (not remove-bare?)
+              (csym.compiler-symbols-handle-found?
+                (csym.compiler-symbols-lookup-macro-in-module-id-or
+                  (& (tc-macro-walk-field state macro-live-symbols-value))
+                  target
+                  item
+                  (csym.compiler-symbols-missing-handle))))
             (tc-macro-walk-set!
               state
               macro-live-symbols-value
@@ -114092,6 +114127,19 @@
                 item
                 cur-module-id
                 alias)))
+          cur-module-id]
+        [(Import _ (Spec _ _ (Some target) (Some alias) _))
+          (when
+            (or remove-bare? (= alias cbi.compiler-builtin-id-fix-empty))
+            (tc-macro-walk-set!
+              state
+              macro-live-symbols-value
+              (csym.compiler-symbols-replay-module-macro-import
+                (tc-macro-walk-field state macro-live-symbols-value)
+                (tc-macro-walk-field state macro-live-symbols-last-insert-index)
+                target
+                cur-module-id
+                remove-bare?)))
           cur-module-id]
         [_ cur-module-id])]
     [_ cur-module-id]))
@@ -114174,13 +114222,21 @@
 
 (define (macro-alias-cache-build-segmented!
   [job-state : TcJobState]
-  [refresh-selected? : bool]) : unit
+  [replay : MacroAliasReplay]) : unit
   (let
     [state : TcMacroState (tc-job-state-macro-state job-state)]
+    [index-module-aliases? : bool
+      (match replay
+        [(IndexModuleAliases) true]
+        [_ false])]
+    [remove-bare? : bool
+      (match replay
+        [(RemoveBareMacroAliases) true]
+        [_ false])]
     [stub-count : i64
-      (if refresh-selected?
-        -1
-        (tc-lazy-import-stub-count-for-state state))]
+      (if index-module-aliases?
+        (tc-lazy-import-stub-count-for-state state)
+        -1)]
     [count : i64 (macro-segmented-program-decl-count job-state)]
     [data : MacroSegmentedProgramViewData
       (macro-segmented-prefix-events-sync! job-state)]
@@ -114189,8 +114245,8 @@
     [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
     [node-address : i64 data.head]
     [start : i64 data.cursor]
-    (unless
-      refresh-selected?
+    (when
+      index-module-aliases?
       ;; Ensuring the stub owner may have invalidated an earlier source's
       ;; table. Initialize after that boundary, before publishing any rows.
       (macro-alias-cache-ensure! state)
@@ -114199,17 +114255,18 @@
     (for [event (iterator.range 0 data.prefix-event-count)]
       (set!
         cur-module-id
-        (if refresh-selected?
-          (macro-selected-item-alias-index-at!
-            state
-            (& prefix)
-            (- (- len 1) (array-ref data.prefix-events event))
-            cur-module-id)
+        (if index-module-aliases?
           (macro-alias-cache-index-at!
             state
             (& prefix)
             (- (- len 1) (array-ref data.prefix-events event))
-            cur-module-id))))
+            cur-module-id)
+          (macro-imported-macro-alias-replay-at!
+            state
+            (& prefix)
+            (- (- len 1) (array-ref data.prefix-events event))
+            cur-module-id
+            remove-bare?))))
     (while (> node-address 0)
       (let
         [node : MacroProgramSegmentNodeData
@@ -114224,22 +114281,23 @@
           (< (array-ref events next-event) end))
           (set!
             cur-module-id
-            (if refresh-selected?
-              (macro-selected-item-alias-index-at!
-                state
-                (& decls)
-                (- (array-ref events next-event) decls.offset)
-                cur-module-id)
+            (if index-module-aliases?
               (macro-alias-cache-index-at!
                 state
                 (& decls)
                 (- (array-ref events next-event) decls.offset)
-                cur-module-id)))
+                cur-module-id)
+              (macro-imported-macro-alias-replay-at!
+                state
+                (& decls)
+                (- (array-ref events next-event) decls.offset)
+                cur-module-id
+                remove-bare?)))
           (+= next-event 1))
         (set! node-address node.next)
         (set! start 0)))
-    (unless
-      refresh-selected?
+    (when
+      index-module-aliases?
       (tc-macro-import-index-control-set! state 10 cur-module-id)
       (tc-macro-import-index-control-set! state 4 1)
       (tc-macro-import-index-control-set! state 5 1)
@@ -114443,7 +114501,7 @@
           (= (tc-macro-import-index-control state 5) 1))
         (tc-macro-import-index-control-set! state 3 0)
         (macro-alias-cache-ensure! state)
-        (macro-alias-cache-build-segmented! job-state false)))
+        (macro-alias-cache-build-segmented! job-state IndexModuleAliases)))
     (macro-import-alias-target-cached-id
       state
       decls
@@ -127460,11 +127518,11 @@
     [(or (PtrAddrOf place) (Spanned place _) (MacroExpansion place _ _)
          (Unary _ place) (FixedMakeArray _ place) (MakeArray _ place)
          (Set _ place) (Ann place _) (Cast place _) (Borrow _ _ place)
-         (StructGet place _) (Box place) (BoxGet place) (BoxTake place)
-         (Comptime place) (Quote place) (Quasiquote place) (Unquote place)
-         (UnquoteSplicing place) (Try place) (Return place) (PtrNullCheck place)
-         (PtrRead place) (PtrCast place _) (PtrToInt place) (IntToPtr place _)
-         (StringData place) (ArrayData place) (Xgetbv place)
+         (StructGet place _) (TupleRef place _) (Box place) (BoxGet place)
+         (BoxTake place) (Comptime place) (Quote place) (Quasiquote place)
+         (Unquote place) (UnquoteSplicing place) (Try place) (Return place)
+         (PtrNullCheck place) (PtrRead place) (PtrCast place _) (PtrToInt place)
+         (IntToPtr place _) (StringData place) (ArrayData place) (Xgetbv place)
          (ForeachActive _ place) (LaneValue place))
       (ctfe-node-has-type-literal? expr-bases state place)]
     [(Call func-box args)
@@ -127480,10 +127538,10 @@
          (Begin items) (Unsafe items) (WithRegion _ items) (WithScratch items)
          (Syscall items))
       (ctfe-exprs-have-type-literal? expr-bases state items)]
-    [(or (Binary _ l r) (TupleRef l r) (ArrayRef l r) (Replace l r)
-         (ArrayPush l r) (StringRef l r) (StructSet l _ r) (BoxSet l r)
-         (PtrWrite l r) (PtrOffset l r) (StringFromBytes l r) (CpuIdEax l r)
-         (CpuIdEbx l r) (CpuIdEcx l r) (CpuIdEdx l r))
+    [(or (Binary _ l r) (ArrayRef l r) (Replace l r) (ArrayPush l r)
+         (StringRef l r) (StructSet l _ r) (BoxSet l r) (PtrWrite l r)
+         (PtrOffset l r) (StringFromBytes l r) (CpuIdEax l r) (CpuIdEbx l r)
+         (CpuIdEcx l r) (CpuIdEdx l r))
       (ctfe-reflection-prescan-or
         (ctfe-node-has-type-literal? expr-bases state l)
         (ctfe-node-has-type-literal? expr-bases state r))]

@@ -17381,6 +17381,33 @@
       [(EnvSomeString root)
         (compiler-load-session-state-note-stdlib-root! state (& root))])))
 
+;: Snapshot the verified stdlib provider roots currently noted on the active
+;: session as owned strings, so an intra-file intern reset can restore them
+;: without retaining pre-reset intern IDs.
+(define (compiler-load-session-stdlib-roots-snapshot) : svec.Vec
+  (let
+    [cell : (__tl_dyn-array (__tl_dyn-array String))
+      (unsafe
+        (ptr-read
+          (ptr-addr-of
+            compiler-load-active-session-state.embedded-stdlib-provenance.roots)))]
+    [count : i64 (array-length (& (array-ref cell 0)))]
+    [out : svec.Vec (svec.with-capacity count)]
+    (for [index (iterator.range 0 count)]
+      (svec.push-ref!
+        (&mut out)
+        (string.copy (& (array-ref (array-ref cell 0) index)))))
+    out))
+
+;: Re-note verified stdlib provider roots on the active session after an
+;: intra-file intern reset.
+(define (compiler-load-session-restore-stdlib-roots!
+  [roots : (& roots svec.Vec)]) : unit
+  (for [index (iterator.range 0 (svec.len roots))]
+    (compiler-load-session-state-note-stdlib-root!
+      (& compiler-load-active-session-state)
+      (& (svec.get roots index "")))))
+
 ;: Whether canonical SOURCE lies under a stdlib root of this session (#8733): a
 ;: configured root (`--stdlib-root`/`TYPELISP_STDLIB_ROOT`), or a root from
 ;: which a verified embedded-matching stdlib module was read. An unconfigured

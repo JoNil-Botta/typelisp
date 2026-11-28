@@ -390,6 +390,11 @@
         "minimal Linux functions keep thread initialization")
       (test.assert-true
         (compiler-backend-runtime-test-contains?
+          (& linux-min-functions)
+          "tl_thread_init:\n    movq $4096, %rsi\n    xorq %rdi, %rdi\n    movq $3, %rdx\n    movq $0x22, %r10\n    movq $-1, %r8\n    xorq %r9, %r9\n    movq $9, %rax\n    syscall")
+        "Linux thread initialization mmap passes fd -1")
+      (test.assert-true
+        (compiler-backend-runtime-test-contains?
           (& windows-min-functions)
           ".globl tl_thread_entry_ptr")
         "minimal Windows functions keep the thread entry bridge")
@@ -467,15 +472,15 @@
           "disabled Windows allocator debug emits no arena-debug hooks"))
       (test.assert-true
         (and
-          (= (string.string-length (& linux-ordinary-alloc)) 8156)
-          (= (hash.string-key (& linux-ordinary-alloc)) 2102350846)
-          (= (string.string-length (& linux-profile-ordinary-alloc)) 14789)
-          (= (hash.string-key (& linux-profile-ordinary-alloc)) 2008108109)
+          (= (string.string-length (& linux-ordinary-alloc)) 7315)
+          (= (hash.string-key (& linux-ordinary-alloc)) 1026944384)
+          (= (string.string-length (& linux-profile-ordinary-alloc)) 13948)
+          (= (hash.string-key (& linux-profile-ordinary-alloc)) 614218927)
           (= (string.string-length (& windows-ordinary-alloc)) 13900)
           (= (hash.string-key (& windows-ordinary-alloc)) 1070032323)
           (= (string.string-length (& windows-profile-ordinary-alloc)) 20573)
           (= (hash.string-key (& windows-profile-ordinary-alloc)) 1677209187))
-        "ordinary tl_alloc assembly remains byte-identical in base/profile modes")
+        "ordinary tl_alloc assembly matches the reviewed base/profile payloads")
       (test.assert-true
         (and
           (not
@@ -562,6 +567,11 @@
             (& windows-full-functions)
             ".L_tl_alloc_aligned_win_atomic_cas:"))
         "aligned allocators validate size, rounding, cap, and atomic CAS paths")
+      (test.assert-true
+        (compiler-backend-runtime-test-contains?
+          (& linux-full-functions)
+          ".L_tl_arena_mmap:\n    movq $3, %rdx\n    movq $0x22, %r10\n    movq $-1, %r8\n    xorq %r9, %r9\n    movq $9, %rax\n    syscall")
+        "Linux arena mmap passes fd -1")
       (test.assert-true
         (compiler-backend-runtime-test-contains?
           (& windows-full-functions)

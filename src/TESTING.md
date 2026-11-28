@@ -2210,8 +2210,10 @@ Compiler-development builds expose three opt-in `typelisp compile` diagnostics:
 - `--dump-ir after-<pass>` writes every function snapshot observed immediately
   after the named optimizer pass. Pass names use the trace spelling, including
   `fold`, `ssa`, `gvn`, `licm`, `global_gvn`, `dce`, and the post-prune
-  `total_switch`. A last per-function observation is not necessarily the final
-  program: later whole-program or post-prune rewrites must also be inspected.
+  `total_switch`. At opt2, `after-tailrec` captures each function after
+  tail-recursion conversion, before inlining and SSA. Later whole-program and
+  post-prune rewrites can change the final IR after the last per-function
+  observation.
 - `--trace-passes` writes one
   `optimizer-pass|<function>|<pass>|blocks=<n>|instructions=<n>` record per
   observed boundary to stderr.

@@ -8,6 +8,7 @@
 (import stdlib.vector)
 (import (vector.vector String) as lint_svec)
 (import compiler_ast_types as ast)
+(import compiler_intern as ci)
 (import compiler_load as load)
 (import compiler_parse_core as parse_core)
 (import lint_driver_core as lint_driver)
@@ -2023,6 +2024,146 @@
         98]
       [else 42])))
 
+(define (lint-driver-smoke-typed-intern-isolation-self-test) : i64
+  (load.compiler-load-test-mkdir "target/lint_intern_isolation")
+  (lint-driver-smoke-write-text
+    "target/lint_intern_isolation/shared_dep.tl"
+    "(define (dep-ok) : i64
+  (let
+    [iso-local-0 : i64 0]
+    [iso-local-1 : i64 1]
+    [iso-local-2 : i64 2]
+    (+ iso-local-0 (+ iso-local-1 iso-local-2))))")
+  (lint-driver-smoke-write-text
+    "target/lint_intern_isolation/first.tl"
+    "(import shared_dep)
+(define (use-first) : i64
+  (shared_dep.dep-ok))")
+  (let
+    [second-path : String "target/lint_intern_isolation/second.tl"]
+    [second-src : String
+      "(import shared_dep)
+(define (use-second) : i64
+  (shared_dep.dep-ok))"]
+    [roots : lint_svec.Vec (lint_svec.new)]
+    (lint-driver-smoke-write-text
+      (string.copy (& second-path))
+      (string.copy (& second-src)))
+    (lint_svec.push-ref! (&mut roots) "target/lint_intern_isolation")
+    ;; Cold surface cache: `shared_dep.tl` is parsed during unsafe-surface prep.
+    (lint_driver.selfhost-lint-reset-file-state!)
+    (lint_driver.selfhost-lint-unsafe-surface-cache-reset!)
+    (let
+      [cold-pools : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-new-with-capacities 64 64)]
+      [_use-cold : unit (ast.ast-node-pool-compat-context-use! cold-pools)]
+      [cold-len : i64
+        (match (parse_core.parse-ast-source-diagnostic-with-cfg-and-pools
+          (string.copy (& second-path))
+          (& second-src)
+          (lint_driver.selfhost-lint-language-cfgs)
+          cold-pools)
+          [(Ok program)
+            (let
+              [_findings : lint_core.LintFindings
+                (lint_driver.selfhost-lint-program-and-typed-findings
+                  (string.copy (& second-path))
+                  (string.copy (& second-src))
+                  program
+                  (lint_svec.clone-vec (& roots))
+                  (& (lint_driver.SelfhostLintCheckContext.FileContext))
+                  (lint_driver.selfhost-lint-language-cfgs)
+                  false
+                  false
+                  false
+                  false
+                  false)]
+              (ci.intern-pool-len))]
+          [(Err _) -1])]
+      (ast.ast-node-pool-compat-context-clear!)
+      (ast.ast-node-pool-context-destroy-storage! cold-pools)
+      ;; Warm surface cache via `first.tl`, reset per-file state (keeping batch
+      ;; surface cache warm), then lint `second.tl`: surface cache must hit and
+      ;; typed checking must still finish with the exact same intern pool count.
+      (lint_driver.selfhost-lint-reset-file-state!)
+      (lint_driver.selfhost-lint-unsafe-surface-cache-reset!)
+      (let
+        [first-path : String "target/lint_intern_isolation/first.tl"]
+        [first-src : String
+          "(import shared_dep)
+(define (use-first) : i64
+  (shared_dep.dep-ok))"]
+        [first-pools : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-new-with-capacities 64 64)]
+        [_use-first : unit (ast.ast-node-pool-compat-context-use! first-pools)]
+        [first-count : i64
+          (match (parse_core.parse-ast-source-diagnostic-with-cfg-and-pools
+            (string.copy (& first-path))
+            (& first-src)
+            (lint_driver.selfhost-lint-language-cfgs)
+            first-pools)
+            [(Ok program)
+              (let
+                [findings : lint_core.LintFindings
+                  (lint_driver.selfhost-lint-program-and-typed-findings
+                    (string.copy (& first-path))
+                    (string.copy (& first-src))
+                    program
+                    (lint_svec.clone-vec (& roots))
+                    (& (lint_driver.SelfhostLintCheckContext.FileContext))
+                    (lint_driver.selfhost-lint-language-cfgs)
+                    false
+                    false
+                    false
+                    false
+                    false)]
+                (lint_core.lint-findings-count findings))]
+            [(Err _) -1])]
+        [_clear-first : unit (ast.ast-node-pool-compat-context-clear!)]
+        [_destroy-first : unit
+          (ast.ast-node-pool-context-destroy-storage! first-pools)]
+        [_reset-between : unit (lint_driver.selfhost-lint-reset-file-state!)]
+        [hits-before : i64
+          (driver_tests.selfhost-lint-unsafe-surface-cache-hit-count)]
+        [warm-pools : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-new-with-capacities 64 64)]
+        [_use-warm : unit (ast.ast-node-pool-compat-context-use! warm-pools)]
+        [warm-len : i64
+          (match (parse_core.parse-ast-source-diagnostic-with-cfg-and-pools
+            (string.copy (& second-path))
+            (& second-src)
+            (lint_driver.selfhost-lint-language-cfgs)
+            warm-pools)
+            [(Ok program)
+              (let
+                [_findings : lint_core.LintFindings
+                  (lint_driver.selfhost-lint-program-and-typed-findings
+                    (string.copy (& second-path))
+                    (string.copy (& second-src))
+                    program
+                    (lint_svec.clone-vec (& roots))
+                    (& (lint_driver.SelfhostLintCheckContext.FileContext))
+                    (lint_driver.selfhost-lint-language-cfgs)
+                    false
+                    false
+                    false
+                    false
+                    false)]
+                (ci.intern-pool-len))]
+            [(Err _) -2])]
+        [hits-after : i64
+          (driver_tests.selfhost-lint-unsafe-surface-cache-hit-count)]
+        (ast.ast-node-pool-compat-context-clear!)
+        (ast.ast-node-pool-context-destroy-storage! warm-pools)
+        (lint_driver.selfhost-lint-reset-file-state!)
+        (lint_driver.selfhost-lint-unsafe-surface-cache-release!)
+        (cond
+          [(not (= first-count 0)) 221]
+          [(<= cold-len 0) 222]
+          [(not (> hits-after hits-before)) 223]
+          [(not (= cold-len warm-len)) 224]
+          [else 42])))))
+
 (define (main) : i64
   ;; This smoke's manifest intentionally covers the stable machine-readable
   ;; path while verify-public-tools.sh covers the default rich CLI renderer.
@@ -2065,6 +2206,8 @@
     [dotted-compat-result : i64
       (lint-driver-smoke-prefer-dotted-field-compat-self-test)]
     [name-case-result : i64 (lint-driver-smoke-name-case-self-test)]
+    [intern-isolation-result : i64
+      (lint-driver-smoke-typed-intern-isolation-self-test)]
     (cond
       [(not (= core-result 42)) core-result]
       [(not (= unused-import-result 42)) unused-import-result]
@@ -2089,4 +2232,5 @@
       [(not (= copy-result 42)) copy-result]
       [(not (= dotted-compat-result 42)) dotted-compat-result]
       [(not (= name-case-result 42)) name-case-result]
+      [(not (= intern-isolation-result 42)) intern-isolation-result]
       [else 42])))

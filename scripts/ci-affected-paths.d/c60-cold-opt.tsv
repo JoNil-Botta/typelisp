@@ -1,0 +1,2 @@
+path	required	advisory	reason
+tests/integration/c60_cold_opt.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Cold function and block -O2 placement, inliner restraint, size policy, and switch-table shapes are pinned through asm-shape.d/c60-cold-opt.cases.

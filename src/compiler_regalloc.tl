@@ -26530,6 +26530,7 @@
             [cost0 : i64
               (if (and
                 has-param?
+                (not caller-saved-ok?)
                 (>= i0 caller-count)
                 (< component-weight (* 16 1024))
                 (not
@@ -26564,6 +26565,7 @@
                   [cost1 : i64
                     (if (and
                       has-param?
+                      (not caller-saved-ok?)
                       (>= i1 caller-count)
                       (< component-weight (* 16 1024))
                       (not

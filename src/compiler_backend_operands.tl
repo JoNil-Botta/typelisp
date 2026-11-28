@@ -2328,7 +2328,7 @@
         reg
         "\n"))))
 
-(define (compiler-backend-emit-literal-address-into
+(define (compiler-backend-emit-fixed-symbol-address-into
   [out : (&mut out be_state.CompilerBackendAsmBuf)]
   [symbol : String]
   [reg : String]
@@ -2360,39 +2360,69 @@
       (compiler-backend-emit-load-var-into out assignments id reg backend-state)
       (Ok "")]
     [(Global name)
-      (be_state.compiler-backend-asm-append5
-        out
-        ;; IAG-1: an inline aggregate global's cell IS the aggregate, so the
-        ;; value of `Global g` -- "the address of the struct" -- is the
-        ;; symbol's own link-time constant address, not a load of the cell.
+      (let
+        [symbol : String
+          (compiler-backend-state-global-symbol-id backend-state name)]
+        ;; An inline aggregate global's cell is the aggregate itself.
         (if (be_state.compiler-backend-inline-aggregate-global?
           backend-state
           name)
-          "    leaq "
-          "    movq ")
-        (compiler-backend-state-global-symbol-id backend-state name)
-        "(%rip), "
-        reg
-        "\n")
+          ;; Keep the RIP-relative LEA on the speed path, where it can fold
+          ;; into the following memory operand.
+          (if (be_state.compiler-backend-state-optimize-for-size? backend-state)
+            (compiler-backend-emit-fixed-symbol-address-into
+              out
+              symbol
+              reg
+              backend-state)
+            (be_state.compiler-backend-asm-append5
+              out
+              "    leaq "
+              symbol
+              "(%rip), "
+              reg
+              "\n"))
+          (be_state.compiler-backend-asm-append5
+            out
+            "    movq "
+            symbol
+            "(%rip), "
+            reg
+            "\n")))
       (Ok "")]
     [(GlobalAddr name)
-      (be_state.compiler-backend-asm-append5
-        out
-        "    leaq "
-        (compiler-backend-state-global-symbol-id backend-state name)
-        "(%rip), "
-        reg
-        "\n")
+      (let
+        [symbol : String
+          (compiler-backend-state-global-symbol-id backend-state name)]
+        [internal? : bool
+          (unsafe
+            (match (deref (be_state.compiler-backend-state-view backend-state)).emission-symbols
+              [(be_state.CompilerBackendEmissionSymbols.Program index)
+                (not (compiler-backend-index-extern-references? index name))]
+              [_ false]))]
+        (if (and
+          internal?
+          (be_state.compiler-backend-state-optimize-for-size? backend-state))
+          (compiler-backend-emit-fixed-symbol-address-into
+            out
+            symbol
+            reg
+            backend-state)
+          (be_state.compiler-backend-asm-append5
+            out
+            "    leaq "
+            symbol
+            "(%rip), "
+            reg
+            "\n")))
       (Ok "")]
     [(Function name)
-      (be_state.compiler-backend-asm-append5
+      (compiler-backend-emit-fixed-symbol-address-into
         out
-        "    leaq "
         (compiler-backend-closure-descriptor-label
           (be_state.compiler-backend-symbol-text-state backend-state name))
-        "(%rip), "
         reg
-        "\n")
+        backend-state)
       (Ok "")]
     [(I64 n)
       (compiler-backend-emit-load-i64-immediate-into out n reg)
@@ -2423,21 +2453,21 @@
     [(String text)
       (if (= (string.string-length text) 0)
         (compiler-backend-emit-load-i64-immediate-into out 0 reg)
-        (compiler-backend-emit-literal-address-into
+        (compiler-backend-emit-fixed-symbol-address-into
           out
           (compiler-backend-string-data-label text)
           reg
           backend-state))
       (Ok "")]
     [(StrDesc text)
-      (compiler-backend-emit-literal-address-into
+      (compiler-backend-emit-fixed-symbol-address-into
         out
         (compiler-backend-string-desc-label text)
         reg
         backend-state)
       (Ok "")]
     [(Bytes text)
-      (compiler-backend-emit-literal-address-into
+      (compiler-backend-emit-fixed-symbol-address-into
         out
         (compiler-backend-bytes-fat-label text)
         reg
@@ -3892,7 +3922,7 @@
 ;; whole of the remat plus the compare.
 (define (compiler-backend-var-remat-value
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [value : compiler_ir_types.CompilerIrValue]
+  [value : (& compiler_ir_types.CompilerIrValue)]
   [backend-state : be_state.CompilerBackendState]) : compiler_ir_types.CompilerIrValue
   (match value
     [(Var id)

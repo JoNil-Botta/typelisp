@@ -91043,7 +91043,7 @@
 ;; instruction) to the top of `D`?
 (define (opt-guard-sink-mem-clear?
   [cells : (& cells OptGlobalCellSummary)]
-  [mem : OptGuardSinkMem]
+  [mem : (& OptGuardSinkMem)]
   [cell-mask : i64]
   [obj-mask : i64]
   [opaque : i64]) : bool
@@ -91090,7 +91090,8 @@
   (budget (__tl_dyn-array i64))
   (mv-src (__tl_dyn-array i64))
   (mv-index (__tl_dyn-array i64))
-  (mv-dst (__tl_dyn-array i64)))
+  (mv-dst (__tl_dyn-array i64))
+  (mv-slot (__tl_dyn-array i64)))
 
 ;; Cheap block-local refusal: a definition read again inside its own block has
 ;; its own block as the nearest common dominator of its reads and can never
@@ -91200,7 +91201,7 @@
             (opt-guard-sink-region! st ctx.source target)
             (if (opt-guard-sink-mem-clear?
               (& st.cells)
-              mem
+              (& mem)
               (bit-or ctx.suffix-cell (array-ref st.region-out 0))
               (bit-or ctx.suffix-obj (array-ref st.region-out 1))
               (if (or (= ctx.suffix-opaque 1) (= (array-ref st.region-out 2) 1))
@@ -91342,21 +91343,63 @@
     [(Block _ instrs)
       (ir.compiler-ir-instr-seq-ref instrs (array-ref st.mv-index k))]))
 
-(define (opt-guard-sink-moved-slot
-  [blocks : (& ir.CompilerIrBlockList)]
-  [st : (&mut st (OptGuardSinkState cells cfg))]
-  [k : i64]
+;; The motion proof reaches the start of the destination block. Check its
+;; prefix before placing a read closer to its first use.
+(define (opt-guard-sink-prefix-slot
+  [cells : (& cells OptGlobalCellSummary)]
+  [mem : (& OptGuardSinkMem)]
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [phi-end : i64]
-  [stop : i64]) : i64
-  (match (let
-    [instr (opt-guard-sink-moved-instr blocks st k)]
-    (opt-instr-def-var (& instr)))
-    [(None) phi-end]
-    [(Some var)
-      (if (or (< var 0) (>= var st.frame))
-        phi-end
-        (opt-guard-sink-first-reader var instrs phi-end stop))]))
+  [reader : i64]) : i64
+  (for [at (iterator.range phi-end reader)]
+    (let
+      [crossed (ir.compiler-ir-instr-seq-borrow instrs at)]
+      (unless
+        (opt-guard-sink-mem-clear?
+          cells
+          mem
+          (opt-guard-sink-instr-cell-mask cells crossed)
+          (opt-guard-sink-instr-obj-mask cells crossed)
+          (if (opt-guard-sink-instr-opaque? crossed)
+            1
+            0))
+        (return at))))
+  reader)
+
+(define (opt-guard-sink-moved-slot
+  [blocks : (& ir.CompilerIrBlockList)]
+  [st : (& st (OptGuardSinkState cells cfg))]
+  [k : i64]) : i64
+  (match (opt-cfg-index-block-at blocks (& st.index) (array-ref st.mv-dst k))
+    [(Block _ instrs)
+      (let
+        [phi-end : i64 (opt-rotate-ssa-leading-phi-end instrs 0)]
+        [instr (opt-guard-sink-moved-instr blocks st k)]
+        [reader : i64
+          (match (opt-instr-def-var (& instr))
+            [(None) phi-end]
+            [(Some var)
+              (if (and (>= var 0) (< var st.frame) (> instrs.len phi-end))
+                (opt-guard-sink-first-reader
+                  var
+                  instrs
+                  phi-end
+                  (- instrs.len 1))
+                phi-end)])]
+        (match (opt-guard-sink-candidate-form
+          st.frame
+          (& st.ptr-kind)
+          (& st.ptr-name)
+          (& instr))
+          [(Yes (None)) reader]
+          [(Yes mem)
+            (opt-guard-sink-prefix-slot
+              (& st.cells)
+              (& mem)
+              instrs
+              phi-end
+              reader)]
+          [(No) phi-end]))]))
 
 (define (opt-guard-sink-push-moved-in!
   [blocks : (& ir.CompilerIrBlockList)]
@@ -91364,15 +91407,10 @@
   [moves : i64]
   [target : i64]
   [slot : i64]
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [phi-end : i64]
-  [stop : i64]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
   (for [k (iterator.range 0 moves)]
     (when
-      (and
-        (= (array-ref st.mv-dst k) target)
-        (= (opt-guard-sink-moved-slot blocks st k instrs phi-end stop) slot))
+      (and (= (array-ref st.mv-dst k) target) (= (array-ref st.mv-slot k) slot))
       (ir.compiler-ir-instr-builder-push!
         builder
         (opt-guard-sink-moved-instr blocks st k)))))
@@ -91389,10 +91427,6 @@
         [builder : ir.CompilerIrInstrBuilder
           (ir.compiler-ir-instr-builder-with-capacity (+ total 4))]
         [phi-end : i64 (opt-rotate-ssa-leading-phi-end instrs 0)]
-        [stop : i64
-          (if (> total phi-end)
-            (- total 1)
-            phi-end)]
         [slot : i64 0]
         (while (< slot phi-end)
           (ir.compiler-ir-instr-builder-push!
@@ -91400,16 +91434,7 @@
             (ir.compiler-ir-instr-seq-ref instrs slot))
           (+= slot 1))
         (while (< slot total)
-          (opt-guard-sink-push-moved-in!
-            blocks
-            st
-            moves
-            id
-            slot
-            instrs
-            phi-end
-            stop
-            (&mut builder))
+          (opt-guard-sink-push-moved-in! blocks st moves id slot (&mut builder))
           (unless
             (opt-guard-sink-moved-out? st moves id slot)
             (ir.compiler-ir-instr-builder-push!
@@ -91425,6 +91450,8 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrBlock)
       (__tl_make-array ir.CompilerIrBlock st.count)]
+    (for [k (iterator.range 0 moves)]
+      (set! (array-ref st.mv-slot k) (opt-guard-sink-moved-slot blocks st k)))
     (for [id (iterator.range 0 st.count)]
       (set!
         (array-ref slots id)
@@ -91498,6 +91525,7 @@
       (__tl_make-array i64 8)
       (__tl_make-array i64 8)
       (__tl_make-array i64 8)
+      (__tl_make-array i64 (opt-guard-sink-move-limit))
       (__tl_make-array i64 (opt-guard-sink-move-limit))
       (__tl_make-array i64 (opt-guard-sink-move-limit))
       (__tl_make-array i64 (opt-guard-sink-move-limit)))))
@@ -106650,6 +106678,13 @@
 ;; heavy-gate budget (bounded in vars to avoid disp32 frame blowup); cyclic or
 ;; deep-in-loop sole-site callees absorb when the merged caller stays within
 ;; compact block and variable bounds so the combined stack frame stays small.
+;; Charge body cost and frame growth even when the callee will disappear:
+;; moving a large frame into the caller can widen its stack displacements.
+(define (opt-inline-size-absorption-cost-ok?
+  [body-cost : i64]
+  [frame-growth : i64]) : bool
+  (<= (+ body-cost frame-growth) 96))
+
 (define (opt-inline-size-sole-call-absorb-ok?
   [absorb-class : i64]
   [staging : (& staging OptInlineArgStaging)]
@@ -106657,9 +106692,12 @@
   [caller-blocks : i64]
   [added-so-far : i64]
   [added-blocks : i64]
-  [merged-vars : i64]) : bool
+  [merged-vars : i64]
+  [frame-growth : i64]
+  [body-cost : i64]) : bool
   (and
     (= absorb-class 1)
+    (opt-inline-size-absorption-cost-ok? body-cost frame-growth)
     (not staging.all?)
     (or (not staging.values?) (opt-inline-blocks-call-free? blocks))
     (let
@@ -110846,6 +110884,7 @@
   [cargs : (& cargs ir.CompilerIrCallArgs)]
   [np : i64]
   [captures : i64]
+  [vars : i64]
   [cblocks : (& cblocks ir.CompilerIrBlockList)]
   [callee-ret : (& ast.AstType)]
   [caller-blocks : i64]
@@ -110853,14 +110892,18 @@
   (when
     (or census.optimize-for-size (opt-inline-current-site-cold?))
     (return
-      (or
-        (opt-inline-census-absorbable? index census func-name callee-name)
-        (and
-          (<
-            (opt-inline-single-block-cost-instrs cblocks)
-            (opt-inline-cost-call-bonus))
-          (opt-inline-blocks-call-free? cblocks)
-          (not (opt-inline-blocks-have-bounds-check? cblocks))))))
+      (let
+        [body-cost : i64 (opt-inline-single-block-cost-instrs cblocks)]
+        (or
+          (and
+            (opt-inline-size-absorption-cost-ok?
+              (+ body-cost captures)
+              (+ (opt-inline-frame-growth vars np) captures))
+            (opt-inline-census-absorbable? index census func-name callee-name))
+          (and
+            (< body-cost (opt-inline-cost-call-bonus))
+            (opt-inline-blocks-call-free? cblocks)
+            (not (opt-inline-blocks-have-bounds-check? cblocks)))))))
   (let
     [added-blocks : i64 0]
     [body-instrs : ir.CompilerIrInstrSeq
@@ -110939,6 +110982,7 @@
                   args
                   np
                   staged-count
+                  vars
                   blocks
                   callee-ret
                   ctx.caller-blocks
@@ -111342,7 +111386,9 @@
                   site-ctx.caller-blocks
                   site-ctx.added-so-far
                   added-blocks
-                  merged-vars)
+                  merged-vars
+                  (- merged-vars site-ctx.vars)
+                  callee-instrs)
                   (return
                     (SitePlan
                       (OptInlineSitePlan

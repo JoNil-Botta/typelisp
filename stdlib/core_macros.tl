@@ -786,41 +786,6 @@
                                 "__for_item_owner_payload_"
                                 (comptime.int->string index)))
                             binding-name)]
-                        [payload-pattern : comptime.Pattern
-                          (if (comptime.expr-binding-clause-has-type? binding)
-                            (comptime.pattern-binding-typed
-                              payload-name
-                              (comptime.expr-binding-clause-type binding))
-                            (comptime.pattern-binding payload-name))]
-                        [item-body : comptime.Expr
-                          (if item-cleanup?
-                            (comptime.expr-resource-scope
-                              binding-name
-                              (comptime.expr-var payload-name)
-                              (comptime.expr-var
-                                (type-cleanup-function item-type))
-                              out
-                              true)
-                            out)]
-                        [done-pattern : comptime.Pattern
-                          (if native-source?
-                            (comptime.pattern-binding
-                              "__for_native_unused_done")
-                            (comptime.pattern-variant
-                              (comptime.string-append
-                                (type-nominal-name next-result)
-                                ".Done")
-                              (comptime.pattern-list-empty)))]
-                        [item-pattern : comptime.Pattern
-                          (if native-source?
-                            payload-pattern
-                            (comptime.pattern-variant
-                              (comptime.string-append
-                                (type-nominal-name next-result)
-                                ".Item")
-                              (comptime.pattern-list-cons
-                                payload-pattern
-                                (comptime.pattern-list-empty))))]
                         [iterator-name : String
                           (comptime.syntax-name-fresh
                             (comptime.string-append
@@ -924,6 +889,8 @@
                                     ,finish)))
                               (if (comptime.expr-binding-clause-has-type?
                                 binding)
+                                ;; Preserve the annotation for specialization of
+                                ;; comptime values, such as fixed array lengths.
                                 (comptime.expr-for-owned-step-typed
                                   owned-source-var
                                   owned-index-var
@@ -937,17 +904,47 @@
                                   binding-var
                                   done-var
                                   out)))
-                            (comptime.expr-match
-                              next-call
-                              (comptime.match-arm-list-cons
-                                (comptime.match-arm
-                                  done-pattern
-                                  (comptime.expr-set-var
-                                    done-name
-                                    (comptime.expr-bool true)))
+                            (let
+                              [payload-pattern : comptime.Pattern
+                                (if (comptime.expr-binding-clause-has-type?
+                                  binding)
+                                  (comptime.pattern-binding-typed
+                                    payload-name
+                                    (comptime.expr-binding-clause-type binding))
+                                  (comptime.pattern-binding payload-name))]
+                              [item-body : comptime.Expr
+                                (if item-cleanup?
+                                  (comptime.expr-resource-scope
+                                    binding-name
+                                    (comptime.expr-var payload-name)
+                                    (comptime.expr-var
+                                      (type-cleanup-function item-type))
+                                    out
+                                    true)
+                                  out)]
+                              [result-name : String
+                                (type-nominal-name next-result)]
+                              [done-pattern : comptime.Pattern
+                                (comptime.pattern-variant
+                                  (comptime.string-append result-name ".Done")
+                                  (comptime.pattern-list-empty))]
+                              [item-pattern : comptime.Pattern
+                                (comptime.pattern-variant
+                                  (comptime.string-append result-name ".Item")
+                                  (comptime.pattern-list-cons
+                                    payload-pattern
+                                    (comptime.pattern-list-empty)))]
+                              (comptime.expr-match
+                                next-call
                                 (comptime.match-arm-list-cons
-                                  (comptime.match-arm item-pattern item-body)
-                                  (comptime.match-arm-list-empty))))))
+                                  (comptime.match-arm
+                                    done-pattern
+                                    (comptime.expr-set-var
+                                      done-name
+                                      (comptime.expr-bool true)))
+                                  (comptime.match-arm-list-cons
+                                    (comptime.match-arm item-pattern item-body)
+                                    (comptime.match-arm-list-empty)))))))
                         (set! index (- index 1)))))
                   (let
                     [loop-condition : comptime.Expr

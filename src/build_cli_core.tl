@@ -5545,7 +5545,10 @@
       (match (io.try-read-file path)
         [(ErrIoBytes _)
           (return
-            (Err (string.append "build: cannot read package archive " path)))]
+            (Err
+              (str_cat.str-cat
+                "build: cannot read package archive "
+                (string.copy path))))]
         [(OkIoBytes buffer) (byte_buf.to-string buffer)])]
     [bytes (& data)]
     [length : i64 (string.string-length bytes)]
